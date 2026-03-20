@@ -27,6 +27,7 @@ export const categories: Category[] = [
   { id: "cli-workflow", label: "CLI & Workflow Tooling", color: "#6366F1", order: 12 },
   { id: "design-tooling", label: "Design Tooling", color: "#D946EF", order: 13 },
   { id: "platform", label: "Platform Specialties", color: "#78716C", order: 14 },
+  { id: "simulation", label: "Simulation & Optimization", color: "#0EA5E9", order: 15 },
 ];
 
 export const skills: Skill[] = [
@@ -142,6 +143,9 @@ export const skills: Skill[] = [
   { slug: "alkosto-wait-optimizer", categoryId: "platform", shortDescription: "Promotion wait optimization" },
   { slug: "ralph-loop", categoryId: "platform", shortDescription: "Ralph Loop plugin" },
   { slug: "loop", categoryId: "platform", shortDescription: "Recurring task runner" },
+
+  // Simulation & Optimization
+  { slug: "openrocket-sim", categoryId: "simulation", shortDescription: "Headless rocket simulation & EGRI" },
 ];
 
 // Derived aggregates
