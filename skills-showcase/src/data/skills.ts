@@ -38,6 +38,7 @@ export const skills: Skill[] = [
   { slug: "autoany", categoryId: "ai-agents", shortDescription: "EGRI recursive improvement" },
   { slug: "control-metalayer-loop", categoryId: "ai-agents", shortDescription: "Control-system metalayer" },
   { slug: "harness-engineering-playbook", categoryId: "ai-agents", shortDescription: "Agent-first harness engineering" },
+  { slug: "p9", categoryId: "ai-agents", shortDescription: "CI watcher + productive-wait + classifier/evaluator self-heal + governance-gated auto-merge" },
 
   // Memory & Knowledge
   { slug: "agent-consciousness", categoryId: "memory-knowledge", shortDescription: "Persistent consciousness architecture" },

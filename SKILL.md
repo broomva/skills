@@ -1,7 +1,7 @@
 ---
 name: skills
 description: >
-  Canonical reference inventory of 83 agent skills across 15 domains, with a Remotion video
+  Canonical reference inventory of 84 agent skills across 15 domains, with a Remotion video
   showcase generator and X thread copy. Use when discovering available skills, browsing the
   full skills catalog, generating skills showcase content, or understanding what capabilities
   are available across AI agents, memory, research, observability, deployment, Next.js, React
@@ -19,11 +19,11 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-83 skills across 15 domains:
+84 skills across 15 domains:
 
 | Domain | Count | Key Skills |
 |---|---|---|
-| AI & Agent Systems | 6 | ai-sdk, claude-api, agentic-control-kernel, autoany |
+| AI & Agent Systems | 7 | ai-sdk, claude-api, agentic-control-kernel, autoany, p9 |
 | Memory & Knowledge | 5 | agent-consciousness, knowledge-graph-memory, obsidian-cli |
 | Research & Intelligence | 5 | deep-research, financial-deep-research, competitor-intel |
 | Observability & Debugging | 5 | sentry-fix-issues, langsmith-trace |
