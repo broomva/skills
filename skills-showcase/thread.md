@@ -5,7 +5,7 @@
 
 I catalogued every skill loaded into my Claude Code agent.
 
-83 specialized capabilities across 15 domains — from recursive self-improvement loops to Liquid Glass implementation guides.
+84 specialized capabilities across 15 domains — from recursive self-improvement loops to Liquid Glass implementation guides.
 
 Here's the full map and why it matters 🧵
 

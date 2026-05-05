@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![skills.sh](https://img.shields.io/badge/skills.sh-directory-8B5CF6)](https://skills.sh/)
 
-A curated collection of agent skills and the canonical reference inventory — **83 skills across 15 domains**.
+A curated collection of agent skills and the canonical reference inventory — **84 skills across 15 domains**.
 
 ## Quick Install
 
@@ -15,7 +15,7 @@ npx skills add broomva/skills@skills-showcase
 
 | Path | Description |
 |---|---|
-| [`references/skills-inventory.md`](references/skills-inventory.md) | Full categorized inventory of 83 skills across 15 domains |
+| [`references/skills-inventory.md`](references/skills-inventory.md) | Full categorized inventory of 84 skills across 15 domains |
 | [`skills-showcase/`](skills-showcase/) | Remotion video + X thread skill for rendering the showcase |
 
 ## Skills Inventory
@@ -24,7 +24,7 @@ The inventory covers every layer of the stack:
 
 | Category | Count |
 |---|---|
-| AI & Agent Systems | 6 |
+| AI & Agent Systems | 7 |
 | Memory & Knowledge | 5 |
 | Research & Intelligence | 5 |
 | Observability & Debugging | 5 |

@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 83 specialized skills across 15 domains. Last updated: 2026-03-17.
+> 84 specialized skills across 15 domains. Last updated: 2026-05-05.
 
-## AI & Agent Systems (6)
+## AI & Agent Systems (7)
 
 | Skill | Description |
 |---|---|
@@ -12,6 +12,7 @@
 | `autoany` | Evaluator-Governed Recursive Improvement (EGRI) for turning ambiguous goals into safe optimization loops |
 | `control-metalayer-loop` | Control-system metalayer for autonomous code-agent development with stability and entropy controls |
 | `harness-engineering-playbook` | Agent-first harness engineering with AGENTS.md, smoke tests, and architecture boundaries |
+| `p9` | CI watcher + productive-wait primitive — replaces sleep with event-driven control loop, classifier+evaluator self-heal, and policy-gated auto-merge with governance-paths-always-block safety |
 
 ## Memory & Knowledge (5)
 
@@ -164,7 +165,7 @@
 
 ## Aggregates
 
-- **Total skills**: 83
+- **Total skills**: 84
 - **Total categories**: 15
 - **Largest category**: Next.js & React (8)
 - **Smallest categories**: Design Tooling (3), MCP & Protocol Integration (4), Database & API (4)
