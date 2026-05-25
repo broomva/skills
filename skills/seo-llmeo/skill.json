@@ -1,0 +1,42 @@
+{
+  "name": "seo-llmeo",
+  "version": "1.0.0",
+  "description": "SEO and LLM Engine Optimization (LLMEO) — audits pages for traditional search-engine signals and LLM discoverability, generates meta tags, structured data, and llms.txt.",
+  "entrypoint": "SKILL.md",
+  "inputs_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["audit", "llms-txt", "meta", "structured-data"],
+        "description": "Skill mode: audit (full SEO + LLMEO check), llms-txt (generate/update llms.txt), meta (generate meta tags), structured-data (generate JSON-LD)"
+      },
+      "target": {
+        "type": "string",
+        "description": "URL or file path to audit/optimize"
+      },
+      "site_root": {
+        "type": "string",
+        "description": "Site root directory (for llms-txt mode)"
+      },
+      "format": {
+        "type": "string",
+        "enum": ["markdown", "json", "html"],
+        "default": "markdown",
+        "description": "Output format for audit results"
+      },
+      "include_llmeo": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include LLMEO signals in audit (default: true)"
+      },
+      "include_cwv": {
+        "type": "boolean",
+        "default": true,
+        "description": "Include Core Web Vitals guidance in audit (default: true)"
+      }
+    },
+    "required": ["mode"]
+  }
+}

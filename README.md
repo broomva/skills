@@ -40,6 +40,16 @@ npx skills add broomva/skills --skill make-spec
 | [`handoff`](skills/handoff/) | `skills/handoff/SKILL.md` | Fresh-session handoff doc drafting — compress a substantive arc into a single resumable doc for the next agent context |
 | [`make-spec`](skills/make-spec/) | `skills/make-spec/SKILL.md` | Native-HTML design-doc scaffolding (spec / plan / ADR / report / pr-explainer) using the canonical Broomva dark theme — implements P18 (Format-Follows-Audience) for Category-C artifacts |
 
+### Content & media
+
+> Migrated 2026-05-25 (Phase 4a) from standalone `broomva/<name>` repos. The originals are deprecated with redirect-stubs (6-month window until 2026-11-25).
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`blog-post`](skills/blog-post/) | `skills/blog-post/SKILL.md` | Full-stack blog post production — research → angle → draft → multi-platform distribution (X, LinkedIn, Instagram, Substack); ships SKILL.md + templates/ + examples/ + `scripts/publish.sh` |
+| [`brand-icons`](skills/brand-icons/) | `skills/brand-icons/SKILL.md` | Brand icon and visual identity asset generation — favicons, app icons, OG images, social avatars from brand sources |
+| [`seo-llmeo`](skills/seo-llmeo/) | `skills/seo-llmeo/SKILL.md` | SEO and LLM Engine Optimization — audits, meta tags, structured data (JSON-LD), `llms.txt` generation |
+
 ### Strategy & decision intelligence
 
 > Migrated 2026-05-25 from the bundled `broomva/strategy-skills` repo per the Tier-2 monorepo plan. Each sub-skill is now individually installable.

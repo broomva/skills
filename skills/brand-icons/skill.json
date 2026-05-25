@@ -1,0 +1,50 @@
+{
+  "name": "brand-icons",
+  "version": "1.0.0",
+  "description": "Brand icon and visual identity management — generates favicons, app icons, OG images, and social media avatars from brand assets with consistent visual identity.",
+  "entrypoint": "SKILL.md",
+  "inputs_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["generate", "og-image", "audit", "social"],
+        "description": "Skill mode: generate (full icon set), og-image (Open Graph image), audit (missing assets check), social (platform-specific images)"
+      },
+      "source": {
+        "type": "string",
+        "description": "Path to source image (SVG or PNG, minimum 512x512 for best results)"
+      },
+      "title": {
+        "type": "string",
+        "description": "Title text for OG image generation (max 60 characters)"
+      },
+      "subtitle": {
+        "type": "string",
+        "description": "Optional subtitle for OG image"
+      },
+      "project_path": {
+        "type": "string",
+        "description": "Project directory to audit for brand assets"
+      },
+      "platform": {
+        "type": "string",
+        "enum": ["x", "linkedin", "github", "youtube", "discord"],
+        "description": "Social media platform for profile/banner generation"
+      },
+      "output_dir": {
+        "type": "string",
+        "default": "icons/",
+        "description": "Output directory for generated assets"
+      },
+      "format": {
+        "type": "string",
+        "enum": ["png", "svg", "webp"],
+        "default": "png",
+        "description": "Output image format"
+      }
+    },
+    "required": ["mode"]
+  }
+}
