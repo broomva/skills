@@ -42,13 +42,19 @@ npx skills add broomva/skills --skill make-spec
 
 ### Content & media
 
-> Migrated 2026-05-25 (Phase 4a) from standalone `broomva/<name>` repos. The originals are deprecated with redirect-stubs (6-month window until 2026-11-25).
+> Migrated 2026-05-25 from standalone `broomva/<name>` repos (Phase 4a: blog-post + brand-icons + seo-llmeo; Phase 4b: the 6 below). All originals are deprecated with redirect-stubs (6-month window until 2026-11-25).
 
 | Skill | Path | What it does |
 |---|---|---|
 | [`blog-post`](skills/blog-post/) | `skills/blog-post/SKILL.md` | Full-stack blog post production — research → angle → draft → multi-platform distribution (X, LinkedIn, Instagram, Substack); ships SKILL.md + templates/ + examples/ + `scripts/publish.sh` |
 | [`brand-icons`](skills/brand-icons/) | `skills/brand-icons/SKILL.md` | Brand icon and visual identity asset generation — favicons, app icons, OG images, social avatars from brand sources |
 | [`seo-llmeo`](skills/seo-llmeo/) | `skills/seo-llmeo/SKILL.md` | SEO and LLM Engine Optimization — audits, meta tags, structured data (JSON-LD), `llms.txt` generation |
+| [`content-creation`](skills/content-creation/) | `skills/content-creation/SKILL.md` | Full-stack content pipeline — research → narrative → visual assets → video → social → deploy; ships SKILL.md + bstack-launch/ + open-source-stack/ example campaigns with rendered video/GIF outputs |
+| [`content-engine`](skills/content-engine/) | `skills/content-engine/SKILL.md` | Full-stack AI content studio — visual DNA compiler, cinematic generation, browser autopilot, content loop. Bundles 4 sub-skills (`content-engine-autopilot`, `content-engine-cinema`, `content-engine-dna`, `content-engine-loop`) under `skills/content-engine/skills/` |
+| [`launch-video`](skills/launch-video/) | `skills/launch-video/SKILL.md` | Liquid Glass product launch video — dark void aesthetic, 3D floating panels, spring animations via Remotion |
+| [`ltx-video`](skills/ltx-video/) | `skills/ltx-video/SKILL.md` | LTX-2.3 video generation — setup, inference, prompting, ComfyUI integration for Lightricks 22B DiT audio-video model |
+| [`creative-review`](skills/creative-review/) | `skills/creative-review/SKILL.md` | Meta creative review skill — style adherence scoring, feedback loops, self-improving creative pipeline |
+| [`brainrot-for-good`](skills/brainrot-for-good/) | `skills/brainrot-for-good/SKILL.md` | High-retention video production using dopamine-aware editing for genuinely valuable content |
 
 ### Strategy & decision intelligence
 
