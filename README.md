@@ -33,10 +33,28 @@ npx skills add broomva/skills --skill make-spec
 
 ## Tier-2 skills (vendored in this monorepo)
 
+### Workflow & lifecycle
+
 | Skill | Path | What it does |
 |---|---|---|
 | [`handoff`](skills/handoff/) | `skills/handoff/SKILL.md` | Fresh-session handoff doc drafting — compress a substantive arc into a single resumable doc for the next agent context |
 | [`make-spec`](skills/make-spec/) | `skills/make-spec/SKILL.md` | Native-HTML design-doc scaffolding (spec / plan / ADR / report / pr-explainer) using the canonical Broomva dark theme — implements P18 (Format-Follows-Audience) for Category-C artifacts |
+
+### Strategy & decision intelligence
+
+> Migrated 2026-05-25 from the bundled `broomva/strategy-skills` repo per the Tier-2 monorepo plan. Each sub-skill is now individually installable.
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`pre-mortem`](skills/pre-mortem/) | `skills/pre-mortem/SKILL.md` | Structured failure-mode analysis (4-category scoring, mitigation plan) before a project launches |
+| [`premortem`](skills/premortem/) | `skills/premortem/SKILL.md` | Klein/Kahneman premortem with parallel sub-agent deep-dives + HTML report |
+| [`braindump`](skills/braindump/) | `skills/braindump/SKILL.md` | Capture raw thoughts → Obsidian vault with auto-categorization and backlinks |
+| [`morning-briefing`](skills/morning-briefing/) | `skills/morning-briefing/SKILL.md` | Generate a focused daily brief from vault priorities and action items |
+| [`drift-check`](skills/drift-check/) | `skills/drift-check/SKILL.md` | Compare stated priorities vs actual effort (git log + vault) — strategy drift report |
+| [`strategy-critique`](skills/strategy-critique/) | `skills/strategy-critique/SKILL.md` | Red-team critique of strategy documents with gaps, risks, and missing assumptions |
+| [`stakeholder-update`](skills/stakeholder-update/) | `skills/stakeholder-update/SKILL.md` | Take one set of facts → generate 3 versions (technical, business, customer-facing) |
+| [`decision-log`](skills/decision-log/) | `skills/decision-log/SKILL.md` | Structured decision capture with context, alternatives, rationale → vault links |
+| [`weekly-review`](skills/weekly-review/) | `skills/weekly-review/SKILL.md` | Scan vault for weekly changes; surface what changed; flag what needs attention |
 
 More Tier-2 graduations land here per the [migration plan](https://github.com/broomva/workspace/blob/main/docs/specs/2026-05-25-skills-packaging-strategy.html). See [CONTRIBUTING.md](CONTRIBUTING.md#tier-2-skill-graduation-flow) for the graduation flow.
 
