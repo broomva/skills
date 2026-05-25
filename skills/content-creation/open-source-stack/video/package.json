@@ -1,0 +1,21 @@
+{
+  "name": "open-source-stack-video",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render OpenSourceStack out/open-source-stack.mp4",
+    "render:gif": "remotion render OpenSourceStack out/open-source-stack.gif --every-nth-frame=3",
+    "render:all": "bun run render && bun run render:gif"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}
