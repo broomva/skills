@@ -1,0 +1,85 @@
+id: "value-prop-canvas"
+name: "Value Proposition Canvas"
+source_firm: "Strategyzer (Osterwalder)"
+source_year: 2014
+source_citation: "Osterwalder, Pigneur, Bernarda, Smith, 'Value Proposition Design' (Wiley, 2014)"
+category: "ideation"
+purpose: |
+  Map customer-segment jobs/pains/gains against value-proposition
+  products/pain-relievers/gain-creators. Surfaces gaps where AI/data can
+  remove pain or amplify gain in a measurable way. Particularly useful
+  when the engagement scope spans both customer-facing and
+  internal-process AI use cases.
+
+inputs:
+  - name: "customer_segment_research"
+    type: "Path"
+    description: "Customer segment definition, jobs/pains/gains research"
+  - name: "current_value_proposition"
+    type: "Path"
+    description: "Current product/service description"
+  - name: "scope_keywords"
+    type: "list[str]"
+    description: "Customer needs / value proposition / pain points"
+
+dimensions:
+  - "customer-jobs"
+  - "customer-pains"
+  - "customer-gains"
+  - "products-services"
+  - "pain-relievers"
+  - "gain-creators"
+
+scoring_rubric:
+  formula: null
+  output_unit: "use-case"
+  thresholds:
+    high-fit: "≥3 pain-relievers + ≥3 gain-creators map to top customer jobs"
+    medium-fit: "1-2 in each"
+    low-fit: "VP doesn't address top customer jobs"
+
+output_shape:
+  type: "UseCase"
+  fields:
+    problem: "customer pain or unmet job"
+    hypothesis: "AI/data pain-reliever or gain-creator"
+    ideation_source: "business-pain | data-opportunity | competitive-response"
+
+when_to_use:
+  - "Engagement covers both customer-facing and internal use cases"
+  - "Sponsor uses Strategyzer / Business Model Canvas vocabulary"
+  - "Need a visual framing to align CX + product + tech stakeholders"
+
+when_NOT_to_use:
+  - "Use cases are purely internal (no customer-segment angle) — use JTBD on internal users"
+  - "Tenant rejects canvas-style framing in favor of narrative or matrix"
+
+example_application:
+  customer_segment: "SMB business banking customer"
+  top_jobs:
+    - "Reconcile account at month-end"
+    - "Detect fraud transactions"
+  pain_relievers:
+    - "Auto-categorize transactions via LLM (removes manual reconciliation pain)"
+    - "Anomaly-detection on transaction stream (removes fraud-detection pain)"
+  derived_use_cases:
+    - id: "uc-002"
+      problem: "Manual reconciliation eats 3hr/month"
+      ideation_source: "business-pain"
+
+relationships:
+  similar_to:
+    - "jobs-to-be-done"
+    - "lean-canvas"
+    - "business-model-canvas"
+  use_with:
+    - "rice"
+    - "real-options"
+  upstream_from:
+    - "use-case-dossier-deliverable"
+  downstream_to:
+    - "gartner-ai"
+
+citations:
+  - "Osterwalder et al., Value Proposition Design (Wiley, 2014)"
+  - "https://www.strategyzer.com/canvas/value-proposition-canvas"

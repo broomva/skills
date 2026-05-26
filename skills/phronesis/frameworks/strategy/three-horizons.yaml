@@ -1,0 +1,86 @@
+id: "three-horizons"
+name: "Three Horizons of Growth"
+source_firm: "McKinsey (Baghai/Coley/White)"
+source_year: 1999
+source_citation: "Baghai, Coley, White, 'The Alchemy of Growth' (Perseus, 1999)"
+category: "strategy"
+purpose: |
+  Partition the innovation portfolio across three horizons: H1 (extend the
+  core, deliver this fiscal year), H2 (build emerging businesses, prove
+  this year and scale next), H3 (create viable options, invest now and
+  decide later). Frames the roadmap so sponsors see what's defensible vs
+  speculative without losing either.
+
+inputs:
+  - name: "use_cases"
+    type: "list[UseCase]"
+    description: "Prioritized AI/data initiatives to allocate across horizons"
+  - name: "thesis_horizon"
+    type: "str"
+    description: "Strategic thesis horizon (h1-now / h2-next / h3-later)"
+  - name: "available_capacity"
+    type: "dict[str, float]"
+    description: "Per-horizon investment budget (e.g., 70/20/10 split)"
+
+dimensions:
+  - "horizon"
+  - "investment-band"
+  - "decision-rights-owner"
+  - "success-gate"
+
+scoring_rubric:
+  formula: null
+  output_unit: "roadmap-step"
+  thresholds:
+    h1: "deploy this fiscal year, hard deadlines"
+    h2: "prove this year, scale next, decision gates"
+    h3: "real options, may kill, capital small"
+
+output_shape:
+  type: "RoadmapStep"
+  fields:
+    horizon: "h1-now | h2-next | h3-later"
+    quarter: "YYYY-QN"
+    success_gate: "explicit go/no-go criterion"
+
+when_to_use:
+  - "Sponsor's fiscal cadence is annual or multi-year (banking, energy, consumer goods)"
+  - "Use cases span both deploy-now bets and option-value bets"
+  - "Board needs visibility into how AI investment lands across time horizons"
+
+when_NOT_to_use:
+  - "Engagement scope is purely H1 — three-horizons adds noise without mix"
+  - "Sponsor is a startup at product-market-fit stage (everything is H1)"
+
+example_application:
+  thesis_horizon: "h1-now"
+  capacity_split:
+    h1: 0.70
+    h2: 0.20
+    h3: 0.10
+  steps:
+    - id: "rs-h1-mpc-pilot"
+      horizon: "h1-now"
+      quarter: "2026-Q3"
+    - id: "rs-h2-portfolio"
+      horizon: "h2-next"
+      quarter: "2027-Q1"
+    - id: "rs-h3-grid-services"
+      horizon: "h3-later"
+      quarter: "2027-Q4"
+
+relationships:
+  similar_to:
+    - "wardley-mapping"
+  use_with:
+    - "real-options"
+    - "quantumblack-ml"
+  upstream_from:
+    - "innovation-roadmap-deliverable"
+  downstream_to:
+    - "rice"
+    - "unit-economics"
+
+citations:
+  - "Baghai, Coley, White, The Alchemy of Growth (1999)"
+  - "https://www.mckinsey.com/business-functions/strategy-and-corporate-finance/our-insights/enduring-ideas-the-three-horizons-of-growth"

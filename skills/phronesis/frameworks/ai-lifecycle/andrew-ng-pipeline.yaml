@@ -1,0 +1,80 @@
+id: "andrew-ng-pipeline"
+name: "Andrew Ng ML Pipeline"
+source_firm: "Andrew Ng (DeepLearning.AI)"
+source_year: 2021
+source_citation: "Andrew Ng, 'Machine Learning Engineering for Production' (DeepLearning.AI/Coursera, 2021); 'Data-centric AI' essays (2022)"
+category: "ai-lifecycle"
+purpose: |
+  Data-centric ML pipeline emphasizing problem scoping → data labeling
+  consistency → modeling → deployment with monitoring. Lighter than
+  QuantumBlack ML; better suited to teams without enterprise MLOps and
+  to research/pilot phases where data quality is the bottleneck. Anchors
+  the pilot-as-iterative-data-loop frame.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Initiative being scoped"
+  - name: "data_quality_assessment"
+    type: "dict"
+    description: "Label consistency, coverage, drift assumptions"
+  - name: "modeling_approach"
+    type: "str"
+    description: "Which class of model + why (classical, deep, foundation-model)"
+
+dimensions:
+  - "problem-scoping"
+  - "data-quality"
+  - "label-consistency"
+  - "modeling-iteration"
+  - "deployment-monitoring"
+
+scoring_rubric:
+  formula: null
+  output_unit: "pilot-design"
+  thresholds:
+    iteration-ready: "Data quality + label consistency assessed"
+    research-ready: "Modeling approach justified, no production target yet"
+    not-ready: "Data quality unknown (dominant gap in non-enterprise pilots)"
+
+output_shape:
+  type: "PilotDesign"
+  fields:
+    use_case_id: "ref"
+    hypothesis: "Data-centric — 'better labels lift accuracy by N%'"
+    learning_objectives: "explicit data-quality experiments"
+    duration_weeks: "typically 8-12 for first iteration"
+
+when_to_use:
+  - "Tenant lacks enterprise MLOps; pilot is exploratory"
+  - "Data labeling consistency is the suspected bottleneck"
+  - "Sponsor familiar with DeepLearning.AI / Coursera vocabulary"
+
+when_NOT_to_use:
+  - "Pilot has production deployment + retraining loop requirements (use QuantumBlack ML)"
+  - "Regulated industry with MLOps governance demands (use QuantumBlack ML or MS Responsible AI)"
+
+example_application:
+  use_case_id: "uc-pdm-inverter"
+  pilot_design:
+    hypothesis: "Higher label consistency on outage logs lifts anomaly-detection precision by 15%"
+    learning_objectives:
+      - "Validate cross-crew label consistency baseline"
+      - "Measure precision lift after relabel-by-consensus"
+    duration_weeks: 8
+
+relationships:
+  similar_to:
+    - "quantumblack-ml"
+    - "google-pair"
+  use_with:
+    - "value-prop-canvas"
+    - "real-options"
+  upstream_from:
+    - "pilot-plan-deliverable"
+  downstream_to:
+    - "gartner-ai"
+
+citations:
+  - "Andrew Ng, Machine Learning Engineering for Production (DeepLearning.AI/Coursera, 2021)"
+  - "https://www.deeplearning.ai/courses/machine-learning-engineering-for-production-mlops/"

@@ -1,0 +1,192 @@
+<!doctype html>
+<!--
+  Hydra livecoded visuals — self-contained.
+
+  Loads hydra-synth 1.4.0 from unpkg CDN. No build, no install.
+  Edit the pattern below, press Cmd-Enter (or Ctrl-Enter) to re-eval.
+
+  Open in:
+    • System browser:  open hydra-tunnel.html
+    • VS Code: command palette → "Simple Browser: Show" → paste the file:// URL
+      of this file's absolute path. If Simple Browser blocks file:// URLs, run
+      `python3 -m http.server 8765` from this directory and point at
+      http://localhost:8765/hydra-tunnel.html instead.
+
+  hydra-synth API reference: https://hydra.ojack.xyz/api/
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Hydra · Tunnel</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: black;
+      overflow: hidden;
+      font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+    }
+    #output {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    #editor {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      width: 540px;
+      max-height: calc(100vh - 40px);
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      padding: 14px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    #editor textarea {
+      width: 100%;
+      height: 380px;
+      background: transparent;
+      border: none;
+      color: #b8ffb8;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.55;
+      outline: none;
+      resize: vertical;
+      tab-size: 2;
+      white-space: pre;
+    }
+    #status {
+      margin-top: 10px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.45);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    #status.ok .indicator { color: #80ff80; }
+    #status.err .indicator { color: #ff7070; }
+    #status .hint { color: rgba(255, 255, 255, 0.35); }
+    #editor:focus-within {
+      border-color: rgba(184, 255, 184, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="output"></canvas>
+
+  <div id="editor">
+    <textarea id="code" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">// Industrial tunnel — gestures at @lo.fi.sci.fi
+// Edit any line, press Cmd-Enter to re-evaluate.
+
+osc(60, 0.1, 1.5)
+  .kaleid(8)
+  .repeat(2, 2)
+  .modulate(
+    noise(3, 0.5).scrollY(0, () =&gt; -time * 0.05),
+    0.5
+  )
+  .scrollY(0, () =&gt; -time * 0.1)
+  .scale(0.5)
+  .colorama(0.1)
+  .contrast(1.5)
+  .out()
+
+
+// --- variations to try (paste over the block above) ---
+
+// Aggressive vortex:
+//   shape(4, 0.5, 0.001)
+//     .repeat(20, 10)
+//     .scrollY(0, () =&gt; -time * 0.15)
+//     .modulate(noise(3, 0.5))
+//     .scale(2)
+//     .colorama(0.5)
+//     .out()
+
+// Wireframe lattice:
+//   osc(20, 0.05, 0.5)
+//     .kaleid(() =&gt; 4 + Math.sin(time * 0.3) * 3)
+//     .modulate(o0, 0.1)
+//     .rotate(0, 0.05)
+//     .luma(0.3)
+//     .invert()
+//     .out()
+
+// Audio-reactive (call a.show() first to confirm bins):
+//   a.setBins(4)
+//   osc(10, 0.1, 1)
+//     .kaleid(() =&gt; a.fft[0] * 8 + 4)
+//     .modulate(noise(3))
+//     .out()
+</textarea>
+    <div id="status">
+      <span class="indicator">ready</span>
+      <span class="hint">Cmd-Enter · Ctrl-Enter · evaluates entire buffer</span>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/hydra-synth@1.4.0/dist/hydra-synth.js"></script>
+  <script>
+    const canvas = document.getElementById('output');
+    function sizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    sizeCanvas();
+    window.addEventListener('resize', sizeCanvas);
+
+    // detectAudio: false avoids the mic-permission prompt unless you opt in.
+    // To enable audio-reactivity later, switch to true and re-eval `a.show()`.
+    const hydra = new Hydra({
+      canvas: canvas,
+      detectAudio: false,
+      enableStreamCapture: false,
+    });
+
+    // Hydra-synth attaches osc/shape/noise/o0..3/s0..3/render/time/a to window
+    // already, so user code in the textarea can call them bare.
+
+    const codeEl = document.getElementById('code');
+    const statusEl = document.getElementById('status');
+    const indicatorEl = statusEl.querySelector('.indicator');
+
+    function setStatus(text, kind) {
+      indicatorEl.textContent = text;
+      statusEl.classList.remove('ok', 'err');
+      if (kind) statusEl.classList.add(kind);
+    }
+
+    function run() {
+      const code = codeEl.value;
+      try {
+        // eslint-disable-next-line no-eval
+        (0, eval)(code);
+        setStatus('running ✓', 'ok');
+      } catch (e) {
+        setStatus('error: ' + e.message, 'err');
+        console.error(e);
+      }
+    }
+
+    codeEl.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        run();
+      }
+      // Cmd-. (Mac) or Esc clears the canvas
+      if ((e.metaKey && e.key === '.') || e.key === 'Escape') {
+        e.preventDefault();
+        try { hydra.hush(); setStatus('hushed', 'ok'); } catch {}
+      }
+    });
+
+    // Auto-run starter pattern on load (slight delay so hydra is fully initialized)
+    setTimeout(run, 100);
+  </script>
+</body>
+</html>

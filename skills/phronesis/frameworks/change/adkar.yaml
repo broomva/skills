@@ -1,0 +1,28 @@
+id: "adkar"
+name: "ADKAR Change Model"
+source_firm: "Prosci (Hiatt)"
+source_year: 2003
+source_citation: "Hiatt, 'ADKAR: A Model for Change' (Prosci, 2003)"
+category: "change"
+purpose: "DEFERRED — D-scope. Phase-2 placeholder. See design spec §5.3 for rationale."
+inputs: []
+dimensions: []
+scoring_rubric:
+  formula: null
+  output_unit: "deferred"
+  thresholds: null
+output_shape:
+  type: "Score"
+  fields: {}
+when_to_use:
+  - "DEFERRED — see Phase 2 design spec"
+  - "DEFERRED — see Phase 2 design spec"
+  - "DEFERRED — see Phase 2 design spec"
+when_NOT_to_use:
+  - "DO NOT USE in Phase 1"
+  - "DO NOT USE without full implementation"
+example_application:
+  note: "deferred to Phase 2"
+relationships: {}
+citations: []
+is_d_scope: true

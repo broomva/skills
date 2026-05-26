@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "broomva-health"
+version = "0.2.3"
+description = "Broomva-stack Health skill — personal health knowledge graph with hex-architecture trace ingest"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Broomva", email = "devteam@getstimulus.ai" }]
+keywords = ["health", "garmin", "apple-health", "whoop", "oura", "hrv", "longevity", "knowledge-graph", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "typer>=0.12",
+  "rich>=13.7",
+  "platformdirs>=4.2",
+  "tomli>=2.0; python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+# Source adapters — each is opt-in so the core installs without network deps
+garmin = ["garminconnect>=0.2.20"]
+encrypted = ["pysqlcipher3>=1.2"]
+keychain = ["keyring>=24.0"]
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "pytest-asyncio>=0.23",
+  "hypothesis>=6.100",
+  "ruff>=0.4",
+  "mypy>=1.10",
+  "types-PyYAML",
+]
+
+[project.scripts]
+health = "broomva_health.cli.app:main"
+
+[project.urls]
+"Source" = "https://github.com/broomva/broomva"
+"Linear" = "https://linear.app/broomva/issue/BRO-1235"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/broomva_health"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/README.md", "/pyproject.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "UP", "S", "A", "C4", "PT", "RET", "SIM", "ARG", "PL", "RUF"]
+ignore = [
+  "S101",     # asserts OK
+  "PLR0913",  # too-many-arguments — DI is unavoidable here
+  "PLR2004",  # magic numbers in tests
+  "E501",     # line-too-long — we prefer readable docstrings
+  "RUF002",   # ambiguous unicode — em-dashes in prose are intentional
+  "RUF003",
+  "N818",     # exception suffix — `HealthError` etc. are intentional
+  "S112",     # try-except-continue used deliberately for forward compat
+  "PLC0415",  # import-outside-top-level — used for optional-extra lazy imports
+  "B008",     # function-call-in-default-argument — Typer/Pydantic pattern
+  "PLR0911",  # too-many-return-statements
+  "PLR0912",  # too-many-branches
+  "PLR0915",  # too-many-statements
+  "RUF043",   # pytest-raises ambiguous-pattern (string regex match)
+  "S105",     # hardcoded-password-string — test fixtures only
+  "N814",     # camelcase-imported-as-constant — UTC import alias
+  "PLE0704",  # misplaced-bare-raise — used inside fallback flows
+  "SIM105",   # contextlib.suppress vs try/except pass — both acceptable
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR2004", "ARG", "PT011"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_decorators = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["garminconnect.*", "garth.*", "keyring.*", "pysqlcipher3.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "e2e: end-to-end test requiring real Garmin credentials (gated on BROOMVA_HEALTH_E2E=1)",
+  "slow: takes > 1s",
+]
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:garminconnect.*",
+  # SQLite cleanup warnings from integration tests are connection-close hygiene,
+  # not real bugs. The repo tests explicitly verify close(); integration tests
+  # are higher-level and let GC handle teardown.
+  "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.coverage.run]
+source = ["src/broomva_health"]
+omit = ["src/broomva_health/cli/__main__.py"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 75
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+]

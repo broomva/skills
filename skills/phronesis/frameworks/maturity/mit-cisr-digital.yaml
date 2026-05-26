@@ -1,0 +1,88 @@
+id: "mit-cisr-digital"
+name: "MIT CISR Digital Maturity"
+source_firm: "MIT CISR (Ross/Beath/Mocker)"
+source_year: 2019
+source_citation: "Ross, Beath, Mocker, 'Designed for Digital' (MIT Press, 2019)"
+category: "maturity"
+purpose: |
+  Score digital maturity along five dimensions — operations, customer
+  insights, data infrastructure, accountability framework, and external
+  developer platform — using MIT CISR's industrialized vs digital axis.
+  Designed for established enterprises moving from digitized (efficient
+  silos) to digital (fast platforms). Standard reference at LATAM
+  enterprise IT leadership level.
+
+inputs:
+  - name: "interview_transcripts"
+    type: "list[Path]"
+    description: "Sponsor + SME interviews, ingested via Stage 1"
+  - name: "data_inventory"
+    type: "list[str]"
+    description: "Architecture documents, data-platform inventory"
+  - name: "scope_keywords"
+    type: "list[str]"
+    description: "Maturity assessment / digital transformation / platform"
+
+dimensions:
+  - "operational-backbone"
+  - "digital-platform"
+  - "customer-insights"
+  - "accountability-framework"
+  - "external-developer-platform"
+
+scoring_rubric:
+  formula: null
+  output_unit: "cisr-level-1-to-5"
+  thresholds:
+    1: "siloed, manual, ad-hoc"
+    2: "digitized within silos"
+    3: "integrated operations"
+    4: "industrialized + accountable"
+    5: "platform with external developer reuse"
+
+output_shape:
+  type: "MaturityDimension"
+  fields:
+    name: "one of the five dimensions"
+    framework_ref: "framework:mit-cisr-digital"
+    current_score: "Score with scale (1.0, 5.0)"
+    target_score: "Score with scale (1.0, 5.0)"
+
+when_to_use:
+  - "Tenant is an established enterprise (>500 headcount, >10 years old)"
+  - "Sponsor familiar with MIT CISR / Sloan Management Review terminology"
+  - "Digital + AI maturity are tangled — need to separate signals"
+
+when_NOT_to_use:
+  - "Tenant is digital-native — MIT CISR's industrialized framing doesn't fit"
+  - "Engagement is purely about ML lifecycle (use Gartner AI or QuantumBlack ML)"
+
+example_application:
+  tenant_industry: "banking"
+  dimensions_scored:
+    - name: "Operational backbone"
+      current: 2.0
+      target: 4.0
+      gap_summary: "Digitized within silos; needs cross-LOB integration"
+    - name: "Digital platform"
+      current: 2.5
+      target: 4.0
+      gap_summary: "No external developer reuse"
+
+relationships:
+  similar_to:
+    - "gartner-ai"
+    - "forrester-data"
+  use_with:
+    - "wardley-mapping"
+    - "three-horizons"
+  upstream_from:
+    - "maturity-report-deliverable"
+    - "capability-heatmap-deliverable"
+  downstream_to:
+    - "jobs-to-be-done"
+    - "rice"
+
+citations:
+  - "Ross, Beath, Mocker, Designed for Digital (MIT Press, 2019)"
+  - "https://cisr.mit.edu/research/research-byline/four-pathways-to-digital-success"

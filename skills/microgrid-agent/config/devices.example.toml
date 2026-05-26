@@ -1,0 +1,145 @@
+# =============================================================================
+# Microgrid Agent — Device Configuration
+# =============================================================================
+# Copy this file to devices.toml and adjust for your actual hardware.
+# Each [[devices]] entry describes one physical or simulated device.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Solar Inverter — Modbus RTU over RS-485
+# -----------------------------------------------------------------------------
+[[devices]]
+name = "solar_inverter"
+type = "modbus_rtu"
+
+# Serial port on the Raspberry Pi (USB-to-RS485 adapter)
+port = "/dev/ttyUSB0"
+
+# Modbus slave address
+address = 1
+
+# Baud rate for Modbus RTU communication
+baudrate = 9600
+
+# Polling interval in seconds
+poll_interval = 5
+
+# Register map: register_address = "metric_name:data_type:scale_factor"
+# data_type: u16, i16, u32, i32, f32
+# scale_factor: multiply raw value by this to get engineering units
+[devices.registers]
+0  = "pv_voltage:u16:0.1"        # PV array voltage (V)
+1  = "pv_current:u16:0.01"       # PV array current (A)
+2  = "pv_power:u16:1.0"          # PV output power (W)
+3  = "ac_voltage:u16:0.1"        # AC output voltage (V)
+4  = "ac_frequency:u16:0.01"     # AC frequency (Hz)
+5  = "ac_power:u16:1.0"          # AC output power (W)
+6  = "daily_energy:u32:0.01"     # Daily energy generated (kWh)
+8  = "total_energy:u32:0.01"     # Lifetime energy generated (kWh)
+10 = "inverter_temp:i16:0.1"     # Inverter temperature (deg C)
+11 = "fault_code:u16:1.0"        # Active fault code (0 = no fault)
+
+# -----------------------------------------------------------------------------
+# Battery Inverter / BMS — Modbus RTU
+# -----------------------------------------------------------------------------
+[[devices]]
+name = "battery_inverter"
+type = "modbus_rtu"
+
+port = "/dev/ttyUSB1"
+address = 2
+baudrate = 9600
+poll_interval = 5
+
+[devices.registers]
+0  = "battery_voltage:u16:0.1"    # Battery voltage (V)
+1  = "battery_current:i16:0.1"    # Battery current (A, positive=charging)
+2  = "soc:u16:1.0"                # State of charge (%)
+3  = "soh:u16:1.0"                # State of health (%)
+4  = "battery_power:i16:1.0"      # Battery power (W, positive=charging)
+5  = "battery_temp:i16:0.1"       # Battery temperature (deg C)
+6  = "charge_energy:u32:0.01"     # Total charge energy (kWh)
+8  = "discharge_energy:u32:0.01"  # Total discharge energy (kWh)
+10 = "max_cell_voltage:u16:0.001" # Highest cell voltage (V)
+11 = "min_cell_voltage:u16:0.001" # Lowest cell voltage (V)
+12 = "fault_code:u16:1.0"         # Active fault code
+
+# -----------------------------------------------------------------------------
+# Diesel Generator — VE.Direct (Victron-style text protocol)
+# -----------------------------------------------------------------------------
+[[devices]]
+name = "diesel_genset"
+type = "ve_direct"
+
+port = "/dev/ttyUSB2"
+baudrate = 19200
+poll_interval = 10
+
+# VE.Direct fields are auto-parsed; list the ones we care about.
+# The agent extracts these by label from the VE.Direct text frames.
+[devices.fields]
+"P"    = "genset_power"       # Output power (W)
+"V"    = "genset_voltage"     # Output voltage (mV, divide by 1000)
+"I"    = "genset_current"     # Output current (mA, divide by 1000)
+"H19"  = "genset_total_kwh"   # Lifetime yield (0.01 kWh)
+"ERR"  = "genset_error"       # Error code
+"CS"   = "genset_state"       # Operating state
+
+# -----------------------------------------------------------------------------
+# Irradiance Sensor — I2C (e.g., BH1750 or similar)
+# -----------------------------------------------------------------------------
+[[devices]]
+name = "irradiance_sensor"
+type = "i2c"
+
+# I2C bus number on the Raspberry Pi
+bus = 1
+
+# I2C device address (hex)
+address = 0x23
+
+# Polling interval in seconds
+poll_interval = 60
+
+# Sensor-specific configuration
+[devices.sensor]
+mode = "continuous_high_res"    # BH1750 measurement mode
+metric = "irradiance_wm2"      # Output metric name
+scale_factor = 1.2              # Calibration factor (lux to W/m2 approximation)
+
+# -----------------------------------------------------------------------------
+# Simulated Device — For testing without hardware
+# -----------------------------------------------------------------------------
+# Enable this device when running in simulation mode (--simulate flag).
+# It generates realistic time-series data using sinusoidal + noise models.
+[[devices]]
+name = "simulated_site"
+type = "simulated"
+
+# No port needed for simulation
+port = "none"
+address = 0
+poll_interval = 5
+
+# Simulation parameters
+[devices.simulation]
+# Base solar profile: peak output at solar noon, sinusoidal envelope
+solar_peak_kw = 50.0
+solar_noise_pct = 0.05           # Random noise as fraction of output
+
+# Battery simulation
+battery_capacity_kwh = 120.0
+initial_soc_pct = 65.0
+
+# Load profile: base load + time-of-day variation
+base_load_kw = 12.0
+peak_load_kw = 40.0
+peak_hours = [7, 8, 11, 12, 18, 19, 20]  # Hours with peak demand
+
+# Diesel generator
+diesel_capacity_kw = 30.0
+diesel_startup_delay_s = 15      # Simulated startup time
+
+# Weather perturbation: probability of cloud cover per hour
+cloud_probability = 0.3
+cloud_reduction_pct = 0.6        # Output drops by this fraction during clouds

@@ -1,0 +1,89 @@
+# RICE Scoring — Phase-1 framework (B.1 worked example).
+#
+# This file is the canonical template for B.2-B.14. New frameworks copy
+# this structure, swap in their own slug + source data + scoring rubric,
+# and ship as a parallel-worktree commit.
+id: "rice"
+name: "RICE Scoring"
+source_firm: "Intercom"
+source_year: 2016
+source_citation: "Sean McBride, 'RICE: Simple prioritization for product managers' (Intercom, 2016)"
+category: "prioritization"
+purpose: |
+  Quantify the value of a use case by reach × impact × confidence ÷ effort.
+  Produces a comparable score across a portfolio of candidates so the CFO
+  can read the formula and accept the ranking.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Candidate AI/data initiative being scored"
+  - name: "reach_estimate"
+    type: "float"
+    description: "Number of users / events / transactions affected per quarter"
+  - name: "impact_estimate"
+    type: "float"
+    description: "Per-affected-event impact (3.0 massive / 2.0 high / 1.0 medium / 0.5 low / 0.25 minimal)"
+  - name: "confidence"
+    type: "float"
+    description: "0-1: confidence in the reach × impact estimate"
+  - name: "effort_person_months"
+    type: "float"
+    description: "Total team-months to deliver"
+
+dimensions:
+  - "reach"
+  - "impact"
+  - "confidence"
+  - "effort"
+
+scoring_rubric:
+  formula: "(reach × impact × confidence) / effort"
+  output_unit: "rice-score"
+  thresholds:
+    high: ">= 50"
+    medium: "10-50"
+    low: "< 10"
+
+output_shape:
+  type: "Score"
+  fields:
+    dimension: "rice-score"
+    value: "computed via formula"
+    scale: "(0.0, 1000.0)"
+    rubric_ref: "framework:rice"
+
+when_to_use:
+  - "Comparing >=3 use cases of similar type to pick top-3"
+  - "CFO/sponsor wants a transparent number rather than vibes"
+  - "Effort estimates are within 50% accuracy"
+
+when_NOT_to_use:
+  - "Use cases have radically different reach domains (compare apples-to-apples first)"
+  - "Effort is unknown by >2x — RICE is meaningless without effort sanity"
+
+example_application:
+  use_case_id: "uc-001"
+  inputs:
+    reach: 12000
+    impact: 2.0
+    confidence: 0.7
+    effort: 3.0
+  computed_score: 5600
+  ranking_band: "high"
+
+relationships:
+  similar_to:
+    - "ice"
+    - "wsjf"
+  use_with:
+    - "unit-economics"
+    - "real-options"
+  upstream_from:
+    - "impact-effort-matrix-deliverable"
+  downstream_to:
+    - "jobs-to-be-done"
+
+citations:
+  - "https://intercom.com/blog/rice-simple-prioritization-for-product-managers/"
+  - "Sean McBride, RICE Score original article (2016)"

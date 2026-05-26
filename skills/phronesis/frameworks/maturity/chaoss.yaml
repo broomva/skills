@@ -1,0 +1,92 @@
+id: "chaoss"
+name: "CHAOSS Project Health Metrics"
+source_firm: "Linux Foundation CHAOSS Project"
+source_year: 2017
+source_citation: "CHAOSS (Community Health Analytics for Open Source Software), Linux Foundation; Goggins, Germonprez, Lumbard, 'A Workshop on Open Source Software Communities and Sustainability' (2017)"
+category: "maturity"
+purpose: |
+  Score open-source project health along five practitioner-relevant
+  dimensions — contributor diversity, release cadence, code review depth,
+  downstream adoption, governance maturity. Designed for AI-BUILDING /
+  runtime / library / OSS-project tenants where MIT CISR's industrialized-
+  vs-platform axis and Gartner AI's awareness-to-systemic ladder both miss
+  the actual measurement: are you running a healthy open-source project
+  that durably ships?
+
+inputs:
+  - name: "repo_telemetry"
+    type: "dict"
+    description: "GitHub/GitLab API exports — commits, PRs, reviewers, issues, releases over 90-day rolling window"
+  - name: "release_cadence"
+    type: "list[str]"
+    description: "Release tags + dates (semver) over the last 12 months"
+  - name: "downstream_adoption"
+    type: "dict"
+    description: "Stars, forks, dependent-projects (npm/pypi/cargo/Maven), production deployments"
+  - name: "governance_artifacts"
+    type: "list[str]"
+    description: "GOVERNANCE.md, CODEOWNERS, RFC process, public roadmap presence"
+
+dimensions:
+  - "contributor-diversity"
+  - "release-cadence"
+  - "code-review-depth"
+  - "downstream-adoption"
+  - "governance-maturity"
+
+scoring_rubric:
+  formula: null
+  output_unit: "chaoss-level-1-to-5"
+  thresholds:
+    1: "solo — single maintainer, sporadic releases, no review process"
+    2: "active — 2-5 contributors, monthly cadence, ad-hoc review"
+    3: "operational — 5-15 contributors, predictable cadence, formal review"
+    4: "industrialized — 15+ contributors, semantic versioning, RFC process, stable downstreams"
+    5: "ecosystem — vendor-neutral foundation, multiple committer organizations, downstream-of-downstreams"
+
+output_shape:
+  type: "MaturityDimension"
+  fields:
+    name: "one of the five dimensions"
+    framework_ref: "framework:chaoss"
+    current_score: "Score with scale (1.0, 5.0)"
+    target_score: "Score with scale (1.0, 5.0)"
+
+when_to_use:
+  - "Tenant builds open-source AI infrastructure (runtime, library, framework, model)"
+  - "Engagement scope includes ecosystem positioning or upstream/downstream relationship strategy"
+  - "Strategic thesis depends on community formation or contributor velocity"
+
+when_NOT_to_use:
+  - "Tenant builds proprietary software with no public repo (use MIT CISR instead)"
+  - "Engagement is enterprise-IT digital maturity (use MIT CISR Digital — CHAOSS measures the wrong axis)"
+
+example_application:
+  tenant_industry: "tech"
+  dimensions_scored:
+    - name: "Contributor diversity"
+      current: 1.0
+      target: 3.0
+      gap_summary: "Solo maintainer; need to land 5+ external contributors before public spec release"
+    - name: "Release cadence"
+      current: 2.0
+      target: 4.0
+      gap_summary: "Sporadic; target semver-driven monthly releases"
+
+relationships:
+  similar_to:
+    - "mit-cisr-digital"
+    - "gartner-ai"
+  use_with:
+    - "wardley-mapping"
+    - "real-options"
+    - "three-horizons"
+  upstream_from:
+    - "maturity-report-deliverable"
+    - "capability-heatmap-deliverable"
+  downstream_to:
+    - "value-prop-canvas"
+
+citations:
+  - "https://chaoss.community/"
+  - "Goggins, Germonprez, Lumbard et al., CHAOSS metrics specification (Linux Foundation, 2017-)"

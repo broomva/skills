@@ -76,6 +76,58 @@ npx skills add broomva/skills --skill make-spec
 | [`wealth-management`](skills/wealth-management/) | `skills/wealth-management/SKILL.md` | Wealth planning + Monte Carlo + tax-optimized allocation + net worth forecasting |
 | [`haima`](skills/haima/) | `skills/haima/SKILL.md` | Agent guide for x402 machine-to-machine payments, secp256k1 wallets, per-task billing, on-chain USDC settlement. (Renamed from `broomva/haima-skill`; runtime crate remains at `broomva/haima`.) |
 
+### Hardware, robotics & physical systems
+
+> Migrated 2026-05-26 (Phase 4d) from standalone `broomva/<name>` repos.
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`capx-agentic-robotics`](skills/capx-agentic-robotics/) | `skills/capx-agentic-robotics/SKILL.md` | CaP-X LLM-driven robot manipulation via code generation — CaP-Gym (187 tasks), CaP-Bench, CaP-Agent0, CaP-RL, sim-to-real |
+| [`openrocket-sim`](skills/openrocket-sim/) | `skills/openrocket-sim/SKILL.md` | Headless rocket design, simulation, and EGRI optimization using OpenRocket |
+| [`sdr-satellite`](skills/sdr-satellite/) | `skills/sdr-satellite/SKILL.md` | Software-defined radio + satellite reception toolkit — what to install, what you can hear, how to compose the stack |
+| [`ocean-genomics`](skills/ocean-genomics/) | `skills/ocean-genomics/SKILL.md` | Deep-ocean genomics research — eDNA metabarcoding, AlphaFold, ESMFold, Evo 2, marine biodiversity, agentic bioinformatics workflows |
+| [`microgrid-agent`](skills/microgrid-agent/) | `skills/microgrid-agent/SKILL.md` | Open-source edge AI agent for autonomous renewable energy microgrid management on Raspberry Pi |
+| [`bitnet`](skills/bitnet/) | `skills/bitnet/SKILL.md` | Microsoft BitNet — 1-bit LLM setup, model download, inference, and benchmarking on CPU |
+
+### Compute & remote infrastructure
+
+> Migrated 2026-05-26 (Phase 4d).
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`colab-remote`](skills/colab-remote/) | `skills/colab-remote/SKILL.md` | Colab Remote — SSH-operated GPU training on Google Colab |
+| [`remote-gpu`](skills/remote-gpu/) | `skills/remote-gpu/SKILL.md` | Remote GPU orchestrator — manage headless GPU servers, submit jobs, run remote Claude Code sessions over SSH/HTTP |
+| [`claude-code-channels`](skills/claude-code-channels/) | `skills/claude-code-channels/SKILL.md` | Telegram + Discord messaging bots for Claude Code with per-channel access control |
+| [`claude-remote-sessions`](skills/claude-remote-sessions/) | `skills/claude-remote-sessions/SKILL.md` | Per-channel Discord + Telegram sessions for Claude Code — isolated tmux sessions, auto-discovery watchdog, thread-context injection, launchd persistence |
+
+### Audio, voice, media tooling
+
+> Migrated 2026-05-26 (Phase 4d). 2 entries renamed during migration (drop `-skill` suffix).
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`omnivoice`](skills/omnivoice/) | `skills/omnivoice/SKILL.md` | OmniVoice Studio agent skill — local TTS, voice cloning, voice design, video dubbing in 646 languages. (Renamed from `broomva/omnivoice-skill`.) |
+| [`livecoding`](skills/livecoding/) | `skills/livecoding/SKILL.md` | Algorave-grade livecoded music workflow — TidalCycles patterns + Hydra visuals |
+
+### Advisory, consulting & decision tooling
+
+> Migrated 2026-05-26 (Phase 4d). 1 entry renamed during migration (drop `-skill` suffix).
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`phronesis`](skills/phronesis/) | `skills/phronesis/SKILL.md` | AI-native advisory practice — top-firm consulting methodology (Three Horizons, MIT CISR, JTBD, RICE, QuantumBlack ML, Wardley) as runnable typed primitives |
+| [`procurer`](skills/procurer/) | `skills/procurer/SKILL.md` | Grounded procurement research — turn any real-world need into a decision-shaped report with cited alternatives, price bands, recommendation |
+| [`alkosto-wait-optimizer`](skills/alkosto-wait-optimizer/) | `skills/alkosto-wait-optimizer/SKILL.md` | Probability-based decision tool for optimal waiting times on Alkosto promotions — Bayesian estimation with uncertainty. (Renamed from `broomva/alkosto-wait-optimizer-skill`.) |
+
+### Health & body
+
+> Migrated 2026-05-26 (Phase 4d). Joins yesterday's `health` and `founder-mode-oncology` graduates into a unified health/body category.
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`health`](skills/health/) | `skills/health/SKILL.md` | Personal health knowledge graph — local-first ingest of Garmin/Apple/Whoop/Oura traces into SQLite, projected to Obsidian daily-note frontmatter (hex architecture). Graduated 2026-05-23 via standalone repo; consolidated to monorepo 2026-05-26 |
+| [`founder-mode-oncology`](skills/founder-mode-oncology/) | `skills/founder-mode-oncology/SKILL.md` | Personalized cancer-treatment navigation — Sid Sijbrandij founder-mode framework with AlphaFold integration |
+
 ### Strategy & decision intelligence
 
 > Migrated 2026-05-25 from the bundled `broomva/strategy-skills` repo per the Tier-2 monorepo plan. Each sub-skill is now individually installable.

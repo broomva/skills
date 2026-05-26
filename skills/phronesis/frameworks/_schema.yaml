@@ -1,0 +1,126 @@
+# Phronesis framework-as-code schema (P1).
+#
+# Every YAML at frameworks/<category>/<slug>.yaml MUST validate against this
+# JSON Schema. The schema is loaded at framework-registry startup; any
+# violation raises before phronesis can run.
+#
+# This file is the source of truth for the framework contract. Changes here
+# require updating:
+#   - core/frameworks.py (Pydantic mirror)
+#   - all 27 framework YAMLs (14 Phase-1 + 13 D-scope stubs)
+#   - tests/unit/test_frameworks_schema.py
+$schema: "http://json-schema.org/draft-07/schema#"
+title: "Phronesis Framework"
+type: object
+required:
+  - id
+  - name
+  - source_firm
+  - source_year
+  - source_citation
+  - category
+  - purpose
+  - inputs
+  - dimensions
+  - scoring_rubric
+  - output_shape
+  - when_to_use
+  - when_NOT_to_use
+  - example_application
+  - relationships
+  - citations
+properties:
+  id:
+    type: string
+    pattern: "^[a-z][a-z0-9-]*$"
+    description: "kebab-case slug, must match filename"
+  name:
+    type: string
+  source_firm:
+    type: string
+  source_year:
+    type: integer
+    minimum: 1900
+    maximum: 2100
+  source_citation:
+    type: string
+  category:
+    type: string
+    enum: [strategy, maturity, ideation, prioritization, roi, ai-lifecycle, change]
+  purpose:
+    type: string
+  inputs:
+    type: array
+    items:
+      type: object
+      required: [name, type, description]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        description: { type: string }
+  dimensions:
+    type: array
+    items: { type: string }
+  scoring_rubric:
+    type: object
+    required: [output_unit]
+    properties:
+      formula:
+        oneOf:
+          - { type: string }
+          - { type: "null" }
+      output_unit: { type: string }
+      thresholds:
+        oneOf:
+          - { type: object }
+          - { type: "null" }
+  output_shape:
+    type: object
+    required: [type, fields]
+    properties:
+      type:
+        type: string
+        enum:
+          - Score
+          - UseCase
+          - MaturityDimension
+          - RoadmapStep
+          - PilotDesign
+          - RoiCell
+          - CapabilityCell
+          - Recommendation
+      fields:
+        type: object
+  when_to_use:
+    type: array
+    items: { type: string }
+    minItems: 3
+    maxItems: 5
+  when_NOT_to_use:
+    type: array
+    items: { type: string }
+    minItems: 2
+    maxItems: 3
+  example_application:
+    type: object
+  relationships:
+    type: object
+    properties:
+      similar_to:
+        type: array
+        items: { type: string }
+      use_with:
+        type: array
+        items: { type: string }
+      upstream_from:
+        type: array
+        items: { type: string }
+      downstream_to:
+        type: array
+        items: { type: string }
+  citations:
+    type: array
+    items: { type: string }
+  is_d_scope:
+    type: boolean
+    description: "Marks D-scope stubs (Phase 2 placeholders). Default false."

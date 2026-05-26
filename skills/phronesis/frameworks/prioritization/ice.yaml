@@ -1,0 +1,79 @@
+id: "ice"
+name: "ICE Scoring"
+source_firm: "GrowthHackers (Sean Ellis)"
+source_year: 2009
+source_citation: "Sean Ellis, 'ICE Score for prioritization' (GrowthHackers, 2009)"
+category: "prioritization"
+purpose: |
+  Lightweight prioritization by Impact × Confidence × Ease. Faster than RICE
+  because it skips reach estimation; better than vibes because the three
+  axes are debate-friendly and the formula is transparent.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Candidate AI/data initiative being scored"
+  - name: "impact"
+    type: "float"
+    description: "1-10: how big the win is if this works"
+  - name: "confidence"
+    type: "float"
+    description: "1-10: how sure you are it will work"
+  - name: "ease"
+    type: "float"
+    description: "1-10: how easy to deliver (10 = trivial; 1 = brutal)"
+
+dimensions:
+  - "impact"
+  - "confidence"
+  - "ease"
+
+scoring_rubric:
+  formula: "(impact + confidence + ease) / 3"
+  output_unit: "ice-score"
+  thresholds:
+    high: ">= 8"
+    medium: "5-8"
+    low: "< 5"
+
+output_shape:
+  type: "Score"
+  fields:
+    dimension: "ice-score"
+    value: "computed via formula"
+    scale: "(1.0, 10.0)"
+    rubric_ref: "framework:ice"
+
+when_to_use:
+  - "Sponsor wants quick prioritization without reach estimation"
+  - "Team is small (<5 people) — RICE's reach axis adds no signal"
+  - "Early-stage exploration where reach is unknowable"
+
+when_NOT_to_use:
+  - "User-base is heterogeneous — reach matters; use RICE instead"
+  - "CFO/board wants quantified financial estimates (use unit-economics + RICE)"
+
+example_application:
+  use_case_id: "uc-001"
+  inputs:
+    impact: 8.0
+    confidence: 7.0
+    ease: 6.0
+  computed_score: 7.0
+  ranking_band: "medium"
+
+relationships:
+  similar_to:
+    - "rice"
+    - "wsjf"
+  use_with:
+    - "jobs-to-be-done"
+    - "unit-economics"
+  upstream_from:
+    - "impact-effort-matrix-deliverable"
+  downstream_to:
+    - "value-prop-canvas"
+
+citations:
+  - "https://growthhackers.com/articles/the-ice-method-for-quickly-prioritizing-ideas/"
+  - "Sean Ellis, ICE Score original framing (2009)"

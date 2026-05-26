@@ -1,0 +1,83 @@
+id: "wardley-mapping"
+name: "Wardley Mapping"
+source_firm: "Simon Wardley"
+source_year: 2018
+source_citation: "Simon Wardley, 'Wardley Maps' (Medium, 2018-2024); CC BY-SA"
+category: "strategy"
+purpose: |
+  Plot capabilities on two axes — value chain (visible to user → invisible)
+  vs evolution (genesis → custom-built → product → commodity). Surfaces
+  which capabilities to build vs buy vs outsource, and where competitive
+  advantage will and won't be available. Native to tech-evolution thinking;
+  pairs well with Three Horizons.
+
+inputs:
+  - name: "capabilities"
+    type: "list[CapabilityCell]"
+    description: "Tenant capabilities under analysis"
+  - name: "user_need"
+    type: "str"
+    description: "Anchor user need at the top of the value chain"
+  - name: "evolution_stages"
+    type: "list[str]"
+    description: "Genesis, Custom-Built, Product, Commodity"
+
+dimensions:
+  - "value-chain-position"
+  - "evolution-stage"
+  - "build-vs-buy-vs-outsource"
+  - "differentiation-window"
+
+scoring_rubric:
+  formula: null
+  output_unit: "capability-cell"
+  thresholds:
+    genesis: "novel, custom, expensive, fragile"
+    custom-built: "specialized, build-or-bespoke"
+    product: "commercial, integrate"
+    commodity: "utility, rent or open-source"
+
+output_shape:
+  type: "CapabilityCell"
+  fields:
+    capability: "name"
+    category: "data | talent | tooling | governance | process"
+    current_state: "absent | ad-hoc | defined | managed | optimizing"
+    target_state: "absent | ad-hoc | defined | managed | optimizing"
+
+when_to_use:
+  - "Tenant operates in a tech-evolution-heavy industry (fintech, energy, healthcare-tech)"
+  - "Build-vs-buy-vs-outsource decision is on the table for several capabilities"
+  - "Strategy team values visual + spatial reasoning over tables"
+
+when_NOT_to_use:
+  - "Tenant is fully commodity-side (no genesis-stage bets) — map collapses to a column"
+  - "Sponsor unfamiliar with Wardley mapping and rejects the visual framing"
+
+example_application:
+  user_need: "Renewable IPP needs sub-second grid-frequency response"
+  capabilities:
+    - capability: "Time-series ML pipeline"
+      current_state: "absent"
+      target_state: "defined"
+      evolution: "custom-built"
+    - capability: "Battery-controller firmware"
+      current_state: "absent"
+      target_state: "managed"
+      evolution: "product"
+
+relationships:
+  similar_to:
+    - "three-horizons"
+  use_with:
+    - "five-forces"
+    - "real-options"
+  upstream_from:
+    - "capability-heatmap-deliverable"
+    - "innovation-roadmap-deliverable"
+  downstream_to:
+    - "mit-cisr-digital"
+
+citations:
+  - "https://medium.com/wardleymaps"
+  - "Simon Wardley, Wardley Maps book series (CC BY-SA)"

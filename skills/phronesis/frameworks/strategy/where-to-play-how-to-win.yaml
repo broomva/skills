@@ -1,0 +1,28 @@
+id: "where-to-play-how-to-win"
+name: "Where to Play / How to Win"
+source_firm: "Lafley/Martin (P&G)"
+source_year: 2013
+source_citation: "Lafley & Martin, 'Playing to Win' (HBS Press, 2013)"
+category: "strategy"
+purpose: "DEFERRED — D-scope. Phase-2 placeholder. See design spec §5.3 for rationale."
+inputs: []
+dimensions: []
+scoring_rubric:
+  formula: null
+  output_unit: "deferred"
+  thresholds: null
+output_shape:
+  type: "Score"
+  fields: {}
+when_to_use:
+  - "DEFERRED — see Phase 2 design spec"
+  - "DEFERRED — see Phase 2 design spec"
+  - "DEFERRED — see Phase 2 design spec"
+when_NOT_to_use:
+  - "DO NOT USE in Phase 1"
+  - "DO NOT USE without full implementation"
+example_application:
+  note: "deferred to Phase 2"
+relationships: {}
+citations: []
+is_d_scope: true

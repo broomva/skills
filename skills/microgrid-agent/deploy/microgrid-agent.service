@@ -1,0 +1,52 @@
+[Unit]
+Description=Microgrid Agent — Autonomous Edge AI Controller
+Documentation=https://github.com/broomva/microgrid-agent
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/opt/microgrid-agent/venv/bin/python /opt/microgrid-agent/main.py --config /opt/microgrid-agent/config/site.toml
+WorkingDirectory=/opt/microgrid-agent
+
+# Watchdog: the agent must call sd_notify("WATCHDOG=1") every 30s
+WatchdogSec=30s
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+StartLimitBurst=4
+StartLimitIntervalSec=300
+StartLimitAction=reboot
+
+# Environment
+Environment=MICROGRID_CONFIG_DIR=/opt/microgrid-agent/config
+Environment=MICROGRID_DATA_DIR=/var/lib/microgrid-agent
+Environment=MICROGRID_LOG_LEVEL=INFO
+Environment=PYTHONUNBUFFERED=1
+
+# Run as dedicated user
+User=microgrid
+Group=microgrid
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/microgrid-agent
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Allow access to serial ports and I2C
+SupplementaryGroups=dialout i2c gpio
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=80%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=microgrid-agent
+
+[Install]
+WantedBy=multi-user.target

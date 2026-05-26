@@ -1,0 +1,82 @@
+id: "real-options"
+name: "Real Options Valuation"
+source_firm: "Trigeorgis / Amram & Kulatilaka"
+source_year: 1999
+source_citation: "Trigeorgis, 'Real Options' (MIT Press, 1996); Amram, Kulatilaka, 'Real Options' (HBR Press, 1999)"
+category: "roi"
+purpose: |
+  Value the option to wait, expand, or kill an AI initiative under
+  uncertainty. NPV systematically undervalues optionality — Real Options
+  fixes that by treating the engagement as a multi-stage decision tree
+  with capital gates. Critical for H3 (later) bets where killing is part
+  of the success path. Pairs with Three Horizons + QuantumBlack ML.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Initiative with multi-stage capital gates"
+  - name: "stage_capital"
+    type: "list[Decimal]"
+    description: "Capital required at each gate (probe → pilot → scale)"
+  - name: "stage_kill_probabilities"
+    type: "list[float]"
+    description: "Probability of killing at each gate"
+  - name: "uncertainty_volatility"
+    type: "float"
+    description: "Volatility estimate (regulatory, technical, market)"
+
+dimensions:
+  - "option-to-wait"
+  - "option-to-expand"
+  - "option-to-kill"
+  - "stage-gate-value"
+
+scoring_rubric:
+  formula: "Black-Scholes-style option-value formula adapted for staged capital"
+  output_unit: "option-value-USD"
+  thresholds:
+    high-option-value: "stage-kill probability > 30% AND uncertainty high"
+    moderate: "stage-kill probability 10-30%"
+    negligible: "stage-kill probability < 10% (use NPV/DCF instead)"
+
+output_shape:
+  type: "RoiCell"
+  fields:
+    use_case_id: "ref"
+    sensitivity_low: "Scenario with 0% expansion exercise"
+    sensitivity_high: "Scenario with full-scale expansion"
+    assumptions: "list of stage-gate kill criteria"
+
+when_to_use:
+  - "Initiative has explicit kill criteria at multiple stages (H2, H3 bets)"
+  - "Regulatory or market uncertainty is significant (FFR market opens 2027? regulatory approval pending?)"
+  - "Multiple expansion paths exist — option to expand has discrete value"
+
+when_NOT_to_use:
+  - "Use case is a single-stage pilot with no kill option (use NPV/DCF)"
+  - "Sponsor is uncomfortable with derivatives-finance vocabulary"
+
+example_application:
+  use_case_id: "uc-ffr-grid"
+  inputs:
+    stage_capital: [10000, 220000, 500000]
+    stage_kill_probabilities: [0.4, 0.3, 0.1]
+    uncertainty_volatility: 0.55
+  option_value: 145000
+  ranking_band: "high-option-value"
+
+relationships:
+  similar_to:
+    - "npv-dcf"
+  use_with:
+    - "three-horizons"
+    - "wsjf"
+    - "wardley-mapping"
+  upstream_from:
+    - "roi-model-deliverable"
+  downstream_to:
+    - "rice"
+
+citations:
+  - "Trigeorgis, Real Options (MIT Press, 1996)"
+  - "Amram, Kulatilaka, Real Options: Managing Strategic Investment in an Uncertain World (HBR Press, 1999)"

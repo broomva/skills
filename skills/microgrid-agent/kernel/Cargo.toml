@@ -1,0 +1,57 @@
+[package]
+name = "microgrid-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Edge AI kernel daemon for autonomous microgrid management"
+license = "MIT"
+authors = ["Carlos Escobar Valbuena <carlosdavidescobar@gmail.com>"]
+readme = "../README.md"
+
+[[bin]]
+name = "microgrid-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Hardware interfaces
+tokio-modbus = "0.14"
+tokio-serial = "5"
+
+# Persistence
+redb = "2"                                          # Event journal (Lago pattern)
+rusqlite = { version = "0.31", features = ["bundled"] }  # Knowledge graph
+
+# Networking
+rumqttc = "0.24"                                    # MQTT fleet sync
+
+# HTTP dashboard
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# Optimization
+good_lp = { version = "1.8", features = ["highs"] }  # LP dispatch solver
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# System
+sd-notify = "0.4"                                   # systemd watchdog
+clap = { version = "4", features = ["derive"] }     # CLI args
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+anyhow = "1"
+rand = "0.8"
+
+[profile.release]
+opt-level = "s"     # Optimize for size (embedded target)
+lto = true
+strip = true
+codegen-units = 1
