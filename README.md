@@ -128,6 +128,16 @@ npx skills add broomva/skills --skill make-spec
 | [`health`](skills/health/) | `skills/health/SKILL.md` | Personal health knowledge graph — local-first ingest of Garmin/Apple/Whoop/Oura traces into SQLite, projected to Obsidian daily-note frontmatter (hex architecture). Graduated 2026-05-23 via standalone repo; consolidated to monorepo 2026-05-26 |
 | [`founder-mode-oncology`](skills/founder-mode-oncology/) | `skills/founder-mode-oncology/SKILL.md` | Personalized cancer-treatment navigation — Sid Sijbrandij founder-mode framework with AlphaFold integration |
 
+### Neuroscience & BCI (TRIBE v2 family)
+
+> Migrated 2026-05-26 (Phase 4e) from standalone `broomva/<name>` repos. The 3 skills have **disjoint reference sets** — no `_shared/tribe-v2/` directory was created because there is no shared content to extract (the `_shared/` pattern is demand-driven, not speculative).
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`tribe-v2-agent-alignment`](skills/tribe-v2-agent-alignment/) | `skills/tribe-v2-agent-alignment/SKILL.md` | Cortical alignment benchmarking for AI encoders using Meta's TRIBE v2 — neuro-informed model selection for the Life/Arcan agent OS stack |
+| [`tribe-v2-bci-applied`](skills/tribe-v2-bci-applied/) | `skills/tribe-v2-bci-applied/SKILL.md` | Applied BCI research + neuro-informed content optimization using Meta's TRIBE v2 — predict neural responses to media/UI/content |
+| [`tribe-v2-neuroscience`](skills/tribe-v2-neuroscience/) | `skills/tribe-v2-neuroscience/SKILL.md` | In-silico neuroscience experiments using Meta's TRIBE v2 — predict fMRI cortical responses to video, audio & text without brain scanners |
+
 ### Strategy & decision intelligence
 
 > Migrated 2026-05-25 from the bundled `broomva/strategy-skills` repo per the Tier-2 monorepo plan. Each sub-skill is now individually installable.
