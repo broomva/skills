@@ -1,0 +1,77 @@
+id: "jobs-to-be-done"
+name: "Jobs-To-Be-Done"
+source_firm: "Christensen / Strategyn"
+source_year: 2003
+source_citation: "Christensen, Hall, Dillon, Duncan, 'Competing Against Luck' (HarperBusiness, 2016); Strategyn ODI methodology (2003)"
+category: "ideation"
+purpose: |
+  Surface AI/data use cases by uncovering the underlying job a customer
+  hires the product to do. Reframes product-thinking around outcomes
+  rather than features. JTBD interviews ('what were you doing the day
+  before you switched to X') reliably surface use cases that
+  feature-brainstorming misses. Pairs naturally with Value Prop Canvas.
+
+inputs:
+  - name: "customer_interviews"
+    type: "list[Path]"
+    description: "Recorded customer/sponsor JTBD interviews"
+  - name: "tenant_industry"
+    type: "str"
+    description: "Industry context to anchor job statements"
+  - name: "scope_keywords"
+    type: "list[str]"
+    description: "Use case ideation / customer needs / product strategy"
+
+dimensions:
+  - "functional-job"
+  - "emotional-job"
+  - "social-job"
+  - "consumption-chain-pain"
+  - "outcome-statement"
+
+scoring_rubric:
+  formula: null
+  output_unit: "use-case"
+  thresholds:
+    well-formed: "When [situation], I want to [job], so I can [outcome]"
+    poorly-formed: "Job is described as a feature or solution"
+
+output_shape:
+  type: "UseCase"
+  fields:
+    problem: "the job statement"
+    hypothesis: "AI/data delivery of the outcome"
+    ideation_source: "business-pain | data-opportunity | regulatory-pressure | competitive-response"
+
+when_to_use:
+  - "Customer-facing AI use cases (CX, Tier-1 deflection, recommendation)"
+  - "Sponsor wants to ground use cases in outcomes, not technology novelty"
+  - "Tenant has access to current customers for JTBD interviews"
+
+when_NOT_to_use:
+  - "Use cases are internal-ops only (no end customer) — use Value Prop Canvas instead"
+  - "Tenant lacks customer access for interviews; JTBD becomes synthetic"
+
+example_application:
+  job_statement: "When a customer asks for their balance via WhatsApp, I (the bank) want to answer instantly, so I can avoid the $8/ticket cost of routing to a human agent."
+  derived_use_case:
+    id: "uc-001"
+    problem: "Tier-1 ticket cost is high; manual triage breaches SLA"
+    hypothesis: "Spanish-LLM deflection cuts cost 30%+"
+    ideation_source: "business-pain"
+
+relationships:
+  similar_to:
+    - "value-prop-canvas"
+    - "lean-canvas"
+  use_with:
+    - "rice"
+    - "ice"
+  upstream_from:
+    - "use-case-dossier-deliverable"
+  downstream_to:
+    - "mit-cisr-digital"
+
+citations:
+  - "Christensen et al., Competing Against Luck (HarperBusiness, 2016)"
+  - "Anthony Ulwick, Outcome-Driven Innovation / ODI methodology (Strategyn, 2003)"

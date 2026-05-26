@@ -1,0 +1,84 @@
+id: "wsjf"
+name: "Weighted Shortest Job First"
+source_firm: "SAFe / Reinertsen"
+source_year: 2009
+source_citation: "Donald G. Reinertsen, 'The Principles of Product Development Flow' (Celeritas, 2009); SAFe codification (2011)"
+category: "prioritization"
+purpose: |
+  Schedule work by Cost-of-Delay divided by job size. Maximizes value
+  delivered per unit of capacity over a backlog. Native to SAFe / Lean,
+  used heavily in regulated and dependency-heavy environments.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Candidate AI/data initiative being scored"
+  - name: "user_business_value"
+    type: "float"
+    description: "1-10: relative business value if delivered"
+  - name: "time_criticality"
+    type: "float"
+    description: "1-10: how much value decays with delay (regulatory deadlines, market windows)"
+  - name: "risk_reduction_opportunity_enablement"
+    type: "float"
+    description: "1-10: how much this reduces risk or enables future work"
+  - name: "job_size"
+    type: "float"
+    description: "1-10: relative size to deliver (10 = enormous)"
+
+dimensions:
+  - "user-business-value"
+  - "time-criticality"
+  - "risk-reduction"
+  - "job-size"
+
+scoring_rubric:
+  formula: "(user_business_value + time_criticality + risk_reduction_opportunity_enablement) / job_size"
+  output_unit: "wsjf-score"
+  thresholds:
+    high: ">= 4"
+    medium: "1.5-4"
+    low: "< 1.5"
+
+output_shape:
+  type: "Score"
+  fields:
+    dimension: "wsjf-score"
+    value: "computed via formula"
+    scale: "(0.0, 30.0)"
+    rubric_ref: "framework:wsjf"
+
+when_to_use:
+  - "Tenant operates under SAFe / Lean — terminology is already known"
+  - "Regulatory or market-window deadlines drive significant cost-of-delay"
+  - "Risk reduction is a first-class outcome (compliance, security uplift)"
+
+when_NOT_to_use:
+  - "Use cases lack credible cost-of-delay estimates — score becomes noise"
+  - "Sponsor unfamiliar with SAFe — switch to RICE or ICE for clarity"
+
+example_application:
+  use_case_id: "uc-002"
+  inputs:
+    user_business_value: 8.0
+    time_criticality: 7.0
+    risk_reduction_opportunity_enablement: 6.0
+    job_size: 5.0
+  computed_score: 4.2
+  ranking_band: "high"
+
+relationships:
+  similar_to:
+    - "rice"
+    - "ice"
+  use_with:
+    - "cost-of-delay"
+    - "real-options"
+  upstream_from:
+    - "impact-effort-matrix-deliverable"
+  downstream_to:
+    - "jobs-to-be-done"
+
+citations:
+  - "https://www.scaledagileframework.com/wsjf/"
+  - "Reinertsen, Principles of Product Development Flow (2009)"

@@ -1,0 +1,86 @@
+id: "npv-dcf"
+name: "Net Present Value / Discounted Cash Flow"
+source_firm: "Standard finance"
+source_year: 1958
+source_citation: "Modigliani-Miller (1958); Brealey, Myers, Allen, 'Principles of Corporate Finance' canonical text"
+category: "roi"
+purpose: |
+  Discount future cash flows to present value at the tenant's WACC.
+  Required when AI initiative spans >12 months or has significant
+  recurring cost structure. CFO/board-level defense of multi-year ML
+  investments. Phase 1 ships the static formula; sensitivity analysis
+  becomes available when paired with real-options for multi-stage gates.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Initiative to value"
+  - name: "cash_flows"
+    type: "list[Decimal]"
+    description: "Year-by-year net cash flow projections (5-yr horizon typical)"
+  - name: "discount_rate"
+    type: "Decimal"
+    description: "Tenant WACC (e.g., 0.14 for CO mid-cap)"
+  - name: "terminal_value"
+    type: "Decimal"
+    description: "Optional perpetuity term at Year-5"
+
+dimensions:
+  - "yearly-cash-flow"
+  - "discount-rate"
+  - "npv"
+  - "irr"
+  - "payback"
+
+scoring_rubric:
+  formula: "sum(CF_t / (1+r)^t for t in 1..N) - investment"
+  output_unit: "npv-USD"
+  thresholds:
+    accept: "NPV > 0 AND IRR > WACC"
+    margin: "NPV > 0 AND IRR ≈ WACC (sensitivity-bound)"
+    reject: "NPV ≤ 0"
+
+output_shape:
+  type: "RoiCell"
+  fields:
+    use_case_id: "ref"
+    year: "1..N"
+    discount_rate: "WACC"
+    cumulative_net: "cumulative discounted net at year N"
+    sensitivity_low: "scenario at -20% revenue"
+    sensitivity_high: "scenario at +20% revenue"
+
+when_to_use:
+  - "Initiative spans >12 months with non-trivial recurring costs"
+  - "CFO requires NPV/IRR for capital-allocation decisions"
+  - "Multiple capital alternatives compete for the same budget"
+
+when_NOT_to_use:
+  - "Use case is <6 months — discounting effect is negligible"
+  - "Cash-flow estimates are wrong by >50% — NPV becomes false precision"
+
+example_application:
+  use_case_id: "uc-002"
+  inputs:
+    cash_flows: [-180000, 240000, 280000, 300000, 320000]
+    discount_rate: 0.14
+    terminal_value: 0
+  npv: 633000
+  irr: 0.96
+  payback_years: 1.0
+
+relationships:
+  similar_to:
+    - "unit-economics"
+    - "owner-earnings"
+  use_with:
+    - "real-options"
+    - "rice"
+  upstream_from:
+    - "roi-model-deliverable"
+  downstream_to:
+    - "three-horizons"
+
+citations:
+  - "Modigliani-Miller, The Cost of Capital, Corporation Finance and the Theory of Investment (1958)"
+  - "Brealey, Myers, Allen, Principles of Corporate Finance"

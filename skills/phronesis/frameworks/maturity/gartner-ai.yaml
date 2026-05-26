@@ -1,0 +1,87 @@
+id: "gartner-ai"
+name: "Gartner AI Maturity Model"
+source_firm: "Gartner"
+source_year: 2024
+source_citation: "Gartner, 'AI Maturity Model' (refreshed 2024 from 2019 baseline)"
+category: "maturity"
+purpose: |
+  Score AI/ML capability along Gartner's five levels — awareness, active,
+  operational, systemic, transformational. Distinct from MIT CISR's
+  digital-maturity framing because it's specifically about ML lifecycle
+  capability (data, MLOps, governance, value capture). Useful when ML
+  capability is below 'defined' and the climb is the pilot story.
+
+inputs:
+  - name: "interview_transcripts"
+    type: "list[Path]"
+    description: "ML/data team interviews"
+  - name: "ml_inventory"
+    type: "dict"
+    description: "Model registry, MLOps tooling, drift monitoring presence"
+  - name: "scope_keywords"
+    type: "list[str]"
+    description: "AI maturity / ML lifecycle / model governance"
+
+dimensions:
+  - "ml-engineering-capability"
+  - "data-readiness-for-ml"
+  - "mlops-maturity"
+  - "ai-governance"
+  - "value-capture-loop"
+
+scoring_rubric:
+  formula: null
+  output_unit: "gartner-level-1-to-5"
+  thresholds:
+    1: "awareness — talked about, no production ML"
+    2: "active — pilots in production, ad-hoc"
+    3: "operational — model registry + CI/CD + drift monitors"
+    4: "systemic — ML embedded in ops, governance, retraining loops"
+    5: "transformational — AI is the product, not a feature"
+
+output_shape:
+  type: "MaturityDimension"
+  fields:
+    name: "one of the five dimensions"
+    framework_ref: "framework:gartner-ai"
+    current_score: "Score with scale (1.0, 5.0)"
+    target_score: "Score with scale (1.0, 5.0)"
+
+when_to_use:
+  - "Engagement scope explicitly references AI/ML capability"
+  - "Tenant has at least one ML pilot in production or planned"
+  - "Sponsor wants benchmarking against industry AI maturity bands"
+
+when_NOT_to_use:
+  - "Tenant has zero ML — assessment becomes 'all level 1', no signal"
+  - "Engagement is general digital transformation (use MIT CISR digital instead)"
+
+example_application:
+  tenant_industry: "energy-utilities"
+  dimensions_scored:
+    - name: "ML engineering capability"
+      current: 1.5
+      target: 3.0
+      gap_summary: "Ad-hoc Excel forecasting; no model registry; no MLOps"
+    - name: "Data readiness for ML"
+      current: 2.5
+      target: 4.0
+      gap_summary: "Telemetry archived but siloed; no warehouse"
+
+relationships:
+  similar_to:
+    - "mit-cisr-digital"
+    - "ms-responsible-ai"
+  use_with:
+    - "quantumblack-ml"
+    - "andrew-ng-pipeline"
+  upstream_from:
+    - "maturity-report-deliverable"
+    - "capability-heatmap-deliverable"
+  downstream_to:
+    - "value-prop-canvas"
+    - "real-options"
+
+citations:
+  - "Gartner AI Maturity Model — research note (2024 refresh)"
+  - "https://www.gartner.com/en/articles/the-2024-gartner-ai-maturity-model"

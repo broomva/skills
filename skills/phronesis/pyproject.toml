@@ -1,0 +1,158 @@
+[project]
+name = "phronesis"
+version = "0.1.2-pre"
+description = "AI-native advisory practice. Encodes top-firm consulting methodology as runnable typed primitives."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    { name = "Broomva Tech", email = "contact@broomva.tech" },
+]
+keywords = [
+    "consulting",
+    "advisory",
+    "ai-maturity",
+    "use-case-prioritization",
+    "innovation-roadmap",
+    "fast-discovery",
+    "broomva",
+    "bstack",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.13.0",
+    "jinja2>=3.1.0",
+    "pyyaml>=6.0.1",
+    "ulid-py>=1.1.0",
+    "click>=8.3.0",
+    "rich>=14.0.0",
+    "jsonschema>=4.21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.0",
+    "mypy>=2.0.0",
+    "types-PyYAML>=6.0.12",
+    "types-jsonschema>=4.26.0",
+]
+build = [
+    "build>=1.2.0",
+    "twine>=5.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/broomva/phronesis"
+Documentation = "https://github.com/broomva/phronesis/tree/main/docs"
+Repository = "https://github.com/broomva/phronesis.git"
+Issues = "https://github.com/broomva/phronesis/issues"
+
+[project.scripts]
+phronesis = "runners.cli.__main__:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Phase 1 / 2: flat-layout — top-level modules ship as separate packages
+# under their own names. A future restructure (Phase 2 follow-up) may
+# re-namespace these under `phronesis/` for the conventional `import
+# phronesis as ph; ph.IntakeStage()` ergonomics.
+packages = ["core", "runners", "stages"]
+# Non-Python data ships via force-include so YAMLs + Jinja2 templates +
+# stage prompts land in the wheel alongside the importable code.
+[tool.hatch.build.targets.wheel.force-include]
+"frameworks" = "frameworks"
+"templates" = "templates"
+"scripts" = "scripts"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/core",
+    "/runners",
+    "/stages",
+    "/frameworks",
+    "/templates",
+    "/scripts",
+    "/tests",
+    "/docs",
+    "/.githooks",
+    "/Makefile",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md",
+    "/LICENSE",
+    "/SKILL.md",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally encode P3/P8/L1-L5 in test names (mapping to design-spec principles
+# and Bision-failure linter rules), so PEP 8 lowercase-name (N802) doesn't apply.
+# Long lines in tests are also acceptable for legibility.
+"tests/**/*.py" = ["E501", "N802"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+]
+markers = [
+    "unit: fast unit tests",
+    "integration: stage-to-stage flow tests",
+    "e2e: fixture-based end-to-end tests (slow)",
+    "canary: anonymization release-gate test",
+    "bision_prevention: L1-L5 release-gate tests",
+    "property: invariant property tests",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Tests don't need strict typing — pytest decorators and fixture returns are routinely
+# Any-typed by pytest itself, and forcing -> None on every test function fights the
+# convention that test bodies are concise. Keep type-hint enforcement on production code.
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_return_any = false

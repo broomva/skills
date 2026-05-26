@@ -1,0 +1,7 @@
+{
+  "name": "claude-remote-sessions-daemon",
+  "private": true,
+  "dependencies": {
+    "discord.js": "^14.25.0"
+  }
+}

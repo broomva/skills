@@ -1,0 +1,91 @@
+id: "quantumblack-ml"
+name: "QuantumBlack ML Lifecycle"
+source_firm: "McKinsey QuantumBlack"
+source_year: 2023
+source_citation: "McKinsey QuantumBlack, 'The State of AI in 2023' + internal ML lifecycle playbooks (2018-2023)"
+category: "ai-lifecycle"
+purpose: |
+  Production-grade ML lifecycle: problem framing → data → modeling →
+  deployment → monitoring → retraining → value capture. Anchors PilotDesign
+  in the discipline that's actually shipped enterprise ML at scale.
+  Used as the structural template for pilot plans because it's the most
+  battle-tested 'pilot-to-production' methodology in the consulting canon.
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Initiative being designed as a pilot"
+  - name: "data_inventory"
+    type: "dict"
+    description: "Available training/inference data, freshness, governance"
+  - name: "deployment_target"
+    type: "str"
+    description: "Where the model runs (cloud, edge, on-prem)"
+  - name: "success_metrics"
+    type: "list[str]"
+    description: "Both technical (accuracy, latency) and business (adoption, $/unit)"
+
+dimensions:
+  - "problem-framing"
+  - "data-readiness"
+  - "modeling-rigor"
+  - "deployment-readiness"
+  - "monitoring-and-retraining"
+  - "value-capture-loop"
+
+scoring_rubric:
+  formula: null
+  output_unit: "pilot-design"
+  thresholds:
+    production-ready: "All 6 dimensions present + monitoring + retraining"
+    pilot-ready: "5/6 with explicit gaps to close in pilot"
+    not-ready: "≤4/6 — deferral or rescoping required"
+
+output_shape:
+  type: "PilotDesign"
+  fields:
+    use_case_id: "ref"
+    hypothesis: "ML-grounded with null hypothesis"
+    success_criteria: "≥3 criteria spanning technical + business"
+    kill_criterion: "explicit"
+    adoption_metric: "L4 — non-negotiable"
+    baseline: "L5 — non-negotiable, captured BEFORE pilot start"
+
+when_to_use:
+  - "Pilot involves production ML deployment (not just notebook proof-of-concept)"
+  - "Tenant operates regulated industry where MLOps governance matters"
+  - "Sponsor wants industry-canonical pilot structure"
+
+when_NOT_to_use:
+  - "Pilot is exploratory/research-only (no production target) — use Andrew Ng pipeline"
+  - "Tenant has no ML team and won't build one (use external vendor + minimal lifecycle)"
+
+example_application:
+  use_case_id: "uc-mpc-solar"
+  pilot_design:
+    hypothesis: "MPC + 5-min cloud nowcast lifts Farm-1 CF from 23.4% to ≥24.1% over 16wk"
+    success_criteria:
+      - "Farm-1 CF ≥24.1% sustained weeks 9-16"
+      - "Zero ramp-rate violations during pilot"
+      - "Adoption metric ≥85% by week 12"
+    kill_criterion: "Week-8 CF < 23.5% OR ramp-violations exceed pre-pilot avg"
+    adoption_metric: "Operations team accepts MPC setpoints without manual override"
+    baseline: ["Farm-1 CF 23.4%", "Curtailment loss 4.8 GWh/yr"]
+
+relationships:
+  similar_to:
+    - "andrew-ng-pipeline"
+    - "ms-responsible-ai"
+    - "google-pair"
+  use_with:
+    - "three-horizons"
+    - "real-options"
+  upstream_from:
+    - "pilot-plan-deliverable"
+    - "use-case-dossier-deliverable"
+  downstream_to:
+    - "gartner-ai"
+
+citations:
+  - "McKinsey QuantumBlack, State of AI 2023 report"
+  - "https://www.mckinsey.com/capabilities/quantumblack/our-insights"

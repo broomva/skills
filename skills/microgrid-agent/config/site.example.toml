@@ -1,0 +1,164 @@
+# =============================================================================
+# Microgrid Agent — Site Configuration
+# =============================================================================
+# Copy this file to site.toml and fill in values for your deployment.
+# All fields are documented inline.
+# =============================================================================
+
+[site]
+# Unique identifier for this site (used in fleet sync and telemetry)
+id = "site-demo-001"
+
+# Human-readable name for the microgrid installation
+name = "Demo Microgrid — Guainía"
+
+# Colombian department or administrative region
+region = "Guainía"
+
+# Geographic coordinates (WGS84). Used for solar irradiance calculations.
+latitude = 3.8653
+longitude = -67.9239
+
+# IANA timezone string. All scheduling and logging uses this.
+timezone = "America/Bogota"
+
+# -----------------------------------------------------------------------------
+# Grid topology
+# -----------------------------------------------------------------------------
+[grid]
+# Grid type: "solar_only", "solar_battery", "hybrid" (solar+battery+diesel),
+# or "diesel_only".
+type = "hybrid"
+
+# Nominal AC voltage of the distribution bus (volts)
+nominal_voltage = 120
+
+# Peak load the microgrid must serve (kW). Used for sizing checks.
+peak_load_kw = 45.0
+
+# Loads that should never be shed (matched by device tag in devices.toml).
+# Order determines shedding priority — last in the list is shed first.
+priority_loads = [
+    "health_post",
+    "water_pump",
+    "communications_tower",
+    "school",
+    "community_center",
+]
+
+# -----------------------------------------------------------------------------
+# Solar PV array
+# -----------------------------------------------------------------------------
+[solar]
+# Total installed PV capacity in kWp (kilowatt-peak)
+capacity_kwp = 60.0
+
+# Number of panels (used for degradation tracking)
+panels = 150
+
+# Panel orientation: compass bearing in degrees (180 = due south)
+orientation = 180
+
+# Panel tilt angle from horizontal (degrees). Optimal for equatorial sites ≈ lat.
+tilt = 4
+
+# Annual degradation rate (fraction per year, e.g. 0.005 = 0.5%/yr)
+degradation_rate = 0.005
+
+# -----------------------------------------------------------------------------
+# Battery Energy Storage System (BESS)
+# -----------------------------------------------------------------------------
+[battery]
+# Total usable battery capacity (kWh)
+capacity_kwh = 120.0
+
+# Battery chemistry: "lfp" (LiFePO4), "nmc", "lead_acid", "flow"
+chemistry = "lfp"
+
+# Maximum depth of discharge (fraction). 0.9 means never discharge below 10% SOC.
+max_dod = 0.9
+
+# Charge / discharge C-rates [charge, discharge].
+# 0.5C on a 120 kWh pack = 60 kW max.
+c_rates = [0.5, 0.5]
+
+# -----------------------------------------------------------------------------
+# Diesel backup generator
+# -----------------------------------------------------------------------------
+[diesel]
+# Rated capacity (kW)
+capacity_kw = 30.0
+
+# Fuel tank size (liters)
+fuel_tank_liters = 500
+
+# Specific fuel consumption (liters per kWh generated).
+# Typical small gensets: 0.25–0.35 L/kWh.
+consumption_per_kwh = 0.30
+
+# -----------------------------------------------------------------------------
+# Connectivity & data sync
+# -----------------------------------------------------------------------------
+[connectivity]
+# Primary uplink: "cellular", "satellite", "wifi", or "none".
+# The agent operates fully offline; connectivity is only for fleet sync.
+primary = "cellular"
+
+# MQTT broker URL for telemetry/commands. Leave empty if no broker.
+mqtt_broker = "mqtt://fleet.example.com:1883"
+
+# How often (seconds) to attempt cloud synchronisation of the event journal.
+sync_interval = 300
+
+# -----------------------------------------------------------------------------
+# Autonomic controller set-points
+# -----------------------------------------------------------------------------
+[autonomic]
+# Minimum battery state-of-charge (%). Below this the agent sheds non-priority loads.
+min_soc_pct = 15
+
+# Maximum battery SOC (%). Charging is curtailed above this to protect the pack.
+max_soc_pct = 95
+
+# SOC threshold at which diesel generator auto-starts (%)
+diesel_start_soc = 20
+
+# SOC threshold at which diesel generator auto-stops (%)
+diesel_stop_soc = 60
+
+# Target fraction of energy supplied by renewables (0.0–1.0).
+# The optimizer penalizes diesel usage proportionally.
+renewable_target = 0.85
+
+# Load shedding configuration
+[autonomic.load_shedding]
+# Enable automatic load shedding when SOC drops below min_soc_pct
+enabled = true
+
+# Hysteresis band (%) — loads are restored when SOC rises this much above threshold
+hysteresis_pct = 5
+
+# Minimum time (seconds) a load stays shed before reconsideration
+min_shed_duration = 300
+
+# Maximum number of load groups that can be shed simultaneously
+max_shed_groups = 3
+
+# -----------------------------------------------------------------------------
+# Community context (used by demand-forecasting model)
+# -----------------------------------------------------------------------------
+[community]
+# Approximate population served by this microgrid
+population = 850
+
+# Primary economic activity: "agriculture", "fishing", "mining", "tourism", "mixed"
+primary_activity = "fishing"
+
+# Days of the week when market/trade activity peaks (0=Mon, 6=Sun)
+market_days = [2, 5]
+
+# Local festival months (1-based) that cause demand spikes
+festivals = [6, 12]
+
+# Rainy season months (1-based). Affects solar irradiance predictions.
+rainy_season_months = [4, 5, 6, 7, 10, 11]

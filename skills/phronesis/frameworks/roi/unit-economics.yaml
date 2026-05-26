@@ -1,0 +1,83 @@
+id: "unit-economics"
+name: "Unit Economics"
+source_firm: "Silicon Valley canon"
+source_year: 2010
+source_citation: "Eric Ries, 'The Lean Startup' (Crown Business, 2011); David Skok, 'For Entrepreneurs' SaaS metrics canon (2010-)"
+category: "roi"
+purpose: |
+  Compute per-unit cost and per-unit revenue/savings of the AI initiative
+  to validate that scaling won't break economics. Standard CFO-readable
+  format for Year-1 ROI claim. Pairs naturally with RICE for prioritization
+  (RICE ranks; unit-economics sizes).
+
+inputs:
+  - name: "use_case"
+    type: "UseCase"
+    description: "Initiative to size"
+  - name: "per_unit_savings"
+    type: "Decimal"
+    description: "$ saved per affected unit (ticket, transaction, MWh, etc)"
+  - name: "per_unit_cost"
+    type: "Decimal"
+    description: "$ spent per affected unit (compute, ops, labor)"
+  - name: "annual_unit_volume"
+    type: "int"
+    description: "Units expected to be processed Year-1"
+
+dimensions:
+  - "per-unit-revenue"
+  - "per-unit-cost"
+  - "contribution-margin"
+  - "payback-period"
+
+scoring_rubric:
+  formula: "(per_unit_savings - per_unit_cost) × annual_unit_volume"
+  output_unit: "year-1-net-USD"
+  thresholds:
+    healthy: "contribution_margin > 50% AND payback < 12mo"
+    marginal: "contribution_margin 20-50% OR payback 12-24mo"
+    unhealthy: "contribution_margin < 20% OR payback > 24mo"
+
+output_shape:
+  type: "RoiCell"
+  fields:
+    use_case_id: "ref"
+    year: "1"
+    revenue_impact: "per_unit_savings × volume"
+    investment: "build + ops cost Year-1"
+    net: "Year-1 net"
+
+when_to_use:
+  - "Use case has a clear unit (ticket, transaction, kWh, MWh)"
+  - "CFO needs a $/unit defense for the investment"
+  - "Scaling assumptions need pressure-testing before full rollout"
+
+when_NOT_to_use:
+  - "Use case has no clear unit (one-shot strategic project) — use NPV/DCF"
+  - "Optionality is the value (real-options matters more than per-unit)"
+
+example_application:
+  use_case_id: "uc-001"
+  inputs:
+    per_unit_savings: 8.0
+    per_unit_cost: 0.3
+    annual_unit_volume: 144000
+  contribution_margin: 0.96
+  year_1_net: 1108800
+
+relationships:
+  similar_to:
+    - "npv-dcf"
+    - "owner-earnings"
+  use_with:
+    - "rice"
+    - "ice"
+  upstream_from:
+    - "roi-model-deliverable"
+    - "impact-effort-matrix-deliverable"
+  downstream_to:
+    - "jobs-to-be-done"
+
+citations:
+  - "Eric Ries, The Lean Startup (Crown Business, 2011)"
+  - "https://www.forentrepreneurs.com/saas-metrics-2/"
