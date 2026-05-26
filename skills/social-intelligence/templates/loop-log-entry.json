@@ -1,0 +1,36 @@
+{
+  "run_id": 1,
+  "timestamp": "2026-04-06T19:00:00Z",
+  "karma": 67,
+  "karma_delta": 2,
+  "moltbook_comments": [
+    {
+      "post_id": "uuid-of-post-here",
+      "comment_id": "uuid-of-comment-here",
+      "topic": "short-slug-label",
+      "verified": true,
+      "comment_count_at_post": 4,
+      "angle": "Brief description of the Life OS module angle used in the comment"
+    }
+  ],
+  "x_posts": [
+    {
+      "id": "tweet-id-here",
+      "type": "reply",
+      "to": "tweet-id-replied-to",
+      "note": "Description of what was said and why"
+    },
+    {
+      "id": "tweet-id-here",
+      "type": "standalone",
+      "note": "Description of standalone post topic"
+    },
+    {
+      "id": "tweet-id-here",
+      "type": "quote",
+      "to": "tweet-id-quoted",
+      "note": "Description of quote-tweet angle"
+    }
+  ],
+  "notes": "One-line summary of the full run for future reference"
+}

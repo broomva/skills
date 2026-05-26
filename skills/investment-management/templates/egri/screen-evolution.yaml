@@ -1,0 +1,100 @@
+# EGRI Problem Spec: Screening Criteria Evolution
+# Evolves stock screening criteria to discover filters that historically
+# select outperforming securities. Uses screener.py + backtest.py as evaluator.
+#
+# Trigger: user asks to "find better screening criteria", "evolve my screener",
+#          "which metrics matter most", "optimize stock selection"
+#
+# Usage: /autoany --spec templates/egri/screen-evolution.yaml
+
+name: screen-evolution
+
+objective:
+  metric: composite_forward_return
+  type: scalar
+  direction: maximize
+  baseline: null  # Buy-and-hold S&P 500 over same period
+
+constraints:
+  - "screened_universe_size >= 10"      # Must select at least 10 stocks
+  - "screened_universe_size <= 50"      # Not too broad (defeats purpose)
+  - "annual_turnover <= 0.50"          # Practical: can't rescreen daily
+  - "max_drawdown_pct > -20.0"        # Selected portfolio must be defensible
+
+artifacts:
+  mutable:
+    - path: "screen_criteria.yaml"
+      type: config
+      description: >
+        Screening criteria: metric thresholds (P/E, P/B, ROE, etc.),
+        philosophy blend weights, universe selection, quality filters.
+        The EGRI proposer evolves these to discover criteria that
+        historically select outperforming stocks.
+  immutable:
+    - path: "~/.investment-management/market-data/"
+      reason: "Historical fundamentals + price data"
+    - path: "scripts/screener.py"
+      reason: "Screening engine"
+    - path: "scripts/backtest.py"
+      reason: "Forward performance evaluator"
+
+evaluator:
+  script: >
+    python3 scripts/screener.py --criteria-file {artifact} --json |
+    python3 scripts/eval_screen.py --lookback 5y --egri
+  inputs:
+    - "{artifact}"
+    - "market-data/"
+  outputs:
+    score: "composite_forward_return"
+    metrics: ["cagr_pct", "sharpe_ratio", "universe_size", "turnover_pct"]
+    constraints: ["universe_size >= 10", "universe_size <= 50"]
+  trusted: false  # Requires validation against known screening outcomes
+  baseline_score: null
+
+execution:
+  backend: local
+  command: "python3 scripts/eval_screen.py --criteria {artifact} --lookback 5y --egri"
+  timeout_s: 180
+  sandbox: false
+
+budget:
+  max_trials: 30
+  time_per_trial_s: 180
+  total_time_s: 2400
+
+promotion:
+  policy: keep_if_improves
+  threshold: null  # Any improvement promoted
+  require_constraint_check: true
+
+autonomy:
+  mode: sandbox
+  escalation_triggers:
+    - "evaluator_score_degrades_3_consecutive_trials"
+    - "screened_universe_size drops below 5"
+    - "budget_75_percent_exhausted_without_improvement"
+
+search:
+  proposer: llm
+  strategy_notes: >
+    Evolve screening criteria using investment philosophy as prior:
+    - Start by blending existing philosophy presets (value, quality, growth, dividend, momentum)
+    - Adjust individual metric thresholds (tighten P/E, loosen ROE, etc.)
+    - Try combining metrics that aren't typically combined (value + momentum)
+    - Test sector-specific screening (different thresholds for tech vs utilities)
+    - Use Piotroski F-Score and Greenblatt Magic Formula as inspiration
+    - Read the ledger: which metric changes drove the biggest improvements?
+    - If stuck, try removing a criterion rather than adding one (simpler = better)
+
+ledger:
+  format: jsonl
+  path: "~/.investment-management/egri/screen-evolution/ledger.jsonl"
+
+domain:
+  preset: generic
+  notes: "Security screening criteria evolution via historical forward-testing"
+
+meta:
+  created_by: "investment-management skill"
+  version: "0.1.0"

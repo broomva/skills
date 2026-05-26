@@ -1,0 +1,84 @@
+[project]
+name = "tradingview-bridge"
+version = "0.2.0"
+description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor (IBKR/Kraken/Polymarket via mock or real-paper)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "broomva", email = "devteam@getstimulus.ai" }]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "structlog>=24.4.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.optional-dependencies]
+# Real-paper broker SDKs — only needed when TVBRIDGE_BROKER_MODE=real-paper.
+# CI installs only base deps (mock mode); operators flipping to real-paper
+# install `tradingview-bridge[brokers]` to pull in the SDKs.
+brokers = [
+    "ib-async>=1.0.1",
+    "ccxt>=4.4.0",
+    "py-clob-client>=0.21",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tradingview_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:passlib",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I", "N", "W", "UP", "B", "A", "C4", "S", "T20", "PT", "RUF",
+]
+ignore = [
+    "S101",  # allow assert in tests
+    "B008",  # FastAPI's idiomatic pattern: Depends() in argument defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "SLF001"]  # tests poke privates + secrets
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# Optional broker SDKs are not installed in CI (mock mode only). Don't
+# fail mypy because their type stubs aren't reachable.
+module = ["ib_async.*", "ccxt.*", "py_clob_client.*"]
+ignore_missing_imports = true

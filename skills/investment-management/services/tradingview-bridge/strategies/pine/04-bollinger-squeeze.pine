@@ -1,0 +1,72 @@
+//@version=5
+// Bollinger band squeeze + directional breakout. Fires when:
+// - BB width is below its N-period mean (squeeze regime)
+// - Price closes outside the band (squeeze release)
+// Best for volatility-compression regimes (consolidating markets that
+// then break out with momentum). Default tuned for FX timeframes.
+//
+// Schema target: TVAlert (services/tradingview-bridge/src/tradingview_bridge/schemas.py)
+
+strategy(
+     title="bridge/04 - Bollinger squeeze",
+     shorttitle="04-BB",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     initial_capital=10000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.02)
+
+// === Inputs ===
+length       = input.int(20,  "BB length",        minval=2)
+mult         = input.float(2.0, "BB stdev",       minval=0.5, step=0.1)
+squeeze_lookback = input.int(50, "Squeeze lookback", minval=10)
+squeeze_pct      = input.float(0.7, "Squeeze threshold (width pct)", minval=0.1, maxval=1.0,
+     tooltip="Squeeze fires when current BB width < this fraction of the mean width over lookback")
+
+ASSET_CLASS   = input.string("fx", "Asset class",
+     options=["stock", "etf", "bond", "fx", "crypto", "prediction"])
+STRATEGY_NAME = input.string("bollinger-squeeze-20", "Strategy name (for journal)")
+SECRET        = input.string("REPLACE_WITH_YOUR_TVBRIDGE_TV_WEBHOOK_SECRET", "Webhook shared secret")
+
+// === Bands ===
+basis = ta.sma(close, length)
+dev   = mult * ta.stdev(close, length)
+upper = basis + dev
+lower = basis - dev
+width = upper - lower
+
+plot(basis, "Basis", color=color.new(color.gray,   60))
+plot(upper, "Upper", color=color.new(color.red,    30))
+plot(lower, "Lower", color=color.new(color.green,  30))
+
+// === Squeeze regime ===
+mean_width = ta.sma(width, squeeze_lookback)
+in_squeeze = width < (mean_width * squeeze_pct)
+bgcolor(in_squeeze ? color.new(color.yellow, 85) : na)
+
+// === Signals — squeeze release ===
+long_signal  = in_squeeze[1] and close > upper
+short_signal = in_squeeze[1] and close < lower
+
+// === Alert message ===
+build_alert(action) =>
+    '{' +
+      '"alert_id":"' + STRATEGY_NAME + '-' + str.tostring(time, "yyyyMMdd-HHmm") + '-' + action + '",' +
+      '"secret":"'        + SECRET        + '",' +
+      '"strategy_name":"' + STRATEGY_NAME + '",' +
+      '"asset_class":"'   + ASSET_CLASS   + '",' +
+      '"symbol":"{{ticker}}",' +
+      '"action":"'        + action        + '",' +
+      '"size":"{{strategy.position_size}}",' +
+      '"size_type":"units",' +
+      '"price_hint":"{{close}}",' +
+      '"order_type":"market",' +
+      '"time":"{{time}}",' +
+      '"metadata":{"bb_width":"' + str.tostring(width, "#.####") + '","mean_width":"' + str.tostring(mean_width, "#.####") + '"}' +
+    '}'
+
+if long_signal
+    strategy.entry("L", strategy.long,  alert_message=build_alert("buy"))
+if short_signal
+    strategy.entry("S", strategy.short, alert_message=build_alert("sell"))

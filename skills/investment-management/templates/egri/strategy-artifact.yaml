@@ -1,0 +1,39 @@
+# Strategy Artifact Template — autoany mutable artifact
+# This is the typed schema for investment strategy definitions.
+# The EGRI proposer mutates this file; backtest.py evaluates it.
+#
+# Copy this template and customize for your optimization target.
+# The backtest.py evaluator reads this format directly via --strategy-file.
+
+name: my-strategy
+
+# Asset weights (must sum to ~1.0, auto-normalized if not)
+weights:
+  SPY: 0.40    # US Large Cap (S&P 500)
+  QQQ: 0.20    # US Tech/Growth (NASDAQ 100)
+  BND: 0.20    # US Aggregate Bonds
+  GLD: 0.10    # Gold
+  VWO: 0.10    # Emerging Markets
+
+# Rebalancing rules
+rebalance:
+  frequency: quarterly     # daily | monthly | quarterly | annually | never
+  threshold_pct: 5.0       # Only rebalance if any weight drifts > N% from target
+
+# Risk management
+stop_loss_pct: null         # Portfolio-level stop loss (null = disabled, e.g. -8.0 = sell all if -8%)
+
+# Momentum strategy parameters (only used if name == "momentum")
+momentum_lookback: 252      # Trading days for momentum calculation
+momentum_top_n: 3           # Select top N by trailing return
+
+# Entry/exit rules (for custom strategies)
+# entry_rules:
+#   - type: moving_average_crossover
+#     fast: 50
+#     slow: 200
+# exit_rules:
+#   - type: stop_loss
+#     threshold: -0.08
+#   - type: trailing_stop
+#     threshold: -0.05
