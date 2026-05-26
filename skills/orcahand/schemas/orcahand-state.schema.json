@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "orcahand-state.schema.json",
+  "title": "OrcaHandState",
+  "description": "Output of observe() — extends agentic-control-kernel state.schema.json",
+  "type": "object",
+  "properties": {
+    "observation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this observation (required by kernel contract)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "measured": {
+      "type": "object",
+      "description": "Kernel's measured container — raw sensor readings with units",
+      "properties": {
+        "joint_positions": {
+          "type": "object",
+          "description": "17 joint positions in degrees",
+          "properties": {
+            "thumb_mcp": { "$ref": "#/$defs/measurement_degrees" },
+            "thumb_abd": { "$ref": "#/$defs/measurement_degrees" },
+            "thumb_pip": { "$ref": "#/$defs/measurement_degrees" },
+            "thumb_dip": { "$ref": "#/$defs/measurement_degrees" },
+            "index_abd": { "$ref": "#/$defs/measurement_degrees" },
+            "index_mcp": { "$ref": "#/$defs/measurement_degrees" },
+            "index_pip": { "$ref": "#/$defs/measurement_degrees" },
+            "middle_abd": { "$ref": "#/$defs/measurement_degrees" },
+            "middle_mcp": { "$ref": "#/$defs/measurement_degrees" },
+            "middle_pip": { "$ref": "#/$defs/measurement_degrees" },
+            "ring_abd": { "$ref": "#/$defs/measurement_degrees" },
+            "ring_mcp": { "$ref": "#/$defs/measurement_degrees" },
+            "ring_pip": { "$ref": "#/$defs/measurement_degrees" },
+            "pinky_abd": { "$ref": "#/$defs/measurement_degrees" },
+            "pinky_mcp": { "$ref": "#/$defs/measurement_degrees" },
+            "pinky_pip": { "$ref": "#/$defs/measurement_degrees" },
+            "wrist": { "$ref": "#/$defs/measurement_degrees" }
+          },
+          "required": ["thumb_mcp", "index_mcp", "middle_mcp", "ring_mcp", "pinky_mcp", "wrist"]
+        },
+        "motor_currents": {
+          "type": "object",
+          "description": "17 motor currents in mA",
+          "additionalProperties": { "$ref": "#/$defs/measurement_mA" }
+        },
+        "motor_temperatures": {
+          "type": "object",
+          "description": "17 motor temperatures in celsius",
+          "additionalProperties": { "$ref": "#/$defs/measurement_celsius" }
+        },
+        "tactile_readings": {
+          "type": "object",
+          "description": "Per-sensor 3D force vectors in Newtons. Only present on touch model (351 sensors).",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+              "unit": { "const": "N" }
+            },
+            "required": ["value", "unit"]
+          }
+        }
+      },
+      "required": ["joint_positions"]
+    },
+    "estimated": {
+      "type": "object",
+      "description": "Estimator output. Initially pass-through; extension point for grasp state inference.",
+      "properties": {
+        "grasp_state": {
+          "enum": ["open", "contact", "secured", "slipping"],
+          "description": "Estimated grasp state fused from joint positions + motor currents"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "description": "Kernel's context container — non-measurement state",
+      "properties": {
+        "backend": { "enum": ["physical", "simulated"] },
+        "control_mode": { "enum": ["position", "current", "current_based_position", "velocity"] },
+        "torque_enabled": { "type": "boolean" }
+      },
+      "required": ["backend", "control_mode", "torque_enabled"]
+    }
+  },
+  "required": ["observation_id", "timestamp", "measured", "context"],
+  "$defs": {
+    "measurement_degrees": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "const": "degrees" }
+      },
+      "required": ["value", "unit"]
+    },
+    "measurement_mA": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "const": "mA" }
+      },
+      "required": ["value", "unit"]
+    },
+    "measurement_celsius": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "const": "celsius" }
+      },
+      "required": ["value", "unit"]
+    }
+  }
+}
