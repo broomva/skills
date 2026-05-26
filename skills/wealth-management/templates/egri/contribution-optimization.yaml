@@ -1,0 +1,125 @@
+# EGRI Problem Spec: Contribution Optimization
+# Optimizes how monthly savings are split across tax-advantaged and
+# taxable vehicles to maximize probability of reaching financial goals.
+# Uses scenario_analysis.py (Monte Carlo) as evaluator.
+#
+# Trigger: user asks "how should I split my savings", "optimize contributions",
+#          "AFC vs pension vs brokerage", "maximize probability of goal"
+#
+# Usage: /autoany --spec templates/egri/contribution-optimization.yaml
+
+name: contribution-optimization
+
+objective:
+  metric: probability_of_goal_pct
+  type: scalar
+  direction: maximize
+  baseline: null  # Established by running evaluator on current contribution plan
+
+constraints:
+  - "afc_annual_cop <= 66_731_060"           # 1,340 UVT cap (2025)
+  - "pension_vol_annual_cop <= 66_731_060"   # Combined cap with AFC
+  - "afc_plus_pension_annual <= 66_731_060"  # Combined cap
+  - "total_monthly <= monthly_budget_cop"    # Can't save more than income allows
+  - "total_allocation_pct == 100"            # All savings accounted for
+  - "median_max_drawdown_pct > -25"          # Risk constraint
+  - "probability_of_ruin_pct <= 5"           # Can't risk going broke
+
+artifacts:
+  mutable:
+    - path: "contribution_plan.yaml"
+      type: config
+      description: >
+        Monthly contribution splits: how much goes to AFC (Davivienda),
+        pensión voluntaria (Skandia), libre inversión (brokerage),
+        crypto allocation, and emergency fund.
+        Also includes the asset allocation within each vehicle.
+  immutable:
+    - path: "~/.finance-substrate/tax/salary-history.jsonl"
+      reason: "Income trajectory — determines budget constraint"
+    - path: "~/.finance-substrate/cache/last_projection.json"
+      reason: "Current patrimonio (starting capital)"
+    - path: "scripts/scenario_analysis.py"
+      reason: "Monte Carlo evaluator — immutable per EGRI Law 3"
+
+evaluator:
+  script: >
+    python3 scripts/scenario_analysis.py
+    --allocation-file {artifact}
+    --years {years}
+    --goal-cop {goal}
+    --simulations 10000
+    --egri
+  inputs:
+    - "{artifact}"
+    - "salary-history.jsonl"
+    - "last_projection.json"
+  outputs:
+    score: "probability_of_goal_pct"
+    metrics:
+      - "median_final_value"
+      - "p10_final_value"
+      - "median_max_drawdown_pct"
+      - "probability_of_ruin_pct"
+      - "safe_withdrawal_rate_pct"
+    constraints:
+      - "median_max_drawdown_pct > -25"
+      - "probability_of_ruin_pct <= 5"
+  trusted: true
+  baseline_score: null
+
+execution:
+  backend: local
+  command: >
+    python3 scripts/scenario_analysis.py
+    --allocation-file {artifact}
+    --years 20
+    --goal-cop 2000000000
+    --simulations 10000
+    --egri
+  timeout_s: 60
+  sandbox: false
+
+budget:
+  max_trials: 20
+  time_per_trial_s: 60
+  total_time_s: 600
+
+promotion:
+  policy: keep_if_improves
+  threshold: 1.0  # Minimum 1% probability improvement to promote
+  require_constraint_check: true
+
+autonomy:
+  mode: sandbox
+  escalation_triggers:
+    - "evaluator_score_degrades_3_consecutive_trials"
+    - "constraint_violation_detected"
+    - "probability_of_ruin_pct exceeds 3"
+
+search:
+  proposer: llm
+  strategy_notes: >
+    Optimize contribution splits using Colombian tax law as prior:
+    - AFC is most flexible (housing withdrawal exemption)
+    - Pensión voluntaria has best tax benefit if held 10yr+
+    - Libre inversión (brokerage) provides liquidity
+    - Max AFC+VP combined benefit is 1,340 UVT (~$66.7M COP)
+    - Start by maximizing tax-advantaged contributions, then tune allocation
+    - Consider the user's time horizon: shorter → more AFC, longer → more VP
+    - Adjust asset allocation within each vehicle (equities in VP, bonds in AFC)
+    - Read the ledger: which vehicle/allocation combos drove probability up?
+    - If probability plateaus, try adding a small crypto or gold allocation
+    - Remember: the goal is P(goal) subject to ruin constraint, not max return
+
+ledger:
+  format: jsonl
+  path: "~/.wealth-management/egri/contribution-optimization/ledger.jsonl"
+
+domain:
+  preset: generic
+  notes: "Colombian tax-optimized contribution plan optimization via Monte Carlo"
+
+meta:
+  created_by: "wealth-management skill"
+  version: "0.1.0"

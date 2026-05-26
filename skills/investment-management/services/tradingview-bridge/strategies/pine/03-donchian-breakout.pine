@@ -1,0 +1,59 @@
+//@version=5
+// Donchian channel breakout — Turtle-trader style. Long on new N-period
+// high, short on new N-period low. Classic momentum/trend-follow that
+// performs well in crypto/futures regimes with persistent trends.
+//
+// Schema target: TVAlert (services/tradingview-bridge/src/tradingview_bridge/schemas.py)
+
+strategy(
+     title="bridge/03 - Donchian breakout",
+     shorttitle="03-Don",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     initial_capital=10000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.10)
+
+// === Inputs ===
+channel_length = input.int(20, "Channel length", minval=2, tooltip="Turtle System 1 default = 20")
+
+ASSET_CLASS   = input.string("crypto", "Asset class",
+     options=["stock", "etf", "bond", "fx", "crypto", "prediction"])
+STRATEGY_NAME = input.string("donchian-breakout-20", "Strategy name (for journal)")
+SECRET        = input.string("REPLACE_WITH_YOUR_TVBRIDGE_TV_WEBHOOK_SECRET", "Webhook shared secret")
+
+// === Channel ===
+upper = ta.highest(high, channel_length)[1]   // exclude current bar so we breakout vs *prior* range
+lower = ta.lowest(low,   channel_length)[1]
+mid   = (upper + lower) / 2
+
+plot(upper, "Upper channel", color=color.new(color.green, 30))
+plot(lower, "Lower channel", color=color.new(color.red,   30))
+plot(mid,   "Mid",           color=color.new(color.gray,  70))
+
+// === Signals ===
+long_signal  = close > upper
+short_signal = close < lower
+
+// === Alert message ===
+build_alert(action) =>
+    '{' +
+      '"alert_id":"' + STRATEGY_NAME + '-' + str.tostring(time, "yyyyMMdd-HHmm") + '-' + action + '",' +
+      '"secret":"'        + SECRET        + '",' +
+      '"strategy_name":"' + STRATEGY_NAME + '",' +
+      '"asset_class":"'   + ASSET_CLASS   + '",' +
+      '"symbol":"{{ticker}}",' +
+      '"action":"'        + action        + '",' +
+      '"size":"{{strategy.position_size}}",' +
+      '"size_type":"units",' +
+      '"price_hint":"{{close}}",' +
+      '"order_type":"market",' +
+      '"time":"{{time}}",' +
+      '"metadata":{"channel_high":"' + str.tostring(upper, "#.##") + '","channel_low":"' + str.tostring(lower, "#.##") + '"}' +
+    '}'
+
+if long_signal
+    strategy.entry("L", strategy.long,  alert_message=build_alert("buy"))
+if short_signal
+    strategy.entry("S", strategy.short, alert_message=build_alert("sell"))

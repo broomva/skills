@@ -1,0 +1,58 @@
+//@version=5
+// SMA crossover — classic trend-following baseline.
+// Fires `buy` alert on fast SMA crossing above slow SMA, `sell` on crossunder.
+// Default config matches the canonical 50/200 golden-cross / death-cross
+// pattern; tune the fast/slow inputs per timeframe.
+//
+// Schema target: TVAlert (services/tradingview-bridge/src/tradingview_bridge/schemas.py)
+
+strategy(
+     title="bridge/01 - SMA crossover",
+     shorttitle="01-SMA",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     initial_capital=10000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05)
+
+// === Inputs ===
+fast_length = input.int(50, "Fast SMA length",  minval=1)
+slow_length = input.int(200, "Slow SMA length", minval=2)
+
+ASSET_CLASS   = input.string("stock", "Asset class",
+     options=["stock", "etf", "bond", "fx", "crypto", "prediction"])
+STRATEGY_NAME = input.string("sma-crossover-50-200", "Strategy name (for journal)")
+SECRET        = input.string("REPLACE_WITH_YOUR_TVBRIDGE_TV_WEBHOOK_SECRET", "Webhook shared secret")
+
+// === Indicators ===
+fast_sma = ta.sma(close, fast_length)
+slow_sma = ta.sma(close, slow_length)
+
+plot(fast_sma, "Fast SMA", color=color.new(color.blue, 0))
+plot(slow_sma, "Slow SMA", color=color.new(color.orange, 0))
+
+// === Signals ===
+long_signal  = ta.crossover(fast_sma,  slow_sma)
+short_signal = ta.crossunder(fast_sma, slow_sma)
+
+// === Alert message (matches TVAlert schema) ===
+build_alert(action) =>
+    '{' +
+      '"alert_id":"' + STRATEGY_NAME + '-' + str.tostring(time, "yyyyMMdd-HHmm") + '-' + action + '",' +
+      '"secret":"'        + SECRET           + '",' +
+      '"strategy_name":"' + STRATEGY_NAME    + '",' +
+      '"asset_class":"'   + ASSET_CLASS      + '",' +
+      '"symbol":"{{ticker}}",' +
+      '"action":"'        + action           + '",' +
+      '"size":"{{strategy.position_size}}",' +
+      '"size_type":"units",' +
+      '"price_hint":"{{close}}",' +
+      '"order_type":"market",' +
+      '"time":"{{time}}"' +
+    '}'
+
+if long_signal
+    strategy.entry("L", strategy.long,  alert_message=build_alert("buy"))
+if short_signal
+    strategy.entry("S", strategy.short, alert_message=build_alert("sell"))

@@ -1,0 +1,135 @@
+# EGRI Problem Spec: Investment Horizon Evaluation
+# Optimizes asset allocation across multiple time-horizon buckets
+# (short-term, medium-term, long-term) to simultaneously maximize
+# probability of reaching all financial goals.
+#
+# Trigger: user asks "how should I allocate for my goals", "optimize by horizon",
+#          "retirement vs housing fund allocation", "multi-goal portfolio"
+#
+# Usage: /autoany --spec templates/egri/horizon-evaluation.yaml
+
+name: horizon-evaluation
+
+objective:
+  metric: risk_adjusted_goal_probability
+  type: scalar
+  direction: maximize
+  baseline: null
+
+constraints:
+  - "total_allocation_pct == 100"
+  - "short_term_bucket_vol <= 0.08"      # Short-term money shouldn't be volatile
+  - "no_bucket_has_zero_allocation"
+  - "afc_plus_pension_annual <= 66_731_060"  # 1,340 UVT cap
+  - "probability_of_ruin_pct <= 5"
+
+artifacts:
+  mutable:
+    - path: "horizon_plan.yaml"
+      type: config
+      description: >
+        Multi-horizon allocation plan. Defines goals with target amounts
+        and dates, then allocates capital + monthly contributions across
+        time-horizon buckets with per-bucket asset allocation.
+
+        Structure:
+          goals:
+            - name: housing
+              target_cop: 300000000
+              target_date: 2029-01-01
+              bucket: short_term
+            - name: education
+              target_cop: 500000000
+              target_date: 2036-01-01
+              bucket: medium_term
+            - name: retirement
+              target_cop: 5000000000
+              target_date: 2055-01-01
+              bucket: long_term
+
+          buckets:
+            short_term:    # 0-5 years
+              allocation: { col_fixed_income: 0.60, afc: 0.30, cash: 0.10 }
+              monthly_cop: 2000000
+            medium_term:   # 5-15 years
+              allocation: { us_equities: 0.40, col_fixed_income: 0.30, pension_vol: 0.20, gold: 0.10 }
+              monthly_cop: 3000000
+            long_term:     # 15+ years
+              allocation: { us_equities: 0.50, intl_equities: 0.20, crypto: 0.10, real_estate: 0.10, pension_vol: 0.10 }
+              monthly_cop: 5000000
+  immutable:
+    - path: "~/.finance-substrate/tax/salary-history.jsonl"
+      reason: "Income trajectory"
+    - path: "~/.finance-substrate/cache/last_projection.json"
+      reason: "Current patrimonio"
+    - path: "scripts/scenario_analysis.py"
+      reason: "Monte Carlo evaluator"
+
+evaluator:
+  script: "python3 scripts/eval_horizon.py --plan {artifact} --egri"
+  inputs:
+    - "{artifact}"
+  outputs:
+    score: "risk_adjusted_goal_probability"
+    metrics:
+      - "per_goal_probability"
+      - "aggregate_probability"
+      - "weighted_sharpe"
+      - "worst_bucket_drawdown"
+    constraints:
+      - "short_term_bucket_vol <= 0.08"
+      - "probability_of_ruin_pct <= 5"
+  trusted: false  # Requires validation
+  baseline_score: null
+
+execution:
+  backend: local
+  command: "python3 scripts/eval_horizon.py --plan {artifact} --egri"
+  timeout_s: 120
+  sandbox: false
+
+budget:
+  max_trials: 40
+  time_per_trial_s: 120
+  total_time_s: 2400
+
+promotion:
+  policy: keep_if_improves
+  threshold: 0.5  # Minimum 0.5% aggregate probability improvement
+  require_constraint_check: true
+
+autonomy:
+  mode: sandbox
+  escalation_triggers:
+    - "evaluator_score_degrades_3_consecutive_trials"
+    - "any_single_goal_probability_below_30"
+    - "budget_75_percent_exhausted_without_improvement"
+
+search:
+  proposer: llm
+  strategy_notes: >
+    Optimize multi-horizon allocation using time-based risk principles:
+    - Short-term (0-5yr): prioritize capital preservation (CDTs, AFC, cash)
+    - Medium-term (5-15yr): balanced growth (60/40 equity/bond mix)
+    - Long-term (15yr+): maximize growth (heavy equities, some crypto/RE)
+    - The aggregate score is probability-weighted: P(all goals) matters more
+      than P(any single goal)
+    - Consider goal priority: retirement may be more important than housing
+    - Adjust monthly contribution splits between buckets
+    - Try graduated risk: start aggressive in long-term bucket, shift conservative
+      as goal date approaches (glide path)
+    - AFC is ideal for the housing goal (tax-free housing withdrawal)
+    - Pensión voluntaria is ideal for retirement (tax-free after 10yr + pension age)
+    - Read ledger: which bucket adjustments had the biggest impact?
+
+ledger:
+  format: jsonl
+  path: "~/.wealth-management/egri/horizon-evaluation/ledger.jsonl"
+
+domain:
+  preset: generic
+  notes: "Multi-horizon goal optimization via per-bucket Monte Carlo simulation"
+
+meta:
+  created_by: "wealth-management skill"
+  version: "0.1.0"

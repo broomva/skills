@@ -1,0 +1,563 @@
+{
+  "name": "investment-management",
+  "version": "0.1.0",
+  "description": "Investment portfolio management — screen securities, run factor models, backtest strategies, optimize allocations, manage risk, execute trades (paper by default), track holdings, and rebalance. Supports Colombian and US markets with COP/USD dual currency.",
+  "entrypoint": "scripts/main.py",
+  "inputs_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "screen",
+          "research",
+          "factor",
+          "backtest",
+          "optimize",
+          "risk",
+          "trade",
+          "track",
+          "rebalance",
+          "data",
+          "score"
+        ],
+        "description": "Skill mode: screen (filter universe by criteria), research (deep-dive single security), factor (multi-factor model analysis), backtest (historical strategy simulation), optimize (portfolio optimization), risk (VaR/CVaR/drawdown analysis), trade (execute or paper-trade orders), track (monitor holdings & P&L), rebalance (drift detection & correction), data (fetch/refresh market data), score (composite investment scoring)."
+      },
+      "universe": {
+        "type": "string",
+        "enum": [
+          "col_equity",
+          "col_fixed_income",
+          "us_equity",
+          "us_etf",
+          "crypto",
+          "custom"
+        ],
+        "description": "Investment universe for screen/data modes."
+      },
+      "tickers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of ticker symbols (e.g., ['ECOPETROL.BVC', 'AAPL', 'BTC-USD'])."
+      },
+      "ticker": {
+        "type": "string",
+        "description": "Single ticker symbol for research/score modes."
+      },
+      "strategy": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Strategy identifier (e.g., 'momentum_value', 'min_variance')."
+          },
+          "params": {
+            "type": "object",
+            "description": "Strategy-specific parameters (lookback windows, thresholds, etc.)."
+          },
+          "weights": {
+            "type": "object",
+            "description": "Factor weights for multi-factor strategies."
+          }
+        },
+        "description": "Strategy definition for backtest/optimize modes."
+      },
+      "factors": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "value",
+            "momentum",
+            "quality",
+            "size",
+            "volatility",
+            "dividend_yield",
+            "growth",
+            "liquidity"
+          ]
+        },
+        "description": "Factor list for factor model analysis."
+      },
+      "screen_criteria": {
+        "type": "object",
+        "properties": {
+          "min_market_cap": {
+            "type": "number",
+            "description": "Minimum market capitalization (in currency units)."
+          },
+          "max_pe_ratio": {
+            "type": "number"
+          },
+          "min_dividend_yield": {
+            "type": "number"
+          },
+          "min_volume": {
+            "type": "number",
+            "description": "Minimum average daily volume."
+          },
+          "sector": {
+            "type": "string"
+          },
+          "custom_filter": {
+            "type": "string",
+            "description": "Custom filter expression (e.g., 'roe > 0.15 AND debt_to_equity < 1.5')."
+          }
+        },
+        "description": "Screening criteria for screen mode."
+      },
+      "backtest_config": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "description": "Backtest start date (YYYY-MM-DD)."
+          },
+          "end_date": {
+            "type": "string",
+            "description": "Backtest end date (YYYY-MM-DD)."
+          },
+          "initial_capital": {
+            "type": "number",
+            "description": "Starting capital in currency units."
+          },
+          "benchmark": {
+            "type": "string",
+            "description": "Benchmark ticker for comparison (e.g., 'COLCAP', 'SPY')."
+          },
+          "rebalance_frequency": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly",
+              "quarterly"
+            ]
+          },
+          "transaction_cost_bps": {
+            "type": "number",
+            "default": 10,
+            "description": "Round-trip transaction cost in basis points."
+          }
+        },
+        "description": "Backtest configuration for backtest mode."
+      },
+      "optimize_config": {
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "enum": [
+              "max_sharpe",
+              "min_variance",
+              "max_return",
+              "risk_parity",
+              "max_diversification",
+              "custom"
+            ],
+            "description": "Optimization objective function."
+          },
+          "constraints": {
+            "type": "object",
+            "properties": {
+              "max_position_pct": {
+                "type": "number",
+                "default": 25,
+                "description": "Maximum single position as % of portfolio."
+              },
+              "min_position_pct": {
+                "type": "number",
+                "default": 0
+              },
+              "max_sector_pct": {
+                "type": "number",
+                "default": 40
+              },
+              "long_only": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          },
+          "risk_free_rate": {
+            "type": "number",
+            "description": "Annualized risk-free rate (e.g., 0.095 for 9.5% Colombian TES rate)."
+          }
+        },
+        "description": "Optimization parameters for optimize mode."
+      },
+      "risk_config": {
+        "type": "object",
+        "properties": {
+          "confidence_level": {
+            "type": "number",
+            "default": 0.95,
+            "description": "VaR/CVaR confidence level."
+          },
+          "horizon_days": {
+            "type": "integer",
+            "default": 1,
+            "description": "Risk horizon in trading days."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "historical",
+              "parametric",
+              "monte_carlo"
+            ],
+            "default": "historical"
+          },
+          "stress_scenarios": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Named stress scenarios (e.g., ['2020_covid', '2022_rate_hike', 'col_peso_deval_20pct'])."
+          }
+        },
+        "description": "Risk analysis configuration for risk mode."
+      },
+      "order": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "order_type": {
+            "type": "string",
+            "enum": [
+              "market",
+              "limit",
+              "stop",
+              "stop_limit"
+            ],
+            "default": "limit"
+          },
+          "limit_price": {
+            "type": "number"
+          },
+          "stop_price": {
+            "type": "number"
+          },
+          "time_in_force": {
+            "type": "string",
+            "enum": [
+              "day",
+              "gtc",
+              "ioc",
+              "fok"
+            ],
+            "default": "day"
+          },
+          "live": {
+            "type": "boolean",
+            "default": false,
+            "description": "If false (default), order is paper-traded. Set true ONLY with explicit user confirmation."
+          }
+        },
+        "required": [
+          "ticker",
+          "side",
+          "quantity"
+        ],
+        "description": "Order specification for trade mode."
+      },
+      "rebalance_config": {
+        "type": "object",
+        "properties": {
+          "target_weights": {
+            "type": "object",
+            "description": "Map of ticker -> target weight (0-1). Must sum to 1."
+          },
+          "drift_threshold_pct": {
+            "type": "number",
+            "default": 5,
+            "description": "Minimum drift % to trigger rebalance."
+          },
+          "tax_aware": {
+            "type": "boolean",
+            "default": true,
+            "description": "Consider tax-loss harvesting opportunities."
+          },
+          "execute": {
+            "type": "boolean",
+            "default": false,
+            "description": "If false (default), only preview trades. If true, submit orders."
+          }
+        },
+        "description": "Rebalancing parameters for rebalance mode."
+      },
+      "data_source": {
+        "type": "string",
+        "enum": [
+          "yahoo",
+          "bvc",
+          "superfinanciera",
+          "banrep",
+          "sec_edgar",
+          "local"
+        ],
+        "description": "Market data source for data mode."
+      },
+      "score_weights": {
+        "type": "object",
+        "properties": {
+          "fundamental": {
+            "type": "number",
+            "default": 0.3
+          },
+          "technical": {
+            "type": "number",
+            "default": 0.2
+          },
+          "factor": {
+            "type": "number",
+            "default": 0.25
+          },
+          "sentiment": {
+            "type": "number",
+            "default": 0.15
+          },
+          "risk": {
+            "type": "number",
+            "default": 0.1
+          }
+        },
+        "description": "Component weights for composite score (must sum to 1). Used in score mode."
+      },
+      "currency": {
+        "type": "string",
+        "enum": [
+          "COP",
+          "USD"
+        ],
+        "default": "COP",
+        "description": "Primary display and calculation currency."
+      },
+      "date": {
+        "type": "string",
+        "description": "Reference date (YYYY-MM-DD) or range (YYYY-MM-DD:YYYY-MM-DD)."
+      },
+      "portfolio_id": {
+        "type": "string",
+        "default": "default",
+        "description": "Portfolio identifier for multi-portfolio tracking."
+      },
+      "output_format": {
+        "type": "string",
+        "enum": [
+          "table",
+          "json",
+          "csv",
+          "chart"
+        ],
+        "default": "table",
+        "description": "Output format preference."
+      }
+    },
+    "required": [
+      "mode"
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "screen"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "universe",
+            "screen_criteria"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "research"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "ticker"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "factor"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "tickers",
+            "factors"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "backtest"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "strategy",
+            "tickers",
+            "backtest_config"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "optimize"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "tickers",
+            "optimize_config"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "risk"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "anyOf": [
+            {
+              "required": [
+                "tickers"
+              ]
+            },
+            {
+              "required": [
+                "portfolio_id"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "trade"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "order"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "rebalance"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "rebalance_config"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "data"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "tickers",
+            "data_source"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "score"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "ticker"
+          ]
+        }
+      }
+    ]
+  }
+}

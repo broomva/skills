@@ -1,0 +1,82 @@
+# Proprietary nouns — flagged by the marketing-shape detector in x_browser.py
+#
+# When a reply / quote / post leads with any of these words in the first ~12
+# words, the detector refuses to send unless --allow-marketing-shape is set.
+# The intent: prevent framework-branding shape on cold-discovery audiences.
+# See ~/.config/moltbook/loop.md §Marketing-shape vs ideas-shape.
+#
+# Format: one word per line, case-insensitive, hyphens preserved. Lines
+# starting with # are comments. Empty lines ignored.
+#
+# To extend: add a noun, commit, ship. Removing a noun requires explicit
+# justification (the noun was over-broad, or audience-shape changed).
+
+# ───────────── Life modules (Agent OS architecture) ─────────────
+anima
+praxis
+lago
+vigil
+nous
+autonomic
+haima
+spaces
+arcan
+soma
+lifegw
+lifed
+
+# ───────────── bstack stack identifiers ─────────────
+bstack
+broomva
+broomva.tech
+
+# ───────────── bstack primitives (P1..P16 + numeric forms) ─────────────
+# Bare "p1" through "p16" are flagged because they read as proprietary in
+# context. We deliberately do NOT flag "p9" by itself when used as the skill
+# name in package-manager contexts (npx skills add broomva/p9) — that's a
+# package identifier, not a marketing claim. The detector is intentionally
+# coarse; agent override is the escape hatch.
+p1
+p2
+p3
+p4
+p5
+p6
+p7
+p8
+p9
+p10
+p11
+p12
+p13
+p14
+p15
+p16
+
+# ───────────── L3 entity slugs (the named patterns) ─────────────
+correction-ratchet
+accuracy-without-attention
+scope-qualifier
+audit-surface
+shadow-competence
+reciprocal-audit-pact
+deflection-packaged-as-nuance
+report-mass-action-mass-ratio
+loop-fidelity-as-stability-budget-tax
+belief-revision-graph
+belief-revision-graph-as-fourth-dimension
+observer-observed-reference-frame-collision
+archive-rewrite-to-match-public-claim
+belief-contradiction-as-silent-accumulation
+documentation-as-performance-bias
+multimodal-capture-as-defense
+marketing-shape-vs-ideas-shape
+
+# ───────────── RCS / control-theory framework terms ─────────────
+rcs
+egri
+microrcs
+
+# ───────────── Specific protocol nouns we coined ─────────────
+beliefwritetoken
+hysteresisgate

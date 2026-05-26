@@ -1,0 +1,59 @@
+//@version=5
+// RSI mean-reversion — fires `buy` when RSI exits oversold, `sell` when
+// RSI exits overbought. Best for range-bound markets; underperforms in
+// strong trends (where RSI stays oversold/overbought for extended periods).
+//
+// Schema target: TVAlert (services/tradingview-bridge/src/tradingview_bridge/schemas.py)
+
+strategy(
+     title="bridge/02 - RSI mean reversion",
+     shorttitle="02-RSI",
+     overlay=false,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     initial_capital=10000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05)
+
+// === Inputs ===
+rsi_length      = input.int(14, "RSI length",      minval=2)
+oversold_level  = input.int(30, "Oversold level",  minval=1, maxval=50)
+overbought_level= input.int(70, "Overbought level",minval=50, maxval=99)
+
+ASSET_CLASS   = input.string("stock", "Asset class",
+     options=["stock", "etf", "bond", "fx", "crypto", "prediction"])
+STRATEGY_NAME = input.string("rsi-mean-reversion-14", "Strategy name (for journal)")
+SECRET        = input.string("REPLACE_WITH_YOUR_TVBRIDGE_TV_WEBHOOK_SECRET", "Webhook shared secret")
+
+// === Indicator ===
+rsi = ta.rsi(close, rsi_length)
+plot(rsi, "RSI", color=color.new(color.purple, 0))
+hline(overbought_level, "Overbought", color=color.new(color.red,   50))
+hline(oversold_level,   "Oversold",   color=color.new(color.green, 50))
+hline(50,               "Midline",    color=color.new(color.gray,  60))
+
+// === Signals — exit-zone confirmation prevents whipsaws ===
+long_signal  = ta.crossover(rsi,  oversold_level)    // RSI was below, now crossed up
+short_signal = ta.crossunder(rsi, overbought_level)  // RSI was above, now crossed down
+
+// === Alert message ===
+build_alert(action) =>
+    '{' +
+      '"alert_id":"' + STRATEGY_NAME + '-' + str.tostring(time, "yyyyMMdd-HHmm") + '-' + action + '",' +
+      '"secret":"'        + SECRET        + '",' +
+      '"strategy_name":"' + STRATEGY_NAME + '",' +
+      '"asset_class":"'   + ASSET_CLASS   + '",' +
+      '"symbol":"{{ticker}}",' +
+      '"action":"'        + action        + '",' +
+      '"size":"{{strategy.position_size}}",' +
+      '"size_type":"units",' +
+      '"price_hint":"{{close}}",' +
+      '"order_type":"market",' +
+      '"time":"{{time}}",' +
+      '"metadata":{"rsi":"' + str.tostring(rsi, "#.##") + '"}' +
+    '}'
+
+if long_signal
+    strategy.entry("L", strategy.long,  alert_message=build_alert("buy"))
+if short_signal
+    strategy.entry("S", strategy.short, alert_message=build_alert("sell"))

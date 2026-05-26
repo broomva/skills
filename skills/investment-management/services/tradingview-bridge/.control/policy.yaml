@@ -1,0 +1,121 @@
+# tradingview-bridge — service-local control policy (v0.2.0 — PR 2).
+# Composes with the investment-management skill's .control/policy.yaml and
+# the umbrella workspace .control/policy.yaml (broomva/workspace).
+
+service: tradingview-bridge
+version: 0.2.0
+canonical-adr: https://github.com/broomva/workspace/blob/main/docs/specs/2026-05-22-broker-selection-cross-asset.html
+linear-ticket: https://github.com/broomva/workspace/blob/main/tasks/bro-167-cross-asset-trading-platform.md
+
+gates:
+  paper-only-mode:
+    enforce: startup
+    blocker: true
+    description: >
+      Service exits with non-zero status at startup if
+      TVBRIDGE_TRADING_MODE != "paper".
+    test-coverage:
+      - tests/test_webhook_smoke.py::test_paper_only_assertion_blocks_live
+
+  source-ip-allowlist:
+    enforce: runtime
+    blocker: true
+    description: >
+      Every POST /webhook request must originate from an IP in
+      TVBRIDGE_TV_ALLOWED_IPS (TradingView's published webhook source IPs).
+    test-coverage:
+      - tests/test_webhook_smoke.py::test_webhook_wrong_ip
+
+  shared-secret-constant-time:
+    enforce: runtime
+    blocker: true
+    description: >
+      The `secret` field in the alert body must match
+      TVBRIDGE_TV_WEBHOOK_SECRET under hmac.compare_digest.
+    test-coverage:
+      - tests/test_auth.py::test_require_valid_secret_rejects
+      - tests/test_webhook_smoke.py::test_webhook_wrong_secret
+      - tests/test_webhook_smoke.py::test_webhook_missing_secret
+
+  auth-before-schema-validation:
+    enforce: runtime
+    blocker: false
+    description: >
+      Auth (secret check) runs BEFORE pydantic schema validation.
+    test-coverage:
+      - tests/test_webhook_smoke.py::test_webhook_validation_error_after_auth
+
+  # --- PR 2 newly-active gates ---
+
+  webhook-rate-limit:
+    enforce: runtime
+    blocker: true
+    description: >
+      Per-IP rate limit (default 60 req/min) via TokenBucketLimiter (60s
+      sliding window). Excess requests get 429 without consuming the
+      secret/schema budget.
+    test-coverage:
+      - tests/test_ratelimit.py
+      - tests/test_webhook_smoke.py::test_webhook_429_on_rate_limit
+
+  alert-idempotency:
+    enforce: runtime
+    blocker: false
+    description: >
+      SQLite store keyed on alert_id; duplicate alerts get 200 with
+      status=duplicate + same order_id from the original dispatch. Prevents
+      double-fire on TradingView retries.
+    test-coverage:
+      - tests/test_idempotency.py
+      - tests/test_webhook_smoke.py::test_webhook_duplicate_alert_returns_duplicate
+
+  broker-mode-mock-default:
+    enforce: startup
+    blocker: false
+    description: >
+      TVBRIDGE_BROKER_MODE defaults to "mock" — no broker contact in CI or
+      local dev without explicit opt-in. Operator flips to "real-paper"
+      explicitly + provides per-broker credentials.
+    test-coverage:
+      - tests/test_clients_interface.py::test_real_client_mock_mode_places_order
+
+  real-paper-requires-creds:
+    enforce: runtime
+    blocker: true
+    description: >
+      When TVBRIDGE_BROKER_MODE=real-paper, each broker client checks for
+      its required env vars and raises NotConfiguredError if missing. The
+      dispatcher translates this into a `rejected` DispatchResult; no
+      cryptic SDK exceptions leak to the response.
+    test-coverage:
+      - tests/test_clients_interface.py::test_real_client_real_paper_without_creds_raises
+
+# Still deferred — promoted to PR 3+ for traceability.
+deferred:
+  per-broker-position-cap:
+    target-pr: 3
+    description: >
+      S9 candidate — per-broker drawdown + concentration caps. Requires
+      a broker-positions reader (REST poll) which depends on real-paper
+      wiring (PR 2b).
+
+  formulario-4-reminder:
+    target-pr: 3
+    description: >
+      S7 candidate — any IBKR outbound capital instruction above threshold
+      blocks until Formulario 4 (Banco República) is logged. Depends on
+      capital-transfer detection, also PR 2b.
+
+  cfd-broker-blocked:
+    target-pr: 4
+    description: >
+      S8 candidate — hard-block any executor call to a CFD broker
+      endpoint. Not relevant in PR 2 because the dispatcher only routes
+      to IBKR/Kraken/Polymarket (no CFD path exists).
+
+  bookkeeping-journal-required:
+    target-pr: 3
+    description: >
+      Currently graceful no-op when CLI not found (this allows tests + CI
+      to pass without the workspace bookkeeping CLI). PR 3 promotes to
+      blocker when running in production deployment.

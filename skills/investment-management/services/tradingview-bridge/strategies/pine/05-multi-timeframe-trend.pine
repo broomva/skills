@@ -1,0 +1,69 @@
+//@version=5
+// Multi-timeframe EMA alignment — fires only when 3 timeframes agree.
+// Long: current TF EMA > higher TF EMA > even higher TF EMA (uptrend confluence).
+// Short: inverse alignment.
+// Lower trade frequency, higher win rate. Default tuned for crypto on 1h
+// chart with 4h + 1D confluence.
+//
+// Schema target: TVAlert (services/tradingview-bridge/src/tradingview_bridge/schemas.py)
+
+strategy(
+     title="bridge/05 - MTF trend alignment",
+     shorttitle="05-MTF",
+     overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=15,
+     initial_capital=10000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.10)
+
+// === Inputs ===
+ema_length = input.int(50, "EMA length",        minval=2)
+htf_1      = input.timeframe("240", "Higher TF 1", tooltip="Default 240 = 4h")
+htf_2      = input.timeframe("D",   "Higher TF 2", tooltip="Default D = daily")
+
+ASSET_CLASS   = input.string("crypto", "Asset class",
+     options=["stock", "etf", "bond", "fx", "crypto", "prediction"])
+STRATEGY_NAME = input.string("mtf-trend-alignment", "Strategy name (for journal)")
+SECRET        = input.string("REPLACE_WITH_YOUR_TVBRIDGE_TV_WEBHOOK_SECRET", "Webhook shared secret")
+
+// === EMAs across 3 timeframes ===
+ema_ltf = ta.ema(close, ema_length)
+ema_h1  = request.security(syminfo.tickerid, htf_1, ta.ema(close, ema_length), lookahead=barmerge.lookahead_off)
+ema_h2  = request.security(syminfo.tickerid, htf_2, ta.ema(close, ema_length), lookahead=barmerge.lookahead_off)
+
+plot(ema_ltf, "EMA (chart)", color=color.new(color.blue,   0))
+plot(ema_h1,  "EMA (HTF1)",  color=color.new(color.orange, 30))
+plot(ema_h2,  "EMA (HTF2)",  color=color.new(color.red,    50))
+
+// === Alignment ===
+bullish_align = ema_ltf > ema_h1 and ema_h1 > ema_h2 and close > ema_ltf
+bearish_align = ema_ltf < ema_h1 and ema_h1 < ema_h2 and close < ema_ltf
+
+bgcolor(bullish_align ? color.new(color.green, 92) : bearish_align ? color.new(color.red, 92) : na)
+
+// Trigger on transition into aligned state (avoids re-firing each bar)
+long_signal  = bullish_align and not bullish_align[1]
+short_signal = bearish_align and not bearish_align[1]
+
+// === Alert message ===
+build_alert(action) =>
+    '{' +
+      '"alert_id":"' + STRATEGY_NAME + '-' + str.tostring(time, "yyyyMMdd-HHmm") + '-' + action + '",' +
+      '"secret":"'        + SECRET        + '",' +
+      '"strategy_name":"' + STRATEGY_NAME + '",' +
+      '"asset_class":"'   + ASSET_CLASS   + '",' +
+      '"symbol":"{{ticker}}",' +
+      '"action":"'        + action        + '",' +
+      '"size":"{{strategy.position_size}}",' +
+      '"size_type":"units",' +
+      '"price_hint":"{{close}}",' +
+      '"order_type":"market",' +
+      '"time":"{{time}}",' +
+      '"metadata":{"htf1":"' + htf_1 + '","htf2":"' + htf_2 + '"}' +
+    '}'
+
+if long_signal
+    strategy.entry("L", strategy.long,  alert_message=build_alert("buy"))
+if short_signal
+    strategy.entry("S", strategy.short, alert_message=build_alert("sell"))

@@ -1,0 +1,38 @@
+{
+  "name": "deep-dive-research-skill",
+  "version": "1.1.0",
+  "description": "Comprehensive multi-dimensional research using coordinated AI specialists",
+  "keywords": [
+    "research",
+    "analysis",
+    "competitive-intelligence",
+    "market-analysis",
+    "data-synthesis",
+    "investigation",
+    "due-diligence",
+    "strategic-planning",
+    "orchestration"
+  ],
+  "author": "Claude Code",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/broomva/deep-dive-research-skill"
+  },
+  "bugs": {
+    "url": "https://github.com/broomva/deep-dive-research-skill/issues"
+  },
+  "homepage": "https://github.com/broomva/deep-dive-research-skill#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "main": "SKILL.md",
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "METHODOLOGY.md",
+    "LICENSE",
+    "examples/",
+    "docs/"
+  ]
+}

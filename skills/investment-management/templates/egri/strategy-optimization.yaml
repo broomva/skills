@@ -1,0 +1,98 @@
+# EGRI Problem Spec: Strategy Optimization
+# Optimizes portfolio strategy (weights, rules, rebalancing) to maximize
+# risk-adjusted returns. Uses backtest.py as evaluator.
+#
+# Trigger: user asks to "optimize allocation", "find the best strategy",
+#          "compare strategies", "backtest variations"
+#
+# Usage: /autoany --spec templates/egri/strategy-optimization.yaml
+
+name: strategy-optimization
+
+objective:
+  metric: sharpe_ratio
+  type: scalar
+  direction: maximize
+  baseline: null  # Filled by running evaluator on initial strategy
+
+constraints:
+  - "max_drawdown_pct > -15.0"        # Policy S6: 15% drawdown limit
+  - "max_position_weight <= 0.25"      # Policy S2: no single position > 25%
+  - "min_asset_count >= 3"             # Minimum diversification
+  - "annual_turnover <= 0.50"          # Tax efficiency (implicit from rebalance freq)
+
+artifacts:
+  mutable:
+    - path: "strategy.yaml"
+      type: config
+      description: >
+        Strategy definition: asset tickers, weights, rebalancing frequency,
+        rebalancing threshold, stop-loss rules. The EGRI proposer mutates
+        weights and parameters to search for better risk-adjusted returns.
+  immutable:
+    - path: "~/.investment-management/market-data/"
+      reason: "Historical price data — must not change during optimization"
+    - path: "scripts/backtest.py"
+      reason: "Evaluator — immutable per EGRI Law 3"
+
+evaluator:
+  script: "python3 scripts/backtest.py --strategy-file {artifact} --period {period} --egri"
+  inputs:
+    - "{artifact}"           # strategy.yaml
+    - "market-data/"         # cached historical prices
+  outputs:
+    score: "sharpe_ratio"
+    metrics: ["cagr_pct", "max_drawdown_pct", "sortino_ratio", "calmar_ratio", "volatility_pct"]
+    constraints: ["max_drawdown_pct > -15.0"]
+  trusted: true
+  baseline_score: null
+
+execution:
+  backend: local
+  command: "python3 scripts/backtest.py --strategy-file {artifact} --period 10y --egri"
+  timeout_s: 120
+  sandbox: false
+
+budget:
+  max_trials: 50
+  time_per_trial_s: 120
+  total_time_s: 3600
+  token_budget: null
+  cost_budget: null
+
+promotion:
+  policy: keep_if_improves
+  threshold: 0.05  # Minimum 0.05 Sharpe improvement to promote
+  require_constraint_check: true
+
+autonomy:
+  mode: sandbox
+  escalation_triggers:
+    - "evaluator_score_degrades_3_consecutive_trials"
+    - "constraint_violation_detected"
+    - "budget_75_percent_exhausted_without_improvement"
+    - "max_drawdown_pct below -20"
+
+search:
+  proposer: llm
+  strategy_notes: >
+    Use investment philosophy frameworks to guide mutations:
+    - Start with broad allocation changes (equity/bond/alt splits)
+    - Then refine individual asset weights within each class
+    - Test rebalancing frequency and threshold sensitivity
+    - Consider barbell strategies (safe + high-convexity)
+    - Apply risk-parity principles when volatility is high
+    - Read the ledger to avoid repeating failed weight combinations
+    - If Sharpe plateaus, try adding/removing asset classes rather than tuning weights
+
+ledger:
+  format: jsonl
+  path: "~/.investment-management/egri/strategy-optimization/ledger.jsonl"
+
+domain:
+  preset: generic
+  notes: "Investment strategy optimization via historical backtesting"
+
+meta:
+  created_by: "investment-management skill"
+  version: "0.1.0"

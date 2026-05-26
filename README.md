@@ -56,6 +56,26 @@ npx skills add broomva/skills --skill make-spec
 | [`creative-review`](skills/creative-review/) | `skills/creative-review/SKILL.md` | Meta creative review skill — style adherence scoring, feedback loops, self-improving creative pipeline |
 | [`brainrot-for-good`](skills/brainrot-for-good/) | `skills/brainrot-for-good/SKILL.md` | High-retention video production using dopamine-aware editing for genuinely valuable content |
 
+### Research & intelligence
+
+> Migrated 2026-05-25 (Phase 4c) from standalone `broomva/<name>` repos. 3 entries renamed during migration to drop the `-skill` suffix (ecosystem norm).
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`deep-dive-research-orchestrator`](skills/deep-dive-research-orchestrator/) | `skills/deep-dive-research-orchestrator/SKILL.md` | Multi-dimensional research with coordinated AI specialists; 10+ source synthesis with citations. (Renamed from `broomva/deep-dive-research-skill`.) |
+| [`social-intelligence`](skills/social-intelligence/) | `skills/social-intelligence/SKILL.md` | Autonomous social engagement + knowledge extraction loop for Moltbook and X — compounds with `blog-post` and `content-creation` |
+| [`harness-engineering-playbook`](skills/harness-engineering-playbook/) | `skills/harness-engineering-playbook/SKILL.md` | Agent-first workflow patterns — AGENTS.md, smoke/test/lint/typecheck harness, entropy control. (Renamed from `broomva/harness-engineering-skill`.) |
+
+### Finance & investment
+
+> Migrated 2026-05-25 (Phase 4c) from standalone `broomva/<name>` repos. `haima` renamed during migration to drop `-skill` suffix; runtime crate stays at `broomva/haima`.
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`investment-management`](skills/investment-management/) | `skills/investment-management/SKILL.md` | Portfolio construction, factor models, backtesting, multi-platform execution (Alpaca, Coinbase, Polymarket) |
+| [`wealth-management`](skills/wealth-management/) | `skills/wealth-management/SKILL.md` | Wealth planning + Monte Carlo + tax-optimized allocation + net worth forecasting |
+| [`haima`](skills/haima/) | `skills/haima/SKILL.md` | Agent guide for x402 machine-to-machine payments, secp256k1 wallets, per-task billing, on-chain USDC settlement. (Renamed from `broomva/haima-skill`; runtime crate remains at `broomva/haima`.) |
+
 ### Strategy & decision intelligence
 
 > Migrated 2026-05-25 from the bundled `broomva/strategy-skills` repo per the Tier-2 monorepo plan. Each sub-skill is now individually installable.
