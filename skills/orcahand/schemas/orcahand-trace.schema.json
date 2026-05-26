@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "orcahand-trace.schema.json",
+  "title": "OrcaHandTrace",
+  "description": "Trace ledger entry — extends agentic-control-kernel trace.schema.json. Lago-compatible.",
+  "type": "object",
+  "properties": {
+    "trace_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "loop_level": {
+      "enum": ["servo", "mid", "outer", "meta"],
+      "description": "Which control loop generated this trace entry"
+    },
+    "state_snapshot": {
+      "$ref": "orcahand-state.schema.json",
+      "description": "Kernel field: state at decision time"
+    },
+    "directive": {
+      "$ref": "orcahand-action.schema.json",
+      "description": "Kernel field: the directive issued"
+    },
+    "action_proposed": {
+      "$ref": "orcahand-action.schema.json",
+      "description": "Raw action before shield filtering"
+    },
+    "action_applied": {
+      "$ref": "orcahand-action.schema.json",
+      "description": "Safe action after shield filtering"
+    },
+    "outcome": {
+      "type": "object",
+      "properties": {
+        "observation_after": {
+          "$ref": "orcahand-state.schema.json",
+          "description": "Kernel field: state after action was applied"
+        }
+      }
+    },
+    "shield_interventions": {
+      "type": "array",
+      "description": "Record of any safety shield filter actions taken",
+      "items": {
+        "type": "object",
+        "properties": {
+          "shield": { "enum": ["joint_rom", "max_current", "temperature", "velocity", "tactile_overload"] },
+          "joint": { "type": "string" },
+          "original_value": { "type": "number" },
+          "clamped_value": { "type": "number" }
+        },
+        "required": ["shield"]
+      }
+    },
+    "evaluator_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Task-specific success score (0-1)"
+    },
+    "backend": {
+      "enum": ["physical", "simulated"]
+    }
+  },
+  "required": ["trace_id", "timestamp", "loop_level", "state_snapshot", "backend"]
+}

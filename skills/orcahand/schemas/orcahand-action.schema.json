@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "orcahand-action.schema.json",
+  "title": "OrcaHandAction",
+  "description": "Input to apply() — extends agentic-control-kernel action.schema.json",
+  "type": "object",
+  "properties": {
+    "directive_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this directive (required by kernel contract)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "directive_type": {
+      "enum": ["setpoint_update", "experiment_request", "mode_switch"],
+      "description": "Kernel directive vocabulary. grasp/release/neutral -> setpoint_update, calibrate -> experiment_request"
+    },
+    "target_controller": {
+      "enum": ["orca_core", "orca_sim"],
+      "description": "Which backend to send the action to"
+    },
+    "priority": {
+      "enum": ["normal", "safety", "emergency"],
+      "default": "normal"
+    },
+    "rationale": {
+      "type": "string",
+      "description": "LLM's reasoning for this directive (outer loop provenance)"
+    },
+    "payload": {
+      "type": "object",
+      "description": "OrcaHand-specific action payload",
+      "properties": {
+        "joint_targets": {
+          "type": "object",
+          "description": "Partial dict of {joint_name: degrees}. Only specified joints move.",
+          "additionalProperties": { "type": "number" }
+        },
+        "num_steps": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 25,
+          "description": "Interpolation steps for smooth motion"
+        },
+        "step_size": {
+          "type": "number",
+          "minimum": 0.0001,
+          "default": 0.001,
+          "description": "Step timing in seconds"
+        },
+        "control_mode": {
+          "enum": ["position", "current", "current_based_position"],
+          "description": "Override control mode for this action"
+        },
+        "max_current": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Current limit override in mA"
+        },
+        "grasp_type": {
+          "enum": ["power", "precision", "pinch"],
+          "description": "High-level grasp strategy (when directive_type = setpoint_update)"
+        }
+      },
+      "required": ["joint_targets"]
+    }
+  },
+  "required": ["directive_id", "timestamp", "directive_type", "target_controller", "payload"]
+}

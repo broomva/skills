@@ -83,6 +83,7 @@ npx skills add broomva/skills --skill make-spec
 | Skill | Path | What it does |
 |---|---|---|
 | [`capx-agentic-robotics`](skills/capx-agentic-robotics/) | `skills/capx-agentic-robotics/SKILL.md` | CaP-X LLM-driven robot manipulation via code generation — CaP-Gym (187 tasks), CaP-Bench, CaP-Agent0, CaP-RL, sim-to-real |
+| [`orcahand`](skills/orcahand/) | `skills/orcahand/SKILL.md` | Full-stack skill for the ORCA Hand — 17-DOF tendon-driven robotic hand. Plant interface, safety shields, MuJoCo simulation, RL training, teleoperation, sim-to-real, EGRI improvement. (Migrated 2026-05-26 — Phase 4f; deduplicated `broomva/orcahand` + `broomva/orcahand-skill`, both archived.) |
 | [`openrocket-sim`](skills/openrocket-sim/) | `skills/openrocket-sim/SKILL.md` | Headless rocket design, simulation, and EGRI optimization using OpenRocket |
 | [`sdr-satellite`](skills/sdr-satellite/) | `skills/sdr-satellite/SKILL.md` | Software-defined radio + satellite reception toolkit — what to install, what you can hear, how to compose the stack |
 | [`ocean-genomics`](skills/ocean-genomics/) | `skills/ocean-genomics/SKILL.md` | Deep-ocean genomics research — eDNA metabarcoding, AlphaFold, ESMFold, Evo 2, marine biodiversity, agentic bioinformatics workflows |

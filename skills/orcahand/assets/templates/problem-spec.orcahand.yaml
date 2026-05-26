@@ -1,0 +1,81 @@
+# OrcaHand EGRI Problem Spec
+# Extends agentic-control-kernel problem-spec.control.yaml
+# Fill in and adjust values for your specific optimization target.
+
+objective:
+  description: "Improve grasp success rate for target object set"
+  metric: "grasp_success_rate"
+  target: 0.85
+  direction: maximize
+
+plant:
+  type: physical
+  name: orcahand
+  shield_type: rule-based  # ROM/current/temp shields are rule-based, not CBF-QP
+  dual_backend: true       # sim and physical share same Plant interface
+
+constraints:
+  - joint_roms from config.yaml (never exceed)
+  - max_current 200mA per motor
+  - max_temperature 70°C per motor
+  - human approval required before physical deployment
+
+artifacts:
+  - name: grasp_policy
+    type: rl_policy
+    path: checkpoints/grasp_policy_latest.pt
+    backend: orca_sim.OrcaHandRightCubeOrientation
+  - name: retargeter_config
+    type: config
+    path: orca_retargeter/models/orcahand_v1_right/retargeter.yaml
+
+evaluator:
+  outputs:
+    sim_success_rate:
+      metric: terminated_success / total_episodes
+      threshold: 0.85
+      episodes: 100
+    sim_to_real_gap:
+      metric: abs(sim_success - real_success)
+      threshold: 0.15
+      episodes: 20
+
+execution:
+  backend: simulator         # Training on remote GPU
+  validation: physical       # Validation on local macOS + real hand
+  budget:
+    max_trials: 50
+    max_hours: 24
+
+promotion:
+  gate: "sim_success_rate > 0.85 AND sim_to_real_gap < 0.15"
+  action: deploy_to_physical
+  rollback: revert_to_previous_checkpoint
+  approval: manual           # Human approves before deploying to physical hand
+
+autonomy:
+  level: supervised          # LLM proposes, human approves physical deployment
+  escalation: alert_on_shield_intervention
+
+search:
+  strategy: curriculum       # Progressive difficulty in sim environments
+  hyperparams:
+    - learning_rate
+    - reward_scale
+    - domain_randomization_range
+
+ledger:
+  backend: lago              # Append-only event journal for all trials
+  event_kind: "Custom"       # EGRI events stored as EventKind::Custom
+
+domain:
+  hardware: "ORCA Hand v1/v2, 17-DOF, Dynamixel XC330-T288"
+  simulation: "MuJoCo via orca_sim, Gymnasium interface"
+  retargeting: "orca_retargeter, pytorch_kinematics FK chain"
+
+meta:
+  created_by: skill-creator
+  version: "1.0"
+  compounds_on:
+    - agentic-control-kernel
+    - bstack

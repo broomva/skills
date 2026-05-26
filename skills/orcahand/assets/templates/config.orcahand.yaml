@@ -1,0 +1,49 @@
+# OrcaHand starter configuration
+# Copy this to your workspace and adjust for your hand build.
+# Maps to orca_core/models/<model_name>/config.yaml
+
+hand:
+  model: orcahand_v1_right   # or orcahand_v2_right, orcahand_v1_left
+  version: v1
+
+serial:
+  port: auto                 # auto-detect, or /dev/tty.usbserial-XXXXX (macOS), /dev/ttyUSB0 (Linux)
+  baudrate: 3000000
+
+motors:
+  type: dynamixel            # or feetech
+  model: XC330-T288
+  count: 17
+  max_current: 200           # mA
+  control_mode: current_based_position  # recommended: position, current, current_based_position
+
+# Joint naming convention: {finger}_{joint_type}
+# Fingers: thumb, index, middle, ring, pinky, wrist
+# Joint types: mcp (metacarpophalangeal), pip (proximal interphalangeal),
+#              dip (distal interphalangeal), abd (abduction)
+joints:
+  - thumb_mcp
+  - thumb_abd
+  - thumb_pip
+  - thumb_dip
+  - index_abd
+  - index_mcp
+  - index_pip
+  - middle_abd
+  - middle_mcp
+  - middle_pip
+  - ring_abd
+  - ring_mcp
+  - ring_pip
+  - pinky_abd
+  - pinky_mcp
+  - pinky_pip
+  - wrist
+
+safety:
+  max_temperature: 70        # celsius, disable torque above this
+  emergency_fallback: disable_all_torque
+
+simulation:
+  environment: OrcaHandRight-v2
+  render_mode: human         # human (interactive) or rgb_array (headless)
