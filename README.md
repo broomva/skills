@@ -17,9 +17,11 @@ This repository serves two purposes:
 npx skills add broomva/skills
 
 # Tier-2 skill from the monorepo
-npx skills add broomva/skills --skill handoff
-npx skills add broomva/skills --skill make-spec
+npx skills add broomva/skills --skill handoff --full-depth
+npx skills add broomva/skills --skill make-spec --full-depth
 ```
+
+> **Why `--full-depth`?** This repo has a root `SKILL.md` (the catalog skill). The `npx skills` CLI stops searching subdirectories once it finds a root `SKILL.md` — so without `--full-depth`, `--skill <name>` only sees the catalog and reports "Found 1 skill". `--full-depth` makes it descend into `skills/<name>/`. Empirically verified 2026-05-26: without the flag → "Found 1 skill"; with it → "Found 53 skills". The bare catalog install (`npx skills add broomva/skills`) needs no flag.
 
 ## Repository layout
 
