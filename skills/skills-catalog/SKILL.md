@@ -1,5 +1,5 @@
 ---
-name: skills
+name: skills-catalog
 description: >
   Canonical reference inventory of 84 agent skills across 15 domains, with a Remotion video
   showcase generator and X thread copy. Use when discovering available skills, browsing the

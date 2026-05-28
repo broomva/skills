@@ -2,38 +2,49 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![skills.sh](https://img.shields.io/badge/skills.sh-directory-8B5CF6)](https://skills.sh/)
+[![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
+[![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated collection of agent skills — the canonical reference inventory **plus** the Broomva monorepo for Tier-2 skills.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 48+ Tier-2 skills + the catalog/showcase. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
-This repository serves two purposes:
-
-1. **Catalog** (root `SKILL.md`) — the discovery surface for **84+ skills across 15 domains**, with a Remotion video showcase.
-2. **Monorepo** (`skills/<name>/`) — the home for Tier-2 vendored skills per the [Broomva packaging strategy](https://github.com/broomva/workspace/blob/main/docs/specs/2026-05-25-skills-packaging-strategy.html). Each skill is independently installable via `--skill <name>`.
+Layout follows the ecosystem-canonical [`anthropics/skills`](https://github.com/anthropics/skills) shape: **no root `SKILL.md`** (the README is the discovery surface), all skills live under `skills/<name>/SKILL.md`.
 
 ## Quick install
 
 ```bash
-# Catalog (root SKILL.md — skill discovery + inventory browsing)
-npx skills add broomva/skills
+# List everything in the monorepo
+npx skills add broomva/skills --list
 
-# Tier-2 skill from the monorepo
-npx skills add broomva/skills --skill handoff --full-depth
-npx skills add broomva/skills --skill make-spec --full-depth
+# Install a specific Tier-2 skill
+npx skills add broomva/skills --skill handoff
+npx skills add broomva/skills --skill make-spec
+
+# The catalog skill itself (browse-the-inventory surface)
+npx skills add broomva/skills --skill skills-catalog
+
+# Install everything (use sparingly — large prompt-budget footprint)
+npx skills add broomva/skills --skill '*'
 ```
 
-> **Why `--full-depth`?** This repo has a root `SKILL.md` (the catalog skill). The `npx skills` CLI stops searching subdirectories once it finds a root `SKILL.md` — so without `--full-depth`, `--skill <name>` only sees the catalog and reports "Found 1 skill". `--full-depth` makes it descend into `skills/<name>/`. Empirically verified 2026-05-26: without the flag → "Found 1 skill"; with it → "Found 53 skills". The bare catalog install (`npx skills add broomva/skills`) needs no flag.
+> **Note:** no `--full-depth` flag is needed — this monorepo has no root `SKILL.md`, so the CLI's default search descends into `skills/<name>/` automatically. (Earlier versions of this README required `--full-depth`; the [2026-05-27 restructure](https://github.com/broomva/skills/pull/11) removed the root `SKILL.md` to align with [`anthropics/skills`](https://github.com/anthropics/skills) and eliminate the footgun.)
 
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
-| [`SKILL.md`](SKILL.md) | The catalog skill itself — invoked when the agent needs to browse the inventory |
-| [`references/skills-inventory.md`](references/skills-inventory.md) | Full categorized inventory of 84+ skills across 15 domains |
+| [`skills/`](skills/) | **The monorepo.** One directory per skill, each with `SKILL.md` + optional `references/`/`scripts/`/`assets/` per the [agentskills.io spec](https://agentskills.io/specification). Includes the catalog skill at [`skills/skills-catalog/`](skills/skills-catalog/). |
+| [`references/skills-inventory.md`](references/skills-inventory.md) | Full categorized inventory across all 15 domains (companion to the catalog skill) |
 | [`skills-showcase/`](skills-showcase/) | Remotion video + X thread renderer for the inventory |
-| [`skills/`](skills/) | **Monorepo** — Tier-2 vendored skills, one directory per skill |
+| [`.github/workflows/`](.github/workflows/) | CI: SKILL.md frontmatter lint (validates `name` matches parent dir + required fields present per agentskills.io spec) |
 | `_shared/` | (reserved) shared utilities used by multiple Tier-2 skills |
 
 ## Tier-2 skills (vendored in this monorepo)
+
+### Catalog & discovery
+
+| Skill | Path | What it does |
+|---|---|---|
+| [`skills-catalog`](skills/skills-catalog/) | `skills/skills-catalog/SKILL.md` | The discovery surface — the agent uses this skill to browse [`references/skills-inventory.md`](references/skills-inventory.md), find skills by domain, and surface relevant tools. Install with `npx skills add broomva/skills --skill skills-catalog`. Renamed from root `skills` skill 2026-05-27 (restructure to drop root `SKILL.md`). |
 
 ### Workflow & lifecycle
 

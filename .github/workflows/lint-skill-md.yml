@@ -1,0 +1,102 @@
+name: lint-skill-md
+
+# Validates every skills/<name>/SKILL.md against the agentskills.io spec:
+#   - required frontmatter fields: name + description
+#   - `name` is lowercase + hyphens + ≤64 chars, no leading/trailing/consecutive hyphens
+#   - `name` matches parent directory name (per spec §Name)
+#   - nested sub-skills (e.g. skills/<x>/skills/<sub>/SKILL.md) checked the same way
+#
+# Fast (<3s). Hermetic (pure Python + PyYAML, no network).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/**/SKILL.md'
+      - '.github/workflows/lint-skill-md.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**/SKILL.md'
+      - '.github/workflows/lint-skill-md.yml'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Lint SKILL.md frontmatter
+        run: |
+          python3 - <<'PYEOF'
+          import os, re, sys, yaml
+          from pathlib import Path
+
+          NAME_RE = re.compile(r'^[a-z][a-z0-9]*(-[a-z0-9]+)*$')
+          MAX_NAME = 64
+
+          errors = []
+          # Lint only the canonical discoverable-skill paths:
+          #   - skills/<name>/SKILL.md          (top-level Tier-2 skills)
+          #   - skills/<x>/skills/<sub>/SKILL.md (nested-sub-skill idiom, e.g. content-engine)
+          # Internal artifacts like skills/<x>/extensions/<y>/SKILL.md are excluded —
+          # they're skill-private extensions, not independently-installable skills.
+          skill_mds = sorted(
+              list(Path("skills").glob("*/SKILL.md")) +
+              list(Path("skills").glob("*/skills/*/SKILL.md"))
+          )
+          if not skill_mds:
+              print("ERROR: no skills/*/SKILL.md found")
+              sys.exit(1)
+
+          print(f"linting {len(skill_mds)} SKILL.md files\n")
+
+          for md in skill_mds:
+              parent = md.parent.name
+              text = md.read_text(encoding="utf-8", errors="replace")
+              if not text.startswith("---"):
+                  errors.append(f"{md}: missing YAML frontmatter (no leading ---)")
+                  continue
+              end = text.find("\n---", 3)
+              if end < 0:
+                  errors.append(f"{md}: unclosed YAML frontmatter")
+                  continue
+              try:
+                  fm = yaml.safe_load(text[3:end]) or {}
+              except yaml.YAMLError as e:
+                  errors.append(f"{md}: malformed YAML — {e}")
+                  continue
+              if not isinstance(fm, dict):
+                  errors.append(f"{md}: frontmatter is not a mapping")
+                  continue
+              name = fm.get("name")
+              if not name:
+                  errors.append(f"{md}: missing required field `name`")
+              else:
+                  if not isinstance(name, str):
+                      errors.append(f"{md}: `name` must be a string, got {type(name).__name__}")
+                  elif len(name) > MAX_NAME:
+                      errors.append(f"{md}: `name` exceeds {MAX_NAME} chars ({len(name)})")
+                  elif not NAME_RE.match(name):
+                      errors.append(f"{md}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* (lowercase, hyphens, no leading/trailing/consecutive)")
+                  elif name != parent:
+                      errors.append(f"{md}: `name`='{name}' does not match parent dir '{parent}' (agentskills.io §Name)")
+              if not fm.get("description"):
+                  errors.append(f"{md}: missing required field `description`")
+
+          if errors:
+              print("FAIL — frontmatter violations:\n")
+              for e in errors:
+                  print(f"  {e}")
+              print(f"\n{len(errors)} error(s) across {len(skill_mds)} skill(s)")
+              sys.exit(1)
+          print(f"OK — {len(skill_mds)} SKILL.md files conform to agentskills.io spec")
+          PYEOF
