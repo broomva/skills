@@ -99,6 +99,17 @@ class Dispatcher:
             return "tradingview-paper"
         return route_asset_class(alert.asset_class)
 
+    def active_broker_client(self) -> BrokerClient | None:
+        """The single broker client when in a single-venue mode, else None.
+
+        Used by the operator to read the real book for reconciliation (the
+        TradingView Paper client exposes ``list_positions``). Returns None in
+        mock / multi-broker modes where there is no single real venue.
+        """
+        if self._broker_mode == "tradingview-paper":
+            return self._clients.get("tradingview-paper")
+        return None
+
     async def dispatch(self, alert: TVAlert) -> DispatchResult:
         """Route the alert through idempotency + broker + journal."""
         broker_name = self._route(alert)

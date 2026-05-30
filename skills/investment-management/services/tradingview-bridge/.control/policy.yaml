@@ -139,6 +139,36 @@ gates:
     test-coverage:
       - tests/test_orders.py::test_canary_orders_filtered
 
+  operator-canary-read-only-in-real-venue:
+    enforce: runtime
+    blocker: true
+    description: >
+      CRITICAL. In any real-venue broker mode (tradingview-paper, real-paper)
+      the self-dogfood canary is READ-ONLY — it verifies the venue via
+      health_check(), and NEVER places an order. The place-an-order canary is
+      used only in `mock` mode (harmless MockClient). Without this, running the
+      operator against a real account would drop a canary order every tick.
+      Proven live: 2 operator ticks in tradingview-paper mode placed 0 orders;
+      the canary passed via venue_health.
+    test-coverage:
+      - tests/test_operator_canary.py::test_read_only_canary_never_dispatches
+      - tests/test_operator_canary.py::test_read_only_canary_fails_on_unhealthy_venue
+
+  operator-reconciles-real-book:
+    enforce: runtime
+    blocker: false
+    description: >
+      In a single real-venue mode the operator reconciles its order ledger
+      against the broker's actual positions (TradingViewPaperClient.list_positions).
+      Drift — a position the operator did not place (broker_only) or a believed
+      position the broker no longer shows (ledger_only) — is surfaced via
+      operator_position_drift, never silent. Live read quality is subject to the
+      tab-churn limitation (degrades gracefully to empty); the reconcile logic
+      is unit-tested.
+    test-coverage:
+      - tests/test_operator_positions.py::test_reconcile_matched_and_broker_only_drift
+      - tests/test_operator_loop.py::test_medium_tick_reconciles_against_broker
+
   operator-position-cap-no-silent-exceed:
     enforce: runtime
     blocker: false

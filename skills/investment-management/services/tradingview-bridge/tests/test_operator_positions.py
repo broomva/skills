@@ -81,3 +81,57 @@ async def test_drift_flags_unwanted_position(tmp_orders_db_path: Path) -> None:
     drifts = {d.symbol: d for d in await pm.drift()}
     assert drifts["AAPL"].delta == Decimal("-10")  # sell all AAPL
     assert drifts["MSFT"].delta == Decimal("5")  # buy MSFT
+
+
+# ---- reconciliation against the real broker book ------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_none_without_broker_reader(tmp_orders_db_path: Path) -> None:
+    pm = PositionManager(OrderLedger(db_path=tmp_orders_db_path))
+    assert await pm.reconcile() is None  # mock mode → trust the ledger
+
+
+@pytest.mark.asyncio
+async def test_reconcile_matched_and_broker_only_drift(tmp_orders_db_path: Path) -> None:
+    ledger = OrderLedger(db_path=tmp_orders_db_path)
+    await _buy(ledger, "AAPL", "10", "o1")  # operator placed AAPL
+
+    async def broker() -> dict[str, str]:
+        # broker shows AAPL (matched) + USDCOP the operator never placed (drift)
+        return {"NASDAQ:AAPL": "open", "FX_IDC:USDCOP": "open"}
+
+    rec = await PositionManager(ledger, broker_reader=broker).reconcile()
+    assert rec is not None
+    assert rec.matched == ["AAPL"]
+    assert rec.broker_only == ["USDCOP"]
+    assert rec.ledger_only == []
+    assert rec.has_drift is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_ledger_only_drift(tmp_orders_db_path: Path) -> None:
+    ledger = OrderLedger(db_path=tmp_orders_db_path)
+    await _buy(ledger, "AAPL", "10", "o1")
+
+    async def broker() -> dict[str, str]:
+        return {}  # broker shows nothing — our believed position vanished
+
+    rec = await PositionManager(ledger, broker_reader=broker).reconcile()
+    assert rec is not None
+    assert rec.ledger_only == ["AAPL"]
+    assert rec.has_drift is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_clean_no_drift(tmp_orders_db_path: Path) -> None:
+    ledger = OrderLedger(db_path=tmp_orders_db_path)
+    await _buy(ledger, "AAPL", "10", "o1")
+
+    async def broker() -> dict[str, str]:
+        return {"NASDAQ:AAPL": "open"}  # exactly what we placed
+
+    rec = await PositionManager(ledger, broker_reader=broker).reconcile()
+    assert rec is not None
+    assert rec.matched == ["AAPL"]
+    assert rec.has_drift is False

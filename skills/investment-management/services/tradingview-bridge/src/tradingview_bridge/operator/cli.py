@@ -63,8 +63,21 @@ def _build_loop(args: argparse.Namespace) -> tuple[OperatorLoop, OrderLedger, Pa
         order_ledger=order_ledger,
     )
     probe_url = getattr(args, "probe_url", None)
-    canary = CanaryProbe(dispatcher, http_url=probe_url)
-    positions = PositionManager(order_ledger)
+
+    # In any real-venue mode (e.g. tradingview-paper) the canary MUST be
+    # read-only — placing a canary order every tick against a real account is
+    # the failure mode we are preventing. Only `mock` mode uses the place-order
+    # canary (harmless MockClient).
+    read_only_canary = settings.broker_mode != "mock"
+    canary = CanaryProbe(dispatcher, http_url=probe_url, read_only=read_only_canary)
+
+    # If a single real venue is active, reconcile the ledger against its real
+    # book (the TradingView Paper client exposes list_positions).
+    broker_reader = None
+    active_client = dispatcher.active_broker_client()
+    if active_client is not None:
+        broker_reader = getattr(active_client, "list_positions", None)
+    positions = PositionManager(order_ledger, broker_reader=broker_reader)
     state_path = default_state_path()
     loop = OperatorLoop(
         canary=canary,

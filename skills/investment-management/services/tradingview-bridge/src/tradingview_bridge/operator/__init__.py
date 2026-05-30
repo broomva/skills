@@ -21,7 +21,7 @@ Modules:
 
 from .canary import CanaryProbe, CanaryResult
 from .loop import OperatorLoop
-from .positions import Drift, PositionManager
+from .positions import Drift, PositionManager, Reconciliation
 from .report import report_tick
 from .state import CanarySnapshot, OperatorState
 
@@ -33,5 +33,6 @@ __all__ = [
     "OperatorLoop",
     "OperatorState",
     "PositionManager",
+    "Reconciliation",
     "report_tick",
 ]
