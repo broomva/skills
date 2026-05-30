@@ -160,9 +160,101 @@ PR 2 ships the skeletons that raise `NotConfiguredError` when env vars are missi
 - **TradingView IP allowlist** — defense-in-depth alongside the shared secret.
 - **Bookkeeping journal** — every accepted alert lands in `research/entities/pattern/strategy-{name}.md` via the workspace bookkeeping CLI (graceful no-op if CLI not reachable).
 
+## Autonomous operator (`operate`)
+
+The bridge is not just a passive receiver — it ships a **self-operating control
+loop** that constantly self-dogfoods and manages positions autonomously, so you
+don't have to babysit it. The operator is a controller in the RCS sense:
+
+| Control element | Operator realization |
+|---|---|
+| **Plant** | broker positions + the bridge pipeline state |
+| **Controller** | the multi-rate tick loop (`operator/loop.py`) |
+| **Shields** | `.control/policy.yaml` operator gates (paper-only, dogfood-precondition, hard-halt, position caps) |
+| **Feedback** | the self-dogfood canary + the order ledger + structured-log journal |
+
+### The dogfood-as-precondition interlock (the safety heart)
+
+Every tick, the operator fires a synthetic `__canary__` alert through the **real**
+dispatch pipeline and verifies it roundtrips. **If the canary fails, the operator
+halts position management.** You never manage money on a pipeline you cannot
+confirm works. This is P11 (Empirical Feedback Loop) crystallized into a runtime
+interlock — not a ritual you remember to run, a precondition the loop enforces.
+
+- **soft halt** — one canary failure halts *this tick*; auto-recovers when the canary next passes.
+- **hard halt** — `--halt-after-failures` (default 3) consecutive failures triggers a STICKY halt. A subsequently-passing canary does **not** clear it; only `operate reset` (operator-acknowledged recovery) does. This stops an autonomous loop from silently resuming after an intermittent fault.
+
+Canary orders use a reserved `strategy_name` (`__canary__`) and are filtered at
+the single order-ledger write point, so the self-dogfood can never move the book
+it is meant to verify.
+
+### Multi-rate cadence (echoes the RCS L0/L1/L2 hierarchy)
+
+| Rate | Every | Does |
+|---|---|---|
+| fast | tick | self-dogfood canary roundtrip ("is the pipeline alive?") |
+| medium | `--medium-every` ticks (default 5) | read net positions; flag if open-position count exceeds `--max-open-positions` |
+| slow | `--slow-every` ticks (default 1440 ≈ daily at 60s) | compute drift vs target allocation; report |
+
+### Commands
+
+```bash
+operate tick        # one tick (cron / loop friendly). Exit 0 if canary passed, 1 otherwise.
+operate run --interval 60   # continuous daemon
+operate status      # print operator state as JSON
+operate positions   # print net positions
+operate reset       # clear a hard halt (operator-acknowledged recovery)
+```
+
+`operate tick` writes **clean JSON to stdout** (logs go to stderr), so
+`operate tick | jq` works in scripts. State persists to
+`~/.tradingview-bridge/operator-state.json` (override with
+`TVBRIDGE_OPERATOR_STATE_PATH`), so the loop is **restart-safe** (P12): a cron, a
+`/loop`, or a `persist iterate` all resume from the same on-disk state.
+
+### Worked example (live)
+
+```bash
+$ operate tick | jq '{tick_count, last_canary_passed, mgmt: (.last_canary_passed and (.hard_halted|not))}'
+{ "tick_count": 1, "last_canary_passed": true, "mgmt": true }
+
+# Force the interlock: point the HTTP canary at a dead bridge
+$ operate tick --probe-url http://127.0.0.1:59999 --halt-after-failures 3   # x3
+{ "tick": 3, "canary": false, "consec_fail": 3, "hard_halted": true, "mgmt": false }
+
+# A healthy canary does NOT clear a hard halt:
+$ operate tick | jq '{canary: .last_canary_passed, hard_halted, mgmt}'
+{ "canary": true, "hard_halted": true, "mgmt": false }
+
+# Only reset does:
+$ operate reset >/dev/null && operate tick | jq '.mgmt'
+true
+```
+
+### Scheduling — pick the mechanism (P19 cube)
+
+The operator loop is mechanism-agnostic. Wire it to whichever fits:
+
+| Shape | Mechanism | How |
+|---|---|---|
+| in-session, internal | `/loop` | `/loop 60s operate tick` |
+| across-session, cron | `schedule` / CronCreate | a routine firing `operate tick` every minute |
+| across-session, external | `persist iterate` | `operate tick` in a `PROMPT.md`-driven restart loop |
+| true daemon | launchd / systemd | a unit running `operate run --interval 60` |
+
+A cron / `/loop` driving `operate tick` is the recommended default — each
+invocation is a fresh process reading persisted state, which is the most
+restart-resilient form (no in-process loop to decay over long horizons).
+
+### What the operator does NOT do yet (deferred)
+
+- **Auto-rebalance execution** — drift is *computed and reported*; the operator does not yet place corrective orders. (Next: gate-guarded auto-rebalance in paper mode.)
+- **Real-paper broker position reads** — positions come from the order ledger (what the bridge dispatched), not from polling IBKR/Kraken. True reconciliation against broker state needs the real-paper SDK wiring (PR 2b).
+- **Price-weighted drift / EGRI strategy-param optimization** — drift is in units, not value; target allocation is units per symbol. Price-weighted rebalancing composes this with the parent skill's `market_data.py` + `backtest.py` (a follow-up).
+
 ## See also
 
 - `SKILL.md` (this repo) — parent skill
 - [`broomva/finance-substrate`](https://github.com/broomva/finance-substrate) — tax substrate (Form 210, DIAN, TRM)
 - [Broker selection ADR](https://github.com/broomva/workspace/blob/main/docs/specs/2026-05-22-broker-selection-cross-asset.html)
-- [Linear ticket BRO-167](https://github.com/broomva/workspace/blob/main/tasks/bro-167-cross-asset-trading-platform.md)
+- [Linear ticket BRO-167](https://github.com/broomva/workspace/blob/main/tasks/bro-167-cross-asset-trading-platform.md) (platform) · BRO-1247 (autonomous operator)

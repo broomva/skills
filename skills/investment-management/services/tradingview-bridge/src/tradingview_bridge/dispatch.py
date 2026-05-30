@@ -26,6 +26,7 @@ from .bookkeeping import schedule_journal
 from .clients import IBKRClient, KrakenClient, PolymarketClient
 from .clients.base import BrokerClient, BrokerName, NotConfiguredError
 from .idempotency import IdempotencyRecord, IdempotencyStore
+from .orders import OrderLedger
 from .schemas import AssetClass, DispatchResult, TVAlert
 
 log = structlog.get_logger("tradingview_bridge.dispatch")
@@ -57,6 +58,7 @@ class Dispatcher:
         broker_mode: str = "mock",
         idempotency_store: IdempotencyStore | None = None,
         clients_override: dict[BrokerName, BrokerClient] | None = None,
+        order_ledger: OrderLedger | None = None,
     ) -> None:
         """
         Args:
@@ -65,9 +67,14 @@ class Dispatcher:
                 (acceptable for tests that don't assert idempotency).
             clients_override: test hook — inject specific clients without
                 instantiating the real classes.
+            order_ledger: SQLite-backed economic record of accepted orders,
+                read by the autonomous operator for position tracking. None
+                disables order recording (acceptable for receiver-only tests).
+                Canary orders are filtered out by the ledger itself.
         """
         self._broker_mode = broker_mode
         self._idempotency = idempotency_store
+        self._order_ledger = order_ledger
 
         if clients_override is not None:
             self._clients: dict[BrokerName, BrokerClient] = clients_override
@@ -151,6 +158,21 @@ class Dispatcher:
                 alert_id=alert.alert_id,
                 broker=broker_name,
                 order_id=receipt.order_id,
+            )
+
+        # Record in the order ledger for position tracking (canary orders are
+        # filtered out inside append()). Awaited so positions stay accurate.
+        if self._order_ledger is not None:
+            await self._order_ledger.append(
+                order_id=receipt.order_id,
+                alert_id=alert.alert_id,
+                strategy_name=alert.strategy_name,
+                broker=broker_name,
+                asset_class=alert.asset_class,
+                symbol=alert.symbol,
+                action=alert.action,
+                size=alert.size,
+                paper=receipt.paper,
             )
 
         # Fire-and-forget bookkeeping
