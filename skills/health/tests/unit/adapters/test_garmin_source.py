@@ -17,7 +17,7 @@ import pytest
 from broomva_health.adapters.clock import FakeClock
 from broomva_health.adapters.mfa.prompt import StaticMFAProvider
 from broomva_health.adapters.rate_limiters.token_bucket import TokenBucketRateLimiter
-from broomva_health.adapters.sources.garmin import GarminTraceSource
+from broomva_health.adapters.sources.garmin import GarminTraceSource, _tokens_look_valid
 from broomva_health.adapters.token_stores.filesystem import FilesystemTokenStore
 from broomva_health.config.paths import HealthPaths
 from broomva_health.domain.errors import AuthRequired, RateLimited, SourceUnavailable
@@ -108,16 +108,37 @@ class FakeGarminClient:
     login_should_raise: BaseException | None = None
     login_calls: list[Any] = field(default_factory=list)
     dump_calls: list[Any] = field(default_factory=list)
-    dump_payload: bytes = b'{"oauth1": "x", "oauth2": "y"}'
+    # A real garmin_tokens.json is substantial JSON (>50 bytes); mirror that so
+    # _tokens_look_valid() accepts it.
+    dump_payload: bytes = (
+        b'{"oauth1_token": {"oauth_token": "fake-oauth1-aaaaaaaaaaaa", '
+        b'"oauth_token_secret": "fake-secret-bbbbbbbbbbbb"}, '
+        b'"oauth2_token": {"access_token": "fake-access-cccccccccccc", '
+        b'"refresh_token": "fake-refresh-dddddddddddd", "expires_in": 3600}}'
+    )
+    # Set False to simulate the 429 false-positive: login() reports success but
+    # NO tokens land on disk.
+    write_tokens_on_login: bool = True
 
-    def login(self, tokenstore: Any | None = None) -> None:
+    def login(self, tokenstore: Any | None = None) -> tuple[None, None]:
         self.login_calls.append(tokenstore)
         if self.login_should_raise is not None:
             raise self.login_should_raise
+        # Mirror garminconnect >=0.3: login(tokenstore=dir) self-persists
+        # garmin_tokens.json via the inner client.dump(dir). Returns
+        # (needs_mfa, _) — (None, None) on clean success.
+        if tokenstore and self.write_tokens_on_login:
+            from pathlib import Path as _P
+
+            target = _P(tokenstore) / "garmin_tokens.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(self.dump_payload)
+        return (None, None)
 
     def dump_tokens(self, path: str) -> None:
+        # Retained for back-compat; the adapter no longer calls this
+        # (login(tokenstore=) is the persist path in garminconnect >=0.3).
         self.dump_calls.append(path)
-        # Write a fake token file to the path so the adapter can read it back
         from pathlib import Path as _P
 
         target = _P(path) / "garmin_tokens.json"
@@ -427,7 +448,8 @@ def test_status_with_tokens_returns_valid(
     bundle = TokenBundle.model_construct(
         source=Source.GARMIN,
         profile="default",
-        raw_bytes=b"x",
+        # token_valid is now VALIDITY not presence — must be substantial token JSON
+        raw_bytes=b'{"oauth2_token":{"access_token":"' + b"a" * 80 + b'"}}',
         stored_at=T0,
         expires_at=T0 + timedelta(hours=24),
     )
@@ -452,7 +474,7 @@ def test_status_makes_no_network_call(
 def test_authenticate_persists_tokens(
     paths: HealthPaths, store: FilesystemTokenStore
 ) -> None:
-    client = FakeGarminClient(dump_payload=b'{"oauth1": "abc"}')
+    client = FakeGarminClient()  # default payload is realistic (>50 bytes)
     factory = FakeClientFactory(client)
     src = GarminTraceSource(paths=paths, client_factory=factory)
 
@@ -470,10 +492,14 @@ def test_authenticate_persists_tokens(
     assert kwargs["password"] == "hunter2"
     assert callable(kwargs["prompt_mfa"])
 
-    # Tokens persisted
+    # login() was given the tokenstore dir so the library self-persists
+    assert client.login_calls
+    assert client.login_calls[0] is not None
+
+    # Tokens persisted = exactly what login() wrote to garmin_tokens.json
     loaded = store.get(Source.GARMIN)
     assert loaded is not None
-    assert loaded.raw_bytes == b'{"oauth1": "abc"}'
+    assert loaded.raw_bytes == client.dump_payload
 
 
 def test_authenticate_missing_creds_raises_auth_required(
@@ -555,3 +581,115 @@ def test_backfill_rejects_inverted_range(
             start=date(2026, 5, 25),
             end=date(2026, 5, 20),
         )
+
+
+# --------------------------------------------------------------------------- #
+# Auth honesty — regressions for the live-dogfood false-positive (BRO-1252)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b"", False),
+        (None, False),
+        (b"   ", False),
+        (b"{}", False),  # parses but empty
+        (b"x", False),  # too short
+        (b'{"a": 1}', False),  # valid JSON but < 50 bytes
+        (b'{"oauth2_token":{"access_token":"' + b"a" * 80 + b'"}}', True),
+        (b"opaque-but-substantial-" + b"z" * 60, True),  # non-JSON but big
+    ],
+)
+def test_tokens_look_valid_cases(raw: bytes | None, expected: bool) -> None:
+    assert _tokens_look_valid(raw) is expected
+
+
+def test_authenticate_rejects_login_success_without_tokens(
+    paths: HealthPaths, store: FilesystemTokenStore
+) -> None:
+    """login() returns success but writes NO token file (the 429 false-positive).
+
+    Must raise AuthRequired and persist NOTHING — never report a phantom auth.
+    """
+    client = FakeGarminClient(write_tokens_on_login=False)
+    src = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(client))
+    with pytest.raises(AuthRequired, match="no valid tokens"):
+        src.authenticate(
+            token_store=store,
+            mfa=StaticMFAProvider("123456"),
+            email="me@example.com",
+            password="pw",
+        )
+    # No phantom bundle persisted → status stays honest.
+    assert store.get(Source.GARMIN) is None
+
+
+def test_status_empty_bundle_reports_invalid(
+    paths: HealthPaths, store: FilesystemTokenStore
+) -> None:
+    """A 0-byte bundle (the poisoned-token state) must report token_valid=False."""
+    bundle = TokenBundle.model_construct(
+        source=Source.GARMIN,
+        profile="default",
+        raw_bytes=b"",
+        stored_at=T0,
+        expires_at=None,
+    )
+    store.put(bundle)
+    src = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(FakeGarminClient()))
+    status = src.status(token_store=store)
+    assert status.token_valid is False
+
+
+def test_authenticate_429_sets_cooldown_and_blocks_immediate_retry(
+    paths: HealthPaths, store: FilesystemTokenStore
+) -> None:
+    """A 429 on auth writes a cooldown; the next auth is refused BEFORE login.
+
+    This is the anti-amplification guard for the exact incident that motivated
+    BRO-1252 (six `auth login` retries in three minutes extending the lockout).
+    """
+    failing = FakeGarminClient(login_should_raise=FakeHTTPError(429))
+    src1 = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(failing))
+    with pytest.raises(RateLimited):
+        src1.authenticate(
+            token_store=store,
+            mfa=StaticMFAProvider("123456"),
+            email="me@example.com",
+            password="pw",
+        )
+    assert (paths.config_dir / "garmin_auth_cooldown.json").exists()
+
+    # Second attempt — even with a client that WOULD succeed — is refused by the
+    # cooldown guard before any login() call.
+    fresh = FakeGarminClient()
+    src2 = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(fresh))
+    with pytest.raises(RateLimited):
+        src2.authenticate(
+            token_store=store,
+            mfa=StaticMFAProvider("123456"),
+            email="me@example.com",
+            password="pw",
+        )
+    assert fresh.login_calls == []  # guard fired before any network call
+
+
+def test_authenticate_success_clears_prior_cooldown(
+    paths: HealthPaths, store: FilesystemTokenStore
+) -> None:
+    """A successful auth wipes any stale cooldown marker."""
+    marker = paths.config_dir / "garmin_auth_cooldown.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    # Stale cooldown already expired → guard lets the attempt through.
+    marker.write_text('{"until": "2000-01-01T00:00:00+00:00"}')
+    client = FakeGarminClient()
+    src = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(client))
+    src.authenticate(
+        token_store=store,
+        mfa=StaticMFAProvider("123456"),
+        email="me@example.com",
+        password="pw",
+    )
+    assert not marker.exists()  # cleared on success
+    assert store.get(Source.GARMIN) is not None

@@ -1,9 +1,11 @@
 """Garmin Connect trace source adapter.
 
-Built on `garminconnect >= 0.2.20` (PyPI package; GitHub repo is
-`cyberjunky/python-garminconnect`). May 2026 substrate — the upstream
-`matin/garth` was deprecated 2026-03-28 after Cloudflare's WAF killed
-the mobile-SSO endpoint. The library wraps Garmin's web API with
+Built on `garminconnect >= 0.3.3` (PyPI package; GitHub repo is
+`cyberjunky/python-garminconnect`; 0.3.3 is the current latest — there is
+no 0.3.4). May 2026 substrate — the upstream `matin/garth` was deprecated
+2026-03-28 after Cloudflare's WAF killed the mobile-SSO endpoint. Auth
+contract: `Garmin(prompt_mfa=...).login(tokenstore=<dir>) -> (needs_mfa, _)`;
+the library self-persists `garmin_tokens.json` into the tokenstore dir. The library wraps Garmin's web API with
 `curl_cffi` Chrome-TLS impersonation; we wrap *that* with the TraceSource
 protocol so the rest of the codebase sees a stable interface even as the
 upstream library churns.
@@ -22,6 +24,7 @@ Discipline:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
@@ -64,6 +67,19 @@ _DEFAULT_429_RETRY_AFTER_S = 900.0  # 15 min — matches min_interval setpoint
 _GARMIN_DEVICE_MANUFACTURER = "garmin"
 _GARMIN_LIB_TOKEN_FILE = "garmin_tokens.json"
 
+# Auth-retry guard. Garmin 429s are account+IP-scoped and *compound* with every
+# retry (see References/rate-limit-discipline.md — observed 48-72h lockouts).
+# After a failed `auth login` we refuse re-auth for a cooldown window so the
+# skill can't amplify a lockout the way a human hammering the command does.
+_AUTH_COOLDOWN_FILE = "garmin_auth_cooldown.json"
+_AUTH_COOLDOWN_FAIL_S = 60.0  # generic failed auth — short breather
+_AUTH_COOLDOWN_429_S = 900.0  # detected 429 — full rate-limit window
+
+# A real garmin_tokens.json carries base64 OAuth1/OAuth2 material (hundreds of
+# bytes). Anything shorter (0 bytes, whitespace, "{}") means login returned
+# without actually obtaining tokens — the live-dogfood false-positive mode.
+_MIN_TOKEN_BYTES = 50
+
 
 # ---------- Library wiring (lazy) ----------
 
@@ -93,6 +109,33 @@ def _is_auth_exception(exc: BaseException) -> bool:
         return False
     auth_exc = getattr(garminconnect, "GarminConnectAuthenticationError", None)
     return auth_exc is not None and isinstance(exc, auth_exc)
+
+
+def _tokens_look_valid(raw: bytes | None) -> bool:
+    """True only if `raw` looks like real persisted Garmin tokens.
+
+    Guards the live-dogfood false-positive: garminconnect's `login()` can
+    return `(None, None)` ("clean success") yet write an empty/`{}` token file
+    when a 429 left a half-session. A genuine token file is substantial JSON.
+    """
+    if not raw:
+        return False
+    text = raw.decode("utf-8", "replace").strip()
+    if len(text) < _MIN_TOKEN_BYTES:
+        return False
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return True  # substantial non-JSON blob — opaque but present
+    return bool(data)  # non-empty dict/list/str
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """429 may surface as an HTTPError with .response OR only in the message
+    (garminconnect logs '... returned 429 ...' then raises a generic auth error)."""
+    if _http_status(exc) == 429:
+        return True
+    return "429" in str(exc) or "rate limit" in str(exc).lower()
 
 
 def _http_status(exc: BaseException) -> int | None:
@@ -146,8 +189,13 @@ class GarminTraceSource:
                 profile=profile,
             )
 
-        # The library accepts a `prompt_mfa` callable invoked when the
-        # account is challenged. Wrap our MFAProvider so the library can call it.
+        # Refuse re-auth while a prior failure's cooldown is active — hammering
+        # `auth login` only extends Garmin's account-scoped 429 lockout.
+        self._guard_auth_cooldown()
+
+        # The library accepts a `prompt_mfa` callable invoked when the account
+        # is challenged (TOTP / authenticator app). Constructor-passing is the
+        # correct shape for garminconnect ≥ 0.3.
         def _prompt_mfa() -> str:
             return mfa.prompt(str(Source.GARMIN))
 
@@ -158,16 +206,47 @@ class GarminTraceSource:
             email=email, password=password, prompt_mfa=_prompt_mfa
         )
 
+        # Pass `tokenstore` so the library persists tokens ITSELF via its inner
+        # `client.dump(dir)` (writes garmin_tokens.json). garminconnect ≥ 0.3 has
+        # no `dump_tokens`/`garth_dump` on the Garmin object — the previous code
+        # called those non-existent methods and silently persisted nothing.
         try:
-            client.login()
-        except Exception as exc:
+            result = client.login(tokenstore=str(token_dir))
+        except TypeError:
+            # Older shape without the `tokenstore` kwarg — fall back to bare login.
+            try:
+                result = client.login()
+            except Exception as exc:
+                self._record_auth_failure(exc)
+                self._raise_mapped(exc, op="authenticate")
+                raise  # unreachable; _raise_mapped always raises
+        except Exception as exc:  # mapped to a domain error below
+            self._record_auth_failure(exc)
             self._raise_mapped(exc, op="authenticate")
             raise  # unreachable; _raise_mapped always raises
 
-        # After login the library exposes `dump_tokens(<dir>)` (older releases
-        # call it `garth_client.dump`). Persist via our TokenStore so the
-        # bundle survives + the Garmin-compat mirror file lives alongside.
-        raw = self._dump_library_tokens(client, token_dir)
+        # login() -> (needs_mfa, _); (None, None) is a clean success. A truthy
+        # first element means a deferred MFA challenge we can't satisfy here.
+        needs_mfa = result[0] if isinstance(result, (tuple, list)) and result else None
+        if needs_mfa:
+            raise MFANeeded(
+                "Garmin returned an MFA challenge that wasn't satisfied; "
+                "re-run `health auth login` and enter the code when prompted.",
+                profile=profile,
+            )
+
+        # CRITICAL: login() can return success WITHOUT writing real tokens when
+        # a 429 leaves a half-session (the live-dogfood false-positive). Verify
+        # the library actually persisted substantial token material before we
+        # declare success — otherwise raise so the user sees the real failure.
+        try:
+            raw = self._read_persisted_tokens(token_dir)
+        except AuthRequired:
+            # A success-without-tokens result is almost always a silent 429 —
+            # set a cooldown so a reflexive retry can't amplify the lockout.
+            self._record_auth_failure()
+            raise
+
         bundle = TokenBundle(
             source=Source.GARMIN,
             profile=profile,
@@ -176,6 +255,7 @@ class GarminTraceSource:
             expires_at=None,
         )
         token_store.put(bundle)
+        self._clear_auth_cooldown()  # success — wipe any prior cooldown marker
 
     def sync(
         self,
@@ -403,12 +483,16 @@ class GarminTraceSource:
         # NO network — P15-reflex path. The CLI cross-references last_sync
         # against the repository separately.
         bundle = token_store.get(Source.GARMIN, profile)
+        # token_valid is VALIDITY, not mere presence — an empty/half-written
+        # bundle (the 429 false-positive) must report invalid so the user
+        # isn't told they're authenticated when sync will fail.
+        valid = bundle is not None and _tokens_look_valid(bundle.raw_bytes)
         return SourceStatus(
             source=Source.GARMIN,
             last_sync=None,
             last_error=None,
             rate_limit_resets_at=None,
-            token_valid=bundle is not None,
+            token_valid=valid,
             token_expires_at=bundle.expires_at if bundle is not None else None,
         )
 
@@ -495,27 +579,68 @@ class GarminTraceSource:
             raise
         return client
 
-    def _dump_library_tokens(self, client: Any, token_dir: Any) -> bytes:
-        """Persist the library's tokens to `token_dir` and return raw bytes."""
-        # Prefer the documented dump API; fall back if missing.
-        for method_name in ("dump_tokens", "garth_dump"):
-            method = getattr(client, method_name, None)
-            if callable(method):
-                try:
-                    method(str(token_dir))
-                except Exception as exc:
-                    logger.debug("Token dump via %s failed: %s", method_name, exc)
-                    continue
-                break
+    def _read_persisted_tokens(self, token_dir: Any) -> bytes:
+        """Read + validate the token file the library wrote via `login(tokenstore=)`.
 
+        Raises `AuthRequired` if the file is missing or doesn't carry real
+        token material — the explicit guard against the false-positive where
+        `login()` reports success but a 429 prevented real tokens from landing.
+        """
         token_file = token_dir / _GARMIN_LIB_TOKEN_FILE
-        if token_file.exists():
-            return token_file.read_bytes()
+        raw = token_file.read_bytes() if token_file.exists() else b""
+        if not _tokens_look_valid(raw):
+            raise AuthRequired(
+                "Garmin login returned but no valid tokens were written "
+                f"({token_file} is missing or empty). This is almost always a "
+                "429 rate-limit that returned without raising. Do NOT retry "
+                "immediately — each attempt extends Garmin's account lockout. "
+                "Wait for it to clear (often hours), then `health auth login` once.",
+                token_file=str(token_file),
+            )
+        return raw
 
-        # Last resort: dump whatever the library has on it as a JSON-ish blob.
-        # Keep it opaque — the consumer only round-trips the bytes.
-        logger.warning("Garmin lib did not write %s; persisting empty bundle", token_file)
-        return b""
+    # --- auth-retry cooldown (anti-amplification) ---
+
+    def _auth_cooldown_path(self) -> Any:
+        return self._paths.config_dir / _AUTH_COOLDOWN_FILE
+
+    def _guard_auth_cooldown(self) -> None:
+        """Raise RateLimited if a prior failed auth set a still-active cooldown."""
+        path = self._auth_cooldown_path()
+        if not path.exists():
+            return
+        try:
+            until = ensure_utc(datetime.fromisoformat(json.loads(path.read_text())["until"]))
+        except (OSError, ValueError, KeyError, TypeError):
+            return  # unreadable marker — don't block on it
+        remaining = (until - utc_now()).total_seconds()
+        if remaining > 0:
+            raise RateLimited(
+                f"Garmin auth is cooling down for ~{int(remaining)}s after a recent "
+                "failed login. Retrying now only extends Garmin's lockout — wait it out.",
+                retry_after_s=float(int(remaining)),
+            )
+
+    def _record_auth_failure(self, exc: BaseException | None = None) -> None:
+        """Persist a cooldown after a failed auth (longer if it looks like a 429)."""
+        cooldown = (
+            _AUTH_COOLDOWN_429_S
+            if exc is not None and _is_rate_limit_error(exc)
+            else _AUTH_COOLDOWN_FAIL_S
+        )
+        until = utc_now() + timedelta(seconds=cooldown)
+        try:
+            path = self._auth_cooldown_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"until": until.isoformat()}))
+        except OSError as exc2:  # pragma: no cover — best-effort
+            logger.debug("Could not write auth cooldown marker: %s", exc2)
+
+    def _clear_auth_cooldown(self) -> None:
+        try:
+            self._auth_cooldown_path().unlink(missing_ok=True)
+        except OSError:  # pragma: no cover
+            pass
 
     def _default_device(self) -> Device:
         return Device(
