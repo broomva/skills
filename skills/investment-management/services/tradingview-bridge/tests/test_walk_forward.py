@@ -71,3 +71,37 @@ def test_full_backtest_attached() -> None:
     assert wf.full.symbol == "MSFT"
     assert wf.full.n_bars == 100
     assert wf.strategy == "sma-crossover-5-20"
+
+
+def test_windows_tile_full_return() -> None:
+    """Regression: windows must SHARE boundaries so compounding the per-window
+    returns reproduces the full backtest return. The earlier bug baselined each
+    window at its own first bar, dropping the equity move BETWEEN windows — so a
+    strategy that grew capital could read as 0% consistent. Guard the invariant
+    directly: product of (1 + window_return) == 1 + full_return."""
+    # V-shape: decline then sustained rise → SMA golden cross fires an entry the
+    # strategy holds through the recovery, so equity actually compounds (a pure
+    # uptrend never crosses, so it would never trade).
+    closes = [100.0 - i for i in range(15)] + [85.0 + i * 1.5 for i in range(45)]
+    wf = walk_forward(
+        SMACrossover(2, 5), _bars(closes), symbol="T", asset_class="stock", n_windows=4
+    )
+    compounded = Decimal(1)
+    for w in wf.windows:
+        compounded *= Decimal(1) + w.return_pct / Decimal(100)
+    full_growth = Decimal(1) + wf.full.total_return_pct / Decimal(100)
+    assert abs(compounded - full_growth) < Decimal("0.001")
+    # the user-facing symptom of the old bug: a winner must not read as 0% consistent
+    assert wf.full.total_return_pct > 0
+    assert wf.consistency_pct > Decimal(0)
+
+
+def test_windows_share_boundaries() -> None:
+    """Each window (after the first) starts where the previous ended — a
+    contiguous tiling of the equity curve, no gaps, no dropped bars."""
+    closes = [100.0 - i for i in range(15)] + [85.0 + i * 1.5 for i in range(85)]
+    wf = walk_forward(
+        SMACrossover(5, 20), _bars(closes), symbol="T", asset_class="stock", n_windows=5
+    )
+    for prev, cur in zip(wf.windows, wf.windows[1:], strict=False):
+        assert cur.start_index == prev.end_index  # shared boundary point

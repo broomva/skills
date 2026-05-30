@@ -112,12 +112,21 @@ def walk_forward(
 
     windows: list[WindowMetrics] = []
     for k in range(n_windows):
+        # Bars [a, b] tile the index space disjointly; the last window absorbs
+        # the remainder.
         a = k * seg
         b = (k + 1) * seg - 1 if k < n_windows - 1 else n - 1
-        start_eq = eq[a]
-        end_eq = eq[b]
+        # Baseline at the PRIOR window's last equity point (shared boundary) so
+        # the equity move entering this window (eq[a-1] -> eq[a]) is attributed
+        # here, not silently dropped. Adjacent windows thus overlap by exactly
+        # one boundary point and TILE the curve: the product of per-window gross
+        # returns reproduces the full backtest return. Without this, n_windows-1
+        # bar moves vanish and a winning strategy can read as 0% consistent.
+        lo = a - 1 if k > 0 else a
+        seg_eq = eq[lo : b + 1]
+        start_eq = seg_eq[0]
+        end_eq = seg_eq[-1]
         win_return = (end_eq - start_eq) / start_eq * Decimal(100) if start_eq > 0 else Decimal(0)
-        seg_eq = eq[a : b + 1]
         seg_returns = [
             float((seg_eq[i] - seg_eq[i - 1]) / seg_eq[i - 1])
             for i in range(1, len(seg_eq))
@@ -126,7 +135,7 @@ def walk_forward(
         windows.append(
             WindowMetrics(
                 index=k,
-                start_index=a,
+                start_index=lo,
                 end_index=b,
                 return_pct=win_return,
                 sharpe=_sharpe(seg_returns, periods_per_year),
