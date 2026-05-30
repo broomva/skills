@@ -167,12 +167,28 @@ gates:
     enforce: runtime
     blocker: true
     description: >
-      v1 supports market buy/sell only. close/flatten and limit/stop raise
-      NotImplementedError, which the dispatcher renders as a clean `rejected`
-      DispatchResult — never a silent partial action against the account.
+      Full order lifecycle: market buy/sell, close (per symbol), flatten (all),
+      cancel. Each maps to an explicit UI flow; a missing control raises and the
+      dispatcher renders a clean `rejected` — never a silent partial action.
+      A double-submit guard ensures a quick button that places immediately is
+      never followed by a second ticket-submit click. limit/stop + modify are
+      deferred.
     test-coverage:
-      - tests/test_clients_tradingview_paper.py::test_close_action_deferred
-      - tests/test_clients_tradingview_paper.py::test_flatten_action_deferred
+      - tests/test_clients_tradingview_paper.py::test_no_double_submit_when_quick_button_places_immediately
+      - tests/test_clients_tradingview_paper.py::test_close_action_via_place_order
+      - tests/test_clients_tradingview_paper.py::test_flatten_action_via_place_order
+      - tests/test_clients_tradingview_paper.py::test_close_action_no_position_becomes_rejected
+
+  tradingview-paper-list-orders-no-phantom:
+    enforce: runtime
+    blocker: false
+    description: >
+      list_orders() is gated on the `Orders N` tab count and reads working
+      orders from row cells — never from the order-entry ticket submit button
+      (which also reads as `Buy N SYM @ price`). Caught live: a phantom order
+      was reported when 0 were working. Regression-tested.
+    test-coverage:
+      - tests/test_clients_tradingview_paper.py::test_list_orders_ignores_ticket_button_when_count_zero
 
   tradingview-paper-browser-failure-is-rejected:
     enforce: runtime

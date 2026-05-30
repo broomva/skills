@@ -175,9 +175,19 @@ uv run uvicorn tradingview_bridge.app:app --port 8787
 - click the side control (`Buy…`/`Sell…`), set quantity, confirm
 - read positions / account balance / PnL from the panel
 
-**v1 scope:** market buy/sell + account/positions read. `close`/`flatten` and limit/stop orders raise `NotImplementedError` → a clean `rejected` DispatchResult (never a silent partial action). Browser/Interceptor unreachable → `NotConfiguredError` → `rejected` (never touches the account on an unverified surface).
+**Order-management surface** (full lifecycle):
+- `place_order(buy/sell)` — market order via the ticket, with a **double-submit guard** (the ticket submit is only clicked if it is a distinct element from the quick button, so a quick button that places immediately never double-fires)
+- `place_order(close)` → `close_position(symbol)` — close the position for that symbol
+- `place_order(flatten)` → close **all** open positions
+- `cancel_order(symbol)` — cancel a working order
+- `list_positions()` — open positions keyed by `EXCHANGE:TICKER`
+- `list_orders()` — *working* orders only (gated on the `Orders N` tab count, so the order-entry ticket button is never reported as a phantom working order)
 
-**CI vs live:** CI has no browser, so the adapter is unit-tested with a scripted fake driver (asserts the UI-action *sequence*). The real DOM is exercised by the **live Interceptor dogfood** — which confirmed, against a live session: navigate to any symbol, read account balance/equity/PnL/margin, read open positions, and identify the exact Buy/Sell/confirm controls by name. Placing a live order is a deliberate action you trigger (or the operator does under its interlock).
+Browser/Interceptor unreachable → `NotConfiguredError` → `rejected` (never touches the account on an unverified surface). Reads degrade gracefully (`[]`/`{}` + warning) rather than crashing. **Deferred:** limit/stop order types, `modify_order`, `protect` (stop/TP).
+
+> **Operational note:** the adapter re-opens the chart tab per call; firing many calls in rapid succession can exhaust the Interceptor extension (tab-create timeouts), at which point reads degrade gracefully. Production tuning (single persistent tab, fewer re-opens) is a tracked fast-follow.
+
+**CI vs live:** CI has no browser, so the adapter is unit-tested with a scripted fake driver (asserts the UI-action *sequence*). The real DOM is exercised by the **live Interceptor dogfood** — which confirmed, against a live session: read account balance/equity/PnL/margin + open positions; `place_order` (created a working order, Orders 0→1, double-submit guard held); `cancel_order` (Orders 1→0); `list_positions`/`list_orders` parsed correctly. close/flatten are unit-tested (live-exercising them requires a filled position).
 
 ## Safety
 
