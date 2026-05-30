@@ -1,6 +1,6 @@
 [project]
 name = "tradingview-bridge"
-version = "0.4.0"
+version = "0.5.0"
 description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor + autonomous self-dogfooding operator"
 readme = "README.md"
 requires-python = ">=3.11"

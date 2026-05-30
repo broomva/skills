@@ -14,16 +14,27 @@ import pytest
 
 from tradingview_bridge.clients.base import NotConfiguredError
 from tradingview_bridge.clients.tradingview_paper import TradingViewPaperClient
-from tradingview_bridge.interceptor_driver import InterceptorError
+from tradingview_bridge.interceptor_driver import InterceptorError, find_ref
 from tradingview_bridge.schemas import TVAlert
 
 
 class FakeDriver:
-    """Records calls; `find` pops scripted return values in order."""
+    """Records calls. Dual-mode `find`:
 
-    def __init__(self, find_returns: list[str | None] | None = None) -> None:
+    - if `find_returns` is non-empty, pop scripted values in order (precise
+      control for the place/submit flows);
+    - else resolve against `tree` via the real `find_ref` (realistic for the
+      list/close/cancel flows that parse the tree).
+    """
+
+    def __init__(
+        self,
+        find_returns: list[str | None] | None = None,
+        tree: str = "",
+    ) -> None:
         self.calls: list[tuple[str, ...]] = []
         self._find_returns = list(find_returns or [])
+        self._tree = tree
         self.raise_on_open = False
 
     async def open(self, url: str, *, reuse: bool = True) -> str:
@@ -34,7 +45,7 @@ class FakeDriver:
 
     async def read_tree(self) -> str:
         self.calls.append(("read_tree",))
-        return ""
+        return self._tree
 
     async def read_text(self) -> str:
         self.calls.append(("read_text",))
@@ -42,7 +53,9 @@ class FakeDriver:
 
     async def find(self, role: str, name: str, *, exact: bool = False) -> str | None:
         self.calls.append(("find", role, name))
-        return self._find_returns.pop(0) if self._find_returns else None
+        if self._find_returns:
+            return self._find_returns.pop(0)
+        return find_ref(self._tree, role, name, exact=exact)
 
     async def act(self, ref: str) -> None:
         self.calls.append(("act", ref))
@@ -113,18 +126,160 @@ async def test_connect_flow_when_not_connected() -> None:
     assert "e-confirm" in acted
 
 
-@pytest.mark.asyncio
-async def test_close_action_deferred() -> None:
-    client = TradingViewPaperClient(FakeDriver())
-    with pytest.raises(NotImplementedError, match="deferred"):
-        await client.place_order(_alert(action="close"))
+# ---- double-submit guard ------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_flatten_action_deferred() -> None:
-    client = TradingViewPaperClient(FakeDriver())
-    with pytest.raises(NotImplementedError):
-        await client.place_order(_alert(action="flatten"))
+async def test_no_double_submit_when_quick_button_places_immediately() -> None:
+    """If the quick Buy button places the order (no ticket opens), the client
+    must NOT click a second time."""
+    # _ensure Buy -> e-quick (connected); _require Buy -> e-quick; qty -> None;
+    # submit "Buy " -> None (no ticket)
+    driver = FakeDriver(find_returns=["e-quick", "e-quick", None, None])
+    client = TradingViewPaperClient(driver)
+    await client.place_order(_alert(action="buy"))
+    assert driver.acted() == ["e-quick"]  # exactly one click, no double-fire
+
+
+@pytest.mark.asyncio
+async def test_submits_ticket_when_distinct_from_quick_button() -> None:
+    driver = FakeDriver(find_returns=["e-quick", "e-quick", "e-qty", "e-submit"])
+    client = TradingViewPaperClient(driver)
+    await client.place_order(_alert(action="buy"))
+    assert driver.acted() == ["e-quick", "e-submit"]
+
+
+# ---- order management: close / cancel / flatten / list ------------------
+
+POSITIONS_TREE = """
+[e1|tab|Positions 2]
+[e2|tab|Orders]
+[e10|columnheader|Symbol]
+[e11|cell|NASDAQ:AAPL]
+[e12|cell|FX_IDC:USDCOP]
+[e20|button|Close]
+[e21|button|Protect Position…]
+[e22|button|Close account manager]
+"""
+
+ORDERS_TREE = """
+[e1|tab|Positions 1]
+[e2|tab|Orders 1]
+[e10|cell|NASDAQ:AAPL]
+[e30|button|Buy 1 AAPL @ 312.06 LIMIT]
+[e31|button|Cancel]
+[e32|button|Modify Order…]
+"""
+
+
+def _connected(driver: FakeDriver) -> TradingViewPaperClient:
+    c = TradingViewPaperClient(driver)
+    c._paper_connected = True  # skip the connect flow (tested separately)
+    return c
+
+
+@pytest.mark.asyncio
+async def test_list_positions_parses_symbol_cells() -> None:
+    client = _connected(FakeDriver(tree=POSITIONS_TREE))
+    positions = await client.list_positions()
+    assert set(positions) == {"NASDAQ:AAPL", "FX_IDC:USDCOP"}
+
+
+@pytest.mark.asyncio
+async def test_list_orders_returns_symbols_when_count_positive() -> None:
+    client = _connected(FakeDriver(tree=ORDERS_TREE))  # tab "Orders 1"
+    orders = await client.list_orders()
+    assert "NASDAQ:AAPL" in orders
+
+
+@pytest.mark.asyncio
+async def test_list_orders_ignores_ticket_button_when_count_zero() -> None:
+    """Regression (live finding): the order-entry ticket submit button reads as
+    'Buy N SYM @ price' but is NOT a working order. With 'Orders' count 0, the
+    list must be empty even though the ticket button is present."""
+    tree = (
+        "[e1|tab|Positions 1]\n"
+        "[e2|tab|Orders]\n"  # no count → 0 working orders
+        "[e30|button|Buy  1,000 USDCOP @ 3,667.7 LIMIT]\n"  # the ticket button
+        "[e31|cell|FX_IDC:USDCOP]\n"
+    )
+    client = _connected(FakeDriver(tree=tree))
+    assert await client.list_orders() == []
+
+
+@pytest.mark.asyncio
+async def test_close_position_selects_row_and_clicks_close() -> None:
+    driver = FakeDriver(tree=POSITIONS_TREE)
+    client = _connected(driver)
+    assert await client.close_position("AAPL") is True
+    acted = driver.acted()
+    assert "e11" in acted  # selected the NASDAQ:AAPL row
+    assert "e20" in acted  # clicked the exact "Close" button (not "Close account manager")
+
+
+@pytest.mark.asyncio
+async def test_close_uses_exact_close_not_substring() -> None:
+    """Close must resolve the exact 'Close' button, never 'Close account manager'."""
+    driver = FakeDriver(tree=POSITIONS_TREE)
+    client = _connected(driver)
+    await client.close_position("AAPL")
+    # e22 is "Close account manager" — must never be clicked
+    assert "e22" not in driver.acted()
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_clicks_cancel() -> None:
+    driver = FakeDriver(tree=ORDERS_TREE)
+    client = _connected(driver)
+    assert await client.cancel_order("AAPL") is True
+    assert "e31" in driver.acted()  # the Cancel button
+
+
+@pytest.mark.asyncio
+async def test_close_action_via_place_order() -> None:
+    driver = FakeDriver(tree=POSITIONS_TREE)
+    client = _connected(driver)
+    receipt = await client.place_order(_alert(action="close", symbol="AAPL"))
+    assert receipt.action == "close"
+    assert receipt.raw["order_type"] == "close"
+    assert "e20" in driver.acted()
+
+
+@pytest.mark.asyncio
+async def test_flatten_closes_all_positions() -> None:
+    driver = FakeDriver(tree=POSITIONS_TREE)
+    client = _connected(driver)
+    closed = await client.flatten()
+    assert closed == 2  # both NASDAQ:AAPL and FX_IDC:USDCOP
+
+
+@pytest.mark.asyncio
+async def test_flatten_action_via_place_order() -> None:
+    driver = FakeDriver(tree=POSITIONS_TREE)
+    client = _connected(driver)
+    receipt = await client.place_order(_alert(action="flatten", symbol="AAPL"))
+    assert receipt.action == "flatten"
+    assert receipt.raw["order_type"] == "flatten"
+
+
+@pytest.mark.asyncio
+async def test_close_position_no_open_position_raises() -> None:
+    # tree with a Positions tab but no Close button → InterceptorError → NotConfigured
+    tree = "[e1|tab|Positions]\n[e2|tab|Orders]"
+    driver = FakeDriver(tree=tree)
+    client = _connected(driver)
+    with pytest.raises(InterceptorError):
+        await client.close_position("AAPL")
+
+
+@pytest.mark.asyncio
+async def test_close_action_no_position_becomes_rejected() -> None:
+    """Through place_order, a missing Close control surfaces as NotConfigured."""
+    tree = "[e1|tab|Positions]\n[e2|tab|Orders]"
+    driver = FakeDriver(tree=tree)
+    client = _connected(driver)
+    with pytest.raises(NotConfiguredError):
+        await client.place_order(_alert(action="close", symbol="AAPL"))
 
 
 @pytest.mark.asyncio
