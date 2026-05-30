@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Source adapters — each is opt-in so the core installs without network deps
-garmin = ["garminconnect>=0.2.20"]
+garmin = ["garminconnect>=0.3.3"]
 encrypted = ["pysqlcipher3>=1.2"]
 keychain = ["keyring>=24.0"]
 dev = [
