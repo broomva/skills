@@ -49,8 +49,8 @@ dev = [
 health = "broomva_health.cli.app:main"
 
 [project.urls]
-"Source" = "https://github.com/broomva/broomva"
-"Linear" = "https://linear.app/broomva/issue/BRO-1235"
+"Source" = "https://github.com/broomva/skills/tree/main/skills/health"
+"Linear" = "https://linear.app/broomva/issue/BRO-1248"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/broomva_health"]
