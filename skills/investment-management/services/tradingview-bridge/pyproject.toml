@@ -1,6 +1,6 @@
 [project]
 name = "tradingview-bridge"
-version = "0.7.0"
+version = "0.8.0"
 description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor + autonomous self-dogfooding operator"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -69,6 +69,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "SLF001"]  # tests poke privates + secrets
+# history() builds a WHERE only from literal column clauses ("strategy = ?" /
+# "kind = ?"); every value is parameterized. No injection surface — see comment
+# in ledger.py. The S608 heuristic can't see the literal-only construction.
+"src/tradingview_bridge/evaluation/ledger.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.11"

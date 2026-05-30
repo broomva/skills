@@ -348,14 +348,57 @@ matching the Pine templates) · `tvalert.py` (Signal → TVAlert; `hold` → no 
 allocation, fills at close, no costs). It measures a strategy's directional edge;
 it does **not** model execution reality. **A good backtest means nothing until a
 strategy survives walk-forward + out-of-sample + paper-forward** — which is the
-next layer. This package is the inner loop those layers wrap.
+evaluation plane below. This package is the inner loop those layers wrap.
 
-**Deferred (the rest of the decision plane):** walk-forward / out-of-sample
-harness + performance ledger (sim vs live-paper) · regime/market-study layer ·
-the autoresearch orchestration loop (agent reads measurements → allocates →
-evolves via EGRI/autoany) · short side + cost/slippage · `market_data.py`
-live-bar integration. Promoting any strategy to live-paper capital is
-human-gated + P20 cross-review.
+## Evaluation plane — walk-forward + ledger (`evaluation/`)
+
+The strategy plane can score *one* backtest. The evaluation plane turns that into
+**trustworthy, anti-overfit evidence you can rank strategies on** — the numbers
+the orchestration layer (and the agent's reasoning) allocate on. One lucky number
+is not an edge; consistency across out-of-sample windows is.
+
+```python
+from tradingview_bridge.evaluation import (
+    walk_forward, score_walk_forward, PerformanceLedger, EvaluationRecord,
+)
+
+# 1. walk-forward: partition a continuous backtest into N out-of-sample windows
+wf = walk_forward(strat, bars, symbol="AAPL", asset_class="stock", n_windows=5)
+#   → consistency_pct (% windows profitable), return_std (dispersion),
+#     mean_sharpe, worst_window_return_pct, worst_window_drawdown_pct, windows[]
+
+# 2. score: one 0-1 trustworthiness number, anti-overfit BY DESIGN
+score = score_walk_forward(wf)        # consistency + robustness weigh HALF
+#   → a dazzling mean-Sharpe strategy with inconsistent windows scores LOW
+
+# 3. ledger: persist every evaluation, then compare backtest vs live-paper
+#    (async — run inside an event loop, e.g. asyncio.run(record_and_compare()))
+async def record_and_compare() -> None:
+    ledger = PerformanceLedger()      # ~/.tradingview-bridge/performance.sqlite
+    await ledger.record(EvaluationRecord(strategy=strat.name, symbol="AAPL",
+        kind="walk_forward", return_pct=wf.mean_return_pct, sharpe=wf.mean_sharpe, ...))
+    gap = await ledger.compare_sim_vs_live(strat.name, symbol="AAPL")  # SimLiveGap
+    #   → return_gap_pct = live - sim; negative = backtest edge decayed in paper.
+```
+
+**Components:** `walk_forward.py` (continuous backtest → N windows →
+`WalkForwardResult` with consistency + dispersion) · `score.py`
+(`score_walk_forward` → `StrategyScore`; weights `risk_adjusted` 0.35,
+`consistency` 0.30, `robustness` 0.20, `drawdown_safety` 0.15 — consistency +
+robustness = **half** the score, the anti-overfit discipline made numeric) ·
+`ledger.py` (`PerformanceLedger`, async SQLite; `compare_sim_vs_live` →
+`SimLiveGap`, the backtest-vs-paper reality check).
+
+**Anti-self-deception, not a profit promise.** The score's job is to *refuse to be
+seduced by one lucky backtest* — a whipsaw strategy that loses across every window
+correctly scores ~0.25, not 0.85. The system gives rigorous measurement; it does
+**not** guarantee gains.
+
+**Deferred (the rest of the decision plane):** regime/market-study layer · the
+autoresearch orchestration loop (agent reads ledger → allocates → evolves via
+EGRI/autoany) · EGRI parameter-optimization over walk-forward · short side +
+cost/slippage · `market_data.py` live-bar integration. Promoting any strategy to
+live-paper capital is human-gated + P20 cross-review.
 
 ## See also
 
