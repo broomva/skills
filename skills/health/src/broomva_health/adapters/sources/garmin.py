@@ -74,6 +74,17 @@ _GARMIN_LIB_TOKEN_FILE = "garmin_tokens.json"
 _AUTH_COOLDOWN_FILE = "garmin_auth_cooldown.json"
 _AUTH_COOLDOWN_FAIL_S = 60.0  # generic failed auth — short breather
 _AUTH_COOLDOWN_429_S = 900.0  # detected 429 — full rate-limit window
+_AUTH_COOLDOWN_WALL_S = 21600.0  # 6h — ACCOUNT_LOCKED / CAPTCHA need human browser action
+
+# Garmin escalates repeated failed logins from 429 → account-lock / CAPTCHA.
+# These are hard walls: NO headless client can clear them — they require an
+# interactive browser login at connect.garmin.com (a password reset also
+# clears them). We classify them so the CLI gives an actionable message
+# instead of dumping the library's raw responseStatus dict.
+_LOGIN_WALL_SIGNATURES: dict[str, tuple[str, ...]] = {
+    "captcha": ("CAPTCHA_REQUIRED",),
+    "account_locked": ("ACCOUNT_LOCKED", "generalLoginAccountLocked"),
+}
 
 # A real garmin_tokens.json carries base64 OAuth1/OAuth2 material (hundreds of
 # bytes). Anything shorter (0 bytes, whitespace, "{}") means login returned
@@ -136,6 +147,20 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
     if _http_status(exc) == 429:
         return True
     return "429" in str(exc) or "rate limit" in str(exc).lower()
+
+
+def _login_wall_reason(exc: BaseException) -> str | None:
+    """Classify a hard login wall (CAPTCHA / account-lock) from the exc message.
+
+    garminconnect raises a GarminConnectConnectionError whose str() embeds the
+    portal `responseStatus` dict (e.g. `{'type': 'CAPTCHA_REQUIRED'}`). These
+    states cannot be cleared headlessly — only by an interactive browser login.
+    """
+    msg = str(exc)
+    for reason, signatures in _LOGIN_WALL_SIGNATURES.items():
+        if any(sig in msg for sig in signatures):
+            return reason
+    return None
 
 
 def _http_status(exc: BaseException) -> int | None:
@@ -550,6 +575,26 @@ class GarminTraceSource:
             raise AuthRequired(f"Garmin auth rejected on {op}", op=op) from exc
         if isinstance(exc, MFANeeded):
             raise
+        wall = _login_wall_reason(exc)
+        if wall == "captcha":
+            raise AuthRequired(
+                "Garmin is demanding a CAPTCHA — NO command-line tool can solve one. "
+                "Your account has been flagged by repeated login attempts. To clear it: "
+                "open https://connect.garmin.com in a real browser, log in and solve the "
+                "CAPTCHA (a password reset also clears the flag), then wait several hours "
+                "before `health auth login`. Repeated CLI attempts only prolong this.",
+                op=op,
+                wall="captcha",
+            ) from exc
+        if wall == "account_locked":
+            raise AuthRequired(
+                "Garmin has LOCKED this account after too many failed logins. "
+                "Open https://connect.garmin.com in a real browser and log in (or reset "
+                "your password) to unlock it, then wait several hours before retrying. "
+                "Do not keep running `health auth login` — each attempt extends the lock.",
+                op=op,
+                wall="account_locked",
+            ) from exc
         raise SourceUnavailable(
             f"Garmin call {op} failed: {type(exc).__name__}: {exc}", op=op
         ) from exc
@@ -622,12 +667,18 @@ class GarminTraceSource:
             )
 
     def _record_auth_failure(self, exc: BaseException | None = None) -> None:
-        """Persist a cooldown after a failed auth (longer if it looks like a 429)."""
-        cooldown = (
-            _AUTH_COOLDOWN_429_S
-            if exc is not None and _is_rate_limit_error(exc)
-            else _AUTH_COOLDOWN_FAIL_S
-        )
+        """Persist a cooldown after a failed auth.
+
+        Escalating windows: a hard wall (account-lock / CAPTCHA) needs human
+        browser action so we back off for hours; a 429 gets the rate-limit
+        window; anything else a short breather.
+        """
+        if exc is not None and _login_wall_reason(exc):
+            cooldown = _AUTH_COOLDOWN_WALL_S
+        elif exc is not None and _is_rate_limit_error(exc):
+            cooldown = _AUTH_COOLDOWN_429_S
+        else:
+            cooldown = _AUTH_COOLDOWN_FAIL_S
         until = utc_now() + timedelta(seconds=cooldown)
         try:
             path = self._auth_cooldown_path()

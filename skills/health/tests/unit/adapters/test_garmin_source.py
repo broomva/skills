@@ -7,6 +7,7 @@ return values closely enough that the mappers are exercised end-to-end.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -17,7 +18,11 @@ import pytest
 from broomva_health.adapters.clock import FakeClock
 from broomva_health.adapters.mfa.prompt import StaticMFAProvider
 from broomva_health.adapters.rate_limiters.token_bucket import TokenBucketRateLimiter
-from broomva_health.adapters.sources.garmin import GarminTraceSource, _tokens_look_valid
+from broomva_health.adapters.sources.garmin import (
+    GarminTraceSource,
+    _login_wall_reason,
+    _tokens_look_valid,
+)
 from broomva_health.adapters.token_stores.filesystem import FilesystemTokenStore
 from broomva_health.config.paths import HealthPaths
 from broomva_health.domain.errors import AuthRequired, RateLimited, SourceUnavailable
@@ -693,3 +698,64 @@ def test_authenticate_success_clears_prior_cooldown(
     )
     assert not marker.exists()  # cleared on success
     assert store.get(Source.GARMIN) is not None
+
+
+# --------------------------------------------------------------------------- #
+# Login walls — ACCOUNT_LOCKED / CAPTCHA_REQUIRED (BRO-1252 follow-up)
+# These escalate from repeated failed logins and CANNOT be cleared headlessly.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("msg", "expected"),
+    [
+        ("Portal web login failed: {'responseStatus': {'type': 'CAPTCHA_REQUIRED'}}", "captcha"),
+        ("{'type': 'ACCOUNT_LOCKED', 'message': 'generalLoginAccountLocked'}", "account_locked"),
+        ("generalLoginAccountLocked", "account_locked"),
+        ("All login strategies exhausted: mobile returned 429", None),
+        ("some unrelated connection error", None),
+    ],
+)
+def test_login_wall_reason_cases(msg: str, expected: str | None) -> None:
+    assert _login_wall_reason(Exception(msg)) == expected
+
+
+def test_authenticate_captcha_maps_to_actionable_authrequired(
+    paths: HealthPaths, store: FilesystemTokenStore
+) -> None:
+    """A CAPTCHA wall → AuthRequired with browser guidance + a multi-hour cooldown."""
+    captcha_exc = Exception(
+        "Login failed: All login strategies exhausted: Portal web login failed: "
+        "{'responseStatus': {'type': 'CAPTCHA_REQUIRED'}}"
+    )
+    client = FakeGarminClient(login_should_raise=captcha_exc)
+    src = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(client))
+    with pytest.raises(AuthRequired, match="CAPTCHA"):
+        src.authenticate(
+            token_store=store,
+            mfa=StaticMFAProvider("123456"),
+            email="me@example.com",
+            password="pw",
+        )
+    # Hard wall → hours-long cooldown, not the 60s generic breather.
+    cd = json.loads((paths.config_dir / "garmin_auth_cooldown.json").read_text())
+    remaining = (datetime.fromisoformat(cd["until"]) - datetime.now(UTC)).total_seconds()
+    assert remaining > 3600  # > 1 hour
+
+
+def test_authenticate_account_locked_maps_to_actionable_authrequired(
+    paths: HealthPaths, store: FilesystemTokenStore
+) -> None:
+    locked_exc = Exception(
+        "Portal web login failed: {'responseStatus': {'type': 'ACCOUNT_LOCKED', "
+        "'message': 'generalLoginAccountLocked'}}"
+    )
+    client = FakeGarminClient(login_should_raise=locked_exc)
+    src = GarminTraceSource(paths=paths, client_factory=FakeClientFactory(client))
+    with pytest.raises(AuthRequired, match="LOCKED"):
+        src.authenticate(
+            token_store=store,
+            mfa=StaticMFAProvider("123456"),
+            email="me@example.com",
+            password="pw",
+        )
