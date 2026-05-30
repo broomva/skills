@@ -150,6 +150,35 @@ uv run uvicorn tradingview_bridge.app:app --port 8787
 
 PR 2 ships the skeletons that raise `NotConfiguredError` when env vars are missing. PR 2b replaces the skeleton bodies with real SDK calls.
 
+## TradingView Paper Trading mode (`tradingview-paper`)
+
+The **fastest** path to a real executed (simulated) book under autonomous control — **zero KYC, zero capital, instant**. Instead of routing to an external broker, the bridge controls TradingView's **built-in Paper Trading simulator** directly.
+
+TradingView has **no inbound trading API** (webhooks only go *out*), so control is via **browser automation of the Trading Panel** using the [Interceptor](https://github.com/Hacker-Valley-Media/slop-browser) CLI (real Chrome, your logged-in session, passes bot detection). The `TradingViewPaperClient` conforms to the same `BrokerClient` ABC as IBKR/Kraken — the dispatcher and the autonomous operator treat it identically.
+
+```bash
+# Prereqs (one-time): Interceptor extension installed + active in Chrome,
+# logged into TradingView, Paper Trading connected in the Trading Panel.
+
+export TVBRIDGE_TRADING_MODE=paper
+export TVBRIDGE_TV_WEBHOOK_SECRET=$(openssl rand -hex 32)
+export TVBRIDGE_BROKER_MODE=tradingview-paper   # ← all alerts → TradingView Paper
+
+uv run uvicorn tradingview_bridge.app:app --port 8787
+# every alert now drives your TradingView Paper account; the operator
+# (`operate run`) manages it under the self-dogfood interlock.
+```
+
+**How it works** (selectors pinned from a live session):
+- navigate the chart to the alert's `symbol` (`/chart/?symbol=…`)
+- idempotently connect Paper Trading (Trade → Paper Trading) if not already
+- click the side control (`Buy…`/`Sell…`), set quantity, confirm
+- read positions / account balance / PnL from the panel
+
+**v1 scope:** market buy/sell + account/positions read. `close`/`flatten` and limit/stop orders raise `NotImplementedError` → a clean `rejected` DispatchResult (never a silent partial action). Browser/Interceptor unreachable → `NotConfiguredError` → `rejected` (never touches the account on an unverified surface).
+
+**CI vs live:** CI has no browser, so the adapter is unit-tested with a scripted fake driver (asserts the UI-action *sequence*). The real DOM is exercised by the **live Interceptor dogfood** — which confirmed, against a live session: navigate to any symbol, read account balance/equity/PnL/margin, read open positions, and identify the exact Buy/Sell/confirm controls by name. Placing a live order is a deliberate action you trigger (or the operator does under its interlock).
+
 ## Safety
 
 - **PAPER_ONLY** enforced at startup — `TVBRIDGE_TRADING_MODE` must be `paper`; otherwise the lifespan hook exits 1.

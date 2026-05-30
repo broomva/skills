@@ -23,7 +23,7 @@ import aiosqlite
 import structlog
 
 from .bookkeeping import schedule_journal
-from .clients import IBKRClient, KrakenClient, PolymarketClient
+from .clients import IBKRClient, KrakenClient, PolymarketClient, TradingViewPaperClient
 from .clients.base import BrokerClient, BrokerName, NotConfiguredError
 from .idempotency import IdempotencyRecord, IdempotencyStore
 from .orders import OrderLedger
@@ -78,6 +78,10 @@ class Dispatcher:
 
         if clients_override is not None:
             self._clients: dict[BrokerName, BrokerClient] = clients_override
+        elif broker_mode == "tradingview-paper":
+            # TradingView Paper trades any symbol on its own chart, so a single
+            # client handles every asset class — routing is bypassed below.
+            self._clients = {"tradingview-paper": TradingViewPaperClient()}
         else:
             self._clients = {
                 "ibkr": IBKRClient(broker_mode),
@@ -85,9 +89,19 @@ class Dispatcher:
                 "polymarket": PolymarketClient(broker_mode),
             }
 
+    def _route(self, alert: TVAlert) -> BrokerName:
+        """Resolve the broker for an alert.
+
+        In tradingview-paper mode every alert goes to the single TradingView
+        Paper client; otherwise route by asset class.
+        """
+        if self._broker_mode == "tradingview-paper":
+            return "tradingview-paper"
+        return route_asset_class(alert.asset_class)
+
     async def dispatch(self, alert: TVAlert) -> DispatchResult:
         """Route the alert through idempotency + broker + journal."""
-        broker_name = route_asset_class(alert.asset_class)
+        broker_name = self._route(alert)
         client = self._clients[broker_name]
 
         # Idempotency pre-check
