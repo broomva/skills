@@ -285,6 +285,31 @@ A cron / `/loop` driving `operate tick` is the recommended default — each
 invocation is a fresh process reading persisted state, which is the most
 restart-resilient form (no in-process loop to decay over long horizons).
 
+### Running autonomous against TradingView Paper (the closed loop)
+
+```bash
+export TVBRIDGE_BROKER_MODE=tradingview-paper
+operate run --interval 60        # or: /loop 60s operate tick
+```
+
+Two safety properties make this loop safe to leave running against a **real**
+(simulated) account:
+
+1. **Read-only canary in real-venue mode.** When `broker_mode` is a real venue,
+   the self-dogfood canary verifies the pipeline via `health_check()` only — it
+   **never places an order**. (The place-an-order canary is used solely in
+   `mock` mode.) *Proven live: 2 operator ticks in tradingview-paper mode placed
+   **0** orders; the canary passed via `venue_health`.* Without this, the
+   operator would drop a canary order every tick.
+2. **Reconciliation against the real book.** Each medium tick the operator reads
+   the actual TradingView positions (`list_positions`) and compares them to its
+   own ledger. A position it did not place (`broker_only`) or one it believes
+   open that the broker no longer shows (`ledger_only`) is surfaced via
+   `operator_position_drift` — never silent.
+
+The dogfood-as-precondition interlock still wraps everything: if the read-only
+canary fails (venue unreachable), position management halts.
+
 ### What the operator does NOT do yet (deferred)
 
 - **Auto-rebalance execution** — drift is *computed and reported*; the operator does not yet place corrective orders. (Next: gate-guarded auto-rebalance in paper mode.)

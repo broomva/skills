@@ -77,38 +77,60 @@ class CanaryProbe:
         *,
         http_url: str | None = None,
         http_timeout_s: float = 5.0,
+        read_only: bool = False,
     ) -> None:
         """
         Args:
-            dispatcher: a Dispatcher (duck-typed: must have ``async dispatch(alert)``).
-                Typed as ``object`` to avoid a hard import cycle with dispatch.py.
+            dispatcher: a Dispatcher (duck-typed: must have ``async dispatch(alert)``
+                and ``async health_check() -> dict[str, bool]``).
             http_url: optional base URL of the running bridge (e.g.
                 http://127.0.0.1:8787). When set, the canary also GETs /health.
             http_timeout_s: timeout for the HTTP health check.
+            read_only: when True, the canary NEVER places an order — it verifies
+                the venue read-only via ``dispatcher.health_check()``. REQUIRED
+                for any real venue (tradingview-paper, real-paper): placing a
+                canary order every tick against a real account is exactly the
+                failure mode this flag prevents. The place-an-order canary is
+                only safe (and only used) in ``mock`` mode.
         """
         self._dispatcher = dispatcher
         self._http_url = http_url.rstrip("/") if http_url else None
         self._http_timeout_s = http_timeout_s
+        self._read_only = read_only
 
     async def run(self, tick: int) -> CanaryResult:
         """Run all configured checks and return the composite result."""
         checks: dict[str, bool] = {}
         details: list[str] = []
 
-        # --- Check 1: in-process dispatch roundtrip ---
-        try:
-            alert = build_canary_alert(tick)
-            result = await self._dispatcher.dispatch(alert)  # type: ignore[attr-defined]
-            status = getattr(result, "status", None)
-            ok = status in ("accepted", "duplicate")
-            checks["dispatch"] = ok
-            if not ok:
-                details.append(f"dispatch returned status={status!r} (expected accepted/duplicate)")
-        except Exception as e:
-            checks["dispatch"] = False
-            details.append(f"dispatch raised {type(e).__name__}: {e}")
+        if self._read_only:
+            # --- Real-venue mode: verify reachability WITHOUT placing an order ---
+            try:
+                health = await self._dispatcher.health_check()  # type: ignore[attr-defined]
+                ok = bool(health) and all(health.values())
+                checks["venue_health"] = ok
+                if not ok:
+                    details.append(f"venue health: {health}")
+            except Exception as e:
+                checks["venue_health"] = False
+                details.append(f"health_check raised {type(e).__name__}: {e}")
+        else:
+            # --- Mock mode: dispatch a canary order (harmless — MockClient) ---
+            try:
+                alert = build_canary_alert(tick)
+                result = await self._dispatcher.dispatch(alert)  # type: ignore[attr-defined]
+                status = getattr(result, "status", None)
+                ok = status in ("accepted", "duplicate")
+                checks["dispatch"] = ok
+                if not ok:
+                    details.append(
+                        f"dispatch returned status={status!r} (expected accepted/duplicate)"
+                    )
+            except Exception as e:
+                checks["dispatch"] = False
+                details.append(f"dispatch raised {type(e).__name__}: {e}")
 
-        # --- Check 2: HTTP /health (optional) ---
+        # --- HTTP /health (optional, both modes) ---
         if self._http_url is not None:
             checks["http_health"] = await self._check_http_health(details)
 

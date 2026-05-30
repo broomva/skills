@@ -18,16 +18,77 @@ class _FakeResult:
 class _FakeDispatcher:
     """Records the alert it received and returns a configurable status."""
 
-    def __init__(self, status: str = "accepted", raises: bool = False) -> None:
+    def __init__(
+        self,
+        status: str = "accepted",
+        raises: bool = False,
+        health: dict[str, bool] | None = None,
+    ) -> None:
         self._status = status
         self._raises = raises
+        self._health = health if health is not None else {"mock": True}
         self.received: object = None
+        self.dispatch_calls = 0
+        self.health_calls = 0
 
     async def dispatch(self, alert: object) -> _FakeResult:
+        self.dispatch_calls += 1
         self.received = alert
         if self._raises:
             raise RuntimeError("dispatch exploded")
         return _FakeResult(status=self._status)
+
+    async def health_check(self) -> dict[str, bool]:
+        self.health_calls += 1
+        return self._health
+
+
+# ---- read-only canary (real-venue mode safety) --------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_only_canary_never_dispatches() -> None:
+    """In read-only mode the canary must NOT place an order — it only health-checks."""
+    disp = _FakeDispatcher(health={"tradingview-paper": True})
+    probe = CanaryProbe(disp, read_only=True)
+    result = await probe.run(tick=1)
+    assert result.passed is True
+    assert disp.dispatch_calls == 0  # CRITICAL: no order placed
+    assert disp.health_calls == 1
+    assert result.checks["venue_health"] is True
+
+
+@pytest.mark.asyncio
+async def test_read_only_canary_fails_on_unhealthy_venue() -> None:
+    disp = _FakeDispatcher(health={"tradingview-paper": False})
+    probe = CanaryProbe(disp, read_only=True)
+    result = await probe.run(tick=1)
+    assert result.passed is False
+    assert disp.dispatch_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_read_only_canary_handles_health_exception() -> None:
+    class _Boom:
+        async def health_check(self) -> dict[str, bool]:
+            raise RuntimeError("venue unreachable")
+
+        async def dispatch(self, alert: object) -> _FakeResult:  # pragma: no cover
+            raise AssertionError("dispatch must not be called in read-only mode")
+
+    result = await CanaryProbe(_Boom(), read_only=True).run(tick=1)
+    assert result.passed is False
+    assert "RuntimeError" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_mock_mode_canary_still_dispatches() -> None:
+    """Default (read_only=False) keeps the place-order canary for mock mode."""
+    disp = _FakeDispatcher(status="accepted")
+    result = await CanaryProbe(disp, read_only=False).run(tick=1)
+    assert result.passed is True
+    assert disp.dispatch_calls == 1
+    assert disp.health_calls == 0
 
 
 def test_build_canary_alert_shape() -> None:

@@ -105,3 +105,22 @@ async def test_health_check_aggregates_per_broker(
     dispatcher = Dispatcher(clients_override=clients)
     health = await dispatcher.health_check()
     assert health == {"ibkr": True, "kraken": True, "polymarket": True}
+
+
+# ---- active_broker_client (for operator reconciliation) -----------------
+
+
+def test_active_broker_client_none_in_mock_mode() -> None:
+    from tradingview_bridge.dispatch import Dispatcher
+
+    assert Dispatcher(broker_mode="mock").active_broker_client() is None
+
+
+def test_active_broker_client_is_tv_paper_in_tv_paper_mode() -> None:
+    from tradingview_bridge.dispatch import Dispatcher
+
+    client = Dispatcher(broker_mode="tradingview-paper").active_broker_client()
+    assert client is not None
+    assert client.broker_name == "tradingview-paper"
+    # exposes the real-book reader the operator reconciles against
+    assert hasattr(client, "list_positions")

@@ -101,6 +101,26 @@ class OperatorLoop:
                     open_positions=len(positions),
                     cap=self._max_open_positions,
                 )
+            # Reconcile the ledger (what we placed) against the real broker book.
+            recon = await self._positions.reconcile()
+            if recon is not None:
+                log.info(
+                    "operator_reconcile",
+                    tick=state.tick_count,
+                    matched=recon.matched,
+                    ledger_only=recon.ledger_only,
+                    broker_only=recon.broker_only,
+                    has_drift=recon.has_drift,
+                )
+                if recon.has_drift:
+                    # Drift is not silent — a position we did not place, or one we
+                    # believe open that the broker no longer shows.
+                    log.warning(
+                        "operator_position_drift",
+                        tick=state.tick_count,
+                        ledger_only=recon.ledger_only,
+                        broker_only=recon.broker_only,
+                    )
 
         # --- slow: drift report ---
         if state.tick_count % self._slow_every == 0:

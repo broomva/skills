@@ -175,3 +175,30 @@ def test_state_path_is_loadable_after_tick(tmp_state_path: Path) -> None:
     state = OperatorState(tick_count=3)
     state.save(tmp_state_path)
     assert OperatorState.load(tmp_state_path).tick_count == 3
+
+
+# ---- reconciliation runs in the medium tick -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_medium_tick_reconciles_against_broker(
+    tmp_orders_db_path: Path, tmp_state_path: Path
+) -> None:
+    """When the PositionManager has a broker reader, the loop reconciles on the
+    medium tick and the broker book is actually read."""
+    calls = {"n": 0}
+
+    async def broker() -> dict[str, str]:
+        calls["n"] += 1
+        return {"NASDAQ:AAPL": "open"}
+
+    ledger = OrderLedger(db_path=tmp_orders_db_path)
+    pm = PositionManager(ledger, broker_reader=broker)
+    loop = OperatorLoop(
+        canary=CanaryProbe(_ToggleDispatcher()),
+        positions=pm,
+        state_path=tmp_state_path,
+        medium_every=1,  # reconcile every tick
+    )
+    await loop.tick()
+    assert calls["n"] == 1  # the real broker book was read for reconciliation
