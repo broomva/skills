@@ -316,6 +316,47 @@ canary fails (venue unreachable), position management halts.
 - **Real-paper broker position reads** — positions come from the order ledger (what the bridge dispatched), not from polling IBKR/Kraken. True reconciliation against broker state needs the real-paper SDK wiring (PR 2b).
 - **Price-weighted drift / EGRI strategy-param optimization** — drift is in units, not value; target allocation is units per symbol. Price-weighted rebalancing composes this with the parent skill's `market_data.py` + `backtest.py` (a follow-up).
 
+## Decision plane — strategies (`strategy/`)
+
+The control plane (operator + adapter) *executes*; the decision plane *decides*.
+Its keystone is a unified **Strategy** abstraction — a pure function
+`signal(market_state) → Signal{enter/exit/size}` that drives **both** simulation
+and live, so the same rules are measured in backtest and run through the live
+operator. The gap between the two (backtest vs paper-forward) is the honest
+signal of whether an edge is real.
+
+```python
+from tradingview_bridge.strategy import SMACrossover, run_backtest, signal_to_tvalert
+
+# 1. define once
+strat = SMACrossover(fast=50, slow=200)
+
+# 2. measure in simulation
+result = run_backtest(strat, bars, symbol="AAPL", asset_class="stock")
+#   → BacktestResult(total_return_pct, sharpe, max_drawdown_pct, win_rate_pct, ...)
+
+# 3. run live — the SAME strategy → a TVAlert → the operator → TradingView paper
+alert = signal_to_tvalert(strat.signal(state), symbol="AAPL", asset_class="stock", ...)
+```
+
+**Components:** `types.py` (Bar / MarketState / Signal) · `base.py` (Strategy ABC,
+deterministic) · `library.py` (SMACrossover / RSIMeanReversion / DonchianBreakout —
+matching the Pine templates) · `tvalert.py` (Signal → TVAlert; `hold` → no alert) ·
+`backtest_runner.py` (event-driven long-only backtest → metrics).
+
+**Honesty:** the backtest runner is deliberately simple (long-only, full
+allocation, fills at close, no costs). It measures a strategy's directional edge;
+it does **not** model execution reality. **A good backtest means nothing until a
+strategy survives walk-forward + out-of-sample + paper-forward** — which is the
+next layer. This package is the inner loop those layers wrap.
+
+**Deferred (the rest of the decision plane):** walk-forward / out-of-sample
+harness + performance ledger (sim vs live-paper) · regime/market-study layer ·
+the autoresearch orchestration loop (agent reads measurements → allocates →
+evolves via EGRI/autoany) · short side + cost/slippage · `market_data.py`
+live-bar integration. Promoting any strategy to live-paper capital is
+human-gated + P20 cross-review.
+
 ## See also
 
 - `SKILL.md` (this repo) — parent skill
