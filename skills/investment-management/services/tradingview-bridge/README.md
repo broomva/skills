@@ -372,11 +372,13 @@ score = score_walk_forward(wf)        # consistency + robustness weigh HALF
 #   → a dazzling mean-Sharpe strategy with inconsistent windows scores LOW
 
 # 3. ledger: persist every evaluation, then compare backtest vs live-paper
-ledger = PerformanceLedger()          # ~/.tradingview-bridge/performance.sqlite
-await ledger.record(EvaluationRecord(strategy=strat.name, symbol="AAPL",
-    kind="walk_forward", return_pct=wf.mean_return_pct, sharpe=wf.mean_sharpe, ...))
-gap = await ledger.compare_sim_vs_live(strat.name)   # SimLiveGap.return_gap_pct
-#   → live - sim; negative = the backtest edge decayed in paper. The truth.
+#    (async — run inside an event loop, e.g. asyncio.run(record_and_compare()))
+async def record_and_compare() -> None:
+    ledger = PerformanceLedger()      # ~/.tradingview-bridge/performance.sqlite
+    await ledger.record(EvaluationRecord(strategy=strat.name, symbol="AAPL",
+        kind="walk_forward", return_pct=wf.mean_return_pct, sharpe=wf.mean_sharpe, ...))
+    gap = await ledger.compare_sim_vs_live(strat.name, symbol="AAPL")  # SimLiveGap
+    #   → return_gap_pct = live - sim; negative = backtest edge decayed in paper.
 ```
 
 **Components:** `walk_forward.py` (continuous backtest → N windows →

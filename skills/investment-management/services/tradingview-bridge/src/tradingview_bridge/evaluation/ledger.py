@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS evaluations (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     strategy         TEXT NOT NULL,
     symbol           TEXT NOT NULL,
-    kind             TEXT NOT NULL,
+    kind             TEXT NOT NULL CHECK (kind IN ('backtest', 'walk_forward', 'live_paper')),
     n_trades         INTEGER NOT NULL,
     return_pct       TEXT NOT NULL,
     sharpe           REAL NOT NULL,
@@ -136,6 +136,7 @@ class PerformanceLedger:
         self,
         strategy: str | None = None,
         kind: EvaluationKind | None = None,
+        symbol: str | None = None,
     ) -> list[EvaluationRecord]:
         clauses: list[str] = []
         params: list[str] = []
@@ -145,13 +146,20 @@ class PerformanceLedger:
         if kind is not None:
             clauses.append("kind = ?")
             params.append(kind)
+        if symbol is not None:
+            clauses.append("symbol = ?")
+            params.append(symbol)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         # `where` is built only from literal column clauses ("strategy = ?" /
-        # "kind = ?"); all values are parameterized below. No injection surface.
+        # "kind = ?" / "symbol = ?"); all values are parameterized below. No
+        # injection surface. Ordered by created_at (not id) so latest() is
+        # time-correct even when an older evaluation is backfilled after a newer
+        # one; id ASC only tie-breaks identical timestamps. created_at is stored
+        # as ISO-8601 UTC, which sorts chronologically as text.
         query = (
             "SELECT strategy, symbol, kind, n_trades, return_pct, sharpe, "
             "max_drawdown_pct, win_rate_pct, consistency_pct, created_at "
-            f"FROM evaluations{where} ORDER BY id ASC"
+            f"FROM evaluations{where} ORDER BY created_at ASC, id ASC"
         )
         async with aiosqlite.connect(self._db_path) as db:
             await self._ensure_schema(db)
@@ -159,18 +167,28 @@ class PerformanceLedger:
             rows = await cursor.fetchall()
         return [_row_to_record(tuple(r)) for r in rows]
 
-    async def latest(self, strategy: str, kind: EvaluationKind) -> EvaluationRecord | None:
-        rows = await self.history(strategy=strategy, kind=kind)
+    async def latest(
+        self, strategy: str, kind: EvaluationKind, symbol: str | None = None
+    ) -> EvaluationRecord | None:
+        rows = await self.history(strategy=strategy, kind=kind, symbol=symbol)
         return rows[-1] if rows else None
 
-    async def compare_sim_vs_live(self, strategy: str) -> SimLiveGap | None:
-        """Compare a strategy's most recent sim evaluation to its latest live-paper."""
-        sim = await self.latest(strategy, "walk_forward")
+    async def compare_sim_vs_live(
+        self, strategy: str, symbol: str | None = None
+    ) -> SimLiveGap | None:
+        """Compare a strategy's most recent sim evaluation to its latest live-paper.
+
+        Pass ``symbol`` to scope the comparison to one instrument. Without it, the
+        latest sim row and the latest live row can come from different symbols of
+        the same strategy, making ``return_gap_pct`` meaningless — so prefer
+        passing it whenever a strategy trades more than one instrument.
+        """
+        sim = await self.latest(strategy, "walk_forward", symbol=symbol)
         sim_kind = "walk_forward"
         if sim is None:
-            sim = await self.latest(strategy, "backtest")
+            sim = await self.latest(strategy, "backtest", symbol=symbol)
             sim_kind = "backtest"
-        live = await self.latest(strategy, "live_paper")
+        live = await self.latest(strategy, "live_paper", symbol=symbol)
         if sim is None or live is None:
             return None
         return SimLiveGap(

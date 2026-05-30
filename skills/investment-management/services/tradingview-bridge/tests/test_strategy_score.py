@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from tradingview_bridge.evaluation.score import score_walk_forward
+import pytest
+
+from tradingview_bridge.evaluation.score import DEFAULT_WEIGHTS, score_walk_forward
 from tradingview_bridge.evaluation.walk_forward import WalkForwardResult, WindowMetrics
 from tradingview_bridge.strategy.backtest_runner import BacktestResult
 
@@ -80,3 +82,28 @@ def test_rationale_is_populated() -> None:
     s = score_walk_forward(_wf(sharpe=1.5, consistency=80, dispersion=8, worst_dd=10))
     assert "sharpe" in s.rationale
     assert "consistency" in s.rationale
+
+
+def test_zero_reference_rejected() -> None:
+    """A 0 reference would divide-by-zero — reject it up front."""
+    wf = _wf(sharpe=1.0, consistency=60, dispersion=10, worst_dd=10)
+    for kwargs in ({"sharpe_target": 0.0}, {"dispersion_ref": 0.0}, {"drawdown_ref": 0.0}):
+        with pytest.raises(ValueError, match="must be > 0"):
+            score_walk_forward(wf, **kwargs)  # type: ignore[arg-type]
+
+
+def test_partial_weights_rejected() -> None:
+    """A weights dict missing keys would KeyError mid-computation — reject it."""
+    wf = _wf(sharpe=1.0, consistency=60, dispersion=10, worst_dd=10)
+    with pytest.raises(ValueError, match="exactly these keys"):
+        score_walk_forward(wf, weights={"risk_adjusted": 1.0})
+
+
+def test_non_normalized_weights_stay_in_unit_range() -> None:
+    """Non-normalized weights are normalized so overall cannot exceed 1.0."""
+    wf = _wf(sharpe=10.0, consistency=100, dispersion=0, worst_dd=0)  # everything maxed
+    doubled = {k: v * 2 for k, v in DEFAULT_WEIGHTS.items()}  # sums to 2.0
+    s = score_walk_forward(wf, weights=doubled)
+    assert 0.0 <= s.overall <= 1.0
+    # matches the normalized-default result (same proportions)
+    assert abs(s.overall - score_walk_forward(wf).overall) < 1e-9

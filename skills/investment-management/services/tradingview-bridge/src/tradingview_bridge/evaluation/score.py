@@ -53,9 +53,20 @@ def score_walk_forward(
         sharpe_target: Sharpe at which risk_adjusted saturates to 1.0.
         dispersion_ref: window-return std at which robustness hits 0.
         drawdown_ref: worst-window drawdown % at which drawdown_safety hits 0.
-        weights: component weights (default DEFAULT_WEIGHTS).
+        weights: component weights (default DEFAULT_WEIGHTS). Must contain exactly
+            the four DEFAULT_WEIGHTS keys; normalized to sum 1.0 before use so
+            ``overall`` is guaranteed to stay in [0, 1].
     """
-    w = weights or DEFAULT_WEIGHTS
+    if sharpe_target <= 0 or dispersion_ref <= 0 or drawdown_ref <= 0:
+        raise ValueError("sharpe_target, dispersion_ref, and drawdown_ref must be > 0")
+    raw = DEFAULT_WEIGHTS if weights is None else weights
+    if set(raw) != set(DEFAULT_WEIGHTS):
+        raise ValueError(f"weights must contain exactly these keys: {sorted(DEFAULT_WEIGHTS)}")
+    total_weight = sum(raw.values())
+    if total_weight <= 0:
+        raise ValueError("weights must sum to a positive value")
+    # Normalize so a convex combination of clamped [0,1] components stays in [0,1].
+    w = {key: raw[key] / total_weight for key in DEFAULT_WEIGHTS}
 
     risk_adjusted = _clamp(wf.mean_sharpe / sharpe_target)
     consistency = _clamp(float(wf.consistency_pct) / 100.0)
@@ -63,7 +74,10 @@ def score_walk_forward(
     worst_dd = float(wf.worst_window_drawdown_pct)
     drawdown_safety = _clamp(1.0 - worst_dd / drawdown_ref)
 
-    overall = (
+    # Clamp the final sum too: a convex combination of [0,1] components is
+    # mathematically in [0,1], but float rounding can nudge it to 1.0000000002 —
+    # clamp so the advertised 0-1 contract holds exactly.
+    overall = _clamp(
         risk_adjusted * w["risk_adjusted"]
         + consistency * w["consistency"]
         + robustness * w["robustness"]
