@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..schemas import TVAlert
 
-BrokerName = Literal["ibkr", "kraken", "polymarket", "mock"]
+BrokerName = Literal["ibkr", "kraken", "polymarket", "mock", "tradingview-paper"]
 
 
 class NotConfiguredError(RuntimeError):

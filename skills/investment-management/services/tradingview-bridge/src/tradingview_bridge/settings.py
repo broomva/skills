@@ -70,14 +70,17 @@ class Settings(BaseSettings):
         ),
     )
 
-    broker_mode: Literal["mock", "real-paper"] = Field(
+    broker_mode: Literal["mock", "real-paper", "tradingview-paper"] = Field(
         default="mock",
         description=(
             "Broker dispatch mode. 'mock' (default) routes every alert to a "
             "MockClient that records orders in-memory — used by all tests and "
             "local dev. 'real-paper' attempts to connect to IBKR TWS (paper "
             "port), Kraken sandbox, and Polymarket CLOB; requires broker-"
-            "specific env vars per README."
+            "specific env vars per README. 'tradingview-paper' drives "
+            "TradingView's built-in Paper Trading simulator via the Interceptor "
+            "browser CLI (no broker creds, needs a logged-in TradingView "
+            "session + the interceptor extension)."
         ),
     )
 

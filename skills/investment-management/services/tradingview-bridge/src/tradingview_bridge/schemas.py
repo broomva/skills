@@ -96,7 +96,7 @@ class DispatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["accepted", "rejected", "stubbed", "duplicate"]
-    broker: Literal["ibkr", "kraken", "polymarket"]
+    broker: Literal["ibkr", "kraken", "polymarket", "tradingview-paper"]
     detail: str = Field(description="Human-readable reason or trace id.")
     alert_id: str
     order_id: str | None = Field(

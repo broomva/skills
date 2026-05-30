@@ -150,6 +150,52 @@ gates:
     test-coverage:
       - tests/test_operator_loop.py::test_position_cap_does_not_crash
 
+  # --- TradingView-Paper adapter gates (BRO-1250) ---
+
+  tradingview-paper-is-simulated:
+    enforce: by-design
+    blocker: true
+    description: >
+      TVBRIDGE_BROKER_MODE=tradingview-paper drives TradingView's built-in
+      Paper Trading simulator only — a simulated broker with no real capital.
+      It composes with the bridge's paper-only startup assertion. There is no
+      code path from this mode to a live-money broker.
+    test-coverage:
+      - tests/test_clients_tradingview_paper.py::test_broker_name
+
+  tradingview-paper-write-actions-bounded:
+    enforce: runtime
+    blocker: true
+    description: >
+      v1 supports market buy/sell only. close/flatten and limit/stop raise
+      NotImplementedError, which the dispatcher renders as a clean `rejected`
+      DispatchResult — never a silent partial action against the account.
+    test-coverage:
+      - tests/test_clients_tradingview_paper.py::test_close_action_deferred
+      - tests/test_clients_tradingview_paper.py::test_flatten_action_deferred
+
+  tradingview-paper-browser-failure-is-rejected:
+    enforce: runtime
+    blocker: true
+    description: >
+      If Interceptor / the browser session is unreachable, the client raises
+      NotConfiguredError → `rejected` (not a crash, not a blind retry). The
+      account is never touched on an unverified control surface.
+    test-coverage:
+      - tests/test_clients_tradingview_paper.py::test_browser_error_becomes_not_configured
+      - tests/test_clients_tradingview_paper.py::test_missing_side_control_raises_not_configured
+
+  tradingview-paper-selectors-by-name:
+    enforce: runtime
+    blocker: false
+    description: >
+      The client never hardcodes per-session element refs (e21, …). It resolves
+      controls by semantic role+name each call (find_ref), so a TradingView DOM
+      reshuffle degrades to a clean `rejected` with a re-pin hint rather than
+      clicking the wrong element.
+    test-coverage:
+      - tests/test_interceptor_driver.py
+
 # Still deferred — promoted to follow-up for traceability.
 deferred:
   per-broker-position-cap:

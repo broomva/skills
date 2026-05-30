@@ -11,6 +11,7 @@ from .ibkr import IBKRClient
 from .kraken import KrakenClient
 from .mock import MockClient
 from .polymarket import PolymarketClient
+from .tradingview_paper import TradingViewPaperClient
 
 __all__ = [
     "BrokerClient",
@@ -20,4 +21,5 @@ __all__ = [
     "NotConfiguredError",
     "OrderReceipt",
     "PolymarketClient",
+    "TradingViewPaperClient",
 ]
