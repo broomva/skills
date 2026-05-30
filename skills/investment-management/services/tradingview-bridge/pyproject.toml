@@ -1,7 +1,7 @@
 [project]
 name = "tradingview-bridge"
-version = "0.2.0"
-description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor (IBKR/Kraken/Polymarket via mock or real-paper)"
+version = "0.3.0"
+description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor + autonomous self-dogfooding operator"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -31,6 +31,11 @@ dev = [
     "ruff>=0.6.0",
     "mypy>=1.11.0",
 ]
+
+[project.scripts]
+# The autonomous operator entry point. `operate tick` runs one self-dogfood +
+# position-management tick; `operate run --interval 60` is the daemon form.
+operate = "tradingview_bridge.operator.cli:main"
 
 [build-system]
 requires = ["hatchling"]

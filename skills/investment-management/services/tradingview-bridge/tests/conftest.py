@@ -63,6 +63,18 @@ def tmp_db_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def tmp_orders_db_path(tmp_path: Path) -> Path:
+    """Per-test order-ledger SQLite path."""
+    return tmp_path / "test-orders.sqlite"
+
+
+@pytest.fixture
+def tmp_state_path(tmp_path: Path) -> Path:
+    """Per-test operator-state JSON path."""
+    return tmp_path / "operator-state.json"
+
+
+@pytest.fixture
 def paper_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_db_path: Path,

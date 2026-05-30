@@ -90,7 +90,67 @@ gates:
     test-coverage:
       - tests/test_clients_interface.py::test_real_client_real_paper_without_creds_raises
 
-# Still deferred — promoted to PR 3+ for traceability.
+  # --- Autonomous operator gates (BRO-1247) ---
+
+  operator-dogfood-precondition:
+    enforce: runtime
+    blocker: true
+    description: >
+      The dogfood-as-precondition interlock. The operator manages positions
+      ONLY when its self-dogfood canary passed this tick AND no hard halt is
+      active (OperatorState.position_management_allowed). P11 crystallized
+      into runtime: never manage money on a pipeline you cannot confirm works.
+    test-coverage:
+      - tests/test_operator_state.py::test_fresh_state_blocks_position_management
+      - tests/test_operator_loop.py::test_failing_canary_trips_interlock
+      - tests/test_operator_loop.py::test_passing_tick_allows_management
+
+  operator-hard-halt-requires-reset:
+    enforce: runtime
+    blocker: true
+    description: >
+      After `halt_after_failures` consecutive canary failures the operator
+      enters a STICKY hard halt. A subsequently-passing canary does NOT clear
+      it — only an explicit `operate reset` (operator-acknowledged recovery)
+      does. Prevents an autonomous loop from silently resuming after an
+      intermittent pipeline fault.
+    test-coverage:
+      - tests/test_operator_state.py::test_hard_halt_survives_a_passing_canary
+      - tests/test_operator_loop.py::test_hard_halt_blocks_until_reset
+
+  operator-paper-only:
+    enforce: startup
+    blocker: true
+    description: >
+      The operator CLI runs assert_paper_only() before constructing its loop —
+      it refuses to operate outside paper mode, identical to the bridge's
+      startup guard.
+    test-coverage:
+      - tests/test_operator_cli.py::test_cli_refuses_live_mode
+
+  operator-canary-excluded-from-positions:
+    enforce: runtime
+    blocker: true
+    description: >
+      Canary orders (strategy_name prefixed `__canary__`) exercise the full
+      dispatch pipeline but are filtered at the single order-ledger write point,
+      so they never pollute net positions. The self-dogfood cannot move the
+      book it is meant to verify.
+    test-coverage:
+      - tests/test_orders.py::test_canary_orders_filtered
+
+  operator-position-cap-no-silent-exceed:
+    enforce: runtime
+    blocker: false
+    description: >
+      When open positions exceed max_open_positions the operator logs
+      operator_position_cap_exceeded (P11 no-silent-caps) rather than silently
+      tolerating it. Non-blocking in paper/mock; promotion to blocker tracked
+      for the real-paper rebalance follow-up.
+    test-coverage:
+      - tests/test_operator_loop.py::test_position_cap_does_not_crash
+
+# Still deferred — promoted to follow-up for traceability.
 deferred:
   per-broker-position-cap:
     target-pr: 3

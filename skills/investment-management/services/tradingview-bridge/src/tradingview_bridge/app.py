@@ -19,6 +19,7 @@ from .auth import require_valid_secret, source_ip, verify_source_ip
 from .dispatch import Dispatcher
 from .idempotency import IdempotencyStore, default_db_path
 from .logging_setup import configure_logging
+from .orders import OrderLedger, default_orders_db_path
 from .ratelimit import TokenBucketLimiter
 from .schemas import DispatchResult, TVAlert
 from .settings import assert_paper_only, get_settings
@@ -27,6 +28,7 @@ from .settings import assert_paper_only, get_settings
 _dispatcher: Dispatcher | None = None
 _limiter: TokenBucketLimiter | None = None
 _idempotency_store: IdempotencyStore | None = None
+_order_ledger: OrderLedger | None = None
 
 
 def get_dispatcher() -> Dispatcher:
@@ -58,18 +60,21 @@ def check_rate_limit(
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Startup hook — runs paper-only assertion, wires singletons."""
-    global _dispatcher, _limiter, _idempotency_store
+    global _dispatcher, _limiter, _idempotency_store, _order_ledger
 
     log = configure_logging()
     settings = get_settings()
     assert_paper_only(settings)
 
     db_path = Path(settings.db_path).expanduser() if settings.db_path else default_db_path()
+    orders_path = default_orders_db_path()
     _idempotency_store = IdempotencyStore(db_path=db_path)
+    _order_ledger = OrderLedger(db_path=orders_path)
     _limiter = TokenBucketLimiter(limit_per_minute=settings.rate_limit_per_minute)
     _dispatcher = Dispatcher(
         broker_mode=settings.broker_mode,
         idempotency_store=_idempotency_store,
+        order_ledger=_order_ledger,
     )
 
     log.info(
@@ -80,6 +85,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         rate_limit_per_minute=settings.rate_limit_per_minute,
         trust_forwarded_for=settings.trust_forwarded_for,
         idempotency_db=str(db_path),
+        orders_db=str(orders_path),
     )
     yield
     log.info("tradingview_bridge_stopped")
@@ -87,6 +93,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _dispatcher = None
     _limiter = None
     _idempotency_store = None
+    _order_ledger = None
 
 
 app = FastAPI(

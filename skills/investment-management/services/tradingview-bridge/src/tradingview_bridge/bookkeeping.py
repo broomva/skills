@@ -122,7 +122,14 @@ def schedule_journal(alert: TVAlert, receipt: OrderReceipt) -> None:
 
     Called from the webhook handler; the request returns immediately while
     the journal subprocess runs in the background event loop.
+
+    Canary alerts (the operator's self-dogfood, strategy_name prefixed
+    ``__canary__``) are skipped — internal plumbing should never land in the
+    knowledge graph, and skipping them keeps the operator's repeated
+    short-lived event loops free of dangling background tasks.
     """
+    if alert.strategy_name.startswith("__canary__"):
+        return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
