@@ -5,40 +5,59 @@ trace-ingest + synthesis + Obsidian-projection, behind a clean hexagonal
 architecture that lets new sources (Apple Health, Whoop, Oura, CGM) drop in
 as adapters with no changes to the application core.
 
-**Status:** v0.2.0 (alpha) — Garmin submodule only; new sources scheduled
+**Status:** v0.2.3 (alpha) — Garmin submodule only; new sources scheduled
 for v0.3+.
-**Linear:** [BRO-1235][v1] (v1 ship) · [BRO-1236][v02] (v0.2 packaging)
+**Home:** [`broomva/skills/skills/health`][home] (monorepo — Tier-2 agent skill)
+**Linear:** [BRO-1235][v1] (v1 ship) · [BRO-1236][v02] (v0.2 packaging) · [BRO-1248][mono] (monorepo gap-close)
 **License:** MIT
 
 [bstack]: https://github.com/broomva/bstack
+[home]: https://github.com/broomva/skills/tree/main/skills/health
 [v1]: https://linear.app/broomva/issue/BRO-1235
 [v02]: https://linear.app/broomva/issue/BRO-1236
+[mono]: https://linear.app/broomva/issue/BRO-1248
 
 ---
 
 ## Install
 
-Pick the path that matches what you want:
+This skill lives in the **`broomva/skills` monorepo**. Pick the path that
+matches what you want:
 
-### A — Full CLI + agent skill (recommended)
+### A — Via `npx skills add` (recommended — multi-agent discovery)
 
 ```bash
-# One-shot from a clone:
-git clone https://github.com/broomva/health.git && cd health
-bash install.sh
+npx skills add broomva/skills --skill health -g -y
+```
 
-# Or one-shot from the web (no clone):
-curl -fsSL https://raw.githubusercontent.com/broomva/health/main/install.sh | bash
+Installs the skill manifest (SKILL.md + Workflows + References + the
+`install.sh`/`install-skill.sh` scripts) to `~/.agents/skills/health/` and
+symlinks it into 30+ agent skill dirs (Claude Code, Cursor, Gemini CLI, …).
+The Python CLI is NOT installed by this step — run path B afterwards if you
+want the `health` binary.
+
+### B — Full CLI (the `health` binary on your PATH)
+
+```bash
+# From the npx-installed skill (after path A):
+bash ~/.agents/skills/health/install.sh
+
+# Or one-shot from the web (no clone, no npx):
+curl -fsSL https://raw.githubusercontent.com/broomva/skills/main/skills/health/install.sh | bash
+
+# Or from a clone:
+git clone https://github.com/broomva/skills.git && cd skills/skills/health
+bash install.sh
 ```
 
 This installs the `health` CLI to `~/.local/bin/health` (symlinked from a
 private venv at `~/.local/share/broomva-health/.venv`). Run `health --help`
 after install to confirm. Re-running `install.sh` upgrades in place.
 
-### B — Agent skill only (no Python CLI)
+### C — Agent skill only (no Python CLI, no npx)
 
 ```bash
-git clone https://github.com/broomva/health.git && cd health
+git clone https://github.com/broomva/skills.git && cd skills/skills/health
 bash install-skill.sh
 ```
 
@@ -47,26 +66,15 @@ agent skill dir (`~/.claude/skills/`, `~/.cursor/skills/`, `~/.gemini/skills/`,
 `~/.agents/skills/`). Use this when an agent needs to *see* the skill for
 routing but the CLI runs on a different machine.
 
-### C — Via `npx skills add` (multi-agent discovery)
+### D — Pure Python package (PyPI — planned)
+
+> **Not yet published.** `broomva-health` is not on PyPI as of v0.2.3. The
+> package builds cleanly (`uv build` → sdist + wheel); publication is tracked
+> in [BRO-1248][mono]. Until then, use path B (the `install.sh` venv) for the
+> CLI. Once published, this will work:
 
 ```bash
-npx skills add https://github.com/broomva/health --skill Health -g -y
-```
-
-Installs the skill manifest to `~/.agents/skills/health/` and symlinks into
-30+ agent skill dirs. The Python CLI is NOT installed — run path A or `pip`
-afterwards if you want the binary.
-
-### D — Pure Python package (PyPI)
-
-```bash
-pip install 'broomva-health[garmin]'   # or uv pip install ...
-```
-
-Or with `uv`:
-
-```bash
-uv pip install 'broomva-health[garmin]'
+pip install 'broomva-health[garmin]'      # or: uv pip install 'broomva-health[garmin]'
 ```
 
 Optional extras: `[garmin]` (Garmin source adapter), `[encrypted]`
@@ -134,8 +142,9 @@ Long-form walkthrough: [`References/extension-guide.md`](References/extension-gu
 
 ## Privacy
 
-By default the trace DB is unencrypted SQLite at `~/broomva/health/traces/`.
-SQLCipher upgrade path is documented in [`References/privacy-architecture.md`](References/privacy-architecture.md).
+By default the trace DB is unencrypted SQLite at `~/broomva/health/traces/`
+(a local data directory — not the source repo). SQLCipher upgrade path is
+documented in [`References/privacy-architecture.md`](References/privacy-architecture.md).
 Tokens live at `~/.config/broomva-health/tokens/` with `0700` dir / `0600`
 file permissions. The rate-limiter persists its state at
 `~/.config/broomva-health/rate_limiter.state.json` so cross-process cron
@@ -151,8 +160,10 @@ make test-e2e       # requires BROOMVA_HEALTH_E2E=1 + real Garmin credentials
 make check          # lint + typecheck + test
 ```
 
-233 tests across unit + property (Hypothesis) + integration. Run in under 1s
-on a warm cache. CI matrix covers Python 3.12 and 3.13.
+233 tests across unit + property (Hypothesis) + integration. Run in under 3s
+on a warm cache. CI matrix covers Python 3.12 and 3.13 via the monorepo's
+path-filtered [`test-health.yml`](../../.github/workflows/test-health.yml)
+workflow (runs only when `skills/health/**` changes).
 
 ---
 

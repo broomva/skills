@@ -1,0 +1,83 @@
+name: test-health
+
+# Python test gate for the `health` skill (skills/health/).
+#
+# The monorepo's default CI is lint-skill-md.yml (SKILL.md frontmatter only),
+# per the "tests are optional" contribution policy. `health` carries a real
+# Python package (broomva-health) with 233 tests + an install.sh, so it gets
+# its own gate — but PATH-FILTERED so it runs ONLY when skills/health/**
+# changes. No other skill pays for it; the monorepo's tests-optional default
+# stands everywhere else.
+#
+# Mirrors the gate that was green on the pre-monorepo standalone repo
+# (broomva/health ci.yml) so the migration doesn't silently drop test coverage.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/health/**'
+      - '.github/workflows/test-health.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/health/**'
+      - '.github/workflows/test-health.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-health-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/health
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          # No uv.lock in the alpha (pyproject is authoritative + intentionally
+          # un-pinned). Re-enable cache when v0.3 ships a lockfile.
+          enable-cache: false
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Create venv + install
+        run: |
+          uv venv --python ${{ matrix.python }}
+          uv pip install -e ".[dev,garmin]"
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Tests (E2E gate ON to run integration tests)
+        env:
+          BROOMVA_HEALTH_E2E: "1"
+        run: uv run pytest tests/ -q
+
+  install-script:
+    name: install.sh end-to-end
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: false
+      - name: Run install.sh (from clone)
+        run: bash install.sh
+      - name: Verify health binary works
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          health --version
+          # doctor exits non-zero when no Garmin token (expected); just check
+          # the JSON shape is well-formed and no traceback escaped.
+          health doctor || true
+          health doctor 2>&1 | head -1 | grep -E '^\[|^\{'

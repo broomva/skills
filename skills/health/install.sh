@@ -6,8 +6,8 @@
 #   # one-shot from clone:
 #   bash install.sh
 #
-#   # one-shot from web (after the repo is on GitHub):
-#   curl -fsSL https://raw.githubusercontent.com/broomva/health/main/install.sh | bash
+#   # one-shot from web (no clone):
+#   curl -fsSL https://raw.githubusercontent.com/broomva/skills/main/skills/health/install.sh | bash
 #
 # What it does:
 #   1. Detects `uv` (preferred) or `python3` ≥ 3.12.
@@ -56,15 +56,23 @@ resolve_source() {
   if [ -f "$BROOMVA_HEALTH_SRC/pyproject.toml" ]; then
     return 0
   fi
-  # Piped install — clone the repo to a temp dir.
-  log "No local source; cloning broomva/health to a temp dir."
+  # Piped install (no local source) — clone the broomva/skills monorepo to a
+  # temp dir and point at skills/health/ where the package actually lives.
+  log "No local source; cloning broomva/skills to a temp dir."
   command -v git >/dev/null 2>&1 || fail "git not found; install git or run from a clone" 3
   local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/broomva-health-src.XXXXXX")"
-  git clone --depth 1 --quiet https://github.com/broomva/health.git "$tmp" \
-    || fail "git clone of broomva/health failed" 3
-  BROOMVA_HEALTH_SRC="$tmp"
-  ok "Source: $BROOMVA_HEALTH_SRC (temp clone)"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/broomva-skills-src.XXXXXX")"
+  # Fast path: blobless sparse clone (monorepo is large). Fall back to a plain
+  # shallow clone on older git that lacks --filter/--sparse.
+  git clone --depth 1 --filter=blob:none --sparse --quiet \
+      https://github.com/broomva/skills.git "$tmp" 2>/dev/null \
+    || git clone --depth 1 --quiet https://github.com/broomva/skills.git "$tmp" \
+    || fail "git clone of broomva/skills failed" 3
+  git -C "$tmp" sparse-checkout set skills/health 2>/dev/null || true
+  BROOMVA_HEALTH_SRC="$tmp/skills/health"
+  [ -f "$BROOMVA_HEALTH_SRC/pyproject.toml" ] \
+    || fail "cloned broomva/skills but skills/health/pyproject.toml is missing" 3
+  ok "Source: $BROOMVA_HEALTH_SRC (temp clone of broomva/skills)"
 }
 
 # ─── python detection ────────────────────────────────────────────────────────
@@ -181,4 +189,4 @@ printf "  1. ${C_INFO}health auth login${C_OFF}         — one-time Garmin logi
 printf "  2. ${C_INFO}health doctor${C_OFF}             — verify paths, tokens, repo migration\n"
 printf "  3. ${C_INFO}health --format json status${C_OFF} — reflexive snapshot\n"
 printf "  4. ${C_INFO}health sync${C_OFF}                — incremental pull\n"
-printf "\nSee ${C_INFO}https://github.com/broomva/health${C_OFF} for docs.\n"
+printf "\nSee ${C_INFO}https://github.com/broomva/skills/tree/main/skills/health${C_OFF} for docs.\n"

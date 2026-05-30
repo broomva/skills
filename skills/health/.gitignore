@@ -1,0 +1,30 @@
+# Python build / cache artifacts (skill-local; the monorepo root .gitignore
+# only covers dist/, so the health skill carries its own to keep its Python
+# package artifacts out of commits).
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtualenvs (install.sh uses ~/.local/share/broomva-health/.venv, but devs
+# may create local ones)
+.venv/
+.venv-*/
+venv/
+
+# Test / type-check caches
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local-only fixtures
+tests/fixtures/local/
