@@ -498,14 +498,56 @@ with the gate disabled) · `cli.py` (the `optimize` entry point).
 
 **Honest framing.** The optimizer measures and recommends params with an honest
 out-of-sample estimate; it never trades, never records, never auto-applies.
-Auto-feeding optimized params into the orchestrator roster is the next
-(human-gated) integration step.
+Optimized params flow into the orchestrator through the **roster promotion**
+registry below — human-gated.
 
-**Deferred (the rest of the decision plane):** evolutionary / Bayesian search (v1
-is grid) · auto-feeding optimized params to the roster (human-gated) ·
-regime/market-study layer · short side + cost/slippage · `market_data.py` live-bar
-integration. Promoting any strategy to live-paper capital is human-gated + P20
-cross-review.
+**Deferred (the rest of the optimizer):** evolutionary / Bayesian search (v1 is
+grid) · `market_data.py` live bars.
+
+## Roster promotion — closing the loop (`roster/`)
+
+The optimizer finds better params with an out-of-sample estimate; the orchestrator
+measures a roster. This registry is the bridge between them — and the place where
+the loop closes on itself **without the safety posture slipping**. Two independent
+human gates stand between an optimizer result and any capital:
+
+```
+optimizer → propose (auto, only if it generalizes) → proposed
+                                                      → promote (HUMAN) → active
+orchestrator measures active params → recommendation (still human-gated) → capital
+```
+
+```bash
+roster propose --family sma-crossover   # optimize + record a PROPOSED entry (auto, OOS-gated)
+roster list --status proposed           # review candidates + their out-of-sample evidence
+roster promote 1                         # HUMAN gate: proposed → active
+research run --roster-db ~/.tradingview-bridge/roster.sqlite   # orchestrator measures active params
+```
+
+**The two gates, precisely.** `propose` is automatic but records a candidate
+**only if the optimizer's holdout said it generalizes** — overfit winners are
+never proposed. The candidate sits as `proposed` until a human runs `roster
+promote`; **no automatic code path sets a roster entry `active`**. And even an
+active entry only changes what the orchestrator *measures* — its allocation
+recommendation is still `requires_human_approval=True`, so capital never moves
+without a second, independent human decision. Promote supersedes the prior active
+entry of the same family, so exactly one param-set is active per family.
+
+**Components:** `store.py` (`RosterStore`, async SQLite — the auditable registry) ·
+`promotion.py` (`propose_from_optimization` — proposes iff it generalizes, always
+`status='proposed'`; `promote` / `reject` — the human gates; `active_roster` —
+reconstruct the active strategies, with the fallback **injected** so this module
+never imports the orchestrator) · `types.py` (`RosterEntry` / `RosterStatus`) ·
+`cli.py` (the `roster` entry point). The orchestrator opts in via `research run
+--roster-db PATH`, falling back to its built-in default roster when nothing is
+active.
+
+**Honest framing.** Nothing here trades. `propose` only records OOS-validated
+candidates; `promote` is a human action; allocation to capital is a separate human
+gate. The whole posture stays paper-only + P20.
+
+**Deferred:** scheduler-driven auto-propose · the live-capital gate itself (the
+orchestrator already enforces human approval) · multi-symbol rosters.
 
 ## See also
 

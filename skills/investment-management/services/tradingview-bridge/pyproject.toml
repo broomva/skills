@@ -1,6 +1,6 @@
 [project]
 name = "tradingview-bridge"
-version = "0.10.0"
+version = "0.11.0"
 description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor + autonomous self-dogfooding operator"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -42,6 +42,10 @@ research = "tradingview_bridge.orchestrator.cli:main"
 # The EGRI parameter-optimizer. `optimize run --family …` grid-searches a strategy
 # family with a true train/test holdout → best generalizing params (human-gated).
 optimize = "tradingview_bridge.optimize.cli:main"
+# The roster promotion registry (closes the loop). `roster propose` records an
+# OOS-validated optimizer winner; `roster promote <id>` is the human gate that
+# activates it; the orchestrator measures active params via `research run --roster-db`.
+roster = "tradingview_bridge.roster.cli:main"
 
 [build-system]
 requires = ["hatchling"]
