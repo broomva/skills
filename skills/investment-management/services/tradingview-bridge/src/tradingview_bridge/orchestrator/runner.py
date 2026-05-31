@@ -104,6 +104,12 @@ class AutoResearch:
 
         board = rank(evaluations, symbol=symbol)
         rec = recommend(board, trust_threshold=trust_threshold)
+        # The reality check is a ledger query (latest sim vs latest live). With
+        # record=True (the loop case) this tick's walk-forward IS the latest sim.
+        # With record=False (a diagnostic run) it compares against the last
+        # *persisted* sim instead — which is intentional: --no-record means "don't
+        # change the ledger", and the check stays safe either way (it can only
+        # demote a candidate, never strengthen one, and never touches the human gate).
         rec = await self._apply_live_reality(rec, symbol, live_decay_tolerance_pct)
 
         log.info(
