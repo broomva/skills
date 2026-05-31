@@ -75,6 +75,7 @@ def _run_ns(**overrides: object) -> argparse.Namespace:
         "trust": 0.6,
         "bars_csv": None,
         "no_record": True,
+        "roster_db": None,
         "json": False,
     }
     base.update(overrides)

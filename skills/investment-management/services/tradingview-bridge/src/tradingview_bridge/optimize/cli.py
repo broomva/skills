@@ -20,8 +20,8 @@ from pathlib import Path
 import structlog
 from pydantic import ValidationError
 
+from ..barsource import bars_from_csv, synthetic_bars
 from ..logging_setup import configure_logging
-from ..orchestrator.cli import bars_from_csv, synthetic_bars
 from ..strategy.types import Bar
 from .egri import optimize_walk_forward
 from .space import BUILTIN_SPACES

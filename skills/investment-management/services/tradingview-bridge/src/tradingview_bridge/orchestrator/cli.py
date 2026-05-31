@@ -18,66 +18,31 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import csv
 import json
 import sys
-from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 
 import structlog
 from pydantic import ValidationError
 
+# bars_from_csv / synthetic_bars are re-exported here (imported from the shared
+# barsource module) so existing `from orchestrator.cli import synthetic_bars`
+# call sites keep working after the extraction.
+from ..barsource import bars_from_csv, synthetic_bars
 from ..evaluation.ledger import PerformanceLedger
 from ..logging_setup import configure_logging
+from ..roster.promotion import active_roster
+from ..roster.store import RosterStore
 from ..strategy.base import Strategy
 from ..strategy.library import DonchianBreakout, RSIMeanReversion, SMACrossover
-from ..strategy.types import Bar
 from .runner import AutoResearch, ResearchReport
 
-_BASE_TS = datetime(2026, 1, 1, tzinfo=UTC)
+__all__ = ["bars_from_csv", "build_parser", "default_roster", "main", "synthetic_bars"]
 
 
 def default_roster() -> list[Strategy]:
     """The built-in strategies to evaluate (one per Pine template family)."""
     return [SMACrossover(5, 20), RSIMeanReversion(14), DonchianBreakout(20)]
-
-
-def synthetic_bars(n: int = 200) -> list[Bar]:
-    """A deterministic four-regime series (uptrend → chop → downtrend → recovery).
-
-    Deterministic on purpose: the same n always yields the same bars, so a
-    `research run` is reproducible and the strategies genuinely differ across
-    regimes (which makes the leaderboard meaningful rather than a coin-flip).
-    """
-    closes: list[float] = []
-    price = 100.0
-    for i in range(n):
-        frac = i / n
-        if frac < 0.25:
-            price *= 1.012
-        elif frac < 0.5:
-            price += 1.5 if (i % 6) < 3 else -1.5
-        elif frac < 0.75:
-            price *= 0.99
-        else:
-            price *= 1.008
-        # Deterministic per-bar jitter (cycles -2..+2, no RNG → still reproducible)
-        # so bar-to-bar returns vary and Sharpe lands in a realistic range rather
-        # than the near-infinite values a perfectly smooth synthetic trend yields.
-        price += ((i * 7) % 5) - 2.0
-        price = max(5.0, price)
-        closes.append(round(price, 2))
-    return [
-        Bar(
-            ts=_BASE_TS + timedelta(days=i),
-            open=Decimal(str(c)),
-            high=Decimal(str(c)),
-            low=Decimal(str(c)),
-            close=Decimal(str(c)),
-        )
-        for i, c in enumerate(closes)
-    ]
 
 
 def _trust_arg(value: str) -> float:
@@ -88,32 +53,6 @@ def _trust_arg(value: str) -> float:
     if not 0.0 <= parsed <= 1.0:
         raise argparse.ArgumentTypeError(f"--trust must be in [0, 1], got {parsed}")
     return parsed
-
-
-def _cell(row: dict[str, str], key: str, default: Decimal) -> Decimal:
-    raw = row.get(key)
-    return Decimal(raw) if raw else default
-
-
-def bars_from_csv(path: Path) -> list[Bar]:
-    """Load bars from a CSV with a required ``close`` column (OHLCV optional)."""
-    bars: list[Bar] = []
-    with path.open(newline="") as handle:
-        reader = csv.DictReader(handle)
-        for i, row in enumerate(reader):
-            close = Decimal(row["close"])
-            bars.append(
-                Bar(
-                    ts=_BASE_TS + timedelta(days=i),
-                    open=_cell(row, "open", close),
-                    high=_cell(row, "high", close),
-                    low=_cell(row, "low", close),
-                    close=close,
-                )
-            )
-    if not bars:
-        raise ValueError(f"no rows with a 'close' column found in {path}")
-    return bars
 
 
 def _format_report(report: ResearchReport) -> str:
@@ -149,11 +88,22 @@ def _format_report(report: ResearchReport) -> str:
     return "\n".join(lines)
 
 
+async def _resolve_roster(args: argparse.Namespace) -> list[Strategy]:
+    """The strategies the orchestrator evaluates. With --roster-db, use the
+    human-promoted active roster (falling back to the built-in defaults when none
+    is active); otherwise the built-in defaults."""
+    if not args.roster_db:
+        return default_roster()
+    store = RosterStore(db_path=Path(args.roster_db).expanduser())
+    entries = await store.active_entries()
+    return active_roster(entries, fallback=default_roster())
+
+
 async def _cmd_run(args: argparse.Namespace) -> int:
     bars = bars_from_csv(Path(args.bars_csv).expanduser()) if args.bars_csv else synthetic_bars()
     orchestrator = AutoResearch()
     report = await orchestrator.run(
-        default_roster(),
+        await _resolve_roster(args),
         bars,
         symbol=args.symbol,
         asset_class=args.asset_class,
@@ -229,6 +179,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--bars-csv", default=None, help="CSV with a 'close' column (else synthetic)"
     )
     p_run.add_argument("--no-record", action="store_true", help="do not write to the ledger")
+    p_run.add_argument(
+        "--roster-db",
+        default=None,
+        help="use the human-promoted active roster from this RosterStore (else built-in defaults)",
+    )
     p_run.add_argument("--json", action="store_true", help="emit JSON instead of a table")
 
     p_lb = sub.add_parser("leaderboard", help="print recorded evaluation history for a symbol")
