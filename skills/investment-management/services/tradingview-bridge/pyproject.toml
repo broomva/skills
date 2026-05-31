@@ -1,6 +1,6 @@
 [project]
 name = "tradingview-bridge"
-version = "0.8.0"
+version = "0.9.0"
 description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor + autonomous self-dogfooding operator"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,6 +36,9 @@ dev = [
 # The autonomous operator entry point. `operate tick` runs one self-dogfood +
 # position-management tick; `operate run --interval 60` is the daemon form.
 operate = "tradingview_bridge.operator.cli:main"
+# The autoresearch orchestrator (L2 slow loop). `research run` evaluates the
+# strategy roster → leaderboard + (human-gated) allocation recommendation.
+research = "tradingview_bridge.orchestrator.cli:main"
 
 [build-system]
 requires = ["hatchling"]

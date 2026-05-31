@@ -394,11 +394,64 @@ seduced by one lucky backtest* — a whipsaw strategy that loses across every wi
 correctly scores ~0.25, not 0.85. The system gives rigorous measurement; it does
 **not** guarantee gains.
 
-**Deferred (the rest of the decision plane):** regime/market-study layer · the
-autoresearch orchestration loop (agent reads ledger → allocates → evolves via
-EGRI/autoany) · EGRI parameter-optimization over walk-forward · short side +
-cost/slippage · `market_data.py` live-bar integration. Promoting any strategy to
-live-paper capital is human-gated + P20 cross-review.
+This package is the inner loop the **orchestration plane** wraps.
+
+## Orchestration plane — autoresearch (`orchestrator/`)
+
+The strategy plane *decides* per bar; the evaluation plane *measures* per
+strategy; this plane *decides what to trust across strategies* — the agent's
+**slow loop**. One tick: evaluate every strategy → record to the ledger → rank →
+recommend an allocation, **tempered by live-paper reality and always human-gated**.
+
+```python
+from tradingview_bridge.orchestrator import AutoResearch
+
+# one tick of the slow loop (paper-only, records to the performance ledger)
+report = await AutoResearch().run(roster, bars, symbol="AAPL", asset_class="stock")
+#   → report.leaderboard       — strategies ranked by trustworthiness (anti-overfit)
+#   → report.recommendation    — promote_candidate | paper_forward | reject
+#                                requires_human_approval is ALWAYS True
+```
+
+Or from the CLI:
+
+```bash
+research run --symbol AAPL                 # synthetic bars (deterministic) → leaderboard + rec
+research run --symbol AAPL --bars-csv x.csv --json   # your bars, JSON out
+research leaderboard --symbol AAPL         # recorded evaluation history
+```
+
+**The decision (`recommend`)** — pure function of the leaderboard. The best
+strategy clears the **trust gate** (default 0.6) → `promote_candidate`; promising
+but under the gate → `paper_forward`; far under → `reject`. There is no
+`go_live` action: promotion to real capital is a separate human decision, and
+`AllocationRecommendation` *cannot be constructed* with the human gate disabled
+(it raises) — the safety invariant is enforced by the type, not by convention.
+
+**The reality check (`runner`)** — the loop-closing step. For a
+`promote_candidate`, the runner consults the ledger's `compare_sim_vs_live`: if a
+strategy looked great in simulation but its live-paper return decayed beyond
+tolerance, the recommendation is **demoted** to `paper_forward`. Measurements
+feed decisions; decisions are tempered by what live-paper actually did. The
+reality check can only ever *weaken* a recommendation — never push it past the
+gate.
+
+**Components:** `research.py` (pure: `evaluate_all` / `rank` / `recommend`, no
+I/O, fully reproducible) · `runner.py` (`AutoResearch` — the stateful tick:
+ledger + reality check) · `types.py` (`StrategyEvaluation` / `Leaderboard` /
+`AllocationRecommendation`) · `cli.py` (the `research` entry point).
+
+**Honest framing.** The orchestrator ranks and recommends; it never trades and
+never allocates capital. Live market-data integration (`market_data.py`) is
+deferred — v1 runs on provided or deterministic-synthetic bars; the orchestration
+logic is independent of the bar source.
+
+**Deferred (the rest of the decision plane):** EGRI parameter-optimization (the
+orchestrator *evolves* params via autoany, not just ranks fixed ones) ·
+regime/market-study layer · auto-feeding the chosen strategy to the operator
+(human-gated) · short side + cost/slippage · `market_data.py` live-bar
+integration. Promoting any strategy to live-paper capital is human-gated + P20
+cross-review.
 
 ## See also
 
