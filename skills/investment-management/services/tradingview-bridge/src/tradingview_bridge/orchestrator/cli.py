@@ -80,6 +80,16 @@ def synthetic_bars(n: int = 200) -> list[Bar]:
     ]
 
 
+def _trust_arg(value: str) -> float:
+    """Parse --trust and enforce the [0, 1] range. Fail loud rather than clamp:
+    --trust governs the promote/reject gate, so silently coercing a bad value
+    (e.g. 5 → everything rejected, -1 → everything promoted) would mask intent."""
+    parsed = float(value)
+    if not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError(f"--trust must be in [0, 1], got {parsed}")
+    return parsed
+
+
 def _cell(row: dict[str, str], key: str, default: Decimal) -> Decimal:
     raw = row.get(key)
     return Decimal(raw) if raw else default
@@ -214,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="asset class label",
     )
     p_run.add_argument("--n-windows", type=int, default=5, help="walk-forward window count")
-    p_run.add_argument("--trust", type=float, default=0.6, help="trust-gate threshold (0-1)")
+    p_run.add_argument("--trust", type=_trust_arg, default=0.6, help="trust-gate threshold (0-1)")
     p_run.add_argument(
         "--bars-csv", default=None, help="CSV with a 'close' column (else synthetic)"
     )

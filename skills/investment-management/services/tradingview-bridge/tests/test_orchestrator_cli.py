@@ -138,6 +138,18 @@ def test_build_parser_routes_run_args() -> None:
     assert args.json is True
 
 
+def test_trust_arg_rejects_out_of_range() -> None:
+    parser = build_parser()
+    for bad in ["5", "-0.1", "1.5"]:
+        with pytest.raises(SystemExit):  # argparse converts ArgumentTypeError → SystemExit(2)
+            parser.parse_args(["run", "--trust", bad])
+
+
+def test_trust_arg_accepts_in_range() -> None:
+    args = build_parser().parse_args(["run", "--trust", "0.8"])
+    assert args.trust == 0.8
+
+
 def test_build_parser_routes_leaderboard_args() -> None:
     args = build_parser().parse_args(["leaderboard", "--symbol", "BTC", "--limit", "5"])
     assert args.command == "leaderboard"
