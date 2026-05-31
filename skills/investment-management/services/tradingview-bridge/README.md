@@ -446,10 +446,64 @@ never allocates capital. Live market-data integration (`market_data.py`) is
 deferred — v1 runs on provided or deterministic-synthetic bars; the orchestration
 logic is independent of the bar source.
 
-**Deferred (the rest of the decision plane):** EGRI parameter-optimization (the
-orchestrator *evolves* params via autoany, not just ranks fixed ones) ·
-regime/market-study layer · auto-feeding the chosen strategy to the operator
-(human-gated) · short side + cost/slippage · `market_data.py` live-bar
+This plane ranks a fixed roster; the **optimization plane** below *evolves* the
+params themselves.
+
+## Optimization plane — EGRI (`optimize/`)
+
+The evaluation plane scores one strategy; the orchestrator ranks a fixed roster;
+this plane **evolves a strategy's parameters** — honestly. It is an EGRI loop
+(Evaluator-Governed Recursive Improvement, composing with the `autoany` skill):
+
+- **Mutable artifact** — the strategy parameters (SMA fast/slow, RSI length/bands,
+  Donchian length).
+- **Immutable evaluator** — `walk_forward` + `score_walk_forward`, **frozen across
+  the search**. The stop-gradient guarantee: the optimizer can change the params,
+  never the yardstick, so it cannot tune the scorer to fit the data.
+- **Promotion policy** — `generalizes` iff the out-of-sample test score clears a
+  floor AND the train→test gap is within tolerance. Always **human-gated**.
+
+```bash
+optimize run --family sma-crossover --symbol AAPL    # grid-search → best generalizing params
+optimize run --family rsi-mean-reversion --json      # JSON; --bars-csv x.csv for your data
+```
+
+**Why the holdout is the whole point.** Grid-searching N param-sets and keeping
+the best is a multiple-comparisons overfitting risk — even noise has an in-sample
+winner. The walk-forward consistency metric helps, but the only honest defense is
+a **test segment the search never saw**:
+
+1. **train** segment → every candidate is scored; the winner is selected here, on
+   train **only**.
+2. **test** segment (holdout) → the winner is scored **exactly once**. No test-set
+   selection.
+3. **generalization gap** = train − test. A large positive gap means the in-sample
+   winner overfit and did not hold up; the verdict says so regardless of how
+   dazzling the train score was.
+
+```python
+from tradingview_bridge.optimize import optimize_walk_forward, SMA_CROSSOVER_SPACE
+
+result = optimize_walk_forward(SMA_CROSSOVER_SPACE, bars, symbol="AAPL", asset_class="stock")
+#   → result.best          — the train-winner's params (selection saw train only)
+#   → result.test_score    — its out-of-sample score (the honest estimate)
+#   → result.generalization_gap, result.generalizes  — the human-gated verdict
+```
+
+**Components:** `space.py` (`ParamSpace` + the 3 built-in spaces — the mutable
+surface) · `search.py` (deterministic grid search; truncation is logged, never
+silent) · `egri.py` (`optimize_walk_forward` — the train/test loop + gap) ·
+`types.py` (`OptimizationResult`, human-gated by construction — it cannot be built
+with the gate disabled) · `cli.py` (the `optimize` entry point).
+
+**Honest framing.** The optimizer measures and recommends params with an honest
+out-of-sample estimate; it never trades, never records, never auto-applies.
+Auto-feeding optimized params into the orchestrator roster is the next
+(human-gated) integration step.
+
+**Deferred (the rest of the decision plane):** evolutionary / Bayesian search (v1
+is grid) · auto-feeding optimized params to the roster (human-gated) ·
+regime/market-study layer · short side + cost/slippage · `market_data.py` live-bar
 integration. Promoting any strategy to live-paper capital is human-gated + P20
 cross-review.
 

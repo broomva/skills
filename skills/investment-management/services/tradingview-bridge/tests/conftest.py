@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import structlog
 
 from tradingview_bridge import settings as settings_module
 
@@ -19,6 +21,24 @@ def _reset_settings_cache() -> Iterator[None]:
     settings_module.get_settings.cache_clear()
     yield
     settings_module.get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_structlog_stream() -> Iterator[None]:
+    """Stop a test that points structlog at a transient capsys stream from leaking
+    that (soon-closed) stream into later tests.
+
+    A CLI test that calls ``main()`` configures structlog's global
+    ``PrintLoggerFactory`` to the *current* ``sys.stderr`` — which under capsys is a
+    buffer closed at that test's teardown. Any later test that emits a structlog
+    line (e.g. the optimizer's truncation warning) would then write to a closed
+    file and raise. After every test, rebind structlog to the real stderr, which
+    capsys never closes — making the whole suite order-independent."""
+    yield
+    structlog.configure(
+        processors=[structlog.processors.JSONRenderer()],
+        logger_factory=structlog.PrintLoggerFactory(file=sys.__stderr__),
+    )
 
 
 @pytest.fixture(autouse=True)
