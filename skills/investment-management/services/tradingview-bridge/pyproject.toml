@@ -24,6 +24,12 @@ brokers = [
     "ccxt>=4.4.0",
     "py-clob-client>=0.21",
 ]
+# Real market data via qlib's point-in-time data layer — only needed for
+# `research/optimize run --qlib <instrument>`. Heavy; CI never installs it
+# (bars_from_qlib is unit-tested with a fake and dogfooded live).
+qlib = [
+    "pyqlib>=0.9.6",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -99,5 +105,5 @@ disallow_untyped_defs = false
 [[tool.mypy.overrides]]
 # Optional broker SDKs are not installed in CI (mock mode only). Don't
 # fail mypy because their type stubs aren't reachable.
-module = ["ib_async.*", "ccxt.*", "py_clob_client.*"]
+module = ["ib_async.*", "ccxt.*", "py_clob_client.*", "qlib.*"]
 ignore_missing_imports = true

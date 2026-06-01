@@ -551,6 +551,36 @@ gate. The whole posture stays paper-only + P20.
 **Deferred:** scheduler-driven auto-propose · the live-capital gate itself (the
 orchestrator already enforces human approval) · multi-symbol rosters.
 
+## Real market data via qlib (optional `[qlib]` extra)
+
+The decision plane runs on synthetic or CSV bars by default. For **real market
+data**, the optional `qlib` extra grafts in [Microsoft Qlib's](https://github.com/microsoft/qlib)
+point-in-time data layer — `bars_from_qlib` reads `$open/$high/$low/$close/$volume`
+and converts to our `Bar` list, so the *existing* walk-forward / score / optimize /
+roster pipeline runs unchanged on real data.
+
+```bash
+# one-time: install the extra + prepare qlib data (~500 MB CN sample)
+uv pip install pyqlib
+python -c "import qlib; from qlib.tests.data import GetData; \
+  GetData().qlib_data(target_dir='~/.qlib/qlib_data/cn_data', region='cn')"
+
+# then point research / optimize at a qlib instrument instead of synthetic bars
+research  run --qlib SH600000                       # evaluate the roster on real csi300 data
+optimize run --qlib SH600000 --family sma-crossover  # optimize on real data, OOS holdout
+```
+
+`bars_from_qlib(instrument, *, start, end, provider_uri=None)` raises a clear,
+actionable error if `pyqlib` isn't installed (it's never in CI — the conversion is
+unit-tested with a fake, and exercised live). NaN/suspended days are skipped; the
+run is labelled by the instrument.
+
+**Honest scope:** OHLCV bars only — what slots into our rule-based `Strategy`
+pipeline. Qlib's 158 engineered Alpha *features* are a separate, later layer (they
+matter once ML strategies land). See the qlib exploration entities (`tool/qlib`,
+`tool/rd-agent`) for the integration thesis: their data, our control + honesty +
+execution.
+
 ## See also
 
 - `SKILL.md` (this repo) — parent skill
