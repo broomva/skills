@@ -28,7 +28,7 @@ from pydantic import ValidationError
 # bars_from_csv / synthetic_bars are re-exported here (imported from the shared
 # barsource module) so existing `from orchestrator.cli import synthetic_bars`
 # call sites keep working after the extraction.
-from ..barsource import bars_from_csv, synthetic_bars
+from ..barsource import bars_from_csv, resolve_bars, synthetic_bars
 from ..evaluation.ledger import PerformanceLedger
 from ..logging_setup import configure_logging
 from ..roster.promotion import active_roster
@@ -100,12 +100,15 @@ async def _resolve_roster(args: argparse.Namespace) -> list[Strategy]:
 
 
 async def _cmd_run(args: argparse.Namespace) -> int:
-    bars = bars_from_csv(Path(args.bars_csv).expanduser()) if args.bars_csv else synthetic_bars()
+    bars = resolve_bars(
+        qlib=args.qlib, qlib_start=args.qlib_start, qlib_end=args.qlib_end, bars_csv=args.bars_csv
+    )
+    symbol = args.qlib or args.symbol  # with --qlib, label the run by the instrument
     orchestrator = AutoResearch()
     report = await orchestrator.run(
         await _resolve_roster(args),
         bars,
-        symbol=args.symbol,
+        symbol=symbol,
         asset_class=args.asset_class,
         n_windows=args.n_windows,
         trust_threshold=args.trust,
@@ -178,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--bars-csv", default=None, help="CSV with a 'close' column (else synthetic)"
     )
+    p_run.add_argument(
+        "--qlib", default=None, help="qlib instrument id (e.g. SH600000) — real data via pyqlib"
+    )
+    p_run.add_argument("--qlib-start", default="2010-01-01", help="qlib start date (YYYY-MM-DD)")
+    p_run.add_argument("--qlib-end", default="2020-09-25", help="qlib end date (YYYY-MM-DD)")
     p_run.add_argument("--no-record", action="store_true", help="do not write to the ledger")
     p_run.add_argument(
         "--roster-db",

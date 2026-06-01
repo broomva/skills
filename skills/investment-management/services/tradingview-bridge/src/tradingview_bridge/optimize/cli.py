@@ -15,12 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 import structlog
 from pydantic import ValidationError
 
-from ..barsource import bars_from_csv, synthetic_bars
+from ..barsource import resolve_bars
 from ..logging_setup import configure_logging
 from ..strategy.types import Bar
 from .egri import optimize_walk_forward
@@ -53,9 +52,13 @@ def _train_frac_arg(value: str) -> float:
 
 
 def _bars(args: argparse.Namespace) -> list[Bar]:
-    if args.bars_csv:
-        return bars_from_csv(Path(args.bars_csv).expanduser())
-    return synthetic_bars(args.bars)
+    return resolve_bars(
+        qlib=args.qlib,
+        qlib_start=args.qlib_start,
+        qlib_end=args.qlib_end,
+        bars_csv=args.bars_csv,
+        synthetic_n=args.bars,
+    )
 
 
 def _format_result(result: OptimizationResult, top: int) -> str:
@@ -91,7 +94,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     result = optimize_walk_forward(
         space,
         _bars(args),
-        symbol=args.symbol,
+        symbol=args.qlib or args.symbol,  # with --qlib, label by the instrument
         asset_class=args.asset_class,
         train_frac=args.train_frac,
         n_windows=args.n_windows,
@@ -154,6 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-windows", type=int, default=4, help="walk-forward window count")
     p.add_argument("--bars", type=int, default=500, help="synthetic bar count (if no --bars-csv)")
     p.add_argument("--bars-csv", default=None, help="CSV with a 'close' column (else synthetic)")
+    p.add_argument(
+        "--qlib", default=None, help="qlib instrument id (e.g. SH600000) — real data via pyqlib"
+    )
+    p.add_argument("--qlib-start", default="2010-01-01", help="qlib start date (YYYY-MM-DD)")
+    p.add_argument("--qlib-end", default="2020-09-25", help="qlib end date (YYYY-MM-DD)")
     p.add_argument("--min-test", type=float, default=0.5, help="min OOS test score to 'generalize'")
     p.add_argument("--max-gap", type=float, default=0.25, help="max train-test gap to 'generalize'")
     p.add_argument("--top", type=int, default=8, help="how many train-ranked candidates to show")
