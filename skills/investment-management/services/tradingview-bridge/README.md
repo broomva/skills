@@ -503,8 +503,35 @@ out-of-sample estimate; it never trades, never records, never auto-applies.
 Optimized params flow into the orchestrator through the **roster promotion**
 registry below — human-gated.
 
-**Deferred (the rest of the optimizer):** evolutionary / Bayesian search (v1 is
-grid) · `market_data.py` live bars.
+### Direction scheduler — `optimize schedule` (Phase 1 of the autoresearch loop)
+
+`optimize run` grid-searches **one** family exhaustively. `optimize schedule`
+allocates a fixed **budget** of evaluations across **all** families with a
+**UCB1 multi-armed bandit** — the "what to optimize next" brain (ported from
+RD-Agent's feedback scheduler, minus the LLM; see `tool/rd-agent` in the KG).
+
+```bash
+optimize schedule --budget 12                 # spread 12 evals across the families
+optimize schedule --budget 12 --qlib SH600000 # …on real data
+```
+
+Each *pull* evaluates one family's next grid candidate on the **TRAIN** segment;
+the reward is its train score. UCB1 (`mean + c·√(ln N / nᵢ)`) decides which family
+to spend the next eval on — exploit promising families, explore under-sampled ones.
+**Deterministic** (no RNG → reproducible). The honesty discipline is preserved
+exactly: the bandit explores **train only**, and the single best-by-train candidate
+is validated **once** on the held-out test segment (no test-set peeking; the
+evaluator stays immutable).
+
+**Components:** `scheduler.py` (`UCB1Scheduler`) · `scheduled_search.py`
+(`scheduled_optimize` → `ScheduledResult`, human-gated by construction). With
+budget < total candidates it concentrates spend where reward + availability point;
+it's the infrastructure the deferred **Phase 2** (LLM-proposed candidates as new
+arms, budget-gated) plugs into — [BRO-1291](https://linear.app/broomva/issue/BRO-1291).
+
+**Deferred (the rest of the optimizer):** Phase 2/3 of the autoresearch loop (LLM
+hypothesis-gen + code-gen, budget-gated) · evolutionary / Bayesian search ·
+`market_data.py` live bars.
 
 ## Roster promotion — closing the loop (`roster/`)
 
