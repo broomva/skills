@@ -330,6 +330,20 @@ investment-management
       └── VC/startup positions
 ```
 
+### Autonomous decision plane — `services/tradingview-bridge`
+
+A self-contained, **paper-only, human-gated** trading control system: a webhook
+receiver + multi-broker executor, plus a closed self-improving loop — `research`
+(walk-forward + anti-overfit scoring), `optimize` (EGRI param search with a true
+train/test holdout), and `roster` (human-gated promotion of optimized params into
+the roster the orchestrator measures). Drives TradingView's Paper simulator via the
+Interceptor CLI (no inbound API), or runs the entire decision loop on synthetic/CSV
+bars with no browser or broker. It measures and recommends — it never moves live
+capital on its own.
+
+→ **[services/tradingview-bridge/QUICKSTART.md](./services/tradingview-bridge/QUICKSTART.md)**
+(install + the loop in 60 seconds) · [full reference](./services/tradingview-bridge/README.md)
+
 ## Quantitative Toolkit
 
 ### Libraries Used
