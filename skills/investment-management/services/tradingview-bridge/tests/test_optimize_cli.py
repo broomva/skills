@@ -29,6 +29,33 @@ def test_train_frac_rejects_out_of_range() -> None:
             build_parser().parse_args(["run", "--train-frac", bad])
 
 
+def test_build_parser_routes_schedule_args() -> None:
+    args = build_parser().parse_args(["schedule", "--budget", "8", "--symbol", "X"])
+    assert args.command == "schedule"
+    assert args.budget == 8
+
+
+def test_main_schedule_table(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["schedule", "--budget", "8", "--symbol", "T", "--bars", "300"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "UCB1 schedule" in out
+    assert "Allocation" in out
+    assert "human-gated : True" in out
+    assert "generalizes" in out
+
+
+def test_main_schedule_json_is_human_gated(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["schedule", "--budget", "8", "--bars", "300", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["requires_human_approval"] is True
+    assert payload["n_evaluated"] == 8
+    assert sum(a["pulls"] for a in payload["allocation"]) == 8
+    assert "best" in payload
+    assert "test_score" in payload
+
+
 def test_unknown_family_rejected_by_argparse() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["run", "--family", "not-a-strategy"])

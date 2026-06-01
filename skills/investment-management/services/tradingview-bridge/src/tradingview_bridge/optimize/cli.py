@@ -23,6 +23,7 @@ from ..barsource import resolve_bars
 from ..logging_setup import configure_logging
 from ..strategy.types import Bar
 from .egri import optimize_walk_forward
+from .scheduled_search import ScheduledResult, scheduled_optimize
 from .space import BUILTIN_SPACES
 from .types import OptimizationResult
 
@@ -128,19 +129,69 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="optimize",
-        description="EGRI param-optimization with a true train/test holdout (human-gated).",
+def _format_scheduled(result: ScheduledResult) -> str:
+    lines = [
+        f"UCB1 schedule — {result.symbol}  (budget {result.budget}, {result.n_evaluated} evals)",
+        "",
+        "Allocation (UCB1 concentrated the budget here):",
+        f"  {'family':<22}{'pulls':>6}{'mean train':>12}",
+    ]
+    for s in result.arms:
+        lines.append(f"  {s.arm:<22}{s.pulls:>6}{s.mean_reward:>12.3f}")
+    lines += [
+        "",
+        "Winner (best by TRAIN, validated ONCE on the holdout):",
+        f"  strategy    : {result.best.strategy_name}  (family {result.best_family})",
+        f"  train score : {result.best.train_score:.3f}",
+        f"  TEST score  : {result.test_score:.3f}    (the honest estimate)",
+        f"  gen. gap    : {result.generalization_gap:+.3f}",
+        f"  generalizes : {result.generalizes}",
+        f"  human-gated : {result.requires_human_approval}",
+        f"  rationale   : {result.rationale}",
+    ]
+    return "\n".join(lines)
+
+
+def _cmd_schedule(args: argparse.Namespace) -> int:
+    result = scheduled_optimize(
+        list(BUILTIN_SPACES.values()),
+        _bars(args),
+        symbol=args.qlib or args.symbol,
+        asset_class=args.asset_class,
+        budget=args.budget,
+        train_frac=args.train_frac,
+        n_windows=args.n_windows,
+        min_test_score=args.min_test,
+        max_gap=args.max_gap,
     )
-    sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("run", help="grid-search a strategy family with a train/test holdout")
-    p.add_argument(
-        "--family",
-        default="sma-crossover",
-        choices=sorted(BUILTIN_SPACES),
-        help="strategy family to optimize",
-    )
+    if args.json:
+        payload = {
+            "symbol": result.symbol,
+            "budget": result.budget,
+            "n_evaluated": result.n_evaluated,
+            "allocation": [
+                {"family": s.arm, "pulls": s.pulls, "mean_train": s.mean_reward}
+                for s in result.arms
+            ],
+            "best": {
+                "strategy": result.best.strategy_name,
+                "family": result.best_family,
+                "params": result.best.params,
+                "train_score": result.best.train_score,
+            },
+            "test_score": result.test_score,
+            "generalization_gap": result.generalization_gap,
+            "generalizes": result.generalizes,
+            "requires_human_approval": result.requires_human_approval,
+        }
+        print(json.dumps(payload, indent=2))  # noqa: T201 — CLI data channel
+    else:
+        print(_format_scheduled(result))  # noqa: T201 — CLI data channel
+    return 0
+
+
+def _add_common_args(p: argparse.ArgumentParser) -> None:
+    """Args shared by `run` and `schedule` (data source, split, gate thresholds)."""
     p.add_argument("--symbol", default="AAPL", help="symbol label for the run")
     p.add_argument(
         "--asset-class",
@@ -164,15 +215,44 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--qlib-end", default="2020-09-25", help="qlib end date (YYYY-MM-DD)")
     p.add_argument("--min-test", type=float, default=0.5, help="min OOS test score to 'generalize'")
     p.add_argument("--max-gap", type=float, default=0.25, help="max train-test gap to 'generalize'")
-    p.add_argument("--top", type=int, default=8, help="how many train-ranked candidates to show")
     p.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="optimize",
+        description="EGRI param-optimization with a true train/test holdout (human-gated).",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_run = sub.add_parser("run", help="grid-search ONE family with a train/test holdout")
+    p_run.add_argument(
+        "--family",
+        default="sma-crossover",
+        choices=sorted(BUILTIN_SPACES),
+        help="strategy family to optimize",
+    )
+    _add_common_args(p_run)
+    p_run.add_argument(
+        "--top", type=int, default=8, help="how many train-ranked candidates to show"
+    )
+
+    p_sched = sub.add_parser(
+        "schedule", help="UCB1-allocate a budget of evaluations across ALL families"
+    )
+    p_sched.add_argument(
+        "--budget", type=int, default=12, help="total candidate-evaluations to allocate"
+    )
+    _add_common_args(p_sched)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     _configure_logging()
     args = build_parser().parse_args(argv)
-    return _cmd_run(args)
+    handlers = {"run": _cmd_run, "schedule": _cmd_schedule}
+    return handlers[args.command](args)
 
 
 if __name__ == "__main__":
