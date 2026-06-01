@@ -1,5 +1,7 @@
 # tradingview-bridge
 
+> 🚀 **New here? Start with [QUICKSTART.md](./QUICKSTART.md)** — install + the full self-improving decision loop in 60 seconds (no browser, no broker). This README is the deep reference.
+
 Webhook receiver + multi-broker executor for TradingView Pine Script alerts. Dispatches by `asset_class` to IBKR (stocks/bonds/FX), Kraken (crypto), and Polymarket (prediction markets) — paper-only, mock-by-default for CI.
 
 **Status: PR 2 (v0.2.0) — receiver + executor + idempotency + rate limit + bookkeeping. Paper-only enforced at startup. Real-paper broker SDKs are an optional extras group (`tradingview-bridge[brokers]`).**
