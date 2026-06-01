@@ -15,7 +15,7 @@ agent (or human). Task-oriented; for architecture and deep reference see
 
 ## The dependency chain (what installs on what)
 
-```
+```text
 npx skills add  →  investment-management skill  (SKILL.md + frameworks)
                      └── services/tradingview-bridge/   (this Python package, uv)
                            ├── 4 console scripts:  operate · research · optimize · roster
@@ -84,7 +84,7 @@ deterministic, so a run is reproducible.
 
 That five-step sequence **is** the self-improving loop:
 
-```
+```text
 optimize → propose (auto, OOS-gated) → promote (HUMAN) → orchestrator measures
 optimized params → recommendation (still human-gated) → [allocate: HUMAN] → capital
 ```
