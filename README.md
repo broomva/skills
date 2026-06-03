@@ -78,6 +78,7 @@ npx skills add broomva/skills --skill '*'
 | [`deep-dive-research-orchestrator`](skills/deep-dive-research-orchestrator/) | `skills/deep-dive-research-orchestrator/SKILL.md` | Multi-dimensional research with coordinated AI specialists; 10+ source synthesis with citations. (Renamed from `broomva/deep-dive-research-skill`.) |
 | [`social-intelligence`](skills/social-intelligence/) | `skills/social-intelligence/SKILL.md` | Autonomous social engagement + knowledge extraction loop for Moltbook and X — compounds with `blog-post` and `content-creation` |
 | [`harness-engineering-playbook`](skills/harness-engineering-playbook/) | `skills/harness-engineering-playbook/SKILL.md` | Agent-first workflow patterns — AGENTS.md, smoke/test/lint/typecheck harness, entropy control. (Renamed from `broomva/harness-engineering-skill`.) |
+| [`checkit`](skills/checkit/) | `skills/checkit/SKILL.md` | Ingest-and-integrate an artifact shared with a terse, under-articulated directive ("check this out", "lets research this", + a URL/repo/paper/file). Infers the real ask without bouncing a question back, then contextualizes → researches (verifying sources) → connects → documents → suggests ranked next steps. Composition skill; pairs with the `checkit` role/x lens in a bstack workspace. |
 
 ### Finance & investment
 
