@@ -1,4 +1,4 @@
-# omnivoice-skill
+# omnivoice
 
 Agent skill for [OmniVoice Studio](https://github.com/debpalash/OmniVoice-Studio) — the open-source ElevenLabs alternative. Gives Claude Code, Cursor, OpenClaw, Codex, and other compatible agents the context they need to call OmniVoice's local MCP server: text-to-speech, voice cloning, voice design, and dub-pipeline primitives across 646 languages without sending any audio to the cloud.
 
@@ -57,7 +57,7 @@ Restart the agent. The skill's helper scripts (`scripts/start-backend.sh`, `scri
 ## Layout
 
 ```
-omnivoice-skill/
+omnivoice/
 ├── SKILL.md                              # YAML frontmatter + workflows + decision rule
 ├── references/
 │   ├── engines-comparison.md             # When to pick OmniVoice vs other TTS engines

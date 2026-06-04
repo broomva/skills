@@ -19,7 +19,7 @@ The procurer skill is the agent's reflex when the user is about to spend money o
 npx skills add broomva/skills --skill procurer
 
 # Or globally for your user:
-npx skills add -g broomva/procurer
+npx skills add -g broomva/skills --skill procurer
 ```
 
 You can also discover it through the interactive finder:

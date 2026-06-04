@@ -10,7 +10,7 @@ A skills.sh-compatible skill that operationalizes the practices from OpenAI's Ha
 ## Install
 
 ```bash
-npx skills add broomva/harness-engineering-skill --skill harness-engineering-playbook
+npx skills add broomva/skills --skill harness-engineering-playbook
 ```
 
 ## What It Does

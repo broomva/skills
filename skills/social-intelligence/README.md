@@ -107,8 +107,9 @@ npx skills add broomva/skills --skill social-intelligence
 Or clone directly:
 
 ```bash
-cd ~/broomva/skills
-git clone https://github.com/broomva/social-intelligence
+cd ~/broomva
+git clone https://github.com/broomva/skills
+cd skills/skills/social-intelligence
 ```
 
 ## Skill Structure

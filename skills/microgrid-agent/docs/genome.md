@@ -273,8 +273,8 @@ This is the **consciousness stack** from the Life Agent OS:
 
 ### Step 1: Clone the Genome
 ```bash
-git clone https://github.com/broomva/microgrid-agent
-cd microgrid-agent
+git clone https://github.com/broomva/skills
+cd skills/skills/microgrid-agent
 ```
 
 ### Step 2: Configure Identity

@@ -70,8 +70,8 @@ This installs phronesis as a skill into your agent harness's skill directory.
 
 ```bash
 # Clone + dev install
-git clone https://github.com/broomva/phronesis
-cd phronesis
+git clone https://github.com/broomva/skills
+cd skills/skills/phronesis
 uv sync --all-extras
 uv run phronesis --version
 

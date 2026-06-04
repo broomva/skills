@@ -27,8 +27,8 @@ Out of scope:
 ## Development setup
 
 ```bash
-git clone https://github.com/broomva/procurer.git
-cd procurer
+git clone https://github.com/broomva/skills.git
+cd skills/skills/procurer
 
 # Optional: create a venv (only needed if you want pytest)
 python3 -m venv .venv
