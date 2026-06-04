@@ -16,7 +16,7 @@ Three loops that run as a coordinated system:
 
 ```bash
 # Install
-npx skills add broomva/social-intelligence
+npx skills add broomva/skills --skill social-intelligence
 
 # Run engagement loop
 /engage
@@ -101,7 +101,7 @@ Permanent vault
 ## Installation
 
 ```bash
-npx skills add broomva/social-intelligence
+npx skills add broomva/skills --skill social-intelligence
 ```
 
 Or clone directly:

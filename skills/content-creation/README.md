@@ -3,7 +3,7 @@
 Full-stack content creation pipeline skill for AI coding agents. Turns ideas into published blog posts, Remotion videos, and social media content.
 
 ```
-npx skills add broomva/content-creation
+npx skills add broomva/skills --skill content-creation
 ```
 
 ## Pipeline

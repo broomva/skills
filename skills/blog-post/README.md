@@ -51,7 +51,7 @@ This skill orchestrates — it delegates to:
 ## Installation
 
 ```bash
-npx skills add broomva/blog-post
+npx skills add broomva/skills --skill blog-post
 ```
 
 ## Skill Structure

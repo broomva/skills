@@ -6,7 +6,7 @@ Brand icon and visual identity asset generation and management for BroomVA proje
 
 ```bash
 # Install
-npx skills add broomva/brand-icons -y -g
+npx skills add broomva/skills --skill brand-icons -y -g
 
 # Generate full icon set from source image
 # Agent reads source SVG/PNG and produces multi-size favicon set, app icons, OG template

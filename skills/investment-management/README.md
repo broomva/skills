@@ -8,7 +8,7 @@ Compounds on [finance-substrate](https://github.com/broomva/finance-substrate) (
 
 ```bash
 # Install
-npx skills add broomva/investment-management -y -g
+npx skills add broomva/skills --skill investment-management -y -g
 
 # Market data (always works, no dependencies)
 python3 scripts/market_data.py --trm

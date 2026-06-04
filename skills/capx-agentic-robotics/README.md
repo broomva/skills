@@ -17,7 +17,7 @@ Equips AI coding agents with the knowledge to set up, run, and extend the CaP-X 
 ## Install
 
 ```bash
-npx skills add broomva/capx-agentic-robotics -g -y
+npx skills add broomva/skills --skill capx-agentic-robotics -g -y
 ```
 
 ## Structure

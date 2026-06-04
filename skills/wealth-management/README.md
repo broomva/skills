@@ -6,7 +6,7 @@ Wealth management, financial planning, and investment analytics skill for Colomb
 
 ```bash
 # Install
-npx skills add broomva/wealth-management -y -g
+npx skills add broomva/skills --skill wealth-management -y -g
 
 # Portfolio summary (uses finance-substrate data)
 python3 scripts/portfolio_summary.py --year 2024
