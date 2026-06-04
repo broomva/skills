@@ -53,7 +53,7 @@ make ci             # All of the above
 
 ### Optional (governance and reliability)
 - `agent-control-metalayer-skill` - Control policy, escalation rules, audit trails
-- `harness-engineering-skill` - Harness commands, AGENTS.md standard, entropy management
+- `harness-engineering-playbook` - Harness commands, AGENTS.md standard, entropy management
 
 ## Sync Rule
 

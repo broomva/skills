@@ -26,15 +26,15 @@ agent-control-metalayer-skill = "1.0.0"
   purpose = "Governance framework, policy enforcement, audit trails, agent control"
   status = "optional"
 
-harness-engineering-skill = "1.0.0"
-  source = "broomva/harness-engineering-skill"
+harness-engineering-playbook = "1.0.0"
+  source = "broomva/skills@harness-engineering-playbook"
   purpose = "Deterministic workflows, test harness validation, safety checks, compliance"
   status = "optional"
 
 [installation-commands]
 
 # One-liner to install all dependencies (required + optional)
-install-all = "npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/harness-engineering-skill -g -y"
+install-all = "npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/skills@harness-engineering-playbook -g -y"
 
 # Required dependencies only
 install-required = "npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization -g -y"
@@ -44,7 +44,7 @@ install-financial = "npx skills add eng0ai/eng0-template-skills@financial-deep-r
 install-competitive = "npx skills add ognjengt/founder-skills@competitor-intel -g"
 install-product = "npx skills add sickn33/antigravity-awesome-skills@app-store-optimization -g"
 install-governance = "npx skills add broomva/agent-control-metalayer-skill -g"
-install-harness = "npx skills add broomva/harness-engineering-skill -g"
+install-harness = "npx skills add broomva/skills@harness-engineering-playbook -g"
 
 [metadata]
 skill-version = "1.1.0"
@@ -71,7 +71,7 @@ financial-deep-research = "pending"
 competitor-intel = "pending"
 app-store-optimization = "pending"
 agent-control-metalayer-skill = "pending"
-harness-engineering-skill = "pending"
+harness-engineering-playbook = "pending"
 deep-dive-research-skill = "pending"
 
 [notes]

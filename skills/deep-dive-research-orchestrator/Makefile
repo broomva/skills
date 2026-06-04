@@ -25,7 +25,7 @@ check:
 	@grep -q "competitor-intel" skills.lock && echo "[PASS] skills.lock has competitor-intel" || echo "[FAIL] skills.lock missing competitor-intel"
 	@grep -q "app-store-optimization" skills.lock && echo "[PASS] skills.lock has app-store-optimization" || echo "[FAIL] skills.lock missing app-store-optimization"
 	@grep -q "agent-control-metalayer-skill" skills.lock && echo "[PASS] skills.lock has agent-control-metalayer-skill" || echo "[FAIL] skills.lock missing agent-control-metalayer-skill"
-	@grep -q "harness-engineering-skill" skills.lock && echo "[PASS] skills.lock has harness-engineering-skill" || echo "[FAIL] skills.lock missing harness-engineering-skill"
+	@grep -q "harness-engineering-playbook" skills.lock && echo "[PASS] skills.lock has harness-engineering-playbook" || echo "[FAIL] skills.lock missing harness-engineering-playbook"
 	@for f in .claude/agents/*.md; do \
 		grep -q "^name:" "$$f" && echo "[PASS] $$f has name" || echo "[FAIL] $$f missing name"; \
 		grep -q "^description:" "$$f" && echo "[PASS] $$f has description" || echo "[FAIL] $$f missing description"; \

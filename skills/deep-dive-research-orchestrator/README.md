@@ -52,7 +52,7 @@ This skill **requires** three dependent skills to function:
 
 ```bash
 # Install all dependencies + orchestrator skill in one command
-npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/harness-engineering-skill broomva/deep-dive-research-skill -g -y
+npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/skills@harness-engineering-playbook broomva/deep-dive-research-skill -g -y
 ```
 
 **Or follow [INSTALLATION.md](INSTALLATION.md) for step-by-step setup**
