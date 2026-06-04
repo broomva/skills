@@ -42,7 +42,7 @@ This skill **requires** three dependent skills to function:
 | **competitor-intel** | Competitive intelligence | Required | `npx skills add ognjengt/founder-skills@competitor-intel -g` |
 | **app-store-optimization** | Product & market metrics | Required | `npx skills add sickn33/antigravity-awesome-skills@app-store-optimization -g` |
 | **agent-control-metalayer-skill** | Governance & policy enforcement | Optional | `npx skills add broomva/agent-control-metalayer-skill -g` |
-| **harness-engineering-skill** | Deterministic workflows & safety | Optional | `npx skills add broomva/skills --skill harness-engineering-playbook -g` |
+| **harness-engineering-playbook** | Deterministic workflows & safety | Optional | `npx skills add broomva/skills --skill harness-engineering-playbook -g` |
 
 📖 **[See full installation guide →](INSTALLATION.md)**
 
