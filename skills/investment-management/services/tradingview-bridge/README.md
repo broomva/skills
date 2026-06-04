@@ -614,8 +614,8 @@ The decision plane is rule-based by default. To let a **machine-learning forecas
 compete on the *same* honest footing, `ForecastStrategy` wraps any `Forecaster` — a
 Protocol with `predict_return(bars, horizon) → float` — into a `Strategy`: predicted
 return above a basis-point threshold → `enter_long`, below `−threshold` → `exit`, else
-`hold`. So an ML model is judged by the **same walk-forward + OOS holdout + score +
-roster** as `SMACrossover` — no special path, no separate "ML is magic" track.
+`hold`. So an ML model is judged by the **same walk-forward + score harness** as
+`SMACrossover` — no special path, no separate "ML is magic" track.
 
 ```python
 from tradingview_bridge.strategy import ForecastStrategy            # dep-free core
@@ -623,8 +623,13 @@ from tradingview_bridge.strategy.kronos_adapter import KronosForecaster  # heavy
 
 fc    = KronosForecaster(model_name="Kronos-small", sample_count=5, kronos_repo_path="…/Kronos")
 strat = ForecastStrategy(fc, horizon=5, threshold_bps=100, min_bars=120)
-# …then the EXISTING walk_forward / score / optimize / roster run unchanged on it.
+# …then the EXISTING walk_forward + score run unchanged on it.
 ```
+
+The int-typed `horizon` / `threshold_bps` are a *precondition* for a future
+optimize/schedule grid, but that factory isn't wired yet — a ForecastStrategy needs a
+live `Forecaster`, so a grid factory must supply one via closure (follow-up). Today the
+honest, tested integration is **harness scoring**, not grid optimization or the roster.
 
 [Kronos](https://github.com/shiyu-coder/Kronos) is the first open-source foundation
 model for K-lines (decoder-only, pretrained on candlesticks). The adapter is an

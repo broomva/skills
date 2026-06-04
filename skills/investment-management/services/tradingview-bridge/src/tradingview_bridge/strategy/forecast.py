@@ -11,8 +11,13 @@ The honest point (BRO-1374 / tool/kronos): directional accuracy is not profit. A
 that forecasts direction 60% of the time may still fail to clear costs and the
 generalization gate. ForecastStrategy is the bridge that lets our harness decide.
 
-Params are int-typed (``horizon``, ``threshold_bps``) so a ForecastStrategy stays
-grid-compatible with the optimize / schedule plane.
+A ForecastStrategy is scored by the SAME ``walk_forward`` + ``score`` harness as any
+Strategy (real + tested — see test_forecast_strategy.py). Its params are int-typed
+(``horizon``, ``threshold_bps``) so a future optimize/schedule ``ParamSpace`` *can*
+grid them — but that factory is **not wired yet**: unlike a rule-based strategy, a
+ForecastStrategy can't be built from an int dict alone (it needs a live ``Forecaster``),
+so the factory must supply the forecaster via closure. Tracked as a follow-up; today the
+honest integration is harness scoring, not grid optimization.
 """
 
 from __future__ import annotations
@@ -75,7 +80,10 @@ class ForecastStrategy(Strategy):
             return Signal(action="hold", reason="warmup")
         pred = self._forecaster.predict_return(state.bars, self._horizon)
         if pred > self._threshold:
-            conf = min(1.0, abs(pred) / self._threshold) if self._threshold > 0 else 1.0
+            # Confidence as a real gradient: ~0.5 just past the threshold → 1.0 at 2x
+            # threshold (the naive abs(pred)/threshold saturates to a constant 1.0 since
+            # pred>threshold already, which would carry no information).
+            conf = min(1.0, abs(pred) / (2 * self._threshold)) if self._threshold > 0 else 1.0
             return Signal(
                 action="enter_long",
                 reason=f"forecast +{pred:.4f} > {self._threshold:.4f}",

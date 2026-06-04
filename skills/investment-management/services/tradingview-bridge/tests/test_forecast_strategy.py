@@ -94,6 +94,20 @@ def test_integration_walk_forward_and_score() -> None:
     assert 0.0 <= score.overall <= 1.0  # produces a valid, honest score
 
 
+def test_confidence_is_a_gradient() -> None:
+    """enter_long confidence scales with signal strength (~0.5 just past the threshold →
+    1.0 at 2x threshold), not a constant — regression guard against the dead-1.0 calc."""
+    weak = ForecastStrategy(_FakeForecaster(lambda _n: 0.0101), threshold_bps=100, min_bars=10)
+    strong = ForecastStrategy(_FakeForecaster(lambda _n: 0.02), threshold_bps=100, min_bars=10)
+    s_weak = weak.signal(_state(50))
+    s_strong = strong.signal(_state(50))
+    assert s_weak.action == "enter_long"
+    assert s_strong.action == "enter_long"
+    assert s_weak.confidence < s_strong.confidence  # gradient, not constant
+    assert s_strong.confidence == 1.0  # 0.02 / (2 * 0.01)
+    assert 0.5 <= s_weak.confidence < 0.6  # ~0.505
+
+
 @pytest.mark.skipif(_TORCH, reason="torch installed; the not-installed path can't be exercised")
 def test_kronos_adapter_requires_extra() -> None:
     """Without the [kronos] extra (no torch), constructing KronosForecaster raises a
@@ -102,3 +116,40 @@ def test_kronos_adapter_requires_extra() -> None:
 
     with pytest.raises(RuntimeError, match="kronos"):
         KronosForecaster()
+
+
+@pytest.mark.skipif(
+    not _TORCH or importlib.util.find_spec("pandas") is None,
+    reason="predict_return needs torch+pandas (the [kronos] extra); CI never installs it",
+)
+def test_kronos_predict_return_math_with_fake_predictor() -> None:
+    """Exercise KronosForecaster.predict_return's MATH — timestamp synthesis, the return
+    calc, and the guards — WITHOUT loading a real model (inject a fake predictor). The
+    fake-forecaster tests above bypass this method entirely, so this is its only coverage.
+    Skipped in CI (which never installs the [kronos] extra)."""
+    import pandas as pd
+
+    from tradingview_bridge.strategy.kronos_adapter import KronosForecaster
+
+    # Bypass __init__ (which loads HF models) — set only what predict_return reads.
+    fc = object.__new__(KronosForecaster)
+    fc._sample_count = 1
+    fc._temperature = 1.0
+    fc._top_p = 0.9
+    fc._lookback = 400
+    fc._seed = 0
+
+    class _FakePredictor:
+        def predict(self, *, df, y_timestamp, pred_len, **kw):  # type: ignore[no-untyped-def]
+            last = float(df["close"].to_numpy()[-1])
+            # forecast close = +10% over the last input close, for every horizon step
+            return pd.DataFrame({"close": [last * 1.10] * pred_len})
+
+    fc._predictor = _FakePredictor()
+
+    bars = synthetic_bars(50)
+    pred = fc.predict_return(bars, horizon=5)
+    assert abs(pred - 0.10) < 1e-6  # +10% forecast close → +0.10 fractional return
+
+    # <2-bar guard returns 0.0 without calling the predictor
+    assert fc.predict_return(bars[:1], horizon=5) == 0.0
