@@ -1,5 +1,5 @@
 {
-  "name": "deep-dive-research-skill",
+  "name": "deep-dive-research-orchestrator",
   "version": "1.1.0",
   "description": "Comprehensive multi-dimensional research using coordinated AI specialists",
   "keywords": [
@@ -17,12 +17,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/broomva/deep-dive-research-skill"
+    "url": "https://github.com/broomva/skills"
   },
   "bugs": {
-    "url": "https://github.com/broomva/deep-dive-research-skill/issues"
+    "url": "https://github.com/broomva/skills/issues"
   },
-  "homepage": "https://github.com/broomva/deep-dive-research-skill#readme",
+  "homepage": "https://github.com/broomva/skills#readme",
   "engines": {
     "node": ">=14.0.0"
   },

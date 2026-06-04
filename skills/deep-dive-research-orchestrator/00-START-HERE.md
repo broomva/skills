@@ -67,7 +67,7 @@ This skill **requires 3 other skills** to function:
 
 **Quick install (all dependencies + skill):**
 ```bash
-npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/deep-dive-research-skill -g -y
+npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/skills@deep-dive-research-orchestrator -g -y
 ```
 
 ## ✨ Key Features
@@ -113,7 +113,7 @@ npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/foun
 ### Step 1: Install (10 minutes)
 ```bash
 # Install all dependencies and the skill
-npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/deep-dive-research-skill -g -y
+npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/skills@deep-dive-research-orchestrator -g -y
 ```
 
 📖 **Detailed instructions:** [INSTALLATION.md](INSTALLATION.md)

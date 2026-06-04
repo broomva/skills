@@ -6,11 +6,11 @@ This document serves two audiences:
 
 ## Project Overview
 
-- Project: `deep-dive-research-skill`
+- Project: `deep-dive-research-orchestrator`
 - Primary runtime(s): Claude Code agents (Explore, general-purpose)
 - Main entrypoint(s): `SKILL.md`, `.claude/agents/research-orchestrator.md`
 - Dependency skills: `financial-deep-research`, `competitor-intel`, `app-store-optimization`
-- Governance skills: `agent-control-metalayer-skill`, `harness-engineering-playbook`
+- Governance skills: `control-metalayer`, `harness-engineering-playbook`
 
 ---
 
@@ -22,7 +22,7 @@ This document serves two audiences:
 | `financial-researcher` | sonnet | 8-phase financial pipeline with source tiering | financial-deep-research | 30 |
 | `competitive-analyst` | sonnet | 6-category mandatory web research, zero-tolerance metrics | competitor-intel | 30 |
 | `market-product-analyst` | sonnet | ASO toolkit, platform-specific analysis, 8 scripts | app-store-optimization | 30 |
-| `governance-auditor` | haiku | Quality gates, source verification, compliance | agent-control-metalayer-skill | 10 |
+| `governance-auditor` | haiku | Quality gates, source verification, compliance | control-metalayer | 10 |
 
 ---
 
@@ -165,7 +165,7 @@ This section is for agents that maintain, improve, and extend this skill.
 ### Repository Structure
 
 ```
-deep-dive-research-skill/
+deep-dive-research-orchestrator/
 ├── SKILL.md                    # Skill specification (frontmatter + content)
 ├── AGENTS.md                   # This file (agent ops + builder guide)
 ├── CLAUDE.md                   # Quick reference for agents working in this repo
@@ -193,14 +193,14 @@ deep-dive-research-skill/
 ### Dependency Map
 
 ```
-deep-dive-research-skill (this skill)
+deep-dive-research-orchestrator (this skill)
 ├── [required] financial-deep-research (eng0ai/eng0-template-skills)
 │     └── Provides: 8-phase pipeline, source tiering, anti-hallucination
 ├── [required] competitor-intel (ognjengt/founder-skills)
 │     └── Provides: 6-category web research, zero-tolerance metrics, leverage strategies
 ├── [required] app-store-optimization (sickn33/antigravity-awesome-skills)
 │     └── Provides: ASO toolkit, platform requirements, 8 analysis scripts
-├── [optional] agent-control-metalayer-skill (broomva/agent-control-metalayer-skill)
+├── [optional] control-metalayer (broomva/control-metalayer)
 │     └── Provides: governance framework, control policy, escalation rules, audit trails
 └── [optional] harness-engineering-playbook (broomva/skills@harness-engineering-playbook)
       └── Provides: harness commands, AGENTS.md standard, deterministic workflows, entropy management
@@ -215,7 +215,7 @@ When a dependency skill updates, the corresponding agent definition must be upda
 | financial-deep-research | `.claude/agents/financial-researcher.md` | New phases, changed source tiers, updated quality gates |
 | competitor-intel | `.claude/agents/competitive-analyst.md` | New search categories, changed output format, new query patterns |
 | app-store-optimization | `.claude/agents/market-product-analyst.md` | New scripts, changed platform limits, new capabilities |
-| agent-control-metalayer-skill | `.claude/agents/governance-auditor.md` | New control primitives, changed escalation rules |
+| control-metalayer | `.claude/agents/governance-auditor.md` | New control primitives, changed escalation rules |
 | Any agent change | `AGENTS.md` Part 1 | Execution flow, skill workflows, boundaries |
 
 **Sync verification command:** `make check` validates agent-skill alignment.

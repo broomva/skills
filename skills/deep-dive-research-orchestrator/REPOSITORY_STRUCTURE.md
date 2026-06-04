@@ -3,7 +3,7 @@
 ## File Organization
 
 ```
-deep-dive-research-skill/
+deep-dive-research-orchestrator/
 │
 ├── 📄 README.md
 │   └── Main documentation, quick start, features
