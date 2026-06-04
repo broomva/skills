@@ -93,8 +93,8 @@ Architecture Overview
 
 ```bash
 # Clone the repository
-git clone https://github.com/broomva/microgrid-agent.git
-cd microgrid-agent
+git clone https://github.com/broomva/skills.git
+cd skills/skills/microgrid-agent
 
 # Install in development mode
 pip install -e ".[dev]"

@@ -173,8 +173,8 @@ This is optional for development but strongly recommended for field deployment.
 
 ```bash
 # Clone the repository
-git clone https://github.com/broomva/microgrid-agent.git
-cd microgrid-agent
+git clone https://github.com/broomva/skills.git
+cd skills/skills/microgrid-agent
 
 # Create a virtual environment
 python3 -m venv .venv

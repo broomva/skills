@@ -44,7 +44,7 @@ capx-agentic-robotics/
 
 - [CaP-X](https://github.com/capgym/cap-x) — Source framework (MIT)
 - [Voyager](https://arxiv.org/abs/2305.16291) — Predecessor: skill libraries + self-reflection in Minecraft
-- [ORCA Hand](https://github.com/broomva/orcahand) — 17-DOF tendon-driven robotic hand skill
+- [ORCA Hand](https://github.com/broomva/skills/tree/main/skills/orcahand) — 17-DOF tendon-driven robotic hand skill
 
 ## License
 

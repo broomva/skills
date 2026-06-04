@@ -46,16 +46,8 @@ python3 scripts/calc_wait.py --pretty --input-json '{
 }'
 ```
 
-## Publicar en GitHub + usar en skills.sh
-
-1. Crear repo remoto y push:
+## Instalar
 
 ```bash
-gh repo create broomva/alkosto-wait-optimizer-skill --public --source . --remote origin --push
-```
-
-2. Instalar skill desde GitHub:
-
-```bash
-npx skills add https://github.com/broomva/alkosto-wait-optimizer-skill --skill alkosto-wait-optimizer --yes
+npx skills add broomva/skills --skill alkosto-wait-optimizer --yes
 ```

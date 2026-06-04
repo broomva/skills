@@ -278,10 +278,10 @@ Store and version:
 
 ```bash
 # ORCA Hand (17-DOF tendon-driven hand — ETH Zurich)
-npx skills add broomva/orcahand -g -y
+npx skills add broomva/skills --skill orcahand -g -y
 
 # Remote GPU (offload perception/training to NUC or cloud)
-npx skills add broomva/remote-gpu -g -y
+npx skills add broomva/skills --skill remote-gpu -g -y
 ```
 
 ## Resources
