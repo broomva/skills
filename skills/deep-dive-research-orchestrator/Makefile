@@ -24,7 +24,7 @@ check:
 	@grep -q "financial-deep-research" skills.lock && echo "[PASS] skills.lock has financial-deep-research" || echo "[FAIL] skills.lock missing financial-deep-research"
 	@grep -q "competitor-intel" skills.lock && echo "[PASS] skills.lock has competitor-intel" || echo "[FAIL] skills.lock missing competitor-intel"
 	@grep -q "app-store-optimization" skills.lock && echo "[PASS] skills.lock has app-store-optimization" || echo "[FAIL] skills.lock missing app-store-optimization"
-	@grep -q "agent-control-metalayer-skill" skills.lock && echo "[PASS] skills.lock has agent-control-metalayer-skill" || echo "[FAIL] skills.lock missing agent-control-metalayer-skill"
+	@grep -q "control-metalayer" skills.lock && echo "[PASS] skills.lock has control-metalayer" || echo "[FAIL] skills.lock missing control-metalayer"
 	@grep -q "harness-engineering-playbook" skills.lock && echo "[PASS] skills.lock has harness-engineering-playbook" || echo "[FAIL] skills.lock missing harness-engineering-playbook"
 	@for f in .claude/agents/*.md; do \
 		grep -q "^name:" "$$f" && echo "[PASS] $$f has name" || echo "[FAIL] $$f missing name"; \
@@ -41,7 +41,7 @@ test: smoke check
 	@grep -q "financial-deep-research" .claude/agents/financial-researcher.md && echo "[PASS] financial-researcher references correct skill" || echo "[FAIL] financial-researcher skill mismatch"
 	@grep -q "competitor-intel" .claude/agents/competitive-analyst.md && echo "[PASS] competitive-analyst references correct skill" || echo "[FAIL] competitive-analyst skill mismatch"
 	@grep -q "app-store-optimization" .claude/agents/market-product-analyst.md && echo "[PASS] market-product-analyst references correct skill" || echo "[FAIL] market-product-analyst skill mismatch"
-	@grep -q "agent-control-metalayer-skill" .claude/agents/governance-auditor.md && echo "[PASS] governance-auditor references correct skill" || echo "[FAIL] governance-auditor skill mismatch"
+	@grep -q "control-metalayer" .claude/agents/governance-auditor.md && echo "[PASS] governance-auditor references correct skill" || echo "[FAIL] governance-auditor skill mismatch"
 	@echo "=== Full Verification Complete ==="
 
 # Research output audit - validate research quality

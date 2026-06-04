@@ -20,7 +20,7 @@ Deep-Dive Research Orchestrator - a Claude Code skill for comprehensive multi-di
 | financial-researcher | sonnet | financial-deep-research | 8-phase pipeline (Scope→Package), 4-tier source credibility, anti-hallucination protocol |
 | competitive-analyst | sonnet | competitor-intel | 6-category mandatory web search, zero-tolerance metrics, 3 leverage strategies |
 | market-product-analyst | sonnet | app-store-optimization | ASO toolkit (6 capabilities), platform-specific limits, 8 analysis scripts |
-| governance-auditor | haiku | agent-control-metalayer-skill | Quality checklist, source verification, compliance validation, 1-10 scoring |
+| governance-auditor | haiku | control-metalayer | Quality checklist, source verification, compliance validation, 1-10 scoring |
 
 ## Commands
 
@@ -52,7 +52,7 @@ make ci             # All of the above
 - `app-store-optimization` - ASO toolkit with platform-specific analysis
 
 ### Optional (governance and reliability)
-- `agent-control-metalayer-skill` - Control policy, escalation rules, audit trails
+- `control-metalayer` - Control policy, escalation rules, audit trails
 - `harness-engineering-playbook` - Harness commands, AGENTS.md standard, entropy management
 
 ## Sync Rule

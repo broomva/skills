@@ -27,7 +27,7 @@ dependencies:
   - financial-deep-research
   - competitor-intel
   - app-store-optimization
-  - agent-control-metalayer-skill
+  - control-metalayer
   - harness-engineering-playbook
 ai-requirements:
   - web-search
@@ -270,7 +270,7 @@ This skill includes 5 specialized agents in `.claude/agents/`:
 
 ### research-orchestrator (opus)
 The lead coordinator that manages the full research workflow. Deploys specialist agents in parallel, cross-references findings, and synthesizes final reports.
-- **Skills:** financial-deep-research, competitor-intel, app-store-optimization, agent-control-metalayer-skill, harness-engineering-playbook
+- **Skills:** financial-deep-research, competitor-intel, app-store-optimization, control-metalayer, harness-engineering-playbook
 - **Tools:** Read, Glob, Grep, WebFetch, WebSearch, Task, Write
 
 ### financial-researcher (sonnet)
@@ -290,7 +290,7 @@ Product metrics and market opportunity analyst. App store performance, user enga
 
 ### governance-auditor (haiku)
 Quality and compliance auditor. Validates source verification, data quality, compliance, and report standards.
-- **Skills:** agent-control-metalayer-skill
+- **Skills:** control-metalayer
 - **Tools:** Read, Glob, Grep
 
 ## Workflow

@@ -30,8 +30,8 @@ Contributions are welcome! Here's how to contribute to the Deep-Dive Research Or
 
 ### 1. Fork the Repository
 ```bash
-git clone https://github.com/YOUR-USERNAME/deep-dive-research-skill
-cd deep-dive-research-skill
+git clone https://github.com/YOUR-USERNAME/skills
+cd skills/skills/deep-dive-research-orchestrator
 ```
 
 ### 2. Create a Feature Branch

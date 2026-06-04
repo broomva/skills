@@ -32,8 +32,8 @@ The Deep-Dive Research Orchestrator **requires** three skills to function:
 
 These skills enhance governance and reliability but are not required for core research:
 
-### 4. **agent-control-metalayer-skill**
-- **Source:** `broomva/agent-control-metalayer-skill`
+### 4. **control-metalayer**
+- **Source:** `broomva/control-metalayer`
 - **Purpose:** Governance framework, policy enforcement, audit trails
 - **Required:** ❌ Optional (enhances governance)
 
@@ -50,7 +50,7 @@ Install all dependencies + skill in one command:
 
 ```bash
 # Install all dependencies (required + optional) and the orchestrator skill
-npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/skills@harness-engineering-playbook broomva/deep-dive-research-skill -g -y
+npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/control-metalayer broomva/skills@harness-engineering-playbook broomva/skills@deep-dive-research-orchestrator -g -y
 ```
 
 **Time:** ~2 minutes
@@ -71,13 +71,13 @@ npx skills add ognjengt/founder-skills@competitor-intel -g -y
 npx skills add sickn33/antigravity-awesome-skills@app-store-optimization -g -y
 
 # Step 4: Install governance framework (optional)
-npx skills add broomva/agent-control-metalayer-skill -g -y
+npx skills add broomva/control-metalayer -g -y
 
 # Step 5: Install harness engineering (optional)
 npx skills add broomva/skills@harness-engineering-playbook -g -y
 
 # Step 6: Install the orchestrator skill
-npx skills add broomva/deep-dive-research-skill -g -y
+npx skills add broomva/skills@deep-dive-research-orchestrator -g -y
 ```
 
 **Time:** ~5 minutes
@@ -88,9 +88,9 @@ npx skills add broomva/deep-dive-research-skill -g -y
 Test locally before global installation:
 
 ```bash
-# Clone the repository
-git clone https://github.com/broomva/deep-dive-research-skill
-cd deep-dive-research-skill
+# Clone the monorepo (the skill lives under skills/)
+git clone https://github.com/broomva/skills
+cd skills/skills/deep-dive-research-orchestrator
 
 # Install dependencies globally
 npx skills add eng0ai/eng0-template-skills@financial-deep-research -g
@@ -116,7 +116,7 @@ npx skills list
 # - financial-deep-research
 # - competitor-intel
 # - app-store-optimization
-# - deep-dive-research-skill (or orchestrator skill name)
+# - deep-dive-research-orchestrator (or orchestrator skill name)
 ```
 
 ## Troubleshooting
@@ -179,7 +179,7 @@ To remove all skills:
 npx skills remove financial-deep-research
 npx skills remove competitor-intel
 npx skills remove app-store-optimization
-npx skills remove deep-dive-research-skill
+npx skills remove deep-dive-research-orchestrator
 ```
 
 Or remove all locally installed skills:
@@ -195,7 +195,7 @@ To update to newer versions:
 
 ```bash
 # Re-install (will update if newer version available)
-npx skills add broomva/deep-dive-research-skill -g -y
+npx skills add broomva/skills@deep-dive-research-orchestrator -g -y
 
 # Or update all skills
 npx skills update
@@ -243,7 +243,7 @@ If you encounter issues:
 1. **Check documentation:** [README.md](README.md), [SKILL.md](SKILL.md)
 2. **Review examples:** [examples/](examples/RESEARCH_REQUESTS.md)
 3. **Check methodology:** [METHODOLOGY.md](METHODOLOGY.md)
-4. **Open an issue:** [GitHub Issues](https://github.com/broomva/deep-dive-research-skill/issues)
+4. **Open an issue:** [GitHub Issues](https://github.com/broomva/skills/issues)
 
 ## Security & Privacy
 

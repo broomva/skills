@@ -41,7 +41,7 @@ This skill **requires** three dependent skills to function:
 | **financial-deep-research** | Financial analysis & funding | Required | `npx skills add eng0ai/eng0-template-skills@financial-deep-research -g` |
 | **competitor-intel** | Competitive intelligence | Required | `npx skills add ognjengt/founder-skills@competitor-intel -g` |
 | **app-store-optimization** | Product & market metrics | Required | `npx skills add sickn33/antigravity-awesome-skills@app-store-optimization -g` |
-| **agent-control-metalayer-skill** | Governance & policy enforcement | Optional | `npx skills add broomva/agent-control-metalayer-skill -g` |
+| **control-metalayer** | Governance & policy enforcement | Optional | `npx skills add broomva/control-metalayer -g` |
 | **harness-engineering-playbook** | Deterministic workflows & safety | Optional | `npx skills add broomva/skills --skill harness-engineering-playbook -g` |
 
 📖 **[See full installation guide →](INSTALLATION.md)**
@@ -52,7 +52,7 @@ This skill **requires** three dependent skills to function:
 
 ```bash
 # Install all dependencies + orchestrator skill in one command
-npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/skills@harness-engineering-playbook broomva/deep-dive-research-skill -g -y
+npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/control-metalayer broomva/skills@harness-engineering-playbook broomva/skills@deep-dive-research-orchestrator -g -y
 ```
 
 **Or follow [INSTALLATION.md](INSTALLATION.md) for step-by-step setup**
@@ -223,19 +223,19 @@ Not ideal for:
 
 ## Installation Methods
 
-### Option 1: From Registry (Recommended)
+### Option 1: Monorepo — explicit `--skill` (Recommended)
 ```bash
 npx skills add broomva/skills --skill deep-dive-research-orchestrator -g
 ```
 
-### Option 2: From GitHub
+### Option 2: Monorepo — `@` shorthand (equivalent)
 ```bash
-npx skills add github:broomva/deep-dive-research-skill -g
+npx skills add broomva/skills@deep-dive-research-orchestrator -g
 ```
 
 ### Option 3: Local Development
 ```bash
-npx skills add ./deep-dive-research-skill -l
+npx skills add ./deep-dive-research-orchestrator -l
 ```
 
 ## License
