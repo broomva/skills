@@ -6,7 +6,7 @@ SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content. Combines trad
 
 ```bash
 # Install
-npx skills add broomva/seo-llmeo -y -g
+npx skills add broomva/skills --skill seo-llmeo -y -g
 
 # Audit a page for SEO + LLMEO signals
 # Agent runs audit checklist and returns scored results

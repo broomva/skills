@@ -7,7 +7,7 @@ Agent skill for [OmniVoice Studio](https://github.com/debpalash/OmniVoice-Studio
 Add the skill to your agent (Vercel-Labs [`skills`](https://www.npmjs.com/package/skills) CLI):
 
 ```bash
-npx skills add broomva/omnivoice-skill
+npx skills add broomva/skills --skill omnivoice
 ```
 
 Then install OmniVoice Studio itself somewhere on your machine and wire the MCP server. The skill's `references/mcp-setup.md` walks through the wiring; the short version is:
@@ -74,7 +74,7 @@ Conforms to Anthropic's [skill-creator](https://github.com/anthropics/skills/tre
 
 There are two ways to land this skill in your agent:
 
-1. **Standalone (this repo)** — `npx skills add broomva/omnivoice-skill`. Independent of OmniVoice Studio's release cadence; updated here on its own schedule.
+1. **Monorepo (this repo)** — `npx skills add broomva/skills --skill omnivoice`. Independent of OmniVoice Studio's release cadence; updated here on its own schedule.
 2. **Bundled in OmniVoice Studio** — once [debpalash/OmniVoice-Studio#113](https://github.com/debpalash/OmniVoice-Studio/pull/113) merges, `npx skills add debpalash/OmniVoice-Studio` will install the same skill from inside OmniVoice's repo at `.claude/skills/omnivoice/`.
 
 Both paths produce the same tool surface; the standalone exists so you can adopt the skill without waiting for OmniVoice's upstream PRs to merge.

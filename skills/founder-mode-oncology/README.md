@@ -14,7 +14,7 @@ For full skill content and clinical detail, see [SKILL.md](SKILL.md).
 ## Quick Install
 
 ```bash
-npx skills add broomva/founder-mode-oncology
+npx skills add broomva/skills --skill founder-mode-oncology
 ```
 
 ## Supported Agents

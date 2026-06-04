@@ -16,7 +16,7 @@ The procurer skill is the agent's reflex when the user is about to spend money o
 
 ```bash
 # Project-level install:
-npx skills add broomva/procurer
+npx skills add broomva/skills --skill procurer
 
 # Or globally for your user:
 npx skills add -g broomva/procurer

@@ -5,7 +5,7 @@ Comprehensive research repository and agent skill for deep-ocean genomics, eDNA 
 ## Install as Agent Skill
 
 ```bash
-npx skills add broomva/ocean-genomics@ocean-genomics -g -y
+npx skills add broomva/skills --skill ocean-genomics -g -y
 ```
 
 This installs the `ocean-genomics` skill into Claude Code, Cursor, Codex, Gemini CLI, and 30+ other AI agents.
@@ -30,7 +30,7 @@ Plus reference docs for 30+ CLI tools, 15 marine databases, 9 foundation models,
 ### 1. Install the Skill
 
 ```bash
-npx skills add broomva/ocean-genomics@ocean-genomics -g -y
+npx skills add broomva/skills --skill ocean-genomics -g -y
 ```
 
 ### 2. Install Companion Skills

@@ -61,7 +61,7 @@ These are enforced by:
 ### Via skills.sh (recommended for agentic harnesses)
 
 ```bash
-npx skills add broomva/phronesis --agent claude-code --yes
+npx skills add broomva/skills --skill phronesis --agent claude-code --yes
 ```
 
 This installs phronesis as a skill into your agent harness's skill directory.

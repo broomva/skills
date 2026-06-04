@@ -7,13 +7,13 @@ Code-as-music. You write Haskell-ish patterns in an editor, they emit OSC into S
 ## Install
 
 ```bash
-npx skills add broomva/livecoding
+npx skills add broomva/skills --skill livecoding
 ```
 
 Or scoped to Claude Code globally:
 
 ```bash
-npx skills add broomva/livecoding -g -a claude-code -y
+npx skills add broomva/skills --skill livecoding -g -a claude-code -y
 ```
 
 ## What it does
