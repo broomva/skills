@@ -18,14 +18,22 @@ evolves them.
 
 from .backtest_runner import BacktestResult, Trade, run_backtest
 from .base import Strategy
+from .forecast import Forecaster, ForecastStrategy
 from .library import DonchianBreakout, RSIMeanReversion, SMACrossover
 from .tvalert import signal_to_tvalert
 from .types import Bar, MarketState, Signal, StrategyAction
+
+# NOTE: KronosForecaster (strategy.kronos_adapter) is intentionally NOT re-exported
+# here — it lazy-imports torch only when constructed, but keeping it out of the
+# package import keeps the core surface dependency-free. Import it explicitly:
+#   from tradingview_bridge.strategy.kronos_adapter import KronosForecaster
 
 __all__ = [
     "BacktestResult",
     "Bar",
     "DonchianBreakout",
+    "ForecastStrategy",
+    "Forecaster",
     "MarketState",
     "RSIMeanReversion",
     "SMACrossover",

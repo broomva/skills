@@ -1,6 +1,6 @@
 [project]
 name = "tradingview-bridge"
-version = "0.12.0"
+version = "0.13.0"
 description = "TradingView Pine Script alert webhook bridge — multi-broker paper executor + autonomous self-dogfooding operator"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,18 @@ brokers = [
 # (bars_from_qlib is unit-tested with a fake and dogfooded live).
 qlib = [
     "pyqlib>=0.9.6",
+]
+# Kronos foundation-model forecaster (ForecastStrategy adapter). Heavy (torch);
+# CI never installs it. NOTE: Kronos itself is not on PyPI — clone
+# github.com/shiyu-coder/Kronos and supply its `model/` on the path (see
+# KronosForecaster.kronos_repo_path). This extra only covers the runtime deps.
+kronos = [
+    "torch>=2.0.0",
+    "huggingface_hub>=0.33.0",
+    "einops>=0.8.0",
+    "safetensors>=0.6.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
 ]
 dev = [
     "pytest>=8.3.0",
@@ -105,5 +117,5 @@ disallow_untyped_defs = false
 [[tool.mypy.overrides]]
 # Optional broker SDKs are not installed in CI (mock mode only). Don't
 # fail mypy because their type stubs aren't reachable.
-module = ["ib_async.*", "ccxt.*", "py_clob_client.*", "qlib.*"]
+module = ["ib_async.*", "ccxt.*", "py_clob_client.*", "qlib.*", "torch.*", "pandas.*", "numpy.*", "model.*"]
 ignore_missing_imports = true

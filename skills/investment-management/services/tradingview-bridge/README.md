@@ -608,6 +608,49 @@ matter once ML strategies land). See the qlib exploration entities (`tool/qlib`,
 `tool/rd-agent`) for the integration thesis: their data, our control + honesty +
 execution.
 
+## Foundation-model forecasters — `ForecastStrategy` (optional `[kronos]` extra)
+
+The decision plane is rule-based by default. To let a **machine-learning forecaster**
+compete on the *same* honest footing, `ForecastStrategy` wraps any `Forecaster` — a
+Protocol with `predict_return(bars, horizon) → float` — into a `Strategy`: predicted
+return above a basis-point threshold → `enter_long`, below `−threshold` → `exit`, else
+`hold`. So an ML model is judged by the **same walk-forward + score harness** as
+`SMACrossover` — no special path, no separate "ML is magic" track.
+
+```python
+from tradingview_bridge.strategy import ForecastStrategy            # dep-free core
+from tradingview_bridge.strategy.kronos_adapter import KronosForecaster  # heavy: [kronos]
+
+fc    = KronosForecaster(model_name="Kronos-small", sample_count=5, kronos_repo_path="…/Kronos")
+strat = ForecastStrategy(fc, horizon=5, threshold_bps=100, min_bars=120)
+# …then the EXISTING walk_forward + score run unchanged on it.
+```
+
+The int-typed `horizon` / `threshold_bps` are a *precondition* for a future
+optimize/schedule grid, but that factory isn't wired yet — a ForecastStrategy needs a
+live `Forecaster`, so a grid factory must supply one via closure (follow-up). Today the
+honest, tested integration is **harness scoring**, not grid optimization or the roster.
+
+[Kronos](https://github.com/shiyu-coder/Kronos) is the first open-source foundation
+model for K-lines (decoder-only, pretrained on candlesticks). The adapter is an
+**optional extra** (`tradingview-bridge[kronos]` → torch + huggingface_hub); the core
+`ForecastStrategy` / `Forecaster` are dependency-free, so CI never imports torch
+(unit-tested with a fake forecaster). Kronos is *not* on PyPI — clone the repo and pass
+`kronos_repo_path`. The adapter **seeds torch per call** (Kronos sampling is pure-torch,
+so that suffices), so identical bars → identical forecast (the `Strategy` determinism
+contract).
+
+**Honest scope (the whole point).** A live dogfood on real csi300 bars (sh600000, 170
+days, `walk_forward` n=3) scored Kronos-small **0.448 overall** vs the rule-based
+`SMACrossover(10,30)` **0.280** on the same bars — *better than baseline, but mediocre
+in absolute terms* (sharpe 0.46, only 1 of 3 windows positive). **Directional accuracy
+≠ profit:** a gut-check measured ~60% directional accuracy, and the harness correctly
+discounts that to a marginal score after cost, consistency, and drawdown. Whether Kronos
+has a *durable* edge needs the full optimize + OOS + paper-forward gauntlet — exactly
+what this plane forces every strategy, ML or rule-based, to survive. See `tool/kronos`
+in the knowledge graph for the gut-check methodology (probabilistic averaging matters;
+bigger ≠ better — base scored *worse* than small).
+
 ## See also
 
 - `SKILL.md` (this repo) — parent skill
