@@ -37,8 +37,8 @@ These skills enhance governance and reliability but are not required for core re
 - **Purpose:** Governance framework, policy enforcement, audit trails
 - **Required:** ❌ Optional (enhances governance)
 
-### 5. **harness-engineering-skill**
-- **Source:** `broomva/harness-engineering-skill`
+### 5. **harness-engineering-playbook**
+- **Source:** `broomva/skills@harness-engineering-playbook`
 - **Purpose:** Deterministic workflows, test harness validation, safety checks
 - **Required:** ❌ Optional (enhances reliability)
 
@@ -50,7 +50,7 @@ Install all dependencies + skill in one command:
 
 ```bash
 # Install all dependencies (required + optional) and the orchestrator skill
-npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/harness-engineering-skill broomva/deep-dive-research-skill -g -y
+npx skills add eng0ai/eng0-template-skills@financial-deep-research ognjengt/founder-skills@competitor-intel sickn33/antigravity-awesome-skills@app-store-optimization broomva/agent-control-metalayer-skill broomva/skills@harness-engineering-playbook broomva/deep-dive-research-skill -g -y
 ```
 
 **Time:** ~2 minutes
@@ -74,7 +74,7 @@ npx skills add sickn33/antigravity-awesome-skills@app-store-optimization -g -y
 npx skills add broomva/agent-control-metalayer-skill -g -y
 
 # Step 5: Install harness engineering (optional)
-npx skills add broomva/harness-engineering-skill -g -y
+npx skills add broomva/skills@harness-engineering-playbook -g -y
 
 # Step 6: Install the orchestrator skill
 npx skills add broomva/deep-dive-research-skill -g -y

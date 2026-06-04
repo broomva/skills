@@ -10,7 +10,7 @@ This document serves two audiences:
 - Primary runtime(s): Claude Code agents (Explore, general-purpose)
 - Main entrypoint(s): `SKILL.md`, `.claude/agents/research-orchestrator.md`
 - Dependency skills: `financial-deep-research`, `competitor-intel`, `app-store-optimization`
-- Governance skills: `agent-control-metalayer-skill`, `harness-engineering-skill`
+- Governance skills: `agent-control-metalayer-skill`, `harness-engineering-playbook`
 
 ---
 
@@ -202,7 +202,7 @@ deep-dive-research-skill (this skill)
 │     └── Provides: ASO toolkit, platform requirements, 8 analysis scripts
 ├── [optional] agent-control-metalayer-skill (broomva/agent-control-metalayer-skill)
 │     └── Provides: governance framework, control policy, escalation rules, audit trails
-└── [optional] harness-engineering-skill (broomva/harness-engineering-skill)
+└── [optional] harness-engineering-playbook (broomva/skills@harness-engineering-playbook)
       └── Provides: harness commands, AGENTS.md standard, deterministic workflows, entropy management
 ```
 
