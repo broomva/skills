@@ -134,6 +134,46 @@ or file path. NO ambiguity. NO "consider X or Y" — pick one.>
 Filename slug should name the **arc**, not the date. The date is the
 mtime, the slug is the identifier.
 
+## Push to the Maestro queue (BRO-1415)
+
+A handoff on local disk is invisible to the next session until someone
+opens the file. **After writing the `.md`, push it to the Maestro
+handoff queue** so it surfaces at
+[`broomva.tech/maestro/queue`](https://broomva.tech/maestro/queue) —
+the realtime, owner-gated queue that articulates *what to hand off
+next*, relates each handoff to its HTML specs, and exposes the
+copy-to-continue trigger (the same Copy/Continue a fresh session uses
+on the spec board, BRO-1399).
+
+```bash
+broomva handoff push docs/handoffs/2026-06-05-<arc>.md \
+  --as <arc> \
+  --spec <spec-handle> \          # repeatable — the /d/<handle> specs this relates to
+  --ticket BRO-NNNN
+# → Queue: https://broomva.tech/maestro/queue
+```
+
+The CLI auto-extracts the **title** (first `# ` heading), **TL;DR**
+(the `**TL;DR.**` lead line), and **first action** (the `## First
+action` section → the Copy-button payload), and records git provenance
+(repo / branch / commit / path). Re-pushing the same `--as <arc>`
+appends a version and supersedes the prior queued entry, so iterating a
+handoff is safe. This is a **reflex, not a request** (P6 · Bookkeeping):
+push the handoff, then report the queue URL — don't ask permission first.
+
+| Field | Source | Used for |
+|---|---|---|
+| `title` | first `# ` heading | queue card headline |
+| `tldr` | `**TL;DR.**` line | queue card subtitle |
+| `firstAction` | `## First action` section | the **Copy** button payload |
+| `specRefs` | `--spec <handle>` (repeatable) | related-spec chips → `/d/<handle>` |
+
+> **Prereq:** the `handoff` subcommand ships in the `broomva` CLI
+> ≥ the BRO-1415 release. If `broomva handoff` is unknown, rebuild
+> (`cargo install --path crates/broomva-cli` in `broomva.tech`) or fall
+> back to opening the queue and pasting — but the canonical path is the
+> CLI push.
+
 ## Composition rules
 
 | Compose with | When |
@@ -152,6 +192,7 @@ A well-formed handoff passes all five checks:
 - [ ] **PR table** cites merge SHAs (not just PR numbers)
 - [ ] **First action** is a single concrete step with the exact command or file path
 - [ ] **Pickup state** lists ≤5 open threads (more than 5 = aspirational scope; split into a separate plan doc)
+- [ ] **Pushed to the queue** via `broomva handoff push … --spec <handle>` so the next session sees it at `/maestro/queue` (reflex, not a request)
 
 ## References
 
