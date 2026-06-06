@@ -75,6 +75,15 @@ in a single pass.
 ## The canonical shape (mirrors `references/handoff-template.md`)
 
 ```
+---
+arc: <slug>                 # stable queue slug (== broomva handoff push --as)
+specs: []                   # related spec handles → /d/<handle>
+ticket: BRO-NNNN
+priority: 0
+# queue_id / queue_slug / queue_version / queue_status / queue_url / pushed_at
+# are written back by `broomva handoff push` — do not hand-edit.
+---
+
 # <Arc name> — <Stage / Phase>
 
 **TL;DR.** <One-sentence summary of where we are; ends with the FIRST ACTION.>
@@ -166,10 +175,59 @@ push the handoff, then report the queue URL — don't ask permission first.
 | `title` | first `# ` heading | queue card headline |
 | `tldr` | `**TL;DR.**` line | queue card subtitle |
 | `firstAction` | `## First action` section | the **Copy** button payload |
-| `specRefs` | `--spec <handle>` (repeatable) | related-spec chips → `/d/<handle>` |
+| `specRefs` | `--spec <handle>` (repeatable) **or** frontmatter `specs` | related-spec chips → `/d/<handle>` |
 
-> **Prereq:** the `handoff` subcommand ships in the `broomva` CLI
-> ≥ the BRO-1415 release. If `broomva handoff` is unknown, rebuild
+### Frontmatter is the control surface (BRO-1418)
+
+The handoff `.md` carries a YAML frontmatter block that is **both the
+publish input and the queue reference** (see
+`references/handoff-template.md`). You set `arc` / `specs` / `ticket` /
+`priority`; `broomva handoff push` reads them (CLI flags override) and
+**writes the queue identity back** into the same block:
+
+```yaml
+---
+arc: maestro-handoff-queue
+specs: [maestro, maestro-relay-phase-1b]
+ticket: BRO-1415
+priority: 0
+# --- written back by `broomva handoff push` — do not hand-edit ---
+queue_id: a1b2c3d4e5f6
+queue_slug: maestro-handoff-queue
+queue_version: 2
+queue_status: in_progress
+queue_url: https://broomva.tech/maestro/queue
+pushed_at: 2026-06-06T01:55:00Z
+---
+```
+
+So the file **references its own queue entry**. Re-pushing the same arc
+appends a version and updates the frontmatter in place — iterating a
+handoff is safe and traceable. The body sent to the server is the
+narrative with the frontmatter stripped. (`--no-write-back` opts out.)
+
+### Managing the lifecycle from the file
+
+The lifecycle verbs accept `<file|id>` — pass the handoff file and the
+CLI resolves `queue_id` from its frontmatter and mirrors the new status
+back, so the file stays the source of truth:
+
+```bash
+broomva handoff pick-up docs/handoffs/<arc>.md   # queued → in_progress
+broomva handoff done    docs/handoffs/<arc>.md   # → done   (mirrors queue_status)
+broomva handoff archive docs/handoffs/<arc>.md   # set aside, off the active queue
+broomva handoff requeue docs/handoffs/<arc>.md   # back to waiting
+broomva handoff rm      docs/handoffs/<arc>.md   # delete + clear the queue_* block
+broomva handoff list                             # the active queue
+```
+
+**When you finish an arc, mark its handoff `done`** — it keeps the queue
+honest (the analytics throughput + pickup-latency metrics depend on it).
+This too is a reflex, not a request.
+
+> **Prereq:** frontmatter publish + lifecycle ship in the `broomva` CLI
+> ≥ the BRO-1418 release (the queue itself is BRO-1415). If `broomva
+> handoff` is unknown or lacks the lifecycle verbs, rebuild
 > (`cargo install --path crates/broomva-cli` in `broomva.tech`) or fall
 > back to opening the queue and pasting — but the canonical path is the
 > CLI push.
