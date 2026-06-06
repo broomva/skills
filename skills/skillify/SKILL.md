@@ -107,10 +107,11 @@ python3 scripts/skillify_check.py <skill_dir> \
     [--strict] [--run-tests] [--skills-sh broomva/skills]
 ```
 
-`--skills-sh <repo>` makes step 9 a *real* install-verify (`npx skills add <repo>
---list`, asserts the skill is listed); step 1 always rejects skills.sh-breaking
-frontmatter (the multi-quoted-string-list gotcha) so a skill that won't install
-fails the gate deterministically, with no network.
+Two layers of skills.sh-readiness: **step 1** always rejects skills.sh-breaking
+frontmatter (the multi-quoted-string-list gotcha) **deterministically, with no
+network** — so a skill that would silently fail to install fails the gate offline.
+**`--skills-sh <repo>`** is the opt-in *networked* check: it makes step 9 a real
+install-verify (`npx skills add <repo> --list`, asserts the skill is listed).
 
 Reports PASS / WARN / SKIP / FAIL for each of the 10 steps. **Required** steps
 (1 SKILL.md, 2 code unless `latent_only`, 3 unit tests when code present) gate

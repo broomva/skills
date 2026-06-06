@@ -135,6 +135,8 @@ def _skillsh_list_has(target: str, name: str) -> tuple[bool, str]:
                            capture_output=True, text=True, timeout=180)
     except (subprocess.TimeoutExpired, OSError) as e:
         return False, f"`npx skills add {target} --list` failed: {e}"
+    if r.returncode != 0:  # the --list itself failed — don't trust its output (CodeRabbit #1)
+        return False, f"`npx skills add {target} --list` exited {r.returncode} (clone/parse failed)"
     found = _list_output_has(r.stdout + r.stderr, name)
     return found, f"'{name}' {'found' if found else 'NOT found'} in `npx skills add {target} --list`"
 
