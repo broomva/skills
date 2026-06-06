@@ -1,3 +1,18 @@
+---
+# Publish inputs (you set these; CLI flags override). Drive `broomva handoff push`.
+arc: <slug>                 # stable queue slug — re-pushing the same arc appends a version
+specs: []                   # related spec handles → /d/<handle> (e.g. [maestro, relay-1b])
+ticket: BRO-NNNN
+priority: 0                  # higher floats up the queue
+# --- managed by `broomva handoff push` — written back on push, do not hand-edit ---
+# queue_id: <id>
+# queue_slug: <slug>
+# queue_version: 1
+# queue_status: queued       # queued → in_progress → done | archived
+# queue_url: https://broomva.tech/maestro/queue
+# pushed_at: <iso8601>
+---
+
 # <Arc name> — <Stage / Phase / PR-arc identifier>
 
 **TL;DR.** <One sentence: where we are + the single next action. End with the first action explicitly.>
