@@ -1,0 +1,94 @@
+# revenuecast.manifest.yaml — a Kleos engine instance
+# This example IS the Layer-2 dogfood instance: Kleos applied to Broomva's own
+# niche (autonomous agentic dev under control-systems governance). It is authored
+# to PASS `revenuecast_check.py` — copy it, swap the capability/brand, keep the gates green.
+#
+#   python3 skills/revenuecast/scripts/revenuecast_check.py skills/revenuecast/templates/revenuecast.manifest.example.yaml
+
+capability: >-
+  Autonomous agentic software development under control-systems governance —
+  agent teams that ship + improve real projects safely (RCS L0-L3 + bstack P1-P20).
+
+brand:
+  name: arcan-studio            # content brand (Kleos = the meta-brand)
+  gloss: "Watch agent teams ship real software safely — then run the harness yourself."
+  aesthetic_ref: skills/content-engine/knowledge/compiled/brands/arcan-studio.md
+  persona: synthetic            # named agents, not a real person's likeness
+
+show:
+  surfaces: [youtube-shorts, instagram-reels, tiktok, x-threads]
+  hero_format: "governed-vs-ungoverned multi-agent build, measured quality delta"
+  retention_gates:              # machine-checkable, per platform
+    tiktok_completion: 0.70
+    reels_completion: 0.70
+    reels_3sec_hold: 0.60
+    shorts_completion: 0.85
+  cadence: "2-3 publish-ready/day from a ~2h batch session"
+
+distribute:
+  authority_layer: [x-threads, broomva.tech-blog, github]   # B2D wedge leads here
+  owned_channel: email + arcan-circle                       # MANDATORY (G3)
+  cross_post_discipline: true   # de-watermark + >=30% transform + native 9:16 + captions
+  surfaces: [youtube-shorts, instagram-reels, tiktok, x-threads]
+
+hook:
+  capture_rail: authority-to-email   # dev buyer: credibility -> email, NOT Reel -> DM
+  secondary_rail: comment-to-DM      # experiment, not the primary funnel
+  lead_magnet: "Harness Mini-Kit (AGENTS.md template + P20 cross-review prompt + swarm-orchestration card)"
+
+offer_ladder:
+  # v1 wedge: free + paid + recurring (G2). Earned tiers are listed but flagged.
+  - tier: T0
+    name: "arcan Proof Feed + Harness Mini-Kit"
+    kind: free
+    price: "$0"
+    what: "high-volume governed-agent-shipping content + free mini-kit -> email"
+  - tier: T1
+    name: "The Harness Starter Pack"
+    kind: paid
+    price: "$27 one-time"
+    what: "productized harness-engineering-playbook: AGENTS.md + CLAUDE.md + policy.yaml + P20 prompt + model-routing cheat-sheet"
+  - tier: T-spine
+    name: "arcan Circle"
+    kind: recurring
+    price: "$49/mo (or $490/yr — push annual)"
+    billing: annual
+    what: "recency re-teaching + member showcase + client-getting module; curriculum = measured dogfood behavior"
+  - tier: T3
+    name: "14-Day Ship-A-Governed-Agent-Team Challenge"
+    kind: paid
+    price: "$49-97"
+    status: EARNED      # design only after >0 paying T1/spine customers + measured conversion
+  - tier: T5
+    name: "arcan VIP / closed-execution"
+    kind: paid
+    price: "$497-7500"
+    status: EARNED
+
+moat:
+  primary: agency-proof          # the running engine IS the viral portfolio (G4)
+  secondary: [compliance, recency, operational-sequencing]
+  why_defensible: >-
+    The proof requires possessing the running self-improving system; a copycat
+    without the engine cannot fake "it shipped and passed CI". Compounded by the
+    compliance/survival module and recency-as-service community.
+
+governance:                       # the compliance pillar (G5) — the SELLER is in scope
+  disclosure_labeling: true       # C2PA + platform AI-label baked into the pipeline
+  likeness_firewall: true         # synthetic named agents only — never a real person
+  earnings_claims_substantiated: true  # written proof + "results not typical"; honor real guarantee
+  spend_cap: "$25/day"
+  platform_diversification: 4     # >=3 video surfaces + owned email/community
+
+self_improvement:                 # the Ritual-vs-Substance gate (G6)
+  claimed: false                  # HONEST: the bandit/attribution/DNA-fold-back loop is
+  mechanism_built: false          # unbuilt new code (L3, deferred) — so we do NOT claim it.
+  measured: false                 # flip to true ONLY after it is built AND measured.
+
+kpis:
+  validated: {}                   # measured from THIS instance (empty at cold-start — honest)
+  imported:                       # borrowed consumer-niche benchmarks — LABELED, not targets (G7)
+    comment_dm_trigger: "25-55% (consumer AI-content niche — UNVALIDATED for B2D)"
+    challenge_completion: "70-80% (consumer — re-baseline for technical buyer)"
+    blended_rev_per_member: "$112/mo (consumer education — UNVALIDATED)"
+    member_ltv: "$1800 (aspirational ceiling from other funnels — not a forecast)"

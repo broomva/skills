@@ -1,0 +1,1028 @@
+<!--
+---
+title: The Kleos Playbook — your work, made famous by showing it
+bro: BRO-1429
+layer: L1 (canonical, shareable meta-system)
+created: 2026-06-08
+provenance: workflow wf_d25abca6-6bf + P20 adversarial review (5.5/10 REVISE, all corrections baked in)
+source_of_truth: skills/kleos/references/design-canon.md
+---
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Kleos Playbook — your work, made famous by showing it</title>
+<style>
+  :root {
+    --bg: #14110f;
+    --bg-2: #1b1715;
+    --surface: #2d262b;
+    --surface-2: #241f23;
+    --ink: #ece6e2;
+    --muted: #a9a09a;
+    --faint: #6f655f;
+    --crimson: #fe004a;
+    --green: #5ff771;
+    --tan: #d69865;
+    --hair: rgba(214, 152, 101, 0.16);
+    --hair-2: rgba(236, 230, 226, 0.08);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 700px at 78% -8%, rgba(254,0,74,0.10), transparent 60%),
+      radial-gradient(900px 600px at -6% 12%, rgba(95,247,113,0.05), transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: 0.005em;
+  }
+  ::selection { background: rgba(254,0,74,0.30); color: #fff; }
+  a { color: var(--tan); text-decoration: none; border-bottom: 1px solid rgba(214,152,101,0.28); }
+  a:hover { color: var(--ink); border-bottom-color: var(--tan); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+
+  /* ---------- header / nav ---------- */
+  header.top {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(20,17,15,0.82);
+    backdrop-filter: blur(14px) saturate(140%);
+    border-bottom: 1px solid var(--hair);
+  }
+  .top-inner {
+    display: flex; align-items: center; gap: 18px;
+    max-width: 1080px; margin: 0 auto; padding: 12px 28px;
+  }
+  .wordmark {
+    font-family: var(--mono);
+    font-weight: 700; letter-spacing: 0.26em;
+    font-size: 16px; color: var(--ink);
+  }
+  .wordmark .k { color: var(--crimson); text-shadow: 0 0 22px rgba(254,0,74,0.55); }
+  .top nav { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+  .top nav a {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em;
+    color: var(--muted); padding: 5px 9px; border-radius: 8px; border-bottom: none;
+    text-transform: uppercase;
+  }
+  .top nav a:hover { color: var(--ink); background: rgba(236,230,226,0.05); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 86px 0 30px; position: relative; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.34em;
+    text-transform: uppercase; color: var(--tan); margin-bottom: 26px;
+  }
+  .hero h1 {
+    font-family: var(--mono);
+    font-size: clamp(56px, 13vw, 132px);
+    line-height: 0.92; letter-spacing: 0.04em; margin: 0 0 14px;
+    font-weight: 700;
+    background: linear-gradient(96deg, #fff 0%, #ece6e2 36%, #d69865 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero h1::first-letter { color: var(--crimson); -webkit-text-fill-color: var(--crimson); }
+  .gloss {
+    font-size: clamp(19px, 3vw, 27px); color: var(--ink);
+    font-weight: 300; letter-spacing: 0.01em; max-width: 720px; margin: 0 0 30px;
+  }
+  .gloss em { color: var(--tan); font-style: normal; }
+  .thesis-line {
+    display: inline-flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 15px; color: var(--muted);
+    padding: 11px 18px; border: 1px solid var(--hair);
+    border-radius: 14px; background: var(--surface-2);
+  }
+  .thesis-line b { color: var(--green); }
+  .thesis-line .arrow { color: var(--crimson); }
+
+  /* ---------- stat band ---------- */
+  .statband {
+    margin: 50px 0 8px; border-radius: 22px; overflow: hidden;
+    border: 1px solid var(--hair);
+    background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+    display: grid; grid-template-columns: repeat(4, 1fr);
+  }
+  .statband .cell {
+    padding: 26px 22px; border-right: 1px solid var(--hair-2);
+  }
+  .statband .cell:last-child { border-right: none; }
+  .stat-n {
+    font-family: var(--mono); font-size: 38px; font-weight: 700;
+    line-height: 1; color: var(--ink); letter-spacing: -0.01em;
+  }
+  .stat-n.bad { color: var(--crimson); text-shadow: 0 0 26px rgba(254,0,74,0.35); }
+  .stat-n.good { color: var(--green); }
+  .stat-n.warm { color: var(--tan); }
+  .stat-l { font-size: 12.5px; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+
+  /* ---------- section scaffolding ---------- */
+  section { padding: 60px 0 16px; }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px; }
+  .sec-num {
+    font-family: var(--mono); font-size: 13px; color: var(--crimson);
+    letter-spacing: 0.12em; padding-top: 4px;
+  }
+  h2 {
+    font-size: clamp(26px, 4vw, 38px); font-weight: 600; margin: 0 0 4px;
+    letter-spacing: -0.012em; color: #fff;
+  }
+  .sec-sub { color: var(--muted); font-size: 16px; margin: 0 0 26px; max-width: 760px; }
+  h3 { font-size: 18px; font-weight: 600; color: var(--ink); margin: 30px 0 12px; letter-spacing: 0; }
+  p { color: var(--ink); }
+  p.lead { font-size: 17px; }
+  .muted { color: var(--muted); }
+  hr.div { border: none; border-top: 1px solid var(--hair); margin: 56px 0 0; }
+
+  /* ---------- cards / callouts ---------- */
+  .card {
+    background: var(--surface); border: 1px solid var(--hair);
+    border-radius: 18px; padding: 22px 24px; margin: 16px 0;
+  }
+  .callout {
+    border-left: 3px solid var(--crimson);
+    background: linear-gradient(90deg, rgba(254,0,74,0.08), rgba(254,0,74,0.01));
+    border-radius: 10px; padding: 16px 20px; margin: 22px 0;
+  }
+  .callout.correct {
+    border-left-color: var(--green);
+    background: linear-gradient(90deg, rgba(95,247,113,0.07), rgba(95,247,113,0.01));
+  }
+  .callout.warn {
+    border-left-color: var(--tan);
+    background: linear-gradient(90deg, rgba(214,152,101,0.08), rgba(214,152,101,0.01));
+  }
+  .callout .tag {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--crimson); display: block; margin-bottom: 6px;
+  }
+  .callout.correct .tag { color: var(--green); }
+  .callout.warn .tag { color: var(--tan); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout p:first-of-type { margin-top: 0; }
+  code, .mono { font-family: var(--mono); font-size: 0.88em; }
+  code {
+    background: rgba(236,230,226,0.06); padding: 1.5px 6px; border-radius: 6px;
+    color: var(--tan); border: 1px solid var(--hair-2);
+  }
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 9px;
+    border-radius: 999px; border: 1px solid var(--hair); color: var(--muted);
+  }
+  .pill.built { color: var(--green); border-color: rgba(95,247,113,0.3); background: rgba(95,247,113,0.06); }
+  .pill.art { color: var(--tan); border-color: rgba(214,152,101,0.3); background: rgba(214,152,101,0.06); }
+  .pill.def { color: var(--crimson); border-color: rgba(254,0,74,0.3); background: rgba(254,0,74,0.05); }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap { overflow-x: auto; margin: 20px 0; border-radius: 16px; border: 1px solid var(--hair); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 640px; }
+  thead th {
+    text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--tan); padding: 13px 16px;
+    background: var(--surface-2); border-bottom: 1px solid var(--hair); font-weight: 600;
+  }
+  tbody td { padding: 13px 16px; border-bottom: 1px solid var(--hair-2); vertical-align: top; color: var(--ink); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(236,230,226,0.025); }
+  td .lead-cell { font-weight: 600; color: #fff; }
+  .x-no { color: var(--crimson); font-weight: 700; }
+  .x-yes { color: var(--green); font-weight: 700; }
+
+  /* ---------- svg figure framing ---------- */
+  figure { margin: 26px 0; }
+  .fig-frame {
+    background: linear-gradient(180deg, var(--surface-2), var(--bg-2));
+    border: 1px solid var(--hair); border-radius: 20px; padding: 26px;
+  }
+  figcaption {
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    margin-top: 14px; letter-spacing: 0.04em; text-align: center;
+  }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: var(--mono); fill: var(--ink); }
+
+  /* ---------- gates checklist ---------- */
+  .gates { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+  .gate {
+    display: flex; gap: 12px; padding: 15px 16px; border-radius: 14px;
+    background: var(--surface); border: 1px solid var(--hair);
+  }
+  .gate .gn {
+    font-family: var(--mono); font-weight: 700; font-size: 12px; color: var(--green);
+    flex-shrink: 0; width: 26px; height: 26px; border-radius: 8px;
+    background: rgba(95,247,113,0.08); border: 1px solid rgba(95,247,113,0.3);
+    display: grid; place-items: center;
+  }
+  .gate .gtxt { font-size: 13.5px; line-height: 1.5; }
+  .gate .gtxt b { color: #fff; }
+
+  /* ---------- four walls ---------- */
+  .walls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 20px 0; }
+  .wall {
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 16px;
+    padding: 18px 20px; position: relative; overflow: hidden;
+  }
+  .wall::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--crimson);
+  }
+  .wall h4 { margin: 0 0 4px; font-size: 14.5px; color: #fff; font-weight: 600; }
+  .wall .law { font-family: var(--mono); font-size: 10.5px; color: var(--crimson); letter-spacing: 0.06em; }
+  .wall p { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .countdown {
+    grid-column: 1 / -1;
+    background: linear-gradient(100deg, rgba(254,0,74,0.12), rgba(214,152,101,0.05));
+    border: 1px solid rgba(254,0,74,0.3);
+    border-radius: 16px; padding: 18px 22px; display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  }
+  .countdown .big {
+    font-family: var(--mono); font-size: 30px; font-weight: 700; color: var(--crimson);
+    text-shadow: 0 0 24px rgba(254,0,74,0.4); line-height: 1;
+  }
+  .countdown .ctxt { font-size: 13.5px; color: var(--ink); }
+  .countdown .ctxt b { color: #fff; }
+
+  /* ---------- arch strip ---------- */
+  .arch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 22px 0; }
+  .layer {
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 16px; padding: 20px;
+  }
+  .layer .lid { font-family: var(--mono); font-size: 12px; color: var(--tan); letter-spacing: 0.1em; }
+  .layer h4 { margin: 8px 0 6px; font-size: 16px; color: #fff; }
+  .layer p { font-size: 13px; color: var(--muted); margin: 6px 0 12px; }
+
+  /* ---------- citations ---------- */
+  ol.cites { font-size: 13.5px; color: var(--muted); padding-left: 22px; }
+  ol.cites li { margin: 9px 0; line-height: 1.5; }
+  ol.cites li a { word-break: break-word; }
+  .cite-tag {
+    font-family: var(--mono); font-size: 10px; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+
+  /* ---------- footer ---------- */
+  footer {
+    margin-top: 70px; border-top: 1px solid var(--hair);
+    padding: 30px 0 56px; color: var(--faint); font-family: var(--mono); font-size: 12px;
+  }
+  footer .fl { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  footer b { color: var(--tan); }
+
+  @media (max-width: 760px) {
+    .statband { grid-template-columns: 1fr 1fr; }
+    .statband .cell:nth-child(2) { border-right: none; }
+    .gates, .walls, .arch { grid-template-columns: 1fr; }
+    .top nav { display: none; }
+    .hero { padding-top: 56px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <span class="wordmark"><span class="k">K</span>LEOS</span>
+    <nav>
+      <a href="#thesis">Thesis</a>
+      <a href="#flywheel">Flywheel</a>
+      <a href="#moat">Moat</a>
+      <a href="#ladder">Ladder</a>
+      <a href="#survival">Survival</a>
+      <a href="#gate">Gate</a>
+      <a href="#layers">Layers</a>
+      <a href="#cites">Sources</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" id="top">
+    <div class="eyebrow">κλέος — renown that propagates by being shown</div>
+    <h1>KLEOS</h1>
+    <p class="gloss">your work, <em>made famous by showing it.</em></p>
+    <div class="thesis-line">
+      <span><b>/skillify</b> turns a working <i>workflow</i> into a permanent skill.</span>
+      <span class="arrow">→</span>
+      <span><b>Kleos</b> turns a <i>capability</i> into a permanent revenue engine.</span>
+    </div>
+
+    <div class="statband">
+      <div class="cell">
+        <div class="stat-n bad">88%</div>
+        <div class="stat-l">of 191,654 products on Whop earn <b>$0</b>. The power-law graveyard.</div>
+      </div>
+      <div class="cell">
+        <div class="stat-n">$74</div>
+        <div class="stat-l">median earner per month. The middle does not exist.</div>
+      </div>
+      <div class="cell">
+        <div class="stat-n warm">57%</div>
+        <div class="stat-l">of $64.2M MRR captured by the <b>top 1%</b>.</div>
+      </div>
+      <div class="cell">
+        <div class="stat-n good">+89%</div>
+        <div class="stat-l">recurring out-earns one-time. The compounding asset.</div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin-top:14px">
+      Source: Whop creator-earnings dataset, 2026 <a href="#cite-1">[1]</a>. The graveyard exists
+      <em>because everyone has the same prompts and the same models.</em> What the 88% lack is a
+      <span style="color:var(--green)">running engine</span> that reliably produces on-brand,
+      retention-clearing output at volume.
+    </p>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 1. THESIS + CORRECTION ============ -->
+  <section id="thesis">
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>The thesis, and the one hard correction</h2>
+    </div>
+    <p class="sec-sub">
+      The pattern is real. It almost always gets sold wrong — and the wrong version is
+      precisely what feeds the 88%.
+    </p>
+
+    <p class="lead">
+      <b>Thesis.</b> Define a distinctive brand + aesthetic → use gen-AI to produce high-volume
+      content showcasing the <em>output</em> of a capability → the content <em>is</em> the
+      advertisement (desirability + accessibility-via-AI = demand) → monetize by selling the
+      <em>system</em> that reproduces it for someone else's brand.
+    </p>
+
+    <div class="callout">
+      <span class="tag">The correction that makes it true · review · HIGH</span>
+      <p>
+        The scarce, non-leakable input is <b>not the method</b>. It is the <b style="color:var(--crimson)">SHOW
+        step</b> — distribution + taste + a <em>running</em> engine. Prompts are one API call away
+        through any aggregator; quality leadership rotates quarterly. The graveyard is full of people
+        who bought the method and never built the show.
+      </p>
+    </div>
+
+    <div class="callout correct">
+      <span class="tag">The binding rule</span>
+      <p>
+        Kleos sells the self-demonstrating <b>ENGINE that produces the SHOW</b> — never "the method"
+        generically. The prompts are not the moat; they leak in days. The proof and the product are
+        the same artifact: a copycat without the engine cannot fake the output.
+      </p>
+    </div>
+
+    <h3>The power-law graveyard, drawn</h3>
+    <figure>
+      <div class="fig-frame">
+        <svg viewBox="0 0 900 320" role="img" aria-label="Earnings distribution: 88% earn $0, a thin middle, top 1% take 57%">
+          <defs>
+            <linearGradient id="gradDead" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#4a3036"/>
+              <stop offset="1" stop-color="#2d262b"/>
+            </linearGradient>
+            <linearGradient id="gradTop" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#fe004a"/>
+              <stop offset="1" stop-color="#8a0a2c"/>
+            </linearGradient>
+            <linearGradient id="gradMid" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#d69865"/>
+              <stop offset="1" stop-color="#7d5a3a"/>
+            </linearGradient>
+          </defs>
+          <!-- axis -->
+          <line x1="60" y1="270" x2="860" y2="270" stroke="rgba(236,230,226,0.18)" stroke-width="1"/>
+          <line x1="60" y1="40" x2="60" y2="270" stroke="rgba(236,230,226,0.18)" stroke-width="1"/>
+          <text x="60" y="300" font-size="11" fill="#a9a09a">low rank</text>
+          <text x="780" y="300" font-size="11" fill="#a9a09a">top 1%</text>
+          <text x="22" y="46" font-size="11" fill="#a9a09a" transform="rotate(-90 22 46)" text-anchor="end">revenue →</text>
+
+          <!-- the dead 88%: a long flat floor -->
+          <rect x="62" y="262" width="560" height="8" fill="url(#gradDead)"/>
+          <text x="300" y="250" font-size="13" fill="#a9a09a" text-anchor="middle">88% earn $0 — the floor</text>
+
+          <!-- thin middle -->
+          <rect x="626" y="226" width="26" height="44" fill="url(#gradMid)"/>
+          <rect x="656" y="210" width="26" height="60" fill="url(#gradMid)"/>
+          <rect x="686" y="186" width="26" height="84" fill="url(#gradMid)"/>
+          <text x="666" y="172" font-size="11" fill="#d69865" text-anchor="middle">median $74/mo</text>
+
+          <!-- the spike: top 1% -->
+          <rect x="780" y="58" width="64" height="212" fill="url(#gradTop)"/>
+          <text x="812" y="46" font-size="14" fill="#fe004a" text-anchor="middle" font-weight="700">57% of MRR</text>
+          <line x1="780" y1="58" x2="745" y2="58" stroke="#fe004a" stroke-width="1.5"/>
+          <text x="740" y="62" font-size="11" fill="#fe004a" text-anchor="end">top 1%</text>
+
+          <!-- the gap annotation -->
+          <path d="M 622 262 Q 700 262 778 110" stroke="rgba(254,0,74,0.4)" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+          <text x="455" y="120" font-size="12" fill="#ece6e2">The gap is not the prompts.</text>
+          <text x="455" y="140" font-size="12" fill="#5ff771">It is the running engine.</text>
+        </svg>
+      </div>
+      <figcaption>Whop, 2026 — n=191,654 products, $64.2M MRR <a href="#cite-1">[1]</a>. Subscriptions out-earn one-time by ~89%.</figcaption>
+    </figure>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 2. THE FLYWHEEL ============ -->
+  <section id="flywheel">
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>The flywheel</h2>
+    </div>
+    <p class="sec-sub">
+      Six stages, each composing an existing skill. Kleos is a composition skill — it
+      <b>reimplements nothing</b>. The loop feeds itself: measured behavior at Stage&nbsp;5
+      refines the brand DNA at Stage&nbsp;0.
+    </p>
+
+    <figure>
+      <div class="fig-frame">
+        <svg viewBox="0 0 760 520" role="img" aria-label="Six-stage Kleos flywheel: Brand Lock, Show, Distribute, Hook, Sell, Moat, looping back">
+          <defs>
+            <marker id="arrowC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#fe004a"/>
+            </marker>
+            <radialGradient id="hubGrad" cx="0.5" cy="0.4" r="0.7">
+              <stop offset="0" stop-color="#2d262b"/>
+              <stop offset="1" stop-color="#14110f"/>
+            </radialGradient>
+          </defs>
+
+          <!-- loop ring -->
+          <circle cx="380" cy="260" r="180" fill="none" stroke="rgba(214,152,101,0.18)" stroke-width="1.5" stroke-dasharray="2 6"/>
+          <!-- directional arc arrows on ring -->
+          <path d="M 380 80 A 180 180 0 0 1 536 170" fill="none" stroke="#fe004a" stroke-width="2" marker-end="url(#arrowC)" opacity="0.7"/>
+          <path d="M 536 350 A 180 180 0 0 1 380 440" fill="none" stroke="#fe004a" stroke-width="2" marker-end="url(#arrowC)" opacity="0.7"/>
+          <path d="M 224 350 A 180 180 0 0 1 224 170" fill="none" stroke="#fe004a" stroke-width="2" marker-end="url(#arrowC)" opacity="0.7"/>
+
+          <!-- hub -->
+          <circle cx="380" cy="260" r="64" fill="url(#hubGrad)" stroke="rgba(254,0,74,0.4)" stroke-width="1.5"/>
+          <text x="380" y="252" font-size="15" fill="#fe004a" text-anchor="middle" font-weight="700">SHOW</text>
+          <text x="380" y="272" font-size="10" fill="#a9a09a" text-anchor="middle">= the scarce</text>
+          <text x="380" y="286" font-size="10" fill="#a9a09a" text-anchor="middle">asset</text>
+
+          <!-- node helper positions on r=180 around (380,260) -->
+          <!-- 0 top, then clockwise -->
+          <!-- Node 0: Brand Lock (top) -->
+          <g>
+            <circle cx="380" cy="80" r="34" fill="#2d262b" stroke="#d69865" stroke-width="1.5"/>
+            <text x="380" y="76" font-size="11" fill="#ece6e2" text-anchor="middle" font-weight="700">0 · BRAND</text>
+            <text x="380" y="90" font-size="11" fill="#ece6e2" text-anchor="middle" font-weight="700">LOCK</text>
+            <text x="380" y="34" font-size="10" fill="#a9a09a" text-anchor="middle">content-engine-dna</text>
+          </g>
+          <!-- Node 1: Show (upper right) -->
+          <g>
+            <circle cx="536" cy="170" r="34" fill="#2d262b" stroke="#fe004a" stroke-width="1.5"/>
+            <text x="536" y="174" font-size="11" fill="#ece6e2" text-anchor="middle" font-weight="700">1 · SHOW</text>
+            <text x="624" y="150" font-size="10" fill="#a9a09a" text-anchor="middle">content-engine</text>
+            <text x="624" y="164" font-size="10" fill="#a9a09a" text-anchor="middle">+ Remotion</text>
+          </g>
+          <!-- Node 2: Distribute (lower right) -->
+          <g>
+            <circle cx="536" cy="350" r="34" fill="#2d262b" stroke="#d69865" stroke-width="1.5"/>
+            <text x="536" y="346" font-size="10" fill="#ece6e2" text-anchor="middle" font-weight="700">2 · DIS-</text>
+            <text x="536" y="360" font-size="10" fill="#ece6e2" text-anchor="middle" font-weight="700">TRIBUTE</text>
+            <text x="624" y="362" font-size="10" fill="#a9a09a" text-anchor="middle">blog-post</text>
+            <text x="624" y="376" font-size="10" fill="#a9a09a" text-anchor="middle">seo-llmeo</text>
+          </g>
+          <!-- Node 3: Hook (bottom) -->
+          <g>
+            <circle cx="380" cy="440" r="34" fill="#2d262b" stroke="#d69865" stroke-width="1.5"/>
+            <text x="380" y="444" font-size="11" fill="#ece6e2" text-anchor="middle" font-weight="700">3 · HOOK</text>
+            <text x="380" y="496" font-size="10" fill="#a9a09a" text-anchor="middle">social-intelligence</text>
+          </g>
+          <!-- Node 4: Sell (lower left) -->
+          <g>
+            <circle cx="224" cy="350" r="34" fill="#2d262b" stroke="#5ff771" stroke-width="1.5"/>
+            <text x="224" y="354" font-size="11" fill="#ece6e2" text-anchor="middle" font-weight="700">4 · SELL</text>
+            <text x="120" y="362" font-size="10" fill="#a9a09a" text-anchor="middle">strategy-skills</text>
+            <text x="120" y="376" font-size="10" fill="#a9a09a" text-anchor="middle">finance-substrate</text>
+          </g>
+          <!-- Node 5: Moat (upper left) -->
+          <g>
+            <circle cx="224" cy="170" r="34" fill="#2d262b" stroke="#5ff771" stroke-width="1.5"/>
+            <text x="224" y="174" font-size="11" fill="#ece6e2" text-anchor="middle" font-weight="700">5 · MOAT</text>
+            <text x="120" y="150" font-size="10" fill="#a9a09a" text-anchor="middle">bookkeeping P6</text>
+            <text x="120" y="164" font-size="10" fill="#a9a09a" text-anchor="middle">symphony+arcan</text>
+          </g>
+
+          <!-- feedback arrow Moat -> Brand -->
+          <path d="M 250 138 Q 320 96 350 84" fill="none" stroke="#5ff771" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrowC)" opacity="0.8"/>
+          <text x="300" y="112" font-size="9" fill="#5ff771" text-anchor="middle">measured ↻ refines DNA</text>
+        </svg>
+      </div>
+      <figcaption>0 BRAND LOCK → 1 SHOW → 2 DISTRIBUTE → 3 HOOK → 4 SELL → 5 MOAT ↻ feeds 0</figcaption>
+    </figure>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Stage</th><th>What it does</th><th>Composes</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>0</b></td>
+            <td class="lead-cell">Brand Lock</td>
+            <td>Distinctive, defensible visual + verbal identity — brand DNA, synthetic persona sheet, fixed color/lighting/upscale signature, 4-layer prompt skeleton. Survives the IG ~80% generic-AI throttle.</td>
+            <td><code>content-engine-dna</code> · <code>arcan-glass</code></td>
+          </tr>
+          <tr>
+            <td><b>1</b></td>
+            <td class="lead-cell">Show</td>
+            <td>High-volume on-brand output <em>as the ad</em>. Clear machine-checkable retention gates. Volume is the strategy — ~1 viral per ~100 shots; AI makes the denominator cheap (~$0.50–3.00/asset, ~24 min/asset).</td>
+            <td><code>content-engine</code> · <code>brainrot-for-good</code> · <code>Remotion</code> · TTS</td>
+          </tr>
+          <tr>
+            <td><b>2</b></td>
+            <td class="lead-cell">Distribute</td>
+            <td>Fan out raw-per-platform to ≥3 video surfaces + 1 <em>owned</em> channel. ≥30% transform, native 9:16, burned-in captions. <b style="color:var(--tan)">X is the AUTHORITY layer</b> — text/threads, never a video dump.</td>
+            <td><code>blog-post</code> · <code>seo-llmeo</code> · <code>social-intelligence</code></td>
+          </tr>
+          <tr>
+            <td><b>3</b></td>
+            <td class="lead-cell">Hook</td>
+            <td>Convert passive viewers into a captured, re-marketable list. Zeigarnik incompleteness (gate the full cut) + comment-to-DM keyword CTA → auto-DM → email. The DM is the only clickable path off public comments.</td>
+            <td><code>social-intelligence</code> · ManyChat-class rail</td>
+          </tr>
+          <tr>
+            <td><b>4</b></td>
+            <td class="lead-cell">Sell</td>
+            <td>Run the captured list up the ladder. Anchor with a <em>paid challenge</em> (manufactures public proof). Bias recurring to <b>annual</b> (≈10× churn cut). Stack offers; don't raise base price.</td>
+            <td><code>strategy-skills</code> · <code>Sales</code> · <code>finance-substrate</code></td>
+          </tr>
+          <tr>
+            <td><b>5</b></td>
+            <td class="lead-cell">Moat</td>
+            <td>Sell the <b>non-leakable</b> layers (§3), not the prompts. Crystallize what worked back into the sellable system; measured behavior feeds Stage 0.</td>
+            <td><code>bookkeeping P6</code> · <code>symphony</code> + <code>arcan</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 3. THE MOAT PICKER ============ -->
+  <section id="moat">
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>The Moat Picker</h2>
+    </div>
+    <p class="sec-sub">
+      The engine must pick <b>≥1 defensible layer.</b> <code>kleos_check.py</code> FAILs any manifest
+      whose <code>moat.primary</code> is <code>prompts</code> or <code>templates</code>.
+    </p>
+
+    <div class="callout">
+      <span class="tag">Non-negotiable</span>
+      <p><b>Prompts and templates are NOT a moat.</b> They leak in days. Anything you can paste into a
+      DM is not defensible. Pick from the grid below — and if your "edge" isn't on it, you don't have one.</p>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Moat</th><th>Why defensible</th><th>Best when</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="lead-cell">Operational sequencing</td>
+            <td>Upload order, posting cadence, per-shot model-routing table, attach-rate stacking — invisible in the free content (Osias's "upload order" system).</td>
+            <td>Any niche; the <em>default</em> operational core.</td>
+          </tr>
+          <tr>
+            <td class="lead-cell">Recency-as-service</td>
+            <td>A living, version-dated community re-teaching each model within days of release beats any static PDF (stale in 90 days). Converts one-time → recurring.</td>
+            <td>Fast-churning tool stacks.</td>
+          </tr>
+          <tr>
+            <td class="lead-cell">Community + accountability</td>
+            <td>Live cohort, member showcase wall, client-getting module. Belonging cannot be downloaded.</td>
+            <td>Audience wants belonging / outcomes.</td>
+          </tr>
+          <tr>
+            <td class="lead-cell">Agency-proof</td>
+            <td>The reference implementation <em>is</em> a running portfolio of viral output (Genre.ai's 300M+ views de-risks the course). Proof and product are the same artifact.</td>
+            <td>You actually run the engine at scale.</td>
+          </tr>
+          <tr>
+            <td class="lead-cell" style="color:var(--green)">Compliance / survival</td>
+            <td>"The only AI-revenue method that won't get you banned or sued." Most competitors are pump-and-dump that teach growth, not survival. See §5.</td>
+            <td>Regulated / hardening environment (2026).</td>
+          </tr>
+          <tr>
+            <td class="lead-cell">Closed-execution</td>
+            <td>(Capafy model) sell the engine as a per-use black box; the governance loop runs server-side, never forked → defeats prompt-commoditization.</td>
+            <td>The engine itself is the IP.</td>
+          </tr>
+          <tr style="background:rgba(254,0,74,0.05)">
+            <td class="lead-cell"><span class="x-no">✕</span> Prompts / templates</td>
+            <td>None. One API call away through any aggregator. Quality leadership rotates quarterly.</td>
+            <td><span class="x-no">Never.</span> <code>kleos_check.py</code> FAILs the manifest.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 4. THE OFFER LADDER ============ -->
+  <section id="ladder">
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>The offer ladder — a validated wedge, not a 6-tier deck</h2>
+    </div>
+    <p class="sec-sub">
+      Designing the closed-execution and license-recursion tiers <em>before T1 converts a single
+      dollar</em> is info-product self-flattery. Build the solid wedge first. Earn the rest with
+      measured numbers.
+    </p>
+
+    <figure>
+      <div class="fig-frame">
+        <svg viewBox="0 0 880 420" role="img" aria-label="Offer ladder: solid v1 wedge (free, tripwire, recurring) then dashed earned tiers (challenge, VIP, license)">
+          <defs>
+            <linearGradient id="solidStep" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#3a3138"/>
+              <stop offset="1" stop-color="#2d262b"/>
+            </linearGradient>
+          </defs>
+
+          <!-- baseline -->
+          <line x1="40" y1="370" x2="840" y2="370" stroke="rgba(236,230,226,0.16)" stroke-width="1"/>
+
+          <!-- ============ SOLID: v1 wedge ============ -->
+          <!-- T0 -->
+          <rect x="60" y="300" width="150" height="70" rx="8" fill="url(#solidStep)" stroke="#5ff771" stroke-width="1.5"/>
+          <text x="135" y="326" font-size="13" fill="#ece6e2" text-anchor="middle" font-weight="700">T0 · FREE</text>
+          <text x="135" y="345" font-size="10" fill="#a9a09a" text-anchor="middle">showcase + lead magnet</text>
+          <text x="135" y="358" font-size="10" fill="#5ff771" text-anchor="middle">$0 → owned email</text>
+
+          <!-- T1 -->
+          <rect x="220" y="230" width="150" height="140" rx="8" fill="url(#solidStep)" stroke="#fe004a" stroke-width="1.5"/>
+          <text x="295" y="256" font-size="13" fill="#ece6e2" text-anchor="middle" font-weight="700">T1 · TRIPWIRE</text>
+          <text x="295" y="276" font-size="10" fill="#a9a09a" text-anchor="middle">40–60 prompts +</text>
+          <text x="295" y="289" font-size="10" fill="#a9a09a" text-anchor="middle">routing + sequencing</text>
+          <text x="295" y="316" font-size="14" fill="#fe004a" text-anchor="middle" font-weight="700">$17–29</text>
+          <text x="295" y="336" font-size="9" fill="#d69865" text-anchor="middle">viewer → buyer</text>
+          <text x="295" y="350" font-size="9" fill="#d69865" text-anchor="middle">first dollar</text>
+
+          <!-- T-spine -->
+          <rect x="380" y="130" width="160" height="240" rx="8" fill="url(#solidStep)" stroke="#d69865" stroke-width="2"/>
+          <text x="460" y="156" font-size="13" fill="#ece6e2" text-anchor="middle" font-weight="700">T-SPINE</text>
+          <text x="460" y="174" font-size="10" fill="#a9a09a" text-anchor="middle">ONE recurring</text>
+          <text x="460" y="187" font-size="10" fill="#a9a09a" text-anchor="middle">community</text>
+          <text x="460" y="214" font-size="16" fill="#d69865" text-anchor="middle" font-weight="700">$39–99/mo</text>
+          <text x="460" y="234" font-size="9" fill="#5ff771" text-anchor="middle">push ANNUAL</text>
+          <text x="460" y="248" font-size="9" fill="#5ff771" text-anchor="middle">+89% vs one-time</text>
+          <text x="460" y="300" font-size="9" fill="#a9a09a" text-anchor="middle">recency + showcase</text>
+          <text x="460" y="313" font-size="9" fill="#a9a09a" text-anchor="middle">+ client-getting</text>
+          <text x="460" y="340" font-size="10" fill="#d69865" text-anchor="middle" font-weight="700">the compounding</text>
+          <text x="460" y="353" font-size="10" fill="#d69865" text-anchor="middle" font-weight="700">asset</text>
+
+          <!-- SOLID label -->
+          <rect x="60" y="392" width="480" height="2" fill="#5ff771"/>
+          <text x="300" y="412" font-size="11" fill="#5ff771" text-anchor="middle" font-weight="700">v1 · BUILD NOW — ≥1 free + ≥1 paid + ≥1 recurring (gate G2)</text>
+
+          <!-- ============ DASHED: earned ============ -->
+          <!-- T3 -->
+          <rect x="550" y="190" width="90" height="180" rx="8" fill="none" stroke="#6f655f" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="595" y="216" font-size="11" fill="#6f655f" text-anchor="middle" font-weight="700">T3</text>
+          <text x="595" y="234" font-size="9" fill="#6f655f" text-anchor="middle">challenge</text>
+          <text x="595" y="248" font-size="10" fill="#6f655f" text-anchor="middle">$49–97</text>
+
+          <!-- T5 -->
+          <rect x="650" y="120" width="90" height="250" rx="8" fill="none" stroke="#6f655f" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="695" y="146" font-size="11" fill="#6f655f" text-anchor="middle" font-weight="700">T5</text>
+          <text x="695" y="164" font-size="9" fill="#6f655f" text-anchor="middle">VIP / DWY /</text>
+          <text x="695" y="177" font-size="9" fill="#6f655f" text-anchor="middle">closed-exec</text>
+          <text x="695" y="196" font-size="10" fill="#6f655f" text-anchor="middle">$497–7.5K</text>
+
+          <!-- T6 -->
+          <rect x="750" y="60" width="90" height="310" rx="8" fill="none" stroke="#6f655f" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="795" y="86" font-size="11" fill="#6f655f" text-anchor="middle" font-weight="700">T6</text>
+          <text x="795" y="104" font-size="9" fill="#6f655f" text-anchor="middle">license-</text>
+          <text x="795" y="117" font-size="9" fill="#6f655f" text-anchor="middle">recursion</text>
+          <text x="795" y="136" font-size="10" fill="#6f655f" text-anchor="middle">20–29%</text>
+
+          <!-- earned label -->
+          <rect x="550" y="392" width="290" height="2" fill="#6f655f"/>
+          <text x="695" y="412" font-size="11" fill="#6f655f" text-anchor="middle">EARNED — design only after &gt;0 paying customers</text>
+        </svg>
+      </div>
+      <figcaption>Tiers are a <em>hypothesis to be earned, not a blueprint to be built</em> (review). Solid = v1. Dashed = earned.</figcaption>
+    </figure>
+
+    <h3>v1 — the two-step wedge (the only thing you build first)</h3>
+    <div class="card">
+      <p><b style="color:var(--green)">T0 · Free showcase + lead magnet ($0)</b> — the high-volume on-brand
+      output IS the ad; a free mini-kit (one template + the 4-layer skeleton + the retention-threshold card)
+      delivered via the capture rail → <b>email</b>, the owned asset no algorithm can throttle.
+      <code>kleos_check.py</code> requires an <code>owned_channel</code>.</p>
+      <p style="margin-bottom:0"><b style="color:var(--crimson)">T1 · Tripwire ($17–29 one-time)</b> — 40–60
+      prompts = a full workflow + the model-routing cheat-sheet + the sequencing order + caption/hook vault.
+      Synthetic personas only (likeness firewall, §5). <em>The first dollar that converts viewer → buyer.</em></p>
+    </div>
+    <div class="card">
+      <p style="margin:0"><b style="color:var(--tan)">T-spine · One recurring community ($39–99/mo, push annual)</b>
+      — the durable spine: recency re-teaching + member showcase + the client-getting module.
+      <b>Recurring out-earns one-time by ~89%.</b> This is the asset that compounds.</p>
+    </div>
+
+    <div class="callout warn">
+      <span class="tag">Earned — design only after measured conversion</span>
+      <p><b>T3 Paid challenge ($49–97)</b> — manufactures public proof. <b>T5 VIP / done-with-you /
+      closed-execution ($497–7.5K)</b> — LTV ceiling + moat protection. <b>T6 Affiliate / license-recursion
+      (20–29%)</b> — the outermost loop; the literal Kleos recursion (sell the engine to people who run it
+      for <em>their</em> vertical). None of these gets a slide before T1 converts.</p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 5. COMPLIANCE / SURVIVAL ============ -->
+  <section id="survival">
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <h2>The compliance / survival pillar — four walls</h2>
+    </div>
+    <p class="sec-sub">
+      The sharpest upgrade from the review: compliance is the <em>most defensible part of the offer</em>
+      AND a sharper standalone product than "learn to make AI content." It targets a dated, urgent pain
+      with deadline-driven urgency. And remember — <b style="color:var(--crimson)">the SELLER is the entity
+      that gets sued.</b> Harden Kleos's own sales page first.
+    </p>
+
+    <div class="walls">
+      <div class="wall">
+        <div class="law">FTC v. AIR AI · MAR 2026</div>
+        <h4>False-earnings ban</h4>
+        <p>Lifetime biz-opp ban + $18M for false earnings + a fake guarantee. <b style="color:var(--ink)">Guardrail:</b>
+        every income claim carries written proof + "results not typical"; sell the <em>capability</em>, never
+        guaranteed income; honor a <em>real</em> money-back guarantee. <code>earnings_claims_substantiated: true</code>.</p>
+      </div>
+      <div class="wall">
+        <div class="law">NO FAKES · ELVIS ACT · RIGHT-OF-PUBLICITY</div>
+        <h4>Likeness firewall</h4>
+        <p>Johansson; Swift + Kimmel voice marks (Apr 2026). <b style="color:var(--ink)">Guardrail:</b> owned
+        synthetic personas / fictional brand characters / cleared talent only. <em>Never</em> a real
+        identifiable person without written consent + license. Teach the firewall as a feature.
+        <code>likeness_firewall: true</code>.</p>
+      </div>
+      <div class="wall">
+        <div class="law">YOUTUBE "INAUTHENTIC CONTENT" SWEEP · JAN 2026</div>
+        <h4>Authenticity threshold</h4>
+        <p>~16 channels / 4.7B views / ~$10M/yr wiped. <b style="color:var(--ink)">Guardrail:</b> keep human
+        editorial commentary &gt;30%; vary templates &gt;20% script-to-script; diversify to ≥3 platforms + owned.</p>
+      </div>
+      <div class="wall">
+        <div class="law">AI-SLOP DEMAND REVERSAL · 60%→26%</div>
+        <h4>Reposition the moat</h4>
+        <p>AI-creator-content preference fell 60%→26% (2023→2026); "slop" is Merriam-Webster's 2025 word of
+        the year. <b style="color:var(--ink)">Guardrail:</b> reposition from <em>volume</em> to
+        <em>distinctive aesthetic + craft + human fingerprint</em> — "the system that survives the algorithm."</p>
+      </div>
+
+      <div class="countdown">
+        <div class="big">Aug&nbsp;2&nbsp;2026</div>
+        <div class="ctxt">
+          <b>EU AI Act, Article 50 — live.</b> Machine-readable AI marking becomes mandatory; fines to
+          €15M / 3% of turnover. <code>disclosure_labeling: true</code> means C2PA Content Credentials +
+          imperceptible watermark + platform AI-label baked in as a <b>build step</b>, not an afterthought.
+          The deadline is the wedge — competitors teaching "growth" have no answer to it.
+        </div>
+      </div>
+    </div>
+
+    <div class="callout correct">
+      <span class="tag">Why this is the differentiator</span>
+      <p>Most competitors are pump-and-dump that teach <em>growth</em>, not <em>survival</em>.
+      <code>kleos_check.py</code> makes governance <b>mandatory</b> — a manifest missing any governance
+      field FAILs. The only AI-revenue method that won't get you banned or sued is a real, defensible product.</p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 6. THE DETERMINISTIC GATE ============ -->
+  <section id="gate">
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <h2>The deterministic gate — what "done" means</h2>
+    </div>
+    <p class="sec-sub">
+      A Kleos engine instance is real <em>iff</em>
+      <code>kleos_check.py kleos.manifest.yaml</code> passes all seven gates. Reasoning doesn't validate;
+      a passing checker does.
+    </p>
+
+    <div class="gates">
+      <div class="gate"><span class="gn">G1</span><span class="gtxt"><b>Identity present.</b> <code>capability</code>, <code>brand.name</code>, <code>brand.gloss</code> all present.</span></div>
+      <div class="gate"><span class="gn">G2</span><span class="gtxt"><b>Validated wedge.</b> <code>offer_ladder</code> has ≥1 free + ≥1 paid + ≥1 recurring tier.</span></div>
+      <div class="gate"><span class="gn">G3</span><span class="gtxt"><b>Own the audience.</b> <code>distribute.owned_channel</code> present.</span></div>
+      <div class="gate"><span class="gn">G4</span><span class="gtxt"><b>Real moat.</b> <code>moat.primary</code> ∈ {sequencing, recency, community, agency-proof, compliance, closed-execution} — <span class="x-no">never</span> prompts/templates.</span></div>
+      <div class="gate"><span class="gn">G5</span><span class="gtxt"><b>Survival.</b> <code>governance</code> has disclosure_labeling, likeness_firewall, earnings_claims_substantiated, spend_cap, platform_diversification (≥3 + owned).</span></div>
+      <div class="gate"><span class="gn">G6</span><span class="gtxt"><b>Ritual-vs-Substance.</b> <code>self_improvement.claimed</code> ⟹ <code>mechanism_built && measured</code>, else FAIL.</span></div>
+      <div class="gate"><span class="gn">G7</span><span class="gtxt"><b>KPI honesty.</b> <code>kpis.imported</code> block present whenever benchmark numbers appear.</span></div>
+    </div>
+
+    <div class="callout">
+      <span class="tag">The binding line</span>
+      <p>A capability that doesn't pass all gates is <b>not a revenue engine</b> — just content that
+      happens to exist today.</p>
+    </div>
+
+    <h3>The Ritual-vs-Substance gate, made concrete</h3>
+    <p>The draft claimed self-improvement was a <em>fork of</em> <code>symphony-egri/batch.rs</code>. The
+    reviewer read the file: it computes one scalar — <code>completed/(completed+retrying)</code> — and
+    increments a pass/fail tally. It is <b>not a variant selector.</b> Real self-improvement (multi-armed
+    bandit + per-variant retention attribution + brand-DNA fold-back) is <b>unbuilt NEW code.</b></p>
+    <div class="callout warn">
+      <span class="tag">Binding rule · G6</span>
+      <p>No Kleos surface — buyer-facing OR internal — may claim "self-improving" / "the loop rewrites
+      tomorrow's content" unless the mechanism is <b>built AND measured.</b> All conversion benchmarks
+      (comment-DM 25–55% trigger, 70–80% challenge completion, $1,800 LTV, 235× CAC) are
+      <b>imported from the consumer AI-celebrity niche</b> and <b>unvalidated for any other buyer</b> —
+      especially the high-trust technical (B2D) buyer. Presenting imported numbers as validated targets
+      is a slop tell and a real FTC risk.</p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ 7. THE THREE LAYERS ============ -->
+  <section id="layers">
+    <div class="sec-head">
+      <span class="sec-num">07</span>
+      <h2>The three layers</h2>
+    </div>
+    <p class="sec-sub">
+      L1 is the meta-engine (this doc + the skill + the gate). L2 is the first real instance. L3 is the
+      autonomous runtime — <b>honestly deferred</b> until L2 validates demand.
+    </p>
+
+    <div class="arch">
+      <div class="layer">
+        <div class="lid">L1</div>
+        <span class="pill built">BUILT</span>
+        <h4>Core system + playbook</h4>
+        <p>The <code>/kleos</code> composition skill + <code>kleos_check.py</code> gate + tests + this
+        Category-C HTML playbook. The meta-engine applicable to any niche.</p>
+        <span class="muted mono" style="font-size:11px">← you are here</span>
+      </div>
+      <div class="layer">
+        <div class="lid">L2</div>
+        <span class="pill art">ARTICULATED</span>
+        <h4>Applied wedge (dogfood)</h4>
+        <p>Kleos applied to Broomva's own niche: autonomous agentic dev under control-systems governance.
+        Authority-rail-first; the FastRender-counter as the single Day-1 cornerstone proof.</p>
+        <a href="./l2-agentic-dev-wedge.html">Read the L2 wedge →</a>
+      </div>
+      <div class="layer">
+        <div class="lid">L3</div>
+        <span class="pill def">DEFERRED</span>
+        <h4>Autonomous runtime</h4>
+        <p><code>apps/kleos-engine</code> — the daemon that generates + publishes + self-improves under
+        <code>.control/policy.yaml</code>. Scaffolded + spec'd; build only after L2 validates demand.</p>
+        <a href="./runtime-spec.html">Read the runtime spec →</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Why the agentic-dev wedge (L2) is the strongest niche</h3>
+      <p>The market <b>named the problem in 2026</b>: "harness engineering" (Hashimoto → OpenAI / Lopopolo,
+      Feb 11 2026 → Thoughtworks / Böckeler: a literal <em>"cybernetic governor combining feed-forward and
+      feedback to regulate the codebase"</em>) — which is Carlos's RCS control-metalayer, described two
+      layers shallower.</p>
+      <p>Generation is commoditized; <b style="color:var(--green)">governance is the scarce input.</b> Cursor
+      FastRender (Jan 2026) proved ~2,000 agents write 3M+ lines/week — and The Register + SIG confirmed
+      "shoddy code at scale." The wedge: making a swarm <em>shippable</em> — safe, reviewed, self-improving,
+      un-sue-able. The slop reversal <em>inverts</em> into an advantage: when consumers distrust AI volume,
+      "it actually shipped and passed CI" is an authenticity signal volume-slop cannot manufacture.</p>
+      <p style="margin-bottom:0"><b>The single Day-1 cornerstone bet:</b> run a small bstack-<em>governed</em>
+      multi-agent build of one real feature; publish the measured quality delta (CI pass-rate, review-catch
+      count, LOC churn) vs an <em>ungoverned</em> swarm. One numbers-backed artifact &gt; 20 stylized terminal
+      Shorts — and platforms structurally cannot reproduce it.</p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ EXEMPLARS ============ -->
+  <section id="exemplars">
+    <div class="sec-head">
+      <span class="sec-num">08</span>
+      <h2>Exemplars — the pattern, already running</h2>
+    </div>
+    <p class="sec-sub">
+      Each of these proves a different moat. None of them sells "the prompts." Note the model column:
+      the durable ones are recurring + agency-proof.
+    </p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Engine</th><th>Model</th><th>Price</th><th>Moat</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="lead-cell">realosias <span class="muted">(Stanley Osias)</span></td>
+            <td>~512K followers · 100M+ views; one-time blueprint</td>
+            <td>$29</td>
+            <td>Operational <b>upload-sequencing</b></td>
+            <td><a href="#cite-4">[4]</a></td>
+          </tr>
+          <tr>
+            <td class="lead-cell">AI Video Bootcamp <span class="muted">(Daniel Riley)</span></td>
+            <td>~22,900 members · #2 of 250k Skool globally</td>
+            <td>$9/mo</td>
+            <td><b>Recurring</b> + community (low-price volume)</td>
+            <td><a href="#cite-3">[3]</a></td>
+          </tr>
+          <tr>
+            <td class="lead-cell">GenHQ <span class="muted">(Rourke)</span></td>
+            <td>439 → 1,500+ members · #1 Tech; 30-min-cut + ManyChat</td>
+            <td>$97/mo</td>
+            <td><b>Recurring + recency</b> + comment-to-DM hook</td>
+            <td><a href="#cite-2">[2]</a></td>
+          </tr>
+          <tr>
+            <td class="lead-cell">AI Filmmaker Academy <span class="muted">(PJ Ace / Genre.ai)</span></td>
+            <td>300M+ views de-risk the course; ladder $97/mo → $7,997/yr</td>
+            <td>$97/mo</td>
+            <td><b>Agency-proof</b> (the views ARE the product)</td>
+            <td><a href="#cite-5">[5]</a></td>
+          </tr>
+          <tr style="background:rgba(95,247,113,0.04)">
+            <td class="lead-cell" style="color:var(--green)">Dev-niche analogs</td>
+            <td>Whop "Claude Code Blueprints" (50 kits, 4.6★) · Finn "Vibe Coding Academy" ($97/mo ~839) · Greg Isenberg "Startup Empire" ($2,999/yr)</td>
+            <td>varies</td>
+            <td>Templates → <span class="x-no">commoditizing</span>; recurring + community survive</td>
+            <td><a href="#cite-11">[11]</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:13px">
+      Production economics behind the SHOW: ~$0.50–3.00/finished short, ~24 min/asset, ~5 publish-ready per
+      2-hr batch, tools $78–180/mo (Nano Banana 2 $0.04–0.13/img · Veo 3.1 $1.20–3.20/8s · Kling ~$0.10/sec).
+      Retention gates: TikTok ~70% completion · Reels ~70% + 60% 3-sec hold · Shorts ~85% / swipe &lt;30%.
+    </p>
+  </section>
+
+  <hr class="div">
+
+  <!-- ============ CITATIONS ============ -->
+  <section id="cites">
+    <div class="sec-head">
+      <span class="sec-num">09</span>
+      <h2>Citations</h2>
+    </div>
+    <p class="sec-sub muted">
+      Verified in research workflow <code>wf_d25abca6-6bf</code> (2026-06-08). Consumer-niche conversion
+      benchmarks are labeled imported / unvalidated for B2D per the KPI-honesty gate (G7).
+    </p>
+    <ol class="cites">
+      <li id="cite-1"><span class="cite-tag">power law</span> — Whop creator-earnings data, 2026: 88% of 191,654 products earn $0; median $74/mo; top 1% take 57% of $64.2M MRR; subscriptions out-earn one-time by 89%. <a href="https://whoptrends.com/blog/whop-creator-earnings-data-2026">whoptrends.com/blog/whop-creator-earnings-data-2026</a></li>
+      <li id="cite-2"><span class="cite-tag">exemplar</span> — GenHQ (Rourke): $97/mo Skool, 439 → 1,500+ members, #1 Tech; 30-min-cut + ManyChat comment-to-DM. <a href="https://startupspells.com/p/ai-video-youtube-funnel-skool-community">startupspells.com — AI video YouTube funnel</a></li>
+      <li id="cite-3"><span class="cite-tag">exemplar</span> — AI Video Bootcamp (Daniel Riley): $9/mo, ~22,900 members, #2 globally of 250k Skool communities. <a href="https://www.skool.com/aivideobootcamp/about">skool.com/aivideobootcamp/about</a></li>
+      <li id="cite-4"><span class="cite-tag">exemplar · moat</span> — realosias (Stanley Osias): ~512K followers, 100M+ views, $29 "AI Celebrity Content Blueprint", moat = upload-sequencing. <a href="https://www.instagram.com/realosias/">instagram.com/realosias</a></li>
+      <li id="cite-5"><span class="cite-tag">exemplar · agency-proof</span> — PJ Ace / Genre.ai: 300M+ views de-risk AI Filmmaker Academy ($97/mo → $7,997/yr). <a href="https://www.aifilmmaker.academy/">aifilmmaker.academy</a></li>
+      <li id="cite-6"><span class="cite-tag">hook · imported KPI</span> — Comment-to-DM benchmarks: 25–55% of commenters trigger, 85–92% DM open, 8–25% qualified-to-paid; one campaign 847 comments → $12,608. <em>Consumer-niche — imported / unvalidated for B2D.</em> <a href="https://communipass.com/blog/auto-dm-statistics-2026-open-rates-conversion-benchmarks/">communipass.com — auto-DM statistics 2026</a></li>
+      <li id="cite-7"><span class="cite-tag">slop reversal</span> — AI-creator-content preference 60%→26% (2023→2026); "slop" = Merriam-Webster 2025 word of the year. <a href="https://digiday.com/media/after-an-oversaturation-of-ai-generated-content-creators-authenticity-and-messiness-are-in-high-demand/">digiday.com — authenticity & messiness in high demand</a></li>
+      <li id="cite-8"><span class="cite-tag">survival</span> — FTC v. Air AI (Mar 2026): lifetime biz-opp ban + $18M for false earnings + fake guarantee. <a href="https://www.ftc.gov/legal-library/browse/cases-proceedings/airai">ftc.gov — Air AI case</a></li>
+      <li id="cite-9"><span class="cite-tag">survival · deadline</span> — EU AI Act Art. 50: live Aug 2 2026; machine-readable AI marking; fines to €15M / 3% turnover. <a href="https://artificialintelligenceact.eu/transparency-rules-article-50/">artificialintelligenceact.eu — Article 50 transparency rules</a></li>
+      <li id="cite-10"><span class="cite-tag">survival</span> — YouTube "inauthentic content" sweep (Jan 2026): ~16 channels / 4.7B views / ~$10M/yr removed. <a href="https://flocker.tv/posts/youtube-inauthentic-content-ai-enforcement/">flocker.tv — YouTube inauthentic-content enforcement</a></li>
+      <li id="cite-11"><span class="cite-tag">dev-niche analogs</span> — Whop "Done For You: Claude Code Blueprints" (50 app kits, 4.6★). <a href="https://whop.com/claude-code-templates/">whop.com/claude-code-templates</a></li>
+      <li id="cite-12"><span class="cite-tag">L2 · governance-as-input</span> — Claude Code ~$2.5B run-rate; 65% of engineers run ≥2 agents; Cursor FastRender "shoddy code at scale." <a href="https://www.mindstudio.ai/blog/claude-code-2-5-billion-annualized-revenue-terminal-tool">mindstudio.ai — Claude Code $2.5B annualized</a></li>
+      <li id="cite-13"><span class="cite-tag">L2 · closed-execution analog</span> — Capafy: closed-execution AI skills marketplace (sell expert systems as per-use black boxes). <a href="https://www.testingcatalog.com/capafy-launches-new-ai-skills-marketplace-for-creators/">testingcatalog.com — Capafy AI skills marketplace</a></li>
+    </ol>
+  </section>
+
+  <footer>
+    <div class="fl">
+      <span class="wordmark"><span class="k">K</span>LEOS</span>
+      <span>your work, made famous by showing it.</span>
+    </div>
+    <div class="fl" style="margin-top:12px">
+      <span><b>BRO-1429</b> · Layer 1 · canonical shareable meta-system</span>
+      <span>·</span>
+      <span>provenance <b>wf_d25abca6-6bf</b> + P20 review (5.5/10 REVISE, all corrections baked in)</span>
+      <span>·</span>
+      <span>source of truth <b>skills/kleos/references/design-canon.md</b></span>
+      <span>·</span>
+      <span>2026-06-08</span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

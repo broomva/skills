@@ -1,0 +1,752 @@
+<!--
+---
+title: "Kleos L2 — The Applied Wedge: Agentic Dev Under Control-Systems Governance"
+bro: BRO-1429
+layer: "L2 — Applied wedge (Kleos dogfooded on Broomva's own niche)"
+created: 2026-06-08
+provenance: workflow wf_d25abca6-6bf
+---
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kleos L2 — The Applied Wedge · arcan-studio</title>
+<style>
+  :root{
+    --bg:#14110f; --bg2:#1b1715; --surf:#2d262b; --surf2:#241f23;
+    --ink:#ece6e2; --mut:#a9a09a; --faint:#6f6862;
+    --crimson:#fe004a; --green:#5ff771; --tan:#d69865;
+    --line:rgba(214,152,101,.16); --line2:rgba(236,230,226,.08);
+    --mono:ui-monospace,SFMono-Regular,Menlo,"Cascadia Mono","Roboto Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:
+      radial-gradient(1200px 700px at 78% -8%, rgba(254,0,74,.08), transparent 60%),
+      radial-gradient(900px 600px at 8% 110%, rgba(95,247,113,.05), transparent 55%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.62;
+    -webkit-font-smoothing:antialiased;letter-spacing:.005em;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  a{color:var(--tan);text-decoration:none;border-bottom:1px solid rgba(214,152,101,.32)}
+  a:hover{color:var(--ink);border-bottom-color:var(--crimson)}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  h1,h2,h3{line-height:1.18;letter-spacing:-.01em;font-weight:650}
+  h2{font-size:1.62rem;margin:0 0 6px}
+  h3{font-size:1.12rem;margin:26px 0 8px;color:var(--ink)}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;color:var(--tan)}
+  .muted{color:var(--mut)}
+  .faint{color:var(--faint)}
+  hr{border:0;border-top:1px solid var(--line2);margin:0}
+
+  /* header */
+  header.hero{position:relative;overflow:hidden;border-bottom:1px solid var(--line)}
+  .hero-inner{padding:74px 0 56px}
+  .wordmark{font-family:var(--mono);font-weight:700;font-size:1.05rem;letter-spacing:.5em;color:var(--ink);display:inline-flex;align-items:center;gap:10px}
+  .wordmark .dot{width:9px;height:9px;border-radius:50%;background:var(--crimson);box-shadow:0 0 14px 2px rgba(254,0,74,.7)}
+  .gloss{font-family:var(--mono);font-size:.78rem;color:var(--mut);letter-spacing:.04em;margin-top:6px}
+  h1.title{font-size:clamp(2.1rem,5.2vw,3.35rem);margin:26px 0 10px;letter-spacing:-.025em;font-weight:700}
+  h1.title .hl{color:var(--crimson)}
+  .lede{font-size:1.18rem;color:var(--ink);max-width:760px;margin:0 0 4px}
+  .thesis{font-family:var(--mono);font-size:.94rem;color:var(--green);margin-top:22px;padding:14px 18px;border:1px solid rgba(95,247,113,.25);border-radius:14px;background:rgba(95,247,113,.04);max-width:760px}
+  .thesis b{color:var(--green)}
+  .badges{margin-top:24px;display:flex;flex-wrap:wrap;gap:8px}
+  .badge{font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;color:var(--mut);border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surf2)}
+  .badge.green{color:var(--green);border-color:rgba(95,247,113,.3)}
+  .badge.crimson{color:var(--crimson);border-color:rgba(254,0,74,.3)}
+
+  /* nav */
+  nav.toc{position:sticky;top:0;z-index:30;background:rgba(20,17,15,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line2)}
+  nav.toc .wrap{display:flex;gap:4px;overflow-x:auto;padding:10px 28px;scrollbar-width:none}
+  nav.toc .wrap::-webkit-scrollbar{display:none}
+  nav.toc a{font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;color:var(--mut);border:0;white-space:nowrap;padding:6px 11px;border-radius:8px}
+  nav.toc a:hover{color:var(--ink);background:var(--surf)}
+
+  section{padding:52px 0;border-bottom:1px solid var(--line2)}
+  .sec-num{font-family:var(--mono);font-size:.74rem;color:var(--crimson);letter-spacing:.16em}
+  p{margin:0 0 14px}
+  .lead-p{font-size:1.06rem}
+
+  .card{background:linear-gradient(180deg,var(--surf),var(--surf2));border:1px solid var(--line);border-radius:18px;padding:22px 24px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:760px){.grid2,.grid3{grid-template-columns:1fr}}
+
+  .callout{border-left:3px solid var(--crimson);background:rgba(254,0,74,.05);border-radius:0 12px 12px 0;padding:14px 18px;margin:18px 0}
+  .callout.green{border-left-color:var(--green);background:rgba(95,247,113,.05)}
+  .callout.tan{border-left-color:var(--tan);background:rgba(214,152,101,.06)}
+  .callout .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);display:block;margin-bottom:4px}
+
+  table{width:100%;border-collapse:collapse;font-size:.92rem;margin:14px 0}
+  th,td{text-align:left;padding:11px 13px;border-bottom:1px solid var(--line2);vertical-align:top}
+  th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--tan);font-weight:600}
+  tbody tr:hover{background:rgba(214,152,101,.035)}
+  td .mono{color:var(--ink)}
+
+  figure{margin:22px 0}
+  figure svg{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:16px;background:var(--surf2)}
+  figcaption{font-size:.82rem;color:var(--faint);margin-top:8px;font-family:var(--mono);letter-spacing:.02em}
+
+  .pill{display:inline-block;font-family:var(--mono);font-size:.68rem;padding:2px 8px;border-radius:6px;letter-spacing:.04em}
+  .pill.gov{color:var(--green);background:rgba(95,247,113,.1);border:1px solid rgba(95,247,113,.25)}
+  .pill.ung{color:var(--crimson);background:rgba(254,0,74,.08);border:1px solid rgba(254,0,74,.22)}
+  .pill.unv{color:var(--tan);background:rgba(214,152,101,.1);border:1px solid rgba(214,152,101,.25)}
+
+  .concept-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:760px){.concept-grid{grid-template-columns:1fr}}
+  .concept{background:var(--surf2);border:1px solid var(--line2);border-radius:14px;padding:16px 18px;transition:border-color .2s}
+  .concept:hover{border-color:var(--line)}
+  .concept .tag{font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--tan)}
+  .concept h4{margin:6px 0 4px;font-size:1.02rem;font-weight:650}
+  .concept p{font-size:.88rem;color:var(--mut);margin:0}
+
+  .open-q{display:flex;gap:14px;align-items:flex-start;padding:14px 0;border-bottom:1px solid var(--line2)}
+  .open-q:last-child{border-bottom:0}
+  .open-q .num{font-family:var(--mono);color:var(--crimson);font-size:.9rem;min-width:26px}
+  .open-q .q{font-weight:600;color:var(--ink)}
+  .open-q .a{color:var(--mut);font-size:.92rem;display:block;margin-top:3px}
+
+  footer{padding:40px 0 60px;color:var(--faint);font-family:var(--mono);font-size:.78rem}
+  footer .prov{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
+  .cite-list{font-size:.85rem;line-height:1.5}
+  .cite-list li{margin-bottom:9px;color:var(--mut)}
+  .cite-list b{color:var(--ink);font-weight:600}
+  sup.ref{font-family:var(--mono);font-size:.62rem;color:var(--crimson);vertical-align:super;margin-left:2px}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap hero-inner">
+    <div class="wordmark"><span class="dot"></span>KLEOS</div>
+    <div class="gloss">your work, made famous by showing it.</div>
+
+    <div class="eyebrow" style="margin-top:30px">Layer 2 · Applied Wedge · arcan-studio</div>
+    <h1 class="title">Watch agent teams ship real software <span class="hl">safely</span> —<br>then run the harness yourself.</h1>
+    <p class="lede">Kleos, dogfooded on Broomva's own niche: <b>autonomous agentic development under control-systems governance.</b> The proof and the product are the same running artifact.</p>
+
+    <div class="thesis">
+      The wedge thesis in one line: <b>generation is commoditized — GOVERNANCE is the scarce input.</b>
+    </div>
+
+    <div class="badges">
+      <span class="badge crimson">Cornerstone: the FastRender-counter</span>
+      <span class="badge green">Authority-rail FIRST</span>
+      <span class="badge">KPIs measured-from-zero</span>
+      <span class="badge">canon §7 · L2</span>
+      <span class="badge">BRO-1429</span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#wedge">01 · Market wedge</a>
+    <a href="#inversion">02 · Slop inversion</a>
+    <a href="#dogfood">03 · Dogfood-as-proof</a>
+    <a href="#cornerstone">04 · The cornerstone bet</a>
+    <a href="#distribution">05 · Distribution mix</a>
+    <a href="#ladder">06 · Offer ladder</a>
+    <a href="#plan">07 · 30-day plan</a>
+    <a href="#concepts">08 · Content concepts</a>
+    <a href="#risks">09 · Risks &amp; open questions</a>
+    <a href="#cite">Citations</a>
+  </div>
+</nav>
+
+<!-- ════════════════════════ 01 — THE MARKET WEDGE ════════════════════════ -->
+<section id="wedge">
+  <div class="wrap">
+    <div class="sec-num">SECTION 01</div>
+    <h2>The market wedge: 2026 named our problem</h2>
+    <p class="lead-p muted">In early 2026 the industry coined a term for the discipline Carlos has been running for two years — <b style="color:var(--ink)">"harness engineering."</b> The same quarter, Cursor's FastRender experiment proved the inverse: ungoverned agent swarms produce "shoddy code at scale." That gap is the wedge.</p>
+
+    <figure>
+      <svg viewBox="0 0 1040 300" role="img" aria-label="Timeline of the harness-engineering naming event mapped onto Carlos's RCS control-metalayer">
+        <defs>
+          <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d69865"/></marker>
+          <linearGradient id="rcsg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#5ff771" stop-opacity=".22"/><stop offset="1" stop-color="#5ff771" stop-opacity=".02"/>
+          </linearGradient>
+        </defs>
+        <!-- timeline axis -->
+        <line x1="60" y1="78" x2="980" y2="78" stroke="#6f6862" stroke-width="1.2"/>
+        <text x="60" y="34" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#d69865" letter-spacing="2">THE NAMING EVENT — 2026</text>
+        <!-- nodes -->
+        <g font-family="ui-monospace,Menlo,monospace">
+          <!-- node 1 -->
+          <circle cx="160" cy="78" r="6" fill="#fe004a"/><line x1="160" y1="78" x2="160" y2="56" stroke="#6f6862"/>
+          <text x="160" y="50" font-size="11" fill="#a9a09a" text-anchor="middle">Mitchell Hashimoto</text>
+          <text x="160" y="100" font-size="10" fill="#6f6862" text-anchor="middle">coins term</text>
+          <!-- node 2 -->
+          <circle cx="440" cy="78" r="6" fill="#fe004a"/><line x1="440" y1="78" x2="440" y2="56" stroke="#6f6862"/>
+          <text x="440" y="50" font-size="11" fill="#a9a09a" text-anchor="middle">OpenAI · R. Lopopolo</text>
+          <text x="440" y="100" font-size="10" fill="#6f6862" text-anchor="middle">Feb 11 2026</text>
+          <!-- node 3 -->
+          <circle cx="760" cy="78" r="6" fill="#fe004a"/><line x1="760" y1="78" x2="760" y2="56" stroke="#6f6862"/>
+          <text x="760" y="50" font-size="11" fill="#a9a09a" text-anchor="middle">Thoughtworks · Böckeler</text>
+          <text x="760" y="113" font-size="10" fill="#5ff771" text-anchor="middle">"cybernetic governor:</text>
+          <text x="760" y="126" font-size="10" fill="#5ff771" text-anchor="middle">feed-forward + feedback"</text>
+        </g>
+        <line x1="172" y1="78" x2="426" y2="78" stroke="#d69865" stroke-width="1.4" marker-end="url(#arr)"/>
+        <line x1="452" y1="78" x2="746" y2="78" stroke="#d69865" stroke-width="1.4" marker-end="url(#arr)"/>
+
+        <!-- mapping bracket down to RCS -->
+        <line x1="760" y1="150" x2="760" y2="178" stroke="#6f6862" stroke-dasharray="3 3"/>
+        <text x="520" y="172" font-family="ui-monospace,Menlo,monospace" font-size="10.5" fill="#d69865" text-anchor="middle">≡  described two layers shallower than Carlos's RCS control-metalayer</text>
+
+        <!-- RCS stack -->
+        <rect x="60" y="188" width="920" height="92" rx="12" fill="url(#rcsg)" stroke="rgba(95,247,113,.3)"/>
+        <text x="78" y="210" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5ff771" letter-spacing="1.5">RCS CONTROL-METALAYER — L0 → L3 (λᵢ &gt; 0 at every level ⟹ exponentially stable)</text>
+        <g font-family="ui-monospace,Menlo,monospace" font-size="10.5">
+          <rect x="78" y="226" width="210" height="42" rx="8" fill="#241f23" stroke="rgba(236,230,226,.1)"/>
+          <text x="90" y="245" fill="#ece6e2">L0 · External plant</text><text x="90" y="260" fill="#6f6862">Arcan agent loop</text>
+          <rect x="300" y="226" width="210" height="42" rx="8" fill="#241f23" stroke="rgba(236,230,226,.1)"/>
+          <text x="312" y="245" fill="#ece6e2">L1 · Agent internal</text><text x="312" y="260" fill="#6f6862">Autonomic engine</text>
+          <rect x="522" y="226" width="210" height="42" rx="8" fill="#241f23" stroke="rgba(236,230,226,.1)"/>
+          <text x="534" y="245" fill="#ece6e2">L2 · Meta-control</text><text x="534" y="260" fill="#6f6862">EGRI loop engine</text>
+          <rect x="744" y="226" width="218" height="42" rx="8" fill="#241f23" stroke="rgba(95,247,113,.3)"/>
+          <text x="756" y="245" fill="#5ff771">L3 · Governance</text><text x="756" y="260" fill="#6f6862">CLAUDE.md + policy.yaml</text>
+        </g>
+      </svg>
+      <figcaption>The industry's "cybernetic governor" is the RCS control-metalayer, named one quarter late and one altitude short.<sup class="ref">7</sup></figcaption>
+    </figure>
+
+    <h3>The wedge: governed vs ungoverned generation</h3>
+    <p class="muted">Cursor FastRender (Jan 2026) ran ~2,000 concurrent agents and produced 3M+ lines / 1M+ Rust in a week with no humans in the loop — then The Register and Software Improvement Group confirmed the output was <b style="color:var(--crimson)">"shoddy code at scale."</b> 65% of engineers now run ≥2 agents; Claude Code is at a ~$2.5B run-rate.<sup class="ref">8</sup> The market has the generation. It does not have the governor.</p>
+
+    <figure>
+      <svg viewBox="0 0 1040 320" role="img" aria-label="Split panel: ungoverned swarm produces shoddy code at scale; governed swarm produces shippable code">
+        <defs>
+          <linearGradient id="ungg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fe004a" stop-opacity=".14"/><stop offset="1" stop-color="#fe004a" stop-opacity=".02"/></linearGradient>
+          <linearGradient id="govg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5ff771" stop-opacity=".14"/><stop offset="1" stop-color="#5ff771" stop-opacity=".02"/></linearGradient>
+        </defs>
+        <!-- LEFT: ungoverned -->
+        <rect x="30" y="24" width="470" height="272" rx="16" fill="url(#ungg)" stroke="rgba(254,0,74,.3)"/>
+        <text x="54" y="56" font-family="ui-monospace,Menlo,monospace" font-size="13" fill="#fe004a" letter-spacing="1.5">UNGOVERNED SWARM</text>
+        <text x="54" y="76" font-family="ui-monospace,Menlo,monospace" font-size="10.5" fill="#a9a09a">Cursor FastRender · ~2,000 agents · no humans</text>
+        <!-- chaotic agents -->
+        <g>
+          <circle cx="110" cy="135" r="13" fill="#fe004a" fill-opacity=".5"/><circle cx="170" cy="115" r="13" fill="#fe004a" fill-opacity=".5"/>
+          <circle cx="240" cy="150" r="13" fill="#fe004a" fill-opacity=".5"/><circle cx="320" cy="118" r="13" fill="#fe004a" fill-opacity=".5"/>
+          <circle cx="390" cy="148" r="13" fill="#fe004a" fill-opacity=".5"/><circle cx="150" cy="170" r="13" fill="#fe004a" fill-opacity=".5"/>
+          <circle cx="290" cy="180" r="13" fill="#fe004a" fill-opacity=".5"/><circle cx="360" cy="178" r="13" fill="#fe004a" fill-opacity=".5"/>
+          <!-- tangled lines -->
+          <path d="M110,135 L240,150 M170,115 L320,118 M240,150 L290,180 M320,118 L390,148 M150,170 L360,178 M170,115 L150,170" stroke="#fe004a" stroke-width="1" stroke-opacity=".35" fill="none"/>
+        </g>
+        <rect x="54" y="226" width="422" height="50" rx="10" fill="#1b1715" stroke="rgba(254,0,74,.3)"/>
+        <text x="265" y="248" font-family="ui-monospace,Menlo,monospace" font-size="12.5" fill="#fe004a" text-anchor="middle">→ "shoddy code at scale"</text>
+        <text x="265" y="266" font-family="ui-monospace,Menlo,monospace" font-size="9.5" fill="#a9a09a" text-anchor="middle">unverified · unattributed · un-shippable · un-sue-able-proof = none</text>
+
+        <!-- divider -->
+        <line x1="520" y1="44" x2="520" y2="276" stroke="#6f6862" stroke-dasharray="2 5"/>
+        <text x="520" y="160" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="#6f6862" text-anchor="middle">vs</text>
+
+        <!-- RIGHT: governed -->
+        <rect x="540" y="24" width="470" height="272" rx="16" fill="url(#govg)" stroke="rgba(95,247,113,.3)"/>
+        <text x="564" y="56" font-family="ui-monospace,Menlo,monospace" font-size="13" fill="#5ff771" letter-spacing="1.5">GOVERNED SWARM</text>
+        <text x="564" y="76" font-family="ui-monospace,Menlo,monospace" font-size="10.5" fill="#a9a09a">bstack · P14/P15/P20 gates · same agents</text>
+        <!-- ordered agents through gates -->
+        <g font-family="ui-monospace,Menlo,monospace" font-size="9">
+          <rect x="564" y="110" width="86" height="34" rx="8" fill="#241f23" stroke="rgba(95,247,113,.3)"/><text x="607" y="131" fill="#5ff771" text-anchor="middle">P15 snap</text>
+          <rect x="676" y="110" width="86" height="34" rx="8" fill="#241f23" stroke="rgba(95,247,113,.3)"/><text x="719" y="131" fill="#5ff771" text-anchor="middle">P14 dep</text>
+          <rect x="788" y="110" width="86" height="34" rx="8" fill="#241f23" stroke="rgba(95,247,113,.3)"/><text x="831" y="131" fill="#5ff771" text-anchor="middle">agents</text>
+          <rect x="900" y="110" width="86" height="34" rx="8" fill="#241f23" stroke="rgba(95,247,113,.3)"/><text x="943" y="131" fill="#5ff771" text-anchor="middle">P20 judge</text>
+          <line x1="650" y1="127" x2="676" y2="127" stroke="#5ff771" stroke-width="1.2"/><line x1="762" y1="127" x2="788" y2="127" stroke="#5ff771" stroke-width="1.2"/><line x1="874" y1="127" x2="900" y2="127" stroke="#5ff771" stroke-width="1.2"/>
+        </g>
+        <g font-family="ui-monospace,Menlo,monospace" font-size="9">
+          <rect x="676" y="160" width="86" height="34" rx="8" fill="#241f23" stroke="rgba(95,247,113,.2)"/><text x="719" y="181" fill="#a9a09a" text-anchor="middle">CI green</text>
+          <rect x="788" y="160" width="198" height="34" rx="8" fill="#241f23" stroke="rgba(95,247,113,.3)"/><text x="887" y="181" fill="#5ff771" text-anchor="middle">merge — signed, attributed</text>
+          <line x1="719" y1="144" x2="719" y2="160" stroke="#5ff771" stroke-width="1.2"/>
+        </g>
+        <rect x="564" y="226" width="422" height="50" rx="10" fill="#1b1715" stroke="rgba(95,247,113,.3)"/>
+        <text x="775" y="248" font-family="ui-monospace,Menlo,monospace" font-size="12.5" fill="#5ff771" text-anchor="middle">→ shippable code at scale</text>
+        <text x="775" y="266" font-family="ui-monospace,Menlo,monospace" font-size="9.5" fill="#a9a09a" text-anchor="middle">reviewed · attributed · CI-passed · the proof IS the receipt</text>
+      </svg>
+      <figcaption>Same agents, same models, same denominator of generation. The only difference is the governor — and that is exactly the difference the market cannot buy off a shelf.</figcaption>
+    </figure>
+
+    <div class="callout green">
+      <span class="k">The wedge in one sentence</span>
+      Generation is one API call away for everyone; what nobody has packaged is the <b>governor that makes a swarm <em>shippable</em></b> — safe, reviewed, self-improving, un-sue-able. That governor is bstack, and Broomva already runs it.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 02 — THE SLOP-REVERSAL INVERSION ════════════════════════ -->
+<section id="inversion">
+  <div class="wrap">
+    <div class="sec-num">SECTION 02</div>
+    <h2>The slop-reversal inversion</h2>
+    <p class="lead-p muted">Consumer preference for AI-creator content collapsed from 60% to 26% between 2023 and 2026; "slop" was Merriam-Webster's 2025 word of the year.<sup class="ref">9</sup> For generic AI content that is a fatal headwind. <b style="color:var(--green)">Here it inverts into a tailwind.</b></p>
+
+    <figure>
+      <svg viewBox="0 0 1040 300" role="img" aria-label="AI-content preference falling from 60 to 26 percent, inverted into an authenticity advantage for governed dev proof">
+        <defs>
+          <linearGradient id="fallg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fe004a"/><stop offset="1" stop-color="#fe004a" stop-opacity=".4"/></linearGradient>
+        </defs>
+        <!-- left chart: the fall -->
+        <text x="40" y="34" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9a09a" letter-spacing="1.5">AI-CREATOR-CONTENT PREFERENCE</text>
+        <!-- axes -->
+        <line x1="60" y1="60" x2="60" y2="240" stroke="#6f6862"/><line x1="60" y1="240" x2="470" y2="240" stroke="#6f6862"/>
+        <text x="46" y="74" font-family="ui-monospace,Menlo,monospace" font-size="9" fill="#6f6862" text-anchor="end">60%</text>
+        <text x="46" y="244" font-family="ui-monospace,Menlo,monospace" font-size="9" fill="#6f6862" text-anchor="end">0%</text>
+        <text x="100" y="258" font-family="ui-monospace,Menlo,monospace" font-size="9" fill="#6f6862">2023</text>
+        <text x="410" y="258" font-family="ui-monospace,Menlo,monospace" font-size="9" fill="#6f6862">2026</text>
+        <!-- the declining line: 60% at y=72, 26% at y=240-(26/60*180)=240-78=162 -->
+        <path d="M100,72 L420,162" stroke="url(#fallg)" stroke-width="3" fill="none"/>
+        <circle cx="100" cy="72" r="5" fill="#fe004a"/><text x="100" y="62" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#fe004a" text-anchor="middle">60%</text>
+        <circle cx="420" cy="162" r="5" fill="#fe004a"/><text x="420" y="152" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#fe004a" text-anchor="middle">26%</text>
+        <text x="265" y="285" font-family="ui-monospace,Menlo,monospace" font-size="9.5" fill="#6f6862" text-anchor="middle">headwind for generic AI volume</text>
+
+        <!-- inversion arrow -->
+        <g>
+          <path d="M500,150 q30,-30 60,0" stroke="#5ff771" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+          <text x="530" y="118" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#5ff771" text-anchor="middle">INVERTS</text>
+        </g>
+
+        <!-- right: the authenticity signal -->
+        <rect x="600" y="56" width="410" height="190" rx="16" fill="rgba(95,247,113,.06)" stroke="rgba(95,247,113,.3)"/>
+        <text x="624" y="88" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5ff771" letter-spacing="1.2">THE UNFAKEABLE SIGNAL</text>
+        <text x="624" y="124" font-family="-apple-system,sans-serif" font-size="17" fill="#ece6e2" font-weight="600">"It shipped and passed CI."</text>
+        <text x="624" y="154" font-family="-apple-system,sans-serif" font-size="12.5" fill="#a9a09a">A swarm of agents can fake a polished demo reel.</text>
+        <text x="624" y="174" font-family="-apple-system,sans-serif" font-size="12.5" fill="#a9a09a">It cannot fake a green pipeline on a real,</text>
+        <text x="624" y="192" font-family="-apple-system,sans-serif" font-size="12.5" fill="#a9a09a">merged, fully-ownable feature.</text>
+        <rect x="624" y="206" width="362" height="28" rx="8" fill="#1b1715" stroke="rgba(95,247,113,.25)"/>
+        <text x="805" y="225" font-family="ui-monospace,Menlo,monospace" font-size="10.5" fill="#5ff771" text-anchor="middle">authenticity volume-slop cannot manufacture</text>
+      </svg>
+      <figcaption>When the market distrusts AI volume, a verifiable shipped artifact is the one credential that survives the distrust. Distrust of slop is the moat's free advertising.</figcaption>
+    </figure>
+
+    <div class="callout green">
+      <span class="k">canon §5 · §7 L2</span>
+      The compliance/survival pillar repositions the moat from <b>volume</b> → <b>distinctive craft + a verifiable human-and-machine fingerprint</b>. "It actually shipped and passed CI" is precisely the receipt that the AI-slop reversal makes scarce.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 03 — DOGFOOD-AS-PROOF ════════════════════════ -->
+<section id="dogfood">
+  <div class="wrap">
+    <div class="sec-num">SECTION 03</div>
+    <h2>Dogfood-as-proof: the engine and the receipt are one artifact</h2>
+    <p class="lead-p muted">Every other AI-revenue course must <em>claim</em> its method works. Kleos L2 shows the method working <b style="color:var(--ink)">on the same pipeline that produces the content.</b> The proof and the product are physically the same artifact — the review verified the substrate is real: <code>crates/symphony-orchestrator</code> scheduler, <code>symphony-egri</code> eval ledger, <code>content-engine</code> live Gemini + a rendered <code>.mp4</code>.</p>
+
+    <figure>
+      <svg viewBox="0 0 1040 250" role="img" aria-label="The agency-proof receipt pipeline: P15 snapshot to P14 dep-chain to agent work to P20 verdict to CI green to merge">
+        <defs>
+          <linearGradient id="pipe" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#d69865"/><stop offset=".55" stop-color="#5ff771"/><stop offset="1" stop-color="#5ff771"/>
+          </linearGradient>
+          <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#5ff771"/></marker>
+        </defs>
+        <text x="40" y="36" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#d69865" letter-spacing="1.5">THE AGENCY-PROOF RECEIPT — itself publishable as content</text>
+        <!-- rail -->
+        <line x1="78" y1="120" x2="962" y2="120" stroke="url(#pipe)" stroke-width="3"/>
+        <!-- stages -->
+        <g font-family="ui-monospace,Menlo,monospace">
+          <!-- 1 P15 -->
+          <rect x="60" y="90" width="118" height="60" rx="12" fill="#241f23" stroke="rgba(214,152,101,.4)"/>
+          <text x="119" y="116" font-size="11.5" fill="#d69865" text-anchor="middle">P15</text><text x="119" y="134" font-size="9" fill="#a9a09a" text-anchor="middle">state snapshot</text>
+          <!-- 2 P14 -->
+          <rect x="220" y="90" width="118" height="60" rx="12" fill="#241f23" stroke="rgba(214,152,101,.4)"/>
+          <text x="279" y="116" font-size="11.5" fill="#d69865" text-anchor="middle">P14</text><text x="279" y="134" font-size="9" fill="#a9a09a" text-anchor="middle">dep-chain</text>
+          <!-- 3 agent work -->
+          <rect x="380" y="90" width="118" height="60" rx="12" fill="#241f23" stroke="rgba(236,230,226,.18)"/>
+          <text x="439" y="116" font-size="11.5" fill="#ece6e2" text-anchor="middle">agent work</text><text x="439" y="134" font-size="9" fill="#6f6862" text-anchor="middle">swarm builds</text>
+          <!-- 4 P20 -->
+          <rect x="540" y="90" width="118" height="60" rx="12" fill="#241f23" stroke="rgba(95,247,113,.4)"/>
+          <text x="599" y="116" font-size="11.5" fill="#5ff771" text-anchor="middle">P20 verdict</text><text x="599" y="134" font-size="9" fill="#a9a09a" text-anchor="middle">cross-model ≥7/10</text>
+          <!-- 5 CI -->
+          <rect x="700" y="90" width="118" height="60" rx="12" fill="#241f23" stroke="rgba(95,247,113,.4)"/>
+          <text x="759" y="116" font-size="11.5" fill="#5ff771" text-anchor="middle">CI green</text><text x="759" y="134" font-size="9" fill="#a9a09a" text-anchor="middle">all checks pass</text>
+          <!-- 6 merge -->
+          <rect x="860" y="90" width="118" height="60" rx="12" fill="rgba(95,247,113,.1)" stroke="rgba(95,247,113,.55)"/>
+          <text x="919" y="116" font-size="11.5" fill="#5ff771" text-anchor="middle">MERGE</text><text x="919" y="134" font-size="9" fill="#a9a09a" text-anchor="middle">signed · attributed</text>
+          <!-- arrows -->
+          <line x1="178" y1="120" x2="216" y2="120" stroke="#5ff771" marker-end="url(#arr2)"/>
+          <line x1="338" y1="120" x2="376" y2="120" stroke="#5ff771" marker-end="url(#arr2)"/>
+          <line x1="498" y1="120" x2="536" y2="120" stroke="#5ff771" marker-end="url(#arr2)"/>
+          <line x1="658" y1="120" x2="696" y2="120" stroke="#5ff771" marker-end="url(#arr2)"/>
+          <line x1="818" y1="120" x2="856" y2="120" stroke="#5ff771" marker-end="url(#arr2)"/>
+        </g>
+        <!-- feedback loop back to snapshot (the self-demonstration) -->
+        <path d="M919,150 q0,60 -440,60 q-440,0 -440,-60" stroke="#d69865" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#arr)"/>
+        <text x="479" y="226" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#d69865" text-anchor="middle">the receipt becomes the next piece of content — the engine that ships the content IS bstack</text>
+      </svg>
+      <figcaption>This is not a metaphor for the product. It is the product, run once and recorded. Each merge produces a receipt; each receipt is a publishable proof of the same governor being sold.</figcaption>
+    </figure>
+
+    <div class="grid2">
+      <div class="card">
+        <h3 style="margin-top:0">Why proof and product collapse into one</h3>
+        <p class="muted">Genre.ai's 300M+ views de-risk PJ Ace's AI Filmmaker Academy<sup class="ref">5</sup> — the running portfolio IS the credential. Kleos L2 takes the structurally stronger version: a copycat without the engine cannot fake a green pipeline on real merged code. The agency-proof moat (canon §3) is "the reference implementation IS a running portfolio of viral output" — here the output is shipped software, the hardest class to fake.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">The reframe (canon §7 L2)</h3>
+        <p class="muted">From "sell the method" → <b style="color:var(--green)">"sell a seat in the running self-improving org."</b> The recency-as-service community's curriculum <em>is</em> the measured dogfood behavior — every receipt that lands is next week's lesson. This collapses the content tier and the community spine into one hard-to-copy thing, and it is honest: members watch the real engine, not a slide deck about it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 04 — THE CORNERSTONE BET ════════════════════════ -->
+<section id="cornerstone">
+  <div class="wrap">
+    <div class="sec-num">SECTION 04 · CENTERPIECE</div>
+    <h2 style="color:var(--crimson)">The cornerstone bet — the FastRender-counter</h2>
+    <p class="lead-p">The single Day-1 cornerstone. Not a campaign. Not a content calendar. <b>One numbers-backed artifact.</b> Run a small bstack-<b style="color:var(--green)">governed</b> multi-agent build of one real, fully-ownable feature. Run the same task with an <b style="color:var(--crimson)">ungoverned</b> swarm. Publish the measured quality delta.</p>
+
+    <div class="callout">
+      <span class="k">The bet, stated once</span>
+      <b>One numbers-backed artifact &gt; 20 stylized terminal Shorts.</b> A measured governed-vs-ungoverned delta is something platforms structurally cannot reproduce — they have the generation, not the governor — so it is the one piece of content that compounds credibility instead of decaying into slop.
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 1040 360" role="img" aria-label="Mock results panel comparing governed and ungoverned swarm metrics: CI pass rate, review-catch count, LOC churn">
+        <defs>
+          <linearGradient id="govbar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ff771"/><stop offset="1" stop-color="#5ff771" stop-opacity=".5"/></linearGradient>
+          <linearGradient id="ungbar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fe004a"/><stop offset="1" stop-color="#fe004a" stop-opacity=".5"/></linearGradient>
+        </defs>
+        <rect x="20" y="20" width="1000" height="320" rx="18" fill="#1b1715" stroke="var(--line)"/>
+        <text x="44" y="52" font-family="ui-monospace,Menlo,monospace" font-size="13" fill="#ece6e2" letter-spacing="1.5">RESULTS PANEL — same feature, same models, two governors</text>
+        <text x="44" y="72" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#d69865">illustrative layout · numbers MEASURED-FROM-ZERO on first run — no targets pre-asserted</text>
+        <!-- legend -->
+        <rect x="760" y="44" width="14" height="14" rx="3" fill="url(#govbar)"/><text x="780" y="56" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#5ff771">governed (bstack)</text>
+        <rect x="760" y="64" width="14" height="14" rx="3" fill="url(#ungbar)"/><text x="780" y="76" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#fe004a">ungoverned swarm</text>
+
+        <!-- baseline -->
+        <line x1="60" y1="300" x2="980" y2="300" stroke="#6f6862"/>
+        <!-- Metric 1: CI pass rate -->
+        <g font-family="ui-monospace,Menlo,monospace">
+          <rect x="110" y="150" width="64" height="150" rx="6" fill="url(#govbar)"/><text x="142" y="142" font-size="11" fill="#5ff771" text-anchor="middle">[ measured ]</text>
+          <rect x="186" y="225" width="64" height="75" rx="6" fill="url(#ungbar)"/><text x="218" y="217" font-size="11" fill="#fe004a" text-anchor="middle">[ measured ]</text>
+          <text x="180" y="322" font-size="10.5" fill="#a9a09a" text-anchor="middle">CI pass rate</text>
+        </g>
+        <!-- Metric 2: review-catch count -->
+        <g font-family="ui-monospace,Menlo,monospace">
+          <rect x="400" y="120" width="64" height="180" rx="6" fill="url(#govbar)"/><text x="432" y="112" font-size="11" fill="#5ff771" text-anchor="middle">[ measured ]</text>
+          <rect x="476" y="270" width="64" height="30" rx="6" fill="url(#ungbar)"/><text x="508" y="262" font-size="11" fill="#fe004a" text-anchor="middle">[ ~none ]</text>
+          <text x="470" y="322" font-size="10.5" fill="#a9a09a" text-anchor="middle">review-catch count (P20)</text>
+        </g>
+        <!-- Metric 3: LOC churn (lower better) -->
+        <g font-family="ui-monospace,Menlo,monospace">
+          <rect x="690" y="240" width="64" height="60" rx="6" fill="url(#govbar)"/><text x="722" y="232" font-size="11" fill="#5ff771" text-anchor="middle">[ lower = better ]</text>
+          <rect x="766" y="135" width="64" height="165" rx="6" fill="url(#ungbar)"/><text x="798" y="127" font-size="11" fill="#fe004a" text-anchor="middle">[ measured ]</text>
+          <text x="760" y="322" font-size="10.5" fill="#a9a09a" text-anchor="middle">LOC churn / rework</text>
+        </g>
+      </svg>
+      <figcaption>Mock layout only. The numbers are deliberately rendered as <code>[ measured ]</code> placeholders — per canon §6, no benchmark is asserted as a target before this instance produces it. The artifact's value is the <em>method of measurement</em>, published openly.</figcaption>
+    </figure>
+
+    <div class="grid3">
+      <div class="card">
+        <span class="pill gov">governed run</span>
+        <h3 style="margin:10px 0 4px">What it carries</h3>
+        <p class="muted" style="font-size:.9rem">P15 snapshot → P14 dep-chain → swarm builds under shields → P20 cross-model gate (≥7/10) → CI → signed merge. Every catch is logged as a receipt.</p>
+      </div>
+      <div class="card">
+        <span class="pill ung">ungoverned run</span>
+        <h3 style="margin:10px 0 4px">The control arm</h3>
+        <p class="muted" style="font-size:.9rem">Same agents, same models, same feature spec — no gates. This is the FastRender condition, reproduced at small scale on a feature you fully own (no client IP — see §09).</p>
+      </div>
+      <div class="card">
+        <span class="pill unv">the delta</span>
+        <h3 style="margin:10px 0 4px">The published artifact</h3>
+        <p class="muted" style="font-size:.9rem">CI pass-rate · review-catch count · LOC churn. Three numbers, one method, openly reproducible. This single artifact is the whole Day-1 content thesis.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 05 — DISTRIBUTION MIX ════════════════════════ -->
+<section id="distribution">
+  <div class="wrap">
+    <div class="sec-num">SECTION 05</div>
+    <h2>Distribution mix — corrected weighting</h2>
+    <p class="lead-p muted">The review's correction (canon §7 L2): the dev buyer converts on <b style="color:var(--ink)">credibility → community</b>, not Reel → DM → tripwire. So the weighting inverts from the consumer playbook — <b style="color:var(--green)">authority rail PRIMARY</b>, IG/TikTok keyword-DM a <b style="color:var(--tan)">secondary experiment</b>, not the lead.</p>
+
+    <figure>
+      <svg viewBox="0 0 1040 280" role="img" aria-label="Weighted distribution bar: authority rail primary, IG/TikTok DM secondary">
+        <text x="40" y="34" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#d69865" letter-spacing="1.5">DISTRIBUTION WEIGHT — where the effort goes</text>
+
+        <!-- PRIMARY: authority rail -->
+        <text x="44" y="74" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5ff771">PRIMARY · authority rail</text>
+        <rect x="44" y="84" width="680" height="46" rx="10" fill="rgba(95,247,113,.12)" stroke="rgba(95,247,113,.4)"/>
+        <!-- segments -->
+        <g font-family="ui-monospace,Menlo,monospace" font-size="10">
+          <line x1="214" y1="84" x2="214" y2="130" stroke="rgba(95,247,113,.3)"/><line x1="384" y1="84" x2="384" y2="130" stroke="rgba(95,247,113,.3)"/><line x1="554" y1="84" x2="554" y2="130" stroke="rgba(95,247,113,.3)"/>
+          <text x="129" y="112" fill="#5ff771" text-anchor="middle">X threads</text>
+          <text x="299" y="112" fill="#5ff771" text-anchor="middle">technical blog</text>
+          <text x="469" y="112" fill="#5ff771" text-anchor="middle">GitHub</text>
+          <text x="639" y="112" fill="#5ff771" text-anchor="middle">LLMEO</text>
+        </g>
+        <text x="740" y="112" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="#5ff771">~75%</text>
+
+        <!-- SECONDARY: IG/TikTok DM -->
+        <text x="44" y="174" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#d69865">SECONDARY · keyword-DM experiment</text>
+        <rect x="44" y="184" width="200" height="46" rx="10" fill="rgba(214,152,101,.1)" stroke="rgba(214,152,101,.35)" stroke-dasharray="5 4"/>
+        <text x="144" y="212" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#d69865" text-anchor="middle">IG / TikTok comment→DM</text>
+        <text x="262" y="212" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="#d69865">~25%</text>
+        <text x="44" y="256" font-family="ui-monospace,Menlo,monospace" font-size="9.5" fill="#6f6862">dashed = experiment, not commitment · consumer mechanics imported &amp; UNVALIDATED for the B2D buyer (§09)</text>
+
+        <!-- note on X link penalty -->
+        <rect x="724" y="184" width="270" height="46" rx="10" fill="#241f23" stroke="var(--line)"/>
+        <text x="859" y="205" font-family="ui-monospace,Menlo,monospace" font-size="9" fill="#a9a09a" text-anchor="middle">X = authority, never a link-dump</text>
+        <text x="859" y="220" font-family="ui-monospace,Menlo,monospace" font-size="8.5" fill="#6f6862" text-anchor="middle">$0.20 URL-write penalty enforces this for free</text>
+      </svg>
+      <figcaption>Authority rail (X threads + technical blog + GitHub + LLMEO seeding AI answer-engines) carries the load; the consumer comment-to-DM funnel runs as a small bounded experiment whose conversion is unvalidated for technical buyers (canon §2 Distribute, §6 KPI honesty).</figcaption>
+    </figure>
+
+    <div class="callout tan">
+      <span class="k">Why authority first</span>
+      The technical (B2D) buyer is high-trust and credibility-gated. They follow a thread, read the blog, star the repo, find you through an AI answer engine (LLMEO) — <em>then</em> they consider a community. The Reel→DM→tripwire path that works for the consumer AI-celebrity niche<sup class="ref">3</sup> is a hypothesis here, not a proven channel — so it gets ~25% of effort and an explicit measure-from-zero label.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 06 — OFFER LADDER ════════════════════════ -->
+<section id="ladder">
+  <div class="wrap">
+    <div class="sec-num">SECTION 06</div>
+    <h2>The offer ladder — this instance</h2>
+    <p class="lead-p muted">The canon (§4) builds only the validated wedge first: <b>≥1 free + ≥1 paid + ≥1 recurring</b>. Tiers beyond that are a hypothesis to be earned, never a blueprint to be built. Earned tiers are drawn dashed — design them only after &gt;0 paying customers + measured conversion.</p>
+
+    <figure>
+      <svg viewBox="0 0 1040 300" role="img" aria-label="Offer ladder: free Harness Mini-Kit, $27 Harness Starter Pack, arcan Circle recurring; earned tiers dashed">
+        <defs>
+          <linearGradient id="rung" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2d262b"/><stop offset="1" stop-color="#241f23"/></linearGradient>
+        </defs>
+        <!-- T0 -->
+        <rect x="40" y="218" width="280" height="58" rx="12" fill="url(#rung)" stroke="rgba(214,152,101,.35)"/>
+        <text x="58" y="242" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#d69865">T0 · FREE</text>
+        <text x="58" y="262" font-family="-apple-system,sans-serif" font-size="13" fill="#ece6e2">Harness Mini-Kit</text>
+        <text x="300" y="262" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#a9a09a" text-anchor="end">$0</text>
+        <!-- T1 -->
+        <rect x="120" y="142" width="280" height="58" rx="12" fill="url(#rung)" stroke="rgba(254,0,74,.4)"/>
+        <text x="138" y="166" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#fe004a">T1 · TRIPWIRE</text>
+        <text x="138" y="186" font-family="-apple-system,sans-serif" font-size="13" fill="#ece6e2">Harness Starter Pack</text>
+        <text x="380" y="186" font-family="ui-monospace,Menlo,monospace" font-size="12" fill="#fe004a" text-anchor="end">$27</text>
+        <!-- T-spine -->
+        <rect x="200" y="66" width="300" height="58" rx="12" fill="rgba(95,247,113,.08)" stroke="rgba(95,247,113,.45)"/>
+        <text x="218" y="90" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5ff771">T-SPINE · RECURRING</text>
+        <text x="218" y="110" font-family="-apple-system,sans-serif" font-size="13" fill="#ece6e2">arcan Circle (push annual)</text>
+        <text x="480" y="110" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#5ff771" text-anchor="end">/mo</text>
+
+        <!-- connecting steps -->
+        <path d="M180,218 L180,200 M260,142 L260,124" stroke="#6f6862" stroke-dasharray="3 3"/>
+
+        <!-- EARNED (dashed) -->
+        <text x="600" y="56" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#6f6862" letter-spacing="1.5">EARNED — design only after measured conversion</text>
+        <rect x="600" y="68" width="380" height="46" rx="10" fill="none" stroke="#6f6862" stroke-dasharray="6 5"/>
+        <text x="618" y="96" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9a09a">T3 · paid challenge</text>
+        <text x="962" y="96" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#6f6862" text-anchor="end">$49–97</text>
+        <rect x="600" y="124" width="380" height="46" rx="10" fill="none" stroke="#6f6862" stroke-dasharray="6 5"/>
+        <text x="618" y="152" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9a09a">T5 · done-with-you / closed-exec</text>
+        <text x="962" y="152" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#6f6862" text-anchor="end">$497–7.5K</text>
+        <rect x="600" y="180" width="380" height="46" rx="10" fill="none" stroke="#6f6862" stroke-dasharray="6 5"/>
+        <text x="618" y="208" font-family="ui-monospace,Menlo,monospace" font-size="11" fill="#a9a09a">T6 · license-recursion</text>
+        <text x="962" y="208" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#6f6862" text-anchor="end">20–29%</text>
+        <line x1="500" y1="95" x2="596" y2="95" stroke="#6f6862" stroke-dasharray="3 4"/>
+      </svg>
+      <figcaption>Solid = build now (free + paid + recurring, the validated wedge). Dashed = earned, designed only after measured conversion. "Recurring out-earns one-time by ~89%"<sup class="ref">1</sup> — the spine is the asset that compounds.</figcaption>
+    </figure>
+
+    <table>
+      <thead><tr><th>Tier</th><th>Instance (this niche)</th><th>What it carries</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill" style="color:var(--tan);background:rgba(214,152,101,.1)">T0</span></td><td class="mono">Harness Mini-Kit (free)</td><td>One bstack primitive card + the P14/P15/P20 reflex skeleton + the FastRender-counter method writeup → email capture (the owned channel <code>kleos_check.py</code> requires).</td><td><span class="pill gov">build now</span></td></tr>
+        <tr><td><span class="pill ung">T1</span></td><td class="mono">Harness Starter Pack — $27</td><td>The governed-swarm runbook: the gate configs, the cross-review brief, the dep-chain template, the CI shield. The first dollar viewer→buyer.</td><td><span class="pill gov">build now</span></td></tr>
+        <tr><td><span class="pill gov">spine</span></td><td class="mono">arcan Circle — recurring, push annual</td><td>Recency-as-service: members watch the real dogfood receipts land each week; curriculum IS the measured behavior. "A seat in the running self-improving org."</td><td><span class="pill gov">build now</span></td></tr>
+        <tr><td colspan="4" style="border-bottom:0;padding-top:18px"><span class="faint mono">— earned tiers (T3 / T5 / T6) deferred until &gt;0 paying customers + measured conversion (canon §4) —</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <span class="k">Explicit unresolved decision</span>
+      <b>The open-source-vs-paid boundary is not yet decided.</b> bstack itself is (largely) open. The product is the <em>running, governed, measured</em> org — not the primitive definitions, which leak by design. Where exactly the paid line falls (hosted closed-execution? the recency-re-teaching cadence? the live receipts feed?) is an open question carried into §09, not a settled position.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 07 — 30-DAY PLAN ════════════════════════ -->
+<section id="plan">
+  <div class="wrap">
+    <div class="sec-num">SECTION 07</div>
+    <h2>30-day plan — authority + cornerstone lead</h2>
+    <p class="lead-p muted">Corrected order: lead with the authority rail and the cornerstone bet, <b>not</b> the consumer funnel. The keyword-DM experiment is a late, bounded probe — it earns its place only after the credibility engine is live.</p>
+
+    <table>
+      <thead><tr><th>Days</th><th>Focus</th><th>Concrete output</th><th>Gate / KPI</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="mono" style="color:var(--green)">1–7</td>
+          <td><b>Brand lock + cornerstone build</b></td>
+          <td>Lock <code>arcan-studio</code> DNA (visual + verbal). Run the FastRender-counter once: one governed swarm + one ungoverned control on a fully-owned feature. Capture the receipt pipeline (§03).</td>
+          <td class="mono"><span class="pill unv">measure-from-zero</span> CI pass-rate · review-catch count · LOC churn — recorded, not targeted</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:var(--green)">8–14</td>
+          <td><b>Authority rail goes live</b></td>
+          <td>Publish the cornerstone artifact: X thread ("harness engineering is just control theory") + technical blog + GitHub repo + LLMEO seeding. The single numbers-backed artifact carries the launch.</td>
+          <td class="mono">thread/blog/repo live; LLMEO answer-engine pickup tracked (measure-from-zero)</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:var(--tan)">15–21</td>
+          <td><b>Capture rail + T0 free kit</b></td>
+          <td>Ship the Harness Mini-Kit + email capture (owned channel). Convert thread/blog readers → list. Begin weekly dogfood-receipt cadence (the recency content engine).</td>
+          <td class="mono"><code>kleos_check.py</code>: owned_channel present; ≥1 free tier live</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:var(--tan)">22–28</td>
+          <td><b>T1 tripwire + spine open</b></td>
+          <td>Ship the $27 Harness Starter Pack. Open arcan Circle (recurring, annual-biased). Run the secondary keyword-DM experiment as a small bounded probe — measure whether the dev buyer converts on consumer mechanics at all.</td>
+          <td class="mono">first dollar converts; recurring spine seeded; DM-conversion measured-from-zero</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:var(--crimson)">29–30</td>
+          <td><b>Measure + crystallize</b></td>
+          <td>Run <code>bookkeeping</code> (P6) over the instance: separate <code>kpis.validated</code> (measured here) from <code>kpis.imported</code> (borrowed, labeled). Decide whether earned tiers (T3/T5/T6) have earned design.</td>
+          <td class="mono"><code>kleos_check.py</code> passes; KPI honesty gate clean; earned-tier decision logged</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout green">
+      <span class="k">canon §6 · the discipline that keeps this honest</span>
+      Every conversion benchmark in this plan starts as <code>[ measured-from-zero ]</code>. No comment-DM trigger rate, no challenge-completion %, no LTV is asserted as a target — they are all imported from the consumer AI-celebrity niche and explicitly unvalidated for the B2D buyer. The manifest separates <code>kpis.validated</code> from <code>kpis.imported</code> or it FAILs.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 08 — CONTENT CONCEPTS ════════════════════════ -->
+<section id="concepts">
+  <div class="wrap">
+    <div class="sec-num">SECTION 08</div>
+    <h2>Content concepts — the strongest cuts</h2>
+    <p class="lead-p muted">Authority-rail-native concepts. Each one is a receipt or a teaching, not a stylized demo. The cornerstone leads; the rest seed the recency cadence.</p>
+
+    <div class="concept-grid">
+      <div class="concept">
+        <div class="tag">CORNERSTONE</div>
+        <h4>The FastRender-counter</h4>
+        <p>Governed vs ungoverned swarm on one real feature, with the measured delta. The single Day-1 artifact. Platforms can't reproduce it.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">RECEIPT</div>
+        <h4>"My agent shipped this PR while I slept"</h4>
+        <p>A real overnight governed run, the merge receipt, and the green CI — narrated. The authenticity signal volume-slop can't fake.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">PROOF-IN-MOTION</div>
+        <h4>"Watch the harness catch a bug"</h4>
+        <p>A live P20 cross-model review catching a real defect an ungoverned agent would have merged. The governor, doing its one job.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">AUTHORITY / X THREAD</div>
+        <h4>"Harness engineering is just control theory"</h4>
+        <p>Maps the 2026 naming event (Hashimoto → OpenAI → Thoughtworks "cybernetic governor") onto RCS L0–L3. The credibility anchor.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">SURVIVAL</div>
+        <h4>"The AI-dev method that won't get you sued"</h4>
+        <p>Disclosure labeling + attribution + earnings-claim substantiation as a build step — riding the EU AI Act Art. 50 (Aug 2 2026) deadline and FTC v. Air AI.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">INVERSION</div>
+        <h4>"Slop is dying — that's good for us"</h4>
+        <p>The 60%→26% AI-content-preference collapse, reframed: "it shipped and passed CI" is the unfakeable credential the reversal makes scarce.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">TEARDOWN</div>
+        <h4>"3M lines, no humans — here's what broke"</h4>
+        <p>A Cursor FastRender post-mortem from the governor's seat: exactly which gates would have caught the "shoddy code at scale." Educational, not gloating.</p>
+      </div>
+      <div class="concept">
+        <div class="tag">REFRAME</div>
+        <h4>"Buy a seat in the running org, not a course"</h4>
+        <p>The product reframe (canon §7 L2): you're not buying a method PDF; you're joining the live engine whose curriculum IS the measured dogfood.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 09 — RISKS & OPEN QUESTIONS ════════════════════════ -->
+<section id="risks">
+  <div class="wrap">
+    <div class="sec-num">SECTION 09</div>
+    <h2>Honest risks &amp; open questions</h2>
+    <p class="lead-p muted">The review's job was to kill slop, and this is where the wedge stays honest. None of these are settled; all are carried forward as explicit unknowns.</p>
+
+    <div class="open-q">
+      <div class="num">01</div>
+      <div><span class="q">Proof-leak (client IP).</span><span class="a">The cornerstone bet runs on a <b>fully-ownable feature</b> precisely so the published governed-vs-ungoverned receipt contains no client code or confidential work. If the only impressive dogfood lives inside client engagements, the proof can't be published — and the proof IS the product. Mitigation: build the cornerstone on a Broomva-owned surface; never on a freelance tenant's code.</span></div>
+    </div>
+    <div class="open-q">
+      <div class="num">02</div>
+      <div><span class="q">Does the dev buyer convert on consumer mechanics?</span><span class="a">The entire comment-to-DM / tripwire funnel is imported from the consumer AI-celebrity niche<sup class="ref">6</sup> and is <span class="pill unv">UNVALIDATED</span> for the high-trust technical buyer. That's why it's secondary (§05) and measured-from-zero (§07). It may convert at a fraction of the consumer rate — or not at all. The authority rail is the hedge: it doesn't depend on this funnel working.</span></div>
+    </div>
+    <div class="open-q">
+      <div class="num">03</div>
+      <div><span class="q">The platform-absorption window: 6 months or 2 years?</span><span class="a">Cursor, Claude Code, and the labs are racing toward built-in governance. If "shippable agent swarms" becomes a platform feature in ~6 months, the wedge is a sprint, not a moat. If it takes ~2 years (cross-model adversarial review + control-theoretic governance is genuinely hard to productize safely), there's a real window. <b>Unknown.</b> The closed-execution moat (canon §3) and the recency-as-service spine are the hedges if the window is short.</span></div>
+    </div>
+    <div class="open-q">
+      <div class="num">04</div>
+      <div><span class="q">Open-source-vs-paid boundary (carried from §06).</span><span class="a">bstack is largely open; the primitives leak by design. Where the paid line falls — hosted closed-execution, the recency cadence, the live receipts feed — is <b>undecided</b>. Drawing it wrong either gives away the moat or makes the free tier too thin to seed the list.</span></div>
+    </div>
+    <div class="open-q">
+      <div class="num">05</div>
+      <div><span class="q">KPI honesty (the gate that keeps the rest honest).</span><span class="a">Every benchmark on this page — comment-DM trigger rates, challenge completion, LTV, CAC payback — is <span class="pill unv">imported / UNVALIDATED</span>, labeled per canon §6. The Ritual-vs-Substance gate also binds: no "self-improving" claim ships unless the bandit/attribution/fold-back mechanism is <b>built AND measured</b>. Until then, "self-improving org" describes the <em>dogfood receipts compounding</em>, not an unbuilt loop.</span></div>
+    </div>
+
+    <div class="callout green" style="margin-top:24px">
+      <span class="k">The compliance pillar is also a standalone wedge (canon §5)</span>
+      "The only AI-dev method that won't get you banned or sued" targets a dated, urgent pain — EU AI Act Art. 50 live <b>Aug 2 2026</b><sup class="ref">A</sup>, FTC v. Air AI's lifetime biz-opp ban + $18M<sup class="ref">B</sup>, YouTube's Jan 2026 inauthentic-content sweep (~4.7B views wiped)<sup class="ref">C</sup>. Note the FTC scope: the <b>seller</b> is in scope — so harden Kleos's own sales page (substantiated earnings, real money-back guarantee, no fake guarantees) first.
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ CITATIONS ════════════════════════ -->
+<section id="cite">
+  <div class="wrap">
+    <div class="sec-num">APPENDIX</div>
+    <h2>Citations</h2>
+    <p class="muted" style="font-size:.9rem">Verified in research workflow <code>wf_d25abca6-6bf</code>. Consumer-niche conversion figures are imported and labeled UNVALIDATED for the B2D buyer per canon §6.</p>
+    <ol class="cite-list">
+      <li><sup class="ref">1</sup> <b>Whop creator earnings (power law).</b> 88% of 191,654 products earn $0; median earner $74/mo; top 1% take 57% of $64.2M MRR; subscriptions out-earn one-time by ~89%. <a href="https://whoptrends.com/blog/whop-creator-earnings-data-2026">whoptrends.com/blog/whop-creator-earnings-data-2026</a></li>
+      <li><sup class="ref">3</sup> <b>GenHQ / Rourke (consumer AI-celebrity funnel analog).</b> $97/mo Skool, 439→1,500+ members, #1 Tech; 30-min-cut + ManyChat comment-to-DM. <a href="https://startupspells.com/p/ai-video-youtube-funnel-skool-community">startupspells.com — AI video YouTube funnel</a></li>
+      <li><sup class="ref">5</sup> <b>PJ Ace / Genre.ai (agency-proof analog).</b> 300M+ views de-risk AI Filmmaker Academy ($97/mo → $7,997/yr). <a href="https://www.aifilmmaker.academy/">aifilmmaker.academy</a></li>
+      <li><sup class="ref">6</sup> <b>Comment-to-DM benchmarks (consumer; imported).</b> 25–55% commenter trigger, 85–92% DM open, 8–25% qualified-to-paid; one campaign 847 comments → $12,608. <a href="https://communipass.com/blog/auto-dm-statistics-2026-open-rates-conversion-benchmarks/">communipass.com — auto-DM statistics 2026</a> <span class="faint">(UNVALIDATED for B2D)</span></li>
+      <li><sup class="ref">7</sup> <b>"Harness engineering" naming event (2026).</b> Mitchell Hashimoto → OpenAI (Ryan Lopopolo, Feb 11 2026) → Thoughtworks (Birgitta Böckeler): a "cybernetic governor combining feed-forward and feedback to regulate the codebase." = Carlos's RCS control-metalayer.</li>
+      <li><sup class="ref">8</sup> <b>Cursor FastRender + market context.</b> ~2,000 concurrent agents, 3M+ lines / 1M+ Rust in a week, no humans → The Register + Software Improvement Group: "shoddy code at scale." 65% of engineers run ≥2 agents; Claude Code ~$2.5B run-rate. <a href="https://www.mindstudio.ai/blog/claude-code-2-5-billion-annualized-revenue-terminal-tool">mindstudio.ai — Claude Code $2.5B run-rate</a></li>
+      <li><sup class="ref">9</sup> <b>AI-slop demand reversal.</b> AI-creator-content preference 60%→26% (2023→2026); "slop" = Merriam-Webster 2025 word of the year. <a href="https://digiday.com/media/after-an-oversaturation-of-ai-generated-content-creators-authenticity-and-messiness-are-in-high-demand/">digiday.com — authenticity in high demand</a></li>
+      <li><sup class="ref">A</sup> <b>EU AI Act Art. 50.</b> Live Aug 2 2026; machine-readable AI marking; fines to €15M / 3% turnover. <a href="https://artificialintelligenceact.eu/transparency-rules-article-50/">artificialintelligenceact.eu — Article 50</a></li>
+      <li><sup class="ref">B</sup> <b>FTC v. Air AI (Mar 2026).</b> Lifetime biz-opp ban + $18M for false earnings + fake guarantee. <a href="https://www.ftc.gov/legal-library/browse/cases-proceedings/airai">ftc.gov — Air AI case</a></li>
+      <li><sup class="ref">C</sup> <b>YouTube "inauthentic content" sweep (Jan 2026).</b> ~16 channels / 4.7B views / ~$10M/yr removed. <a href="https://flocker.tv/posts/youtube-inauthentic-content-ai-enforcement/">flocker.tv — YouTube AI enforcement</a></li>
+      <li><b>Dev-niche analogs.</b> Whop "Done For You: Claude Code Blueprints" (50 app kits, 4.6★) <a href="https://whop.com/claude-code-templates/">whop.com/claude-code-templates</a>; AI Video Bootcamp (Daniel Riley) $9/mo ~22,900 members, #2 of 250k Skool communities <a href="https://www.skool.com/aivideobootcamp/about">skool.com/aivideobootcamp</a>; realosias (Stanley Osias) ~512K followers, $29 blueprint, moat=upload-sequencing <a href="https://www.instagram.com/realosias/">instagram.com/realosias</a>; Capafy closed-execution AI-skills marketplace <a href="https://www.testingcatalog.com/capafy-launches-new-ai-skills-marketplace-for-creators/">testingcatalog.com — Capafy</a>.</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="prov">
+      <span class="wordmark" style="font-size:.85rem;letter-spacing:.4em"><span class="dot"></span>KLEOS</span>
+      <span class="faint">your work, made famous by showing it.</span>
+    </div>
+    <div style="margin-top:14px;color:var(--faint)">
+      L2 — Applied wedge (Kleos dogfooded on Broomva's own niche) ·
+      provenance <code>wf_d25abca6-6bf</code> · created 2026-06-08 ·
+      <span style="color:var(--crimson)">BRO-1429</span> ·
+      grounded in <code>skills/kleos/references/design-canon.md</code> §7 L2 (post-P20-review)
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

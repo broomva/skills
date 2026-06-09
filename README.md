@@ -68,6 +68,7 @@ npx skills add broomva/skills --skill '*'
 | [`ltx-video`](skills/ltx-video/) | `skills/ltx-video/SKILL.md` | LTX-2.3 video generation — setup, inference, prompting, ComfyUI integration for Lightricks 22B DiT audio-video model |
 | [`creative-review`](skills/creative-review/) | `skills/creative-review/SKILL.md` | Meta creative review skill — style adherence scoring, feedback loops, self-improving creative pipeline |
 | [`brainrot-for-good`](skills/brainrot-for-good/) | `skills/brainrot-for-good/SKILL.md` | High-retention video production using dopamine-aware editing for genuinely valuable content |
+| [`revenuecast`](skills/revenuecast/) | `skills/revenuecast/SKILL.md` | Turn a real-world capability into a self-demonstrating gen-AI **revenue engine** ("/skillify for revenue" — the *Kleos* method). Composition skill over `content-engine`; ships the deterministic `revenuecast_check.py` gate (own-the-audience · real moat ≠ leakable prompts · compliance pillar [FTC v. Air AI / EU AI Act Art.50] · Ritual-vs-Substance) + 23 tests + self-contained `references/` (the L1 Kleos playbook, L2 agentic-dev wedge, L3 runtime spec). Install: `npx skills add broomva/skills --skill revenuecast` |
 
 ### Research & intelligence
 
