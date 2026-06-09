@@ -1,0 +1,795 @@
+<!--
+---
+title: Kleos Engine — L3 Autonomous Runtime Spec (DEFERRED / EARNED)
+bro: BRO-1429
+layer: L3 — apps/kleos-engine (autonomous runtime)
+created: 2026-06-08
+provenance: workflow wf_d25abca6-6bf
+status: DEFERRED — build M1 only after L2 funnel shows measured conversion
+---
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kleos Engine — L3 Runtime Spec (DEFERRED/EARNED)</title>
+<style>
+  :root{
+    --bg:#14110f; --bg2:#1b1715; --surface:#2d262b; --surface2:#241f23;
+    --ink:#ece6e2; --muted:#a9a09a; --faint:#7d756f;
+    --crimson:#fe004a; --green:#5ff771; --tan:#d69865;
+    --line:rgba(214,152,101,.16); --line2:rgba(236,230,226,.08);
+    --mono:ui-monospace,SFMono-Regular,Menlo,"Cascadia Mono","Roboto Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --radius:18px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:
+      radial-gradient(1100px 540px at 82% -8%,rgba(254,0,74,.07),transparent 60%),
+      radial-gradient(900px 500px at 8% 4%,rgba(95,247,113,.045),transparent 55%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.62;
+    -webkit-font-smoothing:antialiased;font-size:16px;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 26px 120px}
+  a{color:var(--tan);text-decoration:none;border-bottom:1px solid rgba(214,152,101,.34)}
+  a:hover{color:var(--ink);border-bottom-color:var(--ink)}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  code{background:rgba(236,230,226,.05);padding:.1em .42em;border-radius:6px;color:var(--tan);border:1px solid var(--line2)}
+
+  /* ---- header ---- */
+  header.hero{padding:74px 0 30px;border-bottom:1px solid var(--line)}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.32em;text-transform:uppercase;color:var(--faint);margin:0 0 20px}
+  .wordmark{font-size:64px;font-weight:800;letter-spacing:.16em;margin:0;line-height:1;
+    background:linear-gradient(95deg,#ece6e2 6%,var(--tan) 60%,var(--crimson) 130%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;}
+  .gloss{font-size:18px;color:var(--muted);margin:16px 0 0;font-style:italic;letter-spacing:.01em}
+  .doc-title{font-size:23px;font-weight:650;margin:30px 0 4px;color:var(--ink)}
+  .doc-sub{font-family:var(--mono);font-size:13px;color:var(--faint);letter-spacing:.04em}
+
+  /* ---- status banner ---- */
+  .banner{margin:34px 0 8px;border-radius:var(--radius);overflow:hidden;
+    border:1px solid rgba(254,0,74,.42);
+    background:linear-gradient(180deg,rgba(254,0,74,.10),rgba(254,0,74,.025));
+    box-shadow:0 0 0 1px rgba(254,0,74,.10),0 18px 60px -28px rgba(254,0,74,.5)}
+  .banner-head{display:flex;align-items:center;gap:14px;padding:18px 24px;border-bottom:1px solid rgba(254,0,74,.22)}
+  .pulse{width:13px;height:13px;border-radius:50%;background:var(--crimson);flex:none;
+    box-shadow:0 0 0 0 rgba(254,0,74,.6);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(254,0,74,.5)}70%{box-shadow:0 0 0 12px rgba(254,0,74,0)}100%{box-shadow:0 0 0 0 rgba(254,0,74,0)}}
+  .banner-head b{font-family:var(--mono);letter-spacing:.18em;font-size:15px;color:var(--crimson)}
+  .banner-head span{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:auto;letter-spacing:.06em}
+  .banner-body{padding:20px 24px 22px}
+  .banner-body p{margin:0 0 12px}
+  .banner-body p:last-child{margin-bottom:0}
+  .gate-cond{display:grid;grid-template-columns:auto 1fr;gap:10px 16px;margin:16px 0 4px;
+    font-family:var(--mono);font-size:13px;background:rgba(0,0,0,.22);border:1px solid var(--line2);border-radius:12px;padding:16px 18px}
+  .gate-cond dt{color:var(--green);font-weight:600}
+  .gate-cond dd{margin:0;color:var(--ink)}
+
+  /* ---- nav ---- */
+  nav.toc{position:sticky;top:0;z-index:20;background:rgba(20,17,15,.82);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line2);margin:44px -26px 0;padding:11px 26px}
+  nav.toc ol{list-style:none;display:flex;flex-wrap:wrap;gap:6px 4px;margin:0;padding:0;
+    font-family:var(--mono);font-size:11.5px}
+  nav.toc a{color:var(--muted);border:1px solid transparent;border-radius:7px;padding:4px 9px;letter-spacing:.02em}
+  nav.toc a:hover{color:var(--ink);border-color:var(--line);background:rgba(236,230,226,.04)}
+
+  /* ---- sections ---- */
+  section{padding:54px 0 8px;border-bottom:1px solid var(--line2)}
+  section:last-of-type{border-bottom:none}
+  .secnum{font-family:var(--mono);font-size:12px;color:var(--crimson);letter-spacing:.2em}
+  h2{font-size:29px;font-weight:720;margin:8px 0 6px;letter-spacing:-.01em}
+  h3{font-size:18px;font-weight:650;margin:34px 0 10px;color:var(--tan)}
+  .lede{color:var(--muted);font-size:16.5px;margin:0 0 22px;max-width:74ch}
+  p{margin:0 0 15px}
+  ul,ol{margin:0 0 16px;padding-left:22px}
+  li{margin:0 0 8px}
+  strong{color:#fff;font-weight:650}
+  .gn{color:var(--green)} .cr{color:var(--crimson)} .tn{color:var(--tan)}
+
+  /* ---- callouts ---- */
+  .callout{border-radius:var(--radius);padding:20px 22px;margin:24px 0;border:1px solid var(--line);position:relative;background:var(--surface2)}
+  .callout .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;display:block;margin-bottom:8px}
+  .callout.warn{border-color:rgba(254,0,74,.4);background:linear-gradient(180deg,rgba(254,0,74,.07),transparent)}
+  .callout.warn .lbl{color:var(--crimson)}
+  .callout.good{border-color:rgba(95,247,113,.34);background:linear-gradient(180deg,rgba(95,247,113,.06),transparent)}
+  .callout.good .lbl{color:var(--green)}
+  .callout.note{border-color:var(--line)}
+  .callout.note .lbl{color:var(--tan)}
+  .callout p:last-child{margin-bottom:0}
+
+  /* ---- tables ---- */
+  .tblwrap{overflow-x:auto;margin:22px 0;border:1px solid var(--line);border-radius:14px;background:var(--surface2)}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  th,td{text-align:left;padding:12px 15px;border-bottom:1px solid var(--line2);vertical-align:top}
+  thead th{background:rgba(0,0,0,.26);color:var(--tan);font-family:var(--mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:600;position:sticky;top:0}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:rgba(236,230,226,.022)}
+  td .mono{color:var(--ink)}
+  .pill{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap;display:inline-block}
+  .pill.reuse{color:var(--green);border-color:rgba(95,247,113,.4);background:rgba(95,247,113,.06)}
+  .pill.new{color:var(--crimson);border-color:rgba(254,0,74,.4);background:rgba(254,0,74,.06)}
+  .pill.inflight{color:var(--tan);border-color:rgba(214,152,101,.4);background:rgba(214,152,101,.06)}
+
+  /* ---- svg figure ---- */
+  figure{margin:30px 0;background:var(--surface2);border:1px solid var(--line);border-radius:var(--radius);padding:22px 18px 14px}
+  figure svg{display:block;width:100%;height:auto}
+  figcaption{font-family:var(--mono);font-size:12px;color:var(--faint);margin-top:12px;text-align:center;letter-spacing:.04em}
+  .svg-mono{font-family:var(--mono)}
+
+  /* ---- shield grid ---- */
+  .shield-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:22px 0}
+  .shield{border:1px solid var(--line);border-radius:14px;padding:16px 17px;background:var(--surface2)}
+  .shield h4{margin:0 0 6px;font-family:var(--mono);font-size:14px;color:var(--green);letter-spacing:.04em}
+  .shield p{margin:0;font-size:13.5px;color:var(--muted)}
+  .shield .cap{font-family:var(--mono);font-size:11px;color:var(--tan);display:block;margin-top:8px}
+
+  /* ---- build plan timeline ---- */
+  .week{display:grid;grid-template-columns:96px 1fr;gap:0;border:1px solid var(--line2);border-radius:12px;margin:12px 0;overflow:hidden;background:var(--surface2)}
+  .week .wk{background:rgba(0,0,0,.24);font-family:var(--mono);font-size:12px;color:var(--tan);padding:14px 12px;display:flex;align-items:center;letter-spacing:.04em;border-right:1px solid var(--line2)}
+  .week .wb{padding:14px 18px}
+  .week .wb b{color:#fff}
+  .week .wb .tag{font-family:var(--mono);font-size:10.5px;padding:1px 7px;border-radius:5px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
+
+  .footnote{font-size:13px;color:var(--faint);margin-top:8px}
+  .openq{counter-reset:oq;list-style:none;padding-left:0}
+  .openq li{counter-increment:oq;position:relative;padding-left:46px;margin-bottom:16px}
+  .openq li::before{content:"Q" counter(oq);position:absolute;left:0;top:0;font-family:var(--mono);font-size:12px;color:var(--crimson);border:1px solid rgba(254,0,74,.4);border-radius:7px;padding:3px 7px;background:rgba(254,0,74,.05)}
+
+  footer{margin-top:64px;padding-top:26px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--faint);line-height:1.9}
+  footer .prov b{color:var(--tan)}
+  .refs{font-size:13.5px}
+  .refs ol{padding-left:24px}
+  .refs li{margin-bottom:10px;color:var(--muted)}
+  .refs li a{word-break:break-word}
+  @media(max-width:640px){
+    .wordmark{font-size:44px}.wrap{padding:0 16px 80px}
+    nav.toc{margin:30px -16px 0;padding:10px 16px}
+    .week{grid-template-columns:1fr}.week .wk{border-right:none;border-bottom:1px solid var(--line2)}
+    h2{font-size:24px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <p class="kicker">Broomva · Kleos · Layer 3 Engineering Spec</p>
+    <h1 class="wordmark">KLEOS</h1>
+    <p class="gloss">your work, made famous by showing it.</p>
+    <div class="doc-title">The L3 Autonomous Runtime — <code>apps/kleos-engine</code></div>
+    <div class="doc-sub">BRO-1429 · 2026-06-08 · derived from wf_d25abca6-6bf + its P20 review (5.5/10 REVISE)</div>
+  </header>
+
+  <!-- ============ STATUS BANNER ============ -->
+  <div class="banner" id="status">
+    <div class="banner-head">
+      <span class="pulse"></span>
+      <b>STATUS: DEFERRED / EARNED</b>
+      <span>do not build speculatively</span>
+    </div>
+    <div class="banner-body">
+      <p>This runtime is <strong>scaffolded and spec'd, not built.</strong> The L2 wedge (the
+      applied agentic-dev instance) is articulated but <em>unvalidated</em> — no funnel has yet
+      converted a paying customer. The P20 adversarial review's load-bearing objection: building a
+      generate-publish-self-improve <em>daemon</em> before the funnel converts is
+      <strong>over-capitalizing against the realistic base rate</strong> — Whop's own data shows
+      <strong>88% of 191,654 products earn $0</strong> and the median earner makes
+      <strong>$74/mo</strong>. The scarce input is the <strong>SHOW</strong> (distribution + taste +
+      a <em>running</em> engine), not a fancier orchestrator. A human-driven loop (compose
+      <code>content-engine</code> by hand, publish manually, measure) is sufficient to test demand —
+      and the only way to <em>earn</em> the right to automate it.</p>
+
+      <dl class="gate-cond">
+        <dt>GATE</dt>
+        <dd>Build M1 <strong>only after</strong> the L2 funnel shows <em>measured</em> conversion:
+        ≥1 paying customer through the captured-list → tripwire → recurring spine, with a recorded
+        viewer→buyer rate from <em>this</em> instance (not imported consumer-niche KPIs).</dd>
+        <dt>UNTIL THEN</dt>
+        <dd>The repo ships as a scaffold carrying this spec + a hard <code>STATUS: DEFERRED</code>
+        marker. Manual operation is the M0 it has to beat.</dd>
+        <dt>DEPLOY TARGET</dt>
+        <dd><strong>Railway</strong> (workspace default; Colombian-only tax footprint, no US entity —
+        which also keeps the FTC-seller surface §7 narrow).</dd>
+        <dt>WHEN BUILT</dt>
+        <dd>It is a <em>thin vertical</em> on runtimes Broomva already ships (§2) — the genuinely-new
+        code is <strong>two components</strong> (§4), not a new orchestrator.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- ============ NAV ============ -->
+  <nav class="toc">
+    <ol>
+      <li><a href="#status">00 · Status</a></li>
+      <li><a href="#thesis">01 · Thesis</a></li>
+      <li><a href="#honesty">02 · Self-Improvement Honesty</a></li>
+      <li><a href="#grounding">03 · Repo Grounding</a></li>
+      <li><a href="#arch">04 · Component Architecture</a></li>
+      <li><a href="#transport">05 · Publisher Transport Reality</a></li>
+      <li><a href="#shield">06 · Governance Shield</a></li>
+      <li><a href="#plan">07 · M1 Build Plan</a></li>
+      <li><a href="#open">08 · Open Questions</a></li>
+      <li><a href="#refs">Citations</a></li>
+    </ol>
+  </nav>
+
+  <!-- ============ 1 · THESIS ============ -->
+  <section id="thesis">
+    <div class="secnum">SECTION 01</div>
+    <h2>Thesis — a thin vertical, not a new orchestrator</h2>
+    <p class="lede"><code>kleos-engine</code> is a <strong>social content plant</strong> bolted onto
+    control loops Broomva already runs in production. The Kleos flywheel
+    (<span class="tn">Brand Lock → Show → Distribute → Hook → Sell → Moat</span>) <em>is</em> an
+    <strong>observe → decide → act → judge</strong> control loop. Symphony already runs exactly that
+    shape for code tickets; Kleos swaps the <strong>plant</strong> from "a git repo + CI" to "a social
+    graph + retention metrics." Everything else — the scheduler, the eval ledger, the control gate —
+    is reuse.</p>
+
+    <p>Concretely: <code>symphony-orchestrator</code>'s <code>scheduler.rs</code> already owns a poll
+    tick that "coordinates dispatch, reconciliation, and retries" on an interval. That <em>is</em> the
+    observe→decide→act spine. The only thing it doesn't have is a plant whose state is "what did the
+    audience do to yesterday's posts" and an actuator that talks to platform APIs. Those are the
+    deltas Kleos adds — bounded, named, and budgeted below.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 380" role="img" aria-label="Observe-decide-act-judge control loop with the social graph as the plant">
+        <defs>
+          <linearGradient id="gPlant" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#3a2f36"/><stop offset="1" stop-color="#241f23"/>
+          </linearGradient>
+          <linearGradient id="gCtl" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#2d262b"/><stop offset="1" stop-color="#211c20"/>
+          </linearGradient>
+          <marker id="arr" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L9,4 L0,8 Z" fill="#d69865"/>
+          </marker>
+          <marker id="arrG" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L9,4 L0,8 Z" fill="#5ff771"/>
+          </marker>
+        </defs>
+
+        <!-- plant -->
+        <rect x="330" y="150" width="260" height="92" rx="16" fill="url(#gPlant)" stroke="#fe004a" stroke-opacity=".5"/>
+        <text x="460" y="183" text-anchor="middle" fill="#fe004a" class="svg-mono" font-size="13" letter-spacing="2">THE PLANT</text>
+        <text x="460" y="206" text-anchor="middle" fill="#ece6e2" font-size="15" font-weight="700">Social graph</text>
+        <text x="460" y="226" text-anchor="middle" fill="#a9a09a" class="svg-mono" font-size="11">views · retention · comments · DMs · revenue</text>
+
+        <!-- observe (top-left) -->
+        <rect x="40" y="40" width="200" height="74" rx="14" fill="url(#gCtl)" stroke="#5ff771" stroke-opacity=".4"/>
+        <text x="140" y="68" text-anchor="middle" fill="#5ff771" class="svg-mono" font-size="11" letter-spacing="2">OBSERVE</text>
+        <text x="140" y="90" text-anchor="middle" fill="#ece6e2" font-size="13">kleos-feedback</text>
+        <text x="140" y="106" text-anchor="middle" fill="#7d756f" class="svg-mono" font-size="10">poll platform analytics</text>
+
+        <!-- decide (top-right) -->
+        <rect x="680" y="40" width="200" height="74" rx="14" fill="url(#gCtl)" stroke="#5ff771" stroke-opacity=".4"/>
+        <text x="780" y="68" text-anchor="middle" fill="#5ff771" class="svg-mono" font-size="11" letter-spacing="2">DECIDE</text>
+        <text x="780" y="90" text-anchor="middle" fill="#ece6e2" font-size="13">kleos-core</text>
+        <text x="780" y="106" text-anchor="middle" fill="#7d756f" class="svg-mono" font-size="10">scheduler poll-tick</text>
+
+        <!-- act (bottom-right) -->
+        <rect x="680" y="278" width="200" height="74" rx="14" fill="url(#gCtl)" stroke="#d69865" stroke-opacity=".4"/>
+        <text x="780" y="306" text-anchor="middle" fill="#d69865" class="svg-mono" font-size="11" letter-spacing="2">ACT</text>
+        <text x="780" y="328" text-anchor="middle" fill="#ece6e2" font-size="13">generate + publish</text>
+        <text x="780" y="344" text-anchor="middle" fill="#7d756f" class="svg-mono" font-size="10">through the shield</text>
+
+        <!-- judge (bottom-left) -->
+        <rect x="40" y="278" width="200" height="74" rx="14" fill="url(#gCtl)" stroke="#d69865" stroke-opacity=".4"/>
+        <text x="140" y="306" text-anchor="middle" fill="#d69865" class="svg-mono" font-size="11" letter-spacing="2">JUDGE</text>
+        <text x="140" y="328" text-anchor="middle" fill="#ece6e2" font-size="13">eval ledger</text>
+        <text x="140" y="344" text-anchor="middle" fill="#7d756f" class="svg-mono" font-size="10">retention gates · tally</text>
+
+        <!-- loop arrows (clockwise) -->
+        <path d="M240,70 Q460,18 680,70" fill="none" stroke="#5ff771" stroke-width="1.6" marker-end="url(#arrG)"/>
+        <path d="M790,114 L790,278" fill="none" stroke="#d69865" stroke-width="1.6" marker-end="url(#arr)"/>
+        <path d="M680,315 Q460,378 240,315" fill="none" stroke="#d69865" stroke-width="1.6" marker-end="url(#arr)"/>
+        <path d="M130,278 L130,114" fill="none" stroke="#5ff771" stroke-width="1.6" marker-end="url(#arrG)"/>
+
+        <!-- plant couplings -->
+        <path d="M780,278 L600,242" fill="none" stroke="#d69865" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arr)"/>
+        <path d="M320,205 L140,278" fill="none" stroke="#5ff771" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arrG)"/>
+        <text x="660" y="262" fill="#7d756f" class="svg-mono" font-size="10">actuate</text>
+        <text x="222" y="252" fill="#7d756f" class="svg-mono" font-size="10">sense</text>
+      </svg>
+      <figcaption>Fig. 1 — The Kleos flywheel as a closed control loop. The controller (observe/decide/act/judge) is reused symphony machinery; only the plant is swapped.</figcaption>
+    </figure>
+
+    <div class="callout good">
+      <span class="lbl">Why this is honest reuse</span>
+      <p>Swapping the plant is a legitimate vertical: the directive/trace/evaluator interfaces from
+      <code>agentic-control-kernel</code> are plant-agnostic by design. What is <em>not</em> honest is
+      claiming the <em>judge</em> already does variant selection. It does not — see §2.</p>
+    </div>
+  </section>
+
+  <!-- ============ 2 · SELF-IMPROVEMENT HONESTY ============ -->
+  <section id="honesty">
+    <div class="secnum">SECTION 02</div>
+    <h2>The honest self-improvement scoping</h2>
+    <p class="lede">This is the review's <strong>#1 fix</strong> and the spec's most important
+    correction. The draft claimed Kleos's self-improvement was a <em>fork of</em>
+    <code>symphony-egri/batch.rs</code>. The reviewer read the file. It is not a variant selector. It
+    is a <strong>pass/fail tally</strong>.</p>
+
+    <div class="callout warn">
+      <span class="lbl">What batch.rs actually does (verified, line-by-line)</span>
+      <p><code>symphony-egri/src/batch.rs</code> computes <strong>one scalar</strong>:
+      <code class="mono">score = completed / (completed + retrying)</code>. When that scalar clears a
+      threshold it increments <code class="mono">promoted_count</code>; otherwise
+      <code class="mono">discarded_count</code>. That is the <em>entire</em> mechanism — a batch-level
+      success rate with a counter. It has <strong>no notion of a variant</strong>, no per-arm reward,
+      no attribution of <em>which</em> creative choice drove retention, and no parameter that gets
+      written back into tomorrow's generation.</p>
+      <p style="margin-top:12px"><strong>True self-improvement is unbuilt NEW code</strong>, comprising
+      three pieces none of which exist today:</p>
+      <ul style="margin-top:8px">
+        <li><strong>A multi-armed bandit</strong> — pull arms = creative variants (hook style,
+        lighting signature, caption pattern, posting hour); allocate the next batch's budget toward
+        arms with higher posterior reward.</li>
+        <li><strong>Per-variant retention attribution</strong> — join each published asset's variant
+        fingerprint to its <em>measured</em> retention/conversion, so the reward signal is causal, not
+        a batch average.</li>
+        <li><strong>Brand-DNA parameter fold-back</strong> — write the winning parameters back into the
+        <code>content-engine-dna</code> prompt skeleton so the <em>next</em> Brand-Lock starts from a
+        measured optimum.</li>
+      </ul>
+    </div>
+
+    <p>Per CLAUDE.md <strong>§Ritual vs Substance</strong>: "a phrase that recurs as a discipline must
+    map to a concrete machine-checkable behavior, or it does not count as discipline." Claiming
+    "self-improving" while pointing at a counter is the canonical
+    <strong>incantation-vs-control</strong> failure — a verbal claim with no causally-independent
+    mechanism (<code>h ⟂ U</code>) behind it. The canon's <code>kleos_check.py</code> hard-codes the
+    gate:</p>
+
+    <div class="callout note">
+      <span class="lbl">The binding gate</span>
+      <p><code class="mono">self_improvement.claimed == true ⟹ mechanism_built == true &amp;&amp; measured == true</code>,
+      else <strong>FAIL</strong>. No Kleos surface — buyer-facing <em>or</em> internal — may say
+      "self-improving" or "the loop rewrites tomorrow's content" until the bandit + attribution +
+      fold-back are <strong>built AND measured</strong>.</p>
+    </div>
+
+    <div class="callout warn" style="border-color:rgba(254,0,74,.5)">
+      <span class="lbl">Scoping decision</span>
+      <p>The self-improvement loop is therefore scoped to <strong>M2</strong>, with its
+      <strong>own risk budget</strong> — <em>not</em> claimed as M1 reuse. M1 ships the
+      <em>tally</em> (the existing eval ledger, honestly labeled as a batch success-rate gate, which is
+      all it is). The bandit is a research-grade subsystem and gets the elapsed-time and review surface
+      its novelty warrants, not a one-line "fork batch.rs."</p>
+    </div>
+  </section>
+
+  <!-- ============ 3 · REPO GROUNDING ============ -->
+  <section id="grounding">
+    <div class="secnum">SECTION 03</div>
+    <h2>Corrected repo grounding — reuse vs genuinely-new</h2>
+    <p class="lede">What follows is the verified parts list, with the paths corrected from the draft.
+    Two columns matter: <span class="gn">REUSE</span> (already ships; Kleos calls it) and
+    <span class="cr">NEW</span> (does not exist; Kleos must write it). A third state,
+    <span class="tn">IN-FLIGHT</span>, marks code that <em>exists but is not M1-ready</em> — the trap
+    the draft fell into by scheduling Lago wiring for "Day 2–5."</p>
+
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>Concern</th><th>Asset / path</th><th>State</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Poll-tick / dispatch spine</td>
+            <td><span class="mono">core/symphony/crates/symphony-orchestrator/src/scheduler.rs</span></td>
+            <td><span class="pill reuse">REUSE</span></td>
+            <td>Owns the poll loop ("dispatch, reconciliation, retries", once-mode, ticket filter). The observe→decide→act spine. Kleos drives it with a content plan instead of a ticket queue.</td>
+          </tr>
+          <tr>
+            <td>Eval ledger (the JUDGE, as a tally)</td>
+            <td><span class="mono">core/symphony/crates/symphony-egri/</span> (<span class="mono">batch.rs</span>, <span class="mono">journal.rs</span>, <span class="mono">types.rs</span>)</td>
+            <td><span class="pill reuse">REUSE</span></td>
+            <td>Reused <em>only</em> as a pass/fail success-rate gate (§2). NOT as a variant selector. Path corrected from the draft's <span class="mono">symphony-orchestrator/src/</span>.</td>
+          </tr>
+          <tr>
+            <td>Brand lock + generate at volume</td>
+            <td><span class="mono">skills/content-engine/</span> (compile + generate; <span class="mono">content-engine-dna</span>, <span class="mono">arcan-studio</span>)</td>
+            <td><span class="pill reuse">REUSE</span></td>
+            <td>Already compiles brand DNA and renders to <span class="mono">.mp4</span> via live Gemini. <code>kleos-generate</code> is a thin adapter over it.</td>
+          </tr>
+          <tr>
+            <td>Control gate / shield</td>
+            <td><span class="mono">.control/policy.yaml</span> + PreToolUse gate pattern</td>
+            <td><span class="pill reuse">REUSE</span></td>
+            <td>Extended with S-K1…S-K5 (§6). The enforcement <em>pattern</em> exists; the Kleos shields are new rows.</td>
+          </tr>
+          <tr>
+            <td>Autonomous driver / loop</td>
+            <td><span class="mono">persist</span> (P12) · <span class="mono">bstack wave</span> (P19) · <code>/goal</code></td>
+            <td><span class="pill reuse">REUSE</span></td>
+            <td><code>kleos-orchestrate</code> selects a mechanism from the P19 cube; it does not invent one.</td>
+          </tr>
+          <tr style="background:rgba(254,0,74,.03)">
+            <td><strong>Publisher transport</strong></td>
+            <td><span class="mono">kleos-publisher</span></td>
+            <td><span class="pill new">NEW</span></td>
+            <td><strong>The only genuinely-new transport code.</strong> Platform-API clients with hard rate-limit accounting (§5). Nothing in the workspace talks to YouTube/IG/TikTok/X publish endpoints.</td>
+          </tr>
+          <tr style="background:rgba(254,0,74,.03)">
+            <td><strong>Self-improvement loop</strong></td>
+            <td><span class="mono">kleos-feedback</span> bandit + attribution + fold-back</td>
+            <td><span class="pill new">NEW</span></td>
+            <td><strong>Unbuilt (§2).</strong> M2, own risk budget. NOT a fork of batch.rs.</td>
+          </tr>
+          <tr style="background:rgba(214,152,101,.03)">
+            <td>Content-addressed asset store / billing / identity</td>
+            <td><span class="mono">core/life/</span> — Lago · Anima · Haima</td>
+            <td><span class="pill inflight">IN-FLIGHT</span></td>
+            <td>Exist, but with <strong>many open worktrees</strong> — NOT M1-ready. Wiring <code>kleos-store</code> onto them is a cross-subsystem integration budgeted in <strong>weeks</strong>. M2.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout good">
+      <span class="lbl">The M1 store decision</span>
+      <p>Because Lago/Anima/Haima are in-flight, <strong><code>kleos-store</code> M1 uses a local
+      embedded store</strong> (<code>sled</code> or <code>sqlite</code>) for event-sourced run state.
+      Lago wiring is <strong>M2</strong>, after the embedded store has proven the event schema. This
+      removes a multi-week cross-subsystem dependency from the critical path of the first shippable
+      runtime.</p>
+    </div>
+  </section>
+
+  <!-- ============ 4 · COMPONENT ARCHITECTURE ============ -->
+  <section id="arch">
+    <div class="secnum">SECTION 04</div>
+    <h2>Component architecture</h2>
+    <p class="lede">Seven crates. Six are thin adapters over existing machinery; exactly
+    <strong>one</strong> (<code>kleos-publisher</code>) is genuinely-new transport code in M1, and one
+    more (<code>kleos-feedback</code>'s bandit) is genuinely-new in M2. The control loop binds them.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 470" role="img" aria-label="Component architecture box diagram of the kleos-engine runtime">
+        <defs>
+          <linearGradient id="cBox" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#2d262b"/><stop offset="1" stop-color="#211c20"/>
+          </linearGradient>
+          <marker id="a2" markerWidth="10" markerHeight="10" refX="7" refY="3.5" orient="auto">
+            <path d="M0,0 L8,3.5 L0,7 Z" fill="#a9a09a"/>
+          </marker>
+        </defs>
+
+        <!-- driver band -->
+        <rect x="30" y="26" width="860" height="62" rx="14" fill="none" stroke="#d69865" stroke-opacity=".35" stroke-dasharray="6 5"/>
+        <text x="50" y="50" fill="#d69865" class="svg-mono" font-size="11" letter-spacing="2">kleos-orchestrate</text>
+        <text x="50" y="70" fill="#a9a09a" font-size="12">autonomous driver — selects P19 mechanism (persist / wave / goal)</text>
+        <text x="860" y="60" text-anchor="end" fill="#7d756f" class="svg-mono" font-size="10">REUSE</text>
+
+        <!-- core (center spine) -->
+        <rect x="330" y="120" width="260" height="72" rx="14" fill="url(#cBox)" stroke="#5ff771" stroke-opacity=".5"/>
+        <text x="460" y="150" text-anchor="middle" fill="#5ff771" class="svg-mono" font-size="12" letter-spacing="2">kleos-core</text>
+        <text x="460" y="172" text-anchor="middle" fill="#ece6e2" font-size="12">control loop · drives scheduler poll-tick</text>
+        <text x="575" y="135" text-anchor="end" fill="#7d756f" class="svg-mono" font-size="9">REUSE spine</text>
+
+        <!-- generate (left) -->
+        <rect x="40" y="232" width="220" height="72" rx="14" fill="url(#cBox)" stroke="#a9a09a" stroke-opacity=".3"/>
+        <text x="150" y="262" text-anchor="middle" fill="#ece6e2" class="svg-mono" font-size="12">kleos-generate</text>
+        <text x="150" y="283" text-anchor="middle" fill="#a9a09a" font-size="11.5">content-engine adapter</text>
+        <text x="250" y="247" text-anchor="end" fill="#5ff771" class="svg-mono" font-size="9">REUSE</text>
+
+        <!-- shield (center) -->
+        <rect x="350" y="232" width="220" height="72" rx="14" fill="url(#cBox)" stroke="#5ff771" stroke-opacity=".5"/>
+        <text x="460" y="262" text-anchor="middle" fill="#5ff771" class="svg-mono" font-size="12">kleos-shield</text>
+        <text x="460" y="283" text-anchor="middle" fill="#a9a09a" font-size="11.5">governance gate (S-K1…5)</text>
+        <text x="560" y="247" text-anchor="end" fill="#5ff771" class="svg-mono" font-size="9">REUSE pattern</text>
+
+        <!-- publisher (right) — the NEW one -->
+        <rect x="660" y="232" width="220" height="72" rx="14" fill="url(#cBox)" stroke="#fe004a" stroke-width="1.5"/>
+        <text x="770" y="262" text-anchor="middle" fill="#fe004a" class="svg-mono" font-size="12">kleos-publisher</text>
+        <text x="770" y="283" text-anchor="middle" fill="#ece6e2" font-size="11.5">platform transports</text>
+        <text x="870" y="247" text-anchor="end" fill="#fe004a" class="svg-mono" font-size="9">NEW · M1</text>
+
+        <!-- store (bottom-left) -->
+        <rect x="40" y="356" width="260" height="72" rx="14" fill="url(#cBox)" stroke="#a9a09a" stroke-opacity=".3"/>
+        <text x="170" y="386" text-anchor="middle" fill="#ece6e2" class="svg-mono" font-size="12">kleos-store</text>
+        <text x="170" y="407" text-anchor="middle" fill="#a9a09a" font-size="11.5">event-sourced state — sled/sqlite (M1)</text>
+        <text x="290" y="371" text-anchor="end" fill="#d69865" class="svg-mono" font-size="9">NEW thin · Lago=M2</text>
+
+        <!-- feedback (bottom-right) -->
+        <rect x="620" y="356" width="260" height="72" rx="14" fill="url(#cBox)" stroke="#fe004a" stroke-opacity=".55" stroke-dasharray="5 4"/>
+        <text x="750" y="382" text-anchor="middle" fill="#fe004a" class="svg-mono" font-size="12">kleos-feedback</text>
+        <text x="750" y="402" text-anchor="middle" fill="#a9a09a" font-size="11.5">loop-closer · tally now / bandit M2</text>
+        <text x="870" y="371" text-anchor="end" fill="#fe004a" class="svg-mono" font-size="9">NEW · M2</text>
+
+        <!-- edges -->
+        <line x1="460" y1="88" x2="460" y2="120" stroke="#a9a09a" stroke-width="1.3" marker-end="url(#a2)"/>
+        <line x1="380" y1="192" x2="220" y2="232" stroke="#a9a09a" stroke-width="1.3" marker-end="url(#a2)"/>
+        <line x1="460" y1="192" x2="460" y2="232" stroke="#a9a09a" stroke-width="1.3" marker-end="url(#a2)"/>
+        <line x1="570" y1="268" x2="660" y2="268" stroke="#a9a09a" stroke-width="1.3" marker-end="url(#a2)"/>
+        <line x1="150" y1="304" x2="160" y2="356" stroke="#a9a09a" stroke-width="1.3" marker-end="url(#a2)"/>
+        <path d="M770,304 Q800,332 760,356" fill="none" stroke="#a9a09a" stroke-width="1.3" marker-end="url(#a2)"/>
+        <path d="M620,392 Q300,470 170,428" fill="none" stroke="#5ff771" stroke-width="1.3" stroke-dasharray="4 4" marker-end="url(#a2)"/>
+        <text x="400" y="462" fill="#7d756f" class="svg-mono" font-size="10">measured signal → store → next plan</text>
+      </svg>
+      <figcaption>Fig. 2 — Seven crates. Crimson = genuinely-new code. The publisher is the only NEW transport in M1; the feedback bandit is NEW in M2.</figcaption>
+    </figure>
+
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>Crate</th><th>Role</th><th>Backed by</th></tr></thead>
+        <tbody>
+          <tr><td><span class="mono gn">kleos-core</span></td><td>the observe→decide→act→judge control loop; drives the poll-tick with a content plan</td><td><span class="pill reuse">REUSE</span> scheduler.rs spine</td></tr>
+          <tr><td><span class="mono">kleos-generate</span></td><td>content-engine adapter — brand-lock compile + volume generate to <span class="mono">.mp4</span></td><td><span class="pill reuse">REUSE</span> content-engine</td></tr>
+          <tr><td><span class="mono cr">kleos-publisher</span></td><td><strong>the only genuinely-new code (M1)</strong> — per-platform transports with hard rate-limit accounting</td><td><span class="pill new">NEW</span></td></tr>
+          <tr><td><span class="mono gn">kleos-shield</span></td><td>pre-action governance gate (S-K1…S-K5), Pass / Modify / Block</td><td><span class="pill reuse">REUSE</span> policy.yaml pattern</td></tr>
+          <tr><td><span class="mono tn">kleos-store</span></td><td>event-sourced run state; embedded (sled/sqlite) in M1, Lago in M2</td><td><span class="pill new">NEW</span> thin / <span class="pill inflight">IN-FLIGHT</span> dep</td></tr>
+          <tr><td><span class="mono cr">kleos-feedback</span></td><td>loop-closer — <em>tally</em> in M1 (eval ledger), <strong>bandit + attribution + fold-back in M2</strong></td><td><span class="pill reuse">REUSE</span> tally / <span class="pill new">NEW</span> bandit</td></tr>
+          <tr><td><span class="mono gn">kleos-orchestrate</span></td><td>autonomous driver — selects the P19 mechanism (persist / wave / goal)</td><td><span class="pill reuse">REUSE</span> P12/P19</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 5 · TRANSPORT REALITY ============ -->
+  <section id="transport">
+    <div class="secnum">SECTION 05</div>
+    <h2>The publisher transport reality</h2>
+    <p class="lede">This table is the <strong>load-bearing engineering constraint</strong> of the whole
+    runtime. <code>kleos-publisher</code> is not "post to social" — it is four <em>different</em>
+    transports with four <em>different</em> hard limits, and those limits dictate the architecture
+    (per-platform ceilings in the shield, the X-never-leads-with-a-link rule, TikTok-private-until-audit).
+    Get this wrong and the daemon gets rate-limited, throttled, or banned on Day 1.</p>
+
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>Rail</th><th>API</th><th>Hard limit (the constraint)</th><th>Architectural consequence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong class="cr">YouTube</strong></td>
+            <td>Data API v3</td>
+            <td><span class="mono">~100 quota units / call</span>; default free quota <span class="mono">10,000/day</span> → <strong>~100 uploads/day ceiling</strong></td>
+            <td><strong>The M1 first rail</strong> — generous enough quota that a single rail proves the loop without quota engineering. Account each call against the daily budget in <code>kleos-store</code>.</td>
+          </tr>
+          <tr>
+            <td><strong class="tn">Instagram</strong></td>
+            <td>Graph API</td>
+            <td><strong>3-step</strong> <span class="mono">create container → poll status → publish</span>; <strong>hard 25 published / 24h</strong>; requires <strong>App Review</strong></td>
+            <td>M1-second. The poll-status step makes publish <em>asynchronous</em> — the loop must persist a pending-container state and re-enter, not block. 25/24h is a non-negotiable S-K2 ceiling.</td>
+          </tr>
+          <tr>
+            <td><strong>TikTok</strong></td>
+            <td>Content Posting API</td>
+            <td><span class="mono">6 req / min</span>; <strong>SELF_ONLY until the content-posting audit clears</strong></td>
+            <td><strong>Private-until-audit.</strong> M1 publishes to the owner's private drafts only; public posting is gated on a manual audit milestone, not a code milestone. Do not block M1 on it.</td>
+          </tr>
+          <tr>
+            <td><strong class="gn">X</strong></td>
+            <td>v2 pay-per-use</td>
+            <td><span class="mono">$0.015</span> text-write; <span class="mono">$0.20</span> <strong>URL-write penalty</strong></td>
+            <td><strong>The penalty ENFORCES the strategy.</strong> A 13× cost for posting a link makes "X = authority layer, never lead with a link" a <em>budget</em> constraint, not just a guideline. M1 = text/threads only.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout note">
+      <span class="lbl">Why the X penalty is a feature</span>
+      <p>The canon's "X is the authority layer, not a video dump" rule is usually a discipline an
+      operator has to remember. On X v2 it is <em>self-enforcing</em>: the <code>$0.20</code> URL-write
+      penalty (13× the text-write cost) means a budget-capped agent <em>structurally cannot</em> spam
+      links. The shield's S-K1 spend cap turns the strategy into arithmetic.</p>
+    </div>
+  </section>
+
+  <!-- ============ 6 · GOVERNANCE SHIELD ============ -->
+  <section id="shield">
+    <div class="secnum">SECTION 06</div>
+    <h2>The governance shield</h2>
+    <p class="lede">Every generate/publish action passes a <strong>pre-action gate</strong> before it
+    touches an API — the same PreToolUse shield pattern that <code>.control/policy.yaml</code> already
+    runs for the workspace, extended with five Kleos shields. The gate verdict is
+    <strong>Pass / Modify / Block</strong>, evaluated <em>before</em> the action, never after.</p>
+
+    <figure>
+      <svg viewBox="0 0 920 200" role="img" aria-label="Pre-action shield gate with Pass, Modify, Block outcomes">
+        <defs>
+          <marker id="a3" markerWidth="10" markerHeight="10" refX="7" refY="3.5" orient="auto"><path d="M0,0 L8,3.5 L0,7 Z" fill="#a9a09a"/></marker>
+        </defs>
+        <rect x="30" y="74" width="170" height="52" rx="12" fill="#241f23" stroke="#a9a09a" stroke-opacity=".3"/>
+        <text x="115" y="98" text-anchor="middle" fill="#ece6e2" font-size="13">proposed action</text>
+        <text x="115" y="115" text-anchor="middle" fill="#7d756f" class="svg-mono" font-size="10">generate / publish</text>
+
+        <polygon points="330,100 410,62 490,100 410,138" fill="#2d262b" stroke="#5ff771" stroke-opacity=".55"/>
+        <text x="410" y="96" text-anchor="middle" fill="#5ff771" class="svg-mono" font-size="11" letter-spacing="1">kleos-shield</text>
+        <text x="410" y="113" text-anchor="middle" fill="#a9a09a" class="svg-mono" font-size="9">S-K1 … S-K5</text>
+
+        <line x1="200" y1="100" x2="328" y2="100" stroke="#a9a09a" stroke-width="1.4" marker-end="url(#a3)"/>
+
+        <rect x="600" y="20" width="260" height="44" rx="11" fill="#211c20" stroke="#5ff771" stroke-opacity=".5"/>
+        <text x="620" y="47" fill="#5ff771" class="svg-mono" font-size="12">PASS</text>
+        <text x="730" y="47" text-anchor="middle" fill="#a9a09a" font-size="11.5">→ actuate</text>
+
+        <rect x="600" y="78" width="260" height="44" rx="11" fill="#211c20" stroke="#d69865" stroke-opacity=".5"/>
+        <text x="620" y="105" fill="#d69865" class="svg-mono" font-size="12">MODIFY</text>
+        <text x="745" y="105" text-anchor="middle" fill="#a9a09a" font-size="11.5">→ clamp &amp; retry</text>
+
+        <rect x="600" y="136" width="260" height="44" rx="11" fill="#211c20" stroke="#fe004a" stroke-opacity=".55"/>
+        <text x="620" y="163" fill="#fe004a" class="svg-mono" font-size="12">BLOCK</text>
+        <text x="742" y="163" text-anchor="middle" fill="#a9a09a" font-size="11.5">→ log &amp; halt</text>
+
+        <line x1="490" y1="92" x2="600" y2="42" stroke="#5ff771" stroke-width="1.3" marker-end="url(#a3)"/>
+        <line x1="490" y1="100" x2="600" y2="100" stroke="#d69865" stroke-width="1.3" marker-end="url(#a3)"/>
+        <line x1="490" y1="108" x2="600" y2="158" stroke="#fe004a" stroke-width="1.3" marker-end="url(#a3)"/>
+      </svg>
+      <figcaption>Fig. 3 — The shield is a pre-action gate. No generate or publish call reaches an API without a Pass.</figcaption>
+    </figure>
+
+    <div class="shield-grid">
+      <div class="shield">
+        <h4>S-K1 · spend-cap/day</h4>
+        <p>Total API + model spend bounded per 24h. The X URL-write penalty and Veo/Kling per-second costs are accounted here.</p>
+        <span class="cap">block if Σspend &gt; cap</span>
+      </div>
+      <div class="shield">
+        <h4>S-K2 · per-platform ceilings</h4>
+        <p>Each rail's published-count ≤ its API hard limit (IG ≤ 25/24h, TikTok ≤ 6/min, YT ≤ quota).</p>
+        <span class="cap">≤ API hard limit, always</span>
+      </div>
+      <div class="shield">
+        <h4>S-K3 · disclosure = 100%</h4>
+        <p>Every asset carries C2PA Content Credentials + platform AI-label as a <em>build step</em>. EU AI Act Art. 50 (live Aug 2 2026).</p>
+        <span class="cap">block if any asset undisclosed</span>
+      </div>
+      <div class="shield">
+        <h4>S-K4 · likeness-firewall = 0</h4>
+        <p>Zero real identifiable persons without written consent + license. Synthetic personas / cleared talent only.</p>
+        <span class="cap">block on real-person likeness</span>
+      </div>
+      <div class="shield">
+        <h4>S-K5 · brand-safety</h4>
+        <p>Content classifier gate against banned categories before publish; keeps the rail off the YouTube inauthentic-content sweep.</p>
+        <span class="cap">block on unsafe class</span>
+      </div>
+    </div>
+
+    <div class="callout good">
+      <span class="lbl">Tie-in to policy.yaml</span>
+      <p>S-K1…S-K5 are added as rows to <code>.control/policy.yaml</code> alongside the workspace's
+      existing S1…S15 shields and G1…G5 gates — same schema, same enforcement surface. Kleos does not
+      invent a governance mechanism; it adds <em>setpoints</em> to the one that already runs. S-K3 and
+      S-K4 are the buyer-facing moat (the "won't get you banned or sued" compliance pillar) <em>and</em>
+      the runtime's own safety rail — the seller (Kleos) is the FTC-scope entity, so the shield
+      hardens Kleos first.</p>
+    </div>
+  </section>
+
+  <!-- ============ 7 · M1 BUILD PLAN ============ -->
+  <section id="plan">
+    <div class="secnum">SECTION 07</div>
+    <h2>M1 build plan (gated)</h2>
+    <p class="lede">A realistic week-by-week that ships <strong>one rail first</strong>, defers the
+    in-flight dependencies, and explicitly marks the bandit as M2. This plan does not start until the
+    §00 gate clears — it is the <em>shape</em> of M1, not a schedule to run today.</p>
+
+    <div class="week">
+      <div class="wk">WEEK 1</div>
+      <div class="wb"><b>Spine + store.</b> Stand up <code>kleos-core</code> against the existing
+      <code>scheduler.rs</code> poll-tick with a content-plan input. Embedded <code>kleos-store</code>
+      (sled/sqlite) with the event schema. No publishing yet — drive <code>kleos-generate</code>
+      (content-engine adapter) to render <span class="mono">.mp4</span> to disk.
+      <span class="tag">no Lago — embedded only</span></div>
+    </div>
+    <div class="week">
+      <div class="wk">WEEK 2</div>
+      <div class="wb"><b>Shield + disclosure.</b> Wire <code>kleos-shield</code> with S-K1…S-K5 into
+      <code>.control/policy.yaml</code>. Build the C2PA + AI-label disclosure step (S-K3) as part of
+      the render pipeline — disclosure is a build step, not an afterthought. Gate every generate behind
+      Pass/Modify/Block. <span class="tag">P2 · Gate</span></div>
+    </div>
+    <div class="week">
+      <div class="wk">WEEK 3</div>
+      <div class="wb"><b>One rail: YouTube.</b> Build <code>kleos-publisher</code>'s YouTube Data API v3
+      transport with hard quota accounting against <code>kleos-store</code>. <strong>Actually publish a
+      real asset</strong> and <strong>screenshot the live upload</strong> — reasoning is not validation.
+      <span class="tag">P11 · Empirical</span></div>
+    </div>
+    <div class="week">
+      <div class="wk">WEEK 4</div>
+      <div class="wb"><b>Close the loop (as a tally).</b> <code>kleos-feedback</code> polls YouTube
+      analytics, writes retention into <code>kleos-store</code>, and runs the <em>existing eval ledger
+      tally</em> (honestly labeled — NOT a bandit). The loop is now closed end-to-end on one rail.
+      <span class="tag">tally, not variant selection</span></div>
+    </div>
+    <div class="week">
+      <div class="wk">WEEK 5</div>
+      <div class="wb"><b>IG second, TikTok private, X text-only.</b> IG Graph 3-step transport (async
+      container → poll → publish; S-K2 ≤ 25/24h). TikTok transport publishes <strong>SELF_ONLY drafts
+      only</strong> (public gated on audit). X v2 transport <strong>text/threads only</strong> (no URL
+      writes — the $0.20 penalty enforces it). <span class="tag">multi-rail</span></div>
+    </div>
+    <div class="week">
+      <div class="wk">SHIP</div>
+      <div class="wb"><b>Deploy to Railway.</b> P20 cross-model adversarial review before merge (the
+      writer model cannot be the final judge). Deploy the daemon to Railway. The runtime is real iff
+      <code>kleos_check.py</code> passes on its manifest.
+      <span class="tag">P20 before merge · P4 pipeline</span></div>
+    </div>
+
+    <div class="callout warn">
+      <span class="lbl">Explicitly NOT in M1</span>
+      <p><strong>The self-improvement loop (bandit + per-variant attribution + brand-DNA fold-back) is
+      M2</strong>, with its own risk budget (§2). <strong>Lago/Anima/Haima wiring is M2</strong> (§3) —
+      it is a weeks-long cross-subsystem integration, not a Week-1 task. TikTok <em>public</em> posting
+      is gated on a manual audit milestone, not a code milestone. Any surface claiming "self-improving"
+      before M2 measures it FAILs <code>kleos_check.py</code>.</p>
+    </div>
+  </section>
+
+  <!-- ============ 8 · OPEN QUESTIONS ============ -->
+  <section id="open">
+    <div class="secnum">SECTION 08</div>
+    <h2>Open questions</h2>
+    <p class="lede">Six unresolved design decisions surfaced by the canon and research. None block the
+    §00 gate decision (don't build yet); all must be answered before M1 Week 1.</p>
+    <ol class="openq">
+      <li><strong>Generation subprocess vs native.</strong> Does <code>kleos-generate</code> shell out
+      to the existing <code>content-engine</code> scripts as a subprocess (fast, reuses live Gemini
+      wiring, process-isolated) or reimplement generation natively in Rust (tighter, but duplicates a
+      working pipeline)? Subprocess is the dep-chain-cheap default; revisit only if latency or error
+      handling forces it.</li>
+      <li><strong>TikTok audit gating.</strong> The content-posting audit is a manual, opaque,
+      multi-week process. Does M1 ship the TikTok transport as SELF_ONLY drafts and submit for audit in
+      parallel, or defer the TikTok rail entirely to M2? (Current plan: ship SELF_ONLY, audit in
+      parallel — but the audit timeline is outside our control.)</li>
+      <li><strong>Where the LLM-controller runs.</strong> The "decide" step (what to generate next, which
+      variant) needs an LLM call. Does it run inside the Railway daemon (cost, key custody in the cloud)
+      or as an out-of-band call the daemon requests? Affects S-K1 spend attribution and the token-custody
+      question below.</li>
+      <li><strong>Spend-attribution granularity.</strong> S-K1 caps daily spend — but at what
+      granularity? Per-rail? Per-tenant? Per-asset? Per-variant (needed for M2's bandit reward)? The
+      M1 store schema must record enough to support M2's attribution without a migration.</li>
+      <li><strong>Browser-automation fallback ToS tension.</strong> When a platform lacks a publish API
+      (or gates it behind audit), browser automation is the fallback — but it violates most platform ToS
+      and risks the very bans the compliance pillar sells against. Hard rule candidate: <em>no
+      browser-automation publishing rail ever</em>, accept the API constraints as the design envelope.
+      Needs a decision.</li>
+      <li><strong>Multi-tenant token custody.</strong> The Kleos-recursion endgame (sell the engine to
+      operators who run it for <em>their</em> vertical) means custodying <em>their</em> platform OAuth
+      tokens. Where do those live, how are they encrypted, and does Anima (in-flight) own identity here
+      — or does M1 stay strictly single-tenant (Broomva's own accounts) until Anima is M1-ready?</li>
+    </ol>
+    <p class="footnote"><strong>Plus a seventh, from research:</strong> the cold-start bootstrap — the
+    loop needs <em>some</em> measured retention signal before "decide" has anything to optimize. How
+    does the first batch get seeded (manual operator picks? imported consumer-niche priors, clearly
+    labeled per the KPI-honesty gate?) without claiming validated numbers that aren't?</p>
+  </section>
+
+  <!-- ============ CITATIONS ============ -->
+  <section id="refs">
+    <div class="secnum">APPENDIX</div>
+    <h2>Citations</h2>
+    <div class="refs">
+      <ol>
+        <li>Whop creator earnings (power-law graveyard: 88% of 191,654 products earn $0; median $74/mo; top 1% take 57% of $64.2M MRR; subscriptions out-earn one-time by 89%) — <a href="https://whoptrends.com/blog/whop-creator-earnings-data-2026">whoptrends.com/blog/whop-creator-earnings-data-2026</a></li>
+        <li>EU AI Act Article 50 — transparency rules live Aug 2 2026; machine-readable AI marking; fines to €15M / 3% turnover — <a href="https://artificialintelligenceact.eu/transparency-rules-article-50/">artificialintelligenceact.eu/transparency-rules-article-50</a></li>
+        <li>FTC v. Air AI (Mar 2026): lifetime business-opportunity ban + $18M for false earnings claims + fake guarantee — <a href="https://www.ftc.gov/legal-library/browse/cases-proceedings/airai">ftc.gov/legal-library/browse/cases-proceedings/airai</a></li>
+        <li>YouTube "inauthentic content" enforcement sweep (Jan 2026): ~16 channels / 4.7B views / ~$10M/yr removed — <a href="https://flocker.tv/posts/youtube-inauthentic-content-ai-enforcement/">flocker.tv/posts/youtube-inauthentic-content-ai-enforcement</a></li>
+        <li>AI-slop demand reversal (AI-creator-content preference 60% → 26%, 2023 → 2026; "slop" = Merriam-Webster 2025 word of the year) — <a href="https://digiday.com/media/after-an-oversaturation-of-ai-generated-content-creators-authenticity-and-messiness-are-in-high-demand/">digiday.com — authenticity and messiness in high demand</a></li>
+        <li>Claude Code ~$2.5B annualized run-rate; ~65% of engineers run ≥2 agents (FastRender context) — <a href="https://www.mindstudio.ai/blog/claude-code-2-5-billion-annualized-revenue-terminal-tool">mindstudio.ai/blog/claude-code-2-5-billion-annualized-revenue</a></li>
+        <li>Capafy — closed-execution AI skills marketplace (sell expert systems as per-use black boxes; the closed-execution moat model) — <a href="https://www.testingcatalog.com/capafy-launches-new-ai-skills-marketplace-for-creators/">testingcatalog.com — Capafy launch</a></li>
+        <li>Comment-to-DM conversion benchmarks (CONSUMER-niche; imported/unvalidated for B2D per the KPI-honesty gate) — <a href="https://communipass.com/blog/auto-dm-statistics-2026-open-rates-conversion-benchmarks/">communipass.com — auto-DM statistics 2026</a></li>
+      </ol>
+      <p class="footnote">Internal grounding (verified this session): <span class="mono">core/symphony/crates/symphony-egri/src/batch.rs</span> (the pass/fail tally — <span class="mono">score = completed/(completed+retrying)</span>, increments <span class="mono">promoted_count</span>/<span class="mono">discarded_count</span>); <span class="mono">core/symphony/crates/symphony-orchestrator/src/scheduler.rs</span> (poll-tick spine); <span class="mono">skills/content-engine/</span> (compile + generate); <span class="mono">.control/policy.yaml</span> (S/G shield schema). Canon: <span class="mono">skills/kleos/references/design-canon.md</span> §7.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p class="prov"><b>KLEOS</b> — your work, made famous by showing it.</p>
+    <p>Layer 3 · <code>apps/kleos-engine</code> · STATUS: DEFERRED / EARNED · deploy target Railway</p>
+    <p>BRO-1429 · created 2026-06-08 · provenance workflow wf_d25abca6-6bf · derived from canon v1 (post-P20-review)</p>
+    <p>Category-C HTML artifact (bstack P18 · Audience). Self-contained, offline-renderable, inline SVG only.</p>
+  </footer>
+
+</div>
+</body>
+</html>
