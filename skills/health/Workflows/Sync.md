@@ -10,6 +10,8 @@ health sync --source garmin [--since 2026-05-22T00:00:00Z] [--profile default] [
 
 If `--since` is omitted, the adapter resumes from `repo.last_sample_ts(source, metric)` for each metric — the trace DB *is* the cursor.
 
+**Garmin backend (default `cli`):** sync delegates to eddmann's `garmin-connect` CLI — it pulls today's snapshot via `garmin-connect --format json context`, maps it to domain samples, and upserts into the trace DB. One-time setup: `garmin-connect auth login` (interactive; credentials go straight to Garmin). The skill never handles your password on this backend. See SKILL.md → **Garmin backends** for the `library` / `browser` alternatives.
+
 ## Expected runtime
 
 - **Incremental** (typical 5–60 minute gap): **~5–30 seconds** end-to-end.

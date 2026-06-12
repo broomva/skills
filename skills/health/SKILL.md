@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.2.3
+version: 0.3.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -122,6 +122,34 @@ health <cmd> --format {json,jsonl,csv,tsv,human}       # default: json
 
 ---
 
+## Garmin backends (config: `[garmin] backend`)
+
+Garmin has three interchangeable backends behind the one `TraceSource` port — the payoff of the hex architecture. Select via `~/.config/broomva-health/config.toml`:
+
+```toml
+[garmin]
+backend = "cli"          # default — delegate to eddmann's garmin-connect CLI
+# cli_path = "garmin-connect"
+```
+
+| Backend | How auth works | Tradeoff |
+|---|---|---|
+| **`cli`** (default) | **Delegated** to [`eddmann/garmin-connect-cli`](https://github.com/eddmann/garmin-connect-cli). One-time `garmin-connect auth login` (interactive — credentials go straight to Garmin, **never through this skill**). The CLI owns the ~1-year token lifecycle and rides it past Garmin's Cloudflare wall. | Needs the `garmin-connect` binary on PATH (`uv tool install garmin-connect-cli`). Syncs today's snapshot via `context`. |
+| **`library`** | Direct `garminconnect` import; `health auth login` collects the password via `getpass`. | Automatable, but **fresh** SSO login is Cloudflare-walled (429 → CAPTCHA → account-lock). Install `pip install '.[garmin]'`. |
+| **`browser`** | (planned) Interceptor real-Chrome capture; you log in once in your browser. | CAPTCHA-proof but needs an interactive session; not yet wired. |
+
+**The skill never handles your Garmin password on the default (`cli`) backend.** `health auth login` detects the delegated backend and skips the password prompt entirely — it just verifies `garmin-connect auth status` and points you at `garmin-connect auth login` if needed.
+
+First-time setup (default backend):
+
+```bash
+uv tool install garmin-connect-cli   # one-time: get the binary
+garmin-connect auth login            # one-time: interactive Garmin login
+health sync                          # pulls today's snapshot into the trace DB
+```
+
+---
+
 ## Composition with bstack primitives
 
 The skill is designed to *compound* with the existing bstack primitives, not replace any of them.
@@ -158,7 +186,7 @@ Failure to uphold these invariants is a P20 blocker — Cross-Review must reject
 
 - **Not a coaching surface in v1.** It does not tell you to take a rest day, hit zone 2, or sleep more. Coaching is the v2 vision (see [Workflows/Coaching.md](Workflows/Coaching.md)) and requires Telos + calendar + context integration that is intentionally out-of-scope here.
 - **Not Apple Health in v1.** The Apple Health adapter is *designed-for* (the `APPLE_HEALTH` Source enum member exists; the port shape is HealthKit-compatible) but unimplemented. Adding it is a P5 fan-out task per [References/extension-guide.md](References/extension-guide.md).
-- **Not a Garmin Health API client.** Garmin Health is enterprise-only and not viable for a single-user knowledge graph. We use `python-garminconnect` (widget+cffi bypass; active maintenance) — see [References/garmin-api-landscape-2026.md](References/garmin-api-landscape-2026.md).
+- **Not a Garmin Health API client.** Garmin Health is enterprise-only and not viable for a single-user knowledge graph. The default `cli` backend delegates auth + data to [`eddmann/garmin-connect-cli`](https://github.com/eddmann/garmin-connect-cli) (which owns the token lifecycle past Garmin's Cloudflare wall); the `library` backend uses `garminconnect` directly — see [References/garmin-api-landscape-2026.md](References/garmin-api-landscape-2026.md) and the **Garmin backends** section above.
 - **Not a replacement for `apps/healthOS/`.** `healthOS` is the platform; this skill produces the substrate that `healthOS` can read from. The `[ProjectionTarget]` port exists precisely so `healthOS` can subscribe without coupling.
 - **Not a Strava / Wahoo / Polar middle-tier.** Strava has no sleep/HRV/body-battery; Wahoo has no API; Polar's API is gated. These are not viable substrates for a health KG.
 - **Not a vendor "recovery score" passthrough.** Body Battery, Training Readiness, Whoop Recovery are stored as opaque metric codes (`BODY_BATTERY`, `TRAINING_READINESS`) for completeness but synthesis recomputes its own composites. Reasoning: Altini and others have documented that vendor recovery scores are unvalidated "made up scores" — see [References/validation-evidence.md](References/validation-evidence.md).

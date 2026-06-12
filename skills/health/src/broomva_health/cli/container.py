@@ -179,37 +179,14 @@ class Container:
         mfa: MFAProvider = PromptMFAProvider()
 
         # --- Sources -----------------------------------------------------
-        # We honor the registry if present (Stream B owns it), but only
-        # *require* Garmin for v1. A missing registry collapses to a hand-
-        # rolled {GARMIN: GarminTraceSource(...)} mapping.
-        sources: dict[Source, TraceSource] = {}
-        registry: dict[Source, type[TraceSource]] | None = None
+        # The registry is settings-aware: it picks the Garmin backend from
+        # `[garmin] backend` (default 'cli' — delegate to eddmann's
+        # garmin-connect CLI; 'library' = direct garminconnect import).
         try:
-            from broomva_health.adapters.sources import _registry as src_registry
-
-            registry = getattr(src_registry, "SOURCE_REGISTRY", None)
-        except ImportError:
-            registry = None
-
-        if registry:
-            for src, ctor in registry.items():
-                try:
-                    # Pass paths if the ctor accepts it; otherwise zero-arg
-                    try:
-                        sources[src] = ctor(paths=paths)  # type: ignore[call-arg]
-                    except TypeError:
-                        sources[src] = ctor()
-                except Exception:
-                    if src is Source.GARMIN:
-                        raise
-        else:
-            try:
-                from broomva_health.adapters.sources.garmin import (
-                    GarminTraceSource,
-                )
-            except ImportError as exc:
-                raise _install_hint("sources.garmin", exc) from exc
-            sources[Source.GARMIN] = GarminTraceSource(paths=paths)
+            from broomva_health.adapters.sources._registry import build_sources
+        except ImportError as exc:
+            raise _install_hint("sources._registry", exc) from exc
+        sources: dict[Source, TraceSource] = build_sources(settings, paths)
 
         # --- ProjectionTarget (optional — v1 only used by daily-note) ---
         projection: ProjectionTarget | None = None

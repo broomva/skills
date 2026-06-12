@@ -51,6 +51,24 @@ def login(
     if src is None:
         typer.secho(f"Source '{source.value}' is not registered.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
+
+    # Delegated-auth backends (e.g. the Garmin `cli` backend, which rides
+    # eddmann's garmin-connect token store) never collect a password here —
+    # credentials go straight to the upstream tool, never through this skill.
+    if getattr(src, "delegated_auth", False):
+        src.authenticate(
+            token_store=container.token_store,
+            mfa=container.mfa,
+            email=None,
+            password=None,
+            profile=profile,
+        )
+        typer.secho(
+            f"{source.value}: authenticated via the delegated backend (profile={profile}).",
+            fg=typer.colors.GREEN,
+        )
+        return
+
     if email is None:
         email = typer.prompt(f"{source.value} email")
     password = getpass.getpass(f"{source.value} password: ")
