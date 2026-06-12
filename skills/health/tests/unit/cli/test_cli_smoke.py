@@ -90,6 +90,11 @@ class _StubProjection:
 class _StubGarmin:
     """Minimal TraceSource for tests — every operation is a no-op."""
 
+    def __init__(self, **_: object) -> None:
+        # Accept paths= / cli_path= so build_sources can construct it for
+        # either the library or cli backend.
+        pass
+
     @property
     def name(self) -> Source:
         return Source.GARMIN
@@ -195,6 +200,11 @@ def stub_adapters(
     )
     _install("broomva_health.adapters.sources.garmin", GarminTraceSource=_StubGarmin)
     _install(
+        "broomva_health.adapters.sources.garmin_cli",
+        GarminCliTraceSource=_StubGarmin,
+        map_context=lambda *a, **k: ([], []),
+    )
+    _install(
         "broomva_health.adapters.repositories.sqlite",
         SQLiteTraceRepository=_StubSQLiteRepository,
     )
@@ -202,7 +212,10 @@ def stub_adapters(
     # Make sure cli.app picks up the fresh adapter modules — if it was
     # imported in a previous test, the cached Container.build closure has
     # already captured the original (real) modules, so we reload it.
+    # `_registry` must reload FIRST so its module-level GarminTraceSource /
+    # GarminCliTraceSource names rebind to the stubs above.
     for module_name in [
+        "broomva_health.adapters.sources._registry",
         "broomva_health.cli.container",
         "broomva_health.cli.app",
         "broomva_health.cli.auth",
@@ -224,6 +237,8 @@ def stub_adapters(
         "broomva_health.adapters.mfa.prompt",
         "broomva_health.adapters.projections.obsidian",
         "broomva_health.adapters.sources.garmin",
+        "broomva_health.adapters.sources.garmin_cli",
+        "broomva_health.adapters.sources._registry",
         "broomva_health.adapters.repositories.sqlite",
     ):
         sys.modules.pop(name, None)
