@@ -24,7 +24,7 @@ NOW = datetime(2026, 6, 12, 22, 0, tzinfo=UTC)
 
 # Real endpoint shapes, synthetic values.
 DEFAULT_RESPONSES: dict[str, Any] = {
-    "usersummary-service": {
+    "usersummary/daily": {
         "totalSteps": 8000,
         "totalDistanceMeters": 6000,
         "totalKilocalories": 1500.0,
@@ -40,6 +40,7 @@ DEFAULT_RESPONSES: dict[str, Any] = {
             "lightSleepSeconds": 18000,
             "remSleepSeconds": 5400,
             "awakeSleepSeconds": 600,
+            "sleepScores": {"overall": {"value": 81}},
         }
     },
     "hrv-service": {"hrvSummary": {"lastNightAvg": 62}},
@@ -53,6 +54,11 @@ DEFAULT_RESPONSES: dict[str, Any] = {
     ],
     "maxmet": {"generic": {"vo2MaxValue": 49.0}},
     "trainingreadiness": [{"score": 93, "level": "HIGH"}],
+    "dailyStress": {"avgStressLevel": 31, "maxStressLevel": 100},
+    "/daily/spo2": {"averageSpO2": 90.0, "lowestSpO2": 83},
+    "/daily/respiration": {"avgWakingRespirationValue": 14.0, "avgSleepRespirationValue": 11.0},
+    "weight-service": {"totalAverage": {"weight": 72500.0, "bmi": 23.1, "bodyFat": 18.0, "muscleMass": 34000.0}},
+    "hydration": {"valueInML": 1800.0},
     "activitylist-service": [
         {
             "activityId": 99001,
@@ -163,6 +169,16 @@ def test_sync_happy_path_includes_hrv_and_vo2(paths: HealthPaths) -> None:
     assert by_metric[MetricCode.TRAINING_READINESS] == 93.0
     # body battery time-series → 2 points
     assert sum(1 for s in repo.quantities if s.metric is MetricCode.BODY_BATTERY) == 2
+    # Phase-2 expanded metrics:
+    assert by_metric[MetricCode.STRESS] == 31.0
+    assert by_metric[MetricCode.SPO2_PCT] == 90.0
+    assert by_metric[MetricCode.RESPIRATION_RPM] == 14.0
+    assert by_metric[MetricCode.SLEEP_SCORE] == 81.0
+    assert by_metric[MetricCode.HYDRATION_ML] == 1800.0
+    assert by_metric[MetricCode.WEIGHT_KG] == 72.5  # 72500 g → kg
+    assert by_metric[MetricCode.BMI] == 23.1
+    assert by_metric[MetricCode.BODY_FAT_PCT] == 18.0
+    assert by_metric[MetricCode.LEAN_MASS_KG] == 34.0  # 34000 g → kg
 
 
 def test_sync_persists_refreshed_token(paths: HealthPaths) -> None:
@@ -201,7 +217,7 @@ def test_sync_queries_local_date_not_utc(paths: HealthPaths) -> None:
     src = GarminNativeTraceSource(paths=paths, garth_module=garth)
     src.sync(repo=_FakeRepo(), token_store=object(), rate_limiter=_FakeRateLimiter())
     local_today = _dt.now().astimezone().date().isoformat()
-    daily_calls = [c for c in garth.api_calls if "usersummary-service" in c]
+    daily_calls = [c for c in garth.api_calls if "usersummary/daily" in c]
     assert daily_calls, "sync must hit the daily summary endpoint"
     assert local_today in daily_calls[0], (
         f"daily query must use local date {local_today}, got {daily_calls[0]}"

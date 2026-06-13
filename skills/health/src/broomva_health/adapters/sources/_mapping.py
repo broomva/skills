@@ -134,7 +134,17 @@ def map_context(
     # --- stress / training readiness / weight (often null) ----------------
     add(MetricCode.STRESS, (health.get("stress") or {}).get("overallStressLevel"))
     add(MetricCode.TRAINING_READINESS, (ctx.get("training") or {}).get("readiness"))
-    add(MetricCode.WEIGHT_KG, (ctx.get("weight") or {}).get("current_kg"))
+    weight = ctx.get("weight") or {}
+    add(MetricCode.WEIGHT_KG, weight.get("current_kg"))
+    add(MetricCode.BMI, weight.get("bmi"))
+    add(MetricCode.BODY_FAT_PCT, weight.get("body_fat_pct"))
+    add(MetricCode.LEAN_MASS_KG, weight.get("lean_mass_kg"))
+
+    # --- expanded wellness metrics (native backend supplies these) ---------
+    add(MetricCode.SLEEP_SCORE, sleep.get("sleepScore"))
+    add(MetricCode.SPO2_PCT, (health.get("spo2") or {}).get("average"))
+    add(MetricCode.RESPIRATION_RPM, (health.get("respiration") or {}).get("avgWaking"))
+    add(MetricCode.HYDRATION_ML, (health.get("hydration") or {}).get("ml"))
 
     # --- body battery time-series: [[epoch_ms, level], ...] ---------------
     for point in bb.get("bodyBatteryValuesArray") or []:
