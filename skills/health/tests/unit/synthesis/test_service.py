@@ -82,6 +82,12 @@ class FakeTraceRepository:
     def upsert_workout(self, workouts: list[Workout]) -> int:
         raise NotImplementedError("fake is read-only")
 
+    def upsert_raw_document(self, docs: list) -> int:  # type: ignore[type-arg]
+        raise NotImplementedError("fake is read-only")
+
+    def query_raw_documents(self, source, start, end, endpoint=None) -> list:  # type: ignore[type-arg]
+        raise NotImplementedError("fake does not store raw documents")
+
     def last_sample_ts(self, source: Source, metric: MetricCode) -> datetime | None:
         return None
 

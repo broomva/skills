@@ -109,6 +109,7 @@ class _FakeRepo:
     def __init__(self) -> None:
         self.quantities: list[Any] = []
         self.workouts: list[Any] = []
+        self.raw_docs: list[Any] = []
 
     def upsert_quantity(self, s: list[Any]) -> int:
         self.quantities.extend(s)
@@ -117,6 +118,10 @@ class _FakeRepo:
     def upsert_workout(self, w: list[Any]) -> int:
         self.workouts.extend(w)
         return len(w)
+
+    def upsert_raw_document(self, docs: list[Any]) -> int:
+        self.raw_docs.extend(docs)
+        return len(docs)
 
 
 class _FakeRateLimiter:
@@ -235,6 +240,28 @@ def test_sync_partial_tolerant_when_endpoint_fails(paths: HealthPaths) -> None:
     metrics = {s.metric for s in repo.quantities}
     assert MetricCode.HRV_OVERNIGHT not in metrics
     assert MetricCode.STEPS in metrics  # the rest survived
+
+
+def test_sync_captures_raw_documents_losslessly(paths: HealthPaths) -> None:
+    """Every non-null endpoint is persisted verbatim — incl. fields we never map."""
+    from datetime import datetime as _dt
+
+    _seed_token(paths)
+    src = GarminNativeTraceSource(paths=paths, garth_module=_FakeGarth())
+    repo = _FakeRepo()
+    src.sync(repo=repo, token_store=object(), rate_limiter=_FakeRateLimiter())
+
+    endpoints = {d.endpoint for d in repo.raw_docs}
+    assert {
+        "daily_summary", "sleep", "hrv", "body_battery", "vo2max",
+        "stress", "spo2", "respiration", "weight", "hydration",
+    } <= endpoints
+    # The raw payload keeps fields the structured mapping drops (minHeartRate /
+    # maxHeartRate are not MetricCodes) — this is the whole point of passthrough.
+    daily = next(d for d in repo.raw_docs if d.endpoint == "daily_summary")
+    assert daily.payload["minHeartRate"] == 45
+    assert daily.payload["maxHeartRate"] == 120
+    assert daily.calendar_date == _dt.now().astimezone().date()
 
 
 # --------------------------------------------------------------------------- #
@@ -442,6 +469,27 @@ def test_backfill_fetches_activities_once_not_per_day(paths: HealthPaths) -> Non
     assert "startDate=2026-06-10" in activity_calls[0]
     assert "endDate=2026-06-12" in activity_calls[0]
     assert result.workouts_ingested == 1  # the one synthetic activity in range
+
+
+def test_backfill_captures_raw_per_day(paths: HealthPaths) -> None:
+    """Backfill persists verbatim daily endpoints per calendar day (no activities)."""
+    _seed_token(paths)
+    src = _backfill_src(paths, _FakeGarth())
+    repo = _FakeRepo()
+    src.backfill(
+        repo=repo,
+        token_store=object(),
+        rate_limiter=_FakeRateLimiter(),
+        start=date(2026, 6, 10),
+        end=date(2026, 6, 12),
+    )
+    assert {d.calendar_date for d in repo.raw_docs} == {
+        date(2026, 6, 10), date(2026, 6, 11), date(2026, 6, 12)
+    }
+    # Activities are a windowed one-shot, not a per-day raw doc on the backfill path.
+    assert all(d.endpoint != "activities_recent" for d in repo.raw_docs)
+    # daily_summary captured once per day.
+    assert sum(1 for d in repo.raw_docs if d.endpoint == "daily_summary") == 3
 
 
 def test_backfill_inverted_range_raises(paths: HealthPaths) -> None:

@@ -46,6 +46,7 @@ from typing import Any
 from broomva_health.adapters.sources._mapping import map_context, map_workouts
 from broomva_health.config.paths import HealthPaths
 from broomva_health.domain.errors import AuthRequired, SourceUnavailable
+from broomva_health.domain.raw import RawDocument
 from broomva_health.domain.results import BackfillResult, SourceStatus, SyncResult
 from broomva_health.domain.source import Source
 from broomva_health.domain.time import utc_now
@@ -139,10 +140,11 @@ class GarminNativeTraceSource:
         # Using utc_now().date() asks for the wrong day for any user behind UTC
         # in the evening (e.g. UTC-5 after 19:00 → tomorrow's empty day).
         today = _local_today()
-        ctx = self._fetch_context(g, today.isoformat())
+        ctx, raw = self._fetch_context(g, today.isoformat())
         quantities, workouts = map_context(ctx, now=utc_now(), day=today)
         n_q = repo.upsert_quantity(quantities) if quantities else 0
         n_w = repo.upsert_workout(workouts) if workouts else 0
+        self._persist_raw(repo, today, raw)
         self._save(g, profile)
         return SyncResult(
             source=Source.GARMIN,
@@ -206,9 +208,10 @@ class GarminNativeTraceSource:
         cur = start
         while cur <= end:
             try:
-                ctx = self._fetch_context(g, cur.isoformat(), include_activities=False)
+                ctx, raw = self._fetch_context(g, cur.isoformat(), include_activities=False)
                 q, _ = map_context(ctx, now=now, day=cur)
                 n_q += repo.upsert_quantity(q) if q else 0
+                self._persist_raw(repo, cur, raw)
             except Exception as exc:  # one bad day shouldn't kill the run
                 logger.warning("native backfill failed for %s: %s", cur, exc)
                 errors.append(f"{cur.isoformat()}: {type(exc).__name__}: {exc}")
@@ -334,6 +337,31 @@ class GarminNativeTraceSource:
         except Exception as exc:  # pragma: no cover
             logger.warning("garth token save failed: %s", exc)
 
+    def _persist_raw(self, repo: TraceRepository, day: date, raw_map: dict[str, Any]) -> int:
+        """Persist verbatim endpoint responses for ``day`` (best-effort).
+
+        The raw passthrough is additive to the structured upserts — a failure
+        here must not fail the pull, so it logs + returns 0 rather than raising.
+        """
+        if not raw_map:
+            return 0
+        fetched = utc_now()
+        docs = [
+            RawDocument(
+                source=Source.GARMIN,
+                calendar_date=day,
+                endpoint=name,
+                fetched_at=fetched,
+                payload=payload,
+            )
+            for name, payload in raw_map.items()
+        ]
+        try:
+            return repo.upsert_raw_document(docs)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("raw_document persist failed for %s: %s", day, exc)
+            return 0
+
     @staticmethod
     def _norm_activity(act: dict[str, Any]) -> dict[str, Any]:
         """Flatten garth's ``activityType`` dict to the typeKey string."""
@@ -371,11 +399,14 @@ class GarminNativeTraceSource:
 
     def _fetch_context(
         self, g: Any, date_iso: str, *, include_activities: bool = True
-    ) -> dict[str, Any]:
-        """Call the connectapi endpoints and normalize to the shared context shape.
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Call the connectapi endpoints; return ``(context, raw_by_endpoint)``.
 
-        Each endpoint is partial-tolerant: a failure logs + yields an empty
-        section rather than killing the whole pull.
+        ``context`` is the normalized shape the mappers consume; ``raw_by_endpoint``
+        is every non-null response verbatim, keyed by a logical endpoint name, so
+        the raw-passthrough layer preserves what the curated mapping drops
+        (completeness over truncation). Each endpoint is partial-tolerant: a
+        failure logs + yields an empty section rather than killing the pull.
 
         ``include_activities`` is False on the backfill path: activities are not
         a per-day endpoint (the search returns the *recent* N regardless of
@@ -383,44 +414,63 @@ class GarminNativeTraceSource:
         ``_fetch_activities_window`` instead of re-pulling the same recent set
         on every day.
         """
+        raw: dict[str, Any] = {}
 
-        def call(path: str) -> Any:
+        def call(name: str, path: str) -> Any:
             try:
-                return g.connectapi(path)
+                response = g.connectapi(path)
             except Exception as exc:
                 logger.warning("connectapi %s failed: %s", path.split("?", maxsplit=1)[0], exc)
                 return None
+            if response is not None:
+                raw[name] = response  # verbatim — the lossless passthrough record
+            return response
 
-        daily = call(f"/usersummary-service/usersummary/daily?calendarDate={date_iso}") or {}
+        daily = call(
+            "daily_summary", f"/usersummary-service/usersummary/daily?calendarDate={date_iso}"
+        ) or {}
         sleep = (
-            call(f"/sleep-service/sleep/dailySleepData?date={date_iso}&nonSleepBufferMinutes=60")
+            call(
+                "sleep",
+                f"/sleep-service/sleep/dailySleepData?date={date_iso}&nonSleepBufferMinutes=60",
+            )
             or {}
         )
-        hrv = call(f"/hrv-service/hrv/{date_iso}") or {}
+        hrv = call("hrv", f"/hrv-service/hrv/{date_iso}") or {}
         bb = (
             call(
+                "body_battery",
                 "/wellness-service/wellness/bodyBattery/reports/daily?"
-                f"startDate={date_iso}&endDate={date_iso}"
+                f"startDate={date_iso}&endDate={date_iso}",
             )
             or []
         )
-        vo2 = call(f"/metrics-service/metrics/maxmet/latest/{date_iso}") or {}
-        readiness = call(f"/metrics-service/metrics/trainingreadiness/{date_iso}") or []
+        vo2 = call("vo2max", f"/metrics-service/metrics/maxmet/latest/{date_iso}") or {}
+        readiness = (
+            call("training_readiness", f"/metrics-service/metrics/trainingreadiness/{date_iso}")
+            or []
+        )
         acts = (
             (
                 call(
-                    f"/activitylist-service/activities/search/activities?limit={_ACTIVITY_LIMIT}&start=0"
+                    "activities_recent",
+                    f"/activitylist-service/activities/search/activities?limit={_ACTIVITY_LIMIT}&start=0",
                 )
                 or []
             )
             if include_activities
             else []
         )
-        stress = call(f"/wellness-service/wellness/dailyStress/{date_iso}") or {}
-        spo2 = call(f"/wellness-service/wellness/daily/spo2/{date_iso}") or {}
-        respiration = call(f"/wellness-service/wellness/daily/respiration/{date_iso}") or {}
-        weight = call(f"/weight-service/weight/dayview/{date_iso}") or {}
-        hydration = call(f"/usersummary-service/usersummary/hydration/allData/{date_iso}") or {}
+        stress = call("stress", f"/wellness-service/wellness/dailyStress/{date_iso}") or {}
+        spo2 = call("spo2", f"/wellness-service/wellness/daily/spo2/{date_iso}") or {}
+        respiration = (
+            call("respiration", f"/wellness-service/wellness/daily/respiration/{date_iso}") or {}
+        )
+        weight = call("weight", f"/weight-service/weight/dayview/{date_iso}") or {}
+        hydration = (
+            call("hydration", f"/usersummary-service/usersummary/hydration/allData/{date_iso}")
+            or {}
+        )
 
         bb0 = bb[0] if isinstance(bb, list) and bb else {}
         rdy0 = readiness[0] if isinstance(readiness, list) and readiness else {}
@@ -431,7 +481,7 @@ class GarminNativeTraceSource:
         def g_to_kg(grams: Any) -> float | None:
             return grams / 1000.0 if isinstance(grams, (int, float)) else None
 
-        return {
+        context: dict[str, Any] = {
             "today_stats": {**daily, "floorsClimbed": daily.get("floorsAscended")},
             "health": {
                 "heart_rate": {"resting": daily.get("restingHeartRate")},
@@ -459,3 +509,4 @@ class GarminNativeTraceSource:
                 self._norm_activity(a) for a in acts if isinstance(a, dict)
             ],
         }
+        return context, raw

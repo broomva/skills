@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,9 +12,50 @@ import pytest
 from broomva_health.adapters.repositories.sqlite import SQLiteTraceRepository
 from broomva_health.domain.device import Device
 from broomva_health.domain.metrics import MetricCode
+from broomva_health.domain.raw import RawDocument
 from broomva_health.domain.samples import CategorySample, CorrelationSample, QuantitySample
 from broomva_health.domain.source import Source
 from broomva_health.domain.workout import Workout
+
+
+def _raw(day: date, endpoint: str, payload: object) -> RawDocument:
+    return RawDocument(
+        source=Source.GARMIN,
+        calendar_date=day,
+        endpoint=endpoint,
+        fetched_at=datetime(2026, 6, 13, tzinfo=UTC),
+        payload=payload,
+    )
+
+
+def test_raw_document_roundtrip_and_range(repo: SQLiteTraceRepository) -> None:
+    repo.upsert_raw_document(
+        [
+            _raw(date(2026, 6, 1), "daily_summary", {"totalSteps": 8000, "bmrKilocalories": 1600}),
+            _raw(date(2026, 6, 1), "sleep", {"sleepLevels": [[1, 2], [3, 4]]}),
+            _raw(date(2026, 5, 1), "daily_summary", {"totalSteps": 5000}),
+        ]
+    )
+    # Range filter is inclusive + chronological; payload is verbatim (nested ok).
+    june = repo.query_raw_documents(Source.GARMIN, date(2026, 6, 1), date(2026, 6, 30))
+    assert {d.endpoint for d in june} == {"daily_summary", "sleep"}
+    daily = next(d for d in june if d.endpoint == "daily_summary")
+    assert daily.payload["bmrKilocalories"] == 1600  # unmapped field preserved
+    sleep = next(d for d in june if d.endpoint == "sleep")
+    assert sleep.payload["sleepLevels"] == [[1, 2], [3, 4]]  # nested structure intact
+    # endpoint filter
+    only = repo.query_raw_documents(Source.GARMIN, date(2026, 5, 1), date(2026, 6, 30), "sleep")
+    assert [d.endpoint for d in only] == ["sleep"]
+
+
+def test_raw_document_idempotent(repo: SQLiteTraceRepository) -> None:
+    d1 = _raw(date(2026, 6, 1), "daily_summary", {"totalSteps": 8000})
+    d2 = _raw(date(2026, 6, 1), "daily_summary", {"totalSteps": 9999})  # same PK, new payload
+    repo.upsert_raw_document([d1])
+    repo.upsert_raw_document([d2])
+    got = repo.query_raw_documents(Source.GARMIN, date(2026, 6, 1), date(2026, 6, 1))
+    assert len(got) == 1  # PK (source, date, endpoint) → replace, not duplicate
+    assert got[0].payload["totalSteps"] == 9999  # latest wins
 
 
 # --------------------------------------------------------------------------- #

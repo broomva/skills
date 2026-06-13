@@ -122,6 +122,14 @@ class _FakeRepo:
         self.workouts.extend(workouts)
         return len(workouts)
 
+    def upsert_raw_document(self, docs: list[Any]) -> int:
+        return len(docs)
+
+    def query_raw_documents(
+        self, source: Any, start: Any, end: Any, endpoint: Any = None
+    ) -> list[Any]:
+        return []
+
 
 class _FakeRateLimiter:
     def __init__(self) -> None:

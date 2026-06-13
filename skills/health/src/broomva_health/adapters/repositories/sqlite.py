@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -13,6 +13,7 @@ from typing import Any
 import broomva_health.migrations as _migrations_pkg
 from broomva_health.domain.device import Device
 from broomva_health.domain.metrics import MetricCode
+from broomva_health.domain.raw import RawDocument
 from broomva_health.domain.samples import CategorySample, CorrelationSample, QuantitySample
 from broomva_health.domain.source import Source
 from broomva_health.domain.time import ensure_utc, utc_now
@@ -203,6 +204,33 @@ class SQLiteTraceRepository:
             )
         return len(rows)
 
+    def upsert_raw_document(self, docs: list[RawDocument]) -> int:
+        """Insert-or-replace verbatim upstream responses.
+
+        Idempotent on `(source, calendar_date, endpoint)` — re-backfill
+        overwrites the prior raw payload losslessly.
+        """
+        if not docs:
+            return 0
+        rows = [
+            (
+                str(d.source),
+                d.calendar_date.isoformat(),
+                d.endpoint,
+                d.normalized_fetched_at().isoformat(),
+                _dumps(d.payload),
+            )
+            for d in docs
+        ]
+        with self._txn():
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO raw_document "
+                "(source, calendar_date, endpoint, fetched_at, payload_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
     # ------------------------------------------------------------------ #
     # Queries
     # ------------------------------------------------------------------ #
@@ -279,6 +307,45 @@ class SQLiteTraceRepository:
                 (str(source), start_iso, end_iso),
             )
         return [self._deserialize_workout_row(row) for row in cursor.fetchall()]
+
+    def query_raw_documents(
+        self,
+        source: Source | None,
+        start: date,
+        end: date,
+        endpoint: str | None = None,
+    ) -> list[RawDocument]:
+        """Read raw documents in ``[start, end]`` (inclusive), newest-first.
+
+        Completeness over truncation: every match is returned, never a capped
+        subset. ``calendar_date`` is stored as ISO ``YYYY-MM-DD`` so a string
+        range filter is chronological.
+        """
+        clauses = ["calendar_date >= ?", "calendar_date <= ?"]
+        params: list[str] = [start.isoformat(), end.isoformat()]
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(str(source))
+        if endpoint is not None:
+            clauses.append("endpoint = ?")
+            params.append(endpoint)
+        sql = (
+            "SELECT source, calendar_date, endpoint, fetched_at, payload_json "
+            "FROM raw_document WHERE " + " AND ".join(clauses) + " "
+            "ORDER BY calendar_date DESC, endpoint ASC"
+        )
+        out: list[RawDocument] = []
+        for source_v, cal_date, ep, fetched, payload_json in self._conn.execute(sql, params):
+            out.append(
+                RawDocument(
+                    source=Source(source_v),
+                    calendar_date=date.fromisoformat(cal_date),
+                    endpoint=ep,
+                    fetched_at=_parse_ts(fetched),
+                    payload=json.loads(payload_json),
+                )
+            )
+        return out
 
     # ------------------------------------------------------------------ #
     # Internals
