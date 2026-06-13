@@ -55,13 +55,14 @@ health = "broomva_health.cli.app:main"
 
 [project.urls]
 "Source" = "https://github.com/broomva/skills/tree/main/skills/health"
+"Changelog" = "https://github.com/broomva/skills/blob/main/skills/health/CHANGELOG.md"
 "Linear" = "https://linear.app/broomva/issue/BRO-1248"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/broomva_health"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/README.md", "/pyproject.toml"]
+include = ["/src", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE", "/pyproject.toml"]
 
 [tool.ruff]
 line-length = 100
