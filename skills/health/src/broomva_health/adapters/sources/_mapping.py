@@ -14,7 +14,8 @@ cli backend has no HRV) simply produces fewer samples.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from broomva_health.domain.device import Device
@@ -24,7 +25,7 @@ from broomva_health.domain.source import Source
 from broomva_health.domain.time import ensure_utc
 from broomva_health.domain.workout import Workout
 
-__all__ = ["map_context"]
+__all__ = ["map_context", "map_workouts"]
 
 _GARMIN_DEVICE = Device(manufacturer="garmin")
 
@@ -78,24 +79,36 @@ def _parse_local_dt(raw: Any) -> datetime | None:
 
 
 def map_context(
-    ctx: dict[str, Any], *, now: datetime
+    ctx: dict[str, Any], *, now: datetime, day: date | None = None
 ) -> tuple[list[QuantitySample], list[Workout]]:
     """Map an aggregate ``context`` document to domain samples + workouts.
 
-    Daily aggregates span ``[day_start, now]``; body-battery points are
+    Daily aggregates span ``[day_start, end]``; body-battery points are
     point-in-time. Null fields are skipped. Returns ``(quantities, workouts)``.
+
+    ``day`` pins the calendar day explicitly. **Backfill must pass it.** Without
+    it the day is inferred from ``body_battery.date`` (falling back to
+    ``now.date()``); on a historical day with empty body-battery that fallback
+    stamps the sample with *today*, and because quantity upserts key on
+    ``(source, metric, start_ts)`` every such day would collide on today's key
+    and overwrite each other — collapsing the whole backfill to a single row.
     """
     health = ctx.get("health") or {}
     bb = health.get("body_battery") or {}
 
-    # Anchor the calendar day on body_battery.date when present, else `now`.
-    day_raw = bb.get("date")
-    try:
-        day = date.fromisoformat(day_raw) if isinstance(day_raw, str) else now.date()
-    except ValueError:
-        day = now.date()
-    day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
-    end = now if now >= day_start else day_start  # guarantee end >= start
+    # Calendar-day anchoring. Explicit `day` (backfill) wins; else infer from
+    # body_battery.date; else `now`.
+    anchor = day
+    if anchor is None:
+        day_raw = bb.get("date")
+        try:
+            anchor = date.fromisoformat(day_raw) if isinstance(day_raw, str) else now.date()
+        except ValueError:
+            anchor = now.date()
+    day_start = datetime(anchor.year, anchor.month, anchor.day, tzinfo=UTC)
+    # For a past day, clamp end to that day's boundary; for today, clamp to now.
+    day_end = day_start + timedelta(days=1)
+    end = min(now, day_end) if now >= day_start else day_start  # guarantee end >= start
 
     quantities: list[QuantitySample] = []
 
@@ -168,8 +181,20 @@ def map_context(
         )
 
     # --- recent activities -> workouts ------------------------------------
+    workouts = map_workouts(ctx.get("recent_activities") or [])
+
+    return quantities, workouts
+
+
+def map_workouts(activities: Iterable[Any]) -> list[Workout]:
+    """Map Garmin activity-summary dicts to domain ``Workout`` objects.
+
+    Shared by ``map_context`` (sync's ``recent_activities``) and the native
+    backend's windowed activity backfill. Non-dict entries and entries missing
+    an id or parseable start time are skipped (null-tolerant).
+    """
     workouts: list[Workout] = []
-    for act in ctx.get("recent_activities") or []:
+    for act in activities or []:
         if not isinstance(act, dict):
             continue
         activity_id = act.get("activityId")
@@ -190,5 +215,4 @@ def map_context(
                 raw_summary=act,
             )
         )
-
-    return quantities, workouts
+    return workouts

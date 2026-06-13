@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.5.0
+version: 0.6.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -34,7 +34,7 @@ Invoke this skill on any trigger in the frontmatter `trigger_keywords` list. The
 |---|---|---|
 | "Where do I stand?" / health snapshot | [Status](Workflows/Status.md) | `health status` |
 | "Pull my latest" / fresh data | [Sync](Workflows/Sync.md) | `health sync --source garmin` |
-| "Backfill history from <date>" | [Backfill](Workflows/Backfill.md) | `health backfill --source garmin --from <date>` |
+| "Backfill the last N months" / cold start | [Backfill](Workflows/Backfill.md) | `health backfill --source garmin --months 10` |
 | "Today's daily note" | [DailyNote](Workflows/DailyNote.md) | `health daily-note` |
 | "Am I overreached?" / training-load read | [TrainingLoad](Workflows/TrainingLoad.md) | `health context --metric ctl,atl,tsb --days 90` |
 | "Recovery review" / 7-day rollup | [RecoveryReview](Workflows/RecoveryReview.md) | `health context --window 7d --metric hrv_cv,rhr,sleep` |
@@ -81,7 +81,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 |---|---|---|---|
 | **Status** | `health status` | P15 Snapshot reflex; entry to any health convo | `list[SourceStatus]` (token validity, last sync, rate budget) |
 | **Sync** | `health sync --source garmin` | Foreground / cron; pulls since last sample ts | `SyncResult` (samples_ingested, workouts_ingested, duration_s) |
-| **Backfill** | `health backfill --source garmin --from YYYY-MM-DD` | Cold start, after gap | `BackfillResult` |
+| **Backfill** | `health backfill --source garmin --months N` (or `--days N` / `--from YYYY-MM-DD`) | Cold start, after gap | `BackfillResult` |
 | **DailyNote** | `health daily-note [--date YYYY-MM-DD]` | After successful sync | Path to `~/broomva-vault/07-Health/YYYY-MM-DD.md` |
 | **TrainingLoad** | `health context --metric ctl,atl,tsb --days 90` | When asking about freshness/fatigue | CTL, ATL, TSB time series |
 | **RecoveryReview** | `health context --window 7d --metric hrv_cv,rhr,sleep` | Weekly review; after illness | 7-day rollup |
@@ -101,8 +101,13 @@ health auth status [--source garmin]                    # token validity per sou
 health auth logout [--source garmin]                    # delete token bundle
 
 # Sync & backfill
-health sync [--source garmin] [--since ISO_DATETIME]   # incremental pull
-health backfill --source garmin --from YYYY-MM-DD [--to YYYY-MM-DD]
+health sync [--source garmin] [--since ISO_DATETIME]   # incremental pull (today's snapshot)
+health backfill --source garmin --months N             # last N calendar months
+health backfill --source garmin --days N                # last N days
+health backfill --source garmin --from YYYY-MM-DD [--to YYYY-MM-DD]  # explicit range
+#   Activities fetched once for the window; daily wellness day-by-day, ~1s/day
+#   pacing (a 10-month pull ≈ 20 min). Idempotent → safe to re-run / resume.
+#   For a complete multi-year cold start, prefer Garmin's GDPR export tarball.
 
 # Reflexive
 health status                                           # snapshot across all sources
