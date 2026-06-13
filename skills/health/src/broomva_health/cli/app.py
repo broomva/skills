@@ -52,6 +52,9 @@ from broomva_health.cli import (
     sync as sync_cli,
 )
 from broomva_health.cli import (
+    synthesis as synthesis_cli,
+)
+from broomva_health.cli import (
     training as training_cli,
 )
 from broomva_health.cli import (
@@ -181,6 +184,7 @@ app.add_typer(health_metric_cli.app, name="health")
 app.add_typer(training_cli.app, name="training")
 app.add_typer(weight_cli.app, name="weight")
 app.add_typer(context_cli.app, name="context")
+app.add_typer(synthesis_cli.app, name="synthesis")
 app.add_typer(doctor_cli.app, name="doctor")
 
 
