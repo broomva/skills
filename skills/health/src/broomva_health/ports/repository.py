@@ -6,10 +6,11 @@ SQLCipher upgrade is documented in `References/privacy-architecture.md`.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from broomva_health.domain.metrics import MetricCode
+from broomva_health.domain.raw import RawDocument
 from broomva_health.domain.samples import CategorySample, CorrelationSample, QuantitySample
 from broomva_health.domain.source import Source
 from broomva_health.domain.workout import Workout
@@ -39,8 +40,30 @@ class TraceRepository(Protocol):
 
     def upsert_workout(self, workouts: list[Workout]) -> int: ...
 
+    def upsert_raw_document(self, docs: list[RawDocument]) -> int:
+        """Insert-or-replace verbatim upstream responses.
+
+        Idempotent on `(source, calendar_date, endpoint)` — a re-backfill
+        overwrites the prior raw payload losslessly.
+        """
+        ...
+
     # --- query ---
     def last_sample_ts(self, source: Source, metric: MetricCode) -> datetime | None: ...
+
+    def query_raw_documents(
+        self,
+        source: Source | None,
+        start: date,
+        end: date,
+        endpoint: str | None = None,
+    ) -> list[RawDocument]:
+        """Read raw documents in `[start, end]` (inclusive), newest-ordered.
+
+        Completeness over truncation: returns every matching document, never a
+        capped subset. Optionally filtered to a single `endpoint`.
+        """
+        ...
 
     def query_quantity(
         self,

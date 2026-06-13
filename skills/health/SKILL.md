@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.7.0
+version: 0.8.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -83,6 +83,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **Sync** | `health sync --source garmin` | Foreground / cron; pulls since last sample ts | `SyncResult` (samples_ingested, workouts_ingested, duration_s) |
 | **Backfill** | `health backfill --source garmin --months N` (or `--days N` / `--from YYYY-MM-DD`) | Cold start, after gap | `BackfillResult` |
 | **DailyNote** | `health daily-note [--date YYYY-MM-DD]` | After successful sync | Path to `~/broomva-vault/07-Health/YYYY-MM-DD.md` |
+| **Raw** | `health raw [--from D --to D] [--endpoint NAME]` | Agent needs a field the structured layer doesn't map | verbatim JSON per `(date, endpoint)` — lossless, uncapped |
 | **Synthesis** | `health synthesis [--on YYYY-MM-DD]` | Derived metrics over full history | `SynthesisSnapshot` (hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score) |
 | **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB (needs per-activity TSS — 0 until derived) |
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
@@ -122,6 +123,12 @@ health synthesis [--on YYYY-MM-DD]                     # derived metrics travers
 #   → hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score
 #   NB: ctl/atl/tsb need per-activity TSS (absent from Garmin's activity summary) → 0 until derived.
 #   Per-metric `health <sleep|hrv|rhr|...>` and `training <status|vo2max|...>` queries are v1 stubs.
+health raw [--from D] [--to D] [--endpoint NAME] [--source garmin]   # verbatim upstream responses
+#   The LOSSLESS layer: every field the source returned, nothing curated. Garmin's daily summary
+#   is ~94 fields (we type ~5); sleep carries sleepLevels (stages) + hrvData; stress carries the
+#   intraday array. Completeness over truncation — uncapped within range. Captured on every
+#   sync + backfill. endpoints: daily_summary, sleep, hrv, stress, spo2, respiration,
+#   body_battery, vo2max, training_readiness, weight, hydration.
 
 # Output formatters (applies to every subcommand)
 health <cmd> --format {json,jsonl,csv,tsv,human}       # default: json
