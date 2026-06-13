@@ -33,8 +33,10 @@ npx skills add broomva/skills --skill health -g -y
 Installs the skill manifest (SKILL.md + Workflows + References + the
 `install.sh`/`install-skill.sh` scripts) to `~/.agents/skills/health/` and
 symlinks it into 30+ agent skill dirs (Claude Code, Cursor, Gemini CLI, …).
-The Python CLI is NOT installed by this step — run path B afterwards if you
-want the `health` binary.
+This copies the manifest only. The Python CLI installs **on first use**: an
+agent that loads the skill runs `install.sh` automatically (see `SKILL.md` →
+**Setup**), which pulls all dependencies into an isolated venv. To install the
+`health` binary yourself up front, run path B.
 
 ### B — Full CLI (the `health` binary on your PATH)
 

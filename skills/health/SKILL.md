@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.10.0
+version: 0.10.1
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -23,6 +23,29 @@ trigger_keywords:
 The Health skill turns your wearables into a **queryable, local-first knowledge graph** with validated longevity-proxy synthesis on top. It is a substrate, not a coach. The agent reads from it; the user reads the projections; humans interpret. v1 ships the Garmin adapter and the hex architecture that lets Apple Health, Whoop, Oura, and CGM drop in as single-file adapters with zero application-core changes.
 
 This is the *substrate-shaped* answer to the questions "how did I sleep last night?", "am I overreached?", "what's my VO2max arc this year?" — answered against a trace store you own, not a vendor cloud.
+
+---
+
+## Setup (first run — installs all dependencies)
+
+This skill is a Python package with a `health` CLI. **`npx skills add` copies
+this manifest but does NOT install the CLI** — so, before the first `health`
+command, ensure it's installed. This is the single step that pulls **all**
+dependencies:
+
+```bash
+command -v health >/dev/null 2>&1 || bash "<this skill's dir>/install.sh"
+```
+
+`install.sh` (bundled alongside this `SKILL.md`) detects `uv` / `python3 ≥ 3.12`,
+creates an **isolated venv**, installs `broomva-health` **with every dependency**
+(pydantic, typer, rich, garth, …) plus the `[garmin]` extra, and symlinks
+`health` onto your PATH. It is **idempotent** — safe to re-run; upgrades in
+place; never touches global Python.
+
+> **Agent:** if `command -v health` fails, run `bash <skill-dir>/install.sh`
+> (resolve `<skill-dir>` to the directory containing this `SKILL.md`) **before**
+> the first `health` command, then proceed. Re-run it after updating the skill.
 
 ---
 

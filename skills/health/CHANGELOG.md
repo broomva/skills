@@ -10,6 +10,16 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-06-13
+
+### Changed
+
+- **Self-bootstrapping install.** `SKILL.md` now carries a prominent "Setup
+  (first run)" section instructing the agent to run `install.sh` (which installs
+  the `health` CLI **with all dependencies** into an isolated venv, idempotently)
+  if `health` isn't on PATH — closing the gap where `npx skills add` copies the
+  manifest but not the CLI. README install framing softened to match.
+
 ## [0.10.0] — 2026-06-13
 
 ### Added
@@ -130,7 +140,8 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
   daily-note projection, and the synthesis modules (HRV-CV, CTL/ATL/TSB,
   VO2max arc, recovery).
 
-[Unreleased]: https://github.com/broomva/skills/compare/health-v0.10.0...HEAD
+[Unreleased]: https://github.com/broomva/skills/compare/health-v0.10.1...HEAD
+[0.10.1]: https://github.com/broomva/skills/releases/tag/health-v0.10.1
 [0.10.0]: https://github.com/broomva/skills/releases/tag/health-v0.10.0
 [0.9.0]: https://github.com/broomva/skills/releases/tag/health-v0.9.0
 [0.8.0]: https://github.com/broomva/skills/releases/tag/health-v0.8.0
