@@ -37,11 +37,13 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from broomva_health.adapters.sources._mapping import map_context
+from broomva_health.adapters.sources._mapping import map_context, map_workouts
 from broomva_health.config.paths import HealthPaths
 from broomva_health.domain.errors import AuthRequired, SourceUnavailable
 from broomva_health.domain.results import BackfillResult, SourceStatus, SyncResult
@@ -61,6 +63,14 @@ _TOKEN_SUBDIR = "garmin-garth"
 _TOKEN_FILES = ("oauth1_token.json", "oauth2_token.json")
 _DEFAULT_IMPORT_DIR = "~/.config/garmin-connect-cli/tokens"
 _ACTIVITY_LIMIT = 10
+#: Gentle inter-day delay during backfill. Decoupled from the 15-min sync
+#: poll-floor: a backfill is a deliberate bulk pull, so it paces itself politely
+#: (~1s/day → a 10-month range finishes in minutes) instead of being throttled
+#: to one day per 15 minutes. The within-day calls are already network-spaced.
+_BACKFILL_PACING_S = 1.0
+#: Activity-search page size + a safety bound on pages (60 * 100 = 6000 acts).
+_ACTIVITY_PAGE = 100
+_ACTIVITY_MAX_PAGES = 60
 
 
 def _local_today() -> date:
@@ -80,9 +90,12 @@ class GarminNativeTraceSource:
         *,
         paths: HealthPaths,
         garth_module: Any | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._paths = paths
         self._garth_override = garth_module
+        # Injectable so backfill tests don't actually sleep between days.
+        self._sleep = sleep
 
     @property
     def name(self) -> Source:
@@ -125,8 +138,9 @@ class GarminNativeTraceSource:
         # Garmin keys "daily" data by the user's LOCAL calendar date, not UTC.
         # Using utc_now().date() asks for the wrong day for any user behind UTC
         # in the evening (e.g. UTC-5 after 19:00 → tomorrow's empty day).
-        ctx = self._fetch_context(g, _local_today().isoformat())
-        quantities, workouts = map_context(ctx, now=utc_now())
+        today = _local_today()
+        ctx = self._fetch_context(g, today.isoformat())
+        quantities, workouts = map_context(ctx, now=utc_now(), day=today)
         n_q = repo.upsert_quantity(quantities) if quantities else 0
         n_w = repo.upsert_workout(workouts) if workouts else 0
         self._save(g, profile)
@@ -144,31 +158,66 @@ class GarminNativeTraceSource:
         *,
         repo: TraceRepository,
         token_store: TokenStore,  # noqa: ARG002
-        rate_limiter: RateLimiter,
+        rate_limiter: RateLimiter,  # noqa: ARG002 — backfill is self-paced, not poll-floored
         start: date,
         end: date,
         profile: str = "default",
     ) -> BackfillResult:
-        """Historical pull, one calendar day at a time (rate-limited per day)."""
+        """Historical pull over ``[start, end]`` (inclusive).
+
+        Daily wellness is fetched per calendar day, each **explicitly anchored**
+        (``map_context(day=cur)``) so historical days with empty body-battery
+        don't collapse onto today's upsert key. Activities are fetched **once**
+        for the whole window (date-ranged search), not per day. Cadence is a
+        gentle inter-day sleep (``_BACKFILL_PACING_S``), decoupled from the
+        15-min sync poll-floor — a single ``acquire`` at entry still honors any
+        active 429 cooldown. Upserts are idempotent, so an interrupted run is
+        safe to re-run.
+        """
         if end < start:
             raise SourceUnavailable(
                 f"backfill end ({end.isoformat()}) precedes start ({start.isoformat()})"
             )
+        # NB: backfill does NOT acquire the sync poll-floor limiter. That limiter
+        # enforces a 15-min min-interval meant for the *automated* sync cron;
+        # applying it here would (a) block a user-initiated bulk pull for up to
+        # 15 min after any recent sync/backfill, and (b) only ever trip on
+        # min-interval anyway (the native path never sets a 429 cooldown). A
+        # backfill is deliberate, idempotent, and self-paced (_BACKFILL_PACING_S
+        # per day); transient upstream 429s are caught per-day below.
         g = self._resume(profile)
-        n_q = n_w = 0
+        now = utc_now()
         errors: list[str] = []
+
+        # --- activities: one windowed pull for the entire range --------------
+        n_w = 0
+        try:
+            workouts = map_workouts(self._fetch_activities_window(g, start, end))
+            n_w = repo.upsert_workout(workouts) if workouts else 0
+        except Exception as exc:
+            logger.warning("native backfill activities window failed: %s", exc)
+            errors.append(f"activities[{start.isoformat()}..{end.isoformat()}]: "
+                          f"{type(exc).__name__}: {exc}")
+
+        # --- daily wellness: per calendar day, explicitly anchored -----------
+        n_q = 0
+        total_days = (end - start).days + 1
+        done = 0
         cur = start
         while cur <= end:
-            rate_limiter.acquire(_RATE_LIMIT_KEY)
             try:
-                ctx = self._fetch_context(g, cur.isoformat())
-                q, w = map_context(ctx, now=utc_now())
+                ctx = self._fetch_context(g, cur.isoformat(), include_activities=False)
+                q, _ = map_context(ctx, now=now, day=cur)
                 n_q += repo.upsert_quantity(q) if q else 0
-                n_w += repo.upsert_workout(w) if w else 0
             except Exception as exc:  # one bad day shouldn't kill the run
                 logger.warning("native backfill failed for %s: %s", cur, exc)
                 errors.append(f"{cur.isoformat()}: {type(exc).__name__}: {exc}")
+            done += 1
+            if done % 30 == 0 or cur == end:
+                logger.info("backfill progress: %d/%d days (through %s)", done, total_days, cur)
             cur += timedelta(days=1)
+            if cur <= end:
+                self._sleep(_BACKFILL_PACING_S)
         self._save(g, profile)
         return BackfillResult(
             source=Source.GARMIN,
@@ -292,11 +341,47 @@ class GarminNativeTraceSource:
         type_key = at.get("typeKey") if isinstance(at, dict) else at
         return {**act, "activityType": type_key}
 
-    def _fetch_context(self, g: Any, date_iso: str) -> dict[str, Any]:
+    def _fetch_activities_window(self, g: Any, start: date, end: date) -> list[dict[str, Any]]:
+        """Page Garmin's date-ranged activity search across ``[start, end]``.
+
+        Activities are not a per-day endpoint — the search returns the recent N
+        regardless of date — so backfill fetches them once for the whole window,
+        paginating on ``start`` until a short/empty page (or the safety bound).
+        ``startDate``/``endDate`` filtering is verified live against connectapi.
+        """
+        out: list[dict[str, Any]] = []
+        for i in range(_ACTIVITY_MAX_PAGES):
+            path = (
+                "/activitylist-service/activities/search/activities?"
+                f"limit={_ACTIVITY_PAGE}&start={i * _ACTIVITY_PAGE}"
+                f"&startDate={start.isoformat()}&endDate={end.isoformat()}"
+            )
+            try:
+                batch = g.connectapi(path)
+            except Exception as exc:
+                logger.warning("activity window page %d failed: %s", i, exc)
+                break
+            if not isinstance(batch, list) or not batch:
+                break
+            out.extend(self._norm_activity(a) for a in batch if isinstance(a, dict))
+            if len(batch) < _ACTIVITY_PAGE:
+                break
+            self._sleep(_BACKFILL_PACING_S)  # gentle between pages too
+        return out
+
+    def _fetch_context(
+        self, g: Any, date_iso: str, *, include_activities: bool = True
+    ) -> dict[str, Any]:
         """Call the connectapi endpoints and normalize to the shared context shape.
 
         Each endpoint is partial-tolerant: a failure logs + yields an empty
         section rather than killing the whole pull.
+
+        ``include_activities`` is False on the backfill path: activities are not
+        a per-day endpoint (the search returns the *recent* N regardless of
+        date), so backfill fetches them once for the whole window via
+        ``_fetch_activities_window`` instead of re-pulling the same recent set
+        on every day.
         """
 
         def call(path: str) -> Any:
@@ -322,8 +407,14 @@ class GarminNativeTraceSource:
         vo2 = call(f"/metrics-service/metrics/maxmet/latest/{date_iso}") or {}
         readiness = call(f"/metrics-service/metrics/trainingreadiness/{date_iso}") or []
         acts = (
-            call(f"/activitylist-service/activities/search/activities?limit={_ACTIVITY_LIMIT}&start=0")
-            or []
+            (
+                call(
+                    f"/activitylist-service/activities/search/activities?limit={_ACTIVITY_LIMIT}&start=0"
+                )
+                or []
+            )
+            if include_activities
+            else []
         )
         stress = call(f"/wellness-service/wellness/dailyStress/{date_iso}") or {}
         spo2 = call(f"/wellness-service/wellness/daily/spo2/{date_iso}") or {}

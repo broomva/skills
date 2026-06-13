@@ -320,22 +320,128 @@ def test_delegated_auth_flag(paths: HealthPaths) -> None:
 # --------------------------------------------------------------------------- #
 
 
+class _RecordingSleep:
+    """A no-op sleeper that records its durations (so tests never block)."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+def _backfill_src(paths: HealthPaths, garth: _FakeGarth) -> GarminNativeTraceSource:
+    """A native source whose backfill never actually sleeps."""
+    return GarminNativeTraceSource(paths=paths, garth_module=garth, sleep=_RecordingSleep())
+
+
 def test_backfill_iterates_days(paths: HealthPaths) -> None:
     _seed_token(paths)
     garth = _FakeGarth()
-    src = GarminNativeTraceSource(paths=paths, garth_module=garth)
+    src = _backfill_src(paths, garth)
     repo = _FakeRepo()
-    limiter = _FakeRateLimiter()
     result = src.backfill(
         repo=repo,
         token_store=object(),
-        rate_limiter=limiter,
+        rate_limiter=_FakeRateLimiter(),
         start=date(2026, 6, 10),
         end=date(2026, 6, 12),
     )
     assert result.samples_ingested > 0
-    # 3 days → at least 3 rate-limit acquires (one per day)
-    assert len(limiter.acquired) >= 3
+    # daily wellness endpoint hit once per day (3 days)
+    daily_calls = [c for c in garth.api_calls if "usersummary/daily" in c]
+    assert len(daily_calls) == 3
+
+
+def test_backfill_anchors_each_day_explicitly(paths: HealthPaths) -> None:
+    """Regression (catastrophic collapse): each historical day must anchor on
+    ITS OWN date, not on body_battery.date / today.
+
+    The fake returns a fixed body_battery.date (2026-06-12) for every call. With
+    the old (inferred-day) mapping, all 3 days would anchor to 2026-06-12 and —
+    because quantity upserts key on (source, metric, start_ts) — collapse onto a
+    single row. With explicit per-day anchoring they stay distinct.
+    """
+    _seed_token(paths)
+    src = _backfill_src(paths, _FakeGarth())
+    repo = _FakeRepo()
+    src.backfill(
+        repo=repo,
+        token_store=object(),
+        rate_limiter=_FakeRateLimiter(),
+        start=date(2026, 6, 10),
+        end=date(2026, 6, 12),
+    )
+    step_days = {s.start_ts.date() for s in repo.quantities if s.metric is MetricCode.STEPS}
+    assert step_days == {date(2026, 6, 10), date(2026, 6, 11), date(2026, 6, 12)}
+    # And end_ts is clamped to that day's boundary, not "now" (fix #3): the
+    # 2026-06-10 aggregate must end at 2026-06-11T00:00, not months later.
+    s0 = next(
+        s
+        for s in repo.quantities
+        if s.metric is MetricCode.STEPS and s.start_ts.date() == date(2026, 6, 10)
+    )
+    assert s0.end_ts == datetime(2026, 6, 11, tzinfo=UTC)
+
+
+def test_backfill_does_not_touch_poll_floor(paths: HealthPaths) -> None:
+    """Regression (day-1 death + 15-min-floor block): backfill must NOT acquire
+    the sync poll-floor limiter at all — it is deliberate and self-paced.
+
+    The old code acquired per day (died on day 2 under the 15-min floor); the
+    interim fix acquired once at entry (still blocked a bulk pull for 15 min
+    after any recent sync). Backfill now bypasses the poll-floor entirely.
+    """
+    _seed_token(paths)
+    src = _backfill_src(paths, _FakeGarth())
+    limiter = _FakeRateLimiter()
+    src.backfill(
+        repo=_FakeRepo(),
+        token_store=object(),
+        rate_limiter=limiter,
+        start=date(2026, 6, 1),
+        end=date(2026, 6, 12),  # 12 days — would die on day 2 under the old code
+    )
+    assert limiter.acquired == []
+
+
+def test_backfill_paces_between_days(paths: HealthPaths) -> None:
+    """Gentle inter-day pacing: N days → N-1 inter-day sleeps (≥)."""
+    _seed_token(paths)
+    sleeper = _RecordingSleep()
+    src = GarminNativeTraceSource(paths=paths, garth_module=_FakeGarth(), sleep=sleeper)
+    src.backfill(
+        repo=_FakeRepo(),
+        token_store=object(),
+        rate_limiter=_FakeRateLimiter(),
+        start=date(2026, 6, 10),
+        end=date(2026, 6, 12),
+    )
+    # 3 days → at least 2 inter-day sleeps (window pagination may add more).
+    assert len(sleeper.calls) >= 2
+    assert all(s > 0 for s in sleeper.calls)
+
+
+def test_backfill_fetches_activities_once_not_per_day(paths: HealthPaths) -> None:
+    """Regression (activities don't backfill): the activity search is a windowed
+    one-shot, not a per-day re-pull of the recent set."""
+    _seed_token(paths)
+    garth = _FakeGarth()
+    src = _backfill_src(paths, garth)
+    repo = _FakeRepo()
+    result = src.backfill(
+        repo=repo,
+        token_store=object(),
+        rate_limiter=_FakeRateLimiter(),
+        start=date(2026, 6, 10),
+        end=date(2026, 6, 12),  # 3 days
+    )
+    activity_calls = [c for c in garth.api_calls if "activitylist-service" in c]
+    assert len(activity_calls) == 1, "activities fetched once for the window, not per day"
+    # The windowed search must carry the date-range filter.
+    assert "startDate=2026-06-10" in activity_calls[0]
+    assert "endDate=2026-06-12" in activity_calls[0]
+    assert result.workouts_ingested == 1  # the one synthetic activity in range
 
 
 def test_backfill_inverted_range_raises(paths: HealthPaths) -> None:

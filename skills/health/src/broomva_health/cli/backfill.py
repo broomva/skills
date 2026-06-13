@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+import calendar
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import typer
@@ -45,18 +46,53 @@ def _parse_date(raw: str, *, flag: str) -> date:
         ) from exc
 
 
+def _months_ago(anchor: date, n: int) -> date:
+    """Calendar-month subtraction, clamped to the target month's last day."""
+    m = anchor.month - 1 - n
+    year = anchor.year + m // 12
+    month = m % 12 + 1
+    last = calendar.monthrange(year, month)[1]
+    return date(year, month, min(anchor.day, last))
+
+
+def _resolve_start(
+    *, from_date: str | None, months: int | None, days: int | None, end: date
+) -> date:
+    """Pick the backfill start from exactly one of --from / --months / --days."""
+    given = [x is not None for x in (from_date, months, days)]
+    if sum(given) > 1:
+        raise typer.BadParameter("pass only one of --from, --months, --days")
+    if from_date is not None:
+        return _parse_date(from_date, flag="--from")
+    if months is not None:
+        if months <= 0:
+            raise typer.BadParameter(f"--months must be positive; got {months}")
+        return _months_ago(end, months)
+    if days is not None:
+        if days <= 0:
+            raise typer.BadParameter(f"--days must be positive; got {days}")
+        return end - timedelta(days=days)
+    raise typer.BadParameter("provide a start: one of --from, --months, or --days")
+
+
 @app.callback()
 def backfill_root(
     ctx: typer.Context,
-    from_date: str = typer.Option(
-        ...,
+    from_date: str | None = typer.Option(
+        None,
         "--from",
-        help="Inclusive start date for the backfill range (ISO YYYY-MM-DD).",
+        help="Inclusive start date (ISO YYYY-MM-DD). Or use --months / --days.",
+    ),
+    months: int | None = typer.Option(
+        None, "--months", help="Backfill the last N calendar months (from today)."
+    ),
+    days: int | None = typer.Option(
+        None, "--days", help="Backfill the last N days (from today)."
     ),
     to_date: str | None = typer.Option(
         None,
         "--to",
-        help="Inclusive end date for the backfill range (default: today, UTC).",
+        help="Inclusive end date for the backfill range (default: today, local).",
     ),
     source: Source | None = typer.Option(
         None, "--source", "-s", help="Source to backfill (default: all registered)."
@@ -65,10 +101,12 @@ def backfill_root(
 ) -> None:
     """Run a historical backfill against one or more registered sources.
 
-    The Garmin adapter walks the range day-by-day and acquires the rate
-    limiter per day, so a 30-day backfill at the default 15-min interval
-    takes ~7.5 hours wall-clock. For large ranges (>14 days) prefer the
-    GDPR ``Export Your Data`` tarball — see ``References/garmin-api-landscape-2026.md``.
+    Specify the start with exactly one of ``--from`` / ``--months`` / ``--days``
+    (e.g. ``--months 10``). The Garmin native adapter fetches activities once
+    for the whole window and walks daily wellness day-by-day with a gentle
+    ~1s/day pace, so a 10-month range completes in minutes. For a *complete*
+    multi-year cold-start, prefer the GDPR ``Export Your Data`` tarball — see
+    ``References/garmin-api-landscape-2026.md``.
     """
 
     if ctx.invoked_subcommand is not None:
@@ -76,10 +114,10 @@ def backfill_root(
 
     container = _container_from_ctx(ctx)
 
-    start = _parse_date(from_date, flag="--from")
     end = _parse_date(to_date, flag="--to") if to_date else datetime.now().date()
+    start = _resolve_start(from_date=from_date, months=months, days=days, end=end)
     if end < start:
-        raise typer.BadParameter(f"--to ({end}) precedes --from ({start})")
+        raise typer.BadParameter(f"--to ({end}) precedes start ({start})")
 
     targets: list[Source]
     if source is not None:
