@@ -88,6 +88,45 @@ def login(
     )
 
 
+@app.command("import")
+def import_token(
+    ctx: typer.Context,
+    from_dir: str | None = typer.Option(
+        None,
+        "--from",
+        help="Directory holding oauth1_token.json + oauth2_token.json "
+        "(default: ~/.config/garmin-connect-cli/tokens).",
+    ),
+    profile: str = typer.Option("default", "--profile", "-p"),
+    source: Source = typer.Option(Source.GARMIN, "--source", "-s"),
+) -> None:
+    """Import an existing token into the in-house (native) backend.
+
+    The native Garmin backend rides an existing garth token instead of doing a
+    Cloudflare-walled fresh login. This copies that token (e.g. the one
+    ``garmin-connect auth login`` already minted) into our store. No password,
+    no fresh login — your credentials never pass through this skill.
+    """
+
+    container = _container_from_ctx(ctx)
+    src = container.sources.get(source)
+    importer = getattr(src, "import_tokens", None)
+    if not callable(importer):
+        typer.secho(
+            f"The '{source.value}' backend does not support token import "
+            "(only the native backend does). Set `[garmin] backend = \"native\"`.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    n = importer(from_dir=from_dir, profile=profile)
+    typer.secho(
+        f"Imported {n} token file(s) for {source.value} (profile={profile}). "
+        "Run `health sync` to pull your data.",
+        fg=typer.colors.GREEN,
+    )
+
+
 @app.command("logout")
 def logout(
     ctx: typer.Context,

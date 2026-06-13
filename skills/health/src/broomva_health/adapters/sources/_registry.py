@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 
 from broomva_health.adapters.sources.garmin import GarminTraceSource
 from broomva_health.adapters.sources.garmin_cli import GarminCliTraceSource
+from broomva_health.adapters.sources.garmin_native import GarminNativeTraceSource
 from broomva_health.config.paths import HealthPaths
 from broomva_health.domain.errors import ConfigError
 from broomva_health.domain.source import Source
@@ -39,15 +40,26 @@ SOURCE_REGISTRY: Final[Mapping[Source, type]] = {
     Source.GARMIN: GarminTraceSource,
 }
 
-_DEFAULT_GARMIN_BACKEND = "cli"
+_DEFAULT_GARMIN_BACKEND = "native"
 
 
 def _garmin_source(settings: HealthSettings | None, paths: HealthPaths) -> TraceSource:
-    """Construct the Garmin adapter for the configured backend (default ``cli``)."""
+    """Construct the Garmin adapter for the configured backend (default ``native``).
+
+    - ``native``  (default) — in-house: garth rides an existing token, we own
+      the connectapi calls + aggregation + mapping. Bootstrap via
+      ``health auth import``. No external binary, no fresh-login wall.
+    - ``cli``     — delegate to eddmann's ``garmin-connect`` binary.
+    - ``library`` — direct ``garminconnect`` import (diauth; fresh login may be
+      Cloudflare-walled).
+    - ``browser`` — (planned) Interceptor real-Chrome capture.
+    """
     garmin_cfg = dict(getattr(settings, "garmin", {}) or {}) if settings else {}
     backend = str(garmin_cfg.get("backend", _DEFAULT_GARMIN_BACKEND)).lower()
     cli_path = str(garmin_cfg.get("cli_path", "garmin-connect"))
 
+    if backend == "native":
+        return GarminNativeTraceSource(paths=paths)
     if backend == "cli":
         return GarminCliTraceSource(paths=paths, cli_path=cli_path)
     if backend == "library":
@@ -55,11 +67,11 @@ def _garmin_source(settings: HealthSettings | None, paths: HealthPaths) -> Trace
     if backend == "browser":
         raise ConfigError(
             "garmin backend 'browser' (Interceptor) is planned but not yet wired; "
-            "use 'cli' (default) or 'library'.",
+            "use 'native' (default), 'cli', or 'library'.",
             backend=backend,
         )
     raise ConfigError(
-        f"unknown garmin backend {backend!r}; expected one of: cli, library, browser",
+        f"unknown garmin backend {backend!r}; expected one of: native, cli, library, browser",
         backend=backend,
     )
 

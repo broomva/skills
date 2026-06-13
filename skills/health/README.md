@@ -85,22 +85,22 @@ Optional extras: `[garmin]` (Garmin source adapter), `[encrypted]`
 
 ## Quick start
 
-The default Garmin backend (`cli`) delegates auth + data to eddmann's
-[`garmin-connect`](https://github.com/eddmann/garmin-connect-cli) CLI — it owns
-the token lifecycle and rides it past Garmin's Cloudflare login wall. **The skill
-never handles your Garmin password on this backend.** One-time setup:
+The default Garmin backend (`native`) is **in-house** — it calls Garmin's
+`connectapi` through `garth`, riding an existing token. **The skill never
+handles your Garmin password.** Mint a token once (interactive, straight to
+Garmin), then bring it in-house:
 
 ```bash
-uv tool install garmin-connect-cli   # get the garmin-connect binary
-garmin-connect auth login            # interactive — credentials go straight to Garmin
+uv tool install garmin-connect-cli && garmin-connect auth login   # one-time: mint a token
+health auth import                                                # copy it into our store
 ```
 
 Then:
 
 ```bash
-health auth login                  # delegated backend: verifies garmin-connect is authed (no password prompt)
 health doctor                      # verifies install + paths
-health sync                        # incremental pull (today's snapshot via `context`)
+health sync                        # in-house garth pull → trace DB (steps, sleep, HRV, VO2max, …)
+health status                      # token validity + last sync
 health status                      # reflexive snapshot
 health --format json context       # LLM-optimized aggregated dump
 ```

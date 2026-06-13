@@ -205,6 +205,10 @@ def stub_adapters(
         map_context=lambda *a, **k: ([], []),
     )
     _install(
+        "broomva_health.adapters.sources.garmin_native",
+        GarminNativeTraceSource=_StubGarmin,
+    )
+    _install(
         "broomva_health.adapters.repositories.sqlite",
         SQLiteTraceRepository=_StubSQLiteRepository,
     )
@@ -238,6 +242,7 @@ def stub_adapters(
         "broomva_health.adapters.projections.obsidian",
         "broomva_health.adapters.sources.garmin",
         "broomva_health.adapters.sources.garmin_cli",
+        "broomva_health.adapters.sources.garmin_native",
         "broomva_health.adapters.sources._registry",
         "broomva_health.adapters.repositories.sqlite",
     ):
