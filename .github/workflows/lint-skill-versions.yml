@@ -1,0 +1,43 @@
+name: lint-skill-versions
+
+# Enforces per-skill SemVer consistency across the monorepo. A skill is
+# "versioned" iff its SKILL.md frontmatter declares a `version`; for those,
+# the version must be valid SemVer, agree across pyproject.toml / package.json,
+# and have a matching CHANGELOG section. Unversioned (pre-release) skills are
+# exempt. See scripts/lint_skill_versions.py + CONTRIBUTING.md.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/**/SKILL.md'
+      - 'skills/**/pyproject.toml'
+      - 'skills/**/package.json'
+      - 'skills/**/CHANGELOG.md'
+      - 'scripts/lint_skill_versions.py'
+      - '.github/workflows/lint-skill-versions.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**/SKILL.md'
+      - 'skills/**/pyproject.toml'
+      - 'skills/**/package.json'
+      - 'skills/**/CHANGELOG.md'
+      - 'scripts/lint_skill_versions.py'
+  workflow_dispatch:
+
+jobs:
+  lint-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Lint skill versions
+        run: python3 scripts/lint_skill_versions.py

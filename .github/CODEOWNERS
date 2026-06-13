@@ -1,0 +1,10 @@
+# Code owners for broomva/skills. Requested for review automatically on PRs.
+# Per-skill ownership can be added as maintainers join.
+
+*                       @broomva
+
+# Release + OSS infrastructure
+/.github/                @broomva
+/scripts/                @broomva
+/CONTRIBUTING.md         @broomva
+/SECURITY.md             @broomva

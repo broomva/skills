@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an enhancement to a skill (or a new skill)
+labels: ["enhancement"]
+body:
+  - type: input
+    id: skill
+    attributes:
+      label: Skill (or new)
+      placeholder: 'skills/<name> — or: new skill idea'
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that the skill doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

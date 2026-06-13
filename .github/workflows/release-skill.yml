@@ -1,0 +1,127 @@
+name: release-skill
+
+# Per-skill release automation for the monorepo. Push an annotated tag
+# `<skill>-vX.Y.Z` (see scripts/release-skill.sh) and this workflow:
+#   1. parses the skill name + version from the tag,
+#   2. verifies the skill exists and its SKILL.md version matches the tag,
+#   3. extracts the matching CHANGELOG section as release notes,
+#   4. builds + attaches sdist/wheel if the skill is a Python package,
+#   5. publishes a GitHub Release.
+#
+# Skill names may contain hyphens; the tag is split on the LAST `-v`.
+
+on:
+  push:
+    tags:
+      - '*-v[0-9]+.[0-9]+.[0-9]+'
+      - '*-v[0-9]+.[0-9]+.[0-9]+-*'   # pre-release (e.g. -pre, -rc.1)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)release, e.g. health-v0.9.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag / skill / version
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          # Split on the LAST '-v' → skill before, version after.
+          SKILL="${TAG%-v*}"
+          VERSION="${TAG##*-v}"
+          if [ -z "$SKILL" ] || [ -z "$VERSION" ] || [ "$SKILL" = "$TAG" ]; then
+            echo "::error::tag '$TAG' is not '<skill>-vX.Y.Z'"; exit 1
+          fi
+          if [ ! -f "skills/$SKILL/SKILL.md" ]; then
+            echo "::error::no skill at skills/$SKILL"; exit 1
+          fi
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "skill=$SKILL"     >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing skill='$SKILL' version='$VERSION' from tag '$TAG'"
+
+      - name: Verify SKILL.md version matches the tag
+        run: |
+          set -euo pipefail
+          pip install pyyaml >/dev/null
+          python3 - "${{ steps.meta.outputs.skill }}" "${{ steps.meta.outputs.version }}" <<'PY'
+          import sys, yaml
+          from pathlib import Path
+          skill, version = sys.argv[1], sys.argv[2]
+          text = Path(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+          fm = yaml.safe_load(text[3:text.find("\n---", 3)]) or {}
+          declared = fm.get("version") or (fm.get("metadata") or {}).get("version")
+          if declared is None:
+              sys.exit(f"::error::skills/{skill}/SKILL.md declares no version; cannot release {version}")
+          if str(declared) != version:
+              sys.exit(f"::error::tag version {version} != SKILL.md version {declared}")
+          print(f"OK: SKILL.md version {declared} matches tag")
+          PY
+
+      - name: Extract CHANGELOG section
+        id: notes
+        run: |
+          set -euo pipefail
+          SKILL="${{ steps.meta.outputs.skill }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          CL="skills/$SKILL/CHANGELOG.md"
+          NOTES_FILE="$(mktemp)"
+          if [ -f "$CL" ]; then
+            # Literal match (index/==1), NOT regex — a version's dots must not be
+            # treated as "any char" (awk ~ is regex; 0.9.0 would match 0X9X0).
+            awk -v v="$VERSION" '
+              index($0, "## [" v "]") == 1 {f=1; next}
+              f && /^## \[/ {exit}
+              f {print}
+            ' "$CL" > "$NOTES_FILE"
+          fi
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "Release $SKILL v$VERSION. See CHANGELOG.md." > "$NOTES_FILE"
+          fi
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Build Python package (if any)
+        id: build
+        run: |
+          set -euo pipefail
+          SKILL="${{ steps.meta.outputs.skill }}"
+          if [ -f "skills/$SKILL/pyproject.toml" ]; then
+            pip install build >/dev/null
+            python3 -m build "skills/$SKILL" --outdir "dist-$SKILL"
+            echo "has_dist=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_dist=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SKILL="${{ steps.meta.outputs.skill }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          TAG="${{ steps.meta.outputs.tag }}"
+          PRERELEASE=()
+          case "$VERSION" in *-*) PRERELEASE=(--prerelease);; esac
+          ASSETS=()
+          if [ "${{ steps.build.outputs.has_dist }}" = "true" ]; then
+            while IFS= read -r f; do ASSETS+=("$f"); done < <(find "dist-$SKILL" -type f)
+          fi
+          gh release create "$TAG" \
+            --title "$SKILL v$VERSION" \
+            --notes-file "${{ steps.notes.outputs.notes_file }}" \
+            "${PRERELEASE[@]}" "${ASSETS[@]}" || \
+          gh release edit "$TAG" \
+            --title "$SKILL v$VERSION" \
+            --notes-file "${{ steps.notes.outputs.notes_file }}"

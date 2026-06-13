@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a problem with a skill
+labels: ["bug"]
+body:
+  - type: input
+    id: skill
+    attributes:
+      label: Skill
+      description: Which skill? (e.g. health, deep-dive-research-orchestrator)
+      placeholder: skills/<name>
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Skill version
+      description: From the skill's SKILL.md / CHANGELOG, if versioned.
+      placeholder: e.g. 0.9.0
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. npx skills add broomva/skills --skill <name>
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Agent/runtime, OS, and (for Python skills) Python version.
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confirmation
+      options:
+        - label: This report contains no secrets, credentials, or personal data.
+          required: true

@@ -65,6 +65,44 @@ npx skills add broomva/skills --skill <name>
 
 If multiple Tier-2 skills share utility code, place it under `_shared/<category>/` (e.g. `_shared/strategy/`, `_shared/tribe-v2/`). Reference from individual skill SKILL.md bodies.
 
+## Versioning & Releasing
+
+Skills are versioned **independently** with [SemVer](https://semver.org/): MAJOR
+for breaking CLI/schema changes, MINOR for new commands/metrics, PATCH for fixes.
+Pre-1.0 skills may carry breaking changes in MINOR bumps.
+
+**A skill is "versioned" iff its `SKILL.md` frontmatter declares a `version`.**
+Versioned skills are enforced by CI — `scripts/lint_skill_versions.py` (the
+`lint-skill-versions` workflow) requires:
+
+- the version is valid SemVer;
+- it agrees across `SKILL.md`, `pyproject.toml`, and `package.json` (whichever exist);
+- a `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/)) carries a
+  matching `## [version]` section.
+
+Unversioned (prototype / pre-release) skills are **exempt** — don't declare a
+version until the skill is ready to be released.
+
+Packaged skills that are publishable (a `pyproject.toml`, or a `package.json`
+without `"private": true`) should also ship a `LICENSE`. `SKILL.md`-only skills
+rely on the repository-root [`LICENSE`](LICENSE).
+
+### Cutting a release
+
+1. Bump the version everywhere it appears (`SKILL.md`; plus `pyproject.toml` /
+   `package.json` / `__init__.py` if present) and add a dated `CHANGELOG.md` section.
+2. Open a PR; merge once CI is green. Merging to `main` is what `npx skills add`
+   publishes — skills.sh serves the default branch.
+3. Tag + publish the GitHub release:
+
+   ```bash
+   scripts/release-skill.sh <skill> <version>   # e.g. health 0.9.1
+   ```
+
+   It validates consistency + the CHANGELOG, then pushes the annotated tag
+   `<skill>-vX.Y.Z`, which triggers the `release-skill` workflow to build
+   (Python skills) and publish the GitHub release from the CHANGELOG section.
+
 ## Catalog update flow
 
 > Use this for adding an inventory entry that points at an externally-hosted skill (e.g. `broomva/p9`, `broomva/role-x`, third-party skill repos).
