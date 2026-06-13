@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.8.0
+version: 0.9.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -84,6 +84,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **Backfill** | `health backfill --source garmin --months N` (or `--days N` / `--from YYYY-MM-DD`) | Cold start, after gap | `BackfillResult` |
 | **DailyNote** | `health daily-note [--date YYYY-MM-DD]` | After successful sync | Path to `~/broomva-vault/07-Health/YYYY-MM-DD.md` |
 | **Raw** | `health raw [--from D --to D] [--endpoint NAME]` | Agent needs a field the structured layer doesn't map | verbatim JSON per `(date, endpoint)` — lossless, uncapped |
+| **Series** | `health series --metric M [--from D --to D] [--bucket B --agg A]` | Trend over time / processed view of one metric | structured time-series, raw or bucket-aggregated |
 | **Synthesis** | `health synthesis [--on YYYY-MM-DD]` | Derived metrics over full history | `SynthesisSnapshot` (hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score) |
 | **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB (needs per-activity TSS — 0 until derived) |
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
@@ -119,6 +120,10 @@ health doctor                                           # verify install + paths
 health daily-note [--date YYYY-MM-DD]                  # emit Obsidian daily-note frontmatter
 health context [--focus s1,s2,...] [--window-days N] [--activities N] [--no-health] [--no-weight]
 #   sections: profile, stats, health, training, weight, activities, synthesis (latest-in-window snapshot)
+health series --metric M [--from D] [--to D] [--bucket day|week|month|quarter|year] [--agg mean|sum|min|max|first|last|count]
+#   STRUCTURED time-series for any metric (the layer between context's snapshot and raw's JSON).
+#   No --bucket → every sample, uncapped. With --bucket → query-time aggregation (processed/enriched),
+#   e.g. `series --metric steps --bucket month --agg sum`, `series --metric resting_heart_rate --bucket week`.
 health synthesis [--on YYYY-MM-DD]                     # derived metrics traversing full history
 #   → hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score
 #   NB: ctl/atl/tsb need per-activity TSS (absent from Garmin's activity summary) → 0 until derived.
