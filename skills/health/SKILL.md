@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.6.0
+version: 0.7.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -36,9 +36,9 @@ Invoke this skill on any trigger in the frontmatter `trigger_keywords` list. The
 | "Pull my latest" / fresh data | [Sync](Workflows/Sync.md) | `health sync --source garmin` |
 | "Backfill the last N months" / cold start | [Backfill](Workflows/Backfill.md) | `health backfill --source garmin --months 10` |
 | "Today's daily note" | [DailyNote](Workflows/DailyNote.md) | `health daily-note` |
-| "Am I overreached?" / training-load read | [TrainingLoad](Workflows/TrainingLoad.md) | `health context --metric ctl,atl,tsb --days 90` |
-| "Recovery review" / 7-day rollup | [RecoveryReview](Workflows/RecoveryReview.md) | `health context --window 7d --metric hrv_cv,rhr,sleep` |
-| "VO2max arc" / longevity check | [VO2maxArc](Workflows/VO2maxArc.md) | `health context --metric vo2_max --bucket quarter` |
+| "Am I overreached?" / training-load read | [TrainingLoad](Workflows/TrainingLoad.md) | `health synthesis` (CTL/ATL/TSB field) |
+| "Recovery review" / 7-day rollup | [RecoveryReview](Workflows/RecoveryReview.md) | `health synthesis` (hrv_cv_30d + recovery_score) |
+| "VO2max arc" / longevity check | [VO2maxArc](Workflows/VO2maxArc.md) | `health synthesis` (vo2max_arc field) |
 | "Coach me / what should I do" | [Coaching](Workflows/Coaching.md) | **NOT IMPLEMENTED in v1** |
 
 Default discipline: any health-domain conversation opens with `health status` (a P15 Snapshot reflex). The agent **never** answers a health question from training-data priors when the live trace store could answer it.
@@ -83,9 +83,10 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **Sync** | `health sync --source garmin` | Foreground / cron; pulls since last sample ts | `SyncResult` (samples_ingested, workouts_ingested, duration_s) |
 | **Backfill** | `health backfill --source garmin --months N` (or `--days N` / `--from YYYY-MM-DD`) | Cold start, after gap | `BackfillResult` |
 | **DailyNote** | `health daily-note [--date YYYY-MM-DD]` | After successful sync | Path to `~/broomva-vault/07-Health/YYYY-MM-DD.md` |
-| **TrainingLoad** | `health context --metric ctl,atl,tsb --days 90` | When asking about freshness/fatigue | CTL, ATL, TSB time series |
-| **RecoveryReview** | `health context --window 7d --metric hrv_cv,rhr,sleep` | Weekly review; after illness | 7-day rollup |
-| **VO2maxArc** | `health context --metric vo2_max --bucket quarter` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
+| **Synthesis** | `health synthesis [--on YYYY-MM-DD]` | Derived metrics over full history | `SynthesisSnapshot` (hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score) |
+| **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB (needs per-activity TSS — 0 until derived) |
+| **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
+| **VO2maxArc** | `health synthesis` → `vo2max_arc` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
 | **Coaching** | *(not implemented in v1)* | — | — |
 
 Each workflow doc starts with a one-line **When invoked** rule and ends with example output. See `Workflows/*.md`.
@@ -113,9 +114,14 @@ health backfill --source garmin --from YYYY-MM-DD [--to YYYY-MM-DD]  # explicit 
 health status                                           # snapshot across all sources
 health doctor                                           # verify install + paths + perms
 
-# Projection
+# Projection & query
 health daily-note [--date YYYY-MM-DD]                  # emit Obsidian daily-note frontmatter
-health context [--metric M1,M2,...] [--days N|--window 7d] [--bucket month|quarter|year]
+health context [--focus s1,s2,...] [--window-days N] [--activities N] [--no-health] [--no-weight]
+#   sections: profile, stats, health, training, weight, activities, synthesis (latest-in-window snapshot)
+health synthesis [--on YYYY-MM-DD]                     # derived metrics traversing full history
+#   → hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score
+#   NB: ctl/atl/tsb need per-activity TSS (absent from Garmin's activity summary) → 0 until derived.
+#   Per-metric `health <sleep|hrv|rhr|...>` and `training <status|vo2max|...>` queries are v1 stubs.
 
 # Output formatters (applies to every subcommand)
 health <cmd> --format {json,jsonl,csv,tsv,human}       # default: json

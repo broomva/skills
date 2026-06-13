@@ -84,7 +84,7 @@ def context_root(
         None,
         "--focus",
         help="CSV of section names to include (default: all). "
-        "Sections: profile, stats, health, training, weight, activities.",
+        "Sections: profile, stats, health, training, weight, activities, synthesis.",
     ),
     activities: int = typer.Option(
         5, "--activities", min=0, max=100, help="Number of recent activities to include."
@@ -245,6 +245,13 @@ def context_root(
                     }
                 )
         document["activities"] = activities_payload[:activities]
+
+    if section_enabled("synthesis"):
+        # Derived metrics traverse the full history (not a latest snapshot).
+        # Lazy import avoids a module-load cycle (app imports both).
+        from broomva_health.cli.synthesis import synthesis_by_source
+
+        document["synthesis"] = synthesis_by_source(container, now.astimezone().date())
 
     # If the user gave focus, drop sections that weren't requested AND were
     # not auto-populated. (Top-level metadata keys always stay.)
