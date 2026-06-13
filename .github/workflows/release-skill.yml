@@ -78,8 +78,10 @@ jobs:
           CL="skills/$SKILL/CHANGELOG.md"
           NOTES_FILE="$(mktemp)"
           if [ -f "$CL" ]; then
+            # Literal match (index/==1), NOT regex — a version's dots must not be
+            # treated as "any char" (awk ~ is regex; 0.9.0 would match 0X9X0).
             awk -v v="$VERSION" '
-              $0 ~ "^## \\[" v "\\]" {f=1; next}
+              index($0, "## [" v "]") == 1 {f=1; next}
               f && /^## \[/ {exit}
               f {print}
             ' "$CL" > "$NOTES_FILE"
