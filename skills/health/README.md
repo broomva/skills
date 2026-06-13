@@ -193,6 +193,28 @@ workflow (runs only when `skills/health/**` changes).
 
 ---
 
+## Releasing
+
+Versioning is [SemVer](https://semver.org/); releases are tagged `health-vX.Y.Z`
+within the `broomva/skills` monorepo. To cut a release:
+
+1. Bump the version in **all three** sources together — `pyproject.toml`,
+   `src/broomva_health/__init__.py`, and `SKILL.md` frontmatter. (A test,
+   `tests/unit/test_package_versioning.py`, fails CI if they drift.)
+2. Add a dated section to [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog).
+3. Open a PR; merge once CI is green (merging to `main` is what `npx skills add`
+   publishes — skills.sh serves the default branch).
+4. Tag the merge commit and publish a GitHub release:
+
+   ```bash
+   git tag health-vX.Y.Z <merge-sha> && git push origin health-vX.Y.Z
+   gh release create health-vX.Y.Z --title "health vX.Y.Z" \
+     --notes-from-tag   # or paste the CHANGELOG section
+   ```
+
+MAJOR for breaking CLI/schema changes, MINOR for new commands/metrics, PATCH for
+fixes. Pre-1.0: minor-version bumps may carry breaking changes (Alpha).
+
 ## License
 
-MIT. See [`LICENSE`](LICENSE) (when added) or `pyproject.toml`.
+MIT — see [`LICENSE`](LICENSE).
