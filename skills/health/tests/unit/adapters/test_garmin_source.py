@@ -64,6 +64,12 @@ class FakeRepo:
         self.workouts.extend(workouts)
         return len(workouts)
 
+    def upsert_raw_document(self, docs: list) -> int:  # type: ignore[type-arg]
+        return len(docs)
+
+    def query_raw_documents(self, source, start, end, endpoint=None) -> list:  # type: ignore[type-arg]
+        return []
+
     def last_sample_ts(self, source: Source, metric: MetricCode) -> datetime | None:
         return None
 

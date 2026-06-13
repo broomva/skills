@@ -151,6 +151,12 @@ class _StubSQLiteRepository:
     def upsert_workout(self, workouts) -> int:
         return len(workouts)
 
+    def upsert_raw_document(self, docs) -> int:
+        return len(docs)
+
+    def query_raw_documents(self, source, start, end, endpoint=None):
+        return []
+
     def last_sample_ts(self, source, metric):
         return None
 
