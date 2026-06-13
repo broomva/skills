@@ -325,16 +325,32 @@ class GarminNativeTraceSource:
             call(f"/activitylist-service/activities/search/activities?limit={_ACTIVITY_LIMIT}&start=0")
             or []
         )
+        stress = call(f"/wellness-service/wellness/dailyStress/{date_iso}") or {}
+        spo2 = call(f"/wellness-service/wellness/daily/spo2/{date_iso}") or {}
+        respiration = call(f"/wellness-service/wellness/daily/respiration/{date_iso}") or {}
+        weight = call(f"/weight-service/weight/dayview/{date_iso}") or {}
+        hydration = call(f"/usersummary-service/usersummary/hydration/allData/{date_iso}") or {}
 
         bb0 = bb[0] if isinstance(bb, list) and bb else {}
         rdy0 = readiness[0] if isinstance(readiness, list) and readiness else {}
+        sleep_dto = (sleep.get("dailySleepDTO") or {}) if isinstance(sleep, dict) else {}
+        sleep_score = ((sleep_dto.get("sleepScores") or {}).get("overall") or {}).get("value")
+        w_avg = (weight.get("totalAverage") or {}) if isinstance(weight, dict) else {}
+
+        def g_to_kg(grams: Any) -> float | None:
+            return grams / 1000.0 if isinstance(grams, (int, float)) else None
+
         return {
             "today_stats": {**daily, "floorsClimbed": daily.get("floorsAscended")},
             "health": {
                 "heart_rate": {"resting": daily.get("restingHeartRate")},
-                "sleep": (sleep.get("dailySleepDTO") or {}) if isinstance(sleep, dict) else {},
+                "sleep": {**sleep_dto, "sleepScore": sleep_score},
                 "body_battery": bb0 if isinstance(bb0, dict) else {},
                 "hrv": {"lastNightAvg": (hrv.get("hrvSummary") or {}).get("lastNightAvg")},
+                "stress": {"overallStressLevel": stress.get("avgStressLevel")},
+                "spo2": {"average": spo2.get("averageSpO2")},
+                "respiration": {"avgWaking": respiration.get("avgWakingRespirationValue")},
+                "hydration": {"ml": hydration.get("valueInML")},
             },
             "training": {
                 "readiness": rdy0.get("score") if isinstance(rdy0, dict) else None,
@@ -342,7 +358,12 @@ class GarminNativeTraceSource:
                 if isinstance(vo2, dict)
                 else None,
             },
-            "weight": {},
+            "weight": {
+                "current_kg": g_to_kg(w_avg.get("weight")),
+                "bmi": w_avg.get("bmi"),
+                "body_fat_pct": w_avg.get("bodyFat"),
+                "lean_mass_kg": g_to_kg(w_avg.get("muscleMass")),
+            },
             "recent_activities": [
                 self._norm_activity(a) for a in acts if isinstance(a, dict)
             ],
