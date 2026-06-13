@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.9.0
+version: 0.10.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -86,7 +86,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **Raw** | `health raw [--from D --to D] [--endpoint NAME]` | Agent needs a field the structured layer doesn't map | verbatim JSON per `(date, endpoint)` — lossless, uncapped |
 | **Series** | `health series --metric M [--from D --to D] [--bucket B --agg A]` | Trend over time / processed view of one metric | structured time-series, raw or bucket-aggregated |
 | **Synthesis** | `health synthesis [--on YYYY-MM-DD]` | Derived metrics over full history | `SynthesisSnapshot` (hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score) |
-| **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB (needs per-activity TSS — 0 until derived) |
+| **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB — 42d/7d EWMA of Garmin per-activity training load |
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
 | **VO2maxArc** | `health synthesis` → `vo2max_arc` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
 | **Coaching** | *(not implemented in v1)* | — | — |
@@ -126,7 +126,7 @@ health series --metric M [--from D] [--to D] [--bucket day|week|month|quarter|ye
 #   e.g. `series --metric steps --bucket month --agg sum`, `series --metric resting_heart_rate --bucket week`.
 health synthesis [--on YYYY-MM-DD]                     # derived metrics traversing full history
 #   → hrv_cv_30d, ctl, atl, tsb, vo2max_arc, recovery_score
-#   NB: ctl/atl/tsb need per-activity TSS (absent from Garmin's activity summary) → 0 until derived.
+#   ctl/atl/tsb = 42d/7d EWMA of Garmin per-activity training load (activityTrainingLoad); TSB=CTL−ATL.
 #   Per-metric `health <sleep|hrv|rhr|...>` and `training <status|vo2max|...>` queries are v1 stubs.
 health raw [--from D] [--to D] [--endpoint NAME] [--source garmin]   # verbatim upstream responses
 #   The LOSSLESS layer: every field the source returned, nothing curated. Garmin's daily summary
