@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "broomva-health"
-version = "0.3.0"
+version = "0.4.0"
 description = "Broomva-stack Health skill — personal health knowledge graph with hex-architecture trace ingest"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,11 +28,16 @@ dependencies = [
   "rich>=13.7",
   "platformdirs>=4.2",
   "tomli>=2.0; python_version<'3.11'",
+  # garth: auth + connectapi engine for the default `native` Garmin backend.
+  # Pinned (it's deprecated-but-functional for token-riding); fork-escape-hatch
+  # documented in adapters/sources/garmin_native.py if it ever leaves PyPI.
+  "garth>=0.4.46",
 ]
 
 [project.optional-dependencies]
 # Source adapters — each is opt-in so the core installs without network deps
-garmin = ["garminconnect>=0.3.3"]
+# (garth, the default backend's engine, is a core dep above — not here).
+garmin = ["garminconnect>=0.3.3"]   # only for the `library` (diauth) backend
 encrypted = ["pysqlcipher3>=1.2"]
 keychain = ["keyring>=24.0"]
 dev = [
