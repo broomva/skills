@@ -154,7 +154,7 @@ Long-form walkthrough: [`References/extension-guide.md`](References/extension-gu
 
 ## Privacy
 
-By default the trace DB is unencrypted SQLite at `~/broomva/health/traces/`
+By default the trace DB is unencrypted SQLite at `~/broomva-health/traces/`
 (a local data directory — not the source repo). SQLCipher upgrade path is
 documented in [`References/privacy-architecture.md`](References/privacy-architecture.md).
 Tokens live at `~/.config/broomva-health/tokens/` with `0700` dir / `0600`

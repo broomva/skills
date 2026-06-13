@@ -9,7 +9,7 @@
 **Always prefer this for cold-start ingest.** Garmin's "Export Your Data" produces a complete account dump with no rate-limit cost to your account. Generation time: hours-to-days (Garmin's queue). Once delivered:
 
 1. Download the tarball from the Garmin email link.
-2. Place under `~/broomva/health/exports/garmin/raw/<request-id>.zip`.
+2. Place under `~/broomva-health/exports/garmin/raw/<request-id>.zip`.
 3. Run:
 
 ```bash

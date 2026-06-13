@@ -116,6 +116,26 @@ def _check_vault(container: Container) -> list[Check]:
     return [Check("vault.health", "WARN", f"missing: {vault} — daily-note will be skipped")]
 
 
+def _check_legacy_data(container: Container) -> list[Check]:
+    """Warn if biometric data is sitting in the pre-v0.5 in-repo location."""
+    from broomva_health.config.paths import HealthPaths
+
+    legacy = HealthPaths.legacy_data_dir()
+    legacy_traces = legacy / "traces"
+    current = container.paths.data_dir
+    if legacy != current and legacy_traces.exists() and any(legacy_traces.glob("*.db")):
+        return [
+            Check(
+                "legacy_data",
+                "WARN",
+                f"biometric DB found in the old in-repo location {legacy_traces} — "
+                f"move it to {current / 'traces'} (it may be inside a git repo). "
+                f"`mv {legacy}/* {current}/` then `rmdir {legacy}`.",
+            )
+        ]
+    return [Check("legacy_data", "OK", "no biometric data in the legacy in-repo location")]
+
+
 def _render_checks_human(checks: list[Check]) -> str:
     lines: list[str] = []
     for chk in checks:
@@ -142,6 +162,7 @@ def doctor_root(ctx: typer.Context) -> None:
     checks.extend(_check_tokens(container))
     checks.extend(_check_repository(container))
     checks.extend(_check_vault(container))
+    checks.extend(_check_legacy_data(container))
 
     fmt = ctx.obj["format"]
     fields = ctx.obj["fields"]
