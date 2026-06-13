@@ -68,7 +68,9 @@ DEFAULT_RESPONSES: dict[str, Any] = {
             "duration": 2400.0,
             "startTimeLocal": "2026-06-12 06:30:00",
             "averageHR": 148.0,
+            "maxHR": 172.0,
             "calories": 620.0,
+            "activityTrainingLoad": 65.5,
         }
     ],
 }
@@ -201,6 +203,18 @@ def test_sync_workout_activity_type_flattened(paths: HealthPaths) -> None:
     src.sync(repo=repo, token_store=object(), rate_limiter=_FakeRateLimiter())
     assert repo.workouts[0].activity_type == "running"  # dict {typeKey} → "running"
     assert repo.workouts[0].activity_id == "99001"
+
+
+def test_sync_workout_maps_garmin_training_load(paths: HealthPaths) -> None:
+    """activityTrainingLoad → training_stress_score (the CTL/ATL/TSB load input);
+    maxHR → max_hr. This is what makes the training-load synthesis non-zero."""
+    _seed_token(paths)
+    src = GarminNativeTraceSource(paths=paths, garth_module=_FakeGarth())
+    repo = _FakeRepo()
+    src.sync(repo=repo, token_store=object(), rate_limiter=_FakeRateLimiter())
+    wk = repo.workouts[0]
+    assert wk.training_stress_score == 65.5  # Garmin activityTrainingLoad
+    assert wk.max_hr == 172.0
 
 
 def test_sync_without_token_raises_auth_required(paths: HealthPaths) -> None:

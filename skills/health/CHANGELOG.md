@@ -10,6 +10,23 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-13
+
+### Added
+
+- **Training-load synthesis now populates** (CTL / ATL / TSB were `0`). The
+  workout mapper reads Garmin's firmware-computed `activityTrainingLoad`
+  (Firstbeat/EPOC per-activity load) into `training_stress_score` — the load the
+  CTL/ATL/TSB EWMA already consumes — plus `maxHR` into `max_hr`.
+
+### Changed
+
+- Synthesis CTL/ATL/TSB are documented as a 42d/7d EWMA of **per-activity
+  training load** (Garmin: EPOC-based; Coggan power-TSS where available). The
+  EWMA windows + `TSB = CTL − ATL` form interpretation are unit-agnostic — this
+  mirrors Garmin's own Acute/Chronic load. Re-run `health backfill` to populate
+  the load on already-ingested workouts.
+
 ## [0.9.0] — 2026-06-13
 
 ### Added
@@ -113,7 +130,8 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
   daily-note projection, and the synthesis modules (HRV-CV, CTL/ATL/TSB,
   VO2max arc, recovery).
 
-[Unreleased]: https://github.com/broomva/skills/compare/health-v0.9.0...HEAD
+[Unreleased]: https://github.com/broomva/skills/compare/health-v0.10.0...HEAD
+[0.10.0]: https://github.com/broomva/skills/releases/tag/health-v0.10.0
 [0.9.0]: https://github.com/broomva/skills/releases/tag/health-v0.9.0
 [0.8.0]: https://github.com/broomva/skills/releases/tag/health-v0.8.0
 [0.7.0]: https://github.com/broomva/skills/releases/tag/health-v0.7.0

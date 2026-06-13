@@ -62,13 +62,19 @@ class SynthesisSnapshot(BaseModel):
         description="HRV coefficient of variation over the trailing 30 days, or None if insufficient data",
     )
     ctl: float = Field(
-        default=0.0, ge=0.0, description="Coggan Chronic Training Load (42d EWMA of TSS)"
+        default=0.0,
+        ge=0.0,
+        description="Chronic Training Load — 42d EWMA of per-activity load "
+        "(Garmin: activityTrainingLoad / EPOC; Coggan TSS where available)",
     )
     atl: float = Field(
-        default=0.0, ge=0.0, description="Coggan Acute Training Load (7d EWMA of TSS)"
+        default=0.0,
+        ge=0.0,
+        description="Acute Training Load — 7d EWMA of per-activity load (same unit as ctl)",
     )
     tsb: float = Field(
-        default=0.0, description="Training Stress Balance = CTL - ATL (can be negative)"
+        default=0.0,
+        description="Training Stress Balance = CTL - ATL (form; negative = fatigued)",
     )
     vo2max_arc: dict[str, float] = Field(
         default_factory=dict,

@@ -212,6 +212,14 @@ def map_workouts(activities: Iterable[Any]) -> list[Workout]:
                 distance_m=_num(act.get("distance")),
                 kcal=_num(act.get("calories")),
                 avg_hr=_num(act.get("averageHR")),
+                max_hr=_num(act.get("maxHR")),
+                # Garmin's firmware (Firstbeat/EPOC) per-activity training load. We
+                # store it as the `training_stress_score` because it IS the per-unit
+                # load the CTL/ATL/TSB EWMA consumes — for Garmin this is training
+                # load (EPOC-based), not Coggan power-TSS. The 42d/7d EWMA + TSB
+                # balance interpretation is unit-agnostic (this is what Garmin's own
+                # Acute/Chronic load does).
+                training_stress_score=_num(act.get("activityTrainingLoad")),
                 raw_summary=act,
             )
         )
