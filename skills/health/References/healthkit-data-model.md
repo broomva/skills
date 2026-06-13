@@ -45,7 +45,7 @@ The `DailyProjection.sources_synced` field is a *projection artifact* — it rec
 
 Our trace store does the same shape, except:
 - Multi-source from the start (not Apple-only)
-- Per-source DB files for isolation (`~/broomva/health/traces/<source>.db`)
+- Per-source DB files for isolation (`~/broomva-health/traces/<source>.db`)
 - A separate `synthesis.db` for derived views
 
 References:
@@ -133,7 +133,7 @@ Workout(
 
 - Idempotency key: `(source, activity_id)`. The activity_id is whatever the source returns and is stable per source.
 - Per-second sample streams (HR, power, pace) are stored as `QuantitySample` rows with the activity's `start_ts/end_ts` window. Joining workouts to their streams is a query, not a foreign key — the trace store is intentionally denormalized.
-- The raw FIT blob is referenced by `fit_blob_sha256` and lives on disk under `~/broomva/health/exports/<source>/fit/<sha256>.fit`. We keep the original so any future re-projection (different aggregator, different smoothing) reads the source of truth, not a re-derivation.
+- The raw FIT blob is referenced by `fit_blob_sha256` and lives on disk under `~/broomva-health/exports/<source>/fit/<sha256>.fit`. We keep the original so any future re-projection (different aggregator, different smoothing) reads the source of truth, not a re-derivation.
 
 ---
 

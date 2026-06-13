@@ -14,7 +14,8 @@ def test_discover_defaults_to_home_layout(tmp_path: Path, monkeypatch) -> None: 
     monkeypatch.delenv("BROOMVA_HEALTH_VAULT_DIR", raising=False)
     paths = HealthPaths.discover(home=tmp_path)
     assert paths.config_dir == tmp_path / ".config" / "broomva-health"
-    assert paths.data_dir == tmp_path / "broomva" / "health"
+    assert paths.data_dir == tmp_path / "broomva-health"
+    assert paths.legacy_data_dir(tmp_path) == tmp_path / "broomva" / "health"
     assert paths.vault_dir == tmp_path / "broomva-vault"
     assert paths.vault_health_dir == tmp_path / "broomva-vault" / "07-Health"
 

@@ -24,15 +24,15 @@ References:
 The default trace store is **unencrypted SQLite** at:
 
 ```
-~/broomva/health/traces/garmin.db
-~/broomva/health/traces/apple_health.db   # when v2 ships
-~/broomva/health/traces/whoop.db          # when v2 ships
+~/broomva-health/traces/garmin.db
+~/broomva-health/traces/apple_health.db   # when v2 ships
+~/broomva-health/traces/whoop.db          # when v2 ships
 ```
 
 Per-source DB files are intentional — encryption / migration / rotation can be done per source without touching the others.
 
 **Permissions:**
-- The directory `~/broomva/health/` is created at the user's default umask (typically `0o755`).
+- The directory `~/broomva-health/` is created `0o700` (owner-only), outside any git repo.
 - The trace DB files are created at the user's default umask.
 - This is **fine for v1** because the directory is inside `$HOME` and not world-writable on any reasonable system. But it is not encryption.
 
@@ -173,7 +173,7 @@ $ health doctor
 ✓ ~/.config/broomva-health/ exists
 ✓ ~/.config/broomva-health/tokens/ permissions: 0o700
 ✓ Token files permissions: all 0o600 (3 of 3)
-✓ Trace DB path: ~/broomva/health/traces/ (not inside iCloud)
+✓ Trace DB path: ~/broomva-health/traces/ (not inside iCloud)
 ✓ encrypt_db: false (v1 default; install [encrypted] extra for SQLCipher)
 ✓ No network calls in last 24h other than to source vendors (1 to connect.garmin.com)
 ```

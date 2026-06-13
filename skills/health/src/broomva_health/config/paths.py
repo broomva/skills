@@ -20,14 +20,19 @@ class HealthPaths:
 
     Defaults (macOS / Linux):
       config_dir       ~/.config/broomva-health/
-      data_dir         ~/broomva/health/
-      traces_dir       ~/broomva/health/traces/
-      synthesis_db     ~/broomva/health/synthesis.db
-      exports_dir      ~/broomva/health/exports/
+      data_dir         ~/broomva-health/                 (dedicated; NOT inside any repo)
+      traces_dir       ~/broomva-health/traces/
+      synthesis_db     ~/broomva-health/synthesis.db
+      exports_dir      ~/broomva-health/exports/         (GDPR 'Export Your Data' tarballs)
       tokens_dir       ~/.config/broomva-health/tokens/
       vault_dir        ~/broomva-vault/
       vault_health_dir ~/broomva-vault/07-Health/
       config_file      ~/.config/broomva-health/config.toml
+
+    `data_dir` lives at `~/broomva-health/` — a dedicated folder, a sibling of
+    `~/broomva-vault/`, deliberately OUTSIDE the `~/broomva/` workspace git repo.
+    Biometric data must never sit in a git tree (one `git add -A` from being
+    committed). It is created 0700.
 
     Override any path via env var: `BROOMVA_HEALTH_CONFIG_DIR`,
     `BROOMVA_HEALTH_DATA_DIR`, `BROOMVA_HEALTH_VAULT_DIR`.
@@ -41,9 +46,18 @@ class HealthPaths:
     def discover(cls, *, home: Path | None = None) -> HealthPaths:
         home = home or Path.home()
         config_dir = _env_path("BROOMVA_HEALTH_CONFIG_DIR", home / ".config" / "broomva-health")
-        data_dir = _env_path("BROOMVA_HEALTH_DATA_DIR", home / "broomva" / "health")
+        data_dir = _env_path("BROOMVA_HEALTH_DATA_DIR", home / "broomva-health")
         vault_dir = _env_path("BROOMVA_HEALTH_VAULT_DIR", home / "broomva-vault")
         return cls(config_dir=config_dir, data_dir=data_dir, vault_dir=vault_dir)
+
+    @staticmethod
+    def legacy_data_dir(home: Path | None = None) -> Path:
+        """The pre-v0.5 default (`~/broomva/health`), INSIDE the workspace repo.
+
+        Used by `doctor` to warn if biometric data is sitting in the old,
+        repo-internal location so the user can migrate it.
+        """
+        return (home or Path.home()) / "broomva" / "health"
 
     # --- derived paths ---
     @property
@@ -89,8 +103,11 @@ class HealthPaths:
             self.vault_health_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
-        with contextlib.suppress(OSError):
-            os.chmod(self.tokens_dir, 0o700)
+        # Biometric data + tokens are owner-only (0700). A permissive umask
+        # must not leave a multi-year health DB world-readable on a shared host.
+        for private_dir in (self.data_dir, self.tokens_dir):
+            with contextlib.suppress(OSError):
+                os.chmod(private_dir, 0o700)
 
 
 def _env_path(key: str, default: Path) -> Path:

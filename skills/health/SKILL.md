@@ -1,6 +1,6 @@
 ---
 name: health
-version: 0.4.0
+version: 0.4.1
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -175,7 +175,7 @@ The skill is **not** a primitive — it is a substrate that several primitives c
 
 The Health skill is the most privacy-sensitive workspace component. The invariants are hard:
 
-1. **SQLite by default; SQLCipher upgrade path documented** — v1 ships unencrypted SQLite at `~/broomva/health/traces/<source>.db`. v1.1 will add the `[encrypted]` extra (`pysqlcipher3`) and a one-shot migration to SQLCipher with the encryption key stored in macOS Keychain. See [References/privacy-architecture.md](References/privacy-architecture.md).
+1. **SQLite by default; SQLCipher upgrade path documented** — v1 ships unencrypted SQLite at `~/broomva-health/traces/<source>.db`. v1.1 will add the `[encrypted]` extra (`pysqlcipher3`) and a one-shot migration to SQLCipher with the encryption key stored in macOS Keychain. See [References/privacy-architecture.md](References/privacy-architecture.md).
 2. **Tokens at `0o600`; directory at `0o700`** — `~/.config/broomva-health/tokens/` directory is mode `0o700` (only owner can read), token files are mode `0o600`. The filesystem token store enforces this at write time.
 3. **Never log PII** — no log statement may contain email, password, MFA code, raw token bytes, sample values, or device serials. The agent never echoes these to the conversation log either. PII redaction is enforced at the formatter layer.
 4. **Local-first; no telemetry; no third-party calls beyond the source's own API** — the Health skill makes network calls only to the source vendors (Garmin Connect, in v1). No analytics, no crash reporters, no "phone home".
