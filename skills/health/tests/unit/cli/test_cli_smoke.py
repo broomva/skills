@@ -317,6 +317,43 @@ def test_sync_help(stub_adapters: None) -> None:
     )
 
 
+def test_daily_note_command_is_wired(stub_adapters: None) -> None:
+    """Regression: `daily-note` was documented but unregistered ('No such
+    command'). It must now exist and emit the vault note path."""
+    result = _runner().invoke(
+        _get_app(), ["--format", "json", "daily-note", "--date", "2026-06-13"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "2026-06-13.md" in result.stdout
+
+
+def test_doctor_token_check_follows_source_status() -> None:
+    """Regression: doctor reported token.garmin FAIL while auth status said
+    valid. `_check_tokens` must follow `source.status()` (where the native
+    backend's garth token lives), NOT the generic token_store.
+    """
+    from broomva_health.cli.doctor import _check_tokens
+    from broomva_health.domain.results import SourceStatus
+
+    class _Src:
+        def status(self, *, token_store: object, profile: str = "default") -> SourceStatus:
+            return SourceStatus(source=Source.GARMIN, token_valid=True)
+
+    class _EmptyTokenStore:
+        def get(self, source: object, profile: str = "default") -> None:
+            return None  # token_store is EMPTY — the OLD code would FAIL here
+
+    class _Container:
+        def __init__(self) -> None:
+            self.token_store = _EmptyTokenStore()
+            self.sources = {Source.GARMIN: _Src()}
+            self.settings = types.SimpleNamespace(default_profile="default")
+
+    checks = _check_tokens(_Container())  # type: ignore[arg-type]
+    assert [c.name for c in checks] == ["token.garmin"]
+    assert checks[0].status == "OK"  # follows status()=valid, not the empty store
+
+
 def test_doctor_runs_without_traceback(stub_adapters: None) -> None:
     result = _runner().invoke(_get_app(), ["--format", "human", "doctor"])
     # doctor MAY exit non-zero if a hard check (no config file) becomes FAIL,

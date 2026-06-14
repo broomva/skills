@@ -10,6 +10,31 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-13
+
+Closes 3 gaps a full-capability dogfood surfaced.
+
+### Added
+
+- **`health daily-note [--date YYYY-MM-DD]`** — the Obsidian daily-note projection
+  is now wired to the CLI. It was documented in SKILL.md/README/install.sh but the
+  command didn't exist (`RenderDailyNoteUseCase` was implemented + tested, just
+  never registered in `app.py`).
+
+### Fixed
+
+- **`doctor` no longer false-FAILs the Garmin token.** `_check_tokens` delegated
+  to the generic filesystem token-store, but the default native backend keeps its
+  garth token in `tokens_dir/garmin-garth/<profile>` — so doctor reported FAIL
+  while `auth status` reported valid. It now follows each source's `status()`,
+  the same contract `auth status` uses.
+
+### Security
+
+- Removed the legacy in-repo biometric store at `~/broomva/health/traces` (a stale
+  pre-relocation snapshot; the directory was gitignored, so nothing entered git
+  history). `doctor` already warned about it; this purges it.
+
 ## [0.10.1] — 2026-06-13
 
 ### Changed
@@ -140,7 +165,8 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
   daily-note projection, and the synthesis modules (HRV-CV, CTL/ATL/TSB,
   VO2max arc, recovery).
 
-[Unreleased]: https://github.com/broomva/skills/compare/health-v0.10.1...HEAD
+[Unreleased]: https://github.com/broomva/skills/compare/health-v0.11.0...HEAD
+[0.11.0]: https://github.com/broomva/skills/releases/tag/health-v0.11.0
 [0.10.1]: https://github.com/broomva/skills/releases/tag/health-v0.10.1
 [0.10.0]: https://github.com/broomva/skills/releases/tag/health-v0.10.0
 [0.9.0]: https://github.com/broomva/skills/releases/tag/health-v0.9.0

@@ -40,6 +40,9 @@ from broomva_health.cli import (
     context as context_cli,
 )
 from broomva_health.cli import (
+    daily_note as daily_note_cli,
+)
+from broomva_health.cli import (
     doctor as doctor_cli,
 )
 from broomva_health.cli import (
@@ -190,6 +193,7 @@ app.add_typer(health_metric_cli.app, name="health")
 app.add_typer(training_cli.app, name="training")
 app.add_typer(weight_cli.app, name="weight")
 app.add_typer(context_cli.app, name="context")
+app.add_typer(daily_note_cli.app, name="daily-note")
 app.add_typer(synthesis_cli.app, name="synthesis")
 app.add_typer(series_cli.app, name="series")
 app.add_typer(raw_cli.app, name="raw")
