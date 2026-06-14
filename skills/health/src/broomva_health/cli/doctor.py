@@ -74,20 +74,34 @@ def _check_config(container: Container) -> list[Check]:
 
 
 def _check_tokens(container: Container) -> list[Check]:
+    """Token validity via each source's own ``status()`` — the same contract
+    ``auth status`` uses.
+
+    A generic ``token_store`` lookup false-FAILs for the default native backend,
+    which keeps its garth token outside the ``token_store`` (in
+    ``tokens_dir/garmin-garth/<profile>``). ``status()`` resolves the token
+    wherever the backend actually stores it, so doctor agrees with ``auth status``.
+    """
     checks: list[Check] = []
-    for src in container.sources:
-        bundle = container.token_store.get(src, container.settings.default_profile)
-        if bundle is None:
-            severity = "FAIL" if src is Source.GARMIN else "WARN"
-            checks.append(
-                Check(
-                    f"token.{src.value}",
-                    severity,
-                    f"no token bundle for profile={container.settings.default_profile}",
-                )
-            )
+    profile = container.settings.default_profile
+    for src, source in container.sources.items():
+        try:
+            st = source.status(token_store=container.token_store, profile=profile)
+        except Exception as exc:  # status() is reflexive and shouldn't raise; be safe
+            checks.append(Check(f"token.{src.value}", "WARN", f"status check failed: {exc}"))
+            continue
+        if st.token_valid:
+            detail = "token valid"
+            if st.token_expires_at is not None:
+                detail += f"; expires {st.token_expires_at.isoformat()}"
+            checks.append(Check(f"token.{src.value}", "OK", detail))
         else:
-            checks.append(Check(f"token.{src.value}", "OK", "token present"))
+            severity = "FAIL" if src is Source.GARMIN else "WARN"
+            detail = st.last_error or (
+                f"no valid token for profile={profile} — run `health auth import` "
+                "(native backend) or `health auth login`"
+            )
+            checks.append(Check(f"token.{src.value}", severity, detail))
     return checks
 
 
