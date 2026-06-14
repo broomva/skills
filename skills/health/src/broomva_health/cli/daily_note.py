@@ -82,6 +82,11 @@ def daily_note_root(
 
     # The use case queries the repo source-agnostically (source=None); v1 is
     # Garmin-only, so read the Garmin repo (or the first registered source).
+    if source is not None and source not in container.sources:
+        typer.secho(
+            f"Source '{source.value}' is not registered.", fg=typer.colors.RED, err=True
+        )
+        raise typer.Exit(code=1)
     src = (
         source
         if source is not None

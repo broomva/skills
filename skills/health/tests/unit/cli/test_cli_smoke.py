@@ -327,6 +327,14 @@ def test_daily_note_command_is_wired(stub_adapters: None) -> None:
     assert "2026-06-13.md" in result.stdout
 
 
+def test_daily_note_rejects_unregistered_source(stub_adapters: None) -> None:
+    """`--source` for a backend that isn't registered errors cleanly (exit 1),
+    matching sync/backfill — not a stray empty DB. (P20 cross-review catch.)"""
+    result = _runner().invoke(_get_app(), ["daily-note", "--source", "whoop"])
+    assert result.exit_code == 1
+    assert "not registered" in result.output
+
+
 def test_doctor_token_check_follows_source_status() -> None:
     """Regression: doctor reported token.garmin FAIL while auth status said
     valid. `_check_tokens` must follow `source.status()` (where the native
