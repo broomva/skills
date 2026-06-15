@@ -52,6 +52,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|---|
 | [`handoff`](skills/handoff/) | `skills/handoff/SKILL.md` | Fresh-session handoff doc drafting — compress a substantive arc into a single resumable doc for the next agent context |
 | [`make-spec`](skills/make-spec/) | `skills/make-spec/SKILL.md` | Native-HTML design-doc scaffolding (spec / plan / ADR / report / pr-explainer) using the canonical Broomva dark theme — implements P18 (Format-Follows-Audience) for Category-C artifacts |
+| [`ccr`](skills/ccr/) | `skills/ccr/SKILL.md` | Reversible payload compression — shrink any blob (tool output, log, RAG chunk, file) **before** it enters context, while caching the original locally for byte-exact `retrieve(handle)` on demand. The payload-axis counterpart to a KG loader's retrieval axis. Content-routed deterministic compactors (JSON skeleton / code outline / text head-tail), stdlib-only, no ML; 18 tests, ReDoS-guarded. Lifted from the CCR component of [Headroom](https://github.com/chopratejas/headroom). Install: `npx skills add broomva/skills --skill ccr` |
 
 ### Content & media
 

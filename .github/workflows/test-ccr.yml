@@ -1,0 +1,50 @@
+name: test-ccr
+
+# Python test gate for the `ccr` skill (skills/ccr/). Path-filtered so it runs
+# ONLY when skills/ccr/** changes — the monorepo's tests-optional default
+# (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/ccr/**'
+      - '.github/workflows/test-ccr.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/ccr/**'
+      - '.github/workflows/test-ccr.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-ccr-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/ccr
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Smoke — compress/retrieve round-trip is byte-exact
+        run: |
+          printf 'line one\nline two\nline three\n' > /tmp/ccr_smoke.txt
+          H=$(python3 scripts/ccr.py compress /tmp/ccr_smoke.txt --json | python3 -c "import json,sys;print(json.load(sys.stdin)['handle'])")
+          python3 scripts/ccr.py retrieve "$H" > /tmp/ccr_smoke_rt.txt
+          diff /tmp/ccr_smoke.txt /tmp/ccr_smoke_rt.txt && echo "round-trip OK"
