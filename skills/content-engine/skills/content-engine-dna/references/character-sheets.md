@@ -350,12 +350,11 @@ Nano Banana Pro is the primary consistency model for the content engine. Its cha
 5. All subsequent generations: "Use character sheet nb-char-id-12345"
 ```
 
-### Nano Banana 2 Multi-Angle Generation
+### Multi-Angle Character Set (Nano Banana Pro → Kling Elements)
 
-Nano Banana 2 extends the character sheet with multi-angle generation from a single reference. This is useful for:
-- Generating additional reference angles from limited source material
-- Creating character sheet references without a full photoshoot
-- Verifying character consistency from angles not covered by the original references
+Nano Banana **Pro** (not Nano Banana 2) builds a multi-angle character set — e.g. a 5-frame set of the same character from different angles — which is then saved as a Kling **Element** and recalled by name in later generations. Assemble it from your curated angle references; it is built from multiple angle shots, **not** auto-generated from a single image. Useful for:
+- Building a reusable, named character Element so appearance stays consistent as the camera moves
+- Combining Elements (character + environment + style) into one controlled composite
 
 ### LoRA as Fallback
 
@@ -369,3 +368,109 @@ For character LoRAs specifically:
 - Test at weights 0.6, 0.7, 0.8, 0.85, 0.9 and pick the best balance of consistency vs. flexibility
 - Store weights at `models/loras/{character-slug}-v{N}.safetensors`
 - Record the exact weight range in the character sheet's Consistency Anchors section
+
+---
+
+## AI Video Creators distillation (AVCC additions)
+
+> Distilled from the AI Video Creators course (BRO-1525) — see broomva/workspace docs/reference/ai-video-creators-course/.
+
+The AVCC course arrives at the same destination as the viznfr workflow above (a locked identity reused across every scene) by a different, lower-tooling road: instead of a tool-native consistency model (Nano Banana character sheet ID, LoRA) compiled once, it treats the **prompt text itself** as the portable identity file. The two approaches are complementary — compile the identity into a tool-native anchor when you have one (see [Consistency Anchors](#consistency-anchors) and [Nano Banana Pro Integration](#nano-banana-pro-integration) above), and *additionally* carry the Fixed-DNA text block so the character survives a tool change. Everything below is the text-block discipline and the cross-model reuse mechanism the AVCC teaches; it does not restate the embedding/LoRA/anchor machinery already covered.
+
+### Character DNA = Master Prompt (the "digital passport")
+
+The AVCC frames the character sheet not as a metadata file but as a single reusable prompt split into two parts. The split is the entire discipline:
+
+| Part | Contents | Edit cadence |
+|---|---|---|
+| **A. Fixed DNA** (never changes) | Face description · age / ethnicity / skin type · identifying details (moles, scars, skin texture) | **Copy-pasted verbatim into every generation, forever.** Treat as immutable. |
+| **B. Variable Context** (changes every post) | Outfit · location · lighting · pose | Rewritten per post — this is the *only* part you touch. |
+
+**Why this works:** the model regenerates the face from the same exact tokens every time, so identity drift has no entry point — drift only enters through *changed* tokens, and the Fixed DNA block is never changed. It is the [Anti-Drift Protocol](#anti-drift-protocol) rule "include consistency anchors in every prompt" reduced to its most portable form: when you have no tool-native anchor (new model, new platform, no LoRA), the verbatim text block *is* the anchor. The Fixed/Variable split also makes batching trivial — a content calendar becomes "one Fixed DNA + N Variable Contexts."
+
+The course ships ready-made Master Prompts in its Aesthetic Library (a Drive file of viral character aesthetics + filled-in DNA blocks). Store your own Fixed DNA block at the top of the compiled character sheet so it can be copied in one motion.
+
+A worked example of the level of specificity the Fixed DNA block demands — this is a base **identity-lock portrait** prompt (Nano Banana Pro, 9:16, 2K), where the entire body of the prompt becomes the Fixed DNA from then on:
+
+```text
+Ultra-realistic beauty portrait, chest-up framing, frontal eye-level view, centered composition for identity lock.
+Young woman with very light porcelain skin, soft warm-neutral undertone, natural skin texture with subtle micro-details.
+Facial structure: high cheekbones, symmetrical face, narrow straight nose, soft defined jawline.
+Eyes: light grey-green eyes, sharp focus, clean natural eyelashes.
+Eyebrows: very light blonde, almost invisible, minimal definition.
+Hair: platinum blonde, slicked back tightly, center part, clean styling, no loose strands.
+Lips: natural nude soft pink lips, slightly glossy, medium fullness.
+Expression: neutral, calm, confident, direct eye contact.
+Lighting: soft studio beauty lighting, large diffused key light from front, subtle fill to remove harsh shadows, clean commercial skin rendering.
+Background: pure white seamless studio background, no texture, no gradients.
+Camera: shot on Sony A7R V, Zeiss Supreme Prime lens, 85mm, f1.8 cinematic depth of field.
+Focus: ultra sharp focus on eyes and facial features, background slightly soft.
+Color: clean neutral tones, natural skin color, no stylization.
+Composition: centered framing, minimal negative space, no distractions.
+```
+
+Note "centered composition for identity lock" / "frontal eye-level view" — the portrait is deliberately neutral so it makes the strongest possible reference frame (see the reuse mechanism below). Everything from "Facial structure:" through "Lips:" is what becomes the **Fixed DNA**; "Lighting / Background / Camera / Focus / Color / Composition" are scene-level and migrate into **Variable Context** for later posts.
+
+### 1 account = 1 character, never change the DNA
+
+The hardest rule and the most-repeated one in the course:
+
+> **1 Account = 1 Character. Same face, same skin aesthetic, same DNA. Never change the DNA.**
+
+You may change camera, story, world, outfit, era, mood freely — those are Variable Context. You may **never** change the Fixed DNA, and you may **never** run two characters on one account. The rationale is distribution, not aesthetics: *"You're not looking for content — you're building an asset."* Visual identity is the single strongest signal both the human brain and the recommendation algorithm recognize, so a consistent face compounds recognition the way a logo does. A second character on the same account splits that signal and resets the compounding. This is the business-layer reason the [Maintaining Consistency Across Sessions](#maintaining-consistency-across-sessions) machinery exists: drift is not a quality bug, it is an asset-destruction event.
+
+### Hero-portrait-first + reuse-as-reference (the universal mechanism)
+
+The single mechanism that works across *every* model — Midjourney, Kling, Nano Banana Pro, Seedance — is:
+
+1. **Generate the hero portrait once** (the identity-lock prompt above). This is the anchor frame.
+2. **Reuse that one image as a reference everywhere**, regardless of how each tool names the feature.
+
+The feature has a different name in every tool, but it is the same operation — this table is the model-agnostic Rosetta for the "reference reuse" anchor:
+
+| Tool | Reference-reuse feature | Notes |
+|---|---|---|
+| **Midjourney** | OmniReference | Plain-text prompts only — no JSON |
+| **Kling** | Elements | Save the hero (or a 5-frame multi-angle set) as a named Element; call it by name later |
+| **Nano Banana Pro** | reference image / face-swap | Feed the hero as REF 1; or replace only the face on another image |
+| **Seedance 2.0** | reference collage (up to 9 images) | References give ~80% of control; build the collage in Photojoiner |
+
+**Why this works:** image fidelity caps video fidelity ("if the image isn't real, the video never will be"), so the entire consistency problem collapses to *make one excellent anchor frame, then never re-describe the face — point at the frame instead.* This is the AVCC's version of the [Anti-Drift Protocol](#anti-drift-protocol) rule "always reference the character sheet ID … never rely on text description alone," generalized to any tool that accepts an image reference. The Fixed-DNA text block (above) is the fallback for tools/sessions where you can't attach the image; the reference image is the primary anchor when you can.
+
+> Model/version note: Midjourney OmniReference, Kling Elements, Nano Banana Pro face-swap, and Seedance 2.0's 9-image collage are the named features at time of writing (Kling 3.0, Nano Banana Pro, Seedance 2.0 era). **These rotate quarterly.** The durable craft is "generate one anchor, reuse it as a reference"; the feature names are not durable — re-map them when a tool ships a new reference primitive or a new model supersedes these.
+
+### Two paths to the start image (Full Generation vs Hybrid Reality)
+
+Once the Fixed DNA exists, the per-post start image is made one of two ways:
+
+| Path | How | When to use |
+|---|---|---|
+| **Full Generation** | Keep Fixed DNA untouched; rewrite only Variable Context (new world — Mars, beach, café). Pure text-to-image. | Fictional/impossible scenes; full creative control; no real footage needed. |
+| **Hybrid Reality** | Screenshot a *real* video (yours), upload to Nano Banana Pro, ask it to **replace only the face** with your character. Real environment + real clothes + AI face. | Maximum believability; "easy believable integration" because lighting/physics/wardrobe are already real — only the identity is synthetic. |
+
+**Why Hybrid Reality works:** the photorealism problem is hardest in the environment and the body physics, both of which a real screenshot already solves perfectly. By constraining the model to edit *only the face*, you spend the generation budget on the one region you actually need synthesized and inherit everything else from reality. It is the [Handling Multi-Character Scenes](#handling-multi-character-scenes) "composite for highest consistency" idea applied to a single character against a real backplate. (Nano Banana Pro's face-swap is the named tool here — same rotation caveat as above.)
+
+### Kling Motion Control + the tripod rule ("stillness is the law")
+
+To animate the locked character with realistic human motion, the AVCC uses **Kling Motion Control**, which separates *appearance* from *motion* across two input slots:
+
+| Slot | Feed it | It contributes |
+|---|---|---|
+| **Start Frame** | the perfect hero image (locked DNA) | appearance / identity |
+| **Motion Reference** | a phone video you recorded | movement + facial expressions |
+
+The mapping is the whole point: **appearance comes from the photo, motion comes from your video.** You perform the action yourself on a phone; the AI wears your character's face over your movement.
+
+**The non-negotiable constraint — "stillness is the law":**
+
+> The camera recording the Motion Reference **MUST be absolutely static** — tripod, shelf, or table. Any handheld shake makes the AI face drift, float, or warp, and the illusion breaks.
+
+**Why this works:** the model is solving an identity-transfer problem frame-by-frame; a static camera means the *only* thing changing between frames is the subject's motion, which is exactly the signal Motion Control is built to transfer. A moving camera adds a second source of inter-frame change (parallax, background shift) that the face-transfer solver mistakes for identity variation — and identity variation is drift. A tripod removes that confound entirely. This is the motion-side analogue of the [Drift Sources](#drift-sources) "seed variation" problem: an uncontrolled variable in the input becomes drift in the output, so you eliminate the variable at the source.
+
+### Download and store hero images locally (tools change)
+
+Operational rule that protects everything above:
+
+> **Download and store your hero/anchor images on local disk.** Tools, accounts, and cloud libraries change, deprecate, rate-limit, or disappear; a local file keeps the character forever.
+
+This is the same logic as the `sources` array with SHA-256 hashes in the [character sheet frontmatter](#frontmatter) — the raw visual anchor is the irreplaceable asset and must survive any single tool's lifecycle. In content-engine terms: the hero portrait belongs in `knowledge/raw/character-refs/{slug}/` alongside the other references, hashed and recorded, *before* it is ever uploaded to a generation tool. The Fixed-DNA text block, the local hero image, and (when available) the tool-native anchor are three redundant copies of the same identity — the more tool-independent the copy, the more durable it is.

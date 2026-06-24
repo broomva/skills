@@ -321,3 +321,235 @@ This ensures:
 - faststart flag (enables streaming/seeking)
 - 30fps (matches Remotion default)
 - yuv420p pixel format (required for browser playback)
+
+---
+
+## AI Video Creators distillation (AVCC additions)
+
+> Distilled from the AI Video Creators course (BRO-1525) — see broomva/workspace docs/reference/ai-video-creators-course/. Copy-paste **verbatim motion prompts** live in [`ai-video-prompt-packs.md`](./ai-video-prompt-packs.md).
+
+The sections above cover the *mechanics* of motion (Kling motion transfer, Wan animation, Seedance multi-shot, camera language, chaining). This section adds the AVCC *prompt-discipline* layer — the rules that decide whether a Kling image-to-video generation lands or hangs at 99%. These are model-prompt heuristics, not API mechanics, and they compose with the Kling Motion Transfer and Seedance Multi-Shot sections above (don't re-read them — this layer sits on top).
+
+> **Version note.** Model names below (Kling 1.6 → 3.0, Kling o1, Nano Banana Pro, Seedance 2.0) are pinned to late-2025/early-2026 and **rotate quarterly** — the course itself says model leadership "rotates quarterly." Treat the *tiering logic* (cheaper/faster model ⇒ fewer elements ⇒ simpler prompt) as durable; treat the specific version numbers and credit costs as perishable. When a tier name is stale, map by capability (single-action / few-element / many-element / reasoning / multi-shot), not by number.
+
+### Choose the model BEFORE writing the prompt (the element budget)
+
+The course's load-bearing sequencing rule: **pick the Kling tier first, then write the prompt to fit that tier's element budget.** Prompt complexity is a function of model capacity, not the other way around. Writing a 7-element prompt and then sending it to a fast/cheap tier is the most common self-inflicted failure — the model silently drops or scrambles elements.
+
+An **element** = one noun-bearing thing the model must track and animate: a subject, a distinct action, a key object, a camera move, a lighting condition. (See "Count nouns, not adjectives" below for what counts.)
+
+| Kling tier (rotates) | Element budget | Use for | Prompt discipline |
+|---|---|---|---|
+| **1.6** (oldest/cheapest) | **1 subject + 1 action** | Single-subject, single-action scenes; minimal context | Keep prompts very simple — one thing moving, one way |
+| **2.5 Turbo Pro** (speed-optimized) | **3–4 elements max** | Short streamlined shots where speed/cost matters | Tight, short prompts; compress aggressively |
+| **2.6 / 2.6 Turbo** (everyday) | **5–7 elements** | Most scenes — cinematic realism, richer environments, "fast, relatively inexpensive, works for most scenes" | Standard 4-part structure; room for a couple of objects + a camera move |
+| **o1** (reasoning model — "the nano banana of video") | **complex / layered / many** | Complex scene logic + physics; **in-video editing** (add/remove objects, change environment/season); Next/Previous Shot continuity | Long, layered descriptions OK; pair with the Constraint Sandwich (below) |
+| **3.0** ("the full film studio") | **multi-shot — up to ~6 shots / 15s** | Highest-quality output, multi-shot sequences, talking characters; **Omni** (multi-reference) and `@element` tagging | Define each shot as its own one-camera-move unit; see Seedance Multi-Shot above for the storyboard mindset |
+
+**Why this works:** the failure isn't randomness, it's a budget overrun. A cheaper tier has less capacity to hold elements in coherent relation; an over-budget prompt forces it to gamble on which elements to honor. Matching prompt complexity to tier capacity removes the gamble. (Capability mapping > version number — the *budgets* survive renames; the *names* don't.)
+
+### The 4-part prompt structure: Subject + Action + Context + Style
+
+Every Kling prompt decomposes into four parts. The discipline is that **removing any one part doesn't simplify the prompt — it hands that decision to the model**, which fills the gap with whatever it wants. That gap-filling *is* the "randomness" people blame on the tool.
+
+| Part | What it specifies | Drop it and… |
+|---|---|---|
+| **Subject** | What actually appears in frame | …the model invents who/what is there |
+| **Action** | What moves, and how it moves | …the model picks an arbitrary motion (or none) |
+| **Context** | Where and when the scene happens | …the model picks a setting/time of day |
+| **Style** | How it's filmed and how it feels | …the model picks a look/grade |
+
+**Short-prompt hierarchy** (when under ~50 words, e.g. for a fast tier): compress, never amputate.
+
+```text
+Subject + Action  (never skip these two)
+  → Camera behavior
+    → minimal Context
+      → (optional) Style
+```
+
+> "Short prompts don't remove structure — they compress it."
+
+**Why this works:** the model is an executor, not a co-author. Every unspecified slot is a degree of freedom you've delegated. The 4-part structure is just an enumeration of the slots, so "be more specific" becomes a checklist instead of a vibe.
+
+### TTV ≠ I2V: don't re-describe the image
+
+Text-to-video (TTV) and image-to-video (I2V) are **different operations that need different prompts**, and conflating them is a primary cause of bad I2V output.
+
+- **TTV** builds the world from scratch → you must describe *everything* (full Subject + Action + Context + Style).
+- **I2V** animates a frame that already exists → the image already *is* the Subject, Context, and most of the Style. Describing them again **fights the image** and creates confusion (the text and the pixels disagree, and the model tries to satisfy both).
+
+**The I2V rule — describe motion only, ~20–40 words.** Answer exactly three questions:
+
+1. **What moves** (and how)
+2. **What stays static** (often the camera — say so explicitly)
+3. **The motion endpoint** (where the motion lands — see below)
+
+```text
+Slow push-in. The subject lifts the cup and brings it to their lips, then lowers it. The camera comes to rest. Everything else stays still.
+```
+
+```text
+The hand slowly raises the bracelet into the light, turning it once so the gemstones catch the key light, then holds. Camera tracks the hand, then settles.
+```
+
+These prompts say nothing about who the subject is, what they're wearing, or the room — the frame already carries all of that. (Contrast with the Wan section above, which makes the same "describe ONLY the motion, not the scene content" point for environmental animation — same principle, applied to I2V character/object motion.)
+
+**Why this works:** the uploaded image is a hard constraint the model honors at high weight. Text describing the same content is a *competing soft constraint*. Keeping the text to pure motion lets the image own appearance and the text own movement — no contradiction to resolve.
+
+### Motion must have an endpoint (the 99% hang)
+
+> **Every motion must start, progress, and stop.**
+
+Open-ended motion is the single most-cited cause of the infamous **Kling 99% hang** — the generation stalls at 99% because "Kling doesn't know when to stop." If you tell it the camera "moves forward" or the subject "is dancing" with no terminus, the model has no defined end state and chokes trying to find one.
+
+The fix is to give every motion a **landing point**:
+
+```text
+# Hangs — open-ended:
+The camera pushes in toward the subject.
+
+# Lands — has an endpoint:
+The camera pushes in toward the subject, then comes to rest in a tight close-up.
+```
+
+```text
+# Hangs:
+She walks down the corridor.
+
+# Lands:
+She walks three steps down the corridor and stops at the door, hand on the handle.
+```
+
+**Why this works:** a diffusion-video model is interpolating toward a coherent final frame. "Motion with no endpoint" is an ill-posed target — there's no last frame to converge on. Naming the end state turns an open interval into a closed one the model can actually render.
+
+### One shot = one camera move; more motion = shorter shot
+
+Two coupled rules that govern shot construction (they extend the Camera Control Techniques section above, which catalogs the *vocabulary* — this is the *budget* on using it):
+
+- **One shot = one camera move.** Mixing multiple camera movements in a single prompt breaks spatial consistency. If you need a push-in *and* a pan, that's **two shots**, generated separately and cut together. A camera line is "one line = one movement = one shot."
+
+```text
+# Breaks spatial consistency — two moves in one shot:
+The camera pushes in while panning right and craning up over the crowd.
+
+# Stable — split into single-move shots:
+Shot 1: Slow push-in toward the player, locked otherwise.
+Shot 2: Static wide, camera pans right across the crowd.
+```
+
+- **The more the camera moves, the shorter the shot must be.** Movement and duration trade off. Static/locked shots survive the longest (good for ~8s); a tracking shot is reliable for roughly half that; complex moves should be kept very short. Long + complex = broken generation.
+
+| Camera behavior | Reliable max duration | Notes |
+|---|---|---|
+| Static / locked | longest (~8s) | Let the *subject* carry the motion |
+| Slow push-in / pan | medium | Single axis, slow |
+| Tracking / following | ~half of static | One subject, steady pace |
+| Orbit | short — **slow only** | Fast orbit warps geometry |
+| Handheld | short — specify "controlled/steady" | Don't combine with other moves; becomes jitter fast |
+| Complex / combined | very short or split | Prefer splitting into single-move shots |
+
+**Why this works:** every frame of camera motion compounds the model's prediction error (geometry, parallax, occlusion all have to stay consistent across more change). Duration multiplies that error budget. Static-camera + subject-motion concentrates the hard prediction into one moving thing instead of the whole frame.
+
+> "Cinematic camera" is **not** an instruction — it specifies no move. Use a concrete move (push-in, pan, tracking) or the model picks for you. (Same point the universal camera-terms table above makes; the AVCC framing is that *vagueness is delegation*.)
+
+### Count nouns, not adjectives (the overload rule)
+
+The #1 video-prompt failure is **overload** — too many distinct things for the model to track. The diagnostic is precise:
+
+> **Count nouns, not adjectives.** Adjectives are free; nouns cost budget.
+
+A heavily-described single object ("a battered, rain-soaked, neon-lit vintage leather jacket") is *one* noun — cheap. Five plainly-named objects ("a jacket, a phone, a dog, a bicycle, a sign") is *five* nouns — expensive, and likely over budget for anything below the o1/3.0 tier.
+
+**The fix when over budget: compress objects into categories.** Kling understands categories; don't micromanage every object.
+
+```text
+# Over budget — 6+ tracked nouns:
+A man holding a phone, a coffee cup, a newspaper, and keys, next to a dog, a bicycle, and a parked car.
+
+# Compressed into categories:
+A man holding a phone, surrounded by everyday street clutter, a dog at his feet.
+```
+
+**Why this works:** each noun is an entity the model must instantiate, place, and keep coherent across frames. Adjectives modify an entity already in the budget — they add detail, not load. Categories ("street clutter", "a crowd of fans with flags") let the model fill a region stochastically instead of tracking N discrete objects, which is exactly what it's good at.
+
+### The 5 predictable failure causes
+
+The course's framing: **"These aren't bugs, they're predictable mistakes."** When a Kling generation comes back wrong, it is almost always one of these five — check them in order:
+
+1. **Too many elements** — over the tier's element budget (→ pick a higher tier, or compress nouns into categories).
+2. **Missing camera guidance** — no camera line, so the model chose the move for you (→ add one explicit, single move).
+3. **Innocent words trigger filters** — an ordinary word reads as policy-sensitive and the gen is silently degraded or refused (→ rephrase the trigger word).
+4. **Open-ended motion** — no endpoint → the 99% hang (→ give the motion a landing point).
+5. **Vague spatial language** — "near", "around", "behind" without a clear anchor → the model guesses placement (→ name explicit spatial relationships).
+
+**Why this works:** it converts "the AI is random" into a five-item triage list. Every failure maps to a specific, reversible prompt edit, so debugging is mechanical instead of superstitious.
+
+### Explicit negative constraints
+
+State what must **not** happen — negatives are as load-bearing as positive instructions. Kling will add objects, motions, or behaviors on its own; a negative prompt (or an inline negative clause) is how you suppress them. This is especially critical for the o1 reasoning model and any edited/integrated frame, where the model has more latitude to "improve" the scene.
+
+```text
+No tongue movement. No tongue flicking. The snake does NOT stick out its tongue at any moment. The mouth remains closed. No aggressive or animalistic behavior.
+```
+
+```text
+negative: fast motion, sudden movement, jittery, camera shake, extra people, text on screen, warped hands
+```
+
+**Why this works:** generative models default to a learned prior (snakes flick tongues; crowds appear; hands gesture). The positive prompt can't always override a strong prior by omission — you have to name the prior and forbid it. Negatives are how you delete from the model's defaults. (This is the same lever the Master Synthesis calls one of the "five universal control levers" — it applies across both image and video.)
+
+### The reverse-motion enter-frame trick
+
+A workaround for a genuinely hard problem — getting a *specific* hero to **enter** an initially-empty frame (models are bad at materializing a controlled subject into a clean scene):
+
+1. Generate a clip where the character **walks out of frame** (or prompt "exits walking backward").
+2. **Reverse the clip in editing.**
+3. The character now appears to **walk into** an initially-empty frame.
+
+```text
+# Generate this (easy for the model):
+The football player walks out of frame to the left, leaving the empty stadium.
+
+# Then reverse in CapCut/ffmpeg → he walks INTO the empty stadium.
+```
+
+```bash
+# Reverse a clip with ffmpeg (video only; add areverse for audio):
+ffmpeg -i exit_clip.mp4 -vf reverse -an enter_clip.mp4
+```
+
+**Why this works:** "subject exits a populated frame" is an easy, well-supported generation (the model starts from a fully-specified frame and removes the subject — a downhill task). "Subject enters an empty frame" is uphill (the model must invent and place a specific controlled subject mid-shot). Reversing the easy direction gives you the hard result for free. The course also frames this as a mindset: *"trains you to see video from end to beginning."*
+
+### The Constraint Sandwich (Anchor → Action → Constraints)
+
+The stabilizing structure for advanced/edited generations — especially **Kling o1** in-video editing, where the model is allowed to change the scene and will over-reach without guardrails:
+
+> **Anchor → Action → Constraints**
+
+- **Anchor** — name the hero element that must persist (the subject of the edit).
+- **Action** — what happens / what changes.
+- **Constraints** — what must **NOT** change (lighting, set design, wardrobe, background, etc.).
+
+```text
+Our football player (element one) scores a goal — preserve the lighting and do not change the stadium design.
+```
+
+```text
+Anchor: the white snake wearing the diamond bracelet.
+Action: the hand slowly lifts; the snake rises with the hand, moving with its whole body.
+Constraints: do not change the lighting; keep the dark background; mouth stays closed; no extra objects.
+```
+
+**Why this works:** an editing/reasoning model treats the whole frame as mutable by default. The sandwich pins the two ends — *this stays (Anchor), this is fixed (Constraints)* — and confines change to the middle (Action). It's the negative-constraint lever applied at scene-composition scale: you're telling the model the boundaries of its edit, not just its content. (Composes with the element-budget rule: the Constraints clause adds elements, so keep the total within the chosen tier's budget.)
+
+### Cross-reference map
+
+| AVCC rule above | Builds on (existing section) |
+|---|---|
+| Element budget / model-first | Kling Motion Transfer; Seedance 2.0 Multi-Shot |
+| Describe motion only (I2V) | Wan Image-to-Video ("describe ONLY the motion") |
+| One shot = one camera move | Camera Control Techniques (the move vocabulary) |
+| Multi-shot tier (3.0) | Seedance 2.0 Multi-Shot Storytelling (storyboard mindset) |
+| Reverse-motion trick / endpoints | Chaining and Extending Clips (last-frame chaining) |
+| Negative constraints | Wan `negative_prompt` usage; output discipline |
