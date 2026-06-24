@@ -264,6 +264,20 @@ Extensions live in `extensions/`. Each extension:
 - **ComfyUI MCP** — Direct tool calls for node pipelines
 - **LoRA Training** — Compiled DNA as training data for custom models
 
+## Reference Library — distilled craft
+
+Deep, copy-paste-ready craft references live alongside each sub-skill. The cluster below was distilled from the full **AI Video Creators** course (BRO-1525 — 12.7 h video + 54 lessons; source playbook in `broomva/workspace docs/reference/ai-video-creators-course/`). Load the one that matches the task; the **prompt structure and craft laws are durable** even as model versions rotate.
+
+| Reference | Sub-skill | What it gives |
+|-----------|-----------|---------------|
+| `references/ai-video-prompt-packs.md` | cinema | The transferable prompt-craft laws (image/video/motion formulas, 5 universal control levers, JSON-by-model, camera→look cheat sheet) + verbatim copy-paste packs (identity-lock, image-to-image product integration, motion w/ strict negatives, master upscale, ChatGPT 3-step content engine, lip-sync, image-editing). |
+| `references/audio-sound-design.md` | cinema | Audio + sound-design + edit craft — the trailer arc, 3–5 layer named-role stack, verbatim ElevenLabs SFX prompts, the A/B mute-test gate, rhythm-before-sound editing, CapCut export discipline. |
+| `references/cinematic-prompting.md` → §AVCC | cinema | SHOT+LENS+LIGHT+TEXTURE+COMPOSITION+STYLE formula, NBP Object→Context→Technical, the 5 control levers, 7 aesthetics + meta-messages, shot/lens reference tables, the taste-training loop. |
+| `references/motion-animation.md` → §AVCC | cinema | Kling model-tier element budgets + model-first rule, Subject+Action+Context+Style, TTV-vs-I2V, motion-endpoint/99% hang, count-nouns overload rule, negative constraints, the Constraint Sandwich, reverse-motion trick. |
+| `references/visual-dna-framework.md` | dna | The art-direction layer: Meaning→Trust→Conversion, the Visual DNA Pyramid, Brand Core, the full Meaning Map dictionary, 5 amateur→premium rules, the verbatim "Act as an art director" prompt, the 15-item Legend template. |
+| `references/character-sheets.md` → §AVCC | dna | Character DNA = Master Prompt (Fixed DNA + Variable Context), "1 account = 1 character", hero-portrait-first + reuse, Hybrid-Reality face-swap, Kling Motion Control tripod rule. |
+| `references/monetization-playbook.md` | loop | Creator→revenue: the 4 paths, exact pricing tiers + brand-placement packages, the 60-sec lead-qual script, margin rules, the micro-funnel + viral loop, Skool referral math. Grounds the Kleos proof-driven-demand engine. |
+
 ## Compounding Skills
 
 This skill compounds on the existing broomva content ecosystem:
@@ -286,6 +300,6 @@ This skill compounds on the existing broomva content ecosystem:
 Built from analysis of:
 - **viznfr** — Claude Code + Playwright autopilot, Nano Banana character sheets, brand DNA extraction
 - **ohneis652** — ComfyUI node pipelines, LoRA style-locking, Soul Cinema start-frame doctrine, 25 design styles
-- **Vidis AI / Skool3** — ReelEngine/PromptEngine, character consistency, motion control, monetization
+- **AI Video Creators (Skool)** — fully captured & distilled (BRO-1525): ReelEngine/PromptEngine prompt craft, image-first pipeline, Visual-DNA art direction, character consistency, motion control, audio/edit craft, and the monetization playbook. See the Reference Library above + `broomva/workspace docs/reference/ai-video-creators-course/`.
 - **MemPalace** — Spatial hierarchy, AAAK compression, MCP-native memory
 - **Karpathy LLM Wiki** — raw/wiki/schema 3-layer architecture, compile-then-query, active linting

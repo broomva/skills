@@ -273,3 +273,203 @@ Bad motion prompts:
 - **Budget your video generations.** At 5-6 per day on free tier, each Veo call is precious. Never send a keyframe you have not reviewed.
 - **Keyframes are cheap.** Generate 4-8 candidate keyframes via Imagen, select the best, then animate. This is the core efficiency of the Start-Frame Doctrine.
 - **Gemini analysis as quality gate.** Before spending a Veo generation, run the keyframe through `gemini-2.5-flash` to verify composition matches intent. This catches misaligned framing before it costs a video slot.
+
+---
+
+## AI Video Creators distillation (AVCC additions)
+
+> Distilled from the AI Video Creators course (BRO-1525) — see broomva/workspace docs/reference/ai-video-creators-course/. Copy-paste **verbatim prompt packs** for this craft live in [`ai-video-prompt-packs.md`](./ai-video-prompt-packs.md).
+>
+> This section adds only material NOT already covered above. The Start-Frame Doctrine (above) is the same principle AVCC calls "image-first, then animate" — keyframes become video inputs; that overlap is not restated. AVCC's contribution is the explicit prompt *formula*, a model-specific ordering hierarchy, a named control-lever framework, the parameter-not-feeling rule, model JSON support, the seven aesthetics and their meta-messages, two camera-language reference tables, and a trainable visual-taste loop. Model versions cited (Kling 3.0, Nano Banana Pro, Seedance 2.0) are late-2025/early-2026 snapshots — the course itself says model leadership "rotates quarterly." Treat the *workflow logic and prompt structure* as durable; treat *version names, credit costs, and free-tier claims* as perishable.
+
+### The master image-prompt formula (SHOT+LENS+LIGHT+TEXTURE+COMPOSITION+STYLE)
+
+AVCC compresses the whole image brief into one ordered checklist run **every time** you write a prompt:
+
+```
+SHOT + LENS + LIGHT + TEXTURE + COMPOSITION + STYLE REFERENCE
+```
+
+The professional variant appends one more slot — **EMOTIONAL VISION**, a single phrase stating how the viewer should feel:
+
+```
+SHOT + LENS + LIGHT + TEXTURE + COMPOSITION + STYLE REFERENCE + EMOTIONAL VISION
+```
+
+Why this works: it maps the same craft the **5-Component Priority Order** (§ above) encodes, but adds **two slots that order misses** — an explicit **LENS/focal-length** slot (perspective, compression, isolation — see lens table below) and an explicit **TEXTURE** slot (the single most reliable cure for the "plastic AI look"). Where the 5-component order folds lens into "Technical," AVCC promotes it to a first-class, named decision so it never gets dropped. Use the 5-component order to *prioritize* (what to keep when you must trim); use this formula as the *completeness checklist* (did I make a deliberate decision in every slot).
+
+The fully-assembled homework version of this formula, as a fill-in template:
+
+```
+"Medium shot of [subject] doing [action], shot on [lens] at [aperture], [camera angle].
+[Lighting description: source + direction + quality + temperature].
+Detailed textures on [key materials]. [Composition choice] with [note about negative space or depth].
+Styled like [described visual reference], evoking [emotional intention]."
+```
+
+A worked director-level example (note every slot is filled with a parameter, not an adjective):
+
+```
+Motocross rider mid-lean on a dirt track, captured in gritty 90s analog style,
+vertical black and white frame with strong motion blur,
+shot handheld with a 35mm lens at f/2.8, 1/33 of a second, ISO 400,
+flat overcast daylight, diffused shadows, helmet highlights softly blown out,
+granular dirt with lateral dust streaks, styled like vintage Marlboro campaigns,
+evoking raw speed and unpolished realism.
+```
+
+### "AI understands parameters, not feelings"
+
+The single most load-bearing rule in AVCC's prompt craft, and the reason the formula above is built from technical slots. Models were trained on captioned photography and cinematography, so they respond to the vocabulary that *describes* photographs — bodies, lenses, apertures, shutter speeds, color temperatures, named lighting setups — and respond poorly to mood words.
+
+Do **not** write:
+
+```
+moody portrait, cinematic lighting
+```
+
+Write the parameters that *produce* that mood:
+
+```
+85mm portrait, f/1.4, soft side lighting, warm 3200k tones
+```
+
+Same rule applied to a style decision — instead of "cinematic lighting," name the decisions:
+
+```
+muted blue-gray palette, matte textures, soft haze, asymmetrical composition, gritty editorial mood, 35mm lens
+```
+
+Why this works: a mood word is a *result* the model has to guess a path to; a parameter is the *path itself*. Naming camera language is also the cheapest single realism lever (see "Camera language = realism" under the control levers below).
+
+### Nano Banana Pro: the Object → Context → Technical hierarchy
+
+Modern reasoning-based image models (Nano Banana Pro is the reference instance; versions rotate) read prompts best when written in a specific **order of importance**, distinct from the cinematic SHOT-first formula above. NBP's "Spatial Intelligence" resolves the scene as 3D before drawing, so it wants the *thing* first, then *where it lives*, then *how it's shot*:
+
+```
+1. Object       (the single most important element)
+2. Context / Environment
+3. Technical settings   (lens, lighting, mood)
+```
+
+Worked example (a product campaign base shot):
+
+```
+a bright matte ZUFA-ZUFA can inside a traditional Central Asian yurt
+A low-angle view of the can, where we see it against a hole in the yurt's roof.
+Light beams shine through with smoke and steam
+```
+
+Object = the matte can · Context = inside the yurt · Technical = low angle, light beams through the roof hole, smoke/steam diffusion.
+
+Why this works: a reasoning model anchors on the primary object, then places it spatially, then applies optics — feeding the prompt in that order matches its internal resolution sequence and produces stable, glitch-free results (objects don't float, shadows land correctly, light scatters on the matte surface). This is **not** a contradiction of the SHOT-first cinematic formula — it is the *model-specific* ordering for reasoning-class generators. Use SHOT-first for camera-driven cinematic stills (Midjourney, Imagen-class); use Object-first for reasoning-class generators doing product/integration/text work. When in doubt, AVCC's guidance is to **test both formats plus a JSON version and pick the winner** — they produce genuinely different outputs.
+
+### The 5 universal control levers (named framework)
+
+AVCC names exactly five levers that hold true across **both image and video** generation. When output is wrong, you are almost always failing to pull one of these — not failing to find "the perfect words":
+
+| # | Lever | What it does | Concrete handle |
+|---|-------|--------------|-----------------|
+| 1 | **Camera language = realism** | Naming real camera bodies/lenses deterministically shifts lighting, depth, and grade because the training data was photography | `Sony A7R IV`, `Hasselblad H6D`, `ARRI ALEXA 35`, `RED KOMODO 6K`, `85mm f/1.4`, `35mm anamorphic` |
+| 2 | **References > prompts** | Control comes from reference *images*, not better text — the dominant control surface | OmniReference (Midjourney) · Elements (Kling) · 9-image collage (Seedance ≈ 80% of control) · drag image into prompt window |
+| 3 | **Negative constraints** | Stating what must NOT happen is as important as positive instruction | `no tongue, mouth closed` · `NO UI, no plastic skin` · negative-prompt field for upscale |
+| 4 | **Physics must be explicit** | For object integration: weight, gravity, contact shadows, indentation, reflections — or objects float | `contact shadow under the can`, `the cushion indents under its weight`, `reflection on the wet floor` |
+| 5 | **Deliberate imperfection = realism** | For UGC/authentic looks, perfection reads as fake; specify flaws | `shot on iPhone`, `uneven exposure`, `sensor noise`, `slight horizon tilt`, `natural blink and breath` |
+
+Why this framework matters: it converts "why did it give me a weird result?" into a diagnostic — walk the five levers and find the one you under-specified. It composes with the universal generator model `PROMPT → MODEL → CONTROLS → RESULT`: the levers tell you *what* to change inside the PROMPT and CONTROLS layers. Levers 1 and 3 reinforce the [Soul Cinema](#soul-cinema-vs-general-models) and [motion-prompt](#motion-prompt-camera-movement-only) doctrines above; levers 2, 4, 5 are AVCC-distinct additions.
+
+### JSON prompt support is a per-model property
+
+Whether you can use structured JSON prompting is a **property of the model**, not a universal technique. Get this wrong and a JSON prompt degrades to garbage on a model that can't parse it.
+
+| Model class | JSON support | Notes |
+|-------------|--------------|-------|
+| **Nano Banana Pro** | Yes | Reasoning-based; handles structured blocks well |
+| **Kling** | Yes | JSON-friendly modern video model |
+| **Veo** | Yes | JSON-friendly |
+| **Sora** | Yes | JSON-friendly |
+| **Midjourney** | **No** | Plain text only — JSON will not parse; use natural-language prompts |
+
+A JSON prompt template for the models that support it:
+
+```json
+{
+  "camera": {
+    "angle": "front three-quarter view",
+    "lens": "35mm",
+    "movement": "static"
+  },
+  "lighting": {
+    "type": "soft studio three-point",
+    "key_light": "warm",
+    "rim_light": "subtle",
+    "shadow_style": "soft"
+  },
+  "color_palette": ["#HEX", "#HEX"],
+  "subject": {
+    "type": "...",
+    "pose": "...",
+    "expression": "..."
+  },
+  "render_style": "3D toon shading"
+}
+```
+
+Why this works: JSON shines for **structured, repeatable** images — illustrations, toon shading, 3D-inspired art, and producing controlled variations within one visual system (lock everything, change one field). For photographic/cinematic stills, natural language still wins. Build JSON fast by pasting the template into ChatGPT and using **voice input** to fill each block.
+
+### The 7 main aesthetics and their meta-messages
+
+An aesthetic is a *communication choice*, not decoration — each one carries a meta-message the audience reads before they read any copy. Choosing the wrong aesthetic for the goal is a strategic error no amount of prompt polish fixes. Pick the aesthetic from the chain `Goal → Emotion → Aesthetic → Palette & Light → References`.
+
+| # | Aesthetic | Meta-message | Hallmarks (prompt keywords) | Used for |
+|---|-----------|--------------|------------------------------|----------|
+| 1 | **Cinematic** | story, emotion, importance | dramatic lighting, depth & contrast, shallow DoF, film-like grading | storytelling, emotional ads, trailers, premium narratives |
+| 2 | **Minimalist** | clarity, trust, premium | clean compositions, neutral palettes, soft diffused light, lots of negative space | brands, tech, skincare, luxury products |
+| 3 | **Editorial / Fashion** | confidence, trend, luxury | bold posing, polished skin/textures, studio lighting, campaign styling | fashion, beauty, branding, high-end campaigns |
+| 4 | **Dreamy / Soft** | emotion, nostalgia, calm | pastel/muted colors, glow & haze, gentle light, romantic/introspective | lifestyle, emotional storytelling, memory-driven content |
+| 5 | **Retro / Vintage** | authenticity, memory, humanity | film grain, warm tones, analog imperfections, candid feel | heritage brands, storytelling, human-focused visuals |
+| 6 | **Gritty / Dark** | power, intensity, rebellion | high contrast, deep shadows, rough textures, urban realism | sports, street culture, raw energy, masculine brands |
+| 7 | **Futuristic / Tech** | innovation, speed, advancement | neon/rim lighting, chrome/glossy surfaces, clean geometry, digital precision | tech, AI, future-focused products/services |
+
+Core elements that compose any aesthetic: **Color + Light + Composition + Texture + Mood (+ Shapes)** — changing **one element** can completely flip how an image feels. Color meta-meanings: **warm = emotional · cool = intelligent · dark = powerful · pastel = gentle.** Substyles (Y2K, Dark Academia, Indie Sleaze, Barbiecore, Cyberpunk, etc.) are a refinement vocabulary layered on top — not rigid categories. To apply an aesthetic: (1) name it, (2) add palette + light + texture + mood keywords, (3) keep the vocabulary *consistent* across variations, (4) generate multiple options and pick the strongest. The Soul Cinema doctrine above is the *Cinematic* row of this table taken to full director-vocabulary depth; the other six aesthetics are the AVCC-distinct additions.
+
+### Shot type → emotion (reference table)
+
+The shot type is the lens's first emotional decision — it sets how close the viewer stands to the subject before any lighting or grade applies.
+
+| Shot | Emotional / storytelling effect |
+|------|----------------------------------|
+| Extreme close-up | Intimacy; forces attention onto small details |
+| Close-up | Focuses on emotion |
+| Medium shot | Balances emotion with surrounding context |
+| Full shot | Shows the entire figure plus environment |
+| Long shot | Atmosphere dominates the frame |
+| Over-the-shoulder | Presence; puts the viewer inside the scene |
+| Point-of-view (POV) | Full immersion from the character's perspective |
+| Bird's-eye view | Abstraction plus sense of scale |
+| Worm's-eye view | Power, dominance |
+
+### Lens / focal length → psychology (reference table)
+
+Focal length is the SHOT formula's LENS slot. Short lenses exaggerate space and pull in more environment; long lenses compress space and isolate the subject. Pick the focal length for the *psychological* effect, then it doubles as a realism cue (lever 1).
+
+| Focal length | Character / psychology |
+|--------------|------------------------|
+| 14–24mm (ultra-wide) | Dramatic, distorted, dynamic; exaggerates space, more environment |
+| 24–35mm (wide) | Lots of environment, natural dynamism |
+| 35–50mm (standard) | Close to human-eye perspective |
+| 85–135mm (portrait) | Flattering compression, subject isolation |
+| 200mm+ (telephoto) | Extreme compression, flattened backgrounds |
+
+These two tables are the substance behind the director-style camera-movement vocabulary above: the director sections tell you *how the camera moves*; these tables tell you *what the static frame's shot type and lens do to the viewer* before any movement is added.
+
+### The visual-taste training system (Curate → Patterns → Prompts → Practice)
+
+Taste is **trainable** — it is the set of visual decisions you repeat on purpose (color language, lighting style, composition habits, texture choices, mood), and it is what separates "random prompt → random image" from creative direction. The shift is from **Random** (decisions are arbitrary, output looks arbitrary) to **Curated** (repeat the same visual language deliberately, control the *why*). The four-step loop:
+
+1. **CURATE** — collect like a director, not consume like entertainment. Build a board of premium/emotional/aligned references; target ~20–30 strong references to start, then +5/day. You are collecting *assets*, not chasing inspiration dopamine.
+2. **FIND PATTERNS** — treat the board as a *dataset*, not a collage. Identify 2–4 repeating patterns (palette, lighting signature, texture choices, composition habits, recurring moods) — these become your aesthetic direction.
+3. **TASTE → PROMPTS** — translate taste into *language*. This is the step that makes taste usable: "Woman on the street, cinematic lighting" is weak; "Muted blue-gray palette, matte textures, soft haze, asymmetrical composition, gritty editorial mood, 35mm lens" is direction. **Taste becomes usable only when it becomes language** (note this is the same "parameters not feelings" rule applied to your own style).
+4. **PRACTICE (micro)** — repetition builds taste: recreate one reference exactly, generate 5 variations in the same aesthetic, change *lighting only*, then *angle only*, building a small "signature pack." The goal is **control, not variety.**
+
+A fast shortcut: upload your moodboard to ChatGPT and ask it to extract palette, lighting, textures, composition, and mood, plus ready-to-use keywords *and* an aesthetic **"NO list"** (what breaks your style) — that becomes a repeatable style-guide system. Why this works: it makes the front-end of the SHOT formula (STYLE REFERENCE + EMOTIONAL VISION) a deliberate, owned input rather than a per-prompt guess — the same way the Start-Frame Doctrine makes composition a deliberate input to the video model.
