@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Swapit — live dashboard</title>
+<style>
+:root{--bg:#fbfbfd;--card:#fff;--fg:#1a1a22;--muted:#6b7280;--line:#e6e6ee;--accent:#3b5fc4;
+  --high:#e5484d;--medium:#f5a524;--low:#30a46c;--col:#f3f4f8}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1117;--card:#171a23;--fg:#e8e8f0;--muted:#9aa0ad;
+  --line:#262a36;--accent:#8aa9ff;--col:#12141c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header h1{font-size:20px;margin:0}
+header .stats{color:var(--muted);font-size:13px}
+header .spacer{flex:1}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--fg);
+  border-radius:8px;padding:7px 12px}
+button.primary{background:var(--accent);color:#fff;border-color:transparent}
+button:hover{filter:brightness(1.05)}
+select,input[type=text],input[type=number],input[type=url]{font:inherit;border:1px solid var(--line);
+  background:var(--card);color:var(--fg);border-radius:7px;padding:6px 8px;max-width:100%}
+.wrap{padding:18px 22px 80px}
+.summary{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+.scard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;min-width:120px}
+.scard .n{font-size:26px;font-weight:700;line-height:1}.scard .l{color:var(--muted);font-size:12px;margin-top:3px}
+.donut-num{font-size:24px;font-weight:700;fill:var(--fg)}.donut-lbl{font-size:10px;fill:var(--muted)}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.board{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px;align-items:flex-start}
+.column{background:var(--col);border:1px solid var(--line);border-radius:12px;padding:10px;min-width:250px;width:250px;flex:0 0 auto}
+.column h3{margin:2px 4px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:9px;border-left:4px solid var(--line)}
+.card.high{border-left-color:var(--high)}.card.medium{border-left-color:var(--medium)}.card.low{border-left-color:var(--low)}
+.card .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.card .nm{font-weight:600}
+.badge{font-weight:700;font-size:12px;padding:2px 7px;border-radius:20px;color:#fff;white-space:nowrap}
+.badge.high{background:var(--high)}.badge.medium{background:var(--medium)}.badge.low{background:var(--low)}
+.meta{color:var(--muted);font-size:12px;margin:2px 0 8px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.chip{font-size:11px;background:rgba(127,127,127,.13);border-radius:20px;padding:2px 7px}
+.row{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap}
+.row select{flex:1;min-width:0}
+.chosen{font-size:12px;color:var(--low);margin-top:6px}.pct{color:var(--accent);font-weight:600}
+.tasks{margin:8px 0 0;list-style:none;padding:0}
+.tasks li{display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0}
+.tasks li.done label{text-decoration:line-through;color:var(--muted)}
+.tasks input{margin:0}
+.addtask{display:flex;gap:5px;margin-top:6px}
+.addtask input{flex:1}
+.bm{font-size:12px;margin-top:6px}.bm a{color:var(--accent)}
+.linkbtn{background:none;border:none;color:var(--accent);padding:2px;font-size:12px}
+#addform{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;display:none}
+#addform.open{display:block}
+#addform .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:10px}
+#addform label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+#addform .checks{display:flex;gap:14px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.empty{color:var(--muted);font-size:13px;padding:8px}
+footer{margin-top:30px;color:var(--muted);font-size:12px;text-align:center}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);
+  padding:8px 16px;border-radius:20px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:.95}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 Swapit</h1>
+  <span class="stats" id="kstats"></span>
+  <span class="spacer"></span>
+  <button class="primary" id="addbtn">+ Add item</button>
+  <button id="refresh">↻</button>
+</header>
+
+<div class="wrap">
+  <div class="summary" id="summary"></div>
+
+  <form id="addform" autocomplete="off">
+    <div class="grid">
+      <div><label>Name</label><input type="text" id="f_name" placeholder="Old Teflon pan" required></div>
+      <div><label>Item type</label><input type="text" id="f_class" list="classlist" placeholder="nonstick-cookware" required>
+        <datalist id="classlist"></datalist></div>
+      <div><label>Room</label><input type="text" id="f_room" list="roomlist" placeholder="kitchen">
+        <datalist id="roomlist"></datalist></div>
+      <div><label>Condition</label><select id="f_condition"></select></div>
+      <div><label>Use frequency</label><select id="f_frequency"></select></div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="f_food"> food contact</label>
+      <label><input type="checkbox" id="f_heat"> used with heat</label>
+      <label><input type="checkbox" id="f_child"> child contact</label>
+    </div>
+    <button class="primary" type="submit">Add &amp; assess</button>
+    <button type="button" id="addcancel">Cancel</button>
+  </form>
+
+  <div class="toolbar">
+    <label>Room <select id="filterRoom"><option value="">all</option></select></label>
+    <label>Risk <select id="filterBand"><option value="">all</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option></select></label>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <footer>swapit · the skill's state is the source of truth — the agent is the app<br>
+  Drag is by status dropdown · every change writes back to <code>~/.config/swapit/</code></footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+let STATE = null;
+const COLOR = {high:"var(--high)", medium:"var(--medium)", low:"var(--low)"};
+
+function el(tag, attrs={}, ...kids){
+  const n = document.createElement(tag);
+  for(const [k,v] of Object.entries(attrs)){
+    if(k==="class") n.className=v;
+    else if(k==="text") n.textContent=v;            // safe: user strings go through textContent
+    else if(k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if(v!==null && v!==undefined) n.setAttribute(k, v);
+  }
+  for(const kid of kids){ if(kid!=null) n.append(kid); }
+  return n;
+}
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),1400); }
+
+async function api(path, body){
+  const res = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const data = await res.json();
+  if(!res.ok){ toast(data.error||"error"); return; }
+  STATE = data; render(); toast("saved");
+}
+async function load(){
+  const res = await fetch("/api/state"); STATE = await res.json(); render();
+}
+
+function donut(bands, total){
+  const NS="http://www.w3.org/2000/svg", R=46, C=2*Math.PI*R; let off=0;
+  const svg=document.createElementNS(NS,"svg"); svg.setAttribute("viewBox","0 0 110 110"); svg.setAttribute("width","104"); svg.setAttribute("height","104");
+  if(total===0){ const c=document.createElementNS(NS,"circle"); c.setAttribute("cx","55");c.setAttribute("cy","55");c.setAttribute("r",R);c.setAttribute("fill","none");c.setAttribute("stroke","var(--line)");c.setAttribute("stroke-width","15"); svg.append(c); }
+  for(const b of ["high","medium","low"]){
+    const n=bands[b]||0; if(!n) continue; const frac=n/total, dash=frac*C;
+    const c=document.createElementNS(NS,"circle");
+    c.setAttribute("cx","55");c.setAttribute("cy","55");c.setAttribute("r",R);c.setAttribute("fill","none");
+    c.setAttribute("stroke",COLOR[b]);c.setAttribute("stroke-width","15");
+    c.setAttribute("stroke-dasharray", dash.toFixed(2)+" "+(C-dash).toFixed(2));
+    c.setAttribute("stroke-dashoffset", (-off).toFixed(2));
+    c.setAttribute("transform","rotate(-90 55 55)"); svg.append(c); off+=dash;
+  }
+  const t1=document.createElementNS(NS,"text"); t1.setAttribute("x","55");t1.setAttribute("y","52");t1.setAttribute("text-anchor","middle");t1.setAttribute("class","donut-num");t1.textContent=total;
+  const t2=document.createElementNS(NS,"text"); t2.setAttribute("x","55");t2.setAttribute("y","68");t2.setAttribute("text-anchor","middle");t2.setAttribute("class","donut-lbl");t2.textContent="items";
+  svg.append(t1,t2); return svg;
+}
+
+function card(it){
+  const c = el("div", {class:"card "+it.band});
+  c.append(el("div",{class:"top"},
+    el("span",{class:"nm",text:it.name}),
+    el("span",{class:"badge "+it.band,text:String(it.score)})));
+  c.append(el("div",{class:"meta",text:(it.room||"—")+" · "+(it.item_class||"—")}));
+  if(it.hazards.length){
+    const chips=el("div",{class:"chips"});
+    it.hazards.slice(0,3).forEach(h=>chips.append(el("span",{class:"chip",text:h.name})));
+    c.append(chips);
+  }
+  // choose alternative
+  if(it.alternatives.length){
+    const sel=el("select",{onchange:e=>api("/api/swap/choose",{item_id:it.id,alternative_id:e.target.value})});
+    sel.append(el("option",{value:"",text:it.chosen?"change swap…":"choose a swap…"}));
+    it.alternatives.forEach(a=>{
+      const o=el("option",{value:a.id,text:a.name+"  (−"+a.pct+"%)"}); if(a.id===it.chosen)o.selected=true; sel.append(o);
+    });
+    c.append(el("div",{class:"row"}, el("span",{text:"→"}), sel));
+  }
+  // status
+  const stsel=el("select",{onchange:e=>api("/api/item/status",{item_id:it.id,status:e.target.value})});
+  STATE.statuses.forEach(s=>{const o=el("option",{value:s,text:s}); if(s===it.status)o.selected=true; stsel.append(o);});
+  c.append(el("div",{class:"row"}, el("span",{class:"meta",text:"status"}), stsel));
+  // checklist
+  const ul=el("ul",{class:"tasks"});
+  it.checklist.forEach(t=>{
+    const li=el("li",{class:t.done?"done":""});
+    const cb=el("input",{type:"checkbox",onchange:()=>api("/api/swap/task/toggle",{item_id:it.id,task_id:t.id})}); if(t.done)cb.checked=true;
+    li.append(cb, el("label",{text:t.text})); ul.append(li);
+  });
+  c.append(ul);
+  const taskInput=el("input",{type:"text",placeholder:"add checklist task…"});
+  const taskForm=el("form",{class:"addtask",onsubmit:e=>{e.preventDefault(); if(taskInput.value.trim()){api("/api/swap/task/add",{item_id:it.id,text:taskInput.value.trim()}); taskInput.value="";}}});
+  taskForm.append(taskInput, el("button",{type:"submit",text:"+"})); c.append(taskForm);
+  // bookmarks — sanitize href scheme (block javascript:/data: etc.)
+  it.bookmarks.forEach(b=>{
+    const safe = /^https?:\/\//i.test(b.url||"") ? b.url : "#";
+    c.append(el("div",{class:"bm"}, el("a",{href:safe,target:"_blank",rel:"noopener noreferrer",text:"🔖 "+(b.title||b.url)})));
+  });
+  c.append(el("button",{class:"linkbtn",text:"+ link",onclick:()=>{const u=prompt("Source / vendor URL:"); if(u)api("/api/bookmark",{item_id:it.id,url:u,title:""});}}));
+  return c;
+}
+
+function render(){
+  if(!STATE) return;
+  const s=STATE.summary, k=STATE.knowledge;
+  $("#kstats").textContent = `${k.hazards} hazards · ${k.item_classes} item-types · ${k.alternatives} swaps`;
+  // summary
+  const sum=$("#summary"); sum.replaceChildren();
+  const dwrap=el("div"); dwrap.append(donut(s.bands,s.total)); sum.append(dwrap);
+  sum.append(scard(s.bands.high,"high risk 🔴"));
+  sum.append(scard(s.total?Math.round(100*s.addressed/s.total)+"%":"0%","addressed ("+s.addressed+"/"+s.total+")"));
+  sum.append(scard(s.reduction_available,"exposure pts reducible"));
+  // filters
+  const fr=$("#filterRoom"); const cur=fr.value;
+  fr.replaceChildren(el("option",{value:"",text:"all"}));
+  STATE.rooms.forEach(r=>fr.append(el("option",{value:r,text:r})));
+  fr.value=cur;
+  // room datalist refreshes every render (rooms can be added); static lists fill once
+  $("#roomlist").replaceChildren(...STATE.rooms.map(r=>el("option",{value:r})));
+  fillStatic();
+  // board
+  const board=$("#board"); board.replaceChildren();
+  const roomF=fr.value, bandF=$("#filterBand").value;
+  let items=STATE.items.filter(it=>(!roomF||it.room===roomF)&&(!bandF||it.band===bandF));
+  STATE.statuses.forEach(st=>{
+    const inCol=items.filter(it=>it.status===st);
+    const col=el("div",{class:"column"});
+    col.append(el("h3",{},el("span",{text:st}),el("span",{text:String(inCol.length)})));
+    if(!inCol.length) col.append(el("div",{class:"empty",text:"—"}));
+    inCol.sort((a,b)=>b.score-a.score).forEach(it=>col.append(card(it)));
+    board.append(col);
+  });
+}
+function scard(n,l){ return el("div",{class:"scard"}, el("div",{class:"n",text:String(n)}), el("div",{class:"l",text:l})); }
+
+let staticFilled=false;
+function fillStatic(){
+  // item-classes, conditions, frequencies don't change at runtime — fill once
+  if(staticFilled) return; staticFilled=true;
+  const cl=$("#classlist"); STATE.item_classes.forEach(c=>cl.append(el("option",{value:c.id})));
+  const cs=$("#f_condition"); STATE.conditions.forEach(c=>cs.append(el("option",{value:c,text:c}))); cs.value="good";
+  const fq=$("#f_frequency"); STATE.frequencies.forEach(f=>fq.append(el("option",{value:f,text:f}))); fq.value="occasional";
+}
+
+// wiring
+$("#addbtn").onclick=()=>$("#addform").classList.toggle("open");
+$("#addcancel").onclick=()=>$("#addform").classList.remove("open");
+$("#refresh").onclick=load;
+$("#filterRoom").onchange=render;
+$("#filterBand").onchange=render;
+$("#addform").onsubmit=e=>{
+  e.preventDefault();
+  const name=$("#f_name").value.trim(), cls=$("#f_class").value.trim();
+  if(!name||!cls){ toast("name + type required"); return; }
+  api("/api/item/add",{name, item_class:cls, room:$("#f_room").value.trim(),
+    condition:$("#f_condition").value, frequency:$("#f_frequency").value,
+    food_contact:$("#f_food").checked, heat:$("#f_heat").checked, child_contact:$("#f_child").checked});
+  e.target.reset(); $("#addform").classList.remove("open");
+};
+load();
+</script>
+</body>
+</html>

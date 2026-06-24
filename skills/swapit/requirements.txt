@@ -1,0 +1,3 @@
+# swapit runtime: Python >= 3.10 standard library only — no third-party dependencies.
+# Dev/test dependencies below.
+pytest>=7.0

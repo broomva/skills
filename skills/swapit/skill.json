@@ -1,0 +1,183 @@
+{
+  "name": "swapit",
+  "version": "0.3.1",
+  "description": "Stateful, local-first household toxics inventory + swap engine. Identify items carrying endocrine disruptors / persistent chemicals, score by real exposure, track swaps to safer alternatives. Ships a grounded, cited knowledge graph. Hands sourcing to the procurer skill. Zero paid services.",
+  "requires_python": ">=3.10",
+  "entrypoint": "scripts/swapit.py",
+  "inputs_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "init",
+          "add",
+          "assess",
+          "list",
+          "swap",
+          "score",
+          "report",
+          "procure",
+          "knowledge",
+          "rooms",
+          "bookmark",
+          "selfheal",
+          "serve",
+          "contribute",
+          "sync"
+        ],
+        "description": "Skill mode: init (load seed knowledge), add (add an item), assess (score an item/class), list (inventory), swap (track a swap), score (household summary), report (HTML), procure (procurer handoff brief), knowledge (browse graph), rooms (manage rooms), bookmark (save a link), selfheal (validate integrity), serve (live local dashboard), contribute (queue an anonymized knowledge fact), sync (push/pull the commons, opt-in)."
+      },
+      "name": {
+        "type": "string",
+        "description": "Item display name (add mode)."
+      },
+      "item_class": {
+        "type": "string",
+        "description": "Item-class id from the knowledge graph (add/assess), e.g. nonstick-cookware, polycarbonate-bottle, vinyl-shower-curtain."
+      },
+      "item_id": {
+        "type": "string",
+        "description": "Inventory item id (assess/swap), e.g. itm_ab12cd34."
+      },
+      "target": {
+        "type": "string",
+        "description": "Item id or swap id (procure mode)."
+      },
+      "room": {
+        "type": "string",
+        "description": "Room/zone for an item (kitchen, bathroom, bedroom, nursery, garage, ...)."
+      },
+      "condition": {
+        "type": "string",
+        "enum": [
+          "new",
+          "good",
+          "aging",
+          "worn",
+          "scratched",
+          "damaged",
+          "sealed"
+        ],
+        "default": "good",
+        "description": "Physical condition \u2014 damaged/scratched coatings leach more."
+      },
+      "frequency": {
+        "type": "string",
+        "enum": [
+          "daily",
+          "weekly",
+          "monthly",
+          "occasional",
+          "rare",
+          "unused"
+        ],
+        "default": "occasional",
+        "description": "How often the item is used (drives exposure weighting)."
+      },
+      "food_contact": {
+        "type": "boolean",
+        "default": false,
+        "description": "Item contacts food/drink."
+      },
+      "heat": {
+        "type": "boolean",
+        "default": false,
+        "description": "Item is used with heat (cooking, hot liquids, microwave)."
+      },
+      "child_contact": {
+        "type": "boolean",
+        "default": false,
+        "description": "Item is mouthed/handled by a child (amplifies risk)."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "keep",
+          "flagged",
+          "swap-planned",
+          "sourcing",
+          "swapped",
+          "disposed"
+        ],
+        "description": "Item lifecycle status."
+      },
+      "to": {
+        "type": "string",
+        "description": "Chosen alternative id (swap mode), e.g. cast-iron-skillet, glass-food-container."
+      },
+      "band": {
+        "type": "string",
+        "enum": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "description": "Risk band filter (list mode)."
+      },
+      "json": {
+        "type": "boolean",
+        "default": false,
+        "description": "Emit machine-readable JSON instead of formatted text."
+      }
+    },
+    "required": [
+      "mode"
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "add"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "name",
+            "item_class"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "swap"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "item_id"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "procure"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "target"
+          ]
+        }
+      }
+    ]
+  }
+}
