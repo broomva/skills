@@ -12,6 +12,19 @@ All notable changes to **swapit** are documented here. Format follows
   broomva.tech commons (Postgres + Better Auth); the standalone `commons/` FastAPI service
   remains the self-host option.
 
+### Fixed (review hardening)
+- **Commons moderation is corroboration-gated, not confidence-gated** — `confidence` is
+  caller-supplied, so a single submitter could self-approve; a fact is now served only after a
+  second independent contributor corroborates it.
+- **`sync --configure` refuses a plaintext `http://` endpoint** for non-local hosts
+  (contributions would otherwise be sent unencrypted); localhost http stays allowed for self-host.
+- **A non-JSON commons response is treated as a transport failure** (no crash; best-effort retry).
+- **An empty alternative selection no longer advances a swap** (the dashboard "choose a swap…"
+  placeholder posted `""`).
+- **`selfheal` tolerates a knowledge record missing `id`** (flags it instead of crashing).
+- **Private-realm directories are chmod 0700** (inventory / photos / sync hold what you own).
+- **Commons container runs as a non-root user.**
+
 ## [0.3.0] — 2026-06-24
 
 ### Added — M3 anonymized collaboration + networked commons

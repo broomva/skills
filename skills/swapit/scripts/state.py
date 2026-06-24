@@ -118,6 +118,13 @@ def photos_dir() -> Path:
 def ensure_dirs() -> None:
     for d in (knowledge_dir, inventory_dir, contributions_dir, sync_dir, photos_dir):
         d().mkdir(parents=True, exist_ok=True)
+    # The private realm (inventory, photos, sync config/queue) is owner-only — it holds
+    # what you own and where. Best-effort chmod (no-op on filesystems without POSIX modes).
+    for d in (data_root, inventory_dir, photos_dir, contributions_dir, sync_dir):
+        try:
+            os.chmod(d(), 0o700)
+        except OSError:
+            pass
 
 
 # ----------------------------------------------------------------- jsonl / json io

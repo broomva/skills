@@ -44,9 +44,22 @@ def save_config(cfg: dict) -> None:
     state.write_json(config_path(), cfg)
 
 
+def _require_secure(endpoint: str) -> None:
+    """Refuse a plaintext endpoint for a non-local host — contributions must not go in the clear."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(endpoint).hostname or "").lower()
+    is_local = host in {"127.0.0.1", "localhost", "::1"} or host.endswith(".local")
+    if endpoint.startswith("http://") and not is_local:
+        raise ValueError(
+            f"refusing plaintext endpoint {endpoint!r} — contributions would be sent unencrypted; use https://"
+        )
+
+
 def configure(*, endpoint: str | None = None, token: str | None = None, opt_in: bool | None = None) -> dict:
     cfg = load_config()
     if endpoint is not None:
+        _require_secure(endpoint)
         cfg["endpoint"] = endpoint
     if token is not None:
         cfg["token"] = token
@@ -91,7 +104,13 @@ def _request(url: str, token: str | None, data: dict | None, timeout: int):
     body = json.dumps(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, headers=headers, method="POST" if data is not None else "GET")
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read() or b"null")
+        raw = r.read()
+    try:
+        return json.loads(raw or b"null")
+    except json.JSONDecodeError as exc:
+        # a non-JSON response is a transport-level failure (proxy error page, captive portal);
+        # raise OSError so push_pull treats it like a network error rather than crashing.
+        raise OSError(f"invalid JSON from commons endpoint: {exc}") from exc
 
 
 # ----------------------------------------------------------------------- merge (pull)

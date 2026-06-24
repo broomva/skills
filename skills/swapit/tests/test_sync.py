@@ -26,8 +26,16 @@ def test_push_pull_requires_optin(swapit_home):
 
 
 def test_configure(swapit_home):
-    cfg = sync.configure(endpoint="http://example", token="t", opt_in=True)
-    assert cfg["opt_in"] is True and cfg["endpoint"] == "http://example"
+    cfg = sync.configure(endpoint="https://example", token="t", opt_in=True)
+    assert cfg["opt_in"] is True and cfg["endpoint"] == "https://example"
+
+
+def test_configure_rejects_plaintext_remote_endpoint(swapit_home):
+    with pytest.raises(ValueError):
+        sync.configure(endpoint="http://evil.example", opt_in=True)
+    # localhost http stays allowed (the self-host / dev case)
+    cfg = sync.configure(endpoint="http://127.0.0.1:8791", opt_in=True)
+    assert cfg["endpoint"] == "http://127.0.0.1:8791"
 
 
 def test_merge_incoming_product_and_alternative(swapit_home):

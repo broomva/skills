@@ -12,13 +12,14 @@ def test_health(client):
     assert r.status_code == 200 and r.json()["ok"] is True
 
 
-def test_post_high_confidence_is_approved_and_served(client):
-    f = _fact("fact_a", confidence=0.8)
+def test_single_submission_is_pending_even_at_high_confidence(client):
+    # confidence is caller-supplied, so it must NOT auto-approve a single submission
+    f = _fact("fact_a", confidence=1.0)
     r = client.post("/facts", json=f)
     assert r.status_code == 200
     body = r.json()
-    assert body["corroboration_count"] == 1 and body["status"] == "approved"
-    assert any(x["id"] == "fact_a" for x in client.get("/facts").json())
+    assert body["corroboration_count"] == 1 and body["status"] == "pending"
+    assert client.get("/facts").json() == []  # not served until corroborated
 
 
 def test_low_confidence_pending_until_corroborated(client):

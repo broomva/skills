@@ -20,8 +20,11 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _status(confidence: float, corroboration: int) -> str:
-    return "approved" if (corroboration >= 2 or confidence >= 0.7) else "pending"
+def _status(corroboration: int) -> str:
+    # Approval is corroboration-gated, NOT confidence-gated: `confidence` is supplied by the
+    # contributor, so a single submitter could self-approve by claiming confidence=1.0.
+    # A fact is served only once a second independent contributor corroborates it.
+    return "approved" if corroboration >= 2 else "pending"
 
 
 class Store:
@@ -74,14 +77,14 @@ class Store:
                 # never let a corroborator swap the meaning of an already-stored fact.
                 c.execute(
                     "UPDATE facts SET confidence=?, corroboration_count=?, contributors=?, status=?, last_seen=? WHERE id=?",
-                    (conf, corro, json.dumps(sorted(contributors)), _status(conf, corro), _now(), fid),
+                    (conf, corro, json.dumps(sorted(contributors)), _status(corro), _now(), fid),
                 )
             else:
                 contributors = [tok_hash] if tok_hash else []
                 now = _now()
                 c.execute(
                     "INSERT INTO facts VALUES (?,?,?,?,?,?,?,?,?)",
-                    (fid, kind, json.dumps(payload), conf, 1, json.dumps(contributors), _status(conf, 1), now, now),
+                    (fid, kind, json.dumps(payload), conf, 1, json.dumps(contributors), _status(1), now, now),
                 )
         return self.get(fid)  # type: ignore[return-value]
 

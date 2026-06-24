@@ -99,6 +99,10 @@ def set_item_status(item_id: str, status: str) -> bool:
 # --------------------------------------------------------------------------- swaps
 def choose_alternative(item_id: str, alternative_id: str) -> dict:
     swaps = state.load_swaps()
+    if not alternative_id:
+        # the dashboard's "choose a swap…" placeholder posts ""; don't create a swap or
+        # advance status on an empty selection.
+        return next((s for s in swaps.values() if s["item_id"] == item_id), {"item_id": item_id})
     swap = get_or_create_swap(swaps, item_id)
     swap["chosen_alternative"] = alternative_id
     state.save_swaps(swaps)

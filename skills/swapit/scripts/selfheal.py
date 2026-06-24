@@ -62,9 +62,13 @@ def run() -> list[dict]:
     except ValueError as exc:
         return [_finding("error", "json_parse", str(exc), "fix the malformed JSONL line")]
 
-    hazard_ids = {h["id"] for h in hz}
-    class_ids = {c["id"] for c in ic}
-    alt_ids = {a["id"] for a in alt}
+    for label, recs in (("hazards", hz), ("item-classes", ic), ("alternatives", alt)):
+        for i, rec in enumerate(recs):
+            if not rec.get("id"):
+                findings.append(_finding("error", "missing_id", f"{label}[{i}] has no id", "add an id"))
+    hazard_ids = {h["id"] for h in hz if h.get("id")}
+    class_ids = {c["id"] for c in ic if c.get("id")}
+    alt_ids = {a["id"] for a in alt if a.get("id")}
 
     _check_dupes(hz, "hazards", findings)
     _check_dupes(ic, "item-classes", findings)
