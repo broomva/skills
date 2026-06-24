@@ -392,7 +392,7 @@ The course ships ready-made Master Prompts in its Aesthetic Library (a Drive fil
 
 A worked example of the level of specificity the Fixed DNA block demands — this is a base **identity-lock portrait** prompt (Nano Banana Pro, 9:16, 2K), where the entire body of the prompt becomes the Fixed DNA from then on:
 
-```
+```text
 Ultra-realistic beauty portrait, chest-up framing, frontal eye-level view, centered composition for identity lock.
 Young woman with very light porcelain skin, soft warm-neutral undertone, natural skin texture with subtle micro-details.
 Facial structure: high cheekbones, symmetrical face, narrow straight nose, soft defined jawline.

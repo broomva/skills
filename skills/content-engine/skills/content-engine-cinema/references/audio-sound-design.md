@@ -19,7 +19,7 @@ The cure is two disciplines applied in order:
 
 Every strong audio track follows the same four-beat structure as a movie trailer. Map your soundscape onto this arc and align the audio peak with the visual high point.
 
-```
+```text
 HOOK → BUILD → CLIMAX → RESOLUTION
 ```
 
@@ -36,7 +36,7 @@ HOOK → BUILD → CLIMAX → RESOLUTION
 
 Professional audio is 3 to 5 layers working together. Build them in priority order. **The hard rule that governs the whole stack: voice always dominates.** Music and effects support; they never overpower.
 
-```
+```text
 1. VOICE / VOICEOVER   (MAIN — the narrative spine; ALWAYS dominates)
 2. MUSIC               (mood + pace)
 3. SFX                 (impact + emphasis + transitions)
@@ -104,15 +104,15 @@ Sound effects are punctuation marks. They add rhythm, emphasis, and clarity to a
 
 ElevenLabs has a text-to-SFX tab (Sound Effects). The rule that frames every prompt: **be specific and short — precision equals cleaner results.** State the sound, the character, and an explicit duration. These are the exact prompts from the course:
 
-```
+```text
 airy whoosh, 0.3s
 ```
 
-```
+```text
 crisp UI click, 0.1s
 ```
 
-```
+```text
 cinematic hit, low bass, 0.2s
 ```
 
@@ -140,7 +140,7 @@ The workflow that enforces it:
 
 The objective, repeatable validation move for sound design. It is the audio equivalent of running the app to verify a code change — you judge by *listening*, not by reasoning about whether the mix is good.
 
-```
+```text
 1. Pick a 5-second span of the edit.
 2. Watch it with ALL SFX muted.
 3. Watch the same 5 seconds with SFX unmuted.
@@ -177,7 +177,7 @@ The cardinal rule of the edit: **tight rhythm first, sound second.** Get the cut
 
 ### Cut to the beat
 
-```
+```text
 1. Choose your tempo:
    - a music track / metronome beat, OR
    - (no music) the voiceover pulse — cut on stressed words.
@@ -257,7 +257,7 @@ CapCut is the editor for this whole stage — free tier ships everything core (t
 
 A punch-in on an impact moment, done with two keyframes instead of an animation preset:
 
-```
+```text
 1. Keyframe 1 at the clip start — no change (scale 100%, default position).
 2. Move the playhead to the action moment (e.g. the frame of impact).
 3. Keyframe 2 there — increase scale (zoom in) and reposition onto the subject
@@ -273,7 +273,7 @@ A punch-in on an impact moment, done with two keyframes instead of an animation 
 
 Reverse-engineered in the course Q&A — and notably, it is **not a mask**. It's an image overlay with lowered opacity plus a movement animation:
 
-```
+```text
 1. Drop the overlay image on a layer above the clip; Crop it smaller to fit over the frame.
 2. Animate the position: either
    - keyframe position (off-left → center → off-right), OR
@@ -288,7 +288,7 @@ Reverse-engineered in the course Q&A — and notably, it is **not a mask**. It's
 
 The full sequence from finished clips to export-ready video:
 
-```
+```text
 1. ROUGH CUT (no sound)   → assemble clips on the timeline, no SFX yet.
 2. RHYTHM                 → cut to the beat (4 bars / 4 kicks) or voiceover pulse;
                             retime AI slow-mo clips (~2×); shift cuts 1–2 frames early;

@@ -66,7 +66,7 @@ The Brand Core is your **filter for every visual choice.** Before any references
 
 If the brand already exists, do not invent the core — *audit* it. Ask the audience these five questions and let the answers seed the core:
 
-```
+```text
 1. "What 3 words do you associate with my brand?"
 2. "What do you think I'm best at?"
 3. "What do you trust me for / why would you trust me?"
@@ -84,19 +84,19 @@ These two templates compress the top three pyramid layers into sentences you can
 
 ### Concept Statement (one sentence)
 
-```
+```text
 We help [audience] get [result] by [method], through [tone/experience].
 ```
 
 ### Positioning One-Liner (used live in the workshop)
 
-```
+```text
 I help [audience] get [results] by/during [method], with a vibe of [word 1, word 2, word 3].
 ```
 
 Example, verbatim from the instructor:
 
-```
+```text
 I help brands create cinematic ads with commercial clarity, with a vibe of cinematic, precise and emotional.
 ```
 
@@ -305,7 +305,7 @@ These are the mechanical rules that convert a finished layout from amateur to pr
 
 When something "looks amateur," it is almost always the same core set of causes: too many fonts/sizes, weak hierarchy, inconsistent spacing, low contrast, no system rules, too much content per slide. The fix is a fixed checklist — run it top to bottom:
 
-```
+```text
 1. Remove 20–30% of elements
 2. Increase margins and spacing
 3. Reduce fonts to 1–2
@@ -417,7 +417,7 @@ The default mistake is to gather references from inside your own niche. That rep
 
 Once the Visual DNA Legend exists, hand it to ChatGPT to convert into a finished, defensible visual system. Use this prompt verbatim:
 
-```
+```text
 "Here is my Visual DNA Legend. Act as an art director.
 1. Turn it into a coherent concept narrative.
 2. Propose a complete visual system: color roles, typography direction, layout rules, imagery rules, graphic elements.
@@ -434,7 +434,7 @@ Once the Visual DNA Legend exists, hand it to ChatGPT to convert into a finished
 
 ### The full pipeline this prompt sits inside
 
-```
+```text
 Visual DNA Legend → ChatGPT (art director) → PromptEngine → Nano Banana → Figma assets → consistent templated series
 ```
 
@@ -446,7 +446,7 @@ Each step inherits the meaning from the one before, so nothing downstream is ran
 
 The Legend is the single artifact that captures the whole pyramid. It is the input to the art-director prompt (§10) and the constant alignment check for all downstream work. Write it down even if you "remember it" — flow and excitement make you forget; the written legend is a constant alignment check.
 
-```
+```text
 1.  Brand/project NAME + what it is (1 line)
 2.  GOAL (what visuals must achieve)
 3.  AUDIENCE (who must resonate)

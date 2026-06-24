@@ -361,7 +361,7 @@ Every Kling prompt decomposes into four parts. The discipline is that **removing
 
 **Short-prompt hierarchy** (when under ~50 words, e.g. for a fast tier): compress, never amputate.
 
-```
+```text
 Subject + Action  (never skip these two)
   → Camera behavior
     → minimal Context
@@ -385,11 +385,11 @@ Text-to-video (TTV) and image-to-video (I2V) are **different operations that nee
 2. **What stays static** (often the camera — say so explicitly)
 3. **The motion endpoint** (where the motion lands — see below)
 
-```
+```text
 Slow push-in. The subject lifts the cup and brings it to their lips, then lowers it. The camera comes to rest. Everything else stays still.
 ```
 
-```
+```text
 The hand slowly raises the bracelet into the light, turning it once so the gemstones catch the key light, then holds. Camera tracks the hand, then settles.
 ```
 
@@ -405,7 +405,7 @@ Open-ended motion is the single most-cited cause of the infamous **Kling 99% han
 
 The fix is to give every motion a **landing point**:
 
-```
+```text
 # Hangs — open-ended:
 The camera pushes in toward the subject.
 
@@ -413,7 +413,7 @@ The camera pushes in toward the subject.
 The camera pushes in toward the subject, then comes to rest in a tight close-up.
 ```
 
-```
+```text
 # Hangs:
 She walks down the corridor.
 
@@ -429,7 +429,7 @@ Two coupled rules that govern shot construction (they extend the Camera Control 
 
 - **One shot = one camera move.** Mixing multiple camera movements in a single prompt breaks spatial consistency. If you need a push-in *and* a pan, that's **two shots**, generated separately and cut together. A camera line is "one line = one movement = one shot."
 
-```
+```text
 # Breaks spatial consistency — two moves in one shot:
 The camera pushes in while panning right and craning up over the crowd.
 
@@ -463,7 +463,7 @@ A heavily-described single object ("a battered, rain-soaked, neon-lit vintage le
 
 **The fix when over budget: compress objects into categories.** Kling understands categories; don't micromanage every object.
 
-```
+```text
 # Over budget — 6+ tracked nouns:
 A man holding a phone, a coffee cup, a newspaper, and keys, next to a dog, a bicycle, and a parked car.
 
@@ -489,11 +489,11 @@ The course's framing: **"These aren't bugs, they're predictable mistakes."** Whe
 
 State what must **not** happen — negatives are as load-bearing as positive instructions. Kling will add objects, motions, or behaviors on its own; a negative prompt (or an inline negative clause) is how you suppress them. This is especially critical for the o1 reasoning model and any edited/integrated frame, where the model has more latitude to "improve" the scene.
 
-```
+```text
 No tongue movement. No tongue flicking. The snake does NOT stick out its tongue at any moment. The mouth remains closed. No aggressive or animalistic behavior.
 ```
 
-```
+```text
 negative: fast motion, sudden movement, jittery, camera shake, extra people, text on screen, warped hands
 ```
 
@@ -507,7 +507,7 @@ A workaround for a genuinely hard problem — getting a *specific* hero to **ent
 2. **Reverse the clip in editing.**
 3. The character now appears to **walk into** an initially-empty frame.
 
-```
+```text
 # Generate this (easy for the model):
 The football player walks out of frame to the left, leaving the empty stadium.
 
@@ -531,11 +531,11 @@ The stabilizing structure for advanced/edited generations — especially **Kling
 - **Action** — what happens / what changes.
 - **Constraints** — what must **NOT** change (lighting, set design, wardrobe, background, etc.).
 
-```
+```text
 Our football player (element one) scores a goal — preserve the lighting and do not change the stadium design.
 ```
 
-```
+```text
 Anchor: the white snake wearing the diamond bracelet.
 Action: the hand slowly lifts; the snake rises with the hand, moving with its whole body.
 Constraints: do not change the lighting; keep the dark background; mouth stays closed; no extra objects.

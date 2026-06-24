@@ -4,6 +4,8 @@
 
 A copy-paste prompt library plus the transferable laws of prompt craft for AI image and video generation. Pull exact prompts from §3–§8; pull the reasoning from §1–§2. Every prompt is reproduced VERBATIM in fenced code blocks so an agent can lift it without re-deriving it.
 
+> **Verbatim means verbatim — including the course's own minor typos** (e.g. `hog Hogwarts`, trailing `..` on spoken lines). These are preserved on purpose for fidelity; clean them up when you actually paste a prompt into a generator. Fidelity here is so you can see exactly what produced the course's results, not a guarantee the source was typo-free.
+
 **Version note:** Model names in this file (Kling 1.6→3.0, Nano Banana Pro, Seedance 2.0, Veo 3.1, Minimax Hailuo 2, Avatar 3/4/5) were current late-2025/early-2026. They rotate fast — the course itself says model leadership "rotates quarterly." The **prompt structure and craft laws are durable**; treat the exact version strings as swap-in slots, not load-bearing.
 
 ---
@@ -16,7 +18,7 @@ These are the rules that survive model churn. A prompt is a **technical brief**,
 
 ### 1.1 The image master formula
 
-```
+```text
 SHOT + LENS + LIGHT + TEXTURE + COMPOSITION + STYLE REFERENCE  (+ EMOTIONAL VISION)
 ```
 
@@ -39,14 +41,14 @@ Use it as a checklist every time. A professional prompt is **layered, not short*
 > **AI understands parameters, not feelings.**
 
 Do this:
-```
+```text
 85mm portrait, f/1.4, soft side lighting, warm 3200k tones
 ```
 Not this: "moody portrait." Translate every emotion into a parameter — the emotion is *yours*, the parameter is the model's.
 
 ### 1.3 Nano Banana Pro prompt order
 
-```
+```text
 1. Object   (most important element)
 2. Context / Environment
 3. Technical settings   (lens, lighting, mood)
@@ -56,7 +58,7 @@ Not this: "moody portrait." Translate every emotion into a parameter — the emo
 
 ### 1.4 The Kling video formula
 
-```
+```text
 Subject + Action + Context + Style
 ```
 
@@ -73,7 +75,7 @@ Remove any part → the model fills the gap on its own → randomness begins. Kl
 
 Answer three things in ~20–40 words:
 
-```
+```text
 WHAT moves  +  HOW it moves  +  HOW the camera behaves
 ```
 
@@ -96,7 +98,7 @@ True across image *and* video, across every model:
 
 ### 1.7 The universal generator model
 
-```
+```text
 PROMPT → MODEL → CONTROLS → RESULT
 ```
 
@@ -118,7 +120,7 @@ JSON works best for structured images (illustration, toon shading, 3D-inspired a
 
 ### 1.9 The control hierarchy for making video
 
-```
+```text
 Text → Video           (least control — random character; avoid for brand work)
 Image + Text → Video   (RECOMMENDED — full control over character/style)
 Image → Image transition (most powerful — for time/age/emotional change between two frames)
@@ -159,7 +161,7 @@ Short lenses exaggerate space + include more environment; long lenses compress s
 
 ### 3.1 Director-level "good prompt" (the reference standard)
 
-```
+```text
 Motocross rider mid-lean on a dirt track, captured in gritty 90s analog style,
 vertical black and white frame with strong motion blur,
 shot handheld with a 35mm lens at f/2.8, 1/33 of a second, ISO 400,
@@ -172,27 +174,27 @@ evoking raw speed and unpolished realism.
 
 ### 3.2 Style-decision prompt (vs "cinematic lighting")
 
-```
+```text
 muted blue-gray palette, matte textures, soft haze, asymmetrical composition, gritty editorial mood, 35mm lens
 ```
 
 ### 3.3 Composition-directed example
 
-```
+```text
 A wide shot of a sports car parked under neon signs at night,
 framed with leading lines that guide the eye into the distance.
 ```
 
 ### 3.4 Style-reference example
 
-```
+```text
 Cinematography inspired by Roger Deakins in Blade Runner 2049, teal and amber palette, haze, hard rim lights.
 ```
 
 ### 3.5 Reusable templates with [variables]
 
 Homework master-prompt structure (a fill-in scaffold):
-```
+```text
 "Medium shot of [subject] doing [action], shot on [lens] at [aperture], [camera angle].
 [Lighting description: source + direction + quality + temperature].
 Detailed textures on [key materials]. [Composition choice] with [note about negative space or depth].
@@ -200,13 +202,13 @@ Styled like [described visual reference], evoking [emotional intention]."
 ```
 
 Expert-portrait template (Advanced Option A — a sellable "Prompt System" you hand a client):
-```
+```text
 "Centered close-up portrait of [type of expert] in [environment], shot on [lens] at [aperture],
 [lighting description], [composition note], with [style reference], evoking [emotion]."
 ```
 
 Lens & Lighting Test Grid — 4 controlled variants (Advanced Option B):
-```
+```text
 Version 1: 35mm, soft daylight, side-lit
 Version 2: 85mm, warm tungsten, Rembrandt lighting
 Version 3: 24mm wide, hard neon light
@@ -241,13 +243,13 @@ Version 4: 50mm, backlit, rim light halo
 ### 3.7 Camera-settings looks (drop-in style blocks)
 
 Anamorphic cinema-lens style:
-```
+```text
 Shot on 35mm anamorphic lens, f/2.8, cinematic bokeh, subtle motion blur,
 slight film grain, chromatic aberration, warm color grading, shot on Arri Alexa
 ```
 
 National Geographic / macro style:
-```
+```text
 Macro photography, 85mm prime lens, f/1.8 aperture, sharp focus on skin
 textures and condensation droplets, global illumination, high dynamic range (HDR),
 incredibly detailed pores, shot on Sony A7R IV.
@@ -259,7 +261,7 @@ incredibly detailed pores, shot on Sony A7R IV.
 
 The hero portrait is the visual anchor — generate it FIRST, then reuse it as a reference everywhere. This is THE character-consistency mechanism. Target: Nano Banana Pro, 9:16, 2K.
 
-```
+```text
 Ultra-realistic beauty portrait, chest-up framing, frontal eye-level view, centered composition for identity lock.
 Young woman with very light porcelain skin, soft warm-neutral undertone, natural skin texture with subtle micro-details.
 Facial structure: high cheekbones, symmetrical face, narrow straight nose, soft defined jawline.
@@ -280,7 +282,7 @@ Composition: centered framing, minimal negative space, no distractions.
 
 ### Character Master Prompt structure (the "digital passport")
 
-```
+```text
 Fixed DNA (never changes)  +  Variable Context (changes every post)
 ```
 - **Fixed DNA:** face description · age / ethnicity / skin type · identifying details (moles, scars, texture). Copy-paste verbatim every time.
@@ -292,7 +294,7 @@ Rule: **1 account = 1 character.** Change everything except the DNA. Download/st
 
 For synthetic influencers where you must NOT resemble any real source. Use only as "genetic inspiration."
 
-```
+```text
 Create a photorealistic image of a completely new fictional adult human identity generated from ***TWO*** reference individuals, using the references only as subtle genetic inspiration rather than direct likeness: blend distinct but believable facial structure elements such as almond-influenced eye shape, balanced brow geometry, natural nose bridge with a softly defined tip, realistic lip proportions, gently placed cheekbones, an organic jawline contour, mild facial asymmetry, realistic skin undertone, natural pores, fine skin texture, tiny expression lines, and believable bone-structure transitions into one cohesive person who does not strongly resemble any single source. Frame the subject in a natural medium shot from mid-torso upward, standing or seated casually in a realistic modern living room, captured like an authentic creator-style smartphone photo, eye-level camera angle, relaxed posture, calm everyday expression, direct but unforced presence, minimal foreground obstructions, clean lived-in background with a sofa, soft textiles, a small side table, books, plants, and subtle household details, clear subject separation without artificial blur. Use natural daylight from a nearby window mixed with soft practical home lighting, true-to-life color response, neutral warm skin tones, gentle ambient shadows, no dramatic contrast, no stylized editorial lighting. Shot on a modern smartphone main camera, 26mm equivalent lens, realistic depth of field, slight lens imperfection, mild edge softness, subtle sensor noise, candid UGC realism, anatomically accurate face and body proportions, realistic hairline and neck anatomy, natural clothing in a simple casual outfit such as a soft cotton T-shirt or knit top in muted neutral tones. Avoid morphing artifacts, feature-averaging softness, uncanny symmetry, waxy skin, overly perfect beauty retouching, artificial compositing cues, cinematic staging, glam lighting, exaggerated bokeh, face-swap look, duplicate identity resemblance, distorted eyes, melted features, mismatched lighting, or plastic skin.
 ```
 > If you attach more references, change the number word ("TWO") in the text to match.
@@ -305,7 +307,7 @@ Create a photorealistic image of a completely new fictional adult human identity
 
 Merges a generated subject with REAL product photos. Target: Nano Banana Pro, image-to-image with 3 refs. The 1.5M-view white-snake-with-diamonds commercial used exactly this.
 
-```
+```text
 Base reference image 1 as the base subject: a realistic white snake, same pose, same composition, same lighting direction.
 Apply jewelry from reference image 2 and reference image 3 onto the snake.
 Jewelry integration: jewelry from reference 2 around the upper neck of the snake, naturally hanging with gravity; jewelry from reference 3 wrapped along the middle and lower coils, following the curvature.
@@ -321,20 +323,20 @@ Style: luxury jewelry product photography, Cartier / Tiffany level, ultra clean,
 
 ### Hero-into-scene integration (image-edit, Nano Banana Pro stage)
 
-```
+```text
 Add a textured bearded football player with tattoos, warming up on the field in a real Madrid kit. Add crowds of fans to the stadium with flags of different countries.
 ```
 
 ### Brand-ad hero portrait (Oakley example, Nano Banana Pro)
 
-```
+```text
 A rugged downhill rider, 50 plus gray beard, wearing a helmet and Oakley Juliet glasses. Sunrise in the mountains, a winding mountain road reflected in the lenses. Close up portrait, cinematic lighting.
 ```
 
 ### Hybrid-reality face swap (Nano Banana Pro)
 
 Screenshot a real video → upload → instruct the model to replace only the face with your character. Real environment + clothes + AI face = the easiest believable integration. The course gives this as a spoken instruction, not a fixed prompt — **illustrative paraphrase (author-composed, not a verbatim course prompt):**
-```
+```text
 Replace only the face with the character from reference image 1, preserve identity and facial structure, keep the original environment, clothing, lighting and pose unchanged.
 ```
 
@@ -344,7 +346,7 @@ Replace only the face with the character from reference image 1, preserve identi
 
 Target: Kling 3.0, 1080p, 15s or 5s. The animation companion to the §5 integration.
 
-```
+```text
 Slow motion. Subject lock on the bracelet. The camera smoothly tracks the hand, following the jewelry.
 The hand slowly lifts upward. The snake gently rises with the hand, following the bracelet.
 The snake moves with its entire body, natural, continuous, elegant motion — not only the head.
@@ -357,7 +359,7 @@ Calm, controlled, luxury motion. The snake behaves like a refined, symbolic form
 
 ### Camera line templates (one line = one movement = one shot)
 
-```
+```text
 Static wide shot, locked camera
 Slow push-in toward the subject
 Tracking shot following the subject from the side, smooth and steady
@@ -367,23 +369,23 @@ Stable move vocabulary: static/locked · slow push-in · pan · tracking · aeri
 
 ### Constraint Sandwich (Kling o1 / advanced stability)
 
-```
+```text
 Anchor → Action → Constraints
 ```
 Example: *"our football player (element one) scores a goal — preserve the lighting and do not change the stadium design."* Tells the model what must NOT change, which stabilizes edited/advanced generations.
 
 ### Text-to-video motion examples (VERBATIM)
 
-```
+```text
 Time-lapse video, a stadium filling with a massive crowd of fans with flags from different countries, a noisy and cheerful crowd taking all the seats.
 ```
-```
+```text
 A drone flight over shouting crowds of fans, just like at a real match.
 ```
-```
+```text
 Smooth zoom out from the football player warming up on the field to the stadium.
 ```
-```
+```text
 Time-lapse video of decades flying by. This football player plays football, slowly aging, running back and forth with his team, practicing, laughing, hugging fans, the stands empty and then fill up, showing the endless cycle of games and the years our hero has gone through.
 ```
 
@@ -395,38 +397,38 @@ Lip sync is no longer hard: Kling 3 / Grok do it with minimal prompting given a 
 
 ### 7.1 Kling 3 — Selfie Vlog (bedroom, 3s)
 
-```
+```text
 Handheld selfie video, vertical framing, realistic social-media style, 3 seconds. A young woman matching the reference image, with long dark hair, natural skin texture, minimal makeup, wearing a gray long-sleeve knit sweater, sits in a sunlit bedroom with an unmade bed, pillows, a bedside table, and a casual lived-in home atmosphere. She holds the phone at arm's length in a casual selfie angle while facing the camera. Natural daylight, soft indoor brightness. Subtle handheld motion, gentle natural body movement, natural blinking, realistic breathing, accurate lip sync, authentic facial micro-expressions. Keep the framing close-up to medium close-up, realistic smartphone front-camera optics, clean natural realism, no text on screen, no cuts, no filters, no exaggerated beauty retouching. She looks toward the camera and says clearly: "Hi everyone. I heard that you had some questions regarding lip-syncing."
 ```
 
 ### 7.2 Kling 3 — Gym Locker Room (4s)
 
-```
+```text
 Handheld selfie video, vertical framing, realistic social-media style, 4 seconds. A young woman with long dark hair, natural skin texture, minimal makeup, wearing a dark gray sports bra and black high-waisted leggings, stands in a gym locker room with beige lockers, wooden benches, bright overhead lights, and a large mirror. She holds the phone at arm's length in a casual selfie angle. Bright indoor lighting, clean fitness-club atmosphere, slightly post-workout look. Subtle handheld motion, gentle natural body sway, natural blinking, realistic breathing, accurate lip sync, authentic facial micro-expressions. She keeps her eyes focused on the phone screen the entire time and does not look away from it. Keep the framing close-up to medium close-up, realistic smartphone front-camera optics, clean natural realism, no text on screen, no cuts, no filters, no exaggerated beauty retouching. She says clearly: "In fact, lip-sync works perfectly even with minimal prompting.."
 ```
 
 ### 7.3 Kling 3 — Minimal Studio, walking forward (3s)
 
-```
+```text
 Handheld selfie video, vertical framing, realistic social-media style, 3 seconds. A young woman with long dark hair, natural skin texture, minimal makeup, wearing a fitted gray sleeveless top and black high-waisted leggings, is in a clean minimal studio space with a plain light-gray background. She holds the phone at arm's length in a casual selfie angle while moving slowly forward. Soft indoor studio lighting, clean neutral brightness, no breeze. Subtle handheld motion, gentle walking bounce, natural blinking, realistic breathing, accurate lip sync, authentic facial micro-expressions. Keep the framing close-up to medium close-up, realistic smartphone front-camera optics, clean natural realism, no text on screen, no cuts, no filters, no exaggerated beauty retouching. She looks toward the camera and says clearly: "You can do this in Kling 3.."
 ```
 
 ### 7.4 Kling 3 — Themed Room, walking forward (7s)
 
-```
+```text
 Handheld selfie video, vertical framing, realistic social-media style, 7 seconds. A young woman with long dark hair, natural skin texture, minimal makeup, wearing a brown-and-beige Jedi-style robe costume, stands in a cozy Star Wars-themed room with shelves displaying sci-fi collectibles, a Stormtrooper helmet, warm practical lamps, and subtle fan-decor ambiance. She holds the phone at arm's length in a casual selfie angle while walking slowly forward. Warm indoor lighting, soft balanced brightness, slight natural movement in her hair. Subtle handheld motion, gentle walking bounce, natural blinking, realistic breathing, accurate lip sync, authentic facial micro-expressions. Keep the framing close-up to medium close-up, realistic smartphone front-camera optics, clean natural realism, no text on screen, no cuts, no filters, no exaggerated beauty retouching. She looks toward the camera and says clearly: "See? It works quite well. I'll leave all the prompts down below. And yes- while I'm at it- Happy Star Wars Day!"
 ```
 
 ### 7.5 Grok — Walking Vlog (backup / variation)
 
-```
+```text
 A young woman walks along, filming a vlog, and says, "But you can also give Grok a try."
 ```
 
 ### 7.6 Beat-timed lip sync (dictate exact word rhythm)
 
 Extreme close-up, lower-half-of-face shot with explicit `(pause)` markers and articulation constraints:
-```
+```text
 Extreme close-up video, 3 seconds, realistic cinematic beauty-detail shot, designed as a seamless continuation of the previous clip. Frame only the lower half of a young woman's face, focusing tightly on her lips, part of her nose, and surrounding natural skin texture. Soft natural-looking light, visible pores, realistic lip texture, subtle skin detail, shallow depth of field, clean background blur. She speaks with accurate lip sync in this exact rhythm: "and" (pause) "so" (pause) "much" (pause) "more". Each word is spoken separately, with a short noticeable beat of silence after it. Her mouth does not open wide; lip movement stays controlled, subtle, and precise. The lips move slowly and expressively, with a soft, intimate, sensual articulation style, but still natural and realistic. Minimal movement besides the lips and slight natural breathing, tiny micro-movements around the mouth, no exaggerated jaw opening, no broad facial motion. Clean cinematic realism, no cuts, no text on screen, no filters, no exaggerated beauty retouching.
 ```
 
@@ -435,13 +437,13 @@ Extreme close-up video, 3 seconds, realistic cinematic beauty-detail shot, desig
 ### 7.7 "Seamless continuation" UGC (split one script across shots)
 
 Bake the script across multiple scenes by matching framing/eyeline/lighting and writing each clip "as a seamless continuation of the previous clip." Example continuation line:
-```
+```text
 Vertical talking-head video, 3 seconds, realistic creator-studio style, designed as a seamless continuation of the previous clip. The same young woman with long dark wavy hair, natural skin texture, stands or sits centered in front of a modern shelf setup with soft teal and warm orange practical lighting, camera gear, books, and a glowing AVCC sign in the background. Keep the same camera framing, body position, eye line, lighting, and overall visual continuity as the previous shot so it feels like the next sentence in the same take. She continues speaking naturally, as if mid-thought, with smooth conversational timing and accurate lip sync, saying: "and make thousands of dollars online. Inside AI Video School, you get the full system to create influencers like me that brands actually pay for.". Natural hand gestures continue from the previous moment, with subtle finger movement, small head motion, realistic blinking, breathing, and authentic facial micro-expressions. Clean cinematic realism, realistic smartphone or mirrorless talking-head look, no cuts, no text on screen, no filters, no exaggerated beauty retouching.
 ```
 
 ### 7.8 POV selfie + negatives (Hogwarts hackathon — multi-reference identity lock)
 
-```
+```text
 dark wizard teacher entering a magical classroom full of students in hog Hogwarts , use the face from reference image 1 exactly, preserve identity and facial structure, use the full outfit from reference image 2 exactly, no changes to clothing, POV selfie perspective, camera is the viewer, the character is filming himself, close to medium selfie framing, students visible behind him, shot on iPhone 17 Pro Max, natural indoor lighting, slightly uneven exposure, realistic shadows, authentic classroom atmosphere, students slightly out of focus in background, NO visible phone, NO UI, NO overlays, NO recording interface, NO third person perspective, natural imperfect framing, realistic vlog feel
 ```
 
@@ -455,7 +457,7 @@ ChatGPT is the "AI co-director." Train it once, then use it for pillars → hook
 
 ### 8.1 Step 1 — Train ChatGPT once as a creative director (permanent instruction)
 
-```
+```text
 Tell ChatGPT every time I ask for a visual prompt, include details about the visual style, camera movement, main subject, background setting, and lighting mood. Even if I don't explicitly ask, add a creative rule. If your scene includes multiple characters, instruct ChatGPT to always choose a primary subject and describe them in detail.
 ```
 Feed it the categories first: **visual style · camera angle · subject focus · background setting · lighting/mood.**
@@ -465,7 +467,7 @@ Feed it the categories first: **visual style · camera angle · subject focus ·
 The viral-script 4-part structure: **Hook → Pain + Promise → Value Delivery → Call to Action.** Hook in the first ~3 seconds or it's dead (80% decide in 3s). "Hook with surprise, not explanation" — the first 3s earn the next 3s.
 
 Full script-generation prompt (VERBATIM):
-```
+```text
 write a bold, high converting ad script for a paid AI community that punches the viewer in the face with reality. The audience is creators and marketers who use tools like Mid-Journey, Cling, and Runway, but still make cheap, forgettable content. The tone should be confident, confrontational, and slightly cocky, like a mentor who's tired of excuses. The script must open with a powerful no BS hook, challenging the audience's failures, and calling out why they're broke. Hammer home, the idea that prompts aren't the problem. Their direction and taste are. Explain that everyone has access to the same tools, but only those with elite vision turn them into cash. Use a clear example comparing a basic, boring AI prompt with a cinematic money-making version. Pitch a private AI community where members flip prompts into videos, videos into followers, and followers into income. Promise they'll launch their first AI reel in seven days using the system's exact prompts, voice, stack, and edit map. Include the offer $5 a month, price locked for life for the first 1000 members, with only 500 spots left, and with a final line that hits hard, forcing them to decide. Write it like a high-converting viral ad script designed to make someone stop scrolling immediately.
 ```
 
@@ -476,17 +478,17 @@ write a bold, high converting ad script for a paid AI community that punches the
 Walk the script line by line; each line produces one copy-paste image prompt. Concept brief → resulting Midjourney prompt. Examples (VERBATIM):
 
 Concept (opening hook):
-```
+```text
 Give me a high-fashion editorial concept of three individuals posing under harsh lighting at night. It should feel cyberpunk and confrontational for an opening hook, include lighting, angle, and accessories that read expensive. All three characters should appear serious, staring directly into the camera.
 ```
 Resulting Midjourney prompt:
-```
+```text
 A dramatic close-up of three individuals posing under harsh lighting at night. The central figure is bald with freckled light skin, bold facial piercings, septum, nostril, and a dermal piercing on the forehead. Heavy lashes and wearing oversized rhinestone earrings and a layered crystal necklace. The person on the left has platinum blonde hair with bangs and facial piercings, while the person on the right has straight neon pink hair and intense eye makeup. All three appear serious, staring directly into the camera.
 ```
 
 ### 8.4 Line-refinement queries (iterate any single line)
 
-```
+```text
 Make this hook funnier. Five options.
 Make this phrase more powerful and convincing.
 Add emotion to this paragraph.
@@ -499,7 +501,7 @@ Open ReelEngine → Start → it asks **why** you're creating (promote community
 ### 8.6 Memory-reset phrasings (when ChatGPT/ReelEngine drifts)
 
 Stay in one chat thread for visual consistency; reuse the same character name. If it hallucinates/drifts:
-```
+```text
 forget memory
 forget memory of image creation
 ```
@@ -513,50 +515,50 @@ Most client work is **editing, not generating** — refine an existing image, do
 The 4 types: **Global** (whole image — color/contrast/mood) · **Local** (specific parts) · **Structural** (crop/expand/outpaint/aspect) · **Hybrid** (AI + Canva/Figma/Photoshop).
 
 ### Outpaint / expand
-```
+```text
 extend the city street with soft neon signs and blurred traffic in the background, keep the same lighting and mood
 ```
 
 ### Background replace
-```
+```text
 replace the background with a soft, out-of-focus office interior, warm light, minimal distractions
 ```
 
 ### Remove object
-```
+```text
 remove the extra person in the background and fill with soft bokeh lights
 ```
 
 ### Add object
-```
+```text
 add a vintage camera   (on the table)
 ```
 
 ### Prompt-based global edits
-```
+```text
 same scene, but in cinematic teal and orange color grading.
 Turn this into a night scene with neon reflections on the street.
 Keep the same face and pose, change the outfit to a black leather jacket.
 ```
 
 ### Region-based edits (select a region, attach instruction)
-```
+```text
 Replace sky with dramatic storm clouds          (select the sky)
 Turn the cup into a glass of red wine            (select the coffee cup)
 ```
 
 ### Inpaint / brush-mask
-```
+```text
 change the jacket to a white linen blazer, keep the same pose and lighting
 ```
 
 ### Plain-text targeted edit (Nano Banana Pro — change one part, keep the rest)
-```
+```text
 Replace the eagle, make it look older like the woman and make it look more dangerous.
 ```
 
 ### Homework examples
-```
+```text
 Turn this into a night scene with neon lights, keep the same pose and lighting direction.
 Change the outfit to a black blazer, keep the same face and pose.
 ```
@@ -569,7 +571,7 @@ Change the outfit to a black blazer, keep the same face and pose.
 
 144p → 4K, identity-preserving, optimized for Nano Banana Pro. Works on Google Flow, Higgsfield, Freepik, Flora. This is NOT re-generation — the original is an immutable framework; face, scene, and composition stay identical. Run the result through 1–2 more times to refine detail.
 
-```
+```text
 Enhance the portrait while strictly preserving the subject's
 identity with accurate facial geometry. Do not change their
 expression or face shape. Only allow subtle feature cleanup without
@@ -598,7 +600,7 @@ lighting while keeping identity and background fully preserved.
 ```
 
 NEGATIVE PROMPT (paste into the negative field):
-```
+```text
 No new background.
 No background change.
 No overly dramatic lighting.

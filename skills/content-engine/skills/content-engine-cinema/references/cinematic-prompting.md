@@ -286,13 +286,13 @@ Bad motion prompts:
 
 AVCC compresses the whole image brief into one ordered checklist run **every time** you write a prompt:
 
-```
+```text
 SHOT + LENS + LIGHT + TEXTURE + COMPOSITION + STYLE REFERENCE
 ```
 
 The professional variant appends one more slot — **EMOTIONAL VISION**, a single phrase stating how the viewer should feel:
 
-```
+```text
 SHOT + LENS + LIGHT + TEXTURE + COMPOSITION + STYLE REFERENCE + EMOTIONAL VISION
 ```
 
@@ -300,7 +300,7 @@ Why this works: it maps the same craft the **5-Component Priority Order** (§ ab
 
 The fully-assembled homework version of this formula, as a fill-in template:
 
-```
+```text
 "Medium shot of [subject] doing [action], shot on [lens] at [aperture], [camera angle].
 [Lighting description: source + direction + quality + temperature].
 Detailed textures on [key materials]. [Composition choice] with [note about negative space or depth].
@@ -309,7 +309,7 @@ Styled like [described visual reference], evoking [emotional intention]."
 
 A worked director-level example (note every slot is filled with a parameter, not an adjective):
 
-```
+```text
 Motocross rider mid-lean on a dirt track, captured in gritty 90s analog style,
 vertical black and white frame with strong motion blur,
 shot handheld with a 35mm lens at f/2.8, 1/33 of a second, ISO 400,
@@ -324,19 +324,19 @@ The single most load-bearing rule in AVCC's prompt craft, and the reason the for
 
 Do **not** write:
 
-```
+```text
 moody portrait, cinematic lighting
 ```
 
 Write the parameters that *produce* that mood:
 
-```
+```text
 85mm portrait, f/1.4, soft side lighting, warm 3200k tones
 ```
 
 Same rule applied to a style decision — instead of "cinematic lighting," name the decisions:
 
-```
+```text
 muted blue-gray palette, matte textures, soft haze, asymmetrical composition, gritty editorial mood, 35mm lens
 ```
 
@@ -346,7 +346,7 @@ Why this works: a mood word is a *result* the model has to guess a path to; a pa
 
 Modern reasoning-based image models (Nano Banana Pro is the reference instance; versions rotate) read prompts best when written in a specific **order of importance**, distinct from the cinematic SHOT-first formula above. NBP's "Spatial Intelligence" resolves the scene as 3D before drawing, so it wants the *thing* first, then *where it lives*, then *how it's shot*:
 
-```
+```text
 1. Object       (the single most important element)
 2. Context / Environment
 3. Technical settings   (lens, lighting, mood)
@@ -354,7 +354,7 @@ Modern reasoning-based image models (Nano Banana Pro is the reference instance; 
 
 Worked example (a product campaign base shot):
 
-```
+```text
 a bright matte ZUFA-ZUFA can inside a traditional Central Asian yurt
 A low-angle view of the can, where we see it against a hole in the yurt's roof.
 Light beams shine through with smoke and steam

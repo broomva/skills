@@ -23,7 +23,7 @@ These four rules sit above every pricing table. Get them wrong and no tier sheet
 
 ### Rule #1 in practice — say THIS not THAT (verbatim)
 
-```
+```text
 ❌ DON'T:  "I do videos using Midjourney or something with advanced workflows."
 ✅ DO:     "I create short AI ads with multiple hooks so brands can test creatives faster."
 ```
@@ -119,7 +119,7 @@ A different business than service work: here you sell *your own audience* as the
 
 The minimum viable offer sheet — no website, no big audience, no complex branding required:
 
-```
+```text
 5–9 clips portfolio  ·  3 packages (Starter / Pro / Weekly)  ·  1 simple DM opener
 ```
 
@@ -138,7 +138,7 @@ Every inbound message is a commercial negotiation, not a casual chat. Never jump
 
 ### The verbatim reply
 
-```
+```text
 Thanks for reaching out. And could you share a product niche, goal, platforms, what deliverables you need, timeline, budget range, and usage rights? Once I have this, I'll suggest a clear package in the next steps.
 ```
 
@@ -186,7 +186,7 @@ Warm outreach beats cold every time when you're starting: past contacts (establi
 
 ### Cold-outreach structure (4 beats)
 
-```
+```text
 1. Who you are     → credibility (one line)
 2. What you do     → service (the one-sentence offer)
 3. Example         → relevant work / case study (proof)
@@ -199,7 +199,7 @@ Warm outreach beats cold every time when you're starting: past contacts (establi
 
 Skill-offer opener (lesson 6.9):
 
-```
+```text
 Hey! I create short-form AI influencer content like this.
 Want me to send you one content idea for your brand?
 ```
@@ -208,7 +208,7 @@ Want me to send you one content idea for your brand?
 
 Referral / community-promo hooks (drive comment→DM funnel):
 
-```
+```text
 Want the exact workflow? Comment SPRINT and I'll DM the kit.
 I'm building an AI influencer for 21 days. Want to join the sprint? Comment SPRINT.
 Behind the scenes — how I made this? Comment INFLUENCER for the kit.
@@ -245,7 +245,7 @@ If your first screen needs explaining, it's not client-friendly. A buyer decides
 
 ### The sequence (don't monetize too early)
 
-```
+```text
 ATTENTION  →  TRUST  →  MONEY
 ```
 
@@ -253,7 +253,7 @@ On a new account: post **≥5 pieces**, show progress, create proof FIRST. Value
 
 ### The micro-funnel (4 steps)
 
-```
+```text
 1. Post value / behind-the-scenes
 2. CTA: "comment a keyword"
 3. DM a free starter kit (the lead magnet)
@@ -280,7 +280,7 @@ Revenue scales with reach, and reach scales with a *repeatable* viral format —
 
 ### TEST → SPOT → REPEAT
 
-```
+```text
 TEST    →  try 3 formats: Visual / Trend / Value
 SPOT    →  which got the best RETENTION = the Winner
 REPEAT  →  keep the winning core concept, change only the Variables
@@ -328,7 +328,7 @@ The second revenue stream alongside service work: monetize the *audience itself*
 
 ### The conversion math (illustrative)
 
-```
+```text
 30k followers posting daily
   → ~1–5M views/mo
   → even at 0.1% conversion = ~5,000 link clicks
@@ -343,7 +343,7 @@ The second revenue stream alongside service work: monetize the *audience itself*
 
 The end-to-end path from zero to paid, in order. Each step is gated by the previous — don't skip ahead.
 
-```
+```text
 1. Select 1–2 monetization paths        (§2 — pick ONE to start)
 2. Define a single-sentence offer        (§1 Rule #1)
 3. Price realistically                    (§3 — slightly uncomfortable but achievable)
