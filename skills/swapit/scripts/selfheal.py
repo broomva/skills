@@ -108,6 +108,24 @@ def run() -> list[dict]:
             if hid not in hazard_ids:
                 findings.append(_finding("warn", "broken_edge", f"alternative '{a['id']}' avoids unknown hazard '{hid}'", "fix the hazard id"))
 
+    # --- procurement commons (Realm 1, grown organically): where-to-buy offers
+    try:
+        offers = state.read_jsonl(kdir / "procurement.jsonl")
+    except ValueError as exc:
+        findings.append(_finding("error", "json_parse", f"procurement.jsonl: {exc}", "fix the malformed JSONL line"))
+        offers = []
+    _check_dupes(offers, "procurement", findings)
+    for o in offers:
+        oid = o.get("id", "(no id)")
+        if o.get("alternative") not in alt_ids:
+            findings.append(_finding("warn", "offer_unknown_alt", f"offer '{oid}' targets unknown alternative '{o.get('alternative')}'", "fix the alternative id or pull the latest alternatives"))
+        reg = str(o.get("region") or "")
+        if not (len(reg) == 2 and reg.isalpha()):
+            findings.append(_finding("warn", "offer_bad_region", f"offer '{oid}' region '{reg}' is not ISO-3166-1 alpha-2", "use a 2-letter country code"))
+        pmin, pmax = o.get("price_min"), o.get("price_max")
+        if pmin is not None and pmax is not None and pmin > pmax:
+            findings.append(_finding("warn", "offer_bad_price", f"offer '{oid}' price_min > price_max", "swap the bounds"))
+
     # --- coverage (info)
     for hid in hazard_ids - referenced_hazards:
         findings.append(_finding("info", "unused_hazard", f"hazard '{hid}' is not referenced by any item-class", "ok — reference data, or add an item-class"))

@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "product",
+    "payload": {"product_name": "Brand X Wrap", "brand": "X", "gtin": "123", "item_class": "cling-film-pvc", "observed_hazards": ["bpa", "phthalates"], "evidence": {"recycling_code": null, "label_terms": []}, "confidence": 0.7},
+    "id": "fact_3139c7b450cfe1a4"
+  },
+  {
+    "kind": "item_class_hazard",
+    "payload": {"item_class": "plastic-toothbrush", "hazard_id": "microplastics", "presence_likelihood": 0.6, "rationale": "abrasion", "sources": [], "confidence": 0.7},
+    "id": "fact_83684db33a996bdb"
+  },
+  {
+    "kind": "alternative",
+    "payload": {"name": "Hemp wrap", "replaces": ["cling-film-pvc", "plastic-food-container"], "avoids_hazards": ["phthalates"], "material": "hemp", "rationale": "inert", "sources": [], "confidence": 0.7},
+    "id": "fact_d63d88b793ea626a"
+  },
+  {
+    "kind": "procurement_option",
+    "payload": {"alternative": "cast-iron-skillet", "item_class": "nonstick-cookware", "retailer": "Lodge", "region": "US", "area": null, "url": "https://x", "price_min": 25.0, "price_max": 45.0, "currency": "USD", "as_of": "2026-06-01", "availability": null, "confidence": 0.7},
+    "id": "fact_053a41aa9f097758"
+  },
+  {
+    "kind": "procurement_option",
+    "payload": {"alternative": "cast-iron-skillet", "item_class": null, "retailer": "Lodge", "region": "CO", "area": null, "url": null, "price_min": null, "price_max": null, "currency": null, "as_of": null, "availability": null, "confidence": 0.7},
+    "id": "fact_050479ca65534687"
+  },
+  {
+    "kind": "item_class",
+    "payload": {"item_class": "silicone-bakeware", "name": "Silicone bakeware", "category": "kitchen", "description": "molds", "detection_hints": [], "confidence": 0.7},
+    "id": "fact_8e92b775aeec71a1"
+  },
+  {
+    "kind": "procurement_option",
+    "payload": {"alternative": "glass-bottle", "item_class": null, "retailer": "Tienda Ñ", "region": "CO", "area": "Bogotá", "url": null, "price_min": null, "price_max": null, "currency": null, "as_of": null, "availability": null, "confidence": 0.7},
+    "id": "fact_5b76c212246f2348"
+  }
+]

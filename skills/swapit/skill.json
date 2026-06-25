@@ -1,7 +1,7 @@
 {
   "name": "swapit",
-  "version": "0.3.1",
-  "description": "Stateful, local-first household toxics inventory + swap engine. Identify items carrying endocrine disruptors / persistent chemicals, score by real exposure, track swaps to safer alternatives. Ships a grounded, cited knowledge graph. Hands sourcing to the procurer skill. Zero paid services.",
+  "version": "0.4.0",
+  "description": "Stateful, local-first household toxics inventory + swap engine. Identify items carrying endocrine disruptors / persistent chemicals, score by real exposure, track swaps to safer alternatives, and find where to buy them via a public, geo-scoped, organically-grown procurement commons. Ships a grounded, cited knowledge graph. Hands sourcing to the procurer skill. Zero paid services.",
   "requires_python": ">=3.10",
   "entrypoint": "scripts/swapit.py",
   "inputs_schema": {
@@ -27,7 +27,47 @@
           "contribute",
           "sync"
         ],
-        "description": "Skill mode: init (load seed knowledge), add (add an item), assess (score an item/class), list (inventory), swap (track a swap), score (household summary), report (HTML), procure (procurer handoff brief), knowledge (browse graph), rooms (manage rooms), bookmark (save a link), selfheal (validate integrity), serve (live local dashboard), contribute (queue an anonymized knowledge fact), sync (push/pull the commons, opt-in)."
+        "description": "Skill mode: init (load seed knowledge), add (add an item), assess (score an item/class), list (inventory), swap (track a swap), score (household summary), report (HTML), procure (procurer handoff brief + known where-to-buy offers; record a found offer with --retailer/--region), knowledge (browse graph), rooms (manage rooms), bookmark (save a link), selfheal (validate integrity), serve (live local dashboard), contribute (queue an anonymized fact: product|hazard|alternative|procurement|item-class), sync (push/pull the commons, opt-in)."
+      },
+      "region": {
+        "type": "string",
+        "description": "ISO-3166-1 alpha-2 country code for where-to-buy offers (procure/contribute procurement), e.g. US, CO, DE, GB."
+      },
+      "alternative": {
+        "type": "string",
+        "description": "Safer-alternative id a procurement offer is for (contribute procurement), e.g. cast-iron-skillet."
+      },
+      "retailer": {
+        "type": "string",
+        "description": "Public retailer/store name for a where-to-buy offer (procure/contribute procurement). NOT the user's private purchase vendor."
+      },
+      "url": {
+        "type": "string",
+        "description": "Public listing URL — where to buy online (procurement offers)."
+      },
+      "price_min": {
+        "type": "number",
+        "description": "Public listing price low bound (procurement offers)."
+      },
+      "price_max": {
+        "type": "number",
+        "description": "Public listing price high bound (procurement offers)."
+      },
+      "currency": {
+        "type": "string",
+        "description": "ISO-4217 currency code for an offer price (e.g. USD, COP, EUR)."
+      },
+      "as_of": {
+        "type": "string",
+        "description": "ISO date a listing price was observed (procurement offers; drives forward-only price freshening)."
+      },
+      "area": {
+        "type": "string",
+        "description": "City/area a retailer serves, display-only (procurement offers)."
+      },
+      "category": {
+        "type": "string",
+        "description": "Item-class category when proposing a new taxonomy node (contribute item-class), e.g. kitchen, bathroom, baby-kids."
       },
       "name": {
         "type": "string",

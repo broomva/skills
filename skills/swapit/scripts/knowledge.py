@@ -31,7 +31,12 @@ _FILES = {
     "item_classes": "item-classes.jsonl",
     "alternatives": "alternatives.jsonl",
     "products": "products.jsonl",
+    "procurement": "procurement.jsonl",
 }
+
+# Files that may legitimately start empty (grown organically from the commons), so a missing
+# seed isn't an error — we touch an empty cache instead.
+_OPTIONAL_EMPTY = {"products", "procurement"}
 
 
 def seed_into_data_root(force: bool = False) -> list[str]:
@@ -46,7 +51,7 @@ def seed_into_data_root(force: bool = False) -> list[str]:
         if src.exists():
             shutil.copyfile(src, dest)
             written.append(fname)
-        elif key == "products" and not dest.exists():
+        elif key in _OPTIONAL_EMPTY and not dest.exists():
             dest.write_text("", encoding="utf-8")
             written.append(fname)
     return written
@@ -65,6 +70,9 @@ class Knowledge:
             r["id"]: r for r in state.read_jsonl(kdir / _FILES["alternatives"])
         }
         self.products = {r["id"]: r for r in state.read_jsonl(kdir / _FILES["products"])}
+        self.procurement = {
+            r["id"]: r for r in state.read_jsonl(kdir / _FILES["procurement"])
+        }
 
     # ---- lookups -------------------------------------------------------------
     def hazard(self, hid: str) -> dict | None:
@@ -101,6 +109,20 @@ class Knowledge:
             if cid in a.get("replaces", [])
         ]
 
+    def offers_for_alternative(self, aid: str, region: str | None = None) -> list[dict]:
+        """Public "where to buy" offers for a safer alternative (the procurement commons).
+
+        ``region`` (ISO-3166-1 alpha-2) filters to that country; if given, offers with no
+        region match nothing, but the caller may fall back to the unfiltered list. Sorted by
+        corroboration then recency so the most-trusted, freshest offers come first.
+        """
+        reg = region.strip().upper() if region else None
+        out = [o for o in self.procurement.values() if o.get("alternative") == aid]
+        if reg:
+            out = [o for o in out if (o.get("region") or "").upper() == reg]
+        out.sort(key=lambda o: (o.get("corroboration_count", 1), o.get("as_of") or ""), reverse=True)
+        return out
+
     def search(self, query: str, kind: str | None = None) -> list[dict]:
         """Substring search across name / id / aliases / description. ``kind`` filters
         to one of hazard|item-class|alternative."""
@@ -130,4 +152,5 @@ class Knowledge:
             "item_classes": len(self.item_classes),
             "alternatives": len(self.alternatives),
             "products": len(self.products),
+            "procurement": len(self.procurement),
         }

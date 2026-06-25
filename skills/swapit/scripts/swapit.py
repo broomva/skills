@@ -92,7 +92,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     s = kn.stats()
     print(
         f"  knowledge: {s['hazards']} hazards · {s['item_classes']} item-classes · "
-        f"{s['alternatives']} alternatives · {s['products']} products"
+        f"{s['alternatives']} alternatives · {s['products']} products · "
+        f"{s['procurement']} where-to-buy offers"
     )
     print(f"  rooms: {', '.join(rooms)}")
     if written:
@@ -374,8 +375,28 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _apply_and_queue(fact: dict) -> None:
+    """Privacy-gated: queue a generic fact for the commons + apply it locally immediately."""
+    sync_mod.enqueue(fact)           # gate at enqueue (raises PrivacyError if it would leak)
+    sync_mod.merge_incoming([fact])  # apply locally so the user benefits now
+
+
+def _fmt_offer(o: dict) -> str:
+    price = ""
+    if o.get("price_min") is not None or o.get("price_max") is not None:
+        lo, hi = o.get("price_min"), o.get("price_max")
+        cur = o.get("currency") or ""
+        rng = f"{lo:g}–{hi:g}" if lo is not None and hi is not None else f"{(lo if lo is not None else hi):g}"
+        price = f"  ~{rng} {cur}".rstrip()
+    asof = f"  (as of {o['as_of']})" if o.get("as_of") else ""
+    where = f"{o.get('retailer')} · {o.get('region')}" + (f"/{o['area']}" if o.get("area") else "")
+    link = f"\n      {o['url']}" if o.get("url") else ""
+    return f"{where}{price}{asof}{link}"
+
+
 def cmd_procure(args: argparse.Namespace) -> int:
-    """Build a procurer brief for an item's swap — the handoff to the `procurer` skill."""
+    """Build a procurer brief for an item's swap, surface known commons offers (where to buy),
+    and — when an offer is supplied inline — record it to the public procurement commons."""
     _require_init()
     kn = knowledge.Knowledge()
     items = state.load_items()
@@ -394,14 +415,39 @@ def cmd_procure(args: argparse.Namespace) -> int:
     if swap and swap.get("chosen_alternative"):
         chosen = kn.alternative(swap["chosen_alternative"])
     targets = [chosen] if chosen else a["alternatives"][:3]
-    locale = os.environ.get("SWAPIT_LOCALE", "your region")
+    primary = chosen or (targets[0] if targets else None)
+    region = (args.region or os.environ.get("SWAPIT_REGION") or "").strip().upper() or None
+    locale = args.region or os.environ.get("SWAPIT_LOCALE", "your region")
+
+    # --- inline offer recording (the organic-growth path): procure → contribute, gated by dry-run
+    recorded = None
+    if args.retailer:
+        if not primary:
+            sys.exit("procure --retailer: no alternative resolved to attach the offer to (choose one with `swap --to`)")
+        if not region:
+            sys.exit("procure --retailer needs --region <ISO-3166-1 alpha-2> (e.g. --region US)")
+        offer_alt = args.offer_alternative or primary["id"]
+        fact = anonymize.procurement_option_fact(
+            alternative=offer_alt, item_class=item.get("item_class"), retailer=args.retailer,
+            region=region, area=args.area, url=args.url, price_min=args.price_min,
+            price_max=args.price_max, currency=args.currency, as_of=args.as_of,
+            availability=args.availability, confidence=args.confidence,
+        )
+        _apply_and_queue(fact)
+        recorded = fact
 
     hazards = ", ".join(c["name"] for c in a["risk"]["contributions"] if c["risk"] > 0) or "—"
+    offers = kn.offers_for_alternative(primary["id"], region) if primary else []
+    if region and not offers and primary:  # fall back to global offers when the region has none yet
+        offers = kn.offers_for_alternative(primary["id"])
     brief = {
         "need": f"Replace {item['name']} ({item.get('item_class')}) — currently carries {hazards}.",
         "alternatives": [t["name"] for t in targets if t],
+        "region": region,
         "locale": locale,
         "quantity": item.get("quantity", 1),
+        "known_offers": offers,
+        "recorded": recorded["id"] if recorded else None,
     }
     if args.json:
         _print_json(brief)
@@ -409,10 +455,20 @@ def cmd_procure(args: argparse.Namespace) -> int:
     print("# Procurer handoff brief")
     print(f"Need:        {brief['need']}")
     print(f"Replace with: {', '.join(brief['alternatives']) or '(assess for options)'}")
-    print(f"Quantity:    {brief['quantity']}   ·   Locale: {locale}")
+    print(f"Quantity:    {brief['quantity']}   ·   Region: {region or '(any)'}")
+    if recorded:
+        print(f"\n✓ recorded offer {recorded['id']} to the commons queue (preview: swapit sync --dry-run)")
+    if offers and primary:
+        print(f"\n## Where to buy {primary['name']} (commons{'' if region else ' · all regions'}):")
+        for o in offers[:8]:
+            print(f"  • {_fmt_offer(o)}")
     print("\nHand this to the `procurer` skill, e.g.:")
     alt = brief["alternatives"][0] if brief["alternatives"] else "a safer alternative"
     print(f'  procurer: "Where can I buy {brief["quantity"]}× {alt} in {locale}, and what should it cost?"')
+    if primary:
+        print("\nRecord what you find back to the public commons (grows the where-to-buy dataset):")
+        print(f"  swapit procure {item['id']} --region {region or '<CC>'} --retailer <name> --url <link> \\")
+        print("                 --price-min <n> --price-max <n> --currency <CUR> --as-of <YYYY-MM-DD>")
     return 0
 
 
@@ -505,6 +561,15 @@ def cmd_contribute(args: argparse.Namespace) -> int:
         _require(kn.item_class(args.cls) is not None, f"unknown item-class '{args.cls}'")
         _require(kn.hazard(args.hazard_id) is not None, f"unknown hazard '{args.hazard_id}'")
         _require(0.0 <= args.likelihood <= 1.0, "--likelihood must be 0..1")
+    elif args.ksub == "procurement":
+        _require(bool(args.alternative and args.retailer and args.region),
+                 "procurement needs --alternative, --retailer and --region")
+        _require(kn.alternative(args.alternative) is not None, f"unknown alternative '{args.alternative}'")
+    elif args.ksub == "item-class":
+        _require(bool(args.cls and args.name and args.category),
+                 "item-class needs --class (the new id), --name and --category")
+        _require(kn.item_class(args.cls) is None,
+                 f"item-class '{args.cls}' already exists — contribute a hazard/alternative edge instead")
     else:
         _require(bool(args.name and args.replaces and args.avoids),
                  "alternative needs --name, --replaces and --avoids")
@@ -524,14 +589,26 @@ def cmd_contribute(args: argparse.Namespace) -> int:
             rationale=args.rationale or "", source_url=args.source_url, source_title=args.source_title,
             confidence=args.confidence,
         )
+    elif args.ksub == "procurement":
+        fact = anonymize.procurement_option_fact(
+            alternative=args.alternative, item_class=args.cls, retailer=args.retailer,
+            region=args.region, area=args.area, url=args.url, price_min=args.price_min,
+            price_max=args.price_max, currency=args.currency, as_of=args.as_of,
+            availability=args.availability, confidence=args.confidence,
+        )
+    elif args.ksub == "item-class":
+        fact = anonymize.item_class_fact(
+            item_class=args.cls, name=args.name, category=args.category,
+            description=args.rationale or "", detection_hints=args.label_term or [],
+            confidence=args.confidence,
+        )
     else:  # alternative
         fact = anonymize.alternative_fact(
             name=args.name, replaces=args.replaces, avoids_hazards=args.avoids or [],
             material=args.material or "", rationale=args.rationale or "", source_url=args.source_url,
             confidence=args.confidence,
         )
-    sync_mod.enqueue(fact)          # privacy-gated queue for the commons
-    sync_mod.merge_incoming([fact])  # apply locally so you benefit immediately
+    _apply_and_queue(fact)  # privacy-gated queue for the commons + applied locally
     if args.json:
         _print_json(fact)
         return 0
@@ -663,8 +740,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--open", action="store_true", help="open in browser")
     sp.set_defaults(func=cmd_report)
 
-    sp = sub.add_parser("procure", help="emit a procurer handoff brief for an item/swap")
+    sp = sub.add_parser("procure", help="procurer brief + known where-to-buy offers; record a found offer")
     sp.add_argument("target", help="item id or swap id")
+    sp.add_argument("--region", help="ISO-3166-1 alpha-2 region to surface/record offers for (e.g. US, CO)")
+    sp.add_argument("--offer-alternative", dest="offer_alternative", help="alternative id the recorded offer is for (default: resolved swap target)")
+    sp.add_argument("--retailer", help="record an offer: public retailer/store name (triggers a contribution)")
+    sp.add_argument("--url", help="public listing URL (where to buy online)")
+    sp.add_argument("--area", help="city/area the retailer serves (display-only)")
+    sp.add_argument("--price-min", dest="price_min", type=float, help="listing price low")
+    sp.add_argument("--price-max", dest="price_max", type=float, help="listing price high")
+    sp.add_argument("--currency", help="ISO-4217 currency (e.g. USD, COP)")
+    sp.add_argument("--as-of", dest="as_of", help="ISO date the price was observed")
+    sp.add_argument("--availability", help="in-stock | limited | online-only | in-store")
+    sp.add_argument("--confidence", type=float, default=0.7)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_procure)
 
@@ -689,20 +777,32 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_serve)
 
     sp = sub.add_parser("contribute", help="queue an anonymized knowledge fact for the commons")
-    sp.add_argument("ksub", choices=["product", "hazard", "alternative"], help="fact kind")
-    sp.add_argument("--name", help="product or alternative name (public)")
-    sp.add_argument("--class", dest="cls", help="item-class id (product/hazard)")
+    sp.add_argument("ksub", choices=["product", "hazard", "alternative", "procurement", "item-class"], help="fact kind")
+    sp.add_argument("--name", help="product / alternative / item-class name (public)")
+    sp.add_argument("--class", dest="cls", help="item-class id (product/hazard; or the NEW id for item-class)")
     sp.add_argument("--brand", help="public product brand (product)")
     sp.add_argument("--gtin", help="barcode (product)")
     sp.add_argument("--hazard", action="append", help="observed hazard id (product; repeatable)")
     sp.add_argument("--recycling-code", dest="recycling_code")
-    sp.add_argument("--label-term", dest="label_term", action="append")
+    sp.add_argument("--label-term", dest="label_term", action="append", help="label term (product) / detection hint (item-class; repeatable)")
     sp.add_argument("--hazard-id", dest="hazard_id", help="hazard id (hazard fact)")
     sp.add_argument("--likelihood", type=float, help="presence likelihood 0-1 (hazard fact)")
-    sp.add_argument("--rationale")
+    sp.add_argument("--rationale", help="rationale (hazard/alternative) / description (item-class)")
     sp.add_argument("--replaces", action="append", help="item-class id replaced (alternative; repeatable)")
     sp.add_argument("--avoids", action="append", help="hazard id avoided (alternative; repeatable)")
     sp.add_argument("--material")
+    sp.add_argument("--category", help="item-class category (item-class fact)")
+    # procurement-fact fields (public where-to-buy)
+    sp.add_argument("--alternative", help="safer-alternative id the offer is for (procurement)")
+    sp.add_argument("--retailer", help="public retailer/store name (procurement)")
+    sp.add_argument("--region", help="ISO-3166-1 alpha-2 region (procurement)")
+    sp.add_argument("--area", help="city/area the retailer serves (procurement; display-only)")
+    sp.add_argument("--url", help="public listing URL (procurement)")
+    sp.add_argument("--price-min", dest="price_min", type=float, help="listing price low (procurement)")
+    sp.add_argument("--price-max", dest="price_max", type=float, help="listing price high (procurement)")
+    sp.add_argument("--currency", help="ISO-4217 currency (procurement)")
+    sp.add_argument("--as-of", dest="as_of", help="ISO date the price was observed (procurement)")
+    sp.add_argument("--availability", help="availability note (procurement)")
     sp.add_argument("--source-url", dest="source_url")
     sp.add_argument("--source-title", dest="source_title")
     sp.add_argument("--confidence", type=float, default=0.7)

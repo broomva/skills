@@ -4,6 +4,45 @@ All notable changes to **swapit** are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-06-25
+
+### Added — M4 geo-scaled procurement commons + taxonomy growth
+- **`procurement_option` fact kind** — a public "where to buy" offer: a safer `alternative`
+  sold by a `retailer` in a `region` (ISO-3166-1 alpha-2), with optional `url`, `price_min`/
+  `price_max` + `currency` + `as_of`, `area`, `availability`. The commons becomes an open,
+  detailed, organically-grown where-to-buy dataset anyone can use, scoped by geography.
+  - **Hash key is identity-only `(alternative, retailer, region)`** — the same offer corroborates
+    across users; a different region/retailer is a different fact (the scale axis). Price/url/area
+    are refinable market data, not identity.
+  - **Forward-only price freshening** — a corroboration carrying a strictly newer `as_of` updates
+    the price/url/availability; an older one never regresses fresher data. The single bounded
+    exception to payload-immutability, and it never touches the key.
+- **`item_class` fact kind** — taxonomy growth: the community can propose a *new* item-class
+  (corroboration-gated, ≥2 distinct contributors). Merge **ADDS** a new category but never
+  overwrites a seed/known class.
+- `swapit procure <item> --region <CC>` now surfaces known commons offers (where to buy, with
+  links) and, given `--retailer`/`--url`/`--price-*`, **records** a found offer to the commons
+  queue (gated by `sync --dry-run`) — the organic-growth loop.
+- `swapit contribute procurement|item-class` CLI subcommands.
+- Seed `seed/procurement.jsonl` — 14 durable retailer+region+URL offers across US/CO/DE/GB
+  (prices left to grow organically; reference-grade `verified:false`).
+- `selfheal` validates offer region codes (ISO-3166-1 alpha-2), alternative refs, and price ordering.
+- **Cross-language hash parity** locked by pinned vectors (`tests/parity_vectors.json`) asserted
+  in both the Python suite and broomva.tech's `content-hash` test — covers the two new kinds
+  (incl. unicode + null fields) so corroboration can never silently break across the client/server.
+- Tests: +16 (`tests/test_procurement.py`) → **88 skill tests**; privacy fuzz confirms a
+  procurement fact can never carry `vendor`/`cost`/purchase data.
+
+### Privacy seam (binding, unchanged set)
+- The public procurement fact uses **`retailer`** + **`price_min`/`price_max`** — never the
+  private **`vendor`**/**`cost`** (the Realm-2 record of where *you* bought and what *you* paid).
+  `vendor`/`cost`/`procurer_report_ref` stay on the forbidden list; the new public fields
+  (`retailer`, `region`, `price_*`, `currency`, `as_of`, `area`, `url`) are not private.
+
+### Fixed (doc drift)
+- SKILL.md + `commons/app/store.py` corrected to **corroboration-only** moderation (matching the
+  0.3.1 code fix) — the stale "OR confidence ≥ 0.7" wording is gone.
+
 ## [0.3.1] — 2026-06-24
 
 ### Changed
