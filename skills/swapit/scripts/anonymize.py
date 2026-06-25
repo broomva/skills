@@ -18,8 +18,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 import state
+
+# ISO-3166-1 alpha-2 region codes are the geographic key for procurement facts (the scale
+# axis). We validate *format* (two letters) rather than ship a 249-entry country table — a
+# malformed region must never become the key of a published fact.
+_REGION_RE = re.compile(r"^[A-Za-z]{2}$")
+_CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
 
 
 class PrivacyError(ValueError):
@@ -169,3 +176,113 @@ def alternative_fact(
         "confidence": confidence,
     }
     return _finalize("alternative", {"name": name, "replaces": sorted(replaces), "avoids_hazards": sorted(avoids_hazards)}, payload)
+
+
+# ---- geo helpers -----------------------------------------------------------------
+def _norm_region(region: str) -> str:
+    r = (region or "").strip().upper()
+    if not _REGION_RE.match(r):
+        raise ValueError(f"region must be an ISO-3166-1 alpha-2 code (e.g. US, CO, DE), got {region!r}")
+    return r
+
+
+def _norm_currency(currency: str | None) -> str | None:
+    if currency is None or currency == "":
+        return None
+    c = currency.strip().upper()
+    if not _CURRENCY_RE.match(c):
+        raise ValueError(f"currency must be an ISO-4217 code (e.g. USD, COP, EUR), got {currency!r}")
+    return c
+
+
+def _norm_price(value, label: str) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a number, got {value!r}") from exc
+    if v < 0:
+        raise ValueError(f"{label} must be >= 0, got {v}")
+    return v
+
+
+def procurement_option_fact(
+    *,
+    alternative: str,
+    retailer: str,
+    region: str,
+    item_class: str | None = None,
+    area: str | None = None,
+    url: str | None = None,
+    price_min=None,
+    price_max=None,
+    currency: str | None = None,
+    as_of: str | None = None,
+    availability: str | None = None,
+    confidence: float = 0.7,
+) -> dict:
+    """A public "where to buy" offer: a safer ``alternative`` sold by ``retailer`` in ``region``.
+
+    The privacy seam: this is the *generic catalogue* fact — who sells a safer product, where,
+    and at roughly what public listing price. It is built ONLY from generic fields. The user's
+    *own* purchase (the private ``vendor``/``cost`` on a swap) never reaches here — ``vendor``
+    and ``cost`` are forbidden field names, so even a buggy caller is rejected by ``assert_clean``.
+
+    Hash key = ``(alternative, retailer, region)``: the same offer corroborates across users;
+    ``area``/``url``/price are refinable market data, not identity, so they're outside the key.
+    """
+    if not (alternative and retailer):
+        raise ValueError("procurement_option needs an alternative id and a retailer")
+    region = _norm_region(region)
+    currency = _norm_currency(currency)
+    pmin = _norm_price(price_min, "price_min")
+    pmax = _norm_price(price_max, "price_max")
+    if pmin is not None and pmax is not None and pmin > pmax:
+        raise ValueError(f"price_min ({pmin}) must be <= price_max ({pmax})")
+    _check_freetext(retailer=retailer, area=area, url=url, availability=availability, as_of=as_of)
+    payload = {
+        "alternative": alternative,
+        "item_class": item_class,
+        "retailer": retailer,
+        "region": region,
+        "area": area,
+        "url": url,
+        "price_min": pmin,
+        "price_max": pmax,
+        "currency": currency,
+        "as_of": as_of,
+        "availability": availability,
+        "confidence": confidence,
+    }
+    # key is identity-only (alternative + retailer + region) — price/url/area corroborate-and-refresh
+    return _finalize("procurement_option", {"alternative": alternative, "retailer": retailer, "region": region}, payload)
+
+
+def item_class_fact(
+    *,
+    item_class: str,
+    name: str,
+    category: str,
+    description: str = "",
+    detection_hints: list[str] | None = None,
+    confidence: float = 0.7,
+) -> dict:
+    """Propose a new item-class for the shared taxonomy (taxonomy growth).
+
+    The commons only *serves* it once ≥2 distinct contributors corroborate, and a client only
+    *applies* it if the id isn't already a seed class — so community taxonomy growth can ADD
+    categories but never silently redefine an existing one.
+    """
+    if not (item_class and name and category):
+        raise ValueError("item_class needs an id, a name and a category")
+    _check_freetext(item_class=item_class, name=name, category=category, description=description)
+    payload = {
+        "item_class": item_class,
+        "name": name,
+        "category": category,
+        "description": description,
+        "detection_hints": detection_hints or [],
+        "confidence": confidence,
+    }
+    return _finalize("item_class", {"item_class": item_class}, payload)

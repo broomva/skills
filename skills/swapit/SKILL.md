@@ -1,6 +1,6 @@
 ---
 name: swapit
-version: 0.3.1
+version: 0.4.0
 description: |
   Stateful, local-first household toxics inventory + swap engine. Identify the items in
   a home that carry endocrine disruptors and persistent chemicals (BPA/BPS, phthalates,
@@ -89,7 +89,7 @@ State lives at `~/.config/swapit/` (override with `$SWAPIT_HOME`; honors `$XDG_C
 
 ```
 ~/.config/swapit/
-├── knowledge/   hazards.jsonl · item-classes.jsonl · alternatives.jsonl · products.jsonl
+├── knowledge/   hazards.jsonl · item-classes.jsonl · alternatives.jsonl · products.jsonl · procurement.jsonl
 ├── inventory/   events.jsonl(append-only audit) · items.json · swaps.json · rooms.json · bookmarks.json
 ├── contributions/ queue.jsonl   (M3)
 ├── sync/        config.json · sync-log.jsonl   (M3)
@@ -100,6 +100,7 @@ State lives at `~/.config/swapit/` (override with `$SWAPIT_HOME`; honors `$XDG_C
 - **hazard** — `id · name · aliases · class · mechanism · exposure_routes · regulatory · severity(0-3) · evidence_strength · sources`
 - **item_class** — `id · name · category · description · hazards[]{hazard_id, presence_likelihood, rationale} · detection_hints · sources`
 - **alternative** — `id · name · replaces[] · material · rationale · tradeoffs · caveats · avoids_hazards · residual_concerns · sources`
+- **procurement_option** (where-to-buy, public) — `id · alternative · item_class · retailer · region(ISO-3166-1 a2) · area · url · price_min · price_max · currency · as_of · availability · confidence · corroboration_count`
 - **item** (private) — `id · name · item_class · room · quantity · brand · condition · usage{frequency, food_contact, heat, child_contact} · status · notes · photos`
 - **swap** (private) — `id · item_id · chosen_alternative · procurement{status, cost, vendor} · checklist[] · bookmarks[]`
 
@@ -126,12 +127,12 @@ risk = severity × presence_likelihood × evidence × exposure_relevance × freq
 | `swap` | create/update a swap plan: choose alternative, set status, checklist, bookmark, cost |
 | `score` | household exposure summary + the swap-first ranking |
 | `report` | generate the self-contained HTML report (Category-C) |
-| `procure` | emit a `procurer` handoff brief for an item/swap (where to buy + budget) |
+| `procure` | procurer handoff brief + **known where-to-buy offers** for the swap target (filter by `--region`); record a found offer (`--retailer`/`--url`/`--price-*`) to the public commons |
 | `knowledge` | browse/search the knowledge graph (`list`/`search`/`show`) |
 | `rooms` | list/add rooms |
 | `selfheal` | validate knowledge edges + inventory refs + grounding; exit non-zero on errors |
 | `serve` | **live local dashboard** at `http://127.0.0.1:8731` — kanban board, checklist, bookmarks, status; every click writes back to state |
-| `contribute` | queue an anonymized knowledge fact (product / item-class→hazard / alternative); applied locally + gated for the commons |
+| `contribute` | queue an anonymized fact — `product` / `hazard` (item-class→hazard) / `alternative` / `procurement` (public where-to-buy offer) / `item-class` (new taxonomy node); applied locally + gated for the commons |
 | `sync` | push the contribution queue + pull community knowledge (opt-in); `--dry-run` previews exactly what would be sent; `--configure` sets the endpoint |
 
 ### Typical flow
@@ -180,19 +181,37 @@ fails if any node loses its citation. This is consumer guidance grounded in publ
 
 ## Collaboration (the commons)
 
-Contributions are **generic facts only** — `swapit contribute product|hazard|alternative` builds an
-anonymized fact (a public product→item-class mapping, a hazard-edge correction, or an alternative),
-applies it locally, and queues it. `swapit sync --dry-run` shows *exactly* what would be sent;
-`swapit sync` pushes the queue and pulls community knowledge (opt-in, after `--configure`). Identical
-facts from different users **corroborate** (content-addressed) rather than duplicate; the commons
-serves a fact once it clears `corroboration >= 2` OR `confidence >= 0.7`. The privacy invariant is
-enforced on **both** sides (client `anonymize` gate + server backstop) — inventory never crosses.
+Contributions are **generic facts only** — `swapit contribute product|hazard|alternative|procurement|item-class`
+builds an anonymized fact (a public product→item-class mapping, a hazard-edge correction, an
+alternative, a **where-to-buy offer**, or a **new taxonomy node**), applies it locally, and queues it.
+`swapit sync --dry-run` shows *exactly* what would be sent; `swapit sync` pushes the queue and pulls
+community knowledge (opt-in, after `--configure`). Identical facts from different users **corroborate**
+(content-addressed) rather than duplicate; the commons serves a fact once **two distinct contributors
+corroborate it** (`corroboration >= 2`) — moderation is corroboration-gated, *not* confidence-gated,
+because `confidence` is caller-supplied and a lone submitter could otherwise self-approve. The privacy
+invariant is enforced on **both** sides (client `anonymize` gate + server backstop) — inventory never crosses.
+
+### Where-to-buy (procurement) commons
+
+A `procurement_option` fact is a public offer: a safer `alternative` sold by a `retailer` in a
+`region` (ISO-3166-1 alpha-2), with optional `url`, `price_min`/`price_max` + `currency` + `as_of`,
+`area`, and `availability`. It is content-addressed on **`(alternative, retailer, region)`** — the
+same offer corroborates across users; a different region is a different fact (the geographic scale
+axis). Price/url/area are refinable market data: a corroboration with a strictly newer `as_of`
+**freshens the price forward**, never regressing fresher data. The privacy seam is sharp — the public
+offer uses `retailer` + `price_*` and **never** the private `vendor`/`cost` (where *you* bought and
+what *you* paid stay in Realm 2). `swapit procure <item> --region <CC>` surfaces known offers and
+records new ones you find — growing an open, detailed, geo-scoped dataset anyone can use.
 
 ## Roadmap
 
 - **M1 (shipped, 0.1.0)** — data model, seed knowledge, CLI, risk engine, static HTML report, self-heal.
 - **M2 (shipped, 0.2.0)** — `swapit serve`: live local dashboard with read/write back to state.
-- **M3 (this release, 0.3.0)** — anonymized collaboration + networked commons (`commons/`, FastAPI +
-  SQLite). Privacy invariant enforced by allowlist serialization + fuzz tests on both client and server.
-  **Live deploy to broomva.tech infra is gated on explicit go** (creds/DNS); the skill is fully
-  functional offline without it.
+- **M3 (0.3.0)** — anonymized collaboration + networked commons (`commons/`, FastAPI + SQLite).
+  Privacy invariant enforced by allowlist serialization + fuzz tests on both client and server.
+- **M4 (this release, 0.4.0)** — **geo-scaled procurement commons + taxonomy growth**: the
+  `procurement_option` (public where-to-buy, keyed by `(alternative, retailer, region)`, forward-only
+  price freshening) and `item_class` (corroboration-gated taxonomy growth) fact kinds; `procure`
+  surfaces + records offers; seed offers across US/CO/DE/GB; cross-language hash parity locked by
+  pinned vectors. **Live deploy to broomva.tech infra is gated on explicit go** (creds/DNS); the
+  skill is fully functional offline without it.

@@ -136,6 +136,7 @@ def merge_incoming(facts: list[dict]) -> int:
     products = {r["id"]: r for r in state.read_jsonl(kdir / "products.jsonl")}
     alternatives = {r["id"]: r for r in state.read_jsonl(kdir / "alternatives.jsonl")}
     classes = {r["id"]: r for r in state.read_jsonl(kdir / "item-classes.jsonl")}
+    procurement = {r["id"]: r for r in state.read_jsonl(kdir / "procurement.jsonl")}
     hazard_ids = {r["id"] for r in state.read_jsonl(kdir / "hazards.jsonl")}
     class_ids = set(classes)
     merged = 0
@@ -190,9 +191,44 @@ def merge_incoming(facts: list[dict]) -> int:
                     edge["rationale"] = p["rationale"]
                 merged += 1
 
+        elif kind == "procurement_option":
+            alt = p.get("alternative")
+            region = (p.get("region") or "").upper()
+            if alt not in alternatives or not region:
+                continue  # offer for an unknown alternative / no region — can't attach
+            incoming = {
+                "id": f["id"], "alternative": alt, "item_class": p.get("item_class"),
+                "retailer": p.get("retailer"), "region": region, "area": p.get("area"),
+                "url": p.get("url"), "price_min": p.get("price_min"), "price_max": p.get("price_max"),
+                "currency": p.get("currency"), "as_of": p.get("as_of"),
+                "availability": p.get("availability"), "confidence": conf,
+                "corroboration_count": corro, "source": "commons",
+            }
+            existing = procurement.get(f["id"])
+            # freshen forward only: take the offer whose market data (price/url) is newest by
+            # as_of, so a pull never regresses a locally-fresher, not-yet-pushed contribution.
+            if existing is None or (incoming.get("as_of") or "") >= (existing.get("as_of") or ""):
+                procurement[f["id"]] = incoming
+                merged += 1
+
+        elif kind == "item_class":
+            cid = p.get("item_class")
+            # taxonomy growth: ADD a genuinely new category; NEVER overwrite a seed/known class.
+            if not cid or cid in classes or not p.get("name") or not p.get("category"):
+                continue
+            classes[cid] = {
+                "id": cid, "name": p["name"], "category": p["category"],
+                "description": p.get("description", ""), "hazards": [],
+                "detection_hints": p.get("detection_hints", []),
+                "sources": [{"title": "commons"}], "confidence": conf,
+                "corroboration_count": corro, "source": "commons",
+            }
+            merged += 1
+
     _write_jsonl(kdir / "products.jsonl", products.values())
     _write_jsonl(kdir / "alternatives.jsonl", alternatives.values())
     _write_jsonl(kdir / "item-classes.jsonl", classes.values())
+    _write_jsonl(kdir / "procurement.jsonl", procurement.values())
     return merged
 
 

@@ -1,9 +1,16 @@
 """SQLite store for the swapit knowledge commons.
 
 Content-addressed facts: identical contributions from different users share an id and
-*corroborate* (count up) rather than duplicate. A fact is served only once it clears the
-moderation gate (corroboration >= 2 OR confidence >= 0.7) — the Nous-gate analog. Raw
-contributor tokens are never stored, only a short hash, so contributions stay anonymous.
+*corroborate* (count up) rather than duplicate. A fact is served only once two *distinct*
+contributors corroborate it (corroboration >= 2) — moderation is corroboration-gated, NOT
+confidence-gated (`confidence` is caller-supplied, so a lone submitter could otherwise
+self-approve). Raw contributor tokens are never stored, only a short hash, so contributions
+stay anonymous.
+
+Most kinds are immutable once stored — corroboration means "I agree with THIS fact", so a
+corroborator can never swap a fact's meaning. The sole bounded exception is the market data on
+a ``procurement_option`` (price/url/availability): a corroboration carrying a strictly newer
+``as_of`` freshens those fields forward, but never the identity key (alternative/retailer/region).
 """
 from __future__ import annotations
 
@@ -13,7 +20,25 @@ import sqlite3
 import time
 from pathlib import Path
 
-KINDS = ("product", "item_class_hazard", "alternative")
+KINDS = ("product", "item_class_hazard", "alternative", "procurement_option", "item_class")
+
+# Market-data fields on a procurement_option that may be freshened forward (never the identity
+# key alternative/retailer/region). The sole payload mutation allowed on corroboration.
+_FRESHEN_FIELDS = ("price_min", "price_max", "currency", "url", "availability", "as_of")
+
+
+def _maybe_freshen(kind: str, stored: dict, incoming: dict) -> dict | None:
+    """Return a freshened payload if the incoming corroboration carries strictly newer market
+    data (by ``as_of``), else None (keep the stored payload immutable)."""
+    if kind != "procurement_option":
+        return None
+    new_asof, old_asof = incoming.get("as_of") or "", stored.get("as_of") or ""
+    if new_asof and new_asof > old_asof:
+        merged = dict(stored)
+        for f in _FRESHEN_FIELDS:
+            merged[f] = incoming.get(f)
+        return merged
+    return None
 
 
 def _now() -> str:
@@ -73,12 +98,20 @@ class Store:
                     contributors.add(tok_hash)
                 corro = row["corroboration_count"] + 1
                 conf = max(row["confidence"], conf)
-                # corroboration means "I agree with THIS fact" — keep the first-seen payload;
-                # never let a corroborator swap the meaning of an already-stored fact.
-                c.execute(
-                    "UPDATE facts SET confidence=?, corroboration_count=?, contributors=?, status=?, last_seen=? WHERE id=?",
-                    (conf, corro, json.dumps(sorted(contributors)), _status(corro), _now(), fid),
-                )
+                # corroboration means "I agree with THIS fact" — keep the first-seen payload
+                # (never let a corroborator swap a fact's meaning), EXCEPT a procurement_option's
+                # market data, which freshens forward by as_of (the one bounded exception).
+                fresh = _maybe_freshen(kind, json.loads(row["payload"]), payload)
+                if fresh is not None:
+                    c.execute(
+                        "UPDATE facts SET payload=?, confidence=?, corroboration_count=?, contributors=?, status=?, last_seen=? WHERE id=?",
+                        (json.dumps(fresh), conf, corro, json.dumps(sorted(contributors)), _status(corro), _now(), fid),
+                    )
+                else:
+                    c.execute(
+                        "UPDATE facts SET confidence=?, corroboration_count=?, contributors=?, status=?, last_seen=? WHERE id=?",
+                        (conf, corro, json.dumps(sorted(contributors)), _status(corro), _now(), fid),
+                    )
             else:
                 contributors = [tok_hash] if tok_hash else []
                 now = _now()
