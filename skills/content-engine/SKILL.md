@@ -275,7 +275,7 @@ Deep, copy-paste-ready craft references live alongside each sub-skill. The clust
 | `references/cinematic-prompting.md` → §AVCC | cinema | SHOT+LENS+LIGHT+TEXTURE+COMPOSITION+STYLE formula, NBP Object→Context→Technical, the 5 control levers, 7 aesthetics + meta-messages, shot/lens reference tables, the taste-training loop. |
 | `references/motion-animation.md` → §AVCC | cinema | Kling model-tier element budgets + model-first rule, Subject+Action+Context+Style, TTV-vs-I2V, motion-endpoint/99% hang, count-nouns overload rule, negative constraints, the Constraint Sandwich, reverse-motion trick. |
 | `references/visual-dna-framework.md` | dna | The art-direction layer: Meaning→Trust→Conversion, the Visual DNA Pyramid, Brand Core, the full Meaning Map dictionary, 5 amateur→premium rules, the verbatim "Act as an art director" prompt, the 15-item Legend template. |
-| `references/character-sheets.md` → §AVCC | dna | Character DNA = Master Prompt (Fixed DNA + Variable Context), "1 account = 1 character", hero-portrait-first + reuse, Hybrid-Reality face-swap, Kling Motion Control tripod rule. |
+| `references/character-sheets.md` → §AVCC | dna | Character DNA = Master Prompt (Fixed DNA + Variable Context), "1 account = 1 character", hero-portrait-first + reuse, Hybrid-Reality face-swap, Kling Motion Control tripod rule, **+ product / non-human identity lock** (REF 1/2/3 integration, cross-scene verification). |
 | `references/monetization-playbook.md` | loop | Creator→revenue: the 4 paths, exact pricing tiers + brand-placement packages, the 60-sec lead-qual script, margin rules, the micro-funnel + viral loop, Skool referral math. Grounds the Kleos proof-driven-demand engine. |
 
 ## Compounding Skills

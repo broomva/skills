@@ -474,3 +474,29 @@ Operational rule that protects everything above:
 > **Download and store your hero/anchor images on local disk.** Tools, accounts, and cloud libraries change, deprecate, rate-limit, or disappear; a local file keeps the character forever.
 
 This is the same logic as the `sources` array with SHA-256 hashes in the [character sheet frontmatter](#frontmatter) — the raw visual anchor is the irreplaceable asset and must survive any single tool's lifecycle. In content-engine terms: the hero portrait belongs in `knowledge/raw/character-refs/{slug}/` alongside the other references, hashed and recorded, *before* it is ever uploaded to a generation tool. The Fixed-DNA text block, the local hero image, and (when available) the tool-native anchor are three redundant copies of the same identity — the more tool-independent the copy, the more durable it is.
+
+### Product & non-human identity lock (generalizing the passport)
+
+Everything above is framed around a human face, but the **Master Prompt split is subject-agnostic** — it locks *any* recurring hero, and a **product** is the most common non-human case the face-only framing omits (the course's own product examples include the ZUFA-ZUFA energy drink and the snake-jewelry commercial). The mechanic is identical: a **Fixed DNA** that never changes + a **Variable Context** that changes per shot, anchored by **one canonical reference image**. Store a product's Fixed DNA in `knowledge/compiled/brands/{slug}.md` (or a `products/` sibling) — it is a character sheet for an object.
+
+**Fixed DNA for a product** (the invariant identity — copy verbatim into every prompt, or point at the reference image):
+
+| DNA slot | What to lock | Example (Møss cold-brew — illustrative/fictional) |
+|---|---|---|
+| **Form factor** | silhouette, vessel type, size/volume | 200ml short apothecary glass bottle |
+| **Material & finish** | glass/metal/plastic, matte vs gloss, transparency | frosted matte glass, brushed cold-steel cap |
+| **Label & typography** | exact label text + font class + layout (Nano Banana Pro renders *real* text) | monospace dosage label: `MØSS · COLD BREW · 200ml · adaptogen 75mg · batch 001` |
+| **Color** | brand HEX(es) + contents color | muted sage-teal label, dark cold-brew liquid |
+| **Proportions & marks** | neck-to-body ratio, logo placement, seams, closure | centered label, single front-facing logo, threaded cap |
+
+**Variable Context for a product** — free to change per shot, exactly like a character's outfit/world: surface/scene · lighting setup + color temperature · camera angle & shot type · props · background · season/mood. Change these freely; the five Fixed-DNA slots are frozen.
+
+**The lock is the same hero-first mechanism:**
+1. Generate **one clean identity-lock product shot** — neutral seamless background, frontal hero framing, the full Fixed DNA spelled out. This is the product analogue of the identity-lock *portrait* above; save it as the anchor.
+2. **Reuse that frame as the reference** in every later scene — the same [reference-reuse Rosetta](#hero-portrait-first--reuse-as-reference-the-universal-mechanism) applies (Nano Banana Pro REF 1 · Kling Element · Seedance collage). Never re-describe the label from scratch — point at the anchor so the typography and proportions don't drift.
+
+**Product integration (REF 1/2/3) — the productized "Hybrid Reality":** the strongest product realism comes from merging a *generated* subject with **real product photos** via image-to-image — the course's SOP move and the object analogue of face [Hybrid Reality](#two-paths-to-the-start-image-full-generation-vs-hybrid-reality). Upload the generated/base subject as **REF 1** and the actual high-res product photos as **REF 2 & REF 3**, then prompt the *physical* interaction explicitly (weight, gravity, contact shadows, surface reflections) so nothing floats. You inherit the real product's exact label, gloss, and geometry — spending the generation budget on the composite, not on re-synthesizing a label the model will mangle. The full verbatim REF-integration prompt is the image-to-image pack in [`ai-video-prompt-packs.md`](../../content-engine-cinema/references/ai-video-prompt-packs.md).
+
+**Consistency verification for products** (the non-face analogue of [Face Embedding Consistency Verification](#face-embedding-consistency-verification)): face-embedding cosine doesn't apply, so verify the lock by generating the product in **≥2 different Variable-Context scenes** from the same Fixed DNA + anchor reference, then crop-compare the invariants: (1) label text identical and legible, (2) silhouette + neck-to-body proportion match, (3) brand color holds under the new lighting, (4) cap/closure identical. Any of those drifting is the same asset-destruction event the "never change the DNA" rule guards against — re-anchor on the reference image rather than re-prompting from text.
+
+> Model/version note: Nano Banana Pro's real-text rendering and REF-image integration are the named primitives here (NBP era). The durable craft — *lock label/material/proportions as Fixed DNA, anchor on one reference, verify across scenes* — outlives any specific model.
