@@ -127,6 +127,38 @@ resolve_source
 [ -f "$BROOMVA_HEALTH_SRC/pyproject.toml" ] \
   || fail "pyproject.toml not found at $BROOMVA_HEALTH_SRC" 3
 
+# ─── durability guard (RC1 / BRO-1552) ───────────────────────────────────────
+# Never editable-install (`pip install -e`) from an ephemeral temp dir. A prior
+# install pinned the editable `.pth` to a mktemp clone under /tmp; when the OS
+# cleared /tmp the link dangled and EVERY invocation died with
+# `ModuleNotFoundError: No module named 'broomva_health'`. If the resolved
+# source lives under a temp dir (our own temp clone, a curl-pipe, or $TMPDIR),
+# copy it to a stable location inside $BROOMVA_HEALTH_HOME and install from
+# there so the editable link survives reboots. A source under a user's own
+# persistent clone is left untouched (dev edit-loop preserved).
+src_is_temp=0
+case "$BROOMVA_HEALTH_SRC/" in
+  /tmp/*|/private/tmp/*|/var/tmp/*|/var/folders/*|/private/var/folders/*) src_is_temp=1 ;;
+esac
+# $TMPDIR may point outside the patterns above (a custom temp root). Guard the
+# degenerate TMPDIR=/ (or //): "${TMPDIR%/}/" would become "/" and the glob
+# "/*" would match every absolute path, wrongly flagging a persistent clone.
+if [ -n "${TMPDIR:-}" ] && [ "${TMPDIR%/}" != "" ]; then
+  case "$BROOMVA_HEALTH_SRC/" in "${TMPDIR%/}/"*) src_is_temp=1 ;; esac
+fi
+if [ "$src_is_temp" -eq 1 ]; then
+  STABLE_SRC="$BROOMVA_HEALTH_HOME/pkg"
+  log "Source under a temp dir — copying to stable $STABLE_SRC (durability; BRO-1552)."
+  mkdir -p "$BROOMVA_HEALTH_HOME"
+  rm -rf "$STABLE_SRC"
+  mkdir -p "$STABLE_SRC"
+  cp -R "$BROOMVA_HEALTH_SRC/." "$STABLE_SRC/"
+  rm -rf "$STABLE_SRC/.git" "$STABLE_SRC/.venv"
+  find "$STABLE_SRC" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+  BROOMVA_HEALTH_SRC="$STABLE_SRC"
+  ok "Stable source: $BROOMVA_HEALTH_SRC"
+fi
+
 log "Source:   $BROOMVA_HEALTH_SRC"
 log "Install:  $BROOMVA_HEALTH_HOME"
 log "Bin:      $BROOMVA_HEALTH_BIN_DIR/health"
