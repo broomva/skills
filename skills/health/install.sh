@@ -138,9 +138,12 @@ resolve_source
 # persistent clone is left untouched (dev edit-loop preserved).
 src_is_temp=0
 case "$BROOMVA_HEALTH_SRC/" in
-  /tmp/*|/private/tmp/*|/var/folders/*) src_is_temp=1 ;;
+  /tmp/*|/private/tmp/*|/var/tmp/*|/var/folders/*|/private/var/folders/*) src_is_temp=1 ;;
 esac
-if [ -n "${TMPDIR:-}" ]; then
+# $TMPDIR may point outside the patterns above (a custom temp root). Guard the
+# degenerate TMPDIR=/ (or //): "${TMPDIR%/}/" would become "/" and the glob
+# "/*" would match every absolute path, wrongly flagging a persistent clone.
+if [ -n "${TMPDIR:-}" ] && [ "${TMPDIR%/}" != "" ]; then
   case "$BROOMVA_HEALTH_SRC/" in "${TMPDIR%/}/"*) src_is_temp=1 ;; esac
 fi
 if [ "$src_is_temp" -eq 1 ]; then
