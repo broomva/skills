@@ -1,0 +1,46 @@
+name: test-agentic-vps
+
+# Python + shell test gate for the `agentic-vps` skill (skills/agentic-vps/).
+# Path-filtered so it runs ONLY when skills/agentic-vps/** changes — the
+# monorepo's tests-optional default (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/agentic-vps/**'
+      - '.github/workflows/test-agentic-vps.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/agentic-vps/**'
+      - '.github/workflows/test-agentic-vps.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-agentic-vps-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/agentic-vps
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Unit tests (pure cores — verify + staging_check)
+        run: python -m pytest tests/ -v
+      - name: Shell syntax check (provision.sh)
+        run: bash -n scripts/provision.sh
