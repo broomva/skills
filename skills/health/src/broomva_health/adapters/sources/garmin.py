@@ -646,18 +646,20 @@ class GarminTraceSource:
         """
         garth_oauth2 = token_dir / _GARTH_OAUTH2_FILE
         legacy = token_dir / _GARMIN_LIB_TOKEN_FILE
-        token_file = garth_oauth2 if garth_oauth2.exists() else legacy
-        raw = token_file.read_bytes() if token_file.exists() else b""
-        if not _tokens_look_valid(raw):
-            raise AuthRequired(
-                "Garmin login returned but no valid tokens were written "
-                f"({token_file} is missing or empty). This is almost always a "
-                "429 rate-limit that returned without raising. Do NOT retry "
-                "immediately — each attempt extends Garmin's account lockout. "
-                "Wait for it to clear (often hours), then `health auth login` once.",
-                token_file=str(token_file),
-            )
-        return raw
+        # Prefer garth's two-file format; fall back to the legacy single file
+        # when garth's is absent *or* unreadable/invalid (not just absent).
+        for candidate in (garth_oauth2, legacy):
+            raw = candidate.read_bytes() if candidate.exists() else b""
+            if _tokens_look_valid(raw):
+                return raw
+        raise AuthRequired(
+            "Garmin login returned but no valid tokens were written "
+            f"({garth_oauth2} / {legacy} missing or empty). This is almost always a "
+            "429 rate-limit that returned without raising. Do NOT retry "
+            "immediately — each attempt extends Garmin's account lockout. "
+            "Wait for it to clear (often hours), then `health auth login` once.",
+            token_file=str(garth_oauth2),
+        )
 
     # --- auth-retry cooldown (anti-amplification) ---
 

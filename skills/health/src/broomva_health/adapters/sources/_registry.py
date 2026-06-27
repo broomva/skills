@@ -98,7 +98,7 @@ def get_source(source: Source, *, paths: HealthPaths) -> TraceSource:
 
     Kept for back-compat callers that don't have settings. For Garmin this
     returns the **library** backend; prefer ``build_sources`` for the
-    config-selected default (``cli``).
+    config-selected default (``native`` — ``_DEFAULT_GARMIN_BACKEND``).
     """
     cls = SOURCE_REGISTRY.get(source)
     if cls is None:

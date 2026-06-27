@@ -36,13 +36,14 @@ def test_check_install_fails_for_tmp_path(monkeypatch):
     assert "ephemeral" in checks[0].detail.lower()
 
 
-def test_check_install_fails_for_tmpdir_path(monkeypatch):
-    # A custom $TMPDIR (e.g. macOS /var/folders/...) is also caught.
-    monkeypatch.setenv("TMPDIR", "/var/folders/g9/xyz/T")
+def test_check_install_fails_for_custom_tmpdir(monkeypatch):
+    # A $TMPDIR *outside* the hardcoded prefixes must still be caught — this
+    # exercises the TMPDIR branch specifically (not the static prefix list).
+    monkeypatch.setenv("TMPDIR", "/scratch/ci-tmp")
     monkeypatch.setattr(
         broomva_health,
         "__file__",
-        "/var/folders/g9/xyz/T/clone/src/broomva_health/__init__.py",
+        "/scratch/ci-tmp/clone/src/broomva_health/__init__.py",
     )
     checks = _check_install()
     assert checks[0].status == "FAIL"
