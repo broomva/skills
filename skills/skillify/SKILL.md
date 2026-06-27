@@ -90,10 +90,19 @@ audit.
     can install it. Run the non-mutating parse check first, then the real install,
     then confirm discovery:
     - `npx skills add broomva/skills --skill <name> --list` → the skill is listed
-      with its description (exercises the exact clone+parse path; catches the
-      silent frontmatter gotcha).
+      with its description (exercises the clone+parse path; catches the silent
+      frontmatter gotcha). **`--list` is necessary but NOT sufficient** — it only
+      parses frontmatter, never the file-copy path, so it passes even when the
+      install drops `scripts/` (BRO-1561). The runnable install below is the real gate.
     - `npx skills add broomva/skills --skill <name> -g -a claude-code -y` → confirm
-      files at `~/.claude/skills/<name>/`.
+      the bundled files land at `~/.claude/skills/<name>/scripts/…` (not just SKILL.md),
+      then run the skill's own test. A clean install that yields a *runnable* skill is
+      "published"; a skill that merely `--list`s is not.
+    - **Layout is now machine-enforced (step 1):** a skill that is a git **repo root**
+      carrying bundled dirs (`scripts/`, `references/`, …) FAILS the gate — a remote
+      `npx skills add <owner>/<repo>` drops them (the CLI copies only a repo-root
+      SKILL.md). The skill MUST live in a `skills/<name>/` subdir (agentskills.io
+      standard). See `research/entities/tool/skills-sh.md` for the proof.
     - The skill appears in the agent's available-skills list next session.
 11. **Gate** — `python3 scripts/skillify_check.py <skill_dir> --roles-dir roles
     --registry roles/_index.md --entities-dir research/entities --skills-sh broomva/skills`.

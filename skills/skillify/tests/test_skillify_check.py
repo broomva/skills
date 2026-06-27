@@ -369,3 +369,40 @@ def test_run_tests_executes_pytest(tmp_path):  # H1 strongest form
     (d / "tests" / "test_real.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False, run_tests=True)
     assert _step(res, 3)["status"] == "PASS"
+
+
+# --- BRO-1561: installable-layout gate (step 1) ------------------------------
+
+def _git_init(d: Path):
+    subprocess.run(["git", "init", "-q", str(d)], check=True)
+
+
+def test_repo_root_with_bundled_dirs_fails(tmp_path):
+    # A skill that IS a git repo root carrying scripts/ → remote `npx skills add`
+    # drops the bundled dirs (BRO-1561). Step 1 must FAIL.
+    d = _skill(tmp_path)
+    _git_init(d)
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step1 = next(r for r in res if r["step"] == 1)
+    assert step1["status"] == "FAIL" and step1["required"]
+    assert "repo root" in step1["detail"] and "skills/" in step1["detail"]
+
+
+def test_skills_subdir_layout_passes(tmp_path):
+    # Same skill, but in `skills/<name>/` of a repo root → correct layout, PASS.
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    _git_init(repo)
+    d = _skill(repo / "skills", name="demo")  # → myrepo/skills/demo/
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step1 = next(r for r in res if r["step"] == 1)
+    assert step1["status"] == "PASS", step1["detail"]
+
+
+def test_unit_repo_root_bundled_dirs_issue(tmp_path):
+    # Direct unit: repo-root + scripts/ → message; non-repo-root → None.
+    d = _skill(tmp_path)
+    assert mod._repo_root_bundled_dirs_issue(d) is None    # not a repo root yet
+    _git_init(d)
+    msg = mod._repo_root_bundled_dirs_issue(d)
+    assert msg and "scripts" in msg

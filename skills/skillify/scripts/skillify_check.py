@@ -116,6 +116,45 @@ def _skillsh_frontmatter_issue(skill_dir: Path) -> str | None:
     return None
 
 
+_BUNDLED_DIRS = {
+    "scripts", "references", "assets", "tests",
+    "Scripts", "References", "Assets", "Workflows", "src",
+}
+
+
+def _repo_root_bundled_dirs_issue(skill_dir: Path) -> str | None:
+    """FAIL if the skill is a git REPO ROOT carrying bundled dirs (scripts/, …).
+
+    BRO-1561: a remote `npx skills add <owner>/<repo>` special-cases a repo-root
+    SKILL.md and copies ONLY that file — bundled dirs are silently dropped, so the
+    skill installs non-functional (its SKILL.md points at a missing scripts/<x>).
+    `--list` passes anyway (it parses frontmatter, never the copy path), so this
+    structural check is the gate `--list` cannot be. Fix: put the skill in a
+    `skills/<name>/` subdir (the Agent Skills standard layout) — a subdir is a
+    clean skill folder and is fully copied.
+
+    Only fires when skill_dir is the git toplevel (a repo root); a `skills/<name>/`
+    subdir of a repo is the correct layout and passes.
+    """
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(skill_dir), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        is_repo_root = top.returncode == 0 and Path(top.stdout.strip()) == skill_dir.resolve()
+    except Exception:
+        is_repo_root = (skill_dir / ".git").is_dir()
+    if not is_repo_root:
+        return None
+    bundled = sorted(d.name for d in skill_dir.iterdir() if d.is_dir() and d.name in _BUNDLED_DIRS)
+    if not bundled:
+        return None
+    return (
+        f"skill is a repo root with bundled dir(s) {bundled} — a remote `npx skills add` "
+        f"drops them (only SKILL.md installs). Move the skill into `skills/{skill_dir.resolve().name}/`."
+    )
+
+
 def _list_output_has(out: str, name: str) -> bool:
     """The skill name must appear as a LISTED entry line (box-drawing/bullet
     prefix, name alone on the line) — NOT merely somewhere in a sibling skill's
@@ -264,16 +303,20 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         results.append({"step": step, "label": label, "status": status,
                         "detail": detail, "required": required})
 
-    # 1 — SKILL.md contract (required) + skills.sh-parseable frontmatter
+    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable
+    #     + installable LAYOUT (not a repo-root skill that drops its bundled dirs).
     gotcha = _skillsh_frontmatter_issue(skill_dir)
+    layout = _repo_root_bundled_dirs_issue(skill_dir)
     if not (fm and fm.get("name") and fm.get("description")):
         add(1, "SKILL.md contract", FAIL,
             "SKILL.md missing" if fm is None else "frontmatter needs name + description", required=True)
     elif gotcha:
         add(1, "SKILL.md contract", FAIL,
             f"frontmatter breaks skills.sh parser (multi-quoted-string list item): {gotcha[:48]}", required=True)
+    elif layout:
+        add(1, "SKILL.md contract", FAIL, layout, required=True)
     else:
-        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable)", required=True)
+        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable + installable layout)", required=True)
 
     # 2 — Deterministic code: present + SYNTAX-VALID (required unless truly latent)
     if latent_only and code:
