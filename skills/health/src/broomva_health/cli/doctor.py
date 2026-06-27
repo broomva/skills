@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
 
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.source import Source
+
+# Temp-dir prefixes that make an editable install fragile (vanish on reboot).
+# These are match prefixes for path *detection*, not temp-file creation — the
+# S108 (bandit insecure-temp) lint does not apply.
+_EPHEMERAL_PREFIXES = (
+    "/tmp/",  # noqa: S108
+    "/private/tmp/",
+    "/var/tmp/",  # noqa: S108
+    "/var/folders/",
+    "/private/var/folders/",
+)
 
 if TYPE_CHECKING:
     from broomva_health.cli.container import Container
@@ -150,6 +163,39 @@ def _check_legacy_data(container: Container) -> list[Check]:
     return [Check("legacy_data", "OK", "no biometric data in the legacy in-repo location")]
 
 
+def _check_install(container: Container | None = None) -> list[Check]:  # noqa: ARG001
+    """Flag an editable install pinned to an ephemeral temp dir.
+
+    RC1 (BRO-1552): the CLI was once editable-installed (`pip install -e`) from a
+    `mktemp` clone under `/tmp`; when the OS cleared `/tmp` the import broke on
+    EVERY call (`ModuleNotFoundError`), which masked an otherwise-working skill.
+    `install.sh`'s durability guard prevents *new* installs from landing here,
+    but a pre-existing fragile install only surfaces on the next reboot — this
+    check warns *before* that, while the temp dir still happens to exist.
+    """
+    import broomva_health
+
+    src = Path(broomva_health.__file__).resolve()
+    s = str(src)
+    prefixes: list[str] = list(_EPHEMERAL_PREFIXES)
+    tmpdir = os.environ.get("TMPDIR", "").rstrip("/")
+    if tmpdir:
+        prefixes.append(tmpdir + "/")
+    root = src.parent.parent  # .../src (editable) or .../site-packages (regular)
+    if any(s.startswith(p) for p in prefixes):
+        return [
+            Check(
+                "install.source",
+                "FAIL",
+                f"package is installed from an ephemeral temp path ({root}); it will "
+                "vanish on reboot and break every `health` call. Reinstall from a stable "
+                "location — e.g. `bash ~/.claude/skills/health/install.sh` (the durability "
+                "guard copies temp sources to a stable home).",
+            )
+        ]
+    return [Check("install.source", "OK", str(root))]
+
+
 def _render_checks_human(checks: list[Check]) -> str:
     lines: list[str] = []
     for chk in checks:
@@ -177,6 +223,7 @@ def doctor_root(ctx: typer.Context) -> None:
     checks.extend(_check_repository(container))
     checks.extend(_check_vault(container))
     checks.extend(_check_legacy_data(container))
+    checks.extend(_check_install(container))
 
     fmt = ctx.obj["format"]
     fields = ctx.obj["fields"]

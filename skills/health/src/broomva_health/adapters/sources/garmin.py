@@ -5,7 +5,10 @@ Built on `garminconnect >= 0.3.3` (PyPI package; GitHub repo is
 no 0.3.4). May 2026 substrate — the upstream `matin/garth` was deprecated
 2026-03-28 after Cloudflare's WAF killed the mobile-SSO endpoint. Auth
 contract: `Garmin(prompt_mfa=...).login(tokenstore=<dir>) -> (needs_mfa, _)`;
-the library self-persists `garmin_tokens.json` into the tokenstore dir. The library wraps Garmin's web API with
+the library (via its inner garth client's `dump(dir)`) persists garth's
+**two-file** format — `oauth1_token.json` + `oauth2_token.json` — into the
+tokenstore dir (NOT a single `garmin_tokens.json`; that assumption was the
+BRO-1552 false-negative). The library wraps Garmin's web API with
 `curl_cffi` Chrome-TLS impersonation; we wrap *that* with the TraceSource
 protocol so the rest of the codebase sees a stable interface even as the
 upstream library churns.
@@ -13,9 +16,10 @@ upstream library churns.
 Discipline:
 
 - Every public method acquires from the rate limiter BEFORE any network I/O.
-- Tokens are persisted via the injected `TokenStore`; a Garmin-library-
-  compatible `garmin_tokens.json` mirror is written by `FilesystemTokenStore`
-  so the library's `Garmin().login(tokenstore=<dir>)` path picks it up.
+- Tokens are persisted by the library itself into the tokenstore dir as garth's
+  `oauth1_token.json` + `oauth2_token.json`; `_read_persisted_tokens` validates
+  that two-file format (falling back to the legacy `garmin_tokens.json`). The
+  default `native` backend speaks the same two-file format directly.
 - Library exceptions never escape — they map to domain `HealthError` subtypes
   (`AuthRequired`, `MFANeeded`, `RateLimited`, `SourceUnavailable`).
 - The `garminconnect` import is lazy: tests inject a `client_factory` and
@@ -65,7 +69,8 @@ logger = logging.getLogger(__name__)
 _RATE_LIMIT_KEY = "garmin:sync"
 _DEFAULT_429_RETRY_AFTER_S = 900.0  # 15 min — matches min_interval setpoint
 _GARMIN_DEVICE_MANUFACTURER = "garmin"
-_GARMIN_LIB_TOKEN_FILE = "garmin_tokens.json"
+_GARMIN_LIB_TOKEN_FILE = "garmin_tokens.json"  # legacy single-file (rare/older builds)
+_GARTH_OAUTH2_FILE = "oauth2_token.json"  # garth's actual dump format (oauth1 + oauth2)
 
 # Auth-retry guard. Garmin 429s are account+IP-scoped and *compound* with every
 # retry (see References/rate-limit-discipline.md — observed 48-72h lockouts).
@@ -625,24 +630,36 @@ class GarminTraceSource:
         return client
 
     def _read_persisted_tokens(self, token_dir: Any) -> bytes:
-        """Read + validate the token file the library wrote via `login(tokenstore=)`.
+        """Read + validate the token material the library persisted via `login(tokenstore=)`.
 
-        Raises `AuthRequired` if the file is missing or doesn't carry real
-        token material — the explicit guard against the false-positive where
-        `login()` reports success but a 429 prevented real tokens from landing.
+        garminconnect ≥ 0.3 wraps garth, whose `dump(dir)` writes the **two-file**
+        format `oauth1_token.json` + `oauth2_token.json` — NOT a single
+        `garmin_tokens.json` (the original assumption here; BRO-1552). Accept the
+        garth files first, fall back to the legacy single-file for any older
+        library build that still emits it. The default `native` backend already
+        speaks this two-file format directly; this keeps the deprecated `library`
+        backend from false-failing a real login.
+
+        Raises `AuthRequired` if no token material is present or it doesn't look
+        real — the explicit guard against the false-positive where `login()`
+        reports success but a 429 prevented real tokens from landing.
         """
-        token_file = token_dir / _GARMIN_LIB_TOKEN_FILE
-        raw = token_file.read_bytes() if token_file.exists() else b""
-        if not _tokens_look_valid(raw):
-            raise AuthRequired(
-                "Garmin login returned but no valid tokens were written "
-                f"({token_file} is missing or empty). This is almost always a "
-                "429 rate-limit that returned without raising. Do NOT retry "
-                "immediately — each attempt extends Garmin's account lockout. "
-                "Wait for it to clear (often hours), then `health auth login` once.",
-                token_file=str(token_file),
-            )
-        return raw
+        garth_oauth2 = token_dir / _GARTH_OAUTH2_FILE
+        legacy = token_dir / _GARMIN_LIB_TOKEN_FILE
+        # Prefer garth's two-file format; fall back to the legacy single file
+        # when garth's is absent *or* unreadable/invalid (not just absent).
+        for candidate in (garth_oauth2, legacy):
+            raw = candidate.read_bytes() if candidate.exists() else b""
+            if _tokens_look_valid(raw):
+                return raw
+        raise AuthRequired(
+            "Garmin login returned but no valid tokens were written "
+            f"({garth_oauth2} / {legacy} missing or empty). This is almost always a "
+            "429 rate-limit that returned without raising. Do NOT retry "
+            "immediately — each attempt extends Garmin's account lockout. "
+            "Wait for it to clear (often hours), then `health auth login` once.",
+            token_file=str(garth_oauth2),
+        )
 
     # --- auth-retry cooldown (anti-amplification) ---
 

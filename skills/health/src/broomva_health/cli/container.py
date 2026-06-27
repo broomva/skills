@@ -180,8 +180,9 @@ class Container:
 
         # --- Sources -----------------------------------------------------
         # The registry is settings-aware: it picks the Garmin backend from
-        # `[garmin] backend` (default 'cli' — delegate to eddmann's
-        # garmin-connect CLI; 'library' = direct garminconnect import).
+        # `[garmin] backend` (default 'native' — in-house garth client riding an
+        # imported token; 'cli' delegates to garmin-connect; 'library' = direct
+        # garminconnect import). See _registry._DEFAULT_GARMIN_BACKEND.
         try:
             from broomva_health.adapters.sources._registry import build_sources
         except ImportError as exc:
