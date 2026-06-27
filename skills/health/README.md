@@ -30,6 +30,15 @@ matches what you want:
 npx skills add broomva/skills --skill health -g -y
 ```
 
+> **Large monorepo — clone timeout.** `broomva/skills` is big; `skills.sh`'s
+> default 300s clone can time out. If you see *"Failed to clone … timed out"*,
+> raise the limit or install from a local checkout:
+> ```bash
+> SKILLS_CLONE_TIMEOUT_MS=600000 npx skills add broomva/skills --skill health -g -y
+> # or, from an existing clone (instant):
+> npx skills add /path/to/broomva-skills --skill health -g -y
+> ```
+
 Installs the skill manifest (SKILL.md + Workflows + References + the
 `install.sh`/`install-skill.sh` scripts) to `~/.agents/skills/health/` and
 symlinks it into 30+ agent skill dirs (Claude Code, Cursor, Gemini CLI, …).

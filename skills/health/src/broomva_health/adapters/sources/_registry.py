@@ -6,9 +6,13 @@ and register it here.
 Garmin has multiple **backends** behind the one `TraceSource` port, selected
 by `[garmin] backend` in config:
 
-- ``cli``     (default) — delegate to eddmann's ``garmin-connect`` CLI; the
-              CLI owns the token lifecycle, so the skill never handles
-              credentials and never hits the walled fresh-login path.
+- ``native``  (default — ``_DEFAULT_GARMIN_BACKEND``) — in-house: ``garth``
+              rides an existing token (imported via ``health auth import``); we
+              own the connectapi calls + aggregation + mapping. No external
+              binary, no fresh-login wall.
+- ``cli``     — delegate to eddmann's ``garmin-connect`` CLI; the CLI owns the
+              token lifecycle, so the skill never handles credentials and never
+              hits the walled fresh-login path.
 - ``library`` — direct ``garminconnect`` import; automatable but its fresh
               SSO login is Cloudflare-walled (429 / CAPTCHA / account-lock).
 - ``browser`` — (planned) Interceptor real-Chrome capture; CAPTCHA-proof but
