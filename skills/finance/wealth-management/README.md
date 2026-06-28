@@ -20,15 +20,17 @@ python3 scripts/goal_planner.py --target-usd 500000 --target-date 2040-01-01
 
 ## Modes
 
+Live modes (scripts shipped):
+
 | Mode | Script | Analytics Type |
 |------|--------|---------------|
 | `summary` | `portfolio_summary.py` | Descriptive |
 | `project` | `project_wealth.py` | Predictive |
 | `goal` | `goal_planner.py` | Predictive |
-| `allocation` | `allocate_assets.py` | Prescriptive |
-| `rebalance` | `rebalance.py` | Prescriptive |
 | `scenario` | `scenario_analysis.py` | Predictive |
-| `optimize` | `optimize_strategy.py` | Prescriptive |
+
+Planned modes (designed in SKILL.md, scripts not yet shipped):
+`allocation`, `rebalance`, `optimize`.
 
 ## Dependencies
 

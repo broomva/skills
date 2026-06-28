@@ -2,6 +2,7 @@
   "name": "brand-icons",
   "version": "1.0.0",
   "description": "Brand icon and visual identity management — generates favicons, app icons, OG images, and social media avatars from brand assets with consistent visual identity.",
+  "license": "MIT",
   "entrypoint": "SKILL.md",
   "inputs_schema": {
     "type": "object",

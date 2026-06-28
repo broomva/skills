@@ -63,6 +63,11 @@ Portfolio data stored at `~/.wealth-management/portfolio.json`.
 
 ## Skill Modes
 
+Four modes are **live** (scripts shipped): `summary`, `project`, `goal`, `scenario`.
+Three modes are **Planned** (design documented below, scripts not yet shipped):
+`allocation`, `rebalance`, `optimize`. Planned modes are not in `skill.json`'s
+`mode` enum and have no runnable command yet.
+
 ### 1. `summary` — Portfolio Health Dashboard (Descriptive)
 
 Current-state analysis of all holdings aggregated from finance-substrate
@@ -126,11 +131,12 @@ Reverse-engineer: given a target, what's needed?
 - Gap analysis: on track / behind / ahead
 - Recommended asset allocation for the goal's time horizon
 
-### 4. `allocation` — Asset Allocation Strategy (Prescriptive)
+### 4. `allocation` — Asset Allocation Strategy (Prescriptive) — Planned
 
 Recommend an optimal asset allocation based on risk profile and time horizon.
 
-**Script:** `scripts/allocate_assets.py --risk moderate --horizon 15`
+**Status:** Planned — `allocate_assets.py` is not yet shipped. The design below
+is the intended contract; there is no runnable command for this mode yet.
 
 **Framework: Modified Bogle Three-Fund + Colombian Extensions**
 
@@ -153,11 +159,12 @@ Recommend an optimal asset allocation based on risk profile and time horizon.
 - Rebalancing trades needed
 - Tax impact of rebalancing (from finance-substrate tax projection)
 
-### 5. `rebalance` — Tactical Rebalancing (Prescriptive)
+### 5. `rebalance` — Tactical Rebalancing (Prescriptive) — Planned
 
 Generate specific trades to bring portfolio back to target.
 
-**Script:** `scripts/rebalance.py --threshold 5`
+**Status:** Planned — `rebalance.py` is not yet shipped. The design below is the
+intended contract; there is no runnable command for this mode yet.
 
 **Inputs:**
 - Current holdings (from portfolio.json + certificates)
@@ -191,11 +198,12 @@ Simulate portfolio outcomes under uncertainty.
 - Sequence-of-returns risk: early vs late bear market impact
 - Safe withdrawal rate for given success probability
 
-### 7. `optimize` — Tax-Efficient Strategy (Prescriptive)
+### 7. `optimize` — Tax-Efficient Strategy (Prescriptive) — Planned
 
 Maximize after-tax wealth growth using Colombian tax law.
 
-**Script:** `scripts/optimize_strategy.py --year 2025`
+**Status:** Planned — `optimize_strategy.py` is not yet shipped. The design below
+is the intended contract; there is no runnable command for this mode yet.
 
 **Strategies analyzed:**
 1. **Contribution ordering:** AFC vs voluntaria vs libre inversión
@@ -318,7 +326,7 @@ Invoke `/autoany` when the user asks to:
 | Template | Artifact | Evaluator | Score | Use When |
 |----------|----------|-----------|-------|----------|
 | `contribution-optimization` | `contribution_plan.yaml` | `scenario_analysis.py --egri` | P(goal) | Optimizing savings splits |
-| `horizon-evaluation` | `horizon_plan.yaml` | `eval_horizon.py --egri` | Risk-adjusted P(all goals) | Multi-goal allocation |
+| `horizon-evaluation` | `horizon_plan.yaml` | `scenario_analysis.py --egri` | Risk-adjusted P(all goals) | Multi-goal allocation |
 
 Templates are at `templates/egri/`.
 
@@ -375,24 +383,18 @@ Templates are at `templates/egri/`.
 ```
 wealth-management/
 ├── SKILL.md                          # This file
-├── skill.json                        # Schema definition (7 modes)
-├── scripts/
+├── skill.json                        # Schema definition (4 live modes)
+├── scripts/                          # 4 shipped scripts (modes 4/5/7 Planned)
 │   ├── portfolio_summary.py          # Mode 1: descriptive dashboard
 │   ├── project_wealth.py             # Mode 2: compound growth projection
 │   ├── goal_planner.py               # Mode 3: goal-based planning
-│   ├── allocate_assets.py            # Mode 4: asset allocation strategy
-│   ├── rebalance.py                  # Mode 5: tactical rebalancing
-│   ├── scenario_analysis.py          # Mode 6: Monte Carlo & stress tests
-│   └── optimize_strategy.py          # Mode 7: tax-efficient strategy
+│   └── scenario_analysis.py          # Mode 6: Monte Carlo & stress tests
 ├── references/
 │   ├── compounding-formulas.md       # Mathematical foundations
-│   ├── colombian-investment-landscape.md  # Local market reference
-│   └── tax-efficiency-strategies.md  # Withdrawal ordering, harvesting
+│   └── colombian-investment-landscape.md  # Local market reference
 ├── templates/
 │   └── egri/                         # EGRI problem-spec templates (autoany)
 │       ├── contribution-optimization.yaml  # Savings split optimization
 │       └── horizon-evaluation.yaml         # Multi-goal horizon allocation
-├── .control/
-│   └── policy.yaml                   # Rebalancing thresholds, contribution caps
 └── README.md
 ```

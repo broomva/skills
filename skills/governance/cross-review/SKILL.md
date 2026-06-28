@@ -164,4 +164,4 @@ See [`scripts/cross-review.sh`](./scripts/cross-review.sh) for the implementatio
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — see the [repository LICENSE](https://github.com/broomva/skills/blob/main/LICENSE).

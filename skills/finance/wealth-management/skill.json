@@ -9,8 +9,8 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["summary", "project", "goal", "allocation", "rebalance", "scenario", "optimize"],
-        "description": "Skill mode: summary (portfolio health), project (compound growth), goal (target planning), allocation (asset mix), rebalance (trades), scenario (Monte Carlo), optimize (tax-efficient strategy)"
+        "enum": ["summary", "project", "goal", "scenario"],
+        "description": "Skill mode: summary (portfolio health), project (compound growth), goal (target planning), scenario (Monte Carlo). Modes allocation/rebalance/optimize are Planned (scripts not yet shipped) — see SKILL.md."
       },
       "year": {
         "type": "integer",
@@ -46,12 +46,7 @@
         "type": "string",
         "enum": ["conservative", "moderate", "aggressive"],
         "default": "moderate",
-        "description": "Risk tolerance for allocation and projection assumptions"
-      },
-      "drift_threshold": {
-        "type": "number",
-        "default": 5.0,
-        "description": "Rebalancing trigger: % absolute deviation from target (for rebalance mode)"
+        "description": "Risk tolerance for projection and goal assumptions"
       },
       "simulations": {
         "type": "integer",
@@ -87,10 +82,6 @@
       {
         "if": { "properties": { "mode": { "const": "goal" } } },
         "then": { "required": ["target_date"] }
-      },
-      {
-        "if": { "properties": { "mode": { "const": "allocation" } } },
-        "then": { "required": ["risk_profile"] }
       },
       {
         "if": { "properties": { "mode": { "const": "scenario" } } },

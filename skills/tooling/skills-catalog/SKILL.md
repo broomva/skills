@@ -44,19 +44,21 @@ Read the full inventory with descriptions: `Read references/skills-inventory.md`
 
 ## Showcase Video
 
-The [skills-showcase/](skills-showcase/) subdirectory contains a Remotion project that renders
-the inventory as an animated video (1080x1080, 30fps, 48s) plus a 7-post X thread.
+A Remotion project that renders the inventory as an animated video (1080x1080, 30fps, 48s)
+plus a 7-post X thread lives at the **monorepo root** in `skills-showcase/` (a repo-level dev
+tool, not part of this skill's install — `--skill skills-catalog` ships only `SKILL.md` +
+`references/skills-inventory.md`). From a clone of `broomva/skills`:
 
 ```bash
-cd skills-showcase
+cd skills-showcase          # at the repo root, not inside the skill
 npm install
 npx remotion render SkillsShowcase out/skills-showcase.mp4
 npx remotion render SkillsShowcase out/skills-showcase.gif --every-nth-frame=3
 ```
 
-Pre-rendered outputs in `skills-showcase/out/`.
+Pre-rendered outputs land in the repo-root `skills-showcase/out/`.
 
 ## Adding Skills
 
-Edit `references/skills-inventory.md` for the catalog and `skills-showcase/src/data/skills.ts`
-for the video dataset. Re-render after changes.
+Edit this skill's `references/skills-inventory.md` for the catalog, and (for the video dataset)
+the repo-root `skills-showcase/src/data/skills.ts`. Re-render after changes.

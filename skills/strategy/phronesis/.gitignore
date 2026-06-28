@@ -1,0 +1,35 @@
+# --- Tenant data — never commit (P6 anonymization invariant, ADR-0005) ---
+# Engagement working dirs hold real tenant material. Only the redacted
+# scaffolding template is tracked; every concrete engagement stays local.
+engagements/*
+!engagements/_template/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# --- Build / packaging ---
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Environments / secrets ---
+.venv/
+venv/
+.env
+.env.*
+
+# --- Editor / OS ---
+.DS_Store
+*.swp
+.idea/
+.vscode/

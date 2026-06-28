@@ -105,11 +105,11 @@ Search and filter stocks, ETFs, crypto, and other securities by criteria.
 
 **Data sources:** yfinance, Financial Modeling Prep, OpenBB
 
-### 2. `research` — Deep Investment Research
+### 2. `research` — Deep Investment Research — **(Planned — not yet implemented)**
 
 In-depth analysis of a specific security or market.
 
-**Script:** `scripts/research.py`
+**Status:** Planned — `scripts/research.py` is not yet shipped. Do not invoke; this mode is a roadmap stub.
 
 **Analysis includes:**
 - Company overview and business model
@@ -122,11 +122,11 @@ In-depth analysis of a specific security or market.
 
 **Data sources:** yfinance fundamentals, SEC EDGAR (edgartools), news sentiment (FinBERT)
 
-### 3. `factor` — Factor Analysis
+### 3. `factor` — Factor Analysis — **(Planned — not yet implemented)**
 
 Decompose portfolio returns into systematic factor exposures.
 
-**Script:** `scripts/factor_analysis.py`
+**Status:** Planned — `scripts/factor_analysis.py` is not yet shipped. Do not invoke; this mode is a roadmap stub.
 
 **Factors analyzed:**
 - Fama-French 5 factors: Market, Size (SMB), Value (HML), Profitability (RMW), Investment (CMA)
@@ -153,11 +153,11 @@ Test investment strategies against historical data.
 
 **Metrics:** CAGR, Sharpe, Sortino, max drawdown, Calmar, win rate, average gain/loss
 
-### 5. `optimize` — Portfolio Optimization
+### 5. `optimize` — Portfolio Optimization — **(Planned — not yet implemented)**
 
 Find optimal portfolio weights given constraints.
 
-**Script:** `scripts/portfolio_optimizer.py`
+**Status:** Planned — `scripts/portfolio_optimizer.py` is not yet shipped. Do not invoke; this mode is a roadmap stub.
 
 **Methods:**
 - Mean-variance (Markowitz efficient frontier)
@@ -171,11 +171,11 @@ Find optimal portfolio weights given constraints.
 
 **Libraries:** PyPortfolioOpt, Riskfolio-Lib, cvxpy
 
-### 6. `risk` — Risk Analysis
+### 6. `risk` — Risk Analysis — **(Planned — not yet implemented)**
 
 Comprehensive risk assessment of current or proposed portfolio.
 
-**Script:** `scripts/risk_analysis.py`
+**Status:** Planned — `scripts/risk_analysis.py` is not yet shipped. Do not invoke; this mode is a roadmap stub.
 
 **Metrics:**
 - Value at Risk (parametric, historical, Monte Carlo)
@@ -186,11 +186,11 @@ Comprehensive risk assessment of current or proposed portfolio.
 - GARCH volatility forecast
 - Concentration risk and single-name exposure
 
-### 7. `trade` — Trade Execution
+### 7. `trade` — Trade Execution — **(Planned — not yet implemented)**
 
 Execute trades via supported platform APIs.
 
-**Script:** `scripts/trade.py`
+**Status:** Planned — `scripts/trade.py` is not yet shipped. Do not invoke; this mode is a roadmap stub. (For a working, paper-only execution loop today, use `services/tradingview-bridge` — see below.)
 
 **Supported platforms:**
 
@@ -207,11 +207,11 @@ Execute trades via supported platform APIs.
 - Position sizing: Kelly criterion, fixed fractional, risk-budget
 - Pre-trade checks: liquidity, spread, portfolio impact
 
-### 8. `track` — Multi-Platform Position Tracking
+### 8. `track` — Multi-Platform Position Tracking — **(Planned — not yet implemented)**
 
 Aggregate positions across all investment platforms.
 
-**Script:** `scripts/tracker.py`
+**Status:** Planned — `scripts/tracker.py` is not yet shipped. Do not invoke; this mode is a roadmap stub.
 
 **Sources (in priority order):**
 1. API-connected platforms (Alpaca, Coinbase) — real-time
@@ -221,11 +221,11 @@ Aggregate positions across all investment platforms.
 
 **Output:** Unified position list with cost basis, current value, unrealized gain/loss, allocation %
 
-### 9. `rebalance` — Intelligent Rebalancing
+### 9. `rebalance` — Intelligent Rebalancing — **(Planned — not yet implemented)**
 
 Generate and optionally execute rebalancing trades.
 
-**Script:** `scripts/rebalancer.py`
+**Status:** Planned — `scripts/rebalancer.py` is not yet shipped. Do not invoke; this mode is a roadmap stub.
 
 **Rebalancing modes:**
 - Cash-flow (direct new contributions to underweight positions)
@@ -421,10 +421,12 @@ Invoke `/autoany` when the user asks to:
 | Template | Artifact | Evaluator | Score | Use When |
 |----------|----------|-----------|-------|----------|
 | `strategy-optimization` | `strategy.yaml` (weights, rules) | `backtest.py --egri` | Sharpe ratio | Optimizing portfolio allocation |
-| `screen-evolution` | `screen_criteria.yaml` (thresholds) | `screener.py` + `eval_screen.py` | Forward return | Evolving stock selection criteria |
+| `screen-evolution` _(planned)_ | `screen_criteria.yaml` (thresholds) | `screener.py` + `eval_screen.py` _(`eval_screen.py` not yet shipped)_ | Forward return | Evolving stock selection criteria |
 
-Templates are at `templates/egri/`. The strategy artifact schema is at
-`templates/egri/strategy-artifact.yaml`.
+The `strategy-optimization` loop is live (`backtest.py --egri` ships). The
+`screen-evolution` loop is **planned** — its `eval_screen.py` evaluator is not
+yet implemented. Templates are at `templates/egri/`. The strategy artifact
+schema is at `templates/egri/strategy-artifact.yaml`.
 
 ### Delegation Flow
 
@@ -473,37 +475,46 @@ Templates are at `templates/egri/`. The strategy artifact schema is at
 
 ## File Structure
 
+**Shipped (live today):**
+
 ```
 investment-management/
 ├── SKILL.md                          # This file
-├── skill.json                        # Schema definition (11 modes)
+├── skill.json                        # Schema definition (11 modes; 4 live, 7 planned)
 ├── scripts/
-│   ├── screener.py                   # Mode 1: security screening
-│   ├── research.py                   # Mode 2: deep research
-│   ├── factor_analysis.py            # Mode 3: factor decomposition
-│   ├── backtest.py                   # Mode 4: strategy backtesting
-│   ├── portfolio_optimizer.py        # Mode 5: portfolio optimization
-│   ├── risk_analysis.py              # Mode 6: risk metrics
-│   ├── trade.py                      # Mode 7: trade execution
-│   ├── tracker.py                    # Mode 8: position tracking
-│   ├── rebalancer.py                 # Mode 9: intelligent rebalancing
-│   ├── market_data.py                # Mode 10: data retrieval
-│   ├── scorer.py                     # Mode 11: investment scoring
+│   ├── screener.py                   # Mode 1 (screen): security screening
+│   ├── backtest.py                   # Mode 4 (backtest): strategy backtesting (+ --egri)
+│   ├── market_data.py                # Mode 10 (data): data retrieval
+│   ├── scorer.py                     # Mode 11 (score): investment scoring
 │   └── eval_backtest.py              # EGRI evaluator wrapper (autoany bridge)
 ├── references/
-│   ├── investment-philosophies.md    # Legendary investor frameworks
-│   ├── platform-apis.md             # API reference for all platforms
-│   ├── quantitative-toolkit.md      # Libraries, formulas, models
-│   ├── colombian-markets.md         # BVC, CDTs, FICs, regulations
-│   └── alternative-investments.md   # Crypto, prediction markets, RE, VC
+│   └── investment-philosophies.md    # Legendary investor frameworks
 ├── templates/
-│   ├── strategies.json               # Pre-built strategy configurations
-│   ├── scoring-weights.json          # Philosophy scoring weights
 │   └── egri/                         # EGRI problem-spec templates (autoany)
 │       ├── strategy-optimization.yaml   # Portfolio strategy optimization
-│       ├── screen-evolution.yaml        # Screening criteria evolution
+│       ├── screen-evolution.yaml        # Screening criteria evolution (evaluator planned)
 │       └── strategy-artifact.yaml       # Strategy YAML schema (mutable artifact)
-├── .control/
-│   └── policy.yaml                   # Trading limits, risk gates
+├── services/
+│   └── tradingview-bridge/           # Paper-only, human-gated trading decision plane
 └── README.md
+```
+
+**Planned — not yet shipped (roadmap; do not invoke):**
+
+```
+scripts/research.py                # Mode 2 (research)
+scripts/factor_analysis.py         # Mode 3 (factor)
+scripts/portfolio_optimizer.py     # Mode 5 (optimize)
+scripts/risk_analysis.py           # Mode 6 (risk)
+scripts/trade.py                   # Mode 7 (trade)
+scripts/tracker.py                 # Mode 8 (track)
+scripts/rebalancer.py              # Mode 9 (rebalance)
+scripts/eval_screen.py             # EGRI evaluator for screen-evolution
+references/platform-apis.md        # API reference for all platforms
+references/quantitative-toolkit.md # Libraries, formulas, models
+references/colombian-markets.md    # BVC, CDTs, FICs, regulations
+references/alternative-investments.md  # Crypto, prediction markets, RE, VC
+templates/strategies.json          # Pre-built strategy configurations
+templates/scoring-weights.json     # Philosophy scoring weights
+.control/policy.yaml               # Trading limits, risk gates
 ```

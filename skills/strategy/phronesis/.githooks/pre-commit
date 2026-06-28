@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# phronesis pre-commit hook — local enforcement of the two P6 invariants the
+# practice advertises (see CONTRIBUTING.md, docs/methodology.md, ADR-0005).
+#
+# Wire it with:  git config core.hooksPath .githooks   (or `make doctor` checks it)
+# Bypass (discouraged):  git commit --no-verify
+set -euo pipefail
+
+fail=0
+
+staged() { git diff --cached --name-only --diff-filter=ACM; }
+
+# 1) Tenant data must never be committed. Only engagements/_template/ is tracked.
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  case "$path" in
+    engagements/_template/*) : ;;
+    engagements/*)
+      echo "BLOCKED: tenant data under '$path' may not be committed (ADR-0005, P6)." >&2
+      echo "         Only engagements/_template/ is tracked; real engagements stay local." >&2
+      fail=1
+      ;;
+  esac
+done < <(staged)
+
+# 2) Assignment-shaped secrets must never be committed.
+secret_re='(aws_access_key_id|aws_secret_access_key|api_key|api_secret|secret_key|access_token|password|private_key)[[:space:]]*[:=][[:space:]]*['"'"'"][^'"'"'"]+['"'"'"]'
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ -f "$path" ] || continue
+  if git show ":$path" 2>/dev/null | grep -EiqI "$secret_re"; then
+    echo "BLOCKED: '$path' contains an assignment-shaped secret. Remove it before committing." >&2
+    fail=1
+  fi
+done < <(staged)
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-commit: commit rejected. Use 'git commit --no-verify' only with a reviewed reason." >&2
+  exit 1
+fi
+exit 0

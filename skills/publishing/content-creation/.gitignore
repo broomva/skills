@@ -1,0 +1,7 @@
+# Regenerable render output — kept out of the skill install (BRO-1575)
+**/video/out/
+*.mp4
+*.mov
+*.webm
+# large rendered demo gifs (regenerate from the example sources)
+**/assets/*-showcase.gif

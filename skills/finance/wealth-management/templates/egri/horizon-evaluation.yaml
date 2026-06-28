@@ -66,7 +66,13 @@ artifacts:
       reason: "Monte Carlo evaluator"
 
 evaluator:
-  script: "python3 scripts/eval_horizon.py --plan {artifact} --egri"
+  script: >
+    python3 scripts/scenario_analysis.py
+    --allocation-file {artifact}
+    --years {years}
+    --goal-cop {goal}
+    --simulations 10000
+    --egri
   inputs:
     - "{artifact}"
   outputs:
@@ -84,7 +90,13 @@ evaluator:
 
 execution:
   backend: local
-  command: "python3 scripts/eval_horizon.py --plan {artifact} --egri"
+  command: >
+    python3 scripts/scenario_analysis.py
+    --allocation-file {artifact}
+    --years 30
+    --goal-cop 5000000000
+    --simulations 10000
+    --egri
   timeout_s: 120
   sandbox: false
 
