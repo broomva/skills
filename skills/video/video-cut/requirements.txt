@@ -1,0 +1,6 @@
+# video-cut runtime deps (system: ffmpeg, ffprobe — install via brew/apt separately)
+faster-whisper>=1.1.0
+# optional: yt-dlp  (for --download of remote sources)
+# optional: pyannote.audio  (for --diarize, follow-up)
+# test-only:
+pytest>=8.0
