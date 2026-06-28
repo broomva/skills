@@ -128,7 +128,7 @@ def test_cli_json(tmp_path):
     assert rc == 0
     payload = json.loads(out)
     assert payload["failed"] == 0
-    assert len(payload["results"]) == 10  # all ten steps reported
+    assert len(payload["results"]) == 11  # ten steps + the 1b installable-layout advisory
 
 
 def test_cli_bad_dir_exit_2(tmp_path):
@@ -377,26 +377,31 @@ def _git_init(d: Path):
     subprocess.run(["git", "init", "-q", str(d)], check=True)
 
 
-def test_repo_root_with_bundled_dirs_fails(tmp_path):
-    # A skill that IS a git repo root carrying scripts/ → remote `npx skills add`
-    # drops the bundled dirs (BRO-1561). Step 1 must FAIL.
+def test_repo_root_with_bundled_dirs_warns_not_fails(tmp_path):
+    # A skill that IS a git repo root carrying scripts/ hits skills.sh#1523 on
+    # remote install — BUT top-level is standard-valid, so this is a non-required
+    # WARN (step 1b), NOT a required FAIL. Step 1 (contract) still PASSes.
     d = _skill(tmp_path)
     _git_init(d)
     res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
     step1 = next(r for r in res if r["step"] == 1)
-    assert step1["status"] == "FAIL" and step1["required"]
-    assert "repo root" in step1["detail"] and "skills/" in step1["detail"]
+    assert step1["status"] == "PASS"  # frontmatter is fine — layout doesn't fail the contract
+    step1b = next(r for r in res if r["step"] == "1b")
+    assert step1b["status"] == "WARN" and not step1b["required"]
+    assert "repo root" in step1b["detail"] and "1523" in step1b["detail"]
+    # and it must NOT contribute a required FAIL
+    assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
 
 
 def test_skills_subdir_layout_passes(tmp_path):
-    # Same skill, but in `skills/<name>/` of a repo root → correct layout, PASS.
+    # Same skill, but in `skills/<name>/` of a repo root → correct layout, 1b PASS.
     repo = tmp_path / "myrepo"
     repo.mkdir()
     _git_init(repo)
     d = _skill(repo / "skills", name="demo")  # → myrepo/skills/demo/
     res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
-    step1 = next(r for r in res if r["step"] == 1)
-    assert step1["status"] == "PASS", step1["detail"]
+    step1b = next(r for r in res if r["step"] == "1b")
+    assert step1b["status"] == "PASS", step1b["detail"]
 
 
 def test_unit_repo_root_bundled_dirs_issue(tmp_path):

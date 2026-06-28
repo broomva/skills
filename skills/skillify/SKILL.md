@@ -98,11 +98,15 @@ audit.
       the bundled files land at `~/.claude/skills/<name>/scripts/…` (not just SKILL.md),
       then run the skill's own test. A clean install that yields a *runnable* skill is
       "published"; a skill that merely `--list`s is not.
-    - **Layout is now machine-enforced (step 1):** a skill that is a git **repo root**
-      carrying bundled dirs (`scripts/`, `references/`, …) FAILS the gate — a remote
-      `npx skills add <owner>/<repo>` drops them (the CLI copies only a repo-root
-      SKILL.md). The skill MUST live in a `skills/<name>/` subdir (agentskills.io
-      standard). See `research/entities/tool/skills-sh.md` for the proof.
+    - **Installable layout (step 1b — advisory WARN, not a hard fail):** a top-level
+      `SKILL.md` is **standard-valid** (the agentskills.io spec + the skills.sh README
+      both list the repo *root* as a discovery location). BUT a *remote* `npx skills add
+      <owner>/<repo>` of a repo-root skill with bundled dirs (`scripts/`, …) **drops
+      them** — an open upstream bug ([vercel-labs/skills#1523](https://github.com/vercel-labs/skills/issues/1523),
+      unfixed). So the gate **WARNs** (the skill is correctly authored; the install path
+      is buggy) and recommends vendoring into a `skills/<name>/` subdir — canonically the
+      **`broomva/skills` monorepo**, where the subdir is non-redundant. See
+      `research/entities/tool/skills-sh.md`.
     - The skill appears in the agent's available-skills list next session.
 11. **Gate** — `python3 scripts/skillify_check.py <skill_dir> --roles-dir roles
     --registry roles/_index.md --entities-dir research/entities --skills-sh broomva/skills`.
