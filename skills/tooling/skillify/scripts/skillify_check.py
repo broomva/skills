@@ -316,9 +316,13 @@ def _script_syntax_error(path: Path) -> str | None:
 _REF_RE = re.compile(
     r"(?<![\w./-])((?:scripts|references|assets|templates)/[A-Za-z0-9_][\w./-]*\.[A-Za-z0-9]+)"
 )
+# Explicit planning language only — deliberately NOT common bare English words
+# ("generated"/"will be"/"deprecated"/"stub"), which could incidentally exempt a
+# genuinely-missing live reference (P20 review). The exemption is line-level, so
+# keep these unambiguous.
 _PLANNED_RE = re.compile(
-    r"planned|not[\s-]?yet|not[\s-]?shipped|roadmap|do(?:n['’]t| not)\s+invoke"
-    r"|\bTODO\b|\bTBD\b|coming soon|\bstub\b|generated|will be|placeholder|deprecated",
+    r"planned|not[\s-]?yet|not[\s-]?shipped|not[\s-]?(?:yet[\s-]?)?(?:built|implemented|written|created)"
+    r"|roadmap|do(?:n['’]t| not)\s+invoke|\bTODO\b|\bTBD\b|coming soon|placeholder",
     re.IGNORECASE,
 )
 _SKIP_JSON_KEYS = {"description", "summary", "notes", "when_to_use", "trigger", "triggers"}

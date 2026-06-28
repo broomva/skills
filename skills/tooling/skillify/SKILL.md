@@ -132,10 +132,16 @@ doesn't ship*. The gate scans `SKILL.md` (prose + inline-code, fenced example bl
 excluded), `skill.json` (entrypoint + script-valued fields), and `templates/*.yaml`
 for references to the skill's own `scripts/`/`references/`/`assets/`/`templates/`,
 and FAILs if any points at a file that doesn't exist and isn't marked Planned/
-not-shipped/generated. A path the skill *scaffolds into a target repo* (shipped under
+not-shipped/roadmap/TODO. A path the skill *scaffolds into a target repo* (shipped under
 `assets/templates/…`) counts as satisfied. This is the #1 real defect — a skill that
 *installs* fine but whose SKILL.md tells an agent to run a `scripts/<name>.py` that was
 never written. Fix = ship the file, or mark the reference Planned.
+
+*Scope (deliberately conservative to stay false-positive-free):* 1c only checks
+prefixed paths (`scripts/…`, `references/…`, `assets/…`, `templates/…`) in SKILL.md
+prose, `skill.json`, and `templates/*.yaml`. It does **not** flag bare filenames,
+references inside ` ``` ` fenced blocks, or links in `references/*.md` — those trade
+recall for zero false positives.
 
 Reports PASS / WARN / SKIP / FAIL for each step. **Required** steps (1 SKILL.md,
 1c reference integrity, 2 code unless `latent_only`, 3 unit tests when code present)
