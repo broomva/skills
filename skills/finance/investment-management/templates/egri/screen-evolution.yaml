@@ -39,9 +39,10 @@ artifacts:
       reason: "Forward performance evaluator"
 
 evaluator:
+  # PLANNED — eval_screen.py (the screen-evolution evaluator) is not yet shipped; this template is a roadmap stub.
   script: >
     python3 scripts/screener.py --criteria-file {artifact} --json |
-    python3 scripts/eval_screen.py --lookback 5y --egri
+    python3 scripts/eval_screen.py --lookback 5y --egri   # planned: not yet shipped
   inputs:
     - "{artifact}"
     - "market-data/"
@@ -54,7 +55,7 @@ evaluator:
 
 execution:
   backend: local
-  command: "python3 scripts/eval_screen.py --criteria {artifact} --lookback 5y --egri"
+  command: "python3 scripts/eval_screen.py --criteria {artifact} --lookback 5y --egri"  # planned: eval_screen.py not yet shipped
   timeout_s: 180
   sandbox: false
 

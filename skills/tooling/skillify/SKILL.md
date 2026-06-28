@@ -127,9 +127,22 @@ network** — so a skill that would silently fail to install fails the gate offl
 **`--skills-sh <repo>`** is the opt-in *networked* check: it makes step 9 a real
 install-verify (`npx skills add <repo> --list`, asserts the skill is listed).
 
-Reports PASS / WARN / SKIP / FAIL for each of the 10 steps. **Required** steps
-(1 SKILL.md, 2 code unless `latent_only`, 3 unit tests when code present) gate
-the exit code. `--strict` promotes the recommended steps to required.
+**Step 1c — reference integrity (required).** A skill must not *advertise files it
+doesn't ship*. The gate scans `SKILL.md` (prose + inline-code, fenced example blocks
+excluded), `skill.json` (entrypoint + script-valued fields), and `templates/*.yaml`
+for references to the skill's own `scripts/`/`references/`/`assets/`/`templates/`,
+and FAILs if any points at a file that doesn't exist and isn't marked Planned/
+not-shipped/generated. A path the skill *scaffolds into a target repo* (shipped under
+`assets/templates/…`) counts as satisfied. This is the #1 real defect — a skill that
+*installs* fine but whose SKILL.md tells an agent to run a `scripts/<name>.py` that was
+never written. Fix = ship the file, or mark the reference Planned.
+
+Reports PASS / WARN / SKIP / FAIL for each step. **Required** steps (1 SKILL.md,
+1c reference integrity, 2 code unless `latent_only`, 3 unit tests when code present)
+gate the exit code. `--strict` promotes the recommended steps to required. Step 3
+recognizes Python (AST), JS/TS, **and bash** test suites (`*.test.sh` with
+`ok()`/`fail()` helpers or `PASS`/`FAIL` accounting), so a real shell test battery
+isn't read as "no tests".
 
 ## Composition map
 

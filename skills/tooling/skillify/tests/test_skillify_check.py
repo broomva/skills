@@ -128,7 +128,7 @@ def test_cli_json(tmp_path):
     assert rc == 0
     payload = json.loads(out)
     assert payload["failed"] == 0
-    assert len(payload["results"]) == 11  # ten steps + the 1b installable-layout advisory
+    assert len(payload["results"]) == 12  # ten steps + 1b (installable layout) + 1c (reference integrity)
 
 
 def test_cli_bad_dir_exit_2(tmp_path):
@@ -411,3 +411,94 @@ def test_unit_repo_root_bundled_dirs_issue(tmp_path):
     _git_init(d)
     msg = mod._repo_root_bundled_dirs_issue(d)
     assert msg and "scripts" in msg
+
+
+# --- step 1c: internal-reference integrity -----------------------------------
+
+def _rc(d):
+    return mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+
+
+def test_ref_integrity_fails_on_missing_script_ref(tmp_path):
+    # SKILL.md advertises a script that does not exist → 1c FAIL (the #1 defect).
+    d = _skill(tmp_path)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: x\n---\n"
+        "Run the analysis with `scripts/missing_analyzer.py`.\n", encoding="utf-8")
+    res = _rc(d)
+    assert _step(res, "1c")["status"] == "FAIL"
+    assert _step(res, "1c")["required"]
+    assert [r for r in res if r["status"] == "FAIL" and r["required"]]  # gate fails
+
+
+def test_ref_integrity_existing_ref_passes(tmp_path):
+    d = _skill(tmp_path)  # ships scripts/do.py
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: x\n---\nRuns `scripts/do.py`.\n", encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "PASS"
+
+
+def test_ref_integrity_planned_marker_exempts(tmp_path):
+    d = _skill(tmp_path)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: x\n---\n"
+        "**Status:** Planned — `scripts/future.py` is not yet shipped. Do not invoke.\n",
+        encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "PASS"
+
+
+def test_ref_integrity_ignores_fenced_examples(tmp_path):
+    # Refs inside ``` fences are example commands / File-Structure trees, not claims.
+    d = _skill(tmp_path)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: x\n---\nExample:\n"
+        "```bash\npython3 scripts/example_only.py --flag\n```\n", encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "PASS"
+
+
+def test_ref_integrity_skill_json_entrypoint_must_exist(tmp_path):
+    d = _skill(tmp_path)
+    (d / "skill.json").write_text(
+        '{"name": "demo", "entrypoint": "scripts/nope.py"}', encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "FAIL"
+
+
+def test_ref_integrity_scaffold_template_output_satisfies(tmp_path):
+    # A skill that WRITES files into a target repo ships them under assets/templates/.
+    d = _skill(tmp_path)
+    tdir = d / "assets" / "templates" / "scripts" / "harness"
+    tdir.mkdir(parents=True)
+    (tdir / "lint.sh").write_text("#!/usr/bin/env bash\necho lint\n", encoding="utf-8")
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: x\n---\n"
+        "The bootstrap writes `scripts/harness/lint.sh` into your repo.\n", encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "PASS"
+
+
+def test_ref_integrity_yaml_template_script_ref(tmp_path):
+    # templates/*.yaml that point an executor at a missing script → 1c FAIL.
+    d = _skill(tmp_path)
+    (d / "templates").mkdir(exist_ok=True)
+    (d / "templates" / "loop.yaml").write_text(
+        "evaluator:\n  command: python3 scripts/eval_missing.py --egri\n", encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "FAIL"
+
+
+# --- step 3: bash test suites are recognized ---------------------------------
+
+def test_bash_test_suite_counts_as_real(tmp_path):
+    d = _skill(tmp_path, tests=False)  # ships scripts/do.py, no python tests
+    (d / "tests" / "demo.test.sh").write_text(
+        "#!/usr/bin/env bash\nPASS=0\nFAIL=0\n"
+        "ok() { PASS=$((PASS + 1)); }\nfail() { FAIL=$((FAIL + 1)); }\n"
+        "[ 1 = 1 ] && ok 'one' || fail 'one'\n", encoding="utf-8")
+    res = _rc(d)
+    assert _step(res, 3)["status"] == "PASS"   # bash suite recognized as a real test
+
+
+def test_non_test_bash_script_not_counted(tmp_path):
+    # A plain bash script (no test constructs) must NOT count as a test.
+    d = _skill(tmp_path, tests=False)
+    (d / "tests" / "helper.test.sh").write_text(
+        "#!/usr/bin/env bash\necho 'just a helper'\ncp a b\n", encoding="utf-8")
+    assert mod._is_real_test(d / "tests" / "helper.test.sh") is False
