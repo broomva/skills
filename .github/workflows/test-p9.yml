@@ -1,19 +1,19 @@
 name: test-p9
 
-# Python test gate for the `p9` skill (skills/p9/). Path-filtered so it runs ONLY
-# when skills/p9/** changes. Recovers the CI coverage the standalone broomva/p9
+# Python test gate for the `p9` skill (skills/orchestration/p9/). Path-filtered so it runs ONLY
+# when skills/orchestration/p9/** changes. Recovers the CI coverage the standalone broomva/p9
 # repo had, since migration drops the per-skill .github/ dir
 # (see research/entities/tool/skills-sh.md).
 
 on:
   pull_request:
     paths:
-      - 'skills/p9/**'
+      - 'skills/orchestration/p9/**'
       - '.github/workflows/test-p9.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/p9/**'
+      - 'skills/orchestration/p9/**'
       - '.github/workflows/test-p9.yml'
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/p9
+    working-directory: skills/orchestration/p9
 
 jobs:
   test:

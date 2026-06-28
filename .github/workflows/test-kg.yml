@@ -1,19 +1,19 @@
 name: test-kg
 
-# Python test gate for the `kg` skill (skills/kg/). Path-filtered so it runs ONLY
-# when skills/kg/** changes. Recovers the CI coverage the standalone broomva/kg
+# Python test gate for the `kg` skill (skills/knowledge/kg/). Path-filtered so it runs ONLY
+# when skills/knowledge/kg/** changes. Recovers the CI coverage the standalone broomva/kg
 # repo had, since migration drops the per-skill .github/ dir
 # (see research/entities/tool/skills-sh.md).
 
 on:
   pull_request:
     paths:
-      - 'skills/kg/**'
+      - 'skills/knowledge/kg/**'
       - '.github/workflows/test-kg.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/kg/**'
+      - 'skills/knowledge/kg/**'
       - '.github/workflows/test-kg.yml'
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/kg
+    working-directory: skills/knowledge/kg
 
 jobs:
   test:

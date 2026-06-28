@@ -1,19 +1,19 @@
 name: test-persist
 
-# Python test gate for the `persist` skill (skills/persist/). Path-filtered so it
-# runs ONLY when skills/persist/** changes. Recovers the CI coverage the standalone
+# Python test gate for the `persist` skill (skills/orchestration/persist/). Path-filtered so it
+# runs ONLY when skills/orchestration/persist/** changes. Recovers the CI coverage the standalone
 # broomva/persist repo had, since migration drops the per-skill .github/ dir
 # (see research/entities/tool/skills-sh.md).
 
 on:
   pull_request:
     paths:
-      - 'skills/persist/**'
+      - 'skills/orchestration/persist/**'
       - '.github/workflows/test-persist.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/persist/**'
+      - 'skills/orchestration/persist/**'
       - '.github/workflows/test-persist.yml'
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/persist
+    working-directory: skills/orchestration/persist
 
 jobs:
   test:

@@ -1,11 +1,11 @@
 name: test-health
 
-# Python test gate for the `health` skill (skills/health/).
+# Python test gate for the `health` skill (skills/healthcare/health/).
 #
 # The monorepo's default CI is lint-skill-md.yml (SKILL.md frontmatter only),
 # per the "tests are optional" contribution policy. `health` carries a real
 # Python package (broomva-health) with 233 tests + an install.sh, so it gets
-# its own gate — but PATH-FILTERED so it runs ONLY when skills/health/**
+# its own gate — but PATH-FILTERED so it runs ONLY when skills/healthcare/health/**
 # changes. No other skill pays for it; the monorepo's tests-optional default
 # stands everywhere else.
 #
@@ -15,12 +15,12 @@ name: test-health
 on:
   pull_request:
     paths:
-      - 'skills/health/**'
+      - 'skills/healthcare/health/**'
       - '.github/workflows/test-health.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/health/**'
+      - 'skills/healthcare/health/**'
       - '.github/workflows/test-health.yml'
   workflow_dispatch:
 
@@ -30,7 +30,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/health
+    working-directory: skills/healthcare/health
 
 jobs:
   test:
