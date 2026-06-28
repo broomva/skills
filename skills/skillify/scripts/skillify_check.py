@@ -303,20 +303,32 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         results.append({"step": step, "label": label, "status": status,
                         "detail": detail, "required": required})
 
-    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable
-    #     + installable LAYOUT (not a repo-root skill that drops its bundled dirs).
+    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable.
     gotcha = _skillsh_frontmatter_issue(skill_dir)
-    layout = _repo_root_bundled_dirs_issue(skill_dir)
     if not (fm and fm.get("name") and fm.get("description")):
         add(1, "SKILL.md contract", FAIL,
             "SKILL.md missing" if fm is None else "frontmatter needs name + description", required=True)
     elif gotcha:
         add(1, "SKILL.md contract", FAIL,
             f"frontmatter breaks skills.sh parser (multi-quoted-string list item): {gotcha[:48]}", required=True)
-    elif layout:
-        add(1, "SKILL.md contract", FAIL, layout, required=True)
     else:
-        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable + installable layout)", required=True)
+        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable)", required=True)
+
+    # 1b — Installable layout (ADVISORY, not required). A top-level SKILL.md is
+    # standard-valid (the agentskills.io spec + the skills.sh README list the repo
+    # ROOT as a discovery location). BUT a *remote* `npx skills add <owner>/<repo>`
+    # of a repo-root skill with sibling dirs drops them — an open upstream bug
+    # (vercel-labs/skills#1523, unfixed). So this is a WARN, not a FAIL: the skill
+    # is correctly authored; the install path is buggy. Fix = vendor into a
+    # `skills/<name>/` subdir (canonically the `broomva/skills` monorepo, where the
+    # subdir is non-redundant). Verify with a clean-room runnable install.
+    layout = _repo_root_bundled_dirs_issue(skill_dir)
+    if layout:
+        add("1b", "Installable layout", WARN,
+            f"{layout} (standard-valid layout, but hits skills.sh#1523 on remote install — "
+            f"prefer skills/<name>/ in the broomva/skills monorepo)", required=False)
+    else:
+        add("1b", "Installable layout", PASS, "skills/<name>/ subdir (or single-file) — installs cleanly")
 
     # 2 — Deterministic code: present + SYNTAX-VALID (required unless truly latent)
     if latent_only and code:
