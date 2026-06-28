@@ -49,7 +49,12 @@ def load_edl(path: str | Path) -> dict:
     for i, r in enumerate(edl["ranges"]):
         if r.get("source") not in edl["sources"]:
             raise ValueError(f"range[{i}] references unknown source {r.get('source')!r}")
-        if not (float(r["end"]) > float(r["start"]) >= 0):
+        try:
+            start = float(r["start"])
+            end = float(r["end"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"range[{i}] requires numeric start/end") from e
+        if not (end > start >= 0):
             raise ValueError(f"range[{i}] requires end > start >= 0")
     edl.setdefault("grade", "neutral_punch")
     edl.setdefault("fade_ms", DEFAULT_FADE_MS)
@@ -57,6 +62,14 @@ def load_edl(path: str | Path) -> dict:
     edl.setdefault("overlays", [])
     edl.setdefault("subtitles", {"mode": "none"})
     edl.setdefault("output", "edit/final.mp4")
+    sub = edl["subtitles"]
+    if sub.get("mode") == "burn" and "chunk_words" in sub:
+        try:
+            cw = int(sub["chunk_words"])
+        except (TypeError, ValueError) as e:
+            raise ValueError("subtitles.chunk_words must be a positive integer") from e
+        if cw < 1:
+            raise ValueError("subtitles.chunk_words must be >= 1")
     return edl
 
 

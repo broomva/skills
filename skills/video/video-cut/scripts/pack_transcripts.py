@@ -79,14 +79,14 @@ def main() -> int:
     blocks = []
     for f in files:
         try:
-            transcript = json.loads(f.read_text())
+            transcript = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
             print(f"warning: skipping {f.name}: {e}", flush=True)
             continue
         blocks.append(render_pack(transcript, f.stem, args.gap))
 
     out_path = Path(args.output) if args.output else edit_dir / "takes_packed.md"
-    out_path.write_text("\n\n".join(blocks) + "\n")
+    out_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
     print(str(out_path.resolve()))
     return 0
 

@@ -39,8 +39,12 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def cached_transcript_valid(out_path: Path, source_hash: str) -> bool:
-    """True if a cached transcript at out_path exists and matches source_hash."""
+def cached_transcript_valid(out_path: Path, source_hash: str,
+                            model_size: str, language) -> bool:
+    """True iff a cached transcript matches the source bytes AND the requested
+    transcription settings (model + language). A different --model or --language
+    must invalidate the cache, else a second run silently returns stale text for
+    a different request."""
     if not out_path.exists():
         return False
     try:
@@ -48,7 +52,11 @@ def cached_transcript_valid(out_path: Path, source_hash: str) -> bool:
             data = json.load(fh)
     except (json.JSONDecodeError, OSError):
         return False
-    return data.get("source_hash") == source_hash
+    return (
+        data.get("source_hash") == source_hash
+        and data.get("model") == f"faster-whisper:{model_size}"
+        and data.get("requested_language") == language
+    )
 
 
 def extract_audio(video: Path, wav_out: Path) -> None:
@@ -85,7 +93,8 @@ def _round_or_none(value, ndigits: int = 3):
     return round(value, ndigits)
 
 
-def build_payload(video: Path, source_hash: str, model_size: str, segments, info) -> dict:
+def build_payload(video: Path, source_hash: str, model_size: str, language,
+                  segments, info) -> dict:
     """Assemble the output JSON payload from faster_whisper results."""
     words: list[dict] = []
     seg_out: list[dict] = []
@@ -117,6 +126,7 @@ def build_payload(video: Path, source_hash: str, model_size: str, segments, info
         "source_hash": source_hash,
         "duration": float(info.duration),
         "language": info.language,
+        "requested_language": language,
         "model": f"faster-whisper:{model_size}",
         "words": words,
         "segments": seg_out,
@@ -174,7 +184,9 @@ def run(args: argparse.Namespace) -> int:
     source_hash = sha256_file(video)
 
     # 2. Cache short-circuit.
-    if not args.force and cached_transcript_valid(out_path, source_hash):
+    if not args.force and cached_transcript_valid(
+        out_path, source_hash, args.model, args.language
+    ):
         print(str(out_path))
         return 0
 
@@ -222,7 +234,8 @@ def run(args: argparse.Namespace) -> int:
         )
 
         # 6. Build payload.
-        payload = build_payload(video, source_hash, args.model, segments, info)
+        payload = build_payload(video, source_hash, args.model, args.language,
+                                segments, info)
 
         # 7. Write output.
         transcripts_dir.mkdir(parents=True, exist_ok=True)

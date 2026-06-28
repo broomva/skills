@@ -113,8 +113,13 @@ def main() -> int:
         print(f"error: invalid EDL: {e}", file=sys.stderr)
         return 1
 
-    # source durations + per-source audio presence + common canvas
-    src_paths = {label: p for label, p in edl["sources"].items()}
+    # source durations + per-source audio presence + common canvas.
+    # Relative source paths resolve against the videos dir (parent of edit/), matching
+    # how overlay paths are resolved later — so the EDL is portable, not CWD-dependent.
+    src_paths = {
+        label: (p if Path(p).is_absolute() else str((videos_dir / p).resolve()))
+        for label, p in edl["sources"].items()
+    }
     for label, p in src_paths.items():
         if not Path(p).exists():
             print(f"error: source {label!r} not found: {p}", file=sys.stderr)

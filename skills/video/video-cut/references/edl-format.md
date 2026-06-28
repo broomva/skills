@@ -96,4 +96,4 @@ out_end   = w.end   - s_i + offset_i
 
 Words are chunked into groups of `chunk_words`; a chunk's SRT timing runs from the first
 word's `out_start` to the last word's `out_end`. This logic lives in `scripts/edl.py`
-(`build_srt`, `range_offsets`) and is unit-tested.
+(`build_srt`, `output_segments`) and is unit-tested.

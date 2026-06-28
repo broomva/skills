@@ -3,21 +3,29 @@
 Production-correctness invariants inherited from `browser-use/video-use`, with the exact
 ffmpeg mechanisms used in `render.py`. These are non-negotiable.
 
-## 1. Per-segment extract → lossless concat (no double-encode)
+## 1. Per-segment extract → lossless concat (audio-drift-free)
 
-Each EDL range is extracted **and processed once** (grade + fades baked in), encoded to a
-uniform codec, then joined with the concat demuxer using `-c copy` (no re-encode):
+Each EDL range is extracted **and processed once** (grade + 30 ms fades + canvas
+normalization baked in), encoded to a uniform codec into an **`.mkv`** intermediate with
+**lossless `pcm_s16le`** audio, then joined with the concat demuxer using `-c copy`:
 
+```bash
+# per segment i (encode pass 1 — the only place segment VIDEO is re-encoded):
+ffmpeg -ss <s> -t <dur> -i <src> \
+       -vf "<grade>,scale=W:H:force_original_aspect_ratio=decrease,pad=W:H:(ow-iw)/2:(oh-ih)/2,setsar=1" \
+       -af "afade=t=in:st=0:d=0.03,afade=t=out:st=<dur-0.03>:d=0.03" \
+       -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -fps_mode cfr -r 30 \
+       -c:a pcm_s16le -ar 48000 -ac 2 clips_graded/seg_i.mkv
+
+# concat (no encode — sample-exact, because PCM has no encoder priming):
+ffmpeg -f concat -safe 0 -i concat.txt -c copy concatenated.mkv
 ```
-# per segment i (encode pass 1, only place segments are re-encoded):
-ffmpeg -ss <s> -to <e> -i <src> -vf "<grade>" -af "afade=t=in:st=0:d=0.03,afade=t=out:st=<dur-0.03>:d=0.03" \
-       -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -c:a aac -ar 48000 clips_graded/seg_i.mp4
 
-# concat (no encode):
-ffmpeg -f concat -safe 0 -i concat.txt -c copy concatenated.mp4
-```
-
-Uniform encode params across segments are what make `-c copy` concat valid.
+**Why PCM, not AAC, for segments:** AAC's ~1024-sample encoder priming delay would be baked
+into every segment and accumulate as ~21 ms of A/V drift **per cut seam** under `-c copy`.
+PCM has no priming, so the concat is sample-exact; AAC is encoded **exactly once** in the
+final pass. Uniform encode params + a common canvas across all segments are what make the
+`-c copy` concat valid.
 
 ## 2. Audio fades — 30 ms at every cut
 
@@ -34,8 +42,9 @@ subtitles, so the chain is encoded only once more:
 -filter_complex "[1:v]setpts=PTS-STARTPTS+<start_in_output>/TB[ov];[0:v][ov]overlay=...[v1];[v1]subtitles=master.srt[vout]"
 ```
 
-If there are no overlays and no subtitles, `final.mp4` is the concat output renamed (zero
-second encode). Subtitles are **always** the last filter (Hard Rule 1).
+If there are no overlays and no subtitles (and not `--preview`), `final.mp4` is the concat
+copied through with **video `-c:v copy`** (lossless) and the PCM track encoded to **AAC
+once** (`-c:a aac`). Subtitles are **always** the last filter (Hard Rule 1).
 
 ## 4. Snap cuts to word boundaries + padding
 
@@ -59,10 +68,14 @@ Mental model: grade is baked per-segment during extract (pass 1), never as a sep
 `--preview` scales to 720p height (`scale=-2:720`), `-preset ultrafast -crf 28`, and writes
 `edit/preview.mp4`. Use for the fast iterate loop; full quality only on final.
 
-## 7. Output isolation
+## 7. Output isolation (with an explicit-output escape hatch)
 
-Every artifact lives under `<videos_dir>/edit/`. `render.py` creates the tree and never
-writes outside it. The EDL's `output` path is interpreted relative to the videos dir.
+By default every intermediate lives under `<videos_dir>/edit/`; `render.py` creates that
+tree. The final output target:
+- **no `-o`** → `edit/<basename of edl["output"]>`. Only the *filename* of `edl["output"]`
+  is used — subdirectories in that field are not recreated.
+- **`-o <path>`** → written **exactly** to that path, which may be anywhere on disk (e.g. an
+  export outside `edit/`). The path printed on success is the real file location.
 
 ## Self-eval checks (`self_eval.py`)
 

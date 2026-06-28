@@ -30,9 +30,13 @@ Initial prototype. Local-first raw-footage video editor (BRO-1579), compounding 
   single-source, multi-resolution, silent-source, and absolute-output paths.
 
 ### Validated
-- Hardened against a P20 cross-model adversarial review (5 findings fixed: self_eval
-  timeline alignment, absolute `-o`, mixed-resolution concat, silent-source audio/subtitle
-  handling, degenerate-range dropping).
+- Hardened against a P20 cross-model adversarial review (7 findings fixed across 3 rounds:
+  self_eval timeline alignment, absolute `-o`, mixed-resolution concat, silent-source
+  audio/subtitle handling, degenerate-range dropping, `anullsrc` exact-length silent track,
+  and per-seam AAC priming drift eliminated via a PCM intermediate).
+- Addressed 16 CodeRabbit review comments (cache-key by transcription settings, UTF-8
+  transcript I/O, CWD-independent source-path resolution, malformed-EDL + `chunk_words`
+  validation, unmeasurable-frame self-eval safety, doc/pipeline consistency).
 
 ### Known limitations (follow-ups)
 - Diarization (`--diarize`) is a no-op stub; pyannote pass is a separate ticket.

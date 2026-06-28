@@ -42,7 +42,11 @@ else
   ffmpeg -y -f lavfi -i "sine=frequency=220:duration=6" "$TMP/speech.wav" >/dev/null 2>&1
   AUDIO="$TMP/speech.wav"
 fi
-[ -s "$AUDIO" ] && pass "synthesized audio ($([ $HAVE_SPEECH = 1 ] && echo speech || echo sine))" || fail "no audio"
+if [ -s "$AUDIO" ]; then
+  pass "synthesized audio ($([ $HAVE_SPEECH = 1 ] && echo speech || echo sine))"
+else
+  fail "no audio"
+fi
 
 # 2. mux onto a test video pattern
 ffmpeg -y -f lavfi -i "testsrc=size=640x360:rate=30" -i "$AUDIO" -shortest \
@@ -116,11 +120,12 @@ pass "preview.mp4 rendered at 720p"
 [ -s "$EDIT/verify/tv.png" ] || fail "timeline_view png not produced"
 pass "timeline_view.py -> verify/tv.png"
 
-# 9. self_eval
+# 9. self_eval — and FAIL if it reports any bad boundary (seam regression guard)
 "$PY" "$SCRIPTS/self_eval.py" "$EDIT/edl.json" "$EDIT/final.mp4" --json > "$TMP/eval.json" \
   || fail "self_eval failed"
-"$PY" -c "import json; r=json.load(open('$TMP/eval.json')); assert 'ok' in r and 'boundaries' in r; print('  eval boundaries:', len(r['boundaries']), 'ok:', r['ok'])"
-pass "self_eval.py produced a report"
+"$PY" -c "import json; r=json.load(open('$TMP/eval.json')); assert 'boundaries' in r; assert r['ok'], 'self_eval found bad boundaries: %r' % [b for b in r['boundaries'] if not b['ok']]; print('  eval boundaries:', len(r['boundaries']), 'ok:', r['ok'])" \
+  || fail "self_eval reported a bad boundary on the single-source render"
+pass "self_eval.py clean (no black/pop at any boundary)"
 
 # 10. multi-source / mixed-resolution / silent source / absolute -o
 #     (regression coverage for the P20 cross-review findings 1-4)
@@ -161,6 +166,7 @@ cat > "$EDIT/edl_multi.json" <<JSON
 "subtitles":{"mode":"burn","style":"natural-sentence","chunk_words":4},
 "output":"edit/final.mp4"}
 JSON
+rm -f "$EDIT/master.srt"   # clear the single-source SRT so the check below proves THIS run made captions
 "$PY" "$SCRIPTS/render.py" "$EDIT/edl_multi.json" -o "$OUT" 2>"$TMP/multi.log" \
   || { cat "$TMP/multi.log"; fail "multi-source render failed"; }
 [ -s "$OUT" ] || fail "[finding 2] -o absolute path not honored ($OUT missing)"
@@ -182,8 +188,9 @@ import json, sys
 r = json.load(open(sys.argv[1]))
 ct, td = r["computed_total_s"], r["total_duration_s"]
 assert td is not None and abs(ct - td) < 0.35, f"[finding 1] self_eval misaligned: computed={ct} rendered={td}"
-print(f"  self_eval aligned: computed={ct:.2f}s rendered={td:.2f}s, boundaries={len(r['boundaries'])}")
+assert r["ok"], "[finding 15] self_eval found bad boundaries: %r" % [b for b in r["boundaries"] if not b["ok"]]
+print(f"  self_eval aligned + clean: computed={ct:.2f}s rendered={td:.2f}s, boundaries={len(r['boundaries'])}")
 PYEOF
-pass "self_eval timeline matches clamped render (finding 1)"
+pass "self_eval timeline matches clamped render + no bad boundaries (findings 1, 15)"
 
 echo "== ALL SMOKE CHECKS PASSED =="

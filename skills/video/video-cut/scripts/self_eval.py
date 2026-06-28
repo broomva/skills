@@ -249,10 +249,12 @@ def inspect_boundary(rendered, t, window, verify_dir, audio_present):
             result["peak_db"] = None
             result["audio_pop"] = None
 
-    # --- Aggregate ok: NOT black AND NOT audio_pop (null treated as ok) ---
-    is_black = bool(result["black"]) if result["black"] is not None else False
-    is_pop = bool(result["audio_pop"]) if result["audio_pop"] is not None else False
-    result["ok"] = (not is_black) and (not is_pop)
+    # --- Aggregate ok. An UNMEASURABLE frame (black is None — ffmpeg returned no
+    # YAVG, i.e. a corrupt/unsupported render) is a failure to VERIFY, not a pass.
+    # audio_pop None = no audio stream, which is legitimately acceptable. ---
+    black_ok = result["black"] is False          # None or True => not ok
+    pop_ok = result["audio_pop"] is not True     # None (no audio) => ok
+    result["ok"] = black_ok and pop_ok
 
     return result
 
@@ -262,13 +264,21 @@ def inspect_boundary(rendered, t, window, verify_dir, audio_present):
 # ---------------------------------------------------------------------------
 def build_report(edl_path, rendered_path, edit_dir, window):
     edl = edl_lib.load_edl(edl_path)
+    # Resolve relative EDL source paths against the videos dir (parent of edit/),
+    # so duration probing is CWD-independent and the inspected seams match render.py.
+    videos_dir = Path(edl_path).resolve().parent.parent
+    edl["sources"] = {
+        label: (p if Path(p).is_absolute() else str((videos_dir / p).resolve()))
+        for label, p in (edl.get("sources") or {}).items()
+    }
     boundaries, computed_total = compute_boundaries(edl)
 
-    # Resolve the verify directory.
+    # Resolve the verify directory. Default to the EDL's own edit dir (its parent),
+    # not <rendered>/edit — the latter nests as edit/edit/verify for edit/final.mp4.
     if edit_dir is not None:
         base_dir = Path(edit_dir)
     else:
-        base_dir = Path(rendered_path).resolve().parent / "edit"
+        base_dir = Path(edl_path).resolve().parent
     verify_dir = base_dir / "verify"
     verify_dir.mkdir(parents=True, exist_ok=True)
 

@@ -91,3 +91,39 @@ def test_load_edl_validation(tmp_path):
         assert False, "should have raised"
     except ValueError:
         pass
+
+
+def _write(tmp_path, obj):
+    import json
+    p = tmp_path / "e.json"
+    p.write_text(json.dumps(obj))
+    return p
+
+
+def test_load_edl_malformed_range_is_valueerror(tmp_path):
+    # missing 'start' must surface as a clean ValueError, not KeyError/TypeError
+    bad = _write(tmp_path, {
+        "version": 1, "sources": {"c": "/tmp/c.mp4"},
+        "ranges": [{"source": "c", "end": 2.0}],
+    })
+    import pytest
+    with pytest.raises(ValueError):
+        edl.load_edl(bad)
+    none_start = _write(tmp_path, {
+        "version": 1, "sources": {"c": "/tmp/c.mp4"},
+        "ranges": [{"source": "c", "start": None, "end": 2.0}],
+    })
+    with pytest.raises(ValueError):
+        edl.load_edl(none_start)
+
+
+def test_load_edl_rejects_nonpositive_chunk_words(tmp_path):
+    import pytest
+    for cw in (0, -1):
+        bad = _write(tmp_path, {
+            "version": 1, "sources": {"c": "/tmp/c.mp4"},
+            "ranges": [{"source": "c", "start": 0.0, "end": 2.0}],
+            "subtitles": {"mode": "burn", "chunk_words": cw},
+        })
+        with pytest.raises(ValueError):
+            edl.load_edl(bad)

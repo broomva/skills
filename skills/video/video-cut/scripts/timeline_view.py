@@ -180,6 +180,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
+    import shutil
+    if shutil.which("ffmpeg") is None:
+        sys.stderr.write("timeline_view: ffmpeg not found on PATH — install ffmpeg "
+                         "(e.g. `brew install ffmpeg`)\n")
+        return 1
+
     video: Path = args.video
     if not video.exists():
         sys.stderr.write(f"timeline_view: source not found: {video}\n")

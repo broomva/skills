@@ -88,9 +88,9 @@ ffmpeg specifics. Summary:
 
 ## Scripts
 
-| Script | Purpose |
+| Script / Library | Purpose |
 |---|---|
-| `scripts/transcribe_local.py <video> [--model base] [--diarize]` | Local faster_whisper word-level transcript → `edit/transcripts/<name>.json` (cached by source hash) |
+| `scripts/transcribe_local.py <video> [--model base] [--diarize]` | Local faster_whisper word-level transcript → `edit/transcripts/<name>.json` (cached by source hash + settings) |
 | `scripts/pack_transcripts.py --edit-dir <dir>` | All `transcripts/*.json` → `edit/takes_packed.md` (phrase-level; breaks on silence ≥0.5 s or speaker change) |
 | `scripts/timeline_view.py <video> <start> <end> [-o out.png]` | Filmstrip + waveform + word-label PNG for one range → `edit/verify/` |
 | `scripts/render.py <edl.json> [-o out.mp4] [--preview]` | EDL → ffmpeg: per-segment extract+grade+fades → lossless concat → overlays → subtitles (LAST) |
