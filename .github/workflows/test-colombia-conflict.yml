@@ -1,0 +1,46 @@
+name: test-colombia-conflict
+
+# Python test gate for the `colombia-conflict` skill (skills/knowledge/colombia-conflict/).
+# Path-filtered so it runs ONLY when that skill changes — the monorepo's
+# tests-optional default (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/knowledge/colombia-conflict/**'
+      - '.github/workflows/test-colombia-conflict.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/knowledge/colombia-conflict/**'
+      - '.github/workflows/test-colombia-conflict.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-colombia-conflict-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/knowledge/colombia-conflict
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Catalog freshness — knowledge-index.md not stale
+        run: python3 scripts/cc.py index --check
