@@ -92,7 +92,7 @@ proxy and disputes the resource claims. Pick a side deliberately; cite
 your reasoning. See [`references/07-contrasts.md`](references/07-contrasts.md#sidecars-in-2026).
 
 For each principle, the columns "When to apply" and "Anti-pattern it
-prevents" live in the reference files (`references/01-05.md`) and in
+prevents" live in the numbered reference files (`01-self-service-platforms.md` … `07-contrasts.md`) and in
 [`references/07-contrasts.md`](references/07-contrasts.md), which is
 the canonical place to look for the operational guidance.
 

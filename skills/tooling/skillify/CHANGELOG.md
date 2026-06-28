@@ -5,6 +5,22 @@ All notable changes to `skillify` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-28
+
+Close the gate's blind spot — **contract honesty**.
+
+- **New required step 1c — reference integrity.** The gate now FAILs a skill whose
+  `SKILL.md` / `skill.json` / `templates/*.yaml` reference a `scripts/`/`references/`/
+  `assets/`/`templates/` file that doesn't exist and isn't marked Planned. Fenced
+  example blocks are excluded; scaffold-template outputs (`assets/templates/…`) count
+  as satisfied. Motivated by BRO-1575: 5 skills shipped advertising scripts/templates
+  that were never written — all passing the old gate. Running 1c across the monorepo
+  surfaced 4 more genuine broken-contract skills.
+- **Step 3 now recognizes bash test suites** (`*.test.sh` with `ok()`/`fail()` helpers
+  or `PASS`/`FAIL` accounting), closing a false-negative where a real shell test
+  battery (e.g. cross-review's 8-test suite) read as "no tests".
+- +9 unit tests (49 total).
+
 ## [0.2.0] — 2026-06-06
 
 Full lifecycle — publish + install-dogfood, not just static authoring. skillify

@@ -229,6 +229,17 @@ def _test_files(skill_dir: Path, kind: str = "") -> list[str]:
 
 _JS_TEST_CONSTRUCT = re.compile(r"\b(it|test|describe)\s*\(|\bassert\b|\bexpect\(")
 
+# Bash test suites (e.g. cross-review's tests/*.test.sh) define ok()/fail() helpers
+# + PASS/FAIL accounting rather than JS/py constructs; recognize them too.
+_BASH_TEST_CONSTRUCT = re.compile(
+    r"\bassert\w*\b"                                          # assert / assert_eq / assertEquals
+    r"|^\s*@test\b"                                           # bats
+    r"|\b(?:ok|pass|fail|expect|check)\s*\(\s*\)"             # ok()/fail()/pass() test-helper defs
+    r"|\b(?:PASS|FAIL|PASSED|FAILED|TESTS_RUN)\s*=\s*0\b"     # pass/fail accounting counters
+    r"|\b(?:run_test|test_case|it_should)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def _is_py_test_fn(name: str) -> bool:
     return name == "test" or name.startswith("test_")
@@ -269,7 +280,10 @@ def _is_real_test(path: Path) -> bool:
             ):
                 return True
         return False
-    return bool(_JS_TEST_CONSTRUCT.search(_strip_code_noise(txt)))
+    stripped = _strip_code_noise(txt)
+    if path.suffix == ".sh":
+        return bool(_BASH_TEST_CONSTRUCT.search(stripped))
+    return bool(_JS_TEST_CONSTRUCT.search(stripped))
 
 
 def _script_syntax_error(path: Path) -> str | None:
@@ -288,6 +302,104 @@ def _script_syntax_error(path: Path) -> str | None:
         r = subprocess.run(["node", "--check", str(path)], capture_output=True)
         return None if r.returncode == 0 else "node syntax error"
     return None
+
+
+# --- internal-reference integrity (step 1c) ----------------------------------
+# A skill must not advertise files it doesn't ship. This is the #1 real defect
+# (a SKILL.md "Script: scripts/x.py" / "see references/y.md" for a file that does
+# not exist). We check the skill's OWN structured subdirs (scripts/ references/
+# assets/ templates/) — the high-signal, low-false-positive surface — and only in
+# PROSE: fenced code blocks (example commands + File-Structure trees) are stripped
+# first. A reference is satisfied if the file exists in the skill, ships as a
+# scaffold-template output under assets/templates/ (skills that WRITE files into a
+# target repo), or sits on a line marked Planned / not-yet / generated / etc.
+_REF_RE = re.compile(
+    r"(?<![\w./-])((?:scripts|references|assets|templates)/[A-Za-z0-9_][\w./-]*\.[A-Za-z0-9]+)"
+)
+# Explicit planning language only — deliberately NOT common bare English words
+# ("generated"/"will be"/"deprecated"/"stub"), which could incidentally exempt a
+# genuinely-missing live reference (P20 review). The exemption is line-level, so
+# keep these unambiguous.
+_PLANNED_RE = re.compile(
+    r"planned|not[\s-]?yet|not[\s-]?shipped|not[\s-]?(?:yet[\s-]?)?(?:built|implemented|written|created)"
+    r"|roadmap|do(?:n['’]t| not)\s+invoke|\bTODO\b|\bTBD\b|coming soon|placeholder",
+    re.IGNORECASE,
+)
+_SKIP_JSON_KEYS = {"description", "summary", "notes", "when_to_use", "trigger", "triggers"}
+
+
+def _strip_fences(md: str) -> str:
+    """Drop fenced code blocks (``` … ```) — example commands and File-Structure
+    trees inside them are not live contract claims."""
+    return re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+
+
+def _ref_satisfied(skill_dir: Path, ref: str) -> bool:
+    ref = ref.lstrip("./")
+    if (skill_dir / ref).exists():
+        return True
+    # scaffold-template output: a skill that writes files into a TARGET repo ships
+    # them under assets/templates/ (e.g. harness-engineering-playbook).
+    if (skill_dir / "assets" / "templates" / ref).exists():
+        return True
+    leaf = ref.split("/", 1)[1] if "/" in ref else ref
+    return (skill_dir / "assets" / "templates" / leaf).exists()
+
+
+def _internal_ref_issues(skill_dir: Path) -> list[str]:
+    """List references (SKILL.md prose / skill.json / templates/*.yaml) that point
+    at skill-internal files which do not exist and are not marked planned."""
+    issues: list[str] = []
+    md = skill_dir / "SKILL.md"
+    if md.is_file():
+        body = _strip_fences(md.read_text(encoding="utf-8", errors="replace"))
+        for ln in body.splitlines():
+            planned = bool(_PLANNED_RE.search(ln))
+            for m in _REF_RE.finditer(ln):
+                ref = m.group(1)
+                if not planned and not _ref_satisfied(skill_dir, ref):
+                    issues.append(f"SKILL.md → {ref} (missing; not marked planned)")
+    sj = skill_dir / "skill.json"
+    if sj.is_file():
+        try:
+            data = json.loads(sj.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            data = None
+        ep = data.get("entrypoint") if isinstance(data, dict) else None
+        if isinstance(ep, str) and ep and not _ref_satisfied(skill_dir, ep):
+            issues.append(f"skill.json entrypoint → {ep} (missing)")
+
+        def _walk(o, key=""):
+            if isinstance(o, str):
+                if key in _SKIP_JSON_KEYS:
+                    return
+                for m in _REF_RE.finditer(o):
+                    ref = m.group(1)
+                    if not _ref_satisfied(skill_dir, ref):
+                        issues.append(f"skill.json → {ref} (missing)")
+            elif isinstance(o, dict):
+                for k, v in o.items():
+                    _walk(v, k)
+            elif isinstance(o, list):
+                for v in o:
+                    _walk(v, key)
+        _walk(data)
+    tdir = skill_dir / "templates"
+    if tdir.is_dir():
+        _yaml_ref = re.compile(r"(?<![\w./-])(scripts/[A-Za-z0-9_][\w./-]*\.[A-Za-z0-9]+)")
+        for y in sorted([*tdir.rglob("*.yaml"), *tdir.rglob("*.yml")]):
+            for ln in y.read_text(encoding="utf-8", errors="replace").splitlines():
+                planned = bool(_PLANNED_RE.search(ln))
+                for m in _yaml_ref.finditer(ln):
+                    ref = m.group(1)
+                    if not planned and not _ref_satisfied(skill_dir, ref):
+                        issues.append(f"{y.relative_to(skill_dir)} → {ref} (missing)")
+    seen, out = set(), []
+    for i in issues:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
 
 
 def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | None,
@@ -329,6 +441,20 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
             f"prefer skills/<name>/ in the broomva/skills monorepo)", required=False)
     else:
         add("1b", "Installable layout", PASS, "skills/<name>/ subdir (or single-file) — installs cleanly")
+
+    # 1c — Reference integrity (required): SKILL.md / skill.json / templates must
+    # not advertise files that do not exist. The #1 real defect (broken contracts):
+    # a skill installs fine, but an agent following its SKILL.md invokes a missing
+    # script/template. Fix = ship the file or mark the reference Planned.
+    ref_issues = _internal_ref_issues(skill_dir)
+    if ref_issues:
+        shown = "; ".join(ref_issues[:3]) + ("; …" if len(ref_issues) > 3 else "")
+        add("1c", "Reference integrity", FAIL,
+            f"{len(ref_issues)} broken reference(s): {shown} — ship the file or mark Planned",
+            required=True)
+    else:
+        add("1c", "Reference integrity", PASS,
+            "every scripts/references/assets/templates reference resolves")
 
     # 2 — Deterministic code: present + SYNTAX-VALID (required unless truly latent)
     if latent_only and code:

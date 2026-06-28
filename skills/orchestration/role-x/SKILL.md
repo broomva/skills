@@ -79,7 +79,7 @@ The intake reflex routes prompts in real-time. The meta-progression discipline e
 | Primitive | How role-x composes |
 |---|---|
 | **P5** parallel agents | role-x decompose mode produces the dispatch plan; each sub-agent runs role-x at its scope (typed edges in the reasoning graph) |
-| **P13** dream cycle | lens consolidation via `role-x-replay.py` (M4) — gather → replay → prune → consolidate → index |
+| **P13** dream cycle | lens consolidation via `role-x-replay.py` (M4 — planned, not yet shipped) — gather → replay → prune → consolidate → index |
 | **P14** dep-chain | the lens's `quality_bar` IS the domain-specific P14 enumeration template |
 | **P15** state snapshot | feeds the selection algorithm's signals |
 | **P16** bstack engine | new lenses get promoted via per-lens rule-of-three (≥3 positive-outcome uses → `status: active`) |
@@ -96,7 +96,7 @@ The intake reflex routes prompts in real-time. The meta-progression discipline e
    - Surface mode + selected lenses to user **unless** mode is augment
    - Proceed with the user's request, applying the lens's quality_bar as the P14 dep-chain trace
 2. **Adding a new lens** — author `roles/<name>.md` following the schema in `references/lens-schema.md`; run `role-x validate roles/<name>.md`; run `role-x index` to regenerate `roles/_index.md`; commit on a worktree branch; PR.
-3. **Lens consolidation** (M4) — `python3 scripts/role-x-replay.py <lens-name>` runs the P13 dream cycle against `~/.config/broomva/role/events.jsonl`.
+3. **Lens consolidation** (M4 — planned, not yet shipped) — `python3 scripts/role-x-replay.py <lens-name>` runs the P13 dream cycle against `~/.config/broomva/role/events.jsonl`.
 
 ## Cardinal invariant
 
