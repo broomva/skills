@@ -1,0 +1,13 @@
+version: "1.0"
+profile: governed
+workspace: broomva-test
+
+ci_heal:
+  enabled: true
+  max_attempts: 5
+  stability_floor: 0.3
+  classified_failure_types: [lint]
+  escalation_channel:
+    linear_team: BRO
+    linear_label: ci-heal-escalation
+    notify_hook: skills/p9/scripts/p9-escalate-notify.sh

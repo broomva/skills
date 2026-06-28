@@ -1,0 +1,13 @@
+==> Run: bun run lint
+$ biome check .
+
+./apps/web/src/foo.tsx:42:3 lint/style/useTemplate
+  ✖ Prefer template literals over string concatenation.
+
+  40 │ const greeting = "hello " + name;
+                       ^^^^^^^^^^^^^^^
+
+biome check found 3 errors and 1 warning across 142 files.
+::error::biome check found 3 errors
+
+Error: Process completed with exit code 1.

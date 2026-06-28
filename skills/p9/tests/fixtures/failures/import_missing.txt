@@ -1,0 +1,7 @@
+==> Run: bun run build
+error: Cannot find module '@broomva/missing-package' from '/work/apps/web/src/index.ts'
+
+  1 | import { foo } from "@broomva/missing-package";
+                                  ^
+
+Error: Process completed with exit code 1.

@@ -1,0 +1,45 @@
+{"query": "turning a scoring function into a feedback controller that intervenes on agent beliefs", "expected": ["concept/nous-l2-meta-controller"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "capturing a mobile app's private API traffic before the service shuts down", "expected": ["pattern/install-huxe"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "summary of features offered by the platform for building apps on a notes tool", "expected": ["pattern/entity-page"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "separating authorized intent from physical retries so transient failures don't need re-authorization", "expected": ["pattern/dispatch-identity-vs-attempt"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "marking which components are allowed to change during automated self-improvement", "expected": ["concept/evolvable-resource"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "remaining gaps to build a multi-agent research swarm on existing primitives", "expected": ["pattern/symphony"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "low maturity score on fast frequency response readiness for power providers", "expected": ["industry-pattern/energy-utilities-grid-services-readiness-pattern"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "scoring gate that decides whether agent memory items get saved or discarded", "expected": ["question/the-architecture-fix-nous"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "framework that intercepts every coding-assistant lifecycle event with filesystem hooks", "expected": ["concept/personal-ai-infrastructure"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "selling a configurable ops runtime as product instead of bespoke freelance delivery", "expected": ["project/life-runtime"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "switching agents between rigid cached behavior and adaptive re-evaluation based on conditions", "expected": ["concept/stone-water-intelligence"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "catching a mismatch between reported author and screenshot during validation", "expected": ["pattern/broomva"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "why a health check that always passes fails to detect slow drift", "expected": ["concept/periodic-check-sensitivity"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "portable agent skills for operating directly on plain markdown vault files", "expected": ["tool/kepano-obsidian-skills"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "content-addressed storage layers with local disk, distributed hash table, and gossip backup", "expected": ["concept/relay"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "should prioritization scoring weight use cases by where the idea originated", "expected": ["framework-refinement/rice-business-pain-weight-construction"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "terminal text prompts arrive late so use sound to signal timing", "expected": ["pattern/audible-cue-recording"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "platform that runs agent orchestration automatically for non-coder concept-literate users", "expected": ["project/hawthorne"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "let engine keep one work model and translate views per audience", "expected": ["concept/ontology-projection-decoupling"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "plain-English research loop with distributed swarm coordination announcement", "expected": ["concept/raw-extract"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "commercial replacements for a personalized daily audio briefing app shutting down", "expected": ["project/spotify-studio"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "durable record of a user's operational truth for the agent to answer correctly", "expected": ["persona/who-am-i"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "each model output records which calibration snapshot produced it for auditing", "expected": ["concept/attested-inference-state-parameter-commit"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "platform keeping CAD simulation requirements and tests from drifting for hardware teams", "expected": ["project/flow-engineering"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "investigation of options after a valued personalized podcast app announced shutdown", "expected": ["pattern/huxe-sunset"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "framing AI agent identity as a cryptographic verification issue not alignment", "expected": ["concept/alignment-problem"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "pub-sub channels for agents to message and coordinate with access control", "expected": ["tool/life-spaces"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "ratio of actual cost to raw material floor to find manufacturing waste", "expected": ["concept/idiot-index"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "measuring current influence by citation rate instead of accumulated karma points", "expected": ["pattern/for-koren"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "benchmark must run the real production code not a forked reimplementation", "expected": ["pattern/benchmark-the-real-engine"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "using a population-level average as if it predicts each individual case correctly", "expected": ["pattern/accuracy-without-attention"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "append-only event log that keeps rejected choices as first-class records instead of deleting them", "expected": ["tool/bi-temporal"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "all-typescript engine turning a chat message into a supervised coding agent run in an isolated worktree", "expected": ["project/genesis"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "single privileged daemon routing client calls to backend services through shared trait contracts", "expected": ["concept/unified-kernel-gateway"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "hidden co-founder of a large London Ontario rental property management group", "expected": ["person/jason-stern"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "no public info on founder's next startup after audio app shut down team rejoining google", "expected": ["discovery/raiza-martin"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "typescript framework treating the agent harness as the product with skills written in markdown", "expected": ["tool/flue"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "libp2p peer-to-peer networking stack with noise encryption gossip pubsub and dht discovery", "expected": ["tool/circuit-relay"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "open source pretrained transformer that forecasts financial candlestick bars from tokenized ohlcv", "expected": ["tool/foundation-model"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "scheduling agent wake times so consciousness is discrete bounded runs instead of an infinite loop", "expected": ["concept/chronos-temporal-primitive"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "ui description format where agents say what a node means and compositors decide how it looks", "expected": ["pattern/intent-heavy-appearance-light"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "audio app shutting down right after spotify launched a competing personal podcast tool", "expected": ["tool/sunset-details"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "wrapping a candlestick forecasting model as a trading strategy and testing out of sample generalization", "expected": ["tool/kronos"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "decentralized agi network with private monorepo source and binary-only node releases on github", "expected": ["tool/sui-narwhal"], "notes": "held-out body-derived (BRO-1440)"}
+{"query": "hierarchical multi-agent research repo whose directory structure mirrors a resource taxonomy and self-improvement operators", "expected": ["project/skywork-deepresearchagent"], "notes": "held-out body-derived (BRO-1440)"}

@@ -1,0 +1,23 @@
+version: "1.0"
+profile: governed
+workspace: broomva-test
+
+ci_watch:
+  enabled: true
+  max_concurrent_prs: 1
+  isolation_tier_map:
+    research: none
+    docs: none
+    code_independent: worktree
+    code_dependent: stacked_branch
+    governance: blocked
+
+ci_heal:
+  enabled: true
+  max_attempts: 5
+  stability_floor: 0.3
+  classified_failure_types: [lint, format, test_flaky, codegen_drift, import_missing]
+  escalation_channel:
+    linear_team: BRO
+    linear_label: ci-heal-escalation
+    notify_hook: skills/p9/scripts/p9-escalate-notify.sh

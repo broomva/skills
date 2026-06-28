@@ -1,0 +1,11 @@
+==> Run: vitest run
+ FAIL  packages/ui/src/Button.test.ts > Button > debounces clicks
+AssertionError: expected 1 to be 2
+
+  at packages/ui/src/Button.test.ts:42:18
+
+Test Files  1 failed | 18 passed (19)
+     Tests  1 failed | 87 passed (88)
+  Duration  3.21s
+
+Error: Process completed with exit code 1.

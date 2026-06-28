@@ -1,0 +1,9 @@
+==> Run: bunx prettier --check "**/*.{ts,tsx,js,jsx}"
+Checking formatting...
+[warn] apps/web/src/components/Card.tsx
+[warn] packages/ui/src/Button.tsx
+[warn] Code style issues found in 2 files. Run prettier --write to fix.
+
+prettier --check would reformat 2 files.
+
+Error: Process completed with exit code 1.
