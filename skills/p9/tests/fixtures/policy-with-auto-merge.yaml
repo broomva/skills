@@ -1,0 +1,46 @@
+version: "1.0"
+profile: governed
+workspace: broomva-test
+
+ci_watch:
+  enabled: true
+  max_concurrent_prs: 1
+  isolation_tier_map:
+    research: none
+    docs: none
+    code_independent: worktree
+    code_dependent: stacked_branch
+    governance: blocked
+
+ci_heal:
+  enabled: true
+  max_attempts: 5
+  stability_floor: 0.3
+  classified_failure_types: [lint, format, test_flaky, codegen_drift, import_missing]
+  escalation_channel:
+    linear_team: BRO
+    linear_label: ci-heal-escalation
+    notify_hook: skills/p9/scripts/p9-escalate-notify.sh
+
+auto_merge:
+  enabled: true
+  require_no_requested_changes: true
+  require_branch_up_to_date: true
+  merge_method: squash
+  delete_branch: true
+  rules:
+    # Governance paths ALWAYS block (enforced by pass-1 in matcher)
+    - path_touched: CLAUDE.md
+      action: require_human
+    - path_touched: AGENTS.md
+      action: require_human
+    - path_touched: .control/policy.yaml
+      action: require_human
+    # Auto-merge classes
+    - branch_pattern: "docs/*"
+      action: auto
+    - branch_pattern: "research/*"
+      action: auto
+    - branch_pattern: "feat/p9-*"
+      action: auto
+  default_action: notify

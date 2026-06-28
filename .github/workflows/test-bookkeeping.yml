@@ -1,0 +1,47 @@
+name: test-bookkeeping
+
+# Python test gate for the `bookkeeping` skill (skills/bookkeeping/) — bstack
+# primitive P6. Path-filtered so it runs ONLY when skills/bookkeeping/** changes.
+# Recovers the CI coverage the standalone broomva/bookkeeping repo had, since
+# migration drops the per-skill .github/ dir (see research/entities/tool/skills-sh.md).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/bookkeeping/**'
+      - '.github/workflows/test-bookkeeping.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/bookkeeping/**'
+      - '.github/workflows/test-bookkeeping.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-bookkeeping-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/bookkeeping
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Tests
+        run: python -m pytest -v

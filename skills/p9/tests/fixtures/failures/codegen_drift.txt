@@ -1,0 +1,10 @@
+==> Run: bun run codegen:check
+[graphql codegen] schema mismatch detected
+[graphql codegen] generated/schema.ts is out of date with respect to schema.graphql
+[graphql codegen] diff:
+  -  type Query { hello: String }
+  +  type Query { hello: String, world: String }
+
+Run `bun run codegen` and commit the result.
+
+Error: Process completed with exit code 1.

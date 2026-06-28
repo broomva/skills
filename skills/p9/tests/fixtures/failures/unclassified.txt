@@ -1,0 +1,7 @@
+==> Run: bun run weird-custom-task
+[custom-task] something went wrong but in a way no rubric anticipates
+panic: runtime fault at 0xDEADBEEF — please contact your system administrator
+
+The author of this fixture intentionally made the message un-rubric-able.
+
+Error: Process completed with exit code 1.

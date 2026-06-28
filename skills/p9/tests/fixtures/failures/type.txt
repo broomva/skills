@@ -1,0 +1,11 @@
+==> Run: tsc --noEmit
+apps/web/src/lib/api.ts:18:34 - error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+
+18   const result = await fetcher(input);
+                                   ~~~~~
+
+apps/web/src/components/Form.tsx:55:12 - error TS2322: Type 'number' is not assignable to type 'string'.
+
+Found 2 errors in 2 files.
+
+Error: Process completed with exit code 1.
