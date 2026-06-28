@@ -5,9 +5,9 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 48+ Tier-2 skills + the catalog/showcase. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 68 Tier-2 skills + the catalog/showcase. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
-Layout follows the ecosystem-canonical [`anthropics/skills`](https://github.com/anthropics/skills) shape: **no root `SKILL.md`** (the README is the discovery surface), all skills live under `skills/<name>/SKILL.md`.
+Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
 ## Quick install
 
@@ -26,7 +26,7 @@ npx skills add broomva/skills --skill skills-catalog
 npx skills add broomva/skills --skill '*'
 ```
 
-> **Note:** no `--full-depth` flag is needed — this monorepo has no root `SKILL.md`, so the CLI's default search descends into `skills/<name>/` automatically. (Earlier versions of this README required `--full-depth`; the [2026-05-27 restructure](https://github.com/broomva/skills/pull/11) removed the root `SKILL.md` to align with [`anthropics/skills`](https://github.com/anthropics/skills) and eliminate the footgun.)
+> **Note:** **requires skills.sh CLI ≥ v1.5.8** (PR #1272), which discovers category buckets `skills/<category>/<name>/SKILL.md` at depth-2 by default — on both the local and remote/blob install paths. No `--full-depth` flag is needed (that's only for depth-3+); buckets are exactly one level. On older CLIs the bucketed skills are not found — run `npx skills@latest …` or upgrade. `--skill <name>` resolves by frontmatter `name`, so it is path-independent (the category never appears in the install command).
 
 ## Repository layout
 

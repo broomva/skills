@@ -22,8 +22,13 @@ if [ -z "$SKILL" ] || [ -z "$VERSION" ]; then
   exit 2
 fi
 
-DIR="$ROOT/skills/$SKILL"
-[ -f "$DIR/SKILL.md" ] || { echo "error: no skill at skills/$SKILL" >&2; exit 1; }
+# Resolve the skill across category buckets (skills/<category>/<name>/) — skill
+# names are globally unique, so a single match is expected. Falls back to the
+# legacy flat path skills/<name>/ for safety.
+DIR="$(dirname "$(find "$ROOT/skills" -type f -path "*/$SKILL/SKILL.md" 2>/dev/null | head -1)")"
+[ "$DIR" = "." ] && DIR="$ROOT/skills/$SKILL"
+[ -f "$DIR/SKILL.md" ] || { echo "error: no skill named '$SKILL' found under skills/ (searched all category buckets)" >&2; exit 1; }
+REL="${DIR#"$ROOT/"}"  # e.g. skills/healthcare/health — for messages
 
 # SemVer (MAJOR.MINOR.PATCH[-pre][+build])
 if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
@@ -49,14 +54,14 @@ print(fm.get("version") or (fm.get("metadata") or {}).get("version") or "")
 PY
 )"
 if [ "$DECLARED" != "$VERSION" ]; then
-  echo "error: skills/$SKILL/SKILL.md version '$DECLARED' != requested '$VERSION'" >&2
+  echo "error: $REL/SKILL.md version '$DECLARED' != requested '$VERSION'" >&2
   echo "       bump SKILL.md (+ pyproject/package.json) + CHANGELOG, commit, then retry." >&2
   exit 1
 fi
 
 # CHANGELOG section must exist.
 if ! grep -qE "^## \[$VERSION\]" "$DIR/CHANGELOG.md" 2>/dev/null; then
-  echo "error: skills/$SKILL/CHANGELOG.md missing a '## [$VERSION]' section" >&2
+  echo "error: $REL/CHANGELOG.md missing a '## [$VERSION]' section" >&2
   exit 1
 fi
 

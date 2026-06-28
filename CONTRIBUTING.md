@@ -136,7 +136,7 @@ The catalog entry does NOT require copying the skill source into this repo; the 
 
 The repository's root `SKILL.md` IS the catalog skill itself — what users get when they run `npx skills add broomva/skills`. It instructs the agent how to browse `references/skills-inventory.md` and surface relevant skills.
 
-Don't add new skill subdirectories at the root level — those are reserved for catalog tooling (`skills-showcase/`, future `_shared/`, etc.). All new agent-skill content goes under `skills/<name>/`.
+Don't add new skill subdirectories at the root level — those are reserved for catalog tooling (`skills-showcase/`, future `_shared/`, etc.). All new agent-skill content goes under a category bucket: `skills/<category>/<name>/`.
 
 ## Updating the showcase video
 

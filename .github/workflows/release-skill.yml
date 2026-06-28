@@ -43,27 +43,31 @@ jobs:
           if [ -z "$SKILL" ] || [ -z "$VERSION" ] || [ "$SKILL" = "$TAG" ]; then
             echo "::error::tag '$TAG' is not '<skill>-vX.Y.Z'"; exit 1
           fi
-          if [ ! -f "skills/$SKILL/SKILL.md" ]; then
-            echo "::error::no skill at skills/$SKILL"; exit 1
+          # Resolve the skill across category buckets (skills/<category>/<name>/).
+          # Skill names are globally unique, so a single match is expected.
+          DIR="$(dirname "$(find skills -type f -path "*/$SKILL/SKILL.md" 2>/dev/null | head -1)")"
+          if [ -z "$DIR" ] || [ "$DIR" = "." ] || [ ! -f "$DIR/SKILL.md" ]; then
+            echo "::error::no skill named '$SKILL' found under skills/ (searched all category buckets)"; exit 1
           fi
           echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
           echo "skill=$SKILL"     >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Releasing skill='$SKILL' version='$VERSION' from tag '$TAG'"
+          echo "dir=$DIR"         >> "$GITHUB_OUTPUT"
+          echo "Releasing skill='$SKILL' version='$VERSION' from '$DIR' (tag '$TAG')"
 
       - name: Verify SKILL.md version matches the tag
         run: |
           set -euo pipefail
           pip install pyyaml >/dev/null
-          python3 - "${{ steps.meta.outputs.skill }}" "${{ steps.meta.outputs.version }}" <<'PY'
+          python3 - "${{ steps.meta.outputs.dir }}" "${{ steps.meta.outputs.version }}" <<'PY'
           import sys, yaml
           from pathlib import Path
-          skill, version = sys.argv[1], sys.argv[2]
-          text = Path(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+          skill_dir, version = sys.argv[1], sys.argv[2]
+          text = Path(f"{skill_dir}/SKILL.md").read_text(encoding="utf-8")
           fm = yaml.safe_load(text[3:text.find("\n---", 3)]) or {}
           declared = fm.get("version") or (fm.get("metadata") or {}).get("version")
           if declared is None:
-              sys.exit(f"::error::skills/{skill}/SKILL.md declares no version; cannot release {version}")
+              sys.exit(f"::error::{skill_dir}/SKILL.md declares no version; cannot release {version}")
           if str(declared) != version:
               sys.exit(f"::error::tag version {version} != SKILL.md version {declared}")
           print(f"OK: SKILL.md version {declared} matches tag")
@@ -75,7 +79,7 @@ jobs:
           set -euo pipefail
           SKILL="${{ steps.meta.outputs.skill }}"
           VERSION="${{ steps.meta.outputs.version }}"
-          CL="skills/$SKILL/CHANGELOG.md"
+          CL="${{ steps.meta.outputs.dir }}/CHANGELOG.md"
           NOTES_FILE="$(mktemp)"
           if [ -f "$CL" ]; then
             # Literal match (index/==1), NOT regex — a version's dots must not be
@@ -96,9 +100,10 @@ jobs:
         run: |
           set -euo pipefail
           SKILL="${{ steps.meta.outputs.skill }}"
-          if [ -f "skills/$SKILL/pyproject.toml" ]; then
+          DIR="${{ steps.meta.outputs.dir }}"
+          if [ -f "$DIR/pyproject.toml" ]; then
             pip install build >/dev/null
-            python3 -m build "skills/$SKILL" --outdir "dist-$SKILL"
+            python3 -m build "$DIR" --outdir "dist-$SKILL"
             echo "has_dist=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_dist=false" >> "$GITHUB_OUTPUT"
