@@ -1,0 +1,1032 @@
+[00:00:00] I was recently affected by the layoffs
+[00:00:03] made by Atlassian and I wanted to take
+[00:00:06] some time out to reflect on the time
+[00:00:09] that I spent working for Atlassian. I
+[00:00:11] worked there for about eight years.
+[00:00:13] During that time I built a lot of things
+[00:00:16] and I wanted to talk about what I built,
+[00:00:18] mainly the things that I personally
+[00:00:19] found interesting or that I'm proud of.
+[00:00:21] I hope that this video will be useful or
+[00:00:24] helpful to someone who perhaps is or was
+[00:00:28] in the same situation as me and maybe
+[00:00:31] it'll give them some inspiration in
+[00:00:32] terms of how they can tackle the same
+[00:00:35] things that I did or something similar
+[00:00:37] and perhaps avoid some of the mistakes
+[00:00:39] that I've made. I also might talk about
+[00:00:41] non-technical parts of my experience at
+[00:00:43] Atlassian, although most of it will be
+[00:00:45] technical and this video will be split
+[00:00:48] into chapters so that you can skip to
+[00:00:51] sections that are more interesting to
+[00:00:54] you rather than rather than watching the
+[00:00:56] video from start to finish. So I suppose
+[00:00:58] to start with I'll talk about when I was
+[00:01:00] first hired and even though I it was
+[00:01:02] eight years ago, I still remember the
+[00:01:04] interview process, which is different
+[00:01:07] nowadays, and the reason why I was hired
+[00:01:10] or at least from my perspective the
+[00:01:11] reason why I was hired and the things
+[00:01:13] that I started working on during the
+[00:01:15] start. So yeah, let's just start at the
+[00:01:18] interview process. So I was interviewed
+[00:01:20] by some people that I now consider
+[00:01:23] friends and I remember having the
+[00:01:25] impression while being interviewed that
+[00:01:28] these individuals were quite intelligent
+[00:01:30] and that was something that was exciting
+[00:01:32] for me. The interview process consisted
+[00:01:33] of a coding quiz on HackerRank, which I
+[00:01:36] aced with full marks. Then the first
+[00:01:39] technical interview was with two
+[00:01:42] interviewers and they gave me a white
+[00:01:44] paper and asked me to read it while they
+[00:01:46] sat out of the room for about 10
+[00:01:48] minutes. They came back in and then
+[00:01:50] asked me questions about the white
+[00:01:52] paper, asked me to basically articulate
+[00:01:54] what was in in white paper and the white
+[00:01:56] paper was actually about custom domains,
+[00:01:59] and the white paper was by Cloudflare.
+[00:02:01] They then asked me a few questions about
+[00:02:03] things like microservices and
+[00:02:05] architectural things like that, um
+[00:02:07] containers and and whatnot. And they
+[00:02:09] were happy enough. I don't remember the
+[00:02:11] rest, but they were happy enough with
+[00:02:13] with me during that stage, so I
+[00:02:15] continued to the uh second technical
+[00:02:18] interview, which was a troubleshooting
+[00:02:19] exercise where I was asked to
+[00:02:22] essentially prompt the interviewer for
+[00:02:24] information in order to troubleshoot a
+[00:02:27] real incident that occurred in
+[00:02:28] Atlassian. And it was a it was an
+[00:02:30] application problem that lead led to a
+[00:02:34] denial of service. Uh so that was fun.
+[00:02:36] And then I think I was asked something
+[00:02:38] about how um latency-based DNS works,
+[00:02:42] and my answer was not accurate, but
+[00:02:45] perhaps acceptable. I I I thought about
+[00:02:48] it from first principles, and I thought
+[00:02:49] that that's uh for example, I thought
+[00:02:52] that Route 53 did a triangulation based
+[00:02:54] on the actual latency of the client, but
+[00:02:58] it is more like that they use a uh they
+[00:03:01] probably use a geolocation database in
+[00:03:04] order to do latency-based routing of DNS
+[00:03:07] requests of the DNS answers, sorry. Then
+[00:03:10] after that was a values uh interview.
+[00:03:12] And to be honest, I don't really
+[00:03:14] remember most of the questions for for
+[00:03:16] the values portion, but
+[00:03:18] I do remember one thing, which was when
+[00:03:21] I asked the question of I asked I asked
+[00:03:24] the interviewers to think about 12
+[00:03:26] months from now and to look back
+[00:03:28] retrospectively, what is the thing that
+[00:03:30] I would have had to achieve in order to
+[00:03:33] for for you to say it was a good
+[00:03:35] decision hiring this person. And then
+[00:03:36] they told me about
+[00:03:38] a [clears throat]
+[00:03:39] an application that they needed to be
+[00:03:41] built for the platform within Atlassian,
+[00:03:44] and the application would facilitate
+[00:03:47] self-service load balancers. Sort of
+[00:03:48] similar to if you were using Amazon
+[00:03:52] application load balances or the
+[00:03:54] equivalent in any cloud provider. But
+[00:03:55] for the internal developers of
+[00:03:58] Atlassian. And it was essentially just a
+[00:04:00] a framework that I personally was not
+[00:04:03] familiar with. And I said I could build
+[00:04:05] it because I had confidence in building
+[00:04:07] web apps with Python at that time. And
+[00:04:10] they accepted my level of confidence and
+[00:04:13] decided to hire me. So that's the the
+[00:04:14] interview portion completed. So I joined
+[00:04:17] Atlassian and they have this classic
+[00:04:20] saying or impression that when you join
+[00:04:23] Atlassian that you are drinking from the
+[00:04:26] fire hose because there's so much
+[00:04:28] information that you have to absorb in
+[00:04:30] the first few weeks and months in order
+[00:04:32] to just sort of get going. My first my
+[00:04:35] very first task that at least task that
+[00:04:38] I gave myself was to build the
+[00:04:40] application that they had told me that
+[00:04:43] they wanted. Let me just open a browser
+[00:04:45] and we'll take a little looky at what I
+[00:04:48] mean exactly. Let me just uh move my
+[00:04:51] face a little bit. There's more real
+[00:04:52] estate. Now obviously it's scalar draw
+[00:04:55] is not what I care about. So they wanted
+[00:04:57] me to build an open service broker. This
+[00:04:59] is
+[00:05:00] a a web app with an API which
+[00:05:02] facilitates the provisioning of
+[00:05:04] resources for a platform essentially. So
+[00:05:07] you can you can see here
+[00:05:09] it's sort of built to operate in a
+[00:05:11] Kubernetes world where you're submitting
+[00:05:13] these provisioning requests as things
+[00:05:17] come up and down. And it's going to bind
+[00:05:20] a resource to your pod or your cloud
+[00:05:23] instance or whatever it is as you can
+[00:05:25] see here. And it sort of sits in between
+[00:05:28] these real resources. So you might
+[00:05:31] provision something like a database and
+[00:05:34] then you'll get MySQL. So you'll get
+[00:05:36] something that's SQL compatible but
+[00:05:38] that's abstracted away for your internal
+[00:05:40] developers. Anyhow,
+[00:05:42] the spec is uh, is here on GitHub. You
+[00:05:46] can take a look at it. It goes into It
+[00:05:48] goes into, like, for example, the
+[00:05:51] catalog endpoint. And the catalog lists
+[00:05:54] all of the services and plans that are
+[00:05:56] available on the OSB, and, uh, just
+[00:06:00] metadata about them. And you might say
+[00:06:03] query the the service broker and then
+[00:06:05] display some of the metadata in your
+[00:06:08] Maybe you've got a a a console a
+[00:06:10] console, like, the Amazon console, but
+[00:06:12] maybe you've got something like that
+[00:06:13] internally. Where developers can click
+[00:06:16] and provision things. In the Atlassian
+[00:06:18] case, it was all through configuration
+[00:06:20] files that were committed to, um,
+[00:06:23] version control, and then those would be
+[00:06:25] uploaded, uh, during uploaded from a a
+[00:06:27] build server to deploy a service. Um,
+[00:06:30] but, yeah. So, you might have, you know,
+[00:06:32] other APIs like, uh, provisioning here.
+[00:06:35] So, put and patch for updating and
+[00:06:38] deletes and blah blah blah. So, you
+[00:06:40] would just basically go ahead and and
+[00:06:41] implement this. Or
+[00:06:43] I mean, if you wanted to build your own,
+[00:06:45] and that is essentially what I did. You
+[00:06:47] can see also there's a an open API
+[00:06:49] document here that has the endpoints.
+[00:06:52] So, I chose to build this in in Python
+[00:06:54] using Flask. Oh, no. In fact, what I
+[00:06:57] What I built it with first is with a
+[00:07:00] library called Connection. This is a
+[00:07:02] Python library which takes an open API
+[00:07:05] document and then creates the API
+[00:07:09] handlers for the paths for the API for
+[00:07:12] the API routes that are in that
+[00:07:13] document. Which is cool, but then we
+[00:07:15] eventually I eventually migrated that to
+[00:07:18] just pure Flask. And then eventually
+[00:07:21] migrated that to, uh, Fast API, which I
+[00:07:24] believe is what it still is at the
+[00:07:25] moment. Um, okay. So, it's the first 2
+[00:07:29] weeks, and my primary focus is to build
+[00:07:32] sort of what I promised in the
+[00:07:34] interview, which is this web app that's
+[00:07:36] going to be a broker for the platform,
+[00:07:39] and is going to allow self-service
+[00:07:41] provisioning of load balancing in
+[00:07:44] Elastic. So, like I mentioned earlier, I
+[00:07:46] started with this library called
+[00:07:48] connection, which took an open API
+[00:07:49] document, turned that into routes. But,
+[00:07:52] I'm going to just go with
+[00:07:53] what it ended up as, which is a fast API
+[00:07:56] app. Let's just say we've got fast API
+[00:07:58] here, and then we've got
+[00:08:02] a worker, and then we have a database,
+[00:08:05] which was DynamoDB. Oh, that's annoying.
+[00:08:09] And we would have a client making
+[00:08:11] requests. That's why that's a fast API.
+[00:08:14] The client would say, "Hey, please
+[00:08:16] provision something for me." And the web
+[00:08:19] worker wouldn't do it itself. It would
+[00:08:21] actually send that over SQS. It would
+[00:08:25] drop the task details into SQS.
+[00:08:28] And the worker would then handle that.
+[00:08:31] So, what does a provisioning task
+[00:08:33] actually look like?
+[00:08:35] It's something like creating
+[00:08:38] DNS records somewhere, maybe creating a
+[00:08:42] CloudFront distribution, maybe creating
+[00:08:47] some API calls. And this would be the
+[00:08:51] provisioning task that the worker would
+[00:08:53] do asynchronously, while the web and
+[00:08:57] client would wait for it to be completed
+[00:08:59] essentially. So, the client's polling
+[00:09:01] continuously to say, "Is it ready? Is it
+[00:09:03] ready?" And when it is completed, the
+[00:09:06] worker writes it to the database, the
+[00:09:08] web server checks the status, and then
+[00:09:10] responds saying, "Yes, it's finished."
+[00:09:12] Or it'll say that something went wrong
+[00:09:15] and there was an error.
+[00:09:16] So, then we can sort of encapsulate this
+[00:09:18] as the open service broker that I built.
+[00:09:23] Pretty straightforward.
+[00:09:25] Um to be honest, there's not much more
+[00:09:27] to this, but we're going to go and talk
+[00:09:30] about some of the more complicated bits
+[00:09:33] in just a second, and I will directly
+[00:09:35] link to this as well. So, we got this
+[00:09:37] client requesting
+[00:09:39] uh let's say "Please provision a load
+[00:09:41] balancing." And that is essentially what
+[00:09:43] they were asking for was some kind of
+[00:09:46] load balancing somewhere in the edge
+[00:09:48] infrastructure of Atlassian to allow
+[00:09:50] traffic to go to their service. So,
+[00:09:53] that's a good uh demarcation point to
+[00:09:56] start talking about the next thing that
+[00:09:58] I sort of built.
+[00:09:59] And I built it through necessity
+[00:10:02] of Essentially, I began to understand
+[00:10:06] and unravel the requirements more as I
+[00:10:09] went along. One of the architects had
+[00:10:11] this idea to replace the load balancers
+[00:10:15] at Atlassian, which were enterprise load
+[00:10:18] balancers that had licensing costs, with
+[00:10:21] a open-source cloud-native sort of
+[00:10:24] commodity proxy. And the tech that we
+[00:10:26] chose for that was Envoy proxy. You may
+[00:10:29] be familiar with Envoy proxy. If you're
+[00:10:31] not, then it's very similar to something
+[00:10:33] like Nginx, but perhaps more modern than
+[00:10:37] Nginx. Um you can take a look at its,
+[00:10:40] you know, uh what's what's great about
+[00:10:42] it if you want. You can just read
+[00:10:44] through like why why choose Envoy, blah
+[00:10:46] blah blah. But essentially, we wanted
+[00:10:47] [clears throat] to replace the
+[00:10:48] enterprise load balancers we had, make
+[00:10:50] them self-service, so that devs
+[00:10:52] effectively didn't have to talk to us to
+[00:10:55] go set up their load balancing. So,
+[00:10:57] Envoy has an API that allows you to
+[00:11:02] configure it dynamically. Being able to
+[00:11:04] reload the configuration at run time
+[00:11:06] means that you can deploy a whole bunch
+[00:11:08] of proxies and have them sit there
+[00:11:11] running all the time.
+[00:11:12] And then when someone needs different
+[00:11:14] configuration for their particular uh
+[00:11:16] service, then they can push out a change
+[00:11:19] through the provisioning task detailed
+[00:11:21] here. And those changes should flow to
+[00:11:25] the proxy somehow. And so now, that's a
+[00:11:27] good time to talk about the Envoy
+[00:11:30] management server that I built, which we
+[00:11:32] called the Envoy control plane. And this
+[00:11:35] was it's essentially quite similar
+[00:11:40] uh to this.
+[00:11:41] Yet again, we used a Fast API app. But
+[00:11:44] this was slightly different actually.
+[00:11:46] Let's go into a little bit of detail
+[00:11:47] here. I'm just going to wing this
+[00:11:49] because I should be able to wing it
+[00:11:50] because I know it quite well. Uh this is
+[00:11:52] actually a I open sourced this this
+[00:11:55] software and I called it Sovereign. You
+[00:11:56] can actually go find that on Bitbucket.
+[00:11:58] It's it's a public repo at least for
+[00:12:01] now. I don't know if that's going to be
+[00:12:03] the case always.
+[00:12:04] But essentially Sovereign runs a Fast
+[00:12:06] API app. And some of the things that it
+[00:12:09] takes in as
+[00:12:11] uh configuration are templates
+[00:12:15] and context. And so the app uh polls
+[00:12:20] these. Uh it's obviously got like uh say
+[00:12:24] let's just say this is the
+[00:12:25] configuration. Okay, let's stick Now,
+[00:12:28] so the templates might be particular
+[00:12:32] resource types. And in Envoy, you've got
+[00:12:35] stuff like clusters, routes, listeners.
+[00:12:39] And let's just leave it at that for the
+[00:12:40] moment. You'd have these kind of
+[00:12:43] templates. And so when this when this
+[00:12:47] management server loads up, it'll read
+[00:12:49] in these templates in the context and
+[00:12:50] make these available as APIs for the uh
+[00:12:55] proxies. So then you can imagine let's
+[00:12:58] just say we've got uh an Envoy here.
+[00:13:02] It is going to request these things and
+[00:13:05] Sovereign is going to respond by taking
+[00:13:08] the context, putting it into the
+[00:13:10] templates, and rendering out different
+[00:13:12] content uh as the context changes. Now,
+[00:13:15] where does the context come from? Well,
+[00:13:17] this is part of this management server
+[00:13:19] that is dynamic. So well, let's just uh
+[00:13:22] let's just do a bit of flip around here.
+[00:13:26] Put the context
+[00:13:27] the context actually comes from this
+[00:13:30] database, but we are requesting it from
+[00:13:34] the broker. So, the we're we're
+[00:13:36] requesting data from the broker and
+[00:13:38] other sources, in fact. Let's just add
+[00:13:40] another source here. Let's just say we
+[00:13:42] have a little S3 bucket with some data,
+[00:13:45] and maybe that data is changing over
+[00:13:46] time. So, we take that data, it's
+[00:13:48] dynamic, we feed that into the
+[00:13:49] templates. The The templates have logic
+[00:13:53] that spits out particular Envoy
+[00:13:56] configuration, and then the proxy
+[00:13:57] changes over time. So, what happens is
+[00:14:00] we've got a client that's making a
+[00:14:02] provisioning requests to our broker. The
+[00:14:04] worker is doing some provisioning tasks,
+[00:14:08] and then writing the new data to the
+[00:14:10] database. Then the the management
+[00:14:13] server, let's say. Stop this. Let's
+[00:14:15] encapsulate this a little bit. The
+[00:14:16] management server is then polling that
+[00:14:18] data from various places and generating
+[00:14:21] new configuration. That configuration
+[00:14:23] hits the proxy, and then it starts doing
+[00:14:26] different stuff. That is essentially the
+[00:14:28] second part of what I built. So, we've
+[00:14:30] got a broker, we've got a management
+[00:14:31] server, we've got the client, we've got
+[00:14:33] the proxy. Uh why did this detach?
+[00:14:35] Anyway, so now we've sort of figured
+[00:14:37] this stuff out.
+[00:14:39] This is all at a very high level.
+[00:14:41] &gt;&gt; [clears throat]
+[00:14:41] &gt;&gt; So, we've got this created. Now we can
+[00:14:44] sort of think more about more
+[00:14:47] infrastructure type things. We've got
+[00:14:49] this proxy, but how do we end up with
+[00:14:51] this proxy? How does that actually get
+[00:14:53] provisioned? What is it? Where does it
+[00:14:55] live? Well, let's start with one thing,
+[00:14:58] which is that these proxies,
+[00:15:02] there's many many many of them, as you
+[00:15:04] would expect, and they are provisioned
+[00:15:06] by
+[00:15:07] um
+[00:15:08] they are provisioned by a CloudFormation
+[00:15:11] template. This is an AWS thing that
+[00:15:13] allows you to essentially do
+[00:15:15] infrastructure as code, and it allows
+[00:15:17] you to create resources in in AWS that
+[00:15:21] you would normally create via the
+[00:15:23] console if you were just uh uh let's say
+[00:15:26] uh basic user. So, what kind of stuff do
+[00:15:29] we create in here? Well, if we were to
+[00:15:31] do this stuff from scratch, we'd
+[00:15:33] probably have like a VPC and then we'd
+[00:15:36] have uh you know, a subnet inside that
+[00:15:40] VPC and maybe we'd have
+[00:15:43] an internet gateway, maybe we'd have
+[00:15:47] uh
+[00:15:47] we'd all security group, maybe we'd have
+[00:15:50] a key pair, maybe an IAM role.
+[00:15:54] Um oh, of course we need to have the
+[00:15:56] auto scaling group.
+[00:15:58] Of course, that's what's going to be
+[00:16:01] creating these
+[00:16:03] EC2 instances.
+[00:16:05] And well, the auto scaling group needs
+[00:16:10] an AMI, doesn't it? Well, indeed it does
+[00:16:12] need an AMI. IAM role has to be attached
+[00:16:15] to
+[00:16:16] uh must be attached to all these. The
+[00:16:18] key pair goes on on the these. Security
+[00:16:21] group is attached to to the
+[00:16:24] this Well, it's probably attached to the
+[00:16:26] auto scaling group to be fair. Well, the
+[00:16:28] EC2 instances would inherit it from the
+[00:16:30] from the ASG, blah blah blah. So, we've
+[00:16:33] got all these like uh blocks of
+[00:16:35] resources and stuff like that. Cool.
+[00:16:37] Let's let's put these up put these up
+[00:16:38] together, blah blah blah. Cool. So,
+[00:16:41] yeah, we've kind of got like a little
+[00:16:42] template going on here and it's creating
+[00:16:44] these proxies in many different regions.
+[00:16:48] Uh we might have we might have like
+[00:16:50] uh an NLB in here, a layer four proxy.
+[00:16:54] Maybe we'd have uh bit of maybe a bit of
+[00:16:57] ACM. Of course, these acronyms might
+[00:16:59] mean nothing to some people, but for
+[00:17:01] people that have used AWS, they would
+[00:17:03] know what these things are. And they
+[00:17:04] know it's not really that complicated.
+[00:17:06] It's like pretty basic building blocks
+[00:17:08] and this is what we created
+[00:17:11] uh
+[00:17:12] say 2,000 proxies,
+[00:17:14] uh something like 13 regions, blah blah
+[00:17:16] blah. Um and we also had a little bit of
+[00:17:19] route 53 records for other stuff. Now,
+[00:17:23] the AMI, it's not really provisioned by
+[00:17:26] the the template. It's more like it's
+[00:17:28] referenced by the template, isn't it?
+[00:17:30] So, that would bring us on to the next
+[00:17:32] piece of this thing that I built, which
+[00:17:34] is, well, we need to produce an AMI. We
+[00:17:37] need to produce a standard image for
+[00:17:39] these proxies, and it's going to include
+[00:17:41] all the important stuff in there. So,
+[00:17:43] how do we create this image for the
+[00:17:45] proxy? Well, in this case, we had uh
+[00:17:48] repository that was using HashiCorp
+[00:17:50] Packer, and
+[00:17:52] uh we had um
+[00:17:55] a Salt Stack
+[00:17:56] uh let's call it configuration.
+[00:17:58] And so, we would use Packer to um let's
+[00:18:02] say we'd have the EC Oh, we'd use the
+[00:18:05] EC2 provisioner. And so, we would create
+[00:18:08] an EC2 in like a dev account. We'd then
+[00:18:11] upload all of our Salt Stack
+[00:18:12] configuration. Salt Stack, by the way,
+[00:18:14] is very similar to Puppet, Ansible, and
+[00:18:16] Chef, in case you're not aware of what
+[00:18:18] those are. It is configuration
+[00:18:19] management tools, and that's a fancy way
+[00:18:22] of saying that I want to run I want to
+[00:18:25] install packages, put files, and run
+[00:18:28] services on a machine in a particular
+[00:18:30] way, in a particular order, and it
+[00:18:32] automates that process, makes that
+[00:18:34] process declarative for you. Well, not
+[00:18:37] for you, but it helps you to to make it
+[00:18:38] declarative. So, we created a little um
+[00:18:41] created a little EC2 live running EC2
+[00:18:44] here. We dump the config on there, we do
+[00:18:47] a provisioning step, and then we take
+[00:18:49] the
+[00:18:50] uh essentially turn this into an image,
+[00:18:52] like shut it down, uh whatever, snapshot
+[00:18:54] it, and turn it into an image. So, that
+[00:18:56] essentially would just produce this uh
+[00:18:58] AMI. Now, what was included in here?
+[00:19:00] Let's Let's say we can just uh we can
+[00:19:02] include a few things here. Let's just
+[00:19:04] say we had um we had states for for
+[00:19:07] Envoy. So, like let's say install,
+[00:19:10] configure,
+[00:19:11] uh let's say just install and configure
+[00:19:13] Envoy Uh
+[00:19:15] logging agents, security,
+[00:19:18] let's say slash hardening, network
+[00:19:19] tuning,
+[00:19:21] containers,
+[00:19:23] tracing. Oh, let's just say let's just
+[00:19:25] say observability agent there. And that
+[00:19:28] can cover I can cover logging, tracing,
+[00:19:30] metrics. So, that's essentially what's
+[00:19:32] going on here. Produces the AMI,
+[00:19:35] CloudFormation template takes this AMI
+[00:19:37] provisions these EC2s
+[00:19:40] EC2. And they're running with all this
+[00:19:42] stuff. And then when they when they get
+[00:19:44] provisioned, that's something that we
+[00:19:46] forgot here. There's parameters.
+[00:19:48] Parameters, bump that up, bump this up,
+[00:19:52] make it neat. So, we've got the
+[00:19:53] parameters and these at
+[00:19:57] runtime would pass in secrets and keys
+[00:20:00] and blah blah blah. And then these these
+[00:20:03] proxies would grab the resources, be
+[00:20:05] configured, and then they would be
+[00:20:07] running and accepting traffic. Boom,
+[00:20:09] that's it. Everything's done, working.
+[00:20:11] This was essentially the first two years
+[00:20:14] of working at Lyft. So, now when a
+[00:20:16] developer says, "I want to run my
+[00:20:19] service and I want it to be
+[00:20:21] I want it to be accessible on the
+[00:20:22] internet with all the fancy bells and
+[00:20:24] whistles and routing and advanced
+[00:20:25] stuff." We'd say, "Yes, no problem. Let
+[00:20:28] me just get that provisioned for you."
+[00:20:30] We
+[00:20:31] send off the provisioning task, we write
+[00:20:33] something to the database, we tell them
+[00:20:34] it's ready, then the management server,
+[00:20:37] it's the
+[00:20:39] broker says, "What's the current state
+[00:20:42] of things?" Takes that data, plus other
+[00:20:44] data, puts it into the templates,
+[00:20:46] creates resources out of those
+[00:20:48] templates, gives them to Envoy on when
+[00:20:50] it requests them. And this was all
+[00:20:53] pre-provisioned.
+[00:20:55] That's long-lived infrastructure with
+[00:20:57] CloudFormation. And the CloudFormation
+[00:20:58] is relying on an AMI that it can use to
+[00:21:01] provision those images, those machines.
+[00:21:03] So, yeah, that is probably the first 24
+[00:21:06] months. So, what was next after this?
+[00:21:08] So, this was the foundation of our team,
+[00:21:10] essentially the product that we were
+[00:21:12] going forward with, um which is uh
+[00:21:14] centralized load balancing managed by
+[00:21:17] our team, and all of the features that
+[00:21:20] we provided to our customers would live
+[00:21:22] in logic defined in these templates.
+[00:21:25] We've now laid the foundation for the
+[00:21:27] team. We've got proxy infrastructure
+[00:21:29] that's reacting dynamically to services
+[00:21:32] that are being deployed with different
+[00:21:34] configurations over time. What was next
+[00:21:36] after that point? The big thing after
+[00:21:38] that was taking some of the larger
+[00:21:40] products and making it possible for them
+[00:21:43] to use this platform component. That was
+[00:21:46] one big part, and the second big part
+[00:21:48] was migrating all of the microservices
+[00:21:51] within Atlassian to use this. And that
+[00:21:53] was relatively easier because we could
+[00:21:56] enforce that through the platform.
+[00:21:58] Essentially, what that means is that the
+[00:22:00] platform was previously providing very
+[00:22:03] basic load balancing to every service.
+[00:22:05] And they forced a switch to where you
+[00:22:08] could no longer expose your service
+[00:22:10] publicly through their load balancer,
+[00:22:12] which is too basic, and you had to go
+[00:22:14] through our centralized load balancing
+[00:22:16] infrastructure and to explicitly
+[00:22:18] configure it as a way of signaling your
+[00:22:21] intention for that service to be
+[00:22:23] publicly accessible. Whereas previously,
+[00:22:26] it could have just been maybe accidental
+[00:22:28] that your service was public and not
+[00:22:30] very well protected. So, that was the
+[00:22:32] big major push. We got products like
+[00:22:35] Jira, Confluence, Bitbucket, Status
+[00:22:38] Page, and many others behind this edge
+[00:22:41] infrastructure. And then, what was after
+[00:22:43] that? Well, now we can sort of talk more
+[00:22:45] about Let's say we can talk more about
+[00:22:48] the uh the Envoy-based product that we
+[00:22:51] had here. So, this particular thing,
+[00:22:54] we've got this groundwork of being able
+[00:22:57] to take basic inputs from a a developer
+[00:23:00] and to turn that into templated
+[00:23:03] configuration. Now, Envoy has a lot of
+[00:23:06] configuration. It has a lot of stuff you
+[00:23:09] can configure. Let's just look at the
+[00:23:11] routes, for example. Let's look at the
+[00:23:13] virtual host, for example. You can
+[00:23:15] configure what domains to accept traffic
+[00:23:17] on. Pretty basic. You can do routing.
+[00:23:19] Sort of basic, but once you delve into
+[00:23:21] how you can do this, it gets pretty
+[00:23:23] complicated pretty quickly. You can
+[00:23:25] match on different things. You can route
+[00:23:27] it in different ways. You can do direct
+[00:23:29] responses. do redirects, blah, blah,
+[00:23:31] blah. You can add and remove headers. I
+[00:23:34] guess I guess you could say that's
+[00:23:35] pretty standard, but you can also
+[00:23:37] choose, for example, when you're
+[00:23:39] configuring a route action, you can also
+[00:23:40] choose to send to any cluster that's on
+[00:23:44] the proxy. So, then if I have a thousand
+[00:23:47] devs, or a thousand services, and they
+[00:23:50] each have their own cluster, and any
+[00:23:52] route can send to any cluster, well, it
+[00:23:54] sort of brings up this point of well,
+[00:23:56] this
+[00:23:57] data here needs to be validating that
+[00:24:01] and abstracting that, and so on and so
+[00:24:05] forth. So, there was definitely a
+[00:24:07] concentration of a lot of the
+[00:24:09] development work around this logic here,
+[00:24:11] making sure it was validated here in
+[00:24:13] terms of the parameters were validated
+[00:24:16] such that when those parameters were run
+[00:24:18] through the logic in these in these
+[00:24:21] resources, that it would produce valid
+[00:24:23] resources. Pretty standard, I suppose
+[00:24:25] you could say. I don't know. Maybe I do
+[00:24:27] feel like I have the curse of knowledge.
+[00:24:29] Um and that this stuff seems easier to
+[00:24:32] me now because I I've done so much with
+[00:24:34] it. Uh but there's a lot. There's a lot
+[00:24:36] in here. And if we go into, uh for
+[00:24:38] example, extensions, there's a lot of
+[00:24:40] extensions that can be applied to a
+[00:24:43] listener or a or a cluster. For example,
+[00:24:46] you might have, uh where is it? You've
+[00:24:48] got, uh network filters here. You've got
+[00:24:51] all kinds of network filters. And a big
+[00:24:53] one that we obviously used was a HTTP
+[00:24:56] connection manager, where you could
+[00:24:58] configure routing and how to handle
+[00:25:01] proxies and web sockets and all this
+[00:25:04] stuff. And then, if we go a little bit
+[00:25:06] before that, there's also things like
+[00:25:08] external processing and external
+[00:25:11] authorization. And this sort of brings
+[00:25:13] us to Oh, let's say something that
+[00:25:16] happened next. So, I did briefly mention
+[00:25:18] that some of the big parts after
+[00:25:19] building this was to migrate big
+[00:25:21] products onto Let's assume that's all
+[00:25:23] finished. It took It took some time. It
+[00:25:25] took a couple years because there were
+[00:25:27] many features that needed to be built
+[00:25:29] out here and and wherever else in order
+[00:25:32] to support the larger products and their
+[00:25:34] special cases to work on
+[00:25:37] what's effectively a generic
+[00:25:39] multi-tenanted platform. So, let's just
+[00:25:41] assume that they're all migrated. Then,
+[00:25:42] we have more features that we want to
+[00:25:45] add. I did sort of allude to like we
+[00:25:47] have this We have this groundwork. We
+[00:25:49] have this dynamic configuration. What
+[00:25:52] I'm trying to say is that we we created
+[00:25:54] opportunity. We created opportunity to
+[00:25:57] centralize logic and to handle concerns
+[00:26:01] early in the chain of requests. What I
+[00:26:04] mean by that is a customer, let's just
+[00:26:07] make a smiley customer. And customer is
+[00:26:10] someone that's using our cloud products
+[00:26:12] or Atlassian cloud products. They are
+[00:26:14] hitting the
+[00:26:16] Let's just say they're hitting an NLB
+[00:26:17] first and that's then being proxied to
+[00:26:19] these boys. Yes? If we can deal with the
+[00:26:22] problems here before they reach a
+[00:26:24] service,
+[00:26:26] let's say and let's give it a square.
+[00:26:28] Let's call it a back-end service, you
+[00:26:30] know. So, the requests are flowing in
+[00:26:31] from the customer to the proxies and to
+[00:26:34] the Pretty standard stuff. If we can
+[00:26:35] deal with certain concerns here before
+[00:26:39] it reaches here, we save a lot of time,
+[00:26:41] we save some money, which is and it
+[00:26:44] saves the customer time. It's great for
+[00:26:45] everyone, really. Um
+[00:26:47] and one of those things Now, this is
+[00:26:49] where the the diagram becomes
+[00:26:51] complicated, so let's move off to the
+[00:26:53] side. Let's just copy a few of these.
+[00:26:55] Let's grab
+[00:26:56] three things
+[00:26:58] move over to the side. We've got the
+[00:26:59] customer talking to the proxy and the
+[00:27:01] proxy is talking to back end. Of course,
+[00:27:04] the request comes back up and back out
+[00:27:06] to the customer. Fine and dandy. Yes,
+[00:27:08] this is a this is a proxy. Whatever,
+[00:27:10] there's no surprises here. Now, without
+[00:27:12] with with the products that Elysium
+[00:27:15] runs, there's all kinds of stuff that
+[00:27:17] needs to happen like authentication for
+[00:27:19] example or authorization or
+[00:27:23] DDoS protection or rate limiting or
+[00:27:26] access logs. All this kinds of stuff
+[00:27:28] that needs to happen and it's just turns
+[00:27:31] out that we can deal with them here
+[00:27:32] instead of on a bazillion bazillion back
+[00:27:37] end services. Just imagine there are a
+[00:27:40] bazillion bazillion of these. Just
+[00:27:43] zillions upon zillions. See Daisy. Just
+[00:27:47] zillions and zillions. They're like
+[00:27:48] gazillion. Now, can you imagine if a
+[00:27:50] thousand dev teams needed to deal with
+[00:27:53] all this stuff plus more on their own
+[00:27:56] service? It would be a tremendous waste
+[00:27:59] of money for the company. It would slow
+[00:28:01] down features. The customer wouldn't get
+[00:28:03] their features when they need them and
+[00:28:05] stuff is already hard enough to deliver
+[00:28:07] as it is. Thus, the platform and
+[00:28:10] centralized management of resources and
+[00:28:12] centralized
+[00:28:13] implementation of these features. So,
+[00:28:16] how how were some of these things
+[00:28:17] implemented? Well, DDoS protection was
+[00:28:19] really provided by
+[00:28:22] CloudFront. That was
+[00:28:24] that was
+[00:28:25] spearheaded by a colleague of mine who
+[00:28:27] is very smart and conscientious. And
+[00:28:30] essentially, let's make this a bit more
+[00:28:33] accurate. Let's just say let's get rid
+[00:28:34] of these. There's an NLB here. Oh, blah
+[00:28:37] blah blah blah blah. And of course, it's
+[00:28:39] two-way. So, that's one way that we can
+[00:28:41] take care of that concern for these back
+[00:28:43] end services. Great, we've solved solved
+[00:28:45] the concern for that. Fantastic. These
+[00:28:47] others, well, access logs, what we can
+[00:28:50] do is something like we can use these
+[00:28:53] network filters. Yes, we use the network
+[00:28:55] filters. For example, in the HCM, we
+[00:28:58] have
+[00:29:03] Where are the access logs? Access log.
+[00:29:05] Now, remember, all of this configuration
+[00:29:08] is dynamic. It's all dynamic and it is
+[00:29:11] created by templates which abstract away
+[00:29:15] the resource configuration from the
+[00:29:17] developer who wants to configure it.
+[00:29:19] They provide simple parameters. Those
+[00:29:21] parameters are then validated and then
+[00:29:22] they are fed into the template as
+[00:29:24] context so that we produce the correct
+[00:29:27] template. That means that
+[00:29:29] they send us a little bit of JSON and we
+[00:29:32] set up this whole thing for them with
+[00:29:34] all the access logging and blah blah
+[00:29:36] blah, whatever. So, that is done, in
+[00:29:38] fact, inside the proxy, natively.
+[00:29:41] Fantastic. Some of these things,
+[00:29:42] however, a little bit more complicated.
+[00:29:44] These things, we need to use a sidecar
+[00:29:47] model where Envoy is talking out the
+[00:29:48] side and then these are their own
+[00:29:51] services running locally on the on the
+[00:29:53] proxy. So, these would be like
+[00:29:56] containers, essentially. We've got this
+[00:29:58] sidecar model and those sidecars, some
+[00:30:01] of them were contributed by other teams
+[00:30:03] and some of them were created by me and
+[00:30:05] our team. The authentication and the
+[00:30:07] authentication sidecar was created by
+[00:30:09] me, written, of course, in the Lord's
+[00:30:12] language, Rust. Authorization was done
+[00:30:15] by another team and rate limiting was
+[00:30:16] done by another team. And so, they were
+[00:30:18] able to contribute these sidecars,
+[00:30:20] which, by the way, were set up and
+[00:30:23] were downloaded and configured onto the
+[00:30:26] AMI by this provisioning AMI
+[00:30:28] provisioning flow. Great. So, now we
+[00:30:31] have a programmable proxy with sidecars
+[00:30:35] that have their own separate logic from
+[00:30:37] the proxy and they, too, can actually
+[00:30:40] receive configuration, which is dynamic
+[00:30:43] over the wire locally and
+[00:30:46] and make it even more program. So, we're
+[00:30:48] solving all these concerns before they
+[00:30:50] hit these
+[00:30:51] these back ends and in very very little
+[00:30:54] time. So, that was
+[00:30:55] essentially that is some of the stuff I
+[00:30:58] worked on after migrations and blah blah
+[00:31:00] blah. Yay. What I do after that? With
+[00:31:03] this big blob rid of this mess. So, then
+[00:31:05] we had some non-technical requirements
+[00:31:08] come through. More compliance
+[00:31:11] and things like that. And that effort
+[00:31:13] was very tedious and boring for me
+[00:31:15] personally. It didn't involve building
+[00:31:17] new stuff. It involved taking all of
+[00:31:19] this, making sure that it was compliance
+[00:31:22] for in certain ways. Very bored boring
+[00:31:26] checklist ticking work. Blah blah blah.
+[00:31:29] So, I said earlier that I would also go
+[00:31:30] over some of the non-technical things
+[00:31:32] that I had to go through while working
+[00:31:34] at Atlassian. Obviously, all of that
+[00:31:35] stuff is sort of high-level technical
+[00:31:37] stuff that I just showed. What was some
+[00:31:40] of the other stuff that I went through
+[00:31:42] during my eight-year slog at Atlassian?
+[00:31:45] The first few things to come that come
+[00:31:47] to mind is that I have grown
+[00:31:50] tremendously in my diplomacy skills,
+[00:31:54] conflict avoidance, probably conflict
+[00:31:57] resolution as well. Being able to
+[00:31:59] persuade, propose ideas, being able to
+[00:32:02] teach, educate, and mentor. These are
+[00:32:05] the non-technical things that you
+[00:32:06] probably don't hear a lot about. But
+[00:32:09] after Another thing is that the ability
+[00:32:11] to maintain things, maintain software
+[00:32:15] and systems, to see where the cracks
+[00:32:17] show up and to build things so that
+[00:32:21] those cracks don't show up as or at
+[00:32:23] least to make them show up late as
+[00:32:25] possible. That's definitely something
+[00:32:26] that I picked up. Let's just talk about
+[00:32:28] that maintenance for a sec. I noticed
+[00:32:30] over the eight years that I was there,
+[00:32:32] when I built these apps, these
+[00:32:35] services, that there's obviously that at
+[00:32:37] the very start there's the requirement
+[00:32:40] to onboard people and write
+[00:32:41] documentation and train people so that
+[00:32:44] they understand how things work, know
+[00:32:46] how to contribute to them, and debug
+[00:32:48] them. So that when they become when they
+[00:32:50] go on call, they know where to look,
+[00:32:52] what could go wrong, where do things
+[00:32:54] break essentially. So, you know, that's
+[00:32:57] whether that's knowing what kind of what
+[00:33:00] particular log messages mean, what sort
+[00:33:02] of metrics to check when something is
+[00:33:05] going wrong and what those metrics could
+[00:33:07] allude to, how to resolve those
+[00:33:10] um you know, particular expected
+[00:33:12] problems if they're not automated away.
+[00:33:14] Um and this could be like, you know,
+[00:33:16] Amazon could have an outage and the
+[00:33:18] database isn't access for example. What
+[00:33:20] do you do in that case? What if SQS
+[00:33:22] stops working and you can't do any
+[00:33:24] provisioning tasks? What how what impact
+[00:33:26] does that have on the services that need
+[00:33:28] to provision the resources? And how do
+[00:33:29] you resolve um
+[00:33:31] What happens if an if a proxy receives
+[00:33:33] bad configuration? What if it receives
+[00:33:35] configuration that's valid, but that
+[00:33:37] destroys the traffic that's flowing
+[00:33:39] through? How do you pick up on those?
+[00:33:41] What do you check, etc. etc. So there's
+[00:33:43] obviously a lot of that at the start
+[00:33:45] when you build something. There's a lot
+[00:33:46] of that at the start. But the thing
+[00:33:48] that's more difficult is over time
+[00:33:50] people come and go. People get hired.
+[00:33:53] People get people leave for other jobs
+[00:33:55] and whatnot. And so you get you have to
+[00:33:57] do that onboarding again obviously. But
+[00:33:59] you should have more people that are
+[00:34:01] able to do that onboarding collectively.
+[00:34:02] But then you sort of bring in new
+[00:34:04] opinions. People look at an existing
+[00:34:06] codebase and they want to change things.
+[00:34:08] They want to make it better, and so on
+[00:34:10] and so forth. And so they do that. And
+[00:34:12] change ends There's I I suppose there's
+[00:34:15] this concept of churn in the codebase.
+[00:34:18] The area that churns, it's sort of it
+[00:34:20] becomes predictable where all the churn
+[00:34:22] is going to be
+[00:34:24] at a certain stage. And once you notice
+[00:34:26] that there is some churn, it's sort of a
+[00:34:29] a smell. It is it's an indication that
+[00:34:32] that part of the service or project is
+[00:34:35] going to keep increasing in size or
+[00:34:38] complexity. And something there needs to
+[00:34:41] happen. Something needs to be done to
+[00:34:43] avoid that mess. It's just just how
+[00:34:45] software goes, I suppose. It'll be
+[00:34:47] interesting with all these
+[00:34:49] vibe coded apps and AI assisted apps to
+[00:34:52] see how we handle that. When we have
+[00:34:54] people that are not really familiar with
+[00:34:56] what they've created, and the
+[00:34:58] maintenance burdens appear. They don't
+[00:35:00] appear at the beginning. There's just
+[00:35:01] not enough going through. It hasn't been
+[00:35:03] around for long enough. There hasn't
+[00:35:05] been enough changes. Building something
+[00:35:06] is easy. Changing it and making sure
+[00:35:08] that it you can still change it over
+[00:35:09] time is difficult. Because as you change
+[00:35:12] things, it slowly becomes harder to
+[00:35:14] change. Things start to get coupled, and
+[00:35:16] all of a sudden when you change
+[00:35:18] something in one area, it affects
+[00:35:19] another, and you have to deal with the
+[00:35:20] task of detangling something. And you
+[00:35:22] might be able to find these areas quite
+[00:35:24] quickly, get an LLM to perform the
+[00:35:26] detangling for you. I think that's If we
+[00:35:28] can do that, that's fantastic. But I
+[00:35:30] don't want to be too optimistic just in
+[00:35:32] case. So, there's that on That's my
+[00:35:35] opinion on the maintenance side of
+[00:35:36] things. The next thing I want to talk
+[00:35:38] about is when I mentioned diplomacy,
+[00:35:41] what I'm really trying to say is that I
+[00:35:43] was exposed to different types of
+[00:35:46] managers and colleagues over time. And
+[00:35:48] everyone has different personalities and
+[00:35:50] styles of working. And because I was
+[00:35:52] exposed to so many different types, I
+[00:35:54] experienced conflicts with certain
+[00:35:56] people. And even though I had conflicts,
+[00:35:59] there's still people that I respect.
+[00:36:00] It's just something that happens when
+[00:36:03] you when your personality doesn't mix
+[00:36:05] with their personality. And that's just
+[00:36:06] something that's a bit inevitable. And I
+[00:36:08] think that the only thing you can really
+[00:36:10] do in those situations is to try to have
+[00:36:13] the self-awareness and the awareness of
+[00:36:15] the other person and the, I suppose,
+[00:36:18] understanding of psychology and and how
+[00:36:20] people work to an extent, so that you
+[00:36:23] can be responsible for that difference
+[00:36:25] and the potential for conflict, and to
+[00:36:28] handle it effective to to anticipate the
+[00:36:31] conflict that's going to arise and and
+[00:36:33] to do something to make the relationship
+[00:36:36] work. And maybe it's impossible. I don't
+[00:36:37] know. But that was definitely a source
+[00:36:39] of great stress and at [clears throat]
+[00:36:41] times it affected my performance. And so
+[00:36:45] I do think that because it affected my
+[00:36:48] performance that I took it quite
+[00:36:50] seriously and I learned and changed as a
+[00:36:53] result. So the next time that those
+[00:36:55] situations come around, I do firmly
+[00:36:58] believe that I'll be able to handle them
+[00:37:00] quite a lot better. And then some of the
+[00:37:02] other things, in fact one of the things
+[00:37:04] that I found quite challenging was
+[00:37:08] mentoring. And so I find it easy to help
+[00:37:11] people to point out areas where they
+[00:37:15] need understanding and to deliver that
+[00:37:18] understanding to them, to break down
+[00:37:20] complex things into simple terms so that
+[00:37:23] they can build a mental model of the
+[00:37:26] system that they're working on. I have
+[00:37:27] that ability. I'm quite good at that.
+[00:37:29] But mentoring is distinct from that. I
+[00:37:31] had an intern in the last year and I
+[00:37:34] will first say that the result of their
+[00:37:36] internship was that they got the highest
+[00:37:38] rating possible and it essentially
+[00:37:41] guarantees
+[00:37:42] an offer to work at a last year. The
+[00:37:44] project that they worked on was very
+[00:37:46] impressive and how they approached it
+[00:37:49] and and built it was very impressive.
+[00:37:51] And so that's why they got that
+[00:37:52] excellent rating. What I found
+[00:37:54] personally difficult was striking the
+[00:37:57] balance between It was essentially
+[00:38:00] striking the balance between how much
+[00:38:02] time I give to the mentee and what that
+[00:38:06] time would consist of, whether it's, you
+[00:38:08] know, I didn't I don't want to give them
+[00:38:09] answers to problems, but I don't want
+[00:38:11] them to get so stuck that they become
+[00:38:13] frustrated. I have no idea if I reached
+[00:38:16] that balance, but I suppose the results
+[00:38:18] speak for themselves. I I but I I don't
+[00:38:20] I don't I'm not sure if I can attribute
+[00:38:22] the results to me necessarily. The
+[00:38:24] intern was helped by some of my other
+[00:38:26] colleagues when in areas that I'm much
+[00:38:28] weaker in. So, they effectively got
+[00:38:31] subject matter experts in a few
+[00:38:34] different areas to contribute to their
+[00:38:36] success. But then they did the majority
+[00:38:38] of the legwork to actually build the
+[00:38:41] thing and to test it and to make design
+[00:38:44] decisions and stuff like that. And it
+[00:38:45] was very successful. But I still have
+[00:38:46] this lingering impression of feeling
+[00:38:48] that mentoring is difficult for me and
+[00:38:51] that I I don't have um a good way of um
+[00:38:55] figuring that out because I've never
+[00:38:56] been mentored myself. So, I don't really
+[00:38:58] know what to expect and what they do.
+[00:39:01] But I want to emphasize that that's a
+[00:39:03] very specific type of mentoring that I'm
+[00:39:05] not too sure about. Whereas training my
+[00:39:07] colleagues, getting them to understand,
+[00:39:09] working, you know, working through
+[00:39:11] problems with my colleagues, that was
+[00:39:12] that was essentially my bread and butter
+[00:39:14] during the last half of my employment.
+[00:39:16] You know, jumping on uh uh call and
+[00:39:19] going through stuff. Feedback that I got
+[00:39:21] from my colleagues all the time was that
+[00:39:22] I was always available to help and that
+[00:39:24] I could boil down hard topics into
+[00:39:26] something that was understandable, which
+[00:39:29] I'm pretty proud of. And I've been
+[00:39:31] yapping for a while. I think that covers
+[00:39:32] a quite a lot. If I remember more, I'll
+[00:39:34] probably just make a second video. Um
+[00:39:36] maybe maybe if people are interested, I
+[00:39:38] could actually go through and build some
+[00:39:40] of these things. I could actually go
+[00:39:41] through and build some of these things
+[00:39:42] from scratch on stream or just a video
+[00:39:45] uploaded to kind of show, I guess,
+[00:39:47] essentially what I made and maybe
+[00:39:48] recreate and sharpen my skills a little
+[00:39:50] bit more. Um maybe. I've got a lot of
+[00:39:52] stuff on my to-do list, so maybe maybe
+[00:39:54] not. It depends on the demand. Anyway,
+[00:39:55] I'm going to cut the video from here. If
+[00:39:57] you listened all the way through or to
+[00:39:59] portions, then thank you very much. I
+[00:40:01] hope it was interesting and enlightening
+[00:40:03] and whatever else. I'll catch you
+[00:40:05] around.
