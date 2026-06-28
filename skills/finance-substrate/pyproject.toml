@@ -1,0 +1,38 @@
+[project]
+name = "finance-substrate"
+version = "0.1.0"
+description = "Personal finance and Colombian tax management — import bank transactions, track withholdings, fetch TRM rates, project taxes, issue DIAN e-invoices. Zero paid dependencies."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "broomva", email = "devteam@getstimulus.ai" }]
+
+# Note: this is a script-collection skill, not a Python package. The
+# entrypoints live in `scripts/*.py` and are invoked directly via
+# `python3 scripts/<name>.py`. No build-system / wheel needed.
+#
+# `requires-python` here mirrors the runtime guard at the top of every
+# entrypoint script (added 2026-05-22 after a dogfood run on macOS
+# system Python 3.9.6 caught a PEP-604 union-type TypeError in
+# scripts/fetch_trm.py). Tools that read this file (ruff, mypy, pyright)
+# now know the floor.
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["scripts"]
+
+[tool.ruff.lint]
+# Conservative ruleset — this skill ships as scripts, not as a packaged
+# library. Style consistency matters; bandit/strict rules are out of scope.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade (now safe to suggest 3.10+ idioms)
+    "B",   # flake8-bugbear
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # let docstrings be long
+]

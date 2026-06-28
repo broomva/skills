@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "davivienda",
+    "name": "BANCO DAVIVIENDA S.A.",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["DAVIVIENDA"],
+    "reject_any": ["RAPPICARD"],
+    "case_sensitive": false
+  },
+  "priority": 30,
+  "password_protected": false,
+  "sections": [
+    {
+      "id": "cuentas_totales",
+      "label": "Savings account totals",
+      "anchor": {
+        "pattern": "TOTALES\\n\\d+\\n",
+        "type": "regex"
+      },
+      "fields": [
+        { "key": "saldo", "method": "dollar_amounts_after_anchor", "index": 0 },
+        { "key": "rendimientos", "method": "dollar_amounts_after_anchor", "index": 1 },
+        { "key": "rendimientos_no_gravados", "method": "dollar_amounts_after_anchor", "index": 2 },
+        { "key": "retencion_renta", "method": "dollar_amounts_after_anchor", "index": 3 },
+        { "key": "gmf_retenido", "method": "dollar_amounts_after_anchor", "index": 4 }
+      ]
+    },
+    {
+      "id": "afc",
+      "label": "AFC account (Ahorro Fomento a la Construcción)",
+      "anchor": {
+        "pattern": "CERTIFICADO PRODUCTO CUENTA AFC",
+        "type": "string_find"
+      },
+      "fields": [
+        { "key": "aportes_directos", "method": "label_then_amount", "label": "Aportes Directos" },
+        { "key": "aportes_contingente", "method": "label_then_amount", "label": "Aportes con Contingente" },
+        { "key": "aportes_sin_contingente", "method": "label_then_amount", "label": "Aportes sin Contingente" },
+        { "key": "rendimientos", "method": "label_then_amount", "label": "Rendimientos de los aportes" },
+        { "key": "retiros_vivienda", "method": "label_then_amount", "label": "Retiros con destino vivienda" },
+        { "key": "saldo_fin", "method": "regex", "pattern": "Saldo a 31/12/\\d{4}\\s*\\n?\\$?([\\d.,]+)", "group": 1 }
+      ]
+    }
+  ],
+  "computed_fields": [
+    { "key": "total_aportes_afc", "expression": "sections.afc.aportes_directos + sections.afc.aportes_contingente" }
+  ],
+  "tax_summary_mapping": {
+    "rendimientos_gravados": "sections.cuentas_totales.rendimientos - sections.cuentas_totales.rendimientos_no_gravados",
+    "rendimientos_no_gravados": "sections.cuentas_totales.rendimientos_no_gravados",
+    "retencion_renta": "sections.cuentas_totales.retencion_renta",
+    "gmf_total": "sections.cuentas_totales.gmf_retenido",
+    "gmf_deducible_50pct": "sections.cuentas_totales.gmf_retenido * 0.50",
+    "patrimonio_cuentas": "sections.cuentas_totales.saldo",
+    "aportes_afc_r35": "computed.total_aportes_afc"
+  }
+}

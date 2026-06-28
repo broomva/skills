@@ -1,0 +1,239 @@
+{
+  "name": "finance-substrate",
+  "version": "0.1.0",
+  "description": "Personal finance and Colombian tax management — import bank transactions, track withholdings, fetch TRM rates, project taxes, issue DIAN e-invoices. Zero paid dependencies.",
+  "requires_python": ">=3.10",
+  "entrypoint": "scripts/import_csv.py",
+  "inputs_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "import",
+          "trm",
+          "categorize",
+          "summary",
+          "tax",
+          "withholding",
+          "dian-scrape",
+          "invoice"
+        ],
+        "description": "Skill mode: import (bank CSV/OFX), trm (exchange rates), categorize (classify transactions), summary (financial report), tax (DIAN projection), withholding (record retención), dian-scrape (MUISCA automation), invoice (e-invoicing)."
+      },
+      "bank": {
+        "type": "string",
+        "enum": [
+          "davivienda",
+          "nubank",
+          "nequi",
+          "arq"
+        ],
+        "description": "Bank identifier for import mode."
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Path to CSV/OFX file for import, or PDF for withholding certificate parsing."
+      },
+      "date": {
+        "type": "string",
+        "description": "Date (YYYY-MM-DD) or range (YYYY-MM-DD:YYYY-MM-DD) for TRM fetch or summary period."
+      },
+      "period": {
+        "type": "string",
+        "enum": [
+          "month",
+          "quarter",
+          "year",
+          "custom"
+        ],
+        "description": "Report period for summary mode."
+      },
+      "year": {
+        "type": "integer",
+        "description": "Tax year for projection (default: current year)."
+      },
+      "currency": {
+        "type": "string",
+        "enum": [
+          "COP",
+          "USD"
+        ],
+        "default": "COP",
+        "description": "Primary display currency."
+      },
+      "withholding": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Company or entity name."
+          },
+          "nit": {
+            "type": "string",
+            "description": "NIT of the withholding agent."
+          },
+          "tax_type": {
+            "type": "string",
+            "enum": [
+              "renta",
+              "ica",
+              "iva"
+            ]
+          },
+          "period": {
+            "type": "string",
+            "description": "Period covered (e.g., 2026-01, 2026-Q1, 2026)."
+          },
+          "base_amount": {
+            "type": "number"
+          },
+          "rate": {
+            "type": "number"
+          },
+          "withheld_amount": {
+            "type": "number"
+          }
+        },
+        "description": "Withholding certificate data for withholding mode."
+      },
+      "invoice": {
+        "type": "object",
+        "properties": {
+          "client_name": {
+            "type": "string"
+          },
+          "client_nit": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "number"
+                },
+                "unit_price": {
+                  "type": "number"
+                },
+                "iva_rate": {
+                  "type": "number",
+                  "default": 0.19
+                }
+              },
+              "required": [
+                "description",
+                "quantity",
+                "unit_price"
+              ]
+            }
+          }
+        },
+        "description": "Invoice data for invoice mode."
+      },
+      "dian_target": {
+        "type": "string",
+        "enum": [
+          "rut",
+          "withholdings",
+          "returns",
+          "invoices-received"
+        ],
+        "description": "What to extract from DIAN MUISCA for dian-scrape mode."
+      },
+      "limit": {
+        "type": "integer",
+        "default": 20,
+        "description": "Number of uncategorized transactions to show in categorize mode."
+      }
+    },
+    "required": [
+      "mode"
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "import"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "bank",
+            "file_path"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "withholding"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "anyOf": [
+            {
+              "required": [
+                "withholding"
+              ]
+            },
+            {
+              "required": [
+                "file_path"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "invoice"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "invoice"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "mode": {
+              "const": "dian-scrape"
+            }
+          },
+          "required": [
+            "mode"
+          ]
+        },
+        "then": {
+          "required": [
+            "dian_target"
+          ]
+        }
+      }
+    ]
+  }
+}

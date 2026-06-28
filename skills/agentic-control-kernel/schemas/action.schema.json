@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic Control Kernel — Action Schema",
+  "description": "Typed control directive (θ_t) emitted by the LLM agent. Not raw actuation — parameterizes deterministic controllers.",
+  "type": "object",
+  "required": ["directive_id", "timestamp", "directive_type"],
+  "properties": {
+    "directive_id": {
+      "type": "string",
+      "description": "Unique identifier for this control directive"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of directive emission"
+    },
+    "directive_type": {
+      "type": "string",
+      "enum": [
+        "setpoint_update",
+        "constraint_update",
+        "mode_switch",
+        "parameter_update",
+        "module_selection",
+        "experiment_request",
+        "model_update_trigger",
+        "plan_update"
+      ],
+      "description": "Type of control directive"
+    },
+    "target_controller": {
+      "type": "string",
+      "description": "Which controller module this directive targets"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Directive-specific payload (setpoints, parameters, etc.)",
+      "additionalProperties": true
+    },
+    "rationale": {
+      "type": "string",
+      "description": "LLM's reasoning for this directive (for audit/ledger)"
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["critical", "high", "normal", "low"],
+      "default": "normal",
+      "description": "Execution priority"
+    },
+    "requires_approval": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this directive needs human approval before execution"
+    },
+    "rollback_directive_id": {
+      "type": ["string", "null"],
+      "description": "Directive to execute if this one needs to be rolled back"
+    },
+    "budget_impact": {
+      "type": "object",
+      "description": "Estimated resource consumption",
+      "properties": {
+        "tokens": { "type": "integer" },
+        "compute_s": { "type": "number" },
+        "cost_usd": { "type": "number" }
+      }
+    }
+  }
+}

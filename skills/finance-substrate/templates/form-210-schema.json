@@ -1,0 +1,1196 @@
+{
+  "form": "210",
+  "description": "Declaracion de Renta y Complementario Personas Naturales y Asimiladas",
+  "wizard_steps": 15,
+  "navigation": {
+    "step_selector": "document.querySelectorAll('.step-counter')[N].click()",
+    "next_button": "Siguiente",
+    "note": "Field refs (data-ref) change between sessions — always snapshot before interacting"
+  },
+  "steps": [
+    {
+      "step": 1,
+      "title": "Datos del Declarante",
+      "description": "Pre-filled from RUT. Only gender and economic activity need filling.",
+      "casillas": [
+        {
+          "casilla": 286,
+          "label": "Genero",
+          "field_type": "combobox",
+          "editable": true,
+          "options": ["1 - Femenino", "2 - Masculino"],
+          "data_source": null,
+          "et_article": null,
+          "note": "Select from combobox. Not mapped to tax projection."
+        },
+        {
+          "casilla": 24,
+          "label": "Actividad economica principal",
+          "field_type": "combobox",
+          "editable": true,
+          "options": "CIIU codes — select matching code from RUT",
+          "data_source": null,
+          "et_article": null,
+          "note": "CIIU code must match RUT registration."
+        }
+      ]
+    },
+    {
+      "step": 2,
+      "title": "Deduccion Imputable sin limitantes",
+      "description": "E-invoice deduction and additional yes/no questions.",
+      "casillas": [
+        {
+          "casilla": 299,
+          "label": "Factura electronica de venta como soporte de costos y deducciones",
+          "field_type": "radio",
+          "editable": true,
+          "options": ["Si", "No"],
+          "data_source": "einvoices.count > 0 ? 'Si' : 'No'",
+          "et_article": "Art. 336 Num. 5, Ley 2277/2022",
+          "note": "Select Si if claiming e-invoice 1% deduction."
+        },
+        {
+          "casilla": 297,
+          "label": "Valor compras con factura electronica",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "einvoices.total_facturado",
+          "et_article": "Art. 336 Num. 5, Ley 2277/2022",
+          "note": "Total value of purchases supported by e-invoices."
+        },
+        {
+          "casilla": 28,
+          "label": "Deduccion 1% factura electronica",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 336 Num. 5, Ley 2277/2022",
+          "note": "Auto-calculated as 1% of casilla 297. Disabled field."
+        },
+        {
+          "casilla": 245,
+          "label": "Victima del conflicto armado",
+          "field_type": "radio",
+          "editable": true,
+          "options": ["Si", "No"],
+          "data_source": "default: 'No'",
+          "et_article": null,
+          "note": "Default No for most filers."
+        },
+        {
+          "casilla": 247,
+          "label": "Beneficiario convenio doble tributacion",
+          "field_type": "radio",
+          "editable": true,
+          "options": ["Si", "No"],
+          "data_source": "default: 'No'",
+          "et_article": null,
+          "note": "Default No unless claiming treaty benefits."
+        },
+        {
+          "casilla": 249,
+          "label": "Residente fiscal en Colombia",
+          "field_type": "radio",
+          "editable": true,
+          "options": ["Si", "No"],
+          "data_source": "default: 'No'",
+          "et_article": "Art. 10 ET",
+          "note": "Default No — pre-filled question."
+        },
+        {
+          "casilla": 251,
+          "label": "Obligado a llevar contabilidad",
+          "field_type": "radio",
+          "editable": true,
+          "options": ["Si", "No"],
+          "data_source": "default: 'No'",
+          "et_article": null,
+          "note": "Default No for persona natural not obligated."
+        }
+      ]
+    },
+    {
+      "step": 3,
+      "title": "Patrimonio",
+      "description": "Assets, liabilities, and net worth.",
+      "casillas": [
+        {
+          "casilla": 29,
+          "label": "Total patrimonio bruto",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.patrimonio.R29_patrimonio_bruto",
+          "et_article": "Arts. 261-278 ET",
+          "note": "Sum of all assets at Dec 31."
+        },
+        {
+          "casilla": 30,
+          "label": "Deudas",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.patrimonio.R30_deudas",
+          "et_article": "Arts. 283-286 ET",
+          "note": "Total liabilities at Dec 31. Not computed in current projection (defaults to 0)."
+        },
+        {
+          "casilla": 31,
+          "label": "Total patrimonio liquido",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.patrimonio.R31_patrimonio_liquido",
+          "et_article": "Art. 282 ET",
+          "note": "Auto-calculated: R29 - R30."
+        }
+      ]
+    },
+    {
+      "step": 4,
+      "title": "Rentas de trabajo (relacion laboral o legal y reglamentaria)",
+      "description": "Employment income — salary, wages, bonuses. Rows 32-42.",
+      "casillas": [
+        {
+          "casilla": 32,
+          "label": "Ingresos brutos por rentas de trabajo (Art. 103 ET)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_trabajo.R32_ingresos_brutos",
+          "et_article": "Art. 103 ET"
+        },
+        {
+          "casilla": 33,
+          "label": "Ingresos no constitutivos de renta",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_trabajo.R33_incr",
+          "et_article": "Arts. 55, 56 ET"
+        },
+        {
+          "casilla": 34,
+          "label": "Renta liquida",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_trabajo.R34_renta_liquida",
+          "et_article": null,
+          "note": "Auto-calculated: R32 - R33."
+        },
+        {
+          "casilla": 35,
+          "label": "Rentas exentas de trabajo - Aportes voluntarios AFC/FVP",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_trabajo.R35_aportes_afc",
+          "et_article": "Arts. 126-1, 126-4 ET"
+        },
+        {
+          "casilla": 36,
+          "label": "Otras rentas exentas de trabajo",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_trabajo.R36_otras_rentas_exentas",
+          "et_article": "Art. 206 Num. 10 ET (Ley 2277/2022 Art. 2)"
+        },
+        {
+          "casilla": 37,
+          "label": "Total rentas exentas de trabajo",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_trabajo.R37_total_rentas_exentas",
+          "et_article": null,
+          "note": "Auto-calculated: R35 + R36."
+        },
+        {
+          "casilla": 38,
+          "label": "Deducciones - Intereses de vivienda",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_trabajo.R38_intereses_vivienda",
+          "et_article": "Art. 119 ET"
+        },
+        {
+          "casilla": 39,
+          "label": "Otras deducciones imputables a rentas de trabajo",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_trabajo.R39_otras_deducciones",
+          "et_article": "Arts. 115, 336 Num. 5, 387 ET"
+        },
+        {
+          "casilla": 40,
+          "label": "Total deducciones imputables a rentas de trabajo",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_trabajo.R40_total_deducciones",
+          "et_article": null,
+          "note": "Auto-calculated: R38 + R39."
+        },
+        {
+          "casilla": 41,
+          "label": "Rentas exentas y/o deducciones imputables (limitadas)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_trabajo.R41_exentas_deduc_limitadas",
+          "et_article": "Art. 336 Num. 3 ET (Ley 2277/2022 Art. 7)",
+          "note": "Auto-calculated: min(R37+R40, 40% of R34, 1340 UVT)."
+        },
+        {
+          "casilla": 42,
+          "label": "Renta liquida ordinaria de trabajo",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_trabajo.R42_renta_liq_ordinaria",
+          "et_article": null,
+          "note": "Auto-calculated: R34 - R41."
+        }
+      ]
+    },
+    {
+      "step": 5,
+      "title": "Rentas de trabajo no provenientes de una relacion laboral",
+      "description": "Independent/freelance labor income. Rows 43-57.",
+      "casillas": [
+        {
+          "casilla": 43,
+          "label": "Ingresos brutos rentas de trabajo independiente",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 103 ET",
+          "note": "For independent contractors. Not populated in current projection (salary goes to R32)."
+        },
+        {
+          "casilla": 44,
+          "label": "Devoluciones, rebajas y descuentos",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 45,
+          "label": "Ingresos no constitutivos de renta",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 55, 56 ET"
+        },
+        {
+          "casilla": 46,
+          "label": "Costos y gastos procedentes",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 107 ET"
+        },
+        {
+          "casilla": 47,
+          "label": "Renta liquida",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated."
+        },
+        {
+          "casilla": 48,
+          "label": "Rentas exentas de trabajo - Aportes AFC/FVP",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 126-1, 126-4 ET"
+        },
+        {
+          "casilla": 49,
+          "label": "Otras rentas exentas de trabajo independiente",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 206 ET"
+        },
+        {
+          "casilla": 50,
+          "label": "Total rentas exentas de trabajo independiente",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated: R48 + R49."
+        },
+        {
+          "casilla": 51,
+          "label": "Deducciones - Intereses de vivienda",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 119 ET"
+        },
+        {
+          "casilla": 52,
+          "label": "Otras deducciones",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 53,
+          "label": "Total deducciones",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated: R51 + R52."
+        },
+        {
+          "casilla": 54,
+          "label": "Rentas exentas y/o deducciones (limitadas)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 336 Num. 3 ET"
+        },
+        {
+          "casilla": 55,
+          "label": "Renta liquida ordinaria de trabajo independiente",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated."
+        },
+        {
+          "casilla": 56,
+          "label": "Renta liquida gravable de trabajo independiente",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 57,
+          "label": "Renta presuntiva de trabajo",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        }
+      ]
+    },
+    {
+      "step": 6,
+      "title": "Rentas de capital",
+      "description": "Capital income: interest, financial returns, pension withdrawals. Rows 58-73.",
+      "casillas": [
+        {
+          "casilla": 58,
+          "label": "Ingresos brutos rentas de capital",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_capital.R58_ingresos_brutos",
+          "et_article": "Arts. 38, 40-1, 41 ET"
+        },
+        {
+          "casilla": 59,
+          "label": "Ingresos no constitutivos de renta (capital)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.rentas_capital.R59_incr",
+          "et_article": "Decreto 771/2025 (componente inflacionario 50.88%)"
+        },
+        {
+          "casilla": 60,
+          "label": "Costos y gastos procedentes (capital)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 107 ET",
+          "note": "Not populated in current projection."
+        },
+        {
+          "casilla": 61,
+          "label": "Renta liquida de capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_capital.R61_renta_liquida",
+          "et_article": null,
+          "note": "Auto-calculated: R58 - R59 - R60."
+        },
+        {
+          "casilla": 62,
+          "label": "Rentas exentas de capital - Aportes AFC/FVP",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 126-1, 126-4 ET"
+        },
+        {
+          "casilla": 63,
+          "label": "Otras rentas exentas de capital",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 64,
+          "label": "Total rentas exentas de capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated: R62 + R63."
+        },
+        {
+          "casilla": 65,
+          "label": "Deducciones - Intereses de vivienda (capital)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 119 ET"
+        },
+        {
+          "casilla": 66,
+          "label": "Otras deducciones (capital)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 67,
+          "label": "Total deducciones de capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated: R65 + R66."
+        },
+        {
+          "casilla": 68,
+          "label": "Rentas exentas y/o deducciones (limitadas) capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 336 Num. 3 ET"
+        },
+        {
+          "casilla": 69,
+          "label": "Renta liquida ordinaria de capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 70,
+          "label": "Renta presuntiva de capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 71,
+          "label": "Renta liquida gravable de capital",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 72,
+          "label": "Compensaciones por perdidas de capital",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 147 ET"
+        },
+        {
+          "casilla": 73,
+          "label": "Renta liquida gravable de capital (final)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.rentas_capital.R73_renta_gravable",
+          "et_article": null,
+          "note": "Auto-calculated."
+        }
+      ]
+    },
+    {
+      "step": 7,
+      "title": "Rentas no laborales",
+      "description": "Non-labor income: business, freelance, other. Rows 74-90.",
+      "casillas": [
+        {
+          "casilla": 74,
+          "label": "Ingresos brutos rentas no laborales",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 340 ET",
+          "note": "Not populated in current projection."
+        },
+        {
+          "casilla": 75,
+          "label": "Devoluciones, rebajas y descuentos",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 76,
+          "label": "Ingresos no constitutivos de renta",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 77,
+          "label": "Costos y gastos procedentes (no laborales)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 107 ET"
+        },
+        {
+          "casilla": 78,
+          "label": "Renta liquida no laboral",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated."
+        },
+        {
+          "casilla": 79,
+          "label": "Rentas exentas no laborales - Aportes AFC/FVP",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 126-1, 126-4 ET"
+        },
+        {
+          "casilla": 80,
+          "label": "Otras rentas exentas no laborales",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 81,
+          "label": "Total rentas exentas no laborales",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated: R79 + R80."
+        },
+        {
+          "casilla": 82,
+          "label": "Deducciones - Intereses de vivienda (no laboral)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 119 ET"
+        },
+        {
+          "casilla": 83,
+          "label": "Otras deducciones (no laborales)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 84,
+          "label": "Total deducciones no laborales",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated: R82 + R83."
+        },
+        {
+          "casilla": 85,
+          "label": "Rentas exentas y/o deducciones (limitadas) no laborales",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 336 Num. 3 ET"
+        },
+        {
+          "casilla": 86,
+          "label": "Renta liquida ordinaria no laboral",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 87,
+          "label": "Renta presuntiva no laboral",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 88,
+          "label": "Renta liquida gravable no laboral",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 89,
+          "label": "Compensaciones por perdidas no laborales",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 147 ET"
+        },
+        {
+          "casilla": 90,
+          "label": "Renta liquida gravable no laboral (final)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated."
+        }
+      ]
+    },
+    {
+      "step": 8,
+      "title": "Cedula general",
+      "description": "Aggregation of work + capital + non-labor. Rows 91-97.",
+      "casillas": [
+        {
+          "casilla": 91,
+          "label": "Renta liquida cedula general (trabajo + capital + no laboral)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.cedula_general.R91_renta_liquida",
+          "et_article": "Art. 335 ET",
+          "note": "Auto-calculated: R42 + R55 + R69 + R86."
+        },
+        {
+          "casilla": 92,
+          "label": "Rentas exentas y deducciones imputables limitadas (cedula general)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.cedula_general.R92_exentas_ded_limitadas",
+          "et_article": "Art. 336 Num. 3 ET",
+          "note": "Auto-calculated."
+        },
+        {
+          "casilla": 93,
+          "label": "Renta liquida gravable cedula general",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.cedula_general.R93_renta_grav_cedula_gen",
+          "et_article": null,
+          "note": "Auto-calculated: R91 - R92."
+        },
+        {
+          "casilla": 94,
+          "label": "Renta presuntiva cedula general",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 188 ET",
+          "note": "Auto-calculated. 0% for AG 2021+ (Art. 90 Ley 2010/2019)."
+        },
+        {
+          "casilla": 95,
+          "label": "Compensaciones por exceso de renta presuntiva",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 189 ET"
+        },
+        {
+          "casilla": 96,
+          "label": "Compensaciones por perdidas de ejercicios anteriores",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 147 ET"
+        },
+        {
+          "casilla": 97,
+          "label": "Renta liquida gravable (final cedula general)",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.cedula_general.R97_renta_grav",
+          "et_article": null,
+          "note": "Auto-calculated: max(R93, R94) - R95 - R96."
+        }
+      ]
+    },
+    {
+      "step": 9,
+      "title": "Cedula de pensiones",
+      "description": "Pension income. Rows 99-103.",
+      "casillas": [
+        {
+          "casilla": 99,
+          "label": "Ingresos brutos por pensiones del pais",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 337 ET",
+          "note": "Not populated — N/A for active workers."
+        },
+        {
+          "casilla": 100,
+          "label": "Ingresos brutos por pensiones del exterior",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 101,
+          "label": "Ingresos no constitutivos de renta (pensiones)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 102,
+          "label": "Rentas exentas de pensiones",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 206 Num. 5 ET",
+          "note": "12,000 UVT annual exemption for pensions."
+        },
+        {
+          "casilla": 103,
+          "label": "Renta liquida gravable cedula de pensiones",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated."
+        }
+      ]
+    },
+    {
+      "step": 10,
+      "title": "Dividendos y participaciones",
+      "description": "Dividend income. Rows 104-120.",
+      "casillas": [
+        {
+          "casilla": 104,
+          "label": "Dividendos y participaciones 2016 y anteriores y capitulo XII del Libro I del ET",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 48, 49 ET"
+        },
+        {
+          "casilla": 105,
+          "label": "Ingresos no constitutivos de renta (dividendos pre-2017)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 106,
+          "label": "Renta liquida ordinaria dividendos pre-2017",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 107,
+          "label": "1a subcedula dividendos anio 2017 y siguientes numeral 3 Art. 49 ET",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 49 Num. 3 ET"
+        },
+        {
+          "casilla": 108,
+          "label": "1a subcedula dividendos - INCR",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 109,
+          "label": "1a subcedula dividendos renta liquida",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 110,
+          "label": "2a subcedula dividendos anio 2017 y siguientes paragrafo 2 Art. 49 ET",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 49 Par. 2 ET"
+        },
+        {
+          "casilla": 111,
+          "label": "2a subcedula dividendos - INCR",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 112,
+          "label": "2a subcedula dividendos renta liquida",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 113,
+          "label": "Rentas exentas de la casilla 109 y/o 112",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 114,
+          "label": "Renta liquida pasiva dividendos - ECE (filiales)",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 882-893 ET"
+        },
+        {
+          "casilla": 115,
+          "label": "Rentas exentas ECE dividendos",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 116,
+          "label": "Renta liquida gravable 1a subcedula dividendos",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 117,
+          "label": "Renta liquida gravable 2a subcedula dividendos",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 118,
+          "label": "Dividendos recibidos del exterior",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 119,
+          "label": "Dividendos exterior - INCR",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 120,
+          "label": "Renta liquida gravable dividendos exterior",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        }
+      ]
+    },
+    {
+      "step": 11,
+      "title": "Liquidacion privada",
+      "description": "Tax calculation. Rows 121-133.",
+      "casillas": [
+        {
+          "casilla": 121,
+          "label": "Impuesto sobre las rentas liquidas gravables",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R121_impuesto_rentas",
+          "et_article": "Art. 241 ET",
+          "note": "Auto-calculated from brackets."
+        },
+        {
+          "casilla": 122,
+          "label": "Impuesto sobre dividendos 1a subcedula",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 242 ET"
+        },
+        {
+          "casilla": 123,
+          "label": "Impuesto sobre dividendos 2a subcedula",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 124,
+          "label": "Total impuesto sobre dividendos",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 125,
+          "label": "Impuesto sobre renta gravable dividendos exterior",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 126,
+          "label": "Impuesto neto de renta",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R126_impuesto_neto",
+          "et_article": null,
+          "note": "Auto-calculated: R121 + R124 + R125 - descuentos."
+        },
+        {
+          "casilla": 127,
+          "label": "Impuesto de ganancias ocasionales",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": "Art. 313 ET"
+        },
+        {
+          "casilla": 128,
+          "label": "Descuentos tributarios",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 254-259 ET",
+          "note": "Tax credits (impuestos pagados en el exterior, etc.)."
+        },
+        {
+          "casilla": 129,
+          "label": "Total impuesto a cargo",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R129_total_impuesto_cargo",
+          "et_article": null,
+          "note": "Auto-calculated: R126 + R127 - R128."
+        },
+        {
+          "casilla": 130,
+          "label": "Anticipo renta liquidado anio gravable anterior",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.impuesto.R130_anticipo_anterior",
+          "et_article": "Arts. 807-811 ET"
+        },
+        {
+          "casilla": 131,
+          "label": "Saldo a favor del anio gravable anterior sin solicitud de devolucion o compensacion",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 132,
+          "label": "Retenciones anio gravable a declarar",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.impuesto.R132_retenciones",
+          "et_article": "Art. 373 ET"
+        },
+        {
+          "casilla": 133,
+          "label": "Anticipo renta para el anio gravable siguiente",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R133_anticipo_siguiente",
+          "et_article": "Arts. 807-811 ET",
+          "note": "Auto-calculated: max(0, 75% of R126 - R132)."
+        }
+      ]
+    },
+    {
+      "step": 12,
+      "title": "Ganancias ocasionales",
+      "description": "Occasional gains: lottery, inheritance, asset sales. Rows 112-115 (renumbered in some versions).",
+      "casillas": [
+        {
+          "casilla": 150,
+          "label": "Ingresos por ganancias ocasionales del pais y del exterior",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Arts. 299-317 ET",
+          "note": "Not populated in current projection."
+        },
+        {
+          "casilla": 151,
+          "label": "Costos por ganancias ocasionales",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 152,
+          "label": "Ganancias ocasionales no gravadas y exentas",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 307 ET"
+        },
+        {
+          "casilla": 153,
+          "label": "Ganancias ocasionales gravables",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null,
+          "note": "Auto-calculated."
+        }
+      ]
+    },
+    {
+      "step": 13,
+      "title": "Anticipo y saldo a favor",
+      "description": "Advance payment and prior balance. Rows 130, 133.",
+      "casillas": [
+        {
+          "casilla": 130,
+          "label": "Anticipo renta liquidado anio gravable anterior",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": "form_210.impuesto.R130_anticipo_anterior",
+          "et_article": "Arts. 807-811 ET",
+          "note": "Also appears in Step 11. May be pre-filled from prior declaration."
+        },
+        {
+          "casilla": 133,
+          "label": "Anticipo renta para el anio gravable siguiente",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R133_anticipo_siguiente",
+          "et_article": "Arts. 807-811 ET",
+          "note": "Auto-calculated."
+        }
+      ]
+    },
+    {
+      "step": 14,
+      "title": "Saldo a pagar o a favor",
+      "description": "Final balance: pay or refund. Rows 134-141.",
+      "casillas": [
+        {
+          "casilla": 134,
+          "label": "Saldo a pagar por impuesto",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R134_saldo_pagar",
+          "et_article": null,
+          "note": "Auto-calculated: R129 + R133 - R130 - R131 - R132."
+        },
+        {
+          "casilla": 135,
+          "label": "Sanciones",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": "Art. 641 ET",
+          "note": "Sanctions for late filing, etc. Usually 0."
+        },
+        {
+          "casilla": 136,
+          "label": "Total saldo a pagar",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R136_total_saldo_pagar",
+          "et_article": null,
+          "note": "Auto-calculated: R134 + R135."
+        },
+        {
+          "casilla": 137,
+          "label": "Total saldo a favor",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": "form_210.impuesto.R137_total_saldo_favor",
+          "et_article": null,
+          "note": "Auto-calculated. Shown if R134 is negative."
+        },
+        {
+          "casilla": 138,
+          "label": "Valor pago primera cuota",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null,
+          "note": "First installment if paying in cuotas."
+        },
+        {
+          "casilla": 139,
+          "label": "Valor pago segunda cuota",
+          "field_type": "textbox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null,
+          "note": "Second installment."
+        },
+        {
+          "casilla": 140,
+          "label": "Valor total pago",
+          "field_type": "textbox",
+          "editable": false,
+          "data_source": null,
+          "et_article": null
+        },
+        {
+          "casilla": 141,
+          "label": "Codigo forma de pago",
+          "field_type": "combobox",
+          "editable": true,
+          "data_source": null,
+          "et_article": null,
+          "note": "1=Efectivo, 2=Tarjeta credito."
+        }
+      ]
+    },
+    {
+      "step": 15,
+      "title": "Firmar y presentar",
+      "description": "Review, sign, and submit the declaration.",
+      "casillas": [],
+      "note": "Final review step. No casillas to fill — user reviews and submits."
+    }
+  ]
+}

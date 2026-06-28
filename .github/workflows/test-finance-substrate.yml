@@ -1,0 +1,44 @@
+name: test-finance-substrate
+
+# Regression gate for the `finance-substrate` skill (skills/finance-substrate/).
+# Path-filtered: runs ONLY when skills/finance-substrate/** changes. The skill is a
+# zero-paid-dep script collection; test_runtime_guard.py asserts every entrypoint
+# carries the Python 3.10 version guard. Recovers the CI coverage the standalone
+# broomva/finance-substrate repo had (see research/entities/tool/skills-sh.md).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/finance-substrate/**'
+      - '.github/workflows/test-finance-substrate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/finance-substrate/**'
+      - '.github/workflows/test-finance-substrate.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-finance-substrate-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/finance-substrate
+
+jobs:
+  test:
+    name: runtime-guard regression (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Runtime-guard regression
+        run: python3 scripts/test_runtime_guard.py

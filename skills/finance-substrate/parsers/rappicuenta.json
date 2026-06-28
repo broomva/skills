@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "rappicuenta",
+    "name": "RAPPIPAY (RAPPICUENTA)",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["RAPPICUENTA", "RAPPIPAY"],
+    "reject_any": ["RAPPICARD"],
+    "case_sensitive": false
+  },
+  "priority": 11,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "cuenta",
+      "label": "Savings account",
+      "anchor": {
+        "pattern": "Cuenta ahorros",
+        "type": "string_find"
+      },
+      "fields": [
+        { "key": "saldo", "method": "label_then_amount", "label": "Cuenta ahorros" },
+        { "key": "rendimientos", "method": "regex", "pattern": "Rendimientos\\nfinancieros[^$]*\\$([\\d.,]+)", "group": 1, "scope": "full_text", "flags": "DOTALL" },
+        { "key": "rendimientos_no_gravables", "method": "regex", "pattern": "no\\ngravados\\*?\\s*\\$([\\d.,]+)", "group": 1, "scope": "full_text" },
+        { "key": "gmf", "method": "regex", "pattern": "GMF\\*{0,2}\\s*\\$([\\d.,]+)", "group": 1, "scope": "full_text" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "patrimonio_cuenta": "sections.cuenta.saldo",
+    "rendimientos_gravados": "sections.cuenta.rendimientos - sections.cuenta.rendimientos_no_gravables",
+    "rendimientos_no_gravados": "sections.cuenta.rendimientos_no_gravables",
+    "gmf_total": "sections.cuenta.gmf",
+    "gmf_deducible_50pct": "sections.cuenta.gmf * 0.50"
+  }
+}

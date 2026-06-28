@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "colmedica",
+    "name": "COLMEDICA MEDICINA PREPAGADA",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["COLMÉDICA", "COLMEDICA"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 50,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "prepagada",
+      "label": "Prepaid health insurance value",
+      "fields": [
+        { "key": "valor", "method": "regex", "pattern": "TITULAR\\s*\\n?([\\d.,]+)", "group": 1 }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "medicina_prepagada_deduccion_r39": "sections.prepagada.valor"
+  }
+}

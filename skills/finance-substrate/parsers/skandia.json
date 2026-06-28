@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "skandia",
+    "name": "SKANDIA",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["SKANDIA"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 40,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "pension_obligatoria",
+      "label": "Mandatory pension (may have multiple fund sections)",
+      "fields": [
+        { "key": "aportes_independientes", "method": "sum_all_regex_matches", "pattern": "Obligatorios independientes\\s*\\n([\\d.,]+)", "group": 1, "scope": "full_text" },
+        { "key": "fondo_solidaridad", "method": "sum_all_regex_matches", "pattern": "Fondo de Solidaridad Pensional\\s*\\n([\\d.,]+)", "group": 1, "scope": "full_text" }
+      ]
+    },
+    {
+      "id": "voluntaria",
+      "label": "Voluntary pension (Multifund or similar)",
+      "anchor": {
+        "pattern": "Fondo Voluntario de Pensi",
+        "type": "string_find"
+      },
+      "fields": [
+        { "key": "aportes_con_retencion", "method": "line_after_label", "label": "Aportes realizados durante el año con retención contingente" },
+        { "key": "aportes_sin_retencion", "method": "line_after_label", "label": "Aportes realizados durante el año sin retención contingente" },
+        { "key": "valorizacion", "method": "line_after_label", "label": "Valorización de aportes" },
+        { "key": "retiro_aportes_contingente", "method": "regex", "pattern": "Retiro de aportes efectuados con retención contingente\\s*\\n([\\d.,]+)", "group": 1 },
+        { "key": "retiro_rendimientos", "method": "regex", "pattern": "Retiro de rendimientos sin cumplimiento.*?\\n([\\d.,]+)", "group": 1 },
+        { "key": "retencion_contingente", "method": "line_after_label", "label": "Retención contingente practicada" },
+        { "key": "retencion_rendimientos", "method": "regex", "pattern": "Retención.*?sobre rendimientos\\s*\\n([\\d.,]+)", "group": 1 },
+        { "key": "saldo_fin", "method": "regex", "pattern": "Saldo a diciembre 31 de {year}\\s*\\n([\\d.,]+)", "group": 1 }
+      ]
+    },
+    {
+      "id": "cesantias",
+      "label": "Severance fund (cesantías)",
+      "anchor": {
+        "pattern": "Fondo de Cesant",
+        "type": "string_find"
+      },
+      "fields": [
+        { "key": "saldo", "method": "regex", "pattern": "2017 en adelante.*?\\n([\\d.,]+)", "group": 1 },
+        { "key": "rendimientos", "method": "line_after_label", "label": "Rendimientos causados durante el año" }
+      ]
+    }
+  ],
+  "computed_fields": [
+    { "key": "pension_oblig_total", "expression": "sections.pension_obligatoria.aportes_independientes + sections.pension_obligatoria.fondo_solidaridad" },
+    { "key": "retencion_total", "expression": "sections.voluntaria.retencion_contingente + sections.voluntaria.retencion_rendimientos" }
+  ],
+  "tax_summary_mapping": {
+    "pension_oblig_plus_fsp": "computed.pension_oblig_total",
+    "pension_voluntaria_aportes": "sections.voluntaria.aportes_con_retencion",
+    "retencion_total": "computed.retencion_total",
+    "retiro_aportes_capital_r58": "sections.voluntaria.retiro_aportes_contingente",
+    "retiro_rendimientos_capital_r58": "sections.voluntaria.retiro_rendimientos",
+    "patrimonio_cesantias": "sections.cesantias.saldo",
+    "patrimonio_voluntaria": "sections.voluntaria.saldo_fin",
+    "rendimientos_cesantias": "sections.cesantias.rendimientos",
+    "rendimientos_voluntaria": "sections.voluntaria.valorizacion"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "rappicard",
+    "name": "RAPPICARD",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["RAPPICARD"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 10,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "tarjeta",
+      "label": "Credit card data (values after Totales row)",
+      "anchor": {
+        "pattern": "Totales\\n",
+        "type": "regex"
+      },
+      "fields": [
+        { "key": "saldo", "method": "dollar_amounts_after_anchor", "index": 0 },
+        { "key": "pagos", "method": "dollar_amounts_after_anchor", "index": 1 },
+        { "key": "intereses", "method": "dollar_amounts_after_anchor", "index": 2 },
+        { "key": "gmf", "method": "dollar_amounts_after_anchor", "index": 3 },
+        { "key": "consumos", "method": "dollar_amounts_after_anchor", "index": 4 }
+      ]
+    },
+    {
+      "id": "cashback",
+      "label": "Cashback redemption",
+      "fields": [
+        { "key": "valor", "method": "regex", "pattern": "\\$([\\d.,]+)\\s*\\n.*?[Cc]ashback", "group": 1, "scope": "full_text", "flags": "DOTALL" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "deuda_patrimonio": "sections.tarjeta.saldo",
+    "gmf_total": "sections.tarjeta.gmf",
+    "gmf_deducible_50pct": "sections.tarjeta.gmf * 0.50"
+  }
+}

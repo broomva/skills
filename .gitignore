@@ -6,3 +6,7 @@ dist/
 # bstack control-gate audit trail — written relative to cwd by the PreToolUse
 # hook when an agent runs commands inside this repo; never part of the repo.
 .control/
+
+# Python bytecode (never vendor compiled artifacts)
+__pycache__/
+*.pyc
