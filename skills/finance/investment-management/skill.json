@@ -1,7 +1,7 @@
 {
   "name": "investment-management",
   "version": "0.1.0",
-  "description": "Investment portfolio management — screen securities, run factor models, backtest strategies, optimize allocations, manage risk, execute trades (paper by default), track holdings, and rebalance. Supports Colombian and US markets with COP/USD dual currency.",
+  "description": "Investment portfolio management \u2014 screen securities, run factor models, backtest strategies, optimize allocations, manage risk, execute trades (paper by default), track holdings, and rebalance. Supports Colombian and US markets with COP/USD dual currency.",
   "entrypoint": "scripts/screener.py",
   "inputs_schema": {
     "type": "object",
@@ -11,18 +11,11 @@
         "type": "string",
         "enum": [
           "screen",
-          "research",
-          "factor",
           "backtest",
-          "optimize",
-          "risk",
-          "trade",
-          "track",
-          "rebalance",
           "data",
           "score"
         ],
-        "description": "Skill mode: screen (filter universe by criteria), research (deep-dive single security), factor (multi-factor model analysis), backtest (historical strategy simulation), optimize (portfolio optimization), risk (VaR/CVaR/drawdown analysis), trade (execute or paper-trade orders), track (monitor holdings & P&L), rebalance (drift detection & correction), data (fetch/refresh market data), score (composite investment scoring)."
+        "description": "Skill mode: screen (filter universe by criteria), research (deep-dive single security), factor (multi-factor model analysis), backtest (historical strategy simulation), optimize (portfolio optimization), risk (VaR/CVaR/drawdown analysis), trade (execute or paper-trade orders), track (monitor holdings & P&L), rebalance (drift detection & correction), data (fetch/refresh market data), score (composite investment scoring). \u2014 only shipped modes are selectable. Planned modes (research, factor, optimize, risk, trade, track, rebalance) are roadmap stubs documented in SKILL.md; do not invoke."
       },
       "universe": {
         "type": "string",
