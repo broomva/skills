@@ -104,7 +104,6 @@ npx skills add broomva/skills --skill '*'
 | [`openrocket-sim`](skills/openrocket-sim/) | `skills/openrocket-sim/SKILL.md` | Headless rocket design, simulation, and EGRI optimization using OpenRocket |
 | [`sdr-satellite`](skills/sdr-satellite/) | `skills/sdr-satellite/SKILL.md` | Software-defined radio + satellite reception toolkit — what to install, what you can hear, how to compose the stack |
 | [`ocean-genomics`](skills/ocean-genomics/) | `skills/ocean-genomics/SKILL.md` | Deep-ocean genomics research — eDNA metabarcoding, AlphaFold, ESMFold, Evo 2, marine biodiversity, agentic bioinformatics workflows |
-| [`microgrid-agent`](skills/microgrid-agent/) | `skills/microgrid-agent/SKILL.md` | Open-source edge AI agent for autonomous renewable energy microgrid management on Raspberry Pi |
 | [`bitnet`](skills/bitnet/) | `skills/bitnet/SKILL.md` | Microsoft BitNet — 1-bit LLM setup, model download, inference, and benchmarking on CPU |
 
 ### Compute & remote infrastructure

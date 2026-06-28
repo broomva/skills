@@ -124,6 +124,26 @@ def lint_skill(skill_dir: Path) -> list[str]:
     return [f"{name}: {e}" for e in errors]
 
 
+def _iter_skill_dirs() -> list[Path]:
+    """Every directory under skills/ that holds a SKILL.md, at any depth.
+
+    Mirrors the md-linter's nested traversal (skills/<name>/ and
+    skills/<name>/skills/<sub>/) and is forward-compatible with category
+    buckets (skills/<category>/<name>/). The `extensions/` carve-out is
+    excluded to match lint-skill-md.yml, which does not lint private
+    extensions. Keying on rglob("SKILL.md") rather than top-level iterdir()
+    closes the gap where nested versioned sub-skills (and, post-bucketing,
+    EVERY skill) escaped the SemVer + CHANGELOG check.
+    """
+    dirs: list[Path] = []
+    for skill_md in sorted(_SKILLS_DIR.rglob("SKILL.md")):
+        rel = skill_md.relative_to(_SKILLS_DIR)
+        if "extensions" in rel.parts:
+            continue
+        dirs.append(skill_md.parent)
+    return dirs
+
+
 def main() -> int:
     if not _SKILLS_DIR.is_dir():
         print(f"no skills/ dir at {_SKILLS_DIR}", file=sys.stderr)
@@ -131,9 +151,9 @@ def main() -> int:
 
     all_errors: list[str] = []
     versioned = 0
-    for skill_dir in sorted(p for p in _SKILLS_DIR.iterdir() if p.is_dir()):
+    for skill_dir in _iter_skill_dirs():
         skill_md = skill_dir / "SKILL.md"
-        if skill_md.exists() and _skill_version(_frontmatter(skill_md)) is not None:
+        if _skill_version(_frontmatter(skill_md)) is not None:
             versioned += 1
         all_errors.extend(lint_skill(skill_dir))
 
