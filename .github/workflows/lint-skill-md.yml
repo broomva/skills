@@ -44,17 +44,21 @@ jobs:
           MAX_NAME = 64
 
           errors = []
-          # Lint only the canonical discoverable-skill paths:
-          #   - skills/<name>/SKILL.md          (top-level Tier-2 skills)
-          #   - skills/<x>/skills/<sub>/SKILL.md (nested-sub-skill idiom, e.g. content-engine)
-          # Internal artifacts like skills/<x>/extensions/<y>/SKILL.md are excluded —
+          # Discover every SKILL.md under skills/ at ANY depth, so the linter
+          # covers all canonical discoverable-skill layouts uniformly:
+          #   - skills/<category>/<name>/SKILL.md      (category-bucketed skills, depth-2)
+          #   - skills/<category>/<name>/skills/<sub>/  (nested-sub-skill idiom, e.g. content-engine)
+          #   - skills/<name>/SKILL.md                  (legacy flat / single-file)
+          # Internal artifacts like .../extensions/<y>/SKILL.md are excluded —
           # they're skill-private extensions, not independently-installable skills.
+          # (Keying on rglob rather than fixed-depth globs is what makes the
+          # category-bucket layout — skills/<category>/<name>/ — lintable.)
           skill_mds = sorted(
-              list(Path("skills").glob("*/SKILL.md")) +
-              list(Path("skills").glob("*/skills/*/SKILL.md"))
+              p for p in Path("skills").rglob("SKILL.md")
+              if "extensions" not in p.relative_to("skills").parts
           )
           if not skill_mds:
-              print("ERROR: no skills/*/SKILL.md found")
+              print("ERROR: no SKILL.md found under skills/")
               sys.exit(1)
 
           print(f"linting {len(skill_mds)} SKILL.md files\n")

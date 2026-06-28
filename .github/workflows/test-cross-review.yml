@@ -1,19 +1,19 @@
 name: test-cross-review
 
-# Bash smoke-test gate for the `cross-review` skill (skills/cross-review/).
-# Path-filtered: runs ONLY when skills/cross-review/** changes. Recovers the CI
+# Bash smoke-test gate for the `cross-review` skill (skills/governance/cross-review/).
+# Path-filtered: runs ONLY when skills/governance/cross-review/** changes. Recovers the CI
 # coverage the standalone broomva/cross-review repo had, since migration drops
 # the per-skill .github/ dir (see research/entities/tool/skills-sh.md).
 
 on:
   pull_request:
     paths:
-      - 'skills/cross-review/**'
+      - 'skills/governance/cross-review/**'
       - '.github/workflows/test-cross-review.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/cross-review/**'
+      - 'skills/governance/cross-review/**'
       - '.github/workflows/test-cross-review.yml'
   workflow_dispatch:
 
@@ -23,7 +23,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/cross-review
+    working-directory: skills/governance/cross-review
 
 jobs:
   test:

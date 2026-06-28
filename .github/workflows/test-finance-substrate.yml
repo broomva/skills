@@ -1,7 +1,7 @@
 name: test-finance-substrate
 
-# Regression gate for the `finance-substrate` skill (skills/finance-substrate/).
-# Path-filtered: runs ONLY when skills/finance-substrate/** changes. The skill is a
+# Regression gate for the `finance-substrate` skill (skills/finance/finance-substrate/).
+# Path-filtered: runs ONLY when skills/finance/finance-substrate/** changes. The skill is a
 # zero-paid-dep script collection; test_runtime_guard.py asserts every entrypoint
 # carries the Python 3.10 version guard. Recovers the CI coverage the standalone
 # broomva/finance-substrate repo had (see research/entities/tool/skills-sh.md).
@@ -9,12 +9,12 @@ name: test-finance-substrate
 on:
   pull_request:
     paths:
-      - 'skills/finance-substrate/**'
+      - 'skills/finance/finance-substrate/**'
       - '.github/workflows/test-finance-substrate.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/finance-substrate/**'
+      - 'skills/finance/finance-substrate/**'
       - '.github/workflows/test-finance-substrate.yml'
   workflow_dispatch:
 
@@ -24,7 +24,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/finance-substrate
+    working-directory: skills/finance/finance-substrate
 
 jobs:
   test:

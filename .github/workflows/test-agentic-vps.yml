@@ -1,18 +1,18 @@
 name: test-agentic-vps
 
-# Python + shell test gate for the `agentic-vps` skill (skills/agentic-vps/).
-# Path-filtered so it runs ONLY when skills/agentic-vps/** changes — the
+# Python + shell test gate for the `agentic-vps` skill (skills/compute/agentic-vps/).
+# Path-filtered so it runs ONLY when skills/compute/agentic-vps/** changes — the
 # monorepo's tests-optional default (lint-skill-md.yml) stands everywhere else.
 
 on:
   pull_request:
     paths:
-      - 'skills/agentic-vps/**'
+      - 'skills/compute/agentic-vps/**'
       - '.github/workflows/test-agentic-vps.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/agentic-vps/**'
+      - 'skills/compute/agentic-vps/**'
       - '.github/workflows/test-agentic-vps.yml'
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/agentic-vps
+    working-directory: skills/compute/agentic-vps
 
 jobs:
   test:

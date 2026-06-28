@@ -1,7 +1,7 @@
 name: test-skillify
 
-# Python test gate for the `skillify` skill (skills/skillify/). Path-filtered so
-# it runs ONLY when skills/skillify/** changes — the monorepo's tests-optional
+# Python test gate for the `skillify` skill (skills/tooling/skillify/). Path-filtered so
+# it runs ONLY when skills/tooling/skillify/** changes — the monorepo's tests-optional
 # default (lint-skill-md.yml) stands everywhere else. Recovers the CI coverage
 # the standalone broomva/skillify repo had, since `bstack skills graduate` drops
 # the per-skill .github/ dir on migration (see research/entities/tool/skills-sh.md).
@@ -9,12 +9,12 @@ name: test-skillify
 on:
   pull_request:
     paths:
-      - 'skills/skillify/**'
+      - 'skills/tooling/skillify/**'
       - '.github/workflows/test-skillify.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/skillify/**'
+      - 'skills/tooling/skillify/**'
       - '.github/workflows/test-skillify.yml'
   workflow_dispatch:
 
@@ -24,7 +24,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/skillify
+    working-directory: skills/tooling/skillify
 
 jobs:
   test:

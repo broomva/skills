@@ -4,16 +4,16 @@ on:
   push:
     branches: [main]
     paths:
-      - "skills/investment-management/services/tradingview-bridge/**"
+      - "skills/finance/investment-management/services/tradingview-bridge/**"
       - ".github/workflows/tradingview-bridge.yml"
   pull_request:
     paths:
-      - "skills/investment-management/services/tradingview-bridge/**"
+      - "skills/finance/investment-management/services/tradingview-bridge/**"
       - ".github/workflows/tradingview-bridge.yml"
 
 defaults:
   run:
-    working-directory: skills/investment-management/services/tradingview-bridge
+    working-directory: skills/finance/investment-management/services/tradingview-bridge
 
 jobs:
   lint-and-test:
