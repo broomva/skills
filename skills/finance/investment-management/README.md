@@ -26,7 +26,7 @@ python3 scripts/scorer.py --ticker AAPL --philosophy balanced
 | 1 | `screen` | `screener.py` | Screening | Working |
 | 2 | `research` | `research.py` | Analysis | Planned |
 | 3 | `factor` | `factor_analysis.py` | Quant | Planned |
-| 4 | `backtest` | `backtest.py` | Quant | Planned |
+| 4 | `backtest` | `backtest.py` | Quant | Working |
 | 5 | `optimize` | `portfolio_optimizer.py` | Quant | Planned |
 | 6 | `risk` | `risk_analysis.py` | Analysis | Planned |
 | 7 | `trade` | `trade.py` | Execution | Planned |

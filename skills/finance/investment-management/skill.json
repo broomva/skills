@@ -2,7 +2,7 @@
   "name": "investment-management",
   "version": "0.1.0",
   "description": "Investment portfolio management — screen securities, run factor models, backtest strategies, optimize allocations, manage risk, execute trades (paper by default), track holdings, and rebalance. Supports Colombian and US markets with COP/USD dual currency.",
-  "entrypoint": "scripts/main.py",
+  "entrypoint": "scripts/screener.py",
   "inputs_schema": {
     "type": "object",
     "additionalProperties": false,

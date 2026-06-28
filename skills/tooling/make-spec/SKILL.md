@@ -12,9 +12,11 @@ description: |
   (2) writing an ADR (architectural decision record), (3) producing a
   plan a non-agent stakeholder will review, (4) writing a PR explainer
   for a substantive PR, (5) producing a report that synthesizes prior
-  research. The skill provides theme.css + 5 templates (spec, plan,
-  adr, report, pr-explainer) so the agent doesn't rebuild the
-  70-line :root + h1-h4 + table + callout boilerplate every time.
+  research. The skill ships theme.css + the spec HTML template, and
+  generates the plan / adr / report / pr-explainer variants from that
+  same theme + the prose skeletons below — so the agent doesn't
+  rebuild the 70-line :root + h1-h4 + table + callout boilerplate
+  every time.
   Triggers on "spec", "plan", "ADR", "decision record", "design doc",
   "explainer", "report", "html spec", "html doc", "Broomva html",
   "dark theme spec".
@@ -53,17 +55,25 @@ saves ~5 minutes per doc.
 
 1. **`references/theme.css`** — the canonical 70-line stylesheet,
    verbatim from the proven specs. Reference, don't recopy.
-2. **`references/template-spec.html`** — base template; the other
-   four variants differ only in title prefix, TOC sections, and
-   `meta` line.
-3. **`references/template-plan.html`** — plan variant (sub-phase
-   table + acceptance criteria sections).
-4. **`references/template-adr.html`** — ADR variant
-   (Status / Context / Decision / Consequences / Alternatives).
-5. **`references/template-report.html`** — report variant
-   (Executive summary / Findings / Recommendations / Appendix).
-6. **`references/template-pr-explainer.html`** — PR-explainer variant
-   (What changed / Why / Test plan / Risk / Rollout).
+2. **`references/template-spec.html`** — the one shipped base
+   template (the spec layout). Every variant below is **generated
+   from this base**, not loaded from its own file: start from
+   `template-spec.html`, then swap the title prefix, TOC sections,
+   and section skeleton per the variant's section list. No separate
+   `template-plan/adr/report/pr-explainer.html` files ship — the
+   variants are prose skeletons applied to the spec base.
+
+The four variants (generated, not shipped — apply to the
+`template-spec.html` base + the canonical skeleton below):
+
+3. **Plan variant** — base + sub-phase table + acceptance-criteria
+   sections.
+4. **ADR variant** — base + Status / Context / Decision /
+   Consequences / Alternatives sections.
+5. **Report variant** — base + Executive summary / Findings /
+   Recommendations / Appendix sections.
+6. **PR-explainer variant** — base + What changed / Why / Test plan
+   / Risk / Rollout sections.
 
 ## When to invoke
 
