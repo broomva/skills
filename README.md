@@ -78,6 +78,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`bookkeeping`](skills/knowledge/bookkeeping/) | Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph |
 | [`braindump`](skills/knowledge/braindump/) | Takes raw unstructured thoughts, voice transcript dumps, or stream-of-consciousness text and auto-files them into the right Obsidian vault folders with tags,… |
+| [`colombia-conflict`](skills/knowledge/colombia-conflict/) | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 
 ### Research — `skills/research/`
