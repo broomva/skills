@@ -218,7 +218,13 @@ def _grep_sections(topic: str, limit: int) -> list[dict]:
 
 
 def two_tier_load(topic: str, limit: int = 6) -> dict:
-    """Tier-1 catalog routing; tier-2 body-grep fallback when tier-1 is thin."""
+    """Tier-1 catalog routing; tier-2 body-grep fallback when tier-1 is thin.
+
+    `limit` is a TOTAL result budget across both tiers: tier-1 takes up to
+    `limit` catalog hits, then tier-2 fills only the remaining slots — so
+    len(tier1) + len(tier2) <= limit. `limit` is clamped to >= 1.
+    """
+    limit = max(1, limit)
     qtok = tokenize(topic)
     catalog = (REFS / "knowledge-index.md")
     tier1 = []
@@ -231,7 +237,8 @@ def two_tier_load(topic: str, limit: int = 6) -> dict:
                 tier1.append({"line": line[2:].strip(), "score": round(sc, 3)})
         tier1.sort(key=lambda h: -h["score"])
         tier1 = tier1[:limit]
-    tier2 = _grep_sections(topic, limit) if len(tier1) < limit else []
+    remaining = limit - len(tier1)
+    tier2 = _grep_sections(topic, remaining) if remaining > 0 else []
     return {"topic": topic, "tier1": tier1, "tier2": tier2}
 
 
@@ -308,13 +315,21 @@ def cmd_index(a):
     return 0
 
 
+def _positive_int(s: str) -> int:
+    """argparse type: a >= 1 integer (rejects 0 / negatives that would slice oddly)."""
+    v = int(s)
+    if v < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer (>= 1)")
+    return v
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="cc", description="colombia-conflict knowledge engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("load", help="two-tier kg retrieval over knowledge pages")
     p.add_argument("topic")
-    p.add_argument("-n", type=int, default=6)
+    p.add_argument("-n", type=_positive_int, default=6)
     p.set_defaults(func=cmd_load)
 
     p = sub.add_parser("rec", help="query the 67 recommendations")

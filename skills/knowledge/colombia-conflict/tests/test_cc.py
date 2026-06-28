@@ -127,6 +127,26 @@ def test_two_tier_load_finds_topic():
     assert res["tier1"] or res["tier2"], "expected some retrieval hit"
 
 
+def test_two_tier_load_respects_total_limit():
+    # limit is a TOTAL budget across both tiers (CodeRabbit #67): tier1+tier2 <= limit.
+    for lim in (1, 3, 6):
+        res = cc.two_tier_load("guerra conflicto víctimas tierra", limit=lim)
+        assert len(res["tier1"]) + len(res["tier2"]) <= lim
+
+
+def test_two_tier_load_clamps_nonpositive_limit():
+    res = cc.two_tier_load("exilio", limit=0)
+    assert len(res["tier1"]) + len(res["tier2"]) <= 1
+
+
+def test_load_cli_rejects_nonpositive_n():
+    # `-n 0` / `-n -1` must be rejected by argparse, not silently negative-sliced.
+    parser = cc.build_parser()
+    for bad in ("0", "-1"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["load", "x", "-n", bad])
+
+
 # --- data integrity invariants ----------------------------------------------
 
 def test_recommendations_have_eight_blocks_and_unique_numbers():
