@@ -1,0 +1,19 @@
+{
+  "bank": "davivienda",
+  "label": "Davivienda Cuenta de Ahorros / Corriente",
+  "default_account": "davivienda-savings",
+  "currency": "COP",
+  "encoding": "utf-8",
+  "delimiter": ",",
+  "skip_rows": 0,
+  "date_format": "%d/%m/%Y",
+  "decimal_separator": ",",
+  "thousands_separator": ".",
+  "columns": {
+    "date": "Fecha",
+    "description": "Descripcion",
+    "debit": "Debito",
+    "credit": "Credito"
+  },
+  "notes": "Davivienda CSV exports use DD/MM/YYYY dates, Colombian number formatting (. for thousands, , for decimals), and split debit/credit columns. Export from: DaviPlata app > Movimientos > Descargar extracto, or Davivienda web > Cuentas > Extracto > Descargar CSV."
+}

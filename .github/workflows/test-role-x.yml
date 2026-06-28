@@ -1,0 +1,45 @@
+name: test-role-x
+
+# Python test gate for the `role-x` skill (skills/role-x/). Path-filtered so it
+# runs ONLY when skills/role-x/** changes. Recovers the CI coverage the standalone
+# broomva/role-x repo had, since migration drops the per-skill .github/ dir
+# (see research/entities/tool/skills-sh.md).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/role-x/**'
+      - '.github/workflows/test-role-x.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/role-x/**'
+      - '.github/workflows/test-role-x.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-role-x-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/role-x
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v

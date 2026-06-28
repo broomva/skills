@@ -1,0 +1,18 @@
+{
+  "bank": "nubank",
+  "label": "Nu Colombia Tarjeta de Credito",
+  "default_account": "nubank-credit",
+  "currency": "COP",
+  "encoding": "utf-8",
+  "delimiter": ",",
+  "skip_rows": 0,
+  "date_format": "%Y-%m-%d",
+  "decimal_separator": ".",
+  "thousands_separator": ",",
+  "columns": {
+    "date": "date",
+    "description": "title",
+    "amount": "amount"
+  },
+  "notes": "Nubank Colombia CSV: ISO date format, single amount column (negative = purchase, positive = payment). Export from: Nu app > Tarjeta > Fatura > Compartir > CSV. Column names may vary — adjust if needed."
+}

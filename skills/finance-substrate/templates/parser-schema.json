@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Certificate Parser Definition",
+  "description": "Declarative definition for extracting tax data from a Colombian financial institution PDF certificate.",
+  "type": "object",
+  "required": ["version", "institution", "identification", "priority", "sections", "tax_summary_mapping"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "institution": {
+      "type": "object",
+      "required": ["id", "name", "cert_type"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "name": { "type": "string" },
+        "cert_type": { "type": "string", "default": "certificado-tributario" }
+      }
+    },
+    "identification": {
+      "type": "object",
+      "required": ["require_any"],
+      "properties": {
+        "require_any": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "reject_any": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "case_sensitive": { "type": "boolean", "default": false }
+      }
+    },
+    "priority": { "type": "integer", "minimum": 1, "maximum": 999 },
+    "password_protected": { "type": "boolean", "default": true },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "fields"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "anchor": {
+            "type": "object",
+            "properties": {
+              "pattern": { "type": "string" },
+              "type": { "type": "string", "enum": ["regex", "string_find"], "default": "string_find" },
+              "flags": { "type": "string" }
+            }
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["key", "method"],
+              "properties": {
+                "key": { "type": "string" },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "label_then_amount",
+                    "dollar_amounts_after_anchor",
+                    "regex",
+                    "line_after_label",
+                    "sum_all_regex_matches"
+                  ]
+                },
+                "label": { "type": "string" },
+                "pattern": { "type": "string" },
+                "group": { "type": "integer", "default": 1 },
+                "index": { "type": "integer" },
+                "format": { "type": "string", "enum": ["co_amount", "us_amount", "integer"], "default": "co_amount" },
+                "scope": { "type": "string", "enum": ["section", "full_text"], "default": "section" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "computed_fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "expression"],
+        "properties": {
+          "key": { "type": "string" },
+          "expression": { "type": "string" }
+        }
+      },
+      "default": []
+    },
+    "tax_summary_mapping": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "nequi",
+    "name": "NEQUI (BANCOLOMBIA)",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["NEQUI"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 70,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "deposito",
+      "label": "Low-amount deposit account",
+      "fields": [
+        { "key": "intereses", "method": "label_then_amount", "label": "Intereses pagados" },
+        { "key": "saldo", "method": "regex", "pattern": "Saldo.*?[Dd]epósito.*?\\n\\$([\\d.,]+)", "group": 1 }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "patrimonio_cuenta": "sections.deposito.saldo"
+  }
+}

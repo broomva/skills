@@ -1,0 +1,131 @@
+{
+  "year": 2025,
+  "uvt_value": 49799,
+  "uvt_note": "UVT 2025: $49,799 COP — DIAN Resolución 001233 de 2024. Applies to año gravable 2025.",
+  "brackets_renta": [
+    {
+      "from_uvt": 0,
+      "to_uvt": 1090,
+      "rate": 0.0,
+      "base_tax_uvt": 0,
+      "label": "0% — hasta 1.090 UVT"
+    },
+    {
+      "from_uvt": 1090,
+      "to_uvt": 1700,
+      "rate": 0.19,
+      "base_tax_uvt": 0,
+      "label": "19% — 1.090 a 1.700 UVT"
+    },
+    {
+      "from_uvt": 1700,
+      "to_uvt": 4100,
+      "rate": 0.28,
+      "base_tax_uvt": 115.9,
+      "label": "28% — 1.700 a 4.100 UVT"
+    },
+    {
+      "from_uvt": 4100,
+      "to_uvt": 8670,
+      "rate": 0.33,
+      "base_tax_uvt": 787.9,
+      "label": "33% — 4.100 a 8.670 UVT"
+    },
+    {
+      "from_uvt": 8670,
+      "to_uvt": 18970,
+      "rate": 0.35,
+      "base_tax_uvt": 2296,
+      "label": "35% — 8.670 a 18.970 UVT"
+    },
+    {
+      "from_uvt": 18970,
+      "to_uvt": 31000,
+      "rate": 0.37,
+      "base_tax_uvt": 5901,
+      "label": "37% — 18.970 a 31.000 UVT"
+    },
+    {
+      "from_uvt": 31000,
+      "to_uvt": 999999999,
+      "rate": 0.39,
+      "base_tax_uvt": 10352,
+      "label": "39% — más de 31.000 UVT"
+    }
+  ],
+  "dividendos": {
+    "threshold_uvt": 300,
+    "rate_above_threshold": 0.10,
+    "note": "Dividends taxed at 10% on amount exceeding 300 UVT"
+  },
+  "deductions": {
+    "renta_exenta_25pct": {
+      "rate": 0.25,
+      "cap_uvt_monthly": 790,
+      "note": "25% exempt income on rentas de trabajo, capped at 790 UVT/month"
+    },
+    "dependientes": {
+      "rate": 0.10,
+      "cap_uvt_monthly": 32,
+      "note": "10% deduction for dependents, capped at 32 UVT/month"
+    },
+    "total_deductions_cap_uvt": 1340,
+    "total_deductions_cap_pct": 0.40,
+    "note": "Total deductions + exemptions capped at 40% of gross income or 5,040 UVT"
+  },
+  "filing_calendar": {
+    "note": "Renta persona natural año gravable 2024. Dates by last 2 digits of NIT/CC.",
+    "deadlines": [
+      {"nit_suffix": "01-02", "date": "2025-08-12"},
+      {"nit_suffix": "03-04", "date": "2025-08-13"},
+      {"nit_suffix": "05-06", "date": "2025-08-14"},
+      {"nit_suffix": "07-08", "date": "2025-08-18"},
+      {"nit_suffix": "09-10", "date": "2025-08-19"},
+      {"nit_suffix": "11-12", "date": "2025-08-20"},
+      {"nit_suffix": "13-14", "date": "2025-08-21"},
+      {"nit_suffix": "15-16", "date": "2025-08-22"},
+      {"nit_suffix": "17-18", "date": "2025-08-25"},
+      {"nit_suffix": "19-20", "date": "2025-08-26"},
+      {"nit_suffix": "21-22", "date": "2025-08-27"},
+      {"nit_suffix": "23-24", "date": "2025-08-28"},
+      {"nit_suffix": "25-26", "date": "2025-08-29"},
+      {"nit_suffix": "27-28", "date": "2025-09-01"},
+      {"nit_suffix": "29-30", "date": "2025-09-02"},
+      {"nit_suffix": "31-32", "date": "2025-09-03"},
+      {"nit_suffix": "33-34", "date": "2025-09-04"},
+      {"nit_suffix": "35-36", "date": "2025-09-05"},
+      {"nit_suffix": "37-38", "date": "2025-09-08"},
+      {"nit_suffix": "39-40", "date": "2025-09-09"},
+      {"nit_suffix": "41-42", "date": "2025-09-10"},
+      {"nit_suffix": "43-44", "date": "2025-09-11"},
+      {"nit_suffix": "45-46", "date": "2025-09-12"},
+      {"nit_suffix": "47-48", "date": "2025-09-15"},
+      {"nit_suffix": "49-50", "date": "2025-09-16"},
+      {"nit_suffix": "51-52", "date": "2025-09-17"},
+      {"nit_suffix": "53-54", "date": "2025-09-18"},
+      {"nit_suffix": "55-56", "date": "2025-09-19"},
+      {"nit_suffix": "57-58", "date": "2025-09-22"},
+      {"nit_suffix": "59-60", "date": "2025-09-23"},
+      {"nit_suffix": "61-62", "date": "2025-09-24"},
+      {"nit_suffix": "63-64", "date": "2025-09-25"},
+      {"nit_suffix": "65-66", "date": "2025-09-26"},
+      {"nit_suffix": "67-68", "date": "2025-09-29"},
+      {"nit_suffix": "69-70", "date": "2025-09-30"},
+      {"nit_suffix": "71-72", "date": "2025-10-01"},
+      {"nit_suffix": "73-74", "date": "2025-10-02"},
+      {"nit_suffix": "75-76", "date": "2025-10-03"},
+      {"nit_suffix": "77-78", "date": "2025-10-06"},
+      {"nit_suffix": "79-80", "date": "2025-10-07"},
+      {"nit_suffix": "81-82", "date": "2025-10-08"},
+      {"nit_suffix": "83-84", "date": "2025-10-09"},
+      {"nit_suffix": "85-86", "date": "2025-10-10"},
+      {"nit_suffix": "87-88", "date": "2025-10-14"},
+      {"nit_suffix": "89-90", "date": "2025-10-15"},
+      {"nit_suffix": "91-92", "date": "2025-10-16"},
+      {"nit_suffix": "93-94", "date": "2025-10-17"},
+      {"nit_suffix": "95-96", "date": "2025-10-20"},
+      {"nit_suffix": "97-98", "date": "2025-10-21"},
+      {"nit_suffix": "99-00", "date": "2025-10-22"}
+    ]
+  }
+}

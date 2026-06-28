@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "nu-colombia",
+    "name": "NU COLOMBIA",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["NU.", "NU COLOMBIA", "NU FINANCIERA"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 60,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "cuenta",
+      "label": "Savings account data",
+      "fields": [
+        { "key": "gmf", "method": "regex", "pattern": "GMF o 4x1000\\)\\s*\\n\\$([\\d.,]+)", "group": 1 },
+        { "key": "retencion", "method": "regex", "pattern": "Retención en la fuente\\s*\\n\\$([\\d.,]+)", "group": 1 },
+        { "key": "rendimientos_totales", "method": "regex", "pattern": "Rendimientos totales del año\\s*\\n\\$([\\d.,]+)", "group": 1 },
+        { "key": "rendimientos_no_gravables", "method": "regex", "pattern": "Rendimientos no gravables[^$]*\\$([\\d.,]+)", "group": 1, "flags": "DOTALL" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "rendimientos_gravados": "sections.cuenta.rendimientos_totales - sections.cuenta.rendimientos_no_gravables",
+    "rendimientos_no_gravados": "sections.cuenta.rendimientos_no_gravables",
+    "retencion_renta": "sections.cuenta.retencion",
+    "gmf_total": "sections.cuenta.gmf",
+    "gmf_deducible_50pct": "sections.cuenta.gmf * 0.50"
+  }
+}

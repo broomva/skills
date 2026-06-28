@@ -1,0 +1,18 @@
+{
+  "bank": "arq",
+  "label": "ARQ (ex-DolarApp) USD Account",
+  "default_account": "arq-usd",
+  "currency": "USD",
+  "encoding": "utf-8",
+  "delimiter": ",",
+  "skip_rows": 0,
+  "date_format": "%Y-%m-%d",
+  "decimal_separator": ".",
+  "thousands_separator": ",",
+  "columns": {
+    "date": "date",
+    "description": "description",
+    "amount": "amount"
+  },
+  "notes": "ARQ (formerly DolarApp) does not currently offer CSV export. This profile is a placeholder for manual entry or future export support. If exporting via screenshot-to-CSV conversion, ensure columns match this mapping."
+}

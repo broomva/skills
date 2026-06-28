@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic Control Kernel — Evaluator Schema",
+  "description": "Score vectors and promotion decisions for EGRI-compatible evaluators.",
+  "type": "object",
+  "required": ["evaluator_id", "timestamp", "scores", "decision"],
+  "properties": {
+    "evaluator_id": {
+      "type": "string",
+      "description": "Identifier of the evaluator instance"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trial_id": {
+      "type": "string",
+      "description": "EGRI trial being evaluated"
+    },
+    "controller_version": {
+      "type": "string",
+      "description": "Controller version under evaluation"
+    },
+    "scores": {
+      "type": "object",
+      "description": "Score vector — scalar or multi-dimensional metrics",
+      "properties": {
+        "primary": {
+          "type": "number",
+          "description": "Primary objective score (the one driving promotion)"
+        },
+        "secondary": {
+          "type": "object",
+          "description": "Additional metrics tracked but not driving promotion",
+          "additionalProperties": { "type": "number" }
+        }
+      },
+      "required": ["primary"]
+    },
+    "baseline": {
+      "type": "object",
+      "description": "Baseline scores for comparison",
+      "properties": {
+        "primary": { "type": "number" },
+        "secondary": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "required": ["all_passed"],
+      "properties": {
+        "all_passed": {
+          "type": "boolean",
+          "description": "Whether all hard constraints were satisfied"
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "constraint_id": { "type": "string" },
+              "measured": { "description": "Measured value" },
+              "threshold": { "description": "Threshold that was violated" },
+              "severity": {
+                "type": "string",
+                "enum": ["hard", "soft"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["promoted", "discarded", "branched", "escalated"],
+          "description": "Promotion decision"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why this decision was made"
+        },
+        "new_controller_version": {
+          "type": ["string", "null"],
+          "description": "Version ID of promoted controller (null if discarded)"
+        },
+        "rollback_target": {
+          "type": ["string", "null"],
+          "description": "Version to rollback to if this promotion fails in deployment"
+        }
+      }
+    },
+    "scenario_coverage": {
+      "type": "object",
+      "description": "Which scenarios were evaluated",
+      "properties": {
+        "total_scenarios": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "holdout_passed": {
+          "type": "integer",
+          "description": "Anti-gaming holdout scenarios passed"
+        },
+        "holdout_total": { "type": "integer" }
+      }
+    }
+  }
+}

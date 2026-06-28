@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic Control Kernel — Trace Schema",
+  "description": "Canonical trace entry for the append-only ledger. Compatible with Autoany EGRI ledger format.",
+  "type": "object",
+  "required": ["trace_id", "timestamp", "plant_id", "state_snapshot", "action_proposed", "action_applied", "outcome"],
+  "properties": {
+    "trace_id": {
+      "type": "string",
+      "description": "Unique identifier for this trace entry"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp"
+    },
+    "plant_id": {
+      "type": "string",
+      "description": "Identifier of the plant"
+    },
+    "controller_version": {
+      "type": "string",
+      "description": "Version/hash of the active controller configuration"
+    },
+    "state_snapshot": {
+      "type": "object",
+      "description": "Belief state at decision time (or hash + artifact pointer for large states)",
+      "properties": {
+        "hash": { "type": "string" },
+        "artifact_path": { "type": "string" },
+        "inline": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "directive": {
+      "description": "The LLM's control directive θ_t (ref: action.schema.json)",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "action_proposed": {
+      "type": "object",
+      "description": "Controller's proposed action before safety filtering",
+      "additionalProperties": true
+    },
+    "action_applied": {
+      "type": "object",
+      "description": "Actual action applied after safety shield filtering",
+      "additionalProperties": true
+    },
+    "shield": {
+      "type": "object",
+      "description": "Safety shield results",
+      "properties": {
+        "feasible": {
+          "type": "boolean",
+          "description": "Whether the shield found a feasible safe action"
+        },
+        "modification_magnitude": {
+          "type": "number",
+          "description": "||u_safe - u_proposed|| — how much the shield modified the action"
+        },
+        "certificate": {
+          "type": "object",
+          "description": "Safety certificate proving constraint satisfaction",
+          "additionalProperties": true
+        },
+        "fallback_used": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether emergency fallback was activated"
+        }
+      }
+    },
+    "constraints_checked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["constraint_id", "satisfied"],
+        "properties": {
+          "constraint_id": { "type": "string" },
+          "satisfied": { "type": "boolean" },
+          "value": { "description": "Measured value for the constraint" },
+          "threshold": { "description": "Constraint threshold" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["success"],
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "Whether the action succeeded"
+        },
+        "observation_after": {
+          "type": "object",
+          "description": "Plant observation after action",
+          "additionalProperties": true
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message if action failed"
+        }
+      }
+    },
+    "evaluator_metrics": {
+      "type": "object",
+      "description": "Micro-metrics scored by evaluator for this tick",
+      "properties": {
+        "cost": { "type": "number" },
+        "constraint_violations": { "type": "integer" },
+        "latency_ms": { "type": "number" },
+        "robustness_indicator": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    "egri": {
+      "type": "object",
+      "description": "EGRI loop context (if this trace is part of an improvement trial)",
+      "properties": {
+        "trial_id": { "type": "string" },
+        "parent_state": { "type": "string" },
+        "mutation_operator": { "type": "string" },
+        "decision": {
+          "type": "string",
+          "enum": ["promoted", "discarded", "branched", "escalated", "pending"]
+        }
+      }
+    }
+  }
+}

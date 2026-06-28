@@ -1,0 +1,19 @@
+{
+  "bank": "nequi",
+  "label": "Nequi Billetera Digital",
+  "default_account": "nequi-wallet",
+  "currency": "COP",
+  "encoding": "utf-8",
+  "delimiter": ",",
+  "skip_rows": 0,
+  "date_format": "%d/%m/%Y",
+  "decimal_separator": ",",
+  "thousands_separator": ".",
+  "columns": {
+    "date": "Fecha",
+    "description": "Descripción",
+    "debit": "Valor debito",
+    "credit": "Valor credito"
+  },
+  "notes": "Nequi CSV exports follow Colombian conventions. Export from: Nequi app > Movimientos > Descargar extracto. Column names may vary between PDF-parsed and direct CSV exports — adjust mappings if needed."
+}

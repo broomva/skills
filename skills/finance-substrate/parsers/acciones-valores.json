@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "acciones-valores",
+    "name": "ACCIONES & VALORES (BURSÁTIL)",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["RESUMEN DE OPERACIONES", "SALDO EN CAJA"],
+    "reject_any": ["SKANDIA", "DAVIVIENDA", "fondos de inversión colectiva"],
+    "case_sensitive": false
+  },
+  "priority": 90,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "bursatil",
+      "label": "Stock brokerage data",
+      "fields": [
+        { "key": "saldo_caja", "method": "regex", "pattern": "SALDO EN CAJA:\\s*([\\d.,]+)", "group": 1, "scope": "full_text" },
+        { "key": "dividendos", "method": "regex", "pattern": "Dividendos.*?Totales\\s*\\n([\\d.,]+)", "group": 1, "scope": "full_text", "flags": "DOTALL" },
+        { "key": "valor_acciones", "method": "regex", "pattern": "Valor neto\\s*\\n.*?([\\d.,]+)\\s*\\nTotal", "group": 1, "scope": "full_text", "flags": "DOTALL" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "patrimonio_caja": "sections.bursatil.saldo_caja",
+    "dividendos": "sections.bursatil.dividendos",
+    "patrimonio_acciones": "sections.bursatil.valor_acciones"
+  }
+}

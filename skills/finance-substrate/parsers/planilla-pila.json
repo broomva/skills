@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "planilla-pila",
+    "name": "PLANILLA PILA (Social Security)",
+    "cert_type": "planilla-pila"
+  },
+  "identification": {
+    "require_any": ["PLANILLA INTEGRADA", "AUTOLIQUIDACION DE APORTES"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 5,
+  "password_protected": false,
+  "sections": [
+    {
+      "id": "subsistemas",
+      "label": "Social security subsystem totals",
+      "fields": [
+        { "key": "salud", "method": "regex", "pattern": "Salud\\n\\d+\\n([\\d.]+)", "group": 1 },
+        { "key": "pension", "method": "regex", "pattern": "Pensión\\n\\d+\\n([\\d.]+)", "group": 1 },
+        { "key": "riesgos_laborales", "method": "regex", "pattern": "Riesgos Laborales\\n\\d+\\n([\\d.]+)", "group": 1 },
+        { "key": "total", "method": "regex", "pattern": "TOTALES\\n\\d+\\n[\\d.]+\\n([\\d.]+)", "group": 1 }
+      ]
+    },
+    {
+      "id": "cotizante",
+      "label": "Contributor detail",
+      "fields": [
+        { "key": "ibc_pension", "method": "regex", "pattern": "230901\\n([\\d.]+)", "group": 1, "scope": "full_text" },
+        { "key": "cotizacion_pension", "method": "regex", "pattern": "Cotización \\nObligatoria\\n.*?\\n.*?([\\d.]+)\\n", "group": 1, "flags": "DOTALL" },
+        { "key": "fsp_solidaridad", "method": "regex", "pattern": "Aporte FSP.*?Solidaridad.*?\\n.*?\\n.*?\\n.*?([\\d.]+)", "group": 1, "flags": "DOTALL" },
+        { "key": "fsp_subsistencia", "method": "regex", "pattern": "Aporte FSP.*?Subsistencia.*?\\n.*?\\n.*?\\n.*?\\n.*?([\\d.]+)", "group": 1, "flags": "DOTALL" }
+      ]
+    },
+    {
+      "id": "periodo",
+      "label": "Payment period",
+      "fields": [
+        { "key": "periodo", "method": "regex", "pattern": "(\\d{4}-\\d{2})", "group": 1, "scope": "full_text" },
+        { "key": "fecha_pago", "method": "regex", "pattern": "FECHA PAGO.*?\\n.*?(\\d{2}/\\d{2}/\\d{4})", "group": 1, "scope": "full_text", "flags": "DOTALL" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "salud_obligatoria": "sections.subsistemas.salud",
+    "pension_obligatoria": "sections.subsistemas.pension",
+    "riesgos_laborales": "sections.subsistemas.riesgos_laborales",
+    "total_seguridad_social": "sections.subsistemas.total"
+  }
+}

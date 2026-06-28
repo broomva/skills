@@ -1,0 +1,92 @@
+# Agentic Control Kernel — EGRI Problem Spec for Controller Optimization
+# Extends Autoany's problem-spec template with control-specific fields.
+# See references/egri-for-controllers.md for field-by-field semantics.
+
+name: ""  # e.g., "mpc-weight-optimization", "cbf-margin-tuning"
+
+objective:
+  metric: ""           # e.g., "closed_loop_cost", "tracking_error", "throughput"
+  type: scalar         # scalar | vector
+  direction: minimize  # minimize | maximize
+  baseline: null       # Filled after Phase 2 (evaluator-first)
+
+constraints:
+  - "constraint_violation_count == 0"
+  - "shield_intervention_rate <= 0.05"
+  # Add domain-specific constraints:
+  # - "solve_time_ms <= 100"
+  # - "memory_mb <= 4096"
+
+artifacts:
+  mutable:
+    - path: ""
+      type: config       # config | code | parameters
+      description: ""    # e.g., "MPC cost weights and horizon"
+  immutable:
+    - path: "evals/scenario_library/"
+      reason: "Evaluator scenarios — must not change during trials"
+    - path: "evals/run_eval.sh"
+      reason: "Evaluator script — immutable during trials"
+
+evaluator:
+  script: "evals/run_eval.sh"
+  inputs: []
+  outputs:
+    primary_metric: float
+    constraint_violations: int
+    shield_intervention_rate: float
+  trusted: false       # Set true after validating against known outcomes
+  baseline_score: null
+
+# Control-kernel-specific: plant and shield configuration
+plant:
+  type: cyber          # physical | cyber-physical | cyber
+  config_path: ".control/plant.yaml"
+  shield_enabled: true
+  shield_type: "cbf-qp"  # cbf-qp | policy-gate | rule-based | composite
+  fallback_controller: "" # Path to safe fallback controller config
+
+execution:
+  backend: simulator   # local | container | simulator | api
+  command: ""          # e.g., "python3 twin/run_scenarios.py --config {{artifact}}"
+  timeout_s: 300
+  sandbox: true
+
+budget:
+  max_trials: 30
+  time_per_trial_s: 300
+  total_time_s: null
+  token_budget: null
+  cost_budget: null
+
+promotion:
+  policy: keep_if_improves
+  threshold: null
+  require_constraint_check: true  # Cannot be overridden
+
+autonomy:
+  mode: sandbox        # suggestion | sandbox | auto-promote | portfolio
+  escalation_triggers:
+    - "constraint_violation_detected"
+    - "shield_intervention_rate > 0.10"
+    - "budget_75_percent_exhausted_without_improvement"
+    - "evaluator_score_degrades_3_consecutive_trials"
+
+search:
+  proposer: llm
+  strategy_notes: ""
+
+ledger:
+  format: jsonl
+  path: "./ledger.jsonl"
+  schema: "./schemas/trace.schema.json"  # Uses control kernel trace schema
+
+domain:
+  preset: control      # control | code | rag | workflow | etl | generic
+  notes: ""
+
+meta:
+  created_by: ""
+  created_at: ""
+  version: "0.1.0"
+  parent_spec: null

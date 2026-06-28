@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "banco-bogota",
+    "name": "BANCO DE BOGOTÁ",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["BANCO DE BOGOT"],
+    "reject_any": [],
+    "case_sensitive": false
+  },
+  "priority": 80,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "credito",
+      "label": "Credit obligations",
+      "fields": [
+        { "key": "intereses_pagados", "method": "regex", "pattern": "intereses.*?suma de:\\s*\\$([\\d.,]+)", "group": 1, "flags": "IGNORECASE DOTALL" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "intereses_pagados_deducible": "sections.credito.intereses_pagados"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "institution": {
+    "id": "acciones-valores-fondos",
+    "name": "ACCIONES & VALORES (FONDOS)",
+    "cert_type": "certificado-tributario"
+  },
+  "identification": {
+    "require_any": ["fondos de inversión colectiva", "FIC"],
+    "reject_any": ["RESUMEN DE OPERACIONES"],
+    "case_sensitive": false
+  },
+  "priority": 89,
+  "password_protected": true,
+  "sections": [
+    {
+      "id": "fondos",
+      "label": "Investment fund balances",
+      "fields": [
+        { "key": "fic_saldo", "method": "regex", "pattern": "FIC.*?\\$\\s*([\\d.,]+)", "group": 1, "scope": "full_text" }
+      ]
+    }
+  ],
+  "computed_fields": [],
+  "tax_summary_mapping": {
+    "patrimonio_fondos": "sections.fondos.fic_saldo"
+  }
+}

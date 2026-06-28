@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://broomva.tech/schemas/egri-event.schema.json",
+  "title": "EGRI Trial Event",
+  "description": "Payload for autoany EGRI trial records persisted to Lago via EventKind::Custom with 'egri.' prefix",
+  "type": "object",
+  "required": ["event_type", "trial"],
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "pattern": "^egri\\.",
+      "description": "Event type with 'egri.' prefix, e.g. 'egri.trial'"
+    },
+    "trial": {
+      "$ref": "#/$defs/TrialRecord"
+    },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "Optional Arcan session ID for cross-reference"
+    }
+  },
+  "$defs": {
+    "TrialRecord": {
+      "type": "object",
+      "required": ["trial_id", "timestamp", "parent_state", "mutation", "outcome", "decision"],
+      "properties": {
+        "trial_id": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "parent_state": { "type": "string" },
+        "mutation": { "$ref": "#/$defs/Mutation" },
+        "execution": { "$ref": "#/$defs/ExecutionResult" },
+        "outcome": { "$ref": "#/$defs/Outcome" },
+        "decision": { "$ref": "#/$defs/Decision" },
+        "strategy_notes": { "type": ["string", "null"] }
+      }
+    },
+    "Mutation": {
+      "type": "object",
+      "required": ["operator", "description"],
+      "properties": {
+        "operator": { "type": "string" },
+        "description": { "type": "string" },
+        "diff": { "type": ["string", "null"] },
+        "hypothesis": { "type": ["string", "null"] }
+      }
+    },
+    "ExecutionResult": {
+      "type": ["object", "null"],
+      "properties": {
+        "duration_secs": { "type": "number" },
+        "exit_code": { "type": "integer" },
+        "error": { "type": ["string", "null"] },
+        "output": {}
+      }
+    },
+    "Outcome": {
+      "type": "object",
+      "required": ["score", "constraints_passed"],
+      "properties": {
+        "score": {},
+        "constraints_passed": { "type": "boolean" },
+        "constraint_violations": { "type": "array", "items": { "type": "string" } },
+        "evaluator_metadata": {}
+      }
+    },
+    "Decision": {
+      "type": "object",
+      "required": ["action", "reason"],
+      "properties": {
+        "action": { "type": "string", "enum": ["promoted", "discarded", "branched", "escalated"] },
+        "reason": { "type": "string" },
+        "new_state_id": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
