@@ -1,5 +1,19 @@
 # Changelog — colombia-conflict
 
+## 0.2.0 — 2026-06-28
+
+Full-text grounding substrate + on-demand PDF provenance (BRO-1580).
+
+- **`references/fulltext/*.txt.gz`** — complete extracted text of all 24 volumes
+  (~3.67M words, ~7.7 MB gzipped) bundled as verbatim grounding substrate.
+- **`cc.py source <topic>`** — full-text search returning verbatim passages with
+  match-centered snippets (the digests summarize; this quotes the report exactly).
+- **`sources/MANIFEST.json`** (11 units, all sha256) + **`scripts/fetch_sources.sh`**
+  — fetch + verify the 385 MB of source PDFs on demand (not committed).
+- **`scripts/build_manifest.py`** — regenerate the manifest from a local corpus.
+- Tests: 28 total (added full-text search, manifest-validity, corpus-presence).
+- Also folded `_fold()` accent-folding into a shared helper.
+
 ## 0.1.0 — 2026-06-28
 
 Initial release. Distilled (via `/skillify`, BRO-1578) from the Colombian Truth

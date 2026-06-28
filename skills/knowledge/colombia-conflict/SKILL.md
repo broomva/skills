@@ -18,6 +18,14 @@ Mirrors the workspace's `kg` LLM-as-index pattern:
 - **Substrate (canonical)** — `references/`: the 12 per-volume digests +
   `synthesis.md` (master consolidation) + `lexicon.md`. These are the knowledge
   pages; the agent reasons over them.
+- **Full-text grounding** — `references/fulltext/*.txt.gz`: the complete
+  extracted text of all 24 volumes (~3.67M words, gzipped ~7.7 MB). `cc.py
+  source` greps this for **verbatim** source passages — the digests summarize,
+  the full text lets you quote the report exactly.
+- **Source binaries (on demand)** — `sources/MANIFEST.json` lists the 11
+  downloadable units (10 digital PDFs + the Colombia-adentro ZIP, each with
+  sha256). `scripts/fetch_sources.sh` pulls + verifies the 385 MB of PDFs when
+  actually needed; they are deliberately **not** committed.
 - **Projection (routing)** — `references/knowledge-index.md`: a dense, one-line-
   per-item catalog auto-generated from `data/` + digest headers. Tier-1 retrieval
   scores against this.
@@ -63,9 +71,17 @@ python3 scripts/cc.py concept --search "cuerpo-territorio"
 # is not a full stance model: reason about polarity and gaps yourself.
 python3 scripts/cc.py align "a program to legalize coca cultivation and support campesinos cocaleros"
 
+# Verbatim grounding — grep the full source text for exact passages
+python3 scripts/cc.py source "Bojayá iglesia" -n 3
+python3 scripts/cc.py source "responsabilidad del Estado en el paramilitarismo"
+
 # Regenerate the routing catalog (after editing data/ or references/)
 python3 scripts/cc.py index            # write
 python3 scripts/cc.py index --check    # CI: exit 1 if stale
+
+# Fetch the source PDFs (385 MB) on demand, sha256-verified
+scripts/fetch_sources.sh [DEST_DIR]
+python3 scripts/build_manifest.py      # regenerate the manifest from a local corpus
 ```
 
 ### Recommended agent flow
@@ -73,7 +89,9 @@ python3 scripts/cc.py index --check    # CI: exit 1 if stale
 1. **`load <topic>`** to pull the relevant knowledge-page sections into context.
 2. Read the cited `references/` page(s) for the full, faithful detail.
 3. Use `rec` / `stat` / `actor` / `concept` for precise sourced facts.
-4. For a proposed intervention, run **`align`** to see which recommendation
+4. **`source <topic>`** when you need to quote the report **verbatim** (grounding
+   a claim in the exact source prose, not the digest summary).
+5. For a proposed intervention, run **`align`** to see which recommendation
    blocks it advances — then reason about gaps the report would flag
    (impunity, structural causes, differential harms, *terceros civiles*).
 
@@ -105,8 +123,10 @@ python3 scripts/cc.py index --check    # CI: exit 1 if stale
   synthesis, not a verbatim transcription of all 67 articles).
 - This is **collective** (ethical-political) responsibility as the CEV framed it
   — not individual criminal guilt (the JEP's domain).
-- The full 393 MB of source PDFs is **not** bundled (it lives in the user's
-  Downloads); the knowledge substrate is the digests + synthesis.
+- The **full extracted text** (all 24 volumes, gzipped) **is** bundled under
+  `references/fulltext/` for verbatim grounding. The 385 MB of source **PDFs**
+  are not committed — they are fetched + sha256-verified on demand via
+  `scripts/fetch_sources.sh` (`sources/MANIFEST.json`).
 
 ## References
 
@@ -114,3 +134,5 @@ python3 scripts/cc.py index --check    # CI: exit 1 if stale
 - `references/digests/*.md` — 12 per-volume sourced digests.
 - `references/lexicon.md` — the coined-concepts glossary.
 - `references/knowledge-index.md` — the tier-1 routing catalog (generated).
+- `references/fulltext/*.txt.gz` — full extracted text of all 24 volumes (verbatim grounding).
+- `sources/MANIFEST.json` + `scripts/fetch_sources.sh` — on-demand PDF retrieval.

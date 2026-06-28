@@ -22,6 +22,7 @@ Pure-stdlib, zero network, deterministic.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import re
 import sys
@@ -30,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 REFS = ROOT / "references"
+FULLTEXT = REFS / "fulltext"
 
 _STOP = {
     "the", "a", "an", "of", "to", "and", "or", "in", "on", "for", "with", "is",
@@ -41,14 +43,18 @@ _STOP = {
 
 # --- pure helpers (unit-tested) ---------------------------------------------
 
+def _fold(text: str) -> str:
+    """Lowercase + ASCII-fold Spanish accents (1:1, length-preserving)."""
+    text = (text or "").lower()
+    for a, b in (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"),
+                 ("ñ", "n"), ("ü", "u")):
+        text = text.replace(a, b)
+    return text
+
+
 def tokenize(text: str) -> set[str]:
     """Lowercase word-tokens, ASCII-folded, stopwords + <3-char tokens dropped."""
-    text = (text or "").lower()
-    folds = (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"),
-             ("ñ", "n"), ("ü", "u"))
-    for a, b in folds:
-        text = text.replace(a, b)
-    toks = re.findall(r"[a-z0-9]+", text)
+    toks = re.findall(r"[a-z0-9]+", _fold(text))
     return {t for t in toks if len(t) >= 3 and t not in _STOP}
 
 
@@ -217,6 +223,53 @@ def _grep_sections(topic: str, limit: int) -> list[dict]:
     return hits[:limit]
 
 
+def search_fulltext(topic: str, limit: int = 5) -> list[dict]:
+    """Verbatim grounding: grep the gzipped full text (references/fulltext/*.txt.gz)
+    for paragraphs matching the topic, ranked by token overlap.
+
+    The digests are summaries; this searches the *actual source prose* so the
+    agent can quote the report verbatim. Returns up to `limit` passages, each
+    {page, score, snippet}. Empty if the full-text substrate isn't present
+    (e.g. a slim install) — callers fall back to `load`/digests.
+    """
+    limit = max(1, limit)
+    qtok = tokenize(topic)
+    if not qtok or not FULLTEXT.is_dir():
+        return []
+    hits: list[dict] = []
+    for p in sorted(FULLTEXT.glob("*.txt.gz")):
+        try:
+            with gzip.open(p, "rt", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        page = p.name[:-7] if p.name.endswith(".txt.gz") else p.stem
+        for para in re.split(r"\n\s*\n", text):
+            para = para.strip()
+            if len(para) < 40:
+                continue
+            sc = score_overlap(qtok, tokenize(para))
+            if sc > 0:
+                hits.append({"page": page, "score": round(sc, 3),
+                             "snippet": _snippet(para, qtok)})
+    hits.sort(key=lambda h: -h["score"])
+    return hits[:limit]
+
+
+def _snippet(para: str, qtok: set[str], width: int = 300) -> str:
+    """A ~width-char window centered on the first query-token match (so the hit
+    is visible, not cut off by a prefix), whitespace-collapsed."""
+    folded = _fold(para)  # length-preserving fold -> indices map to `para`
+    positions = [i for i in (folded.find(t) for t in qtok) if i >= 0]
+    if positions:
+        pos = min(positions)
+        start = max(0, pos - 80)
+        window = para[start:pos + (width - 80)]
+        out = re.sub(r"\s+", " ", window).strip()
+        return ("…" + out) if start > 0 else out
+    return re.sub(r"\s+", " ", para).strip()[:width]
+
+
 def two_tier_load(topic: str, limit: int = 6) -> dict:
     """Tier-1 catalog routing; tier-2 body-grep fallback when tier-1 is thin.
 
@@ -296,6 +349,10 @@ def cmd_align(a):
     })
 
 
+def cmd_source(a):
+    _print({"topic": a.topic, "passages": search_fulltext(a.topic, a.n)})
+
+
 def cmd_index(a):
     stats = _load_json("statistics.json")["statistics"]
     actors = _load_json("actors.json")["actors"]
@@ -351,6 +408,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("concept", help="query the lexicon")
     p.add_argument("--search")
     p.set_defaults(func=cmd_concept)
+
+    p = sub.add_parser("source", help="verbatim full-text search over references/fulltext/*.txt.gz")
+    p.add_argument("topic")
+    p.add_argument("-n", type=_positive_int, default=5)
+    p.set_defaults(func=cmd_source)
 
     p = sub.add_parser("align", help="score a proposal vs the recommendation roadmap")
     p.add_argument("text")
