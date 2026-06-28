@@ -180,6 +180,38 @@ def test_all_datasets_are_valid_json():
         assert isinstance(_j(name), dict)
 
 
+def test_fulltext_corpus_present():
+    gz = list((ROOT / "references" / "fulltext").glob("*.txt.gz"))
+    assert len(gz) == 24, "expected 24 gzipped volume texts"
+
+
+def test_search_fulltext_finds_known_term():
+    # 'Marquetalia' (FARC founding myth) is verbatim in the historical narrative.
+    hits = cc.search_fulltext("Marquetalia", limit=5)
+    assert hits, "expected a verbatim full-text hit"
+    assert any("marquetalia" in h["snippet"].lower() for h in hits)
+    assert all(0.0 < h["score"] <= 1.0 for h in hits)
+
+
+def test_search_fulltext_respects_limit():
+    hits = cc.search_fulltext("guerra víctimas tierra conflicto", limit=3)
+    assert len(hits) <= 3
+
+
+def test_search_fulltext_empty_query_returns_empty():
+    assert cc.search_fulltext("", limit=5) == []
+
+
+def test_source_manifest_valid():
+    m = json.loads((ROOT / "sources" / "MANIFEST.json").read_text(encoding="utf-8"))
+    dl = m["downloads"]
+    assert len(dl) == 11 and m["_meta"]["units"] == 11
+    for d in dl:
+        assert d["url"].startswith("https://") and d["filename"]
+        assert d["sha256"] and len(d["sha256"]) == 64  # all hashed
+    assert sum(1 for d in dl if d["filename"].endswith(".zip")) == 1
+
+
 def test_committed_catalog_is_not_stale():
     """The committed references/knowledge-index.md must equal a fresh build —
     so `cc.py index --check` is green on a fresh clone (CI gate honesty)."""
