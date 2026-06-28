@@ -371,8 +371,8 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
 
         def _walk(o, key=""):
             if isinstance(o, str):
-                if key in _SKIP_JSON_KEYS:
-                    return
+                if key in _SKIP_JSON_KEYS or key == "entrypoint":
+                    return  # entrypoint already checked explicitly above (no double-count)
                 for m in _REF_RE.finditer(o):
                     ref = m.group(1)
                     if not _ref_satisfied(skill_dir, ref):
@@ -386,11 +386,10 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
         _walk(data)
     tdir = skill_dir / "templates"
     if tdir.is_dir():
-        _yaml_ref = re.compile(r"(?<![\w./-])(scripts/[A-Za-z0-9_][\w./-]*\.[A-Za-z0-9]+)")
         for y in sorted([*tdir.rglob("*.yaml"), *tdir.rglob("*.yml")]):
             for ln in y.read_text(encoding="utf-8", errors="replace").splitlines():
                 planned = bool(_PLANNED_RE.search(ln))
-                for m in _yaml_ref.finditer(ln):
+                for m in _REF_RE.finditer(ln):  # all 4 subdir prefixes, not just scripts/
                     ref = m.group(1)
                     if not planned and not _ref_satisfied(skill_dir, ref):
                         issues.append(f"{y.relative_to(skill_dir)} → {ref} (missing)")

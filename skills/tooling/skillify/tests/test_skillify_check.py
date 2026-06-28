@@ -502,3 +502,21 @@ def test_non_test_bash_script_not_counted(tmp_path):
     (d / "tests" / "helper.test.sh").write_text(
         "#!/usr/bin/env bash\necho 'just a helper'\ncp a b\n", encoding="utf-8")
     assert mod._is_real_test(d / "tests" / "helper.test.sh") is False
+
+
+def test_ref_integrity_entrypoint_counted_once(tmp_path):  # CodeRabbit: no double-count
+    d = _skill(tmp_path)
+    (d / "skill.json").write_text(
+        '{"name": "demo", "entrypoint": "scripts/nope.py"}', encoding="utf-8")
+    s1c = _step(_rc(d), "1c")
+    assert s1c["status"] == "FAIL"
+    assert s1c["detail"].startswith("1 broken")  # exactly one issue, not two
+
+
+def test_ref_integrity_yaml_non_script_prefix(tmp_path):  # CodeRabbit: all 4 prefixes
+    # A templates/*.yaml ref to references/ (not just scripts/) is also checked.
+    d = _skill(tmp_path)
+    (d / "templates").mkdir(exist_ok=True)
+    (d / "templates" / "loop.yaml").write_text(
+        "doc: references/missing_guide.md\n", encoding="utf-8")
+    assert _step(_rc(d), "1c")["status"] == "FAIL"
