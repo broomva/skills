@@ -1,5 +1,6 @@
 ---
 name: p9
+primitive: P9
 category: orchestration
 description: |
   P9 — Broomva productive-wait primitive (the wait optimizer). Convert any

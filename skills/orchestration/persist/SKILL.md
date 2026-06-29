@@ -1,5 +1,6 @@
 ---
 name: persist
+primitive: P12
 category: orchestration
 description: "bstack P12 — Persistent Loop Discipline. Cross-context restart loop where state lives in the filesystem (PROMPT.md + git tree + state.jsonl), not in the conversation. Each iteration spawns a fresh agent context. Solves the 'context rot' failure mode where long-horizon agentic work (>1h, METR's 80%-reliability ceiling) degrades silently past ~100K tokens. Validation backpressure comes from compilers/tests/linters, not model self-grading. Use persist when: (1) starting work that may span hours and exceed the model's reliability horizon, (2) detecting context drift mid-session (token usage past 100K, repeated failed iterations on the same fix), (3) coordinating long-horizon work that needs to survive crashes / context exhaustion, (4) running parallel work streams (one persist loop per worktree, composed with bstack P5). Triggers on 'persist', 'long-horizon loop', 'context restart', 'fresh-context iteration', 'P12', 'Ralph loop', 'filesystem-state loop'."
 ---
