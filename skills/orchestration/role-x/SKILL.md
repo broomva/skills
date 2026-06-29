@@ -1,5 +1,6 @@
 ---
 name: role-x
+primitive: P17
 category: orchestration
 description: |
   bstack P17 — Lens-Routed Request Articulation. The typed routing
