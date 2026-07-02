@@ -1,6 +1,6 @@
 {
   "name": "gasgo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Best gas deal near me — engine over live Colombian per-station fuel-price open data (SICOM via datos.gov.co Socrata).",
   "type": "module",
   "module": "src/engine.ts",

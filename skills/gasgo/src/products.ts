@@ -10,10 +10,13 @@ export function normalizeProduct(raw: string): Product | null {
 
   // CNG / vehicular natural gas
   if (/(GNCV|CNG|GNV|NATURAL)/.test(s)) return "GNCV";
+  // Biodiesel — MUST precede the ACPM/DIESEL check: "BIODIESEL" contains the
+  // substring "DIESEL", so a DIESEL-first order silently reclassifies every
+  // biodiesel row as ACPM/diesel (observed: 533 "BIODIESEL EXTRA" rows in
+  // gjy9-tpph misfiled, and `--product biodiesel` returning nothing).
+  if (/BIODIESEL/.test(s)) return "BIODIESEL";
   // Diesel / ACPM
   if (/(ACPM|DIESEL|DIÉSEL|DISEL)/.test(s)) return "ACPM_DIESEL";
-  // Biodiesel (check before generic gasolina)
-  if (/BIODIESEL/.test(s)) return "BIODIESEL";
   // Extra gasoline
   if (/EXTRA/.test(s)) return "GASOLINA_EXTRA";
   // Corriente / regular gasoline (default gasoline bucket)
