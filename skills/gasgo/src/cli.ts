@@ -20,6 +20,7 @@
  */
 
 import { bestDeal } from "./engine.ts";
+import { formatDistance, recommendationLine } from "./present.ts";
 import { normalizeProduct, productLabel, productUnit } from "./products.ts";
 import type { Coord, Product } from "./types.ts";
 
@@ -107,7 +108,9 @@ async function run(): Promise<void> {
   const productRaw = typeof args.product === "string" ? args.product : "gncv";
   const product = normalizeProduct(productRaw) as Product | null;
   if (!product) {
-    console.error(`Unknown --product "${productRaw}". Try: gncv | corriente | extra | diesel | biodiesel`);
+    console.error(
+      `Unknown --product "${productRaw}". Try: gncv | corriente | extra | diesel | biodiesel`,
+    );
     process.exit(2);
   }
 
@@ -130,31 +133,32 @@ async function run(): Promise<void> {
 
   const unit = productUnit(product);
   console.log(`\n⛽ gasgo — ${productLabel(product)} near ${label}`);
-  console.log(`   candidates: ${result.candidateCount} · avg ${result.avgPriceCop ? cop(result.avgPriceCop) : "—"}/${unit} · observed ${result.freshness.observedAt ?? "—"}`);
-  console.log(`   ${result.freshness.isLive ? "🟢 LIVE" : "🟡 HISTORICAL"} — ${result.freshness.note}`);
+  console.log(
+    `   candidates: ${result.candidateCount} · avg ${result.avgPriceCop ? cop(result.avgPriceCop) : "—"}/${unit} · observed ${result.freshness.observedAt ?? "—"}`,
+  );
+  console.log(
+    `   ${result.freshness.isLive ? "🟢 LIVE" : "🟡 HISTORICAL"} — ${result.freshness.note}`,
+  );
 
   if (!result.best) {
-    console.log("\n   No stations found in range. Widen --radius, set --municipality, or try --city.\n");
+    console.log(
+      "\n   No stations found in range. Widen --radius, set --municipality, or try --city.\n",
+    );
     return;
   }
 
   console.log("");
   for (const s of result.ranked) {
-    const dist = s.distanceKm === null ? "dist n/a" : `${s.distanceKm.toFixed(1)} km`;
+    const dist = formatDistance(s);
     const save =
-      s.savingsVsAvgCop > 0 ? `saves ${cop(s.savingsVsAvgCop)}/tank` : `${cop(-s.savingsVsAvgCop)} over avg`;
+      s.savingsVsAvgCop > 0
+        ? `saves ${cop(s.savingsVsAvgCop)}/tank`
+        : `${cop(-s.savingsVsAvgCop)} over avg`;
     const marker = s.rank === 1 ? "👉" : "  ";
-    console.log(
-      `${marker} ${s.rank}. ${s.stationName}${s.brand ? ` [${s.brand}]` : ""}`,
-    );
-    console.log(
-      `      ${cop(s.priceCop)}/${unit} · ${dist} · ${s.municipality ?? "?"} · ${save}`,
-    );
+    console.log(`${marker} ${s.rank}. ${s.stationName}${s.brand ? ` [${s.brand}]` : ""}`);
+    console.log(`      ${cop(s.priceCop)}/${unit} · ${dist} · ${s.municipality ?? "?"} · ${save}`);
   }
-  const b = result.best;
-  console.log(
-    `\n   👉 Go to: ${b.stationName} — ${cop(b.priceCop)}/${unit}${b.distanceKm !== null ? `, ${b.distanceKm.toFixed(1)} km away` : ""}.\n`,
-  );
+  console.log(`\n   ${recommendationLine(result.best, `${cop(result.best.priceCop)}/${unit}`)}\n`);
 }
 
 const HELP = `gasgo — best gas deal near you (Colombia, live open data)

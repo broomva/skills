@@ -5,9 +5,9 @@
  * freshness verdict. Pure orchestration; sources and ranking are separate.
  */
 
+import { rankStations } from "./rank.ts";
 import { fetchObservations } from "./sources/adapters.ts";
 import type { SocrataOptions } from "./sources/socrata.ts";
-import { rankStations } from "./rank.ts";
 import type { BestDealQuery, BestDealResult, Observation } from "./types.ts";
 
 export const DEFAULTS = {
@@ -17,7 +17,9 @@ export const DEFAULTS = {
   costPerKmCop: 350,
 } as const;
 
-export function makeQuery(partial: Partial<BestDealQuery> & Pick<BestDealQuery, "at" | "product">): BestDealQuery {
+export function makeQuery(
+  partial: Partial<BestDealQuery> & Pick<BestDealQuery, "at" | "product">,
+): BestDealQuery {
   return {
     radiusKm: partial.radiusKm ?? DEFAULTS.radiusKm,
     topN: partial.topN ?? DEFAULTS.topN,
@@ -56,9 +58,19 @@ export function rankObservations(
   const anyLive = observations.some((o) => o.isLive);
   const observedAt = best?.observedAt ?? observations[0]?.observedAt ?? null;
   const source = best?.source ?? observations[0]?.source ?? "none";
-  const note = anyLive
+
+  // Honesty caveat: the only open coordinates are municipal centroids, so
+  // within a municipality every station shares one point and one distance.
+  // Ranking there is by price; distances shown are approximate. (v0.2)
+  const anyMunicipalCoords = ranked.some((s) => s.geoResolution === "municipality");
+  const geoCaveat = anyMunicipalCoords
+    ? " Coordinates are municipal centroids (no open per-station coords), so distances are approximate and ranking within a municipality is by price."
+    : "";
+
+  const base = anyLive
     ? "Live automated feed (SICOM GNCV via datos.gov.co)."
-    : "Historical snapshot — gasoline/diesel open data is frozen (≈2022). Treat as reference, not live. Live gasoline/diesel needs the SICOM consulta or Google Places adapter (roadmap).";
+    : "Historical snapshot — gasoline/diesel open data is frozen (≈2022). Treat as reference, not live. Live gasoline/diesel needs a working SICOM consulta endpoint or a Google Places adapter (roadmap).";
+  const note = base + geoCaveat;
 
   return {
     query,

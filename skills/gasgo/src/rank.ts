@@ -22,7 +22,9 @@ export function rankStations(
   // 2) optional municipality filter (case/accent-insensitive contains).
   if (query.municipality) {
     const want = normalize(query.municipality);
-    candidates = candidates.filter((o) => o.municipality && normalize(o.municipality).includes(want));
+    candidates = candidates.filter(
+      (o) => o.municipality && normalize(o.municipality).includes(want),
+    );
   }
 
   // 3) attach distance; radius-filter only those that HAVE coords.
@@ -42,8 +44,13 @@ export function rankStations(
 
   if (inRange.length === 0) return { ranked: [], avgPriceCop: null, candidateCount: 0 };
 
-  const avgPriceCop =
-    inRange.reduce((sum, x) => sum + x.o.priceCop, 0) / inRange.length;
+  // Round the average ONCE and use the same value for both the displayed avg and
+  // the per-station savings, so the two are always self-consistent — otherwise a
+  // sub-COP fractional avg (displayed rounded) multiplied by the tank size makes
+  // "avg $2.734" and "saves $1.283" disagree with (avg − price) × tank. (P20)
+  const avgPriceCop = Math.round(
+    inRange.reduce((sum, x) => sum + x.o.priceCop, 0) / inRange.length,
+  );
 
   const scored = inRange.map(({ o, distanceKm }) => {
     const detour = distanceKm === null ? 0 : 2 * distanceKm * query.costPerKmCop;
@@ -64,13 +71,9 @@ export function rankStations(
 
   // candidateCount describes the SAME set the average is computed over
   // (post municipality + radius filtering), not the raw product set. (#3)
-  return { ranked, avgPriceCop: Math.round(avgPriceCop), candidateCount: inRange.length };
+  return { ranked, avgPriceCop, candidateCount: inRange.length };
 }
 
 function normalize(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toUpperCase()
-    .trim();
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
 }
