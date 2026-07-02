@@ -1,0 +1,22 @@
+{
+  "name": "gasgo",
+  "version": "0.1.0",
+  "description": "Best gas deal near me — engine over live Colombian per-station fuel-price open data (SICOM via datos.gov.co Socrata).",
+  "type": "module",
+  "module": "src/engine.ts",
+  "bin": {
+    "gasgo": "src/cli.ts"
+  },
+  "scripts": {
+    "gasgo": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src test",
+    "format": "biome format --write src test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.6.3"
+  }
+}
