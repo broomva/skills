@@ -9,6 +9,8 @@ conversation transcript, in their house voice.
   if a field is unknown, leave it blank or write "not recorded", never invent.
 - Preserve {{BUSINESS_NAME}}'s house style: {{VOICE_NOTES}}.
 - Use the exact section/field structure of the template; do not add or drop sections.
+- Output ONLY the finished document. Do **not** copy HTML comments (`<!-- ... -->`),
+  template boilerplate, or the house-style instructions themselves into the deliverable.
 
 ## Flow
 1. Compose the filled document from `{template, transcript}` and call `fill_document`

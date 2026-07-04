@@ -1,7 +1,7 @@
 ---
 name: eve-forge
 category: orchestration
-version: 1.0.1
+version: 1.0.2
 author: broomva
 description: >-
   Forge a personalized eve agent for a business end-to-end — absorb the
@@ -95,7 +95,7 @@ Delete `/tmp/<slug>.env` after (it holds a live token).
 - `scripts/eve_forge.py gate <agent_dir> [--info info.json --expect-tools a,b]` — runs deploy-safety (+ validate) as one pre-deploy gate.
 - `scripts/deploy_safety.py <agent_dir> [--env prod|dev]` / `--stdin` — the auth-lock check.
 - `scripts/validate.py --expect-tools a,b` (reads `eve info --json` on stdin) — diagnostics + tools.
-- `scripts/smoke.py --output <file> --truth <json>` — deployed-output vs ground-truth.
+- `scripts/smoke.py --output <file> --truth <json>` — deployed-output vs ground-truth (strips HTML comments; `truth.json` `forbidden` encodes case-scoped negatives, e.g. no `"bloodwork"` for a non-senior patient).
 
 ## Gotchas (see `references/gotchas.md`)
 
