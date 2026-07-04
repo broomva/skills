@@ -1,12 +1,13 @@
-// TEMPLATE: agent/channels/<channel>.ts
-// AUTH IS LOCKED BY DEFAULT. The scaffold ships placeholderAuth(); this template
-// replaces it with a real authenticator so the deploy-safety gate passes.
-// NEVER add none() for a production deploy — the gate will (and should) block it.
-import { defineChannel } from "eve/channels";
-import { vercelOidc, localDev } from "eve/channels/auth";
+// TEMPLATE: agent/channels/eve.ts
+// NOTE (BRO-1685): `npx eve init` ALREADY scaffolds this file with the correct
+// wrapper — `eveChannel` from `eve/channels/eve`. Its default `auth` array ends
+// with `placeholderAuth()`. The AUTHOR stage EDITS the scaffolded file to remove
+// placeholderAuth() and lock to a real authenticator. Do NOT hand-write
+// `defineChannel` from `eve/channels` (that is the generic channel and needs routes).
+import { eveChannel } from "eve/channels/eve";
+import { localDev, vercelOidc } from "eve/channels/auth";
 
-export default defineChannel({
-  // HTTP channel. Add @chat-adapter/whatsapp etc. for WhatsApp/Telegram ingress.
+export default eveChannel({
   auth: [vercelOidc(), localDev()], // prod-safe: real authenticator + dev convenience
-  // Do NOT ship: auth: [none()]  ← deploy-safety.py denies this in prod (fail-closed).
+  // NEVER ship: auth: [none()] — and remove placeholderAuth() — deploy_safety.py blocks both (fail-closed).
 });

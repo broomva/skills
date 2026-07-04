@@ -18,10 +18,13 @@ Every item here bit a real run. The `eve-forge` gates exist because of these.
    authenticator. **NEVER ship `none()` in prod** — a benchmark run did, leaving a public,
    Gateway-billed endpoint anyone could drain. The `deploy-safety` gate blocks this.
 
-4. **Vercel Deployment Protection (SSO).** The raw deployment URL 302-redirects to
-   `vercel.com/sso-api` (platform-level, in front of eve's always-public `/health`). The
-   **production alias** (`<slug>.vercel.app`) is public. → Use the alias for smoke-tests and
-   the customer-facing URL, not the raw deployment URL.
+4. **Vercel Deployment Protection (SSO) + auth-gated routes.** The raw deployment URL
+   302-redirects to `vercel.com/sso-api` (platform-level). Use the **production alias**
+   (`<slug>.vercel.app`). NOTE (corrected in v1.0.1): on eve v0.19.0 there is **no public
+   `/health` route** (it 404s); `/eve/v1/info` and `/eve/v1/session` are **auth-gated** once
+   the channel is locked (401 to anonymous). Authenticate the smoke driver via
+   `vercel env pull` → `Authorization: Bearer $VERCEL_OIDC_TOKEN` (see SKILL §Smoke against a
+   locked channel).
 
 5. **eve not auto-detected as a Vercel framework.** Deploy logs "No framework detected"; it
    works only because the scaffold's `build` script is `eve build`. Consequence: eve's native

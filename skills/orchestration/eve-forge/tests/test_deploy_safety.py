@@ -82,3 +82,16 @@ def test_variable_auth_fails_closed():
 def test_scan_dir_no_channels_fails(tmp_path):
     ok, rows = ds.scan_dir(str(tmp_path))
     assert not ok and rows[0][0] == "<none>"
+
+
+def test_scan_dir_ignores_node_modules(tmp_path):
+    # BRO-1685: a project-root scan must not fail on the eve library's own
+    # channel files under node_modules/eve/dist/**/channels/*.ts.
+    ch = tmp_path / "channels"
+    ch.mkdir()
+    (ch / "eve.ts").write_text("auth: [vercelOidc()]")
+    nm = tmp_path / "node_modules" / "eve" / "dist" / "channels"
+    nm.mkdir(parents=True)
+    (nm / "x.ts").write_text("auth: [none()]")  # library file — must be skipped
+    ok, rows = ds.scan_dir(str(tmp_path))
+    assert ok and all("node_modules" not in r[0] for r in rows)
