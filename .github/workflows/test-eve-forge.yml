@@ -1,0 +1,33 @@
+name: test-eve-forge
+on:
+  pull_request:
+    paths: ['skills/orchestration/eve-forge/**', '.github/workflows/test-eve-forge.yml']
+  push:
+    branches: [main]
+    paths: ['skills/orchestration/eve-forge/**', '.github/workflows/test-eve-forge.yml']
+  workflow_dispatch:
+concurrency:
+  group: test-eve-forge-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    working-directory: skills/orchestration/eve-forge
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Unit tests (deploy-safety, validate, smoke)
+        run: python -m pytest tests/ -v
+      - name: Script syntax
+        run: python -m py_compile scripts/*.py
