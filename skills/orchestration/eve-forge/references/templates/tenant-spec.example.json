@@ -1,0 +1,17 @@
+{
+  "tenant": "vet-clinic",
+  "business_name": "Broomva Veterinary",
+  "document_type": "clinical visit summary",
+  "delivery": { "channel": "whatsapp", "recipient_field": "owner_email" },
+  "voice": "warm but clinical; metric units; species written as 'Canine (Breed)'",
+  "fields": [
+    "patient_name", "species_breed", "sex", "age", "owner_name", "visit_date",
+    "complaint", "exam_findings", "temp", "assessment", "plan", "followup"
+  ],
+  "fill_rules": [
+    "fill ONLY from the transcript; never fabricate; unknown field -> leave blank",
+    "if age > 8 years (senior): ADD a baseline-bloodwork recommendation line to Follow-up",
+    "strip HTML comments (<!-- ... -->) from the produced document"
+  ],
+  "ground_truth": "truth.json"
+}

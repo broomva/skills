@@ -1,7 +1,7 @@
 ---
 name: eve-forge
 category: orchestration
-version: 1.0.0
+version: 1.0.1
 author: broomva
 description: >-
   Forge a personalized eve agent for a business end-to-end — absorb the
@@ -52,13 +52,13 @@ the consequential steps so the forge cannot repeat the benchmark's mistakes.
 
 | # | Stage | How | Gate |
 |---|---|---|---|
-| 1 | **Absorb** | read the Word template + 1–2 transcripts + 2–3 filled examples → write `tenant-spec.json` (fields, fill-logic, voice, delivery surface, and **at least one ground-truth filled example**) | latent |
-| 2 | **Scaffold** | `python3 scripts/eve_forge.py preflight` **then** `nvm use 24 && npx eve@latest init <slug>` | **preflight blocks if Node < 24** (the npx trap) |
-| 3 | **Author** | copy `references/templates/*` into `agent/`, fill from `tenant-spec.json`: `instructions.md`, `tools/fill_document.ts`, `tools/send_document.ts` (`approval: always()`), `channels/<ch>.ts` (**auth LOCKED — `vercelOidc()`, never `none()`**) | latent |
-| 4 | **Validate** | `npx eve info --json \| python3 scripts/validate.py --expect-tools fill_document,send_document` + `pnpm typecheck` | **0 diagnostics + tools registered or iterate** |
-| 5 | **Deploy** | `python3 scripts/eve_forge.py gate <agent_dir>` **before** `vercel deploy --scope <team>` (use the **production alias**, not the SSO raw URL) | **deploy-safety denies if auth not locked** |
-| 6 | **Smoke** | drive the deployed agent with the business's own example → `python3 scripts/smoke.py --output <filled> --truth tenant-spec.truth.json` | **assert vs ground truth (evidence-gated)** |
-| 7 | **Register** | commit `freelance/<slug>/` (agent dir + spec + smoke receipt); report the URL + evidence | tenant = versioned data |
+| 1 | **Absorb** | read the template + 1–2 transcripts + 2–3 filled examples → write `tenant-spec.json` (see `references/templates/tenant-spec.example.json`) + a ground-truth `truth.json` (required substrings + case-scoped `forbidden`). **Stage these OUTSIDE the tenant dir** — `eve init` refuses a non-empty target ("has no package.json") | latent |
+| 2 | **Scaffold** | `python3 scripts/eve_forge.py preflight` **then** `nvm use 24 && npx eve@latest init <slug>`, then move `tenant-spec.json`/`truth.json` in | **preflight blocks if Node < 24** (the npx trap) |
+| 3 | **Author** | fill from `tenant-spec.json`: copy `references/templates/{fill_document,send_document}.ts` → `agent/tools/`; write `agent/instructions.md` (business voice + **"strip HTML comments from the output"**); **EDIT the scaffolded `agent/channels/eve.ts`** — remove `placeholderAuth()` → `auth: [vercelOidc(), localDev()]` (never `none()`). Do NOT hand-write `defineChannel`; the scaffold already ships `eveChannel` | latent |
+| 4 | **Validate** | `npx eve info --json \| python3 scripts/validate.py --expect-tools fill_document,send_document` (validate.py strips eve's banner + reads the real dict-`diagnostics`/`status` schema) + `npm run typecheck` | **0 diagnostic errors + tools registered, or iterate** |
+| 5 | **Deploy** | `python3 scripts/eve_forge.py gate agent/` (point at the **`agent/` dir**, not the project root) **before** `vercel deploy --scope <team>`; use the **production alias** (the raw URL 302s to SSO) | **deploy-safety denies if auth not locked** |
+| 6 | **Smoke** | drive the deployed agent (see **§Smoke against a locked channel**) → `python3 scripts/smoke.py --output <filled.txt> --truth truth.json` | **assert vs ground truth (evidence-gated)** |
+| 7 | **Register** | commit `freelance/<slug>/` (agent dir + `tenant-spec.json` + `truth.json` + `smoke-receipt.json`: `{url, verdict, coverage, at}`); report URL + evidence | tenant = versioned data |
 | 8 | **Evolve** | owner draft→approve corrections → forge proposes a diff to `instructions.md`/skills | **propose → test vs fixtures → owner-approve → commit** |
 
 ## The deploy-safety gate (the incident-derived check)
@@ -70,6 +70,24 @@ Claude-Code orchestrator, wire it as a **PreToolUse hook** that runs
 tool call on a non-zero exit**. Rule (prod): the channel `auth:` array must contain a
 real authenticator (`vercelOidc`) and must NOT contain `none()`/`placeholderAuth()`;
 a lone `localDev()` is dev-only. Fail-closed if no `auth:` array is found.
+
+## Smoke against a locked channel
+
+A correctly-locked channel returns **401** to anonymous callers — so the smoke driver must
+authenticate (the only reason a naive smoke "worked" in the benchmark was the `auth: none()`
+incident). On the Vercel deploy:
+
+```bash
+vercel env pull /tmp/<slug>.env --environment=production --scope <team>   # mints VERCEL_OIDC_TOKEN
+TOKEN=$(grep VERCEL_OIDC_TOKEN /tmp/<slug>.env | cut -d= -f2- | tr -d '"')
+# POST a turn — payload field is `message` (NOT `input`); returns 202 + sessionId:
+curl -s -XPOST "https://<slug>.vercel.app/eve/v1/session" -H "Authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' -d '{"message":"<transcript>"}'
+# GET the stream (it long-polls at session.waiting → cap it), extract the fill_document output:
+curl -s --max-time 60 "https://<slug>.vercel.app/eve/v1/session/<sessionId>/stream?startIndex=0" \
+     -H "Authorization: Bearer $TOKEN" > /tmp/<slug>.stream
+```
+Delete `/tmp/<slug>.env` after (it holds a live token).
 
 ## Deterministic scripts
 

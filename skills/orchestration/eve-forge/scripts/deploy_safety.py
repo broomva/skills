@@ -101,7 +101,10 @@ def scan_dir(agent_dir, env="prod"):
     for g in CHANNEL_GLOBS:
         files += glob.glob(os.path.join(agent_dir, "**", "channels", g), recursive=True)
         files += glob.glob(os.path.join(agent_dir, "channels", g))
-    files = sorted(set(files))
+    # skip dependency/build dirs (BRO-1685: a project-root scan globbed
+    # node_modules/eve/dist/**/channels/*.ts and failed on the library's own files)
+    _skip = ("/node_modules/", "/.eve/", "/dist/", "/.git/", "/.next/")
+    files = sorted(set(f for f in files if not any(s in f for s in _skip)))
     if not files:
         return False, [("<none>", False, "no channel files under channels/ (fail-closed)")]
     rows = []
