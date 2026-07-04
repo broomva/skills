@@ -4,6 +4,13 @@ All notable changes to `broomva/eve-forge` are documented here.
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-07-04
+
+### Fixed — smoke-gate fidelity residuals (BRO-1685)
+- **`smoke.py`** now strips HTML comments (`<!-- ... -->`) from the output before matching, so an echoed template/house-style comment can't false-match a required or forbidden term.
+- Documented + tested that `truth.json` `forbidden` encodes **case-scoped negative constraints** — e.g. `"bloodwork"` for a non-senior patient — so a real house-style violation now fails the gate (previously smoke passed regardless of the single most business-critical rule).
+- **`instructions.md` template** — added a rule: output only the finished document; never echo HTML comments / template boilerplate / house-style instructions into the deliverable.
+
 ## [1.0.1] — 2026-07-04
 
 ### Fixed — E2E dogfood (BRO-1685): the gates now run against **real** eve v0.19.0, not assumed schemas

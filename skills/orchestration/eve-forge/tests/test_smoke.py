@@ -33,3 +33,18 @@ def test_p20_substring_false_positive_rejected():
     # "Bella" must NOT be satisfied by "Isabella", nor "one week" by "phone weekly"
     ok, _, reason = s.assess_output("Isabella phoned weekly", {"required": ["Bella", "one week"]})
     assert not ok and "missing" in reason
+
+
+# --- v1.0.2: HTML-comment stripping + case-scoped negative constraint (BRO-1685) ---
+def test_echoed_html_comment_does_not_trip_forbidden():
+    # an echoed template comment containing a forbidden word must NOT fail the gate
+    out = "Follow-up: recheck in one week.\n<!-- if senior (>8y) add a bloodwork line -->"
+    ok, _, _ = s.assess_output(out, {"required": ["one week"], "forbidden": ["bloodwork"]})
+    assert ok
+
+
+def test_negative_constraint_in_body_fails():
+    # the real senior-rule violation: 'bloodwork' in the actual body MUST fail
+    out = "Follow-up: recheck in one week; recommend baseline bloodwork."
+    ok, _, r = s.assess_output(out, {"required": ["one week"], "forbidden": ["bloodwork"]})
+    assert not ok and "forbidden" in r

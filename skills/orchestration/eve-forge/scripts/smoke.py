@@ -17,13 +17,21 @@ import re
 import sys
 
 
+def _strip_html_comments(text):
+    """Remove <!-- ... --> so an echoed template/house-style comment can't false-match
+    a required OR forbidden term (BRO-1685: the agent echoed the template comment,
+    which contains 'bloodwork', into the deliverable)."""
+    return re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+
+
 def _present(term, out):
     return re.search(r"\b" + re.escape(term.lower()) + r"\b", out) is not None
 
 
 def assess_output(output, truth):
-    """(ok, coverage_ratio, reason)."""
-    out = (output or "").lower()
+    """(ok, coverage_ratio, reason). HTML comments stripped first (v1.0.2). `forbidden`
+    encodes case-scoped negative constraints (e.g. no 'bloodwork' for a non-senior patient)."""
+    out = _strip_html_comments(output or "").lower()
     reasons = []
     required = truth.get("required", [])
     missing = [r for r in required if not _present(r, out)]
