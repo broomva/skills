@@ -1723,11 +1723,13 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
     if not is_tombstone:
         if not core_claim:
             errors.append(LintError(path_str, "core_claim", "core_claim is missing", "error"))
-        elif len(str(core_claim)) > 140:
-            errors.append(LintError(
-                path_str, "core_claim",
-                f"core_claim is {len(str(core_claim))} chars (max 140)", "error"
-            ))
+        else:
+            if len(str(core_claim)) > 140:
+                errors.append(LintError(
+                    path_str, "core_claim",
+                    f"core_claim is {len(str(core_claim))} chars (max 140)", "error"
+                ))
+            errors.extend(_lint_core_claim_quality(path_str, core_claim))
 
         # sources
         sources = fm.get("sources", [])
@@ -1791,6 +1793,38 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
     errors.extend(_lint_contradicts_resolution(path_str, fm, body))
 
     return errors
+
+
+# ── core_claim quality (BRO-1689) ─────────────────────────────────────────────
+# A core_claim should be a distilled one-sentence claim. When a research doc is
+# mis-promoted (whole-doc-as-body), entities inherit a FRAGMENT as their claim —
+# a table row, a section header, a raw-extract preamble. Tier-1 /kg routing scores
+# on core_claim, so a fragment claim is a catalog row that never matches a real
+# query AND crowds out real entities. These signatures are mechanically detectable;
+# clickbait-title claims need human judgment and are deliberately NOT flagged here.
+_JUNK_CLAIM_PATTERNS: "list[tuple[re.Pattern, str]]" = [
+    (re.compile(r"\s\|\s.*\|"), "contains markdown table pipes"),
+    (re.compile(r"(?i)\braw extract\b"), "is a raw-extract header"),
+    (re.compile(r"^\s*Pathway\s+[A-C]\b"), "is a 'Pathway X' action-item fragment"),
+    (re.compile(r"(?i)^\s*bottom line\b"), "is a 'Bottom line' BLUF fragment"),
+    (re.compile(r"^\s*\d+\.\d+\s+[A-Za-z]"), "is a numbered section-header fragment"),
+]
+
+
+def _lint_core_claim_quality(path_str: str, core_claim) -> "list[LintError]":
+    """Flag core_claims that are mis-promotion artifacts (fragments) rather than a
+    distilled claim (BRO-1689). Structural signatures only — see _JUNK_CLAIM_PATTERNS;
+    clickbait-title claims need human judgment and are intentionally not flagged."""
+    cc = str(core_claim or "").strip()
+    if not cc:
+        return []  # missing-claim is handled by the caller
+    for rx, why in _JUNK_CLAIM_PATTERNS:
+        if rx.search(cc):
+            return [LintError(
+                path_str, "core_claim",
+                f"core_claim {why} — mis-promotion artifact, not a distilled claim "
+                f"(BRO-1689): {cc[:60]!r}", "error")]
+    return []
 
 
 _TIMELINE_HEADING_RE = re.compile(r"^##\s+Timeline\b.*$", re.MULTILINE)
