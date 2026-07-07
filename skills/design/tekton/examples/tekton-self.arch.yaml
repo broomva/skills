@@ -1,0 +1,147 @@
+name: Tekton
+description: The shared architecture-intent substrate, modeling itself (dogfood v0.2).
+
+# ── one graph, many tiers. Views are filters over these same nodes.
+#    v0.2: parent (containment), status (as-is/to-be), qualities (NFRs),
+#    rules (fitness functions). Edit this file; re-run `tekton render` / `tekton lint`.
+
+nodes:
+  # actors
+  - { id: carlos,  type: actor, label: Carlos (human) }
+  - { id: agent,   type: actor, label: Claude (agent) }
+
+  # journey: a design session (steps are CONTAINED, not step-of-edged)
+  - { id: design_session, type: journey, label: Design session }
+  - { id: s_intent,  type: step, label: State intent,        parent: design_session }
+  - { id: s_model,   type: step, label: Mutate the model,    parent: design_session }
+  - { id: s_render,  type: step, label: Render & see views,  parent: design_session }
+  - { id: s_steer,   type: step, label: Steer / redirect,    parent: design_session }
+
+  # system — engine boundary contains the core pipeline
+  - { id: engine,     type: boundary,  label: Engine core }
+  - { id: cli,        type: component, label: Tekton CLI (tekton.py), parent: engine, layer: interface }
+  - { id: validator,  type: component, label: Validator + linter,     parent: engine, layer: domain }
+  - { id: projector,  type: component, label: View projector,         parent: engine, layer: domain }
+  - { id: viewer,     type: component, label: HTML viewer (on-brand), layer: interface }
+  - { id: elk,        type: external,  label: elkjs layout engine }
+  - { id: skill,      type: component, label: /tekton skill wrapper,  layer: interface }
+  - { id: mcp,        type: external,  label: MCP server,             status: target }   # v1 — to-be
+
+  # data
+  - { id: model_store, type: datastore, label: arch.yaml (canonical), layer: data }
+  - { id: e_node,      type: entity,    label: Node (typed) }
+  - { id: e_edge,      type: entity,    label: Edge (typed) }
+  - { id: e_view,      type: entity,    label: View (query) }
+  - { id: e_rule,      type: entity,    label: Rule (fitness fn) }
+
+  # infra
+  - { id: repo,    type: infra, label: skills/tekton (git) }
+  - { id: browser, type: infra, label: Browser (view surface) }
+
+decisions:
+  - id: adr_yaml
+    label: YAML-canonical model
+    status: accepted
+    context: Both human and agent must read/write the same design substrate with git as the round-trip; binary or DB-backed formats exclude one party or lose diffability.
+    consequences: Zero-parser cost and PR-reviewable design changes; ceiling on real-time co-editing until a CRDT layer (v2).
+    governs: [model_store]
+  - id: adr_views
+    label: Views are graph queries, not separate diagrams
+    status: accepted
+    context: Multi-diagram tools drift apart; the C4/Structurizr lesson is one model, many projections.
+    consequences: Adding a tier = adding node/edge types + a filter; cross-tier traceability is a path query for free.
+    governs: [projector, e_view]
+  - id: adr_mermaid
+    label: Mermaid as primary render target
+    status: superseded
+    context: v0 needed a zero-dependency render fast.
+    consequences: Could not express the Broomva Design System; weak layout on dense graphs.
+    governs: []
+  - id: adr_renderer
+    label: Custom elkjs + Broomva DS renderer
+    status: accepted
+    supersedes: adr_mermaid
+    context: Mermaid's theming ceiling blocked the design language ("pretty" is a requirement, not a nicety); elkjs is pure JS so the output stays one self-contained file.
+    consequences: We own the visual grammar (matte cards, earned glass, status encoding); more viewer code to maintain.
+    governs: [viewer, elk]
+  - id: adr_crdt
+    label: git round-trip v1; CRDT (loro) co-editing v2
+    status: proposed
+    context: Real-time human/agent co-editing needs conflict-free merges; git diff covers the turn-based loop today.
+    consequences: v1 stays simple; live Prosopon surface deferred.
+    governs: [model_store, mcp]
+
+qualities:
+  - id: q_selfcontained
+    label: Viewer ships as one self-contained HTML file
+    kind: portability
+    target: 0 build steps; opens from disk, phone, or Omnara
+    applies_to: [viewer]
+  - id: q_difffriendly
+    label: Model stays diff-friendly
+    kind: evolvability
+    target: every design change is a reviewable YAML diff
+    applies_to: [model_store]
+  - id: q_layout_speed
+    label: Layout stays interactive
+    kind: performance
+    target: elk layout < 1.5s at 100 nodes
+    applies_to: [projector, elk]
+
+# ── fitness functions — machine-checked design rules (tekton lint) ──
+rules:
+  - id: viewer-readonly
+    rule: forbid-dep
+    from: { id: viewer }
+    to: { id: model_store }
+    via: [writes]
+    why: the viewer is a projection surface; only humans/agents write the model
+  - id: steps-via-components
+    rule: forbid-dep
+    from: { type: step }
+    to: { type: datastore }
+    why: journey steps interact through components, never stores directly
+  - id: engine-acyclic
+    rule: no-cycle
+    via: [calls, uses, depends-on]
+  - id: clean-layering
+    rule: layer-order
+    layers: [interface, domain, data]
+    via: [calls, reads, writes, uses]
+
+edges:
+  # journey flow (containment replaces step-of)
+  - { from: carlos, to: design_session, type: uses }
+  - { from: agent,  to: design_session, type: uses }
+  - { from: s_intent, to: s_model,  type: next }
+  - { from: s_model,  to: s_render, type: next }
+  - { from: s_render, to: s_steer,  type: next }
+  - { from: s_steer,  to: s_model,  type: next }         # the loop
+  - { from: s_model,  to: cli,      type: touches }
+  - { from: s_render, to: viewer,   type: touches }
+
+  # system wiring
+  - { from: skill,     to: cli,        type: uses }
+  - { from: cli,       to: validator,  type: calls }
+  - { from: cli,       to: projector,  type: calls }
+  - { from: cli,       to: viewer,     type: uses }
+  - { from: viewer,    to: elk,        type: uses }
+  - { from: mcp,       to: cli,        type: uses }
+
+  # data access
+  - { from: cli,       to: model_store, type: reads }
+  - { from: viewer,    to: model_store, type: reads }
+  - { from: agent,     to: model_store, type: writes }
+  - { from: carlos,    to: model_store, type: writes }
+  - { from: model_store, to: e_node,   type: stores }
+  - { from: model_store, to: e_edge,   type: stores }
+  - { from: model_store, to: e_rule,   type: stores }
+  - { from: projector,   to: e_view,   type: owns }
+  - { from: projector,   to: e_node,   type: reads }
+  - { from: projector,   to: e_edge,   type: reads }
+  - { from: validator,   to: e_rule,   type: reads }
+
+  # infra
+  - { from: cli,    to: repo,    type: deploys-to }
+  - { from: viewer, to: browser, type: runs-on }
+  - { from: model_store, to: repo, type: runs-on }
