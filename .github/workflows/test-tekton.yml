@@ -1,0 +1,46 @@
+name: test-tekton
+
+# Test gate for the `tekton` skill (skills/design/tekton/) — shared
+# architecture-intent substrate. Path-filtered: runs only when the skill
+# changes. Covers the per-review-finding regression suite (CLI) and the
+# headless-Chrome geometry audit (fails on node overlaps / empty captures).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/design/tekton/**'
+      - '.github/workflows/test-tekton.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/design/tekton/**'
+      - '.github/workflows/test-tekton.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-tekton-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - name: Regression suite (31 assertions, one per adversarial-review finding)
+        run: bash skills/design/tekton/tests/regressions.sh
+      - name: Self-model gates (validate + lint)
+        run: |
+          python3 skills/design/tekton/scripts/tekton.py validate skills/design/tekton/examples/tekton-self.arch.yaml
+          python3 skills/design/tekton/scripts/tekton.py lint skills/design/tekton/examples/tekton-self.arch.yaml
+      - name: Visual/geometry audit (headless Chrome)
+        run: bash skills/design/tekton/tests/visual-audit.sh skills/design/tekton/examples/tekton-self.arch.yaml /tmp/shots
+      - name: Upload view screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tekton-view-screenshots
+          path: /tmp/shots/*.png
+          if-no-files-found: ignore

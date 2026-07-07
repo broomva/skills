@@ -1,0 +1,3 @@
+# rendered viewers are derived artifacts — regenerate with `tekton render`
+*.view.html
+__pycache__/
