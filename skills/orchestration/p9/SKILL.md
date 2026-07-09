@@ -259,7 +259,8 @@ to channels in `$P9_HOME/notify.json`:
 - **webhook** — generic JSON POST (`{title, body, payload}`).
 - **command** — JSON on stdin to any hook script; this is the seam for
   Omnara, Telegram, Discord, or claude-remote-sessions relays.
-- Escalation-kind events additionally fire the policy's
+- Escalation-class events (`termination:escalated`, `stuck`, and any kind
+  containing `escalat`) additionally fire the policy's
   `ci_heal.escalation_channel.notify_hook` (previously dead config — now
   invoked).
 

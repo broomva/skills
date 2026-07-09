@@ -225,14 +225,21 @@ class TestNotify:
             class _R:
                 def read(self):
                     return b"ok"
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
             return _R()
 
         monkeypatch.setattr(p9.urllib.request, "urlopen", fake_urlopen)
         monkeypatch.setenv("BROOMVA_P9_NTFY_TOPIC", "my-topic")
         row = p9.notify("test", "Title!", "body")
         assert row["deliveries"] == [{"channel": "ntfy", "ok": True}]
-        assert calls[0].full_url.endswith("/my-topic")
-        assert calls[0].get_header("Title") == "Title!"
+        # JSON publish endpoint: topic + title ride in the UTF-8 body.
+        body = json.loads(calls[0].data.decode("utf-8"))
+        assert body["topic"] == "my-topic"
+        assert body["title"] == "Title!"
+        assert body["message"] == "body"
 
     def test_notify_cli_smoke(self, p9, capsys):
         rc = p9.main(["notify", "hello", "--body", "world", "--json"])
@@ -278,12 +285,30 @@ class TestWaitFor:
         rows = _wait_rows(p9)
         assert rows[-1]["to_state"] == "FAILED"
 
-    def test_heartbeat_touched_per_poll(self, p9):
-        p9.main(["wait-for", "hb", "--cmd", "true",
-                 "--interval", "0.1", "--timeout", "5"])
-        rows = _wait_rows(p9)
-        wid = rows[-1]["wait_id"]
-        assert p9.wait_heartbeat_path(wid).exists()
+    def test_heartbeat_touched_per_poll(self, p9, tmp_path):
+        """Heartbeat exists while the wait is LIVE (stuck-scan's progress
+        signal) and is cleaned up by the terminal fold."""
+        proc = subprocess.Popen(
+            [sys.executable, str(_SCRIPTS / "p9.py"),
+             "wait-for", "hb", "--cmd", "false",
+             "--interval", "0.2", "--timeout", "60"],
+            env=_cli_env(tmp_path),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            assert _wait_until(
+                lambda: any(r["name"] == "hb" for r in _wait_rows(p9))
+            ), "wait never registered"
+            wid = next(r["wait_id"] for r in _wait_rows(p9)
+                       if r["name"] == "hb")
+            assert _wait_until(
+                lambda: p9.wait_heartbeat_path(wid).exists()
+            ), "heartbeat never touched while live"
+        finally:
+            os.kill(proc.pid, signal.SIGTERM)
+            proc.communicate(timeout=15)
+        assert not p9.wait_heartbeat_path(wid).exists(), \
+            "terminal fold must clean up the heartbeat"
 
     def test_status_lists_open_waits(self, p9, capsys):
         p9.append_wait_event(p9.WaitEvent(
@@ -478,7 +503,6 @@ class TestStuckScan:
 class TestWatchLogs:
     def test_spawn_watcher_writes_log_file(self, p9, monkeypatch):
         captured = {}
-        real_popen = p9.subprocess.Popen
 
         def fake_popen(cmd, **kw):
             captured["stdout"] = kw.get("stdout")
@@ -489,22 +513,22 @@ class TestWatchLogs:
         assert captured["stdout"] is not p9.subprocess.DEVNULL
         assert p9.watch_log_path("abc123").exists()
 
-    def test_report_includes_log_tail_for_single_pr(self, p9, monkeypatch, capsys):
-        monkeypatch.setattr(p9, "spawn_watcher",
-                            lambda *a, **kw: _FakeProc(returncode=0))
-        p9.main(["watch", "700", "--repo", "broomva/test"])
-        # fabricate the log the fake spawn skipped
+    def test_report_includes_log_tail_for_single_pr(self, p9, capsys):
         p9.logs_dir().mkdir(parents=True, exist_ok=True)
-        rows, _ = p9.jsonl_read_all(p9.state_jsonl())
-        wid = rows[-1]["watcher_id"]
-        p9.watch_log_path(wid).write_text("check A pass\ncheck B fail\n")
-        # patch the row's extra.log via a fresh terminal event? Not needed:
-        # log is stamped in extra at watch time when a real proc exists.
-        capsys.readouterr()
+        log = p9.watch_log_path("wtail")
+        log.write_text("check A pass\ncheck B fail\n")
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=700, repo="broomva/test",
+            from_state=p9.PRState.PUSHED.value,
+            to_state=p9.PRState.WATCHING.value,
+            watcher_id="wtail", extra={"pid": 0, "log": str(log)},
+        ))
         rc = p9.main(["report", "--pr", "700", "--json"])
         assert rc == 0
         out = json.loads(capsys.readouterr().out)
-        assert out["reports"][0]["pr"] == 700
+        rep = out["reports"][0]
+        assert rep["pr"] == 700
+        assert rep["log_tail"] == ["check A pass", "check B fail"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -538,3 +562,182 @@ class TestRewatchCeiling:
         # one more DISTINCT PR must still hit the ceiling
         rc = p9.main(["watch", "699", "--repo", "broomva/test"])
         assert rc == p9.EXIT_CONCURRENCY_CEILING
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P20 cross-review round-1 regressions (adversarial review + CodeRabbit)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestP20Round1:
+    def test_ntfy_unicode_title_rides_in_json_body_not_header(self, p9, monkeypatch):
+        """MAJOR #1: real termination titles carry '→'/'—', which die in
+        latin-1 HTTP headers. The JSON publish endpoint carries them in the
+        UTF-8 body — assert the title never lands in a header."""
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req)
+            class _R:
+                def read(self):
+                    return b"ok"
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+            return _R()
+
+        monkeypatch.setattr(p9.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setenv("BROOMVA_P9_NTFY_TOPIC", "t")
+        title = "p9 PR #82 → GREEN — done"
+        row = p9.notify("termination:green", title, "body")
+        assert row["deliveries"] == [{"channel": "ntfy", "ok": True}]
+        req = calls[0]
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["title"] == title
+        assert body["topic"] == "t"
+        assert req.get_header("Title") is None
+        # header values must be latin-1 encodable end-to-end
+        for k, v in req.header_items():
+            v.encode("latin-1")
+
+    def test_rearm_survives_slash_in_wait_name(self, p9, capsys):
+        """MAJOR #2: a dead wait named 'deploy/prod' must be re-armed, not
+        crash rearm after destructively folding the row."""
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        p9.append_wait_event(p9.WaitEvent(
+            ts=p9._utcnow(), wait_id="wslash", name="deploy/prod",
+            from_state="NEW", to_state="WAITING",
+            extra={"pid": proc.pid,
+                   "argv": [sys.executable, str(_SCRIPTS / "p9.py"),
+                            "wait-for", "deploy/prod", "--cmd", "true",
+                            "--interval", "0.1", "--timeout", "5"]},
+        ))
+        rc = p9.main(["rearm", "--now", "--json"])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        act = out["rearmed"][0]
+        assert act.get("rearmed_pid"), f"rearm failed: {act}"
+        assert "deploy/prod" not in act["log"].rsplit("/", 1)[-1]
+        assert Path(act["log"]).parent == p9.logs_dir()
+
+    def test_rearm_argv_wrong_script_is_rejected(self, p9, capsys):
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        p9.append_wait_event(p9.WaitEvent(
+            ts=p9._utcnow(), wait_id="wevil", name="evil",
+            from_state="NEW", to_state="WAITING",
+            extra={"pid": proc.pid,
+                   "argv": [sys.executable, "/tmp/not-p9.py",
+                            "wait-for", "evil", "--cmd", "true"]},
+        ))
+        rc = p9.main(["rearm", "--now", "--json"])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["rearmed"][0].get("skipped")
+        # row must NOT have been folded
+        assert _wait_rows(p9)[-1]["to_state"] == "WAITING"
+
+    def test_cmd_overrides_preset(self, p9):
+        """CodeRabbit major: --cmd must win over --preset, as documented."""
+        rc = p9.main(["wait-for", "both", "--preset", "vercel",
+                      "--cmd", "true", "--interval", "0.1", "--timeout", "5"])
+        assert rc == 0  # vercel preset without --target would be EXIT_USAGE
+        rows = _wait_rows(p9)
+        assert rows[-1]["extra"]["cmd"] == "true"
+        assert rows[-1]["to_state"] == "SUCCEEDED"
+
+    def test_wait_terminal_fold_is_single(self, p9):
+        """MINOR #3: exactly one terminal row per wait lifecycle."""
+        p9.main(["wait-for", "single", "--cmd", "true",
+                 "--interval", "0.1", "--timeout", "5"])
+        rows = [r for r in _wait_rows(p9) if r["name"] == "single"]
+        terminal = [r for r in rows if r["to_state"] != "WAITING"]
+        assert len(terminal) == 1
+        # heartbeat cleaned up on terminal fold
+        assert not p9.wait_heartbeat_path(rows[-1]["wait_id"]).exists()
+
+    def test_escalated_termination_fires_policy_hook(self, p9, tmp_path, monkeypatch):
+        """MINOR #5: 'termination:escalated' must reach the policy
+        escalation hook, not just a literal 'escalation' kind."""
+        sink = tmp_path / "hook-sink.json"
+        hook = tmp_path / "hook.sh"
+        hook.write_text(f"#!/bin/sh\ncat > {sink}\n")
+        hook.chmod(0o755)
+        policy = tmp_path / "policy.yaml"
+        policy.write_text(
+            (_FIXTURES / "policy-good.yaml").read_text()
+            .replace("notify_hook: skills/p9/scripts/p9-escalate-notify.sh",
+                     f"notify_hook: {hook}")
+        )
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(policy))
+        row = p9.notify("termination:escalated", "t", "b")
+        assert {"channel": "command", "ok": True} in row["deliveries"]
+        assert json.loads(sink.read_text())["title"] == "t"
+
+    def test_status_pr_filter_excludes_waits(self, p9, capsys):
+        p9.append_wait_event(p9.WaitEvent(
+            ts=p9._utcnow(), wait_id="wx", name="unrelated",
+            from_state="NEW", to_state="WAITING",
+            extra={"pid": os.getpid()},
+        ))
+        rc = p9.main(["status", "--json", "--no-reap", "--pr", "1"])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["open_waits"] == []
+
+    def test_report_repo_filter_excludes_waits(self, p9, capsys):
+        p9.append_wait_event(p9.WaitEvent(
+            ts=p9._utcnow(), wait_id="wy", name="unrelated",
+            from_state="NEW", to_state="WAITING",
+            extra={"pid": os.getpid()},
+        ))
+        rc = p9.main(["report", "--repo", "broomva/other", "--json"])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert all(r["kind"] == "pr-watch" for r in out["reports"])
+
+    def test_rearm_repo_less_row_is_folded_before_respawn(self, p9, monkeypatch, capsys):
+        """MINOR #8: a repo-less WATCHING row can never be matched by the
+        re-spawned watch --adopt; rearm must fold it itself."""
+        spawned = []
+
+        def fake_popen(argv, **kw):
+            spawned.append(argv)
+            return _FakeProc(0)
+
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2020-01-01T00:00:00+00:00", pr=55, repo="",
+            from_state=p9.PRState.PUSHED.value,
+            to_state=p9.PRState.WATCHING.value,
+            watcher_id="wnorepo", extra={"pid": proc.pid},
+        ))
+        monkeypatch.setattr(p9.subprocess, "Popen", fake_popen)
+        rc = p9.main(["rearm", "--now", "--json"])
+        assert rc == 0
+        assert p9.current_pr_state(55, "") == p9.PRState.ABANDONED
+        assert spawned and "watch" in spawned[0]
+
+    def test_webhook_channel_delivers_payload(self, p9, monkeypatch):
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(req)
+            class _R:
+                def read(self):
+                    return b"ok"
+                def __enter__(self):
+                    return self
+                def __exit__(self, *a):
+                    return False
+            return _R()
+
+        monkeypatch.setattr(p9.urllib.request, "urlopen", fake_urlopen)
+        p9.notify_config_path().write_text(json.dumps({
+            "channels": [{"type": "webhook", "url": "https://x.example/h"}],
+        }))
+        row = p9.notify("test", "t", "b", {"pr": 9})
+        assert row["deliveries"] == [{"channel": "webhook", "ok": True}]
+        body = json.loads(calls[0].data.decode("utf-8"))
+        assert body["payload"]["pr"] == 9

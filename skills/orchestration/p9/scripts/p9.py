@@ -1303,15 +1303,25 @@ def _load_notify_config() -> tuple[list[dict[str, Any]], str | None]:
 
 
 def _deliver_ntfy(ch: dict[str, Any], title: str, body: str) -> None:
+    # ntfy's JSON publish endpoint (topic in the body, POST to the server
+    # root): titles ride in the UTF-8 JSON body, never in an HTTP header —
+    # header values are latin-1 and our real titles carry '→'/'—', which
+    # made every genuine termination push die on UnicodeEncodeError while
+    # the ASCII smoke test passed (P20 finding #1).
     base = (ch.get("url") or "https://ntfy.sh").rstrip("/")
-    headers = {"Title": title, "Tags": str(ch.get("tags", "robot"))}
+    headers = {"Content-Type": "application/json"}
     if ch.get("token"):
         headers["Authorization"] = f"Bearer {ch['token']}"
-    req = urllib.request.Request(
-        f"{base}/{ch['topic']}", data=body.encode("utf-8"),
-        headers=headers, method="POST",
-    )
-    urllib.request.urlopen(req, timeout=10).read()
+    data = json.dumps({
+        "topic": str(ch["topic"]),
+        "title": title,
+        "message": body,
+        "tags": [t.strip() for t in str(ch.get("tags", "robot")).split(",")],
+    }, separators=(",", ":")).encode("utf-8")
+    req = urllib.request.Request(base, data=data, headers=headers,
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        resp.read()
 
 
 def _deliver_webhook(ch: dict[str, Any], title: str, body: str,
@@ -1324,7 +1334,8 @@ def _deliver_webhook(ch: dict[str, Any], title: str, body: str,
         ch["url"], data=data,
         headers={"Content-Type": "application/json"}, method="POST",
     )
-    urllib.request.urlopen(req, timeout=10).read()
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        resp.read()
 
 
 def _deliver_command(ch: dict[str, Any], title: str, body: str,
@@ -1354,10 +1365,12 @@ def notify(kind: str, title: str, body: str,
     channels, cfg_err = _load_notify_config()
     if cfg_err:
         deliveries.append({"channel": "config", "ok": False, "error": cfg_err})
-    # Escalation kinds additionally fire the policy escalation hook — the
-    # ci_heal.escalation_channel.notify_hook config predates this dispatcher
-    # and was never invoked from code until now.
-    if kind.startswith("escalat"):
+    # Escalation-class kinds additionally fire the policy escalation hook —
+    # the ci_heal.escalation_channel.notify_hook config predates this
+    # dispatcher and was never invoked from code until now. Substring match
+    # so "termination:escalated" (what the invariant actually emits) and
+    # "stuck" qualify, not just a literal "escalation" kind (P20 finding #5).
+    if "escalat" in kind or kind == "stuck":
         with contextlib.suppress(Exception):
             hook = load_policy().ci_heal.escalation_channel.notify_hook
             hook_path = Path(hook)
@@ -1548,8 +1561,15 @@ def open_waits(session_id: str | None = None) -> list[dict[str, Any]]:
     return out
 
 
+def _safe_slug(s: str, max_len: int = 80) -> str:
+    """Filesystem-safe path component. Wait ids/names come from CLI args and
+    JSONL state — either could carry '/' or '..'; never let them escape the
+    state dir."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", s).lstrip(".")[:max_len] or "_"
+
+
 def wait_heartbeat_path(wait_id: str) -> Path:
-    return heartbeats_dir() / f"wait-{wait_id}"
+    return heartbeats_dir() / f"wait-{_safe_slug(wait_id)}"
 
 
 def touch_wait_heartbeat(wait_id: str) -> None:
@@ -1685,6 +1705,24 @@ def reap_stale_watchers(*, grace_seconds: float | None = None,
     None scans all rows (the standalone `p9 reap`)."""
     grace = _watcher_grace_seconds() if grace_seconds is None else grace_seconds
     reaped: list[dict[str, Any]] = []
+    # Serialize the scan-decide-append cycle: two concurrent reaps (e.g.
+    # `p9 status` preflights in two shells) would otherwise both fold the
+    # same dead row AND both notify — duplicate pings per dead watcher
+    # (P20 finding #7). Fail open on lock contention: someone else is
+    # already reaping; skipping is safe.
+    try:
+        lock_ctx = file_lock(p9_home() / "reap.lock", timeout_s=5.0)
+        lock_ctx.__enter__()
+    except P9Error:
+        return reaped
+    try:
+        return _reap_scan(grace, reconcile, session_id, reaped)
+    finally:
+        lock_ctx.__exit__(None, None, None)
+
+
+def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
+               reaped: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in open_prs(session_id=session_id):
         state = PRState(row["to_state"])
         if state not in (PRState.WATCHING, PRState.HEALING):
@@ -1800,9 +1838,13 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         print("p9 doctor: note — no notify channels configured "
               f"(add {notify_config_path()} or set BROOMVA_P9_NTFY_TOPIC)")
 
-    # 6. Logs dir writable (watch logs + wait logs land here)
+    # 6. Logs dir writable (watch logs + wait logs land here) — probe an
+    # actual write; mkdir(exist_ok=True) proves nothing for an existing dir.
     try:
         logs_dir().mkdir(parents=True, exist_ok=True)
+        probe = logs_dir() / ".doctor-probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
     except OSError as e:
         problems.append(f"logs directory not writable: {e}")
 
@@ -2096,45 +2138,95 @@ def cmd_watch(args: argparse.Namespace) -> int:
     enforce_concurrency_ceiling(policy, session_id=sid,
                                 exclude=(repo or "", pr))
     watcher_id = uuid.uuid4().hex[:12]
-    proc = spawn_watcher(pr, repo, dry_run=args.dry_run, watcher_id=watcher_id)
-    pid = proc.pid if proc else 0
-    log_path = str(watch_log_path(watcher_id)) if proc is not None else None
-    append_state_event(PRStateEvent(
-        ts=_utcnow(),
-        pr=pr,
-        repo=repo or "",
-        from_state=PRState.PUSHED.value,
-        to_state=PRState.WATCHING.value,
-        watcher_id=watcher_id,
-        attempt=0,
-        session_id=sid,
-        extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach,
-               **({"log": log_path} if log_path else {})},
-    ))
-    if args.json:
-        print(json.dumps({
-            "watcher_id": watcher_id,
-            "pid": pid,
-            "pr": pr,
-            "repo": repo,
-            "mode": "detach" if args.detach else "foreground",
-        }))
-    else:
-        mode = "detach" if args.detach else "foreground"
-        print(f"watcher_id={watcher_id} pid={pid} pr={pr} repo={repo} mode={mode}")
 
-    # Detach / dry-run: do NOT block; caller polls state.jsonl.
-    if args.detach or args.dry_run or proc is None:
-        return EXIT_OK
+    # Termination invariant (BRO-1701): EVERY exit path — green, red, signal,
+    # unexpected exception — folds a state event, emits a termination report
+    # (state + next action), and notifies. A killed watcher must not die
+    # silently. Handlers go up BEFORE the WATCHING row is written so there is
+    # no registered-but-unguarded window (P20 finding #4); the terminal fold
+    # runs AFTER handlers are restored so a late signal cannot double-fold
+    # (P20 finding #3). SIGKILL is untrappable by design; that path is
+    # covered by `p9 reap` / `p9 rearm`, which emit the same report shape.
+    proc: subprocess.Popen[bytes] | None = None
+    pid = 0
+    log_path: str | None = None
+    row_written = False
+    foreground = not (args.detach or args.dry_run)
+    outcome: tuple[PRState, str, dict[str, Any]] | None = None
+    reraise: BaseException | None = None
 
-    # Foreground: block on subprocess, then fold the result into a state
-    # event. Termination invariant (BRO-1701): EVERY exit path — green, red,
-    # signal, unexpected exception — folds a state event, emits a termination
-    # report (state + next action), and notifies. A killed watcher must not
-    # die silently. SIGKILL is untrappable by design; that path is covered by
-    # `p9 reap` / `p9 rearm`, which emit the same report shape.
-    def _fold_and_report(next_state: PRState, *, cause: str,
-                         extra: dict[str, Any]) -> dict[str, Any]:
+    def _on_signal(signum: int, _frame: Any) -> None:
+        raise _WaitInterrupted(signum)
+
+    prev_handlers: dict[int, Any] = {}
+    if foreground:
+        for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            with contextlib.suppress(OSError, ValueError):
+                prev_handlers[s] = signal.signal(s, _on_signal)
+    try:
+        proc = spawn_watcher(pr, repo, dry_run=args.dry_run,
+                             watcher_id=watcher_id)
+        pid = proc.pid if proc else 0
+        log_path = str(watch_log_path(watcher_id)) if proc is not None else None
+        append_state_event(PRStateEvent(
+            ts=_utcnow(),
+            pr=pr,
+            repo=repo or "",
+            from_state=PRState.PUSHED.value,
+            to_state=PRState.WATCHING.value,
+            watcher_id=watcher_id,
+            attempt=0,
+            session_id=sid,
+            extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach,
+                   **({"log": log_path} if log_path else {})},
+        ))
+        row_written = True
+        if args.json:
+            print(json.dumps({
+                "watcher_id": watcher_id,
+                "pid": pid,
+                "pr": pr,
+                "repo": repo,
+                "mode": "detach" if args.detach else "foreground",
+            }), flush=True)
+        else:
+            mode = "detach" if args.detach else "foreground"
+            print(f"watcher_id={watcher_id} pid={pid} pr={pr} repo={repo} "
+                  f"mode={mode}", flush=True)
+
+        if not foreground or proc is None:
+            # Detach / dry-run: do NOT block; caller polls state.jsonl.
+            return EXIT_OK
+
+        rc = proc.wait()
+        next_state = PRState.GREEN if rc == 0 else PRState.RED_UNCLASSIFIED
+        outcome = (next_state, "gh-exit",
+                   {"gh_exit_code": rc, "folded_by": "p9 watch"})
+    except _WaitInterrupted as exc:
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+        signame = signal.Signals(exc.signum).name
+        outcome = (PRState.ABANDONED, f"killed:{signame}", {
+            "reason": f"watcher killed by {signame}",
+            "termination": "killed", "dead_pid": pid,
+        })
+    except BaseException as exc:  # unexpected — the invariant still holds
+        if proc is not None:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+        outcome = (PRState.ABANDONED, f"error:{type(exc).__name__}",
+                   {"reason": f"watcher crashed: {exc}",
+                    "termination": "error", "dead_pid": pid})
+        reraise = exc
+    finally:
+        for s, h in prev_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(s, h)
+
+    # Handlers restored — fold exactly once, immune to late signals.
+    next_state, cause, extra = outcome
+    if row_written:
         if log_path:
             extra.setdefault("log", log_path)
         event = PRStateEvent(
@@ -2143,43 +2235,13 @@ def cmd_watch(args: argparse.Namespace) -> int:
             watcher_id=watcher_id, attempt=0, session_id=sid, extra=extra,
         )
         append_state_event(event)
-        report = pr_termination_report(dataclasses.asdict(event), cause=cause)
-        emit_termination_report(report)
-        return report
-
-    def _on_signal(signum: int, _frame: Any) -> None:
-        raise _WaitInterrupted(signum)
-
-    prev_handlers = {}
-    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        with contextlib.suppress(OSError, ValueError):
-            prev_handlers[s] = signal.signal(s, _on_signal)
-    try:
-        rc = proc.wait()
-    except _WaitInterrupted as exc:
-        with contextlib.suppress(Exception):
-            proc.terminate()
-        signame = signal.Signals(exc.signum).name
-        _fold_and_report(PRState.ABANDONED, cause=f"killed:{signame}", extra={
-            "reason": f"watcher killed by {signame}",
-            "termination": "killed", "dead_pid": pid,
-        })
+        emit_termination_report(
+            pr_termination_report(dataclasses.asdict(event), cause=cause))
+    if reraise is not None:
+        raise reraise
+    if next_state is PRState.ABANDONED:
         return EXIT_DEGRADED
-    except BaseException as exc:  # unexpected — the invariant still holds
-        with contextlib.suppress(Exception):
-            proc.terminate()
-        _fold_and_report(PRState.ABANDONED, cause=f"error:{type(exc).__name__}",
-                         extra={"reason": f"watcher crashed: {exc}",
-                                "termination": "error", "dead_pid": pid})
-        raise
-    finally:
-        for s, h in prev_handlers.items():
-            with contextlib.suppress(OSError, ValueError):
-                signal.signal(s, h)
-
-    next_state = PRState.GREEN if rc == 0 else PRState.RED_UNCLASSIFIED
-    _fold_and_report(next_state, cause="gh-exit",
-                     extra={"gh_exit_code": rc, "folded_by": "p9 watch"})
+    rc = int(extra.get("gh_exit_code", 0))
     if args.json:
         print(json.dumps({"watcher_id": watcher_id, "result": next_state.value, "gh_exit_code": rc}))
     else:
@@ -2199,7 +2261,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     rows = open_prs(session_id=session_id)
     if args.pr is not None:
         rows = [r for r in rows if r["pr"] == int(args.pr)]
-    wrows = open_waits(session_id=session_id)
+    # Generic waits are not PR-scoped: a --pr filter must not leak them
+    # (CodeRabbit).
+    wrows = [] if args.pr is not None else open_waits(session_id=session_id)
     if args.json:
         # open_waits is additive (BRO-1701) — consumers keyed on open_prs
         # keep working unchanged.
@@ -2519,7 +2583,11 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
     """
     sid = current_session_id()
     name = args.name
-    if args.preset:
+    # --cmd overrides --preset, as the help promises (P20 finding #6 /
+    # CodeRabbit): an explicit command is always the stronger signal.
+    if args.cmd and args.cmd.strip():
+        cmd = args.cmd
+    elif args.preset:
         template = _WAIT_PRESETS.get(args.preset)
         if template is None:
             print(f"unknown preset {args.preset!r}; known: "
@@ -2530,14 +2598,14 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
             return EXIT_USAGE
         cmd = template.replace("{target}", args.target or "")
     else:
-        cmd = args.cmd or ""
+        cmd = ""
     if not cmd.strip():
         print("wait-for needs --cmd or --preset", file=sys.stderr)
         return EXIT_USAGE
 
     interval = max(0.1, float(args.interval))
     timeout = max(interval, float(args.timeout))
-    wait_id = args.wait_id or uuid.uuid4().hex[:12]
+    wait_id = _safe_slug(args.wait_id) if args.wait_id else uuid.uuid4().hex[:12]
     script = str(Path(__file__).resolve())
     # Recorded with the RESOLVED command so `p9 rearm` can re-exec without
     # re-deriving preset/target. Built from controlled fields only.
@@ -2547,7 +2615,7 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
 
     if args.detach:
         logs_dir().mkdir(parents=True, exist_ok=True)
-        log_path = logs_dir() / f"wait-{wait_id}.log"
+        log_path = logs_dir() / f"wait-{_safe_slug(wait_id)}.log"
         child_argv = rearm_argv + ["--wait-id", wait_id]
         with open(log_path, "ab") as out:
             child = subprocess.Popen(child_argv, stdout=out,
@@ -2565,51 +2633,43 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
         **({"preset": args.preset} if args.preset else {}),
         **({"rearmed_from": args.rearmed_from} if args.rearmed_from else {}),
     }
-    append_wait_event(WaitEvent(
-        ts=_utcnow(), wait_id=wait_id, name=name,
-        from_state="NEW", to_state=WaitState.WAITING.value,
-        session_id=sid, extra=dict(base_extra),
-    ))
-    touch_wait_heartbeat(wait_id)
-    if args.json:
-        print(json.dumps({"wait_id": wait_id, "pid": os.getpid(),
-                          "name": name, "mode": "foreground"}), flush=True)
-    else:
-        print(f"wait_id={wait_id} pid={os.getpid()} name={name} "
-              f"interval={interval}s timeout={timeout}s", flush=True)
 
     polls = 0
     last_exit: int | None = None
     stderr_tail: list[str] = []
-
-    def _fold_and_report(state: WaitState, *, cause: str,
-                         reason: str | None = None) -> None:
-        extra = dict(base_extra)
-        extra.update(polls=polls, last_exit=last_exit)
-        if stderr_tail:
-            extra["stderr_tail"] = stderr_tail[-5:]
-        if reason:
-            extra["reason"] = reason
-        event = WaitEvent(
-            ts=_utcnow(), wait_id=wait_id, name=name,
-            from_state=WaitState.WAITING.value, to_state=state.value,
-            session_id=sid, extra=extra,
-        )
-        append_wait_event(event)
-        emit_termination_report(
-            wait_termination_report(dataclasses.asdict(event), cause=cause))
+    row_written = False
+    # (state, cause, reason, exit_code) — decided in the loop, folded ONCE
+    # after handlers are restored so a late signal cannot double-fold
+    # (P20 finding #3); handlers go up before the WAITING row is written so
+    # there is no registered-but-unguarded window (P20 finding #4).
+    outcome: tuple[WaitState, str, str | None, int] | None = None
+    reraise: BaseException | None = None
 
     def _on_signal(signum: int, _frame: Any) -> None:
         raise _WaitInterrupted(signum)
 
-    prev_handlers = {}
+    prev_handlers: dict[int, Any] = {}
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         with contextlib.suppress(OSError, ValueError):
             prev_handlers[s] = signal.signal(s, _on_signal)
 
     started = time.monotonic()
     try:
-        while True:
+        append_wait_event(WaitEvent(
+            ts=_utcnow(), wait_id=wait_id, name=name,
+            from_state="NEW", to_state=WaitState.WAITING.value,
+            session_id=sid, extra=dict(base_extra),
+        ))
+        row_written = True
+        touch_wait_heartbeat(wait_id)
+        if args.json:
+            print(json.dumps({"wait_id": wait_id, "pid": os.getpid(),
+                              "name": name, "mode": "foreground"}), flush=True)
+        else:
+            print(f"wait_id={wait_id} pid={os.getpid()} name={name} "
+                  f"interval={interval}s timeout={timeout}s", flush=True)
+
+        while outcome is None:
             poll_budget = max(1.0, min(interval * 3.0 + 10.0,
                                        timeout - (time.monotonic() - started)))
             try:
@@ -2625,43 +2685,74 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
             polls += 1
             touch_wait_heartbeat(wait_id)
             if last_exit == 0:
-                _fold_and_report(WaitState.SUCCEEDED, cause="predicate-true")
-                return EXIT_OK
+                outcome = (WaitState.SUCCEEDED, "predicate-true", None,
+                           EXIT_OK)
+                break
             if polls == 1 and last_exit in (126, 127):
-                _fold_and_report(
-                    WaitState.FAILED, cause="command-not-runnable",
-                    reason=f"command exited {last_exit} on first poll "
-                           f"(not found / not executable)")
-                return EXIT_EXTERNAL_ERROR
+                outcome = (WaitState.FAILED, "command-not-runnable",
+                           f"command exited {last_exit} on first poll "
+                           f"(not found / not executable)",
+                           EXIT_EXTERNAL_ERROR)
+                break
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
-                _fold_and_report(
-                    WaitState.TIMED_OUT, cause="deadline",
-                    reason=f"predicate still false after {timeout:.0f}s "
-                           f"({polls} polls)")
-                return EXIT_DEGRADED
+                outcome = (WaitState.TIMED_OUT, "deadline",
+                           f"predicate still false after {timeout:.0f}s "
+                           f"({polls} polls)", EXIT_DEGRADED)
+                break
             time.sleep(min(interval, remaining))
+            # Deadline-first: never launch another poll past the deadline
+            # (CodeRabbit) — the sleep above may end exactly at it.
+            if time.monotonic() - started >= timeout:
+                outcome = (WaitState.TIMED_OUT, "deadline",
+                           f"predicate still false after {timeout:.0f}s "
+                           f"({polls} polls)", EXIT_DEGRADED)
     except _WaitInterrupted as exc:
         signame = signal.Signals(exc.signum).name
-        _fold_and_report(WaitState.KILLED, cause=f"killed:{signame}",
-                         reason=f"wait killed by {signame}")
-        return EXIT_DEGRADED
+        outcome = (WaitState.KILLED, f"killed:{signame}",
+                   f"wait killed by {signame}", EXIT_DEGRADED)
     except BaseException as exc:  # unexpected — the invariant still holds
-        _fold_and_report(WaitState.KILLED, cause=f"error:{type(exc).__name__}",
-                         reason=f"wait crashed: {exc}")
-        raise
+        outcome = (WaitState.KILLED, f"error:{type(exc).__name__}",
+                   f"wait crashed: {exc}", EXIT_DEGRADED)
+        reraise = exc
     finally:
         for s, h in prev_handlers.items():
             with contextlib.suppress(OSError, ValueError):
                 signal.signal(s, h)
 
+    # Handlers restored — fold exactly once, immune to late signals.
+    state, cause, reason, exit_code = outcome
+    if row_written:
+        extra = dict(base_extra)
+        extra.update(polls=polls, last_exit=last_exit)
+        if stderr_tail:
+            extra["stderr_tail"] = stderr_tail[-5:]
+        if reason:
+            extra["reason"] = reason
+        event = WaitEvent(
+            ts=_utcnow(), wait_id=wait_id, name=name,
+            from_state=WaitState.WAITING.value, to_state=state.value,
+            session_id=sid, extra=extra,
+        )
+        append_wait_event(event)
+        with contextlib.suppress(OSError):
+            wait_heartbeat_path(wait_id).unlink(missing_ok=True)
+        emit_termination_report(
+            wait_termination_report(dataclasses.asdict(event), cause=cause))
+    if reraise is not None:
+        raise reraise
+    return exit_code
+
 
 def _sane_rearm_argv(argv: Any) -> bool:
-    """Recorded by p9 itself from controlled fields, but validate shape
-    anyway — the state dir is plain JSONL on disk."""
+    """Recorded by p9 itself from controlled fields, but validate the exact
+    re-exec shape anyway — the state dir is plain JSONL on disk and this
+    list reaches Popen (P20 finding / CodeRabbit): [python, .../p9.py,
+    "wait-for", <name>, ...flags]."""
     return (isinstance(argv, list) and len(argv) >= 4
             and all(isinstance(a, str) for a in argv)
-            and "wait-for" in argv)
+            and Path(argv[1]).name == "p9.py"
+            and argv[2] == "wait-for")
 
 
 def cmd_rearm(args: argparse.Namespace) -> int:
@@ -2676,6 +2767,8 @@ def cmd_rearm(args: argparse.Namespace) -> int:
     script = str(Path(__file__).resolve())
     actions: list[dict[str, Any]] = []
 
+    # Per-row fault isolation (P20 finding #2): one un-rearmable row must
+    # never abort the scan or, worse, strand a row it already folded.
     for row in open_prs():
         state = PRState(row["to_state"])
         if state not in (PRState.WATCHING, PRState.HEALING):
@@ -2688,20 +2781,39 @@ def cmd_rearm(args: argparse.Namespace) -> int:
         pr, repo = row["pr"], row.get("repo") or ""
         action = {"kind": "pr-watch", "pr": pr, "repo": repo,
                   "dead_pid": pid}
-        if args.dry_run:
-            action["would"] = "re-watch via p9 watch --adopt"
-        else:
-            argv = [sys.executable, script, "watch", str(pr)]
-            if repo:
-                argv += ["--repo", repo]
-            argv.append("--force" if args.now else "--adopt")
-            logs_dir().mkdir(parents=True, exist_ok=True)
-            log_path = logs_dir() / f"rearm-watch-{pr}.log"
-            with open(log_path, "ab") as out:
-                child = subprocess.Popen(argv, stdout=out,
-                                         stderr=subprocess.STDOUT,
-                                         start_new_session=True)
-            action.update(rearmed_pid=child.pid, log=str(log_path))
+        try:
+            if args.dry_run:
+                action["would"] = "re-watch via p9 watch --adopt"
+            else:
+                if not repo:
+                    # The child watch detects its repo from cwd and can never
+                    # match this repo-less row for the adopt-supersede — fold
+                    # it here so it stops holding a slot (P20 finding #8).
+                    stale = PRStateEvent(
+                        ts=_utcnow(), pr=pr, repo="",
+                        from_state=state.value,
+                        to_state=PRState.ABANDONED.value,
+                        watcher_id="rearm",
+                        session_id=row.get("session_id", ""),
+                        extra={"reason": "repo-less row superseded by rearm",
+                               "dead_pid": pid},
+                    )
+                    append_state_event(stale)
+                    emit_termination_report(pr_termination_report(
+                        dataclasses.asdict(stale), cause="reaped:dead-watcher"))
+                argv = [sys.executable, script, "watch", str(pr)]
+                if repo:
+                    argv += ["--repo", repo]
+                argv.append("--force" if args.now else "--adopt")
+                logs_dir().mkdir(parents=True, exist_ok=True)
+                log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
+                with open(log_path, "ab") as out:
+                    child = subprocess.Popen(argv, stdout=out,
+                                             stderr=subprocess.STDOUT,
+                                             start_new_session=True)
+                action.update(rearmed_pid=child.pid, log=str(log_path))
+        except Exception as e:  # noqa: BLE001 — isolate per row
+            action["error"] = f"{type(e).__name__}: {e}"
         actions.append(action)
 
     for row in open_waits():
@@ -2721,25 +2833,36 @@ def cmd_rearm(args: argparse.Namespace) -> int:
             continue
         if args.dry_run:
             action["would"] = "fold ABANDONED + re-spawn recorded argv"
-        else:
+            actions.append(action)
+            continue
+        try:
+            # Spawn FIRST, fold after (P20 finding #2): if the spawn fails,
+            # the row stays WAITING and the next rearm retries it — a lost
+            # wait is worse than a rare duplicate from a fold that fails
+            # after a successful spawn.
+            logs_dir().mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir() / f"rearm-wait-{_safe_slug(name or wid)}.log"
+            with open(log_path, "ab") as out:
+                child = subprocess.Popen(
+                    list(argv) + ["--rearmed-from", wid], stdout=out,
+                    stderr=subprocess.STDOUT, start_new_session=True)
             event = WaitEvent(
                 ts=_utcnow(), wait_id=wid, name=name,
                 from_state=WaitState.WAITING.value,
                 to_state=WaitState.ABANDONED.value,
                 session_id=row.get("session_id", ""),
-                extra={**extra, "reason": "dead wait superseded by rearm"},
+                extra={**extra, "reason": "dead wait superseded by rearm",
+                       "superseded_by_pid": child.pid},
             )
             append_wait_event(event)
+            with contextlib.suppress(OSError):
+                wait_heartbeat_path(wid).unlink(missing_ok=True)
             emit_termination_report(
                 wait_termination_report(dataclasses.asdict(event),
                                         cause="reaped:dead-wait"))
-            logs_dir().mkdir(parents=True, exist_ok=True)
-            log_path = logs_dir() / f"rearm-wait-{name or wid}.log"
-            with open(log_path, "ab") as out:
-                child = subprocess.Popen(
-                    list(argv) + ["--rearmed-from", wid], stdout=out,
-                    stderr=subprocess.STDOUT, start_new_session=True)
             action.update(rearmed_pid=child.pid, log=str(log_path))
+        except Exception as e:  # noqa: BLE001 — isolate per row
+            action["error"] = f"{type(e).__name__}: {e}"
         actions.append(action)
 
     if args.json:
@@ -2901,7 +3024,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     for r in pr_rows:
         reports.append(pr_termination_report(r, cause="report",
                                              with_log_tail=with_tail))
-    if args.pr is None:
+    if args.pr is None and not args.repo:
+        # Waits are neither PR- nor repo-scoped; either filter excludes them.
         for r in all_wait_rows().values():
             reports.append(wait_termination_report(r, cause="report"))
     reports.sort(key=lambda r: r.get("last_event_ts", ""), reverse=True)
@@ -3150,7 +3274,7 @@ def build_parser() -> argparse.ArgumentParser:
              "threshold → structured failure dump + notification")
     pss.add_argument("--threshold-min", type=float, default=None,
                      help="Stall threshold in minutes (default: "
-                          "BROOMVA_P9_STUCK_MIN or 45)")
+                          "BROOMVA_P9_STUCK_MIN or 45; floor: 1 minute)")
     pss.add_argument("--renotify", action="store_true",
                      help="Notify again even within the same stall episode")
     pss.add_argument("--json", action="store_true")
