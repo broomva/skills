@@ -8,15 +8,20 @@ description: |
   long-running index ops — into work on the next priority. The reference
   implementation is a PR CI watcher: drains a context-scoped deferred-work
   queue while `gh pr checks --watch` runs in the background, classifies
-  failures, and self-heals known categories. Non-PR waits (today) get a
-  single direct check after kicking off next-priority work — wiring those
-  into `p9 watch` is on the roadmap. Merge authorization stays with the
+  failures, and self-heals known categories. Non-PR waits get the same
+  lifecycle via `p9 wait-for` (deploy readiness, long extractions — poll a
+  predicate command with heartbeats and re-arm). Every watcher and wait
+  upholds the termination invariant (BRO-1701): on success, failure, OR
+  kill it reports state + next action and pushes through the configured
+  notify channels — killed watchers never die silently; `p9 stuck-scan`
+  catches live-but-wedged ones. Merge authorization stays with the
   existing control metalayer (.control/policy.yaml).
 when_to_use: |
   Automatically after every `git push` that opens or updates a PR. After a
-  push that triggers a non-PR deploy: do one direct check after next work,
-  never `sleep`. Hard rule: the agent MUST apply productive-wait discipline
-  before `sleep` is ever an option.
+  push that triggers a non-PR deploy or any long-running external operation:
+  `p9 wait-for <name> --cmd '<predicate>'` instead of polling by hand.
+  Hard rule: the agent MUST apply productive-wait discipline before `sleep`
+  is ever an option.
 ---
 
 # P9 — Productive Wait (Wait-Optimizer Skill)
@@ -27,11 +32,11 @@ when_to_use: |
 > a push-triggered deploy, a long build, or an index sync — convert the
 > wait into productive work on the next priority. For PR CI, `p9 watch <pr>`
 > spawns the observer in the background and the agent pulls work from the
-> wait-queue. For non-PR waits (today), do *one* direct check on completion
-> after kicking off next work. Sleep is a footgun — it burns clock time the
-> agent could be
-> using to validate definitions, refresh the knowledge graph, or draft the
-> next slice.
+> wait-queue. For non-PR waits, `p9 wait-for <name> --cmd '<predicate>'`
+> gives the wait the same lifecycle (state row, heartbeat, termination
+> report, re-arm). Sleep is a footgun — it burns clock time the agent could
+> be using to validate definitions, refresh the knowledge graph, or draft
+> the next slice.
 
 ## When to invoke
 
@@ -40,6 +45,9 @@ when_to_use: |
 | `git push` opens or updates a PR | `p9 watch <pr> --background` immediately |
 | `run_in_background` task notification fires for the watcher | `p9 status --pr <n>` to read terminal state |
 | `gh pr checks` returned non-zero | `p9 heal <pr> --classify` to inspect failure |
+| Push triggers a deploy / long non-PR operation | `p9 wait-for <name> --cmd '<predicate>' --detach` (or `--preset railway\|vercel`) |
+| Fresh session picking up after a kill/crash/reboot | `p9 report` to read state + next action; `p9 rearm` to re-arm dead watchers |
+| A watcher/wait looks wedged | `p9 stuck-scan` — structured dump + notification |
 | About to `sleep` | **Don't.** Pull from `p9 wait-queue pop` instead |
 
 ## Parallel agent sessions (BRO-1529)
@@ -205,6 +213,104 @@ $ p9 heal 42 --classify
 # Watcher stays running — if a human pushes a fix, watcher resumes and
 # the next green check transitions to MERGE_READY.
 ```
+
+## Background-work visibility (BRO-1701)
+
+### Termination invariant (hard rule)
+
+> **On watcher termination — success, failure, OR kill — P9 always reports
+> state + next action.** Killed watchers must not die silently.
+
+Every exit path of `p9 watch` and `p9 wait-for` (green, red, timeout,
+SIGTERM/SIGINT/SIGHUP, unexpected exception) folds a state event, prints a
+`P9-TERMINATION-REPORT {json}` line to **stderr** (stdout stays
+machine-parseable), and pushes through the notify channels. The report
+carries `state`, `cause`, and a concrete `next_action` (e.g. ABANDONED →
+"re-arm: p9 watch <pr> --adopt"). SIGKILL and machine death can't be
+trapped — that path is covered by `p9 reap` (emits the same report shape
+when it reconciles a dead row) and `p9 rearm`.
+
+Read-side: `p9 report [--pr <n>] [--json]` renders the latest report for
+every tracked watcher/wait — this is what a fresh session (or the Tier-1 #1
+post-notification reconcile rule) consumes to learn what happened and what
+to do next. Report fields are additive-only.
+
+`gh pr checks --watch` output now lands in `$P9_HOME/logs/watch-<id>.log`
+(not the void): the log's mtime is a progress signal for `stuck-scan` and
+its tail rides along in reports — full details to understand *why*, not
+just *that*, something died.
+
+### Notify channels (push-to-phone)
+
+`p9 notify <title> [--body ...]` and every termination/stuck event fan out
+to channels in `$P9_HOME/notify.json`:
+
+```json
+{"channels": [
+  {"type": "ntfy",    "topic": "broomva-p9", "url": "https://ntfy.sh"},
+  {"type": "webhook", "url": "https://example.com/hook"},
+  {"type": "command", "cmd": "scripts/p9-escalate-notify.sh"}
+]}
+```
+
+- **ntfy** — reaches a phone with zero infra (install the ntfy app,
+  subscribe to the topic). Quick-config without a file:
+  `export BROOMVA_P9_NTFY_TOPIC=<topic>`.
+- **webhook** — generic JSON POST (`{title, body, payload}`).
+- **command** — JSON on stdin to any hook script; this is the seam for
+  Omnara, Telegram, Discord, or claude-remote-sessions relays.
+- Escalation-class events (`termination:escalated`, `stuck`, and any kind
+  containing `escalat`) additionally fire the policy's
+  `ci_heal.escalation_channel.notify_hook` (previously dead config — now
+  invoked).
+
+Delivery is best-effort and per-channel isolated: a failing channel is
+recorded and skipped, never raised — a notification must never take down
+the watcher it reports on. Every attempt (even with zero channels) appends
+an audit row to `$P9_HOME/notify.jsonl`; that audit floor is what makes the
+termination invariant verifiable after the fact.
+
+**In-session protocol (PushNotification/Omnara):** when an agent session
+receives a termination report or stuck dump while the user is off-terminal,
+it MUST surface it through the harness `PushNotification` tool (or the
+Omnara session surface) — the file-level channels cover the no-session
+case; the harness tool covers the live-session case.
+
+### Non-PR waits — `p9 wait-for`
+
+```bash
+p9 wait-for railway-deploy --preset railway --interval 30 --timeout 1800 --detach
+p9 wait-for vercel-deploy  --preset vercel --target <deployment-url> --detach
+p9 wait-for extraction     --cmd 'test -f /tmp/extract.done' --interval 60 --timeout 7200 --detach
+```
+
+Polls the predicate command until exit 0 (`SUCCEEDED`), deadline
+(`TIMED_OUT`), first-poll exit 126/127 (`FAILED` fast), or signal
+(`KILLED`) — each terminal state folds + reports + notifies exactly like a
+PR watch. State lives in `$P9_HOME/waits.jsonl` (its own stream — PR-state
+consumers never see wait states); every poll touches a heartbeat file that
+`stuck-scan` reads. Presets are convenience templates over `--cmd` —
+deploy-CLI output shapes drift, so verify against your installed CLI and
+fall back to an explicit `--cmd` when they do.
+
+### Re-arm after kill — `p9 rearm`
+
+`p9 rearm [--dry-run] [--now]` scans for dead-but-unfinished work: PR rows
+whose watcher pid is gone re-enter via a detached `p9 watch --adopt`; dead
+waits are folded ABANDONED and re-spawned from their recorded argv (with
+`rearmed_from` lineage). This closes the loop the July-1 leverage audit
+flagged: watchers killed before their notification fires now leave a
+report AND come back.
+
+### Stuck-detector — `p9 stuck-scan`
+
+`p9 stuck-scan [--threshold-min N] [--json]` flags **live** watchers/waits
+with no progress (state event / watch-log mtime / heartbeat) inside the
+threshold (default 45 min, env `BROOMVA_P9_STUCK_MIN`): structured failure
+dump (pid, ages, log tail, next action) + notification, deduped to one per
+stall episode (`--renotify` overrides; a new episode starts when progress
+moves). Dead pids are reap/rearm territory, not stuck. Exit code 1 when
+anything is stuck — wire it into cron/governor loops as a cheap probe.
 
 ## Cardinal invariant (hard rule)
 
