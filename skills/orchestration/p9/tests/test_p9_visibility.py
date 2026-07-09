@@ -505,3 +505,36 @@ class TestWatchLogs:
         assert rc == 0
         out = json.loads(capsys.readouterr().out)
         assert out["reports"][0]["pr"] == 700
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-watch vs concurrency ceiling (found live while dogfooding PR #82)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestRewatchCeiling:
+    def test_same_pr_rewatch_not_blocked_by_own_red_row(self, p9, monkeypatch):
+        """A RED fold from a transient gh error must not block the re-watch
+        of the SAME PR at max_concurrent_prs=1 — the ceiling bounds distinct
+        PRs, and a re-watch replaces its own row."""
+        monkeypatch.setattr(p9, "spawn_watcher",
+                            lambda *a, **kw: _FakeProc(returncode=1))
+        rc = p9.main(["watch", "600", "--repo", "broomva/test"])
+        assert rc == 0
+        assert p9.current_pr_state(600, "broomva/test") == p9.PRState.RED_UNCLASSIFIED
+        # ceiling in policy-good.yaml is small; re-watch of the same PR
+        # must pass regardless
+        monkeypatch.setattr(p9, "spawn_watcher",
+                            lambda *a, **kw: _FakeProc(returncode=0))
+        rc = p9.main(["watch", "600", "--repo", "broomva/test"])
+        assert rc == 0
+        assert p9.current_pr_state(600, "broomva/test") == p9.PRState.GREEN
+
+    def test_distinct_pr_still_blocked_at_ceiling(self, p9, monkeypatch):
+        policy = p9.load_policy()
+        ceiling = policy.ci_watch.max_concurrent_prs
+        monkeypatch.setattr(p9, "spawn_watcher",
+                            lambda *a, **kw: _FakeProc(returncode=1))
+        for i in range(ceiling):
+            assert p9.main(["watch", str(610 + i), "--repo", "broomva/test"]) == 0
+        # one more DISTINCT PR must still hit the ceiling
+        rc = p9.main(["watch", "699", "--repo", "broomva/test"])
+        assert rc == p9.EXIT_CONCURRENCY_CEILING

@@ -1722,15 +1722,26 @@ def reap_stale_watchers(*, grace_seconds: float | None = None,
 # Concurrency
 # ─────────────────────────────────────────────────────────────────────────────
 def enforce_concurrency_ceiling(
-    policy: PolicyConfig, session_id: str | None = None
+    policy: PolicyConfig, session_id: str | None = None,
+    exclude: tuple[str, int] | None = None,
 ) -> None:
     """Enforce ``max_concurrent_prs``.
 
     With ``session_id`` set (production: ``cmd_watch`` passes the live
     session), the count is scoped to that session — N parallel agents can
     each hold their own watcher. ``session_id=None`` keeps the global count
-    (direct/legacy callers and tests)."""
-    open_count = len(open_prs(session_id=session_id))
+    (direct/legacy callers and tests).
+
+    ``exclude`` (BRO-1701): the ``(repo, pr)`` about to be watched. The
+    ceiling bounds *distinct* in-flight PRs; a re-watch replaces its own
+    row (open_prs keys by (repo, pr)), so without the exclusion a PR's own
+    non-terminal row — e.g. a RED fold from a transient gh error — would
+    block its own re-watch at max_concurrent_prs=1."""
+    rows = open_prs(session_id=session_id)
+    if exclude is not None:
+        rows = [r for r in rows
+                if (r.get("repo", ""), r["pr"]) != exclude]
+    open_count = len(rows)
     if open_count >= policy.ci_watch.max_concurrent_prs:
         scope = f" for session {session_id}" if session_id else ""
         raise ConcurrencyCeilingError(
@@ -2082,7 +2093,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
                    "dead_pid": epid, "forced": force, "adopt": adopt},
         ))
 
-    enforce_concurrency_ceiling(policy, session_id=sid)
+    enforce_concurrency_ceiling(policy, session_id=sid,
+                                exclude=(repo or "", pr))
     watcher_id = uuid.uuid4().hex[:12]
     proc = spawn_watcher(pr, repo, dry_run=args.dry_run, watcher_id=watcher_id)
     pid = proc.pid if proc else 0
