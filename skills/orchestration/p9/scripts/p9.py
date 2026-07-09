@@ -31,9 +31,12 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,6 +97,43 @@ def session_lock_path() -> Path:
 
 def session_default_id_path() -> Path:
     return p9_home() / "session-default.id"
+
+
+def waits_jsonl() -> Path:
+    """Generic (non-PR) waits live in their own stream — never in
+    state.jsonl, whose consumers parse every row's to_state as PRState."""
+    return p9_home() / "waits.jsonl"
+
+
+def waits_lock_path() -> Path:
+    return p9_home() / "waits.lock"
+
+
+def notify_jsonl() -> Path:
+    """Audit trail: every notification P9 attempted, with per-channel
+    delivery results. This is the always-on floor of the termination
+    invariant — even with zero channels configured, the row lands here."""
+    return p9_home() / "notify.jsonl"
+
+
+def notify_lock_path() -> Path:
+    return p9_home() / "notify.lock"
+
+
+def notify_config_path() -> Path:
+    return p9_home() / "notify.json"
+
+
+def logs_dir() -> Path:
+    return p9_home() / "logs"
+
+
+def heartbeats_dir() -> Path:
+    return p9_home() / "heartbeats"
+
+
+def stuck_markers_dir() -> Path:
+    return p9_home() / "stuck"
 
 
 def current_session_id() -> str:
@@ -241,6 +281,35 @@ def is_terminal(state: PRState) -> bool:
     return state in {PRState.MERGED, PRState.ESCALATED, PRState.ABANDONED}
 
 
+class WaitState(str, enum.Enum):
+    """States for generic (non-PR) waits — `p9 wait-for` (BRO-1701).
+
+    A deliberately separate, flat machine: WAITING is the only live state;
+    everything else is terminal. Kept out of PRState so state.jsonl
+    consumers (open_prs, status, the governor) never see an unknown value.
+    """
+    WAITING = "WAITING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"          # command not runnable (exit 126/127 first poll)
+    TIMED_OUT = "TIMED_OUT"
+    KILLED = "KILLED"          # signal-terminated; report already emitted
+    ABANDONED = "ABANDONED"    # dead pid reconciled by reap/rearm
+
+
+def wait_is_terminal(state: WaitState) -> bool:
+    return state is not WaitState.WAITING
+
+
+class _WaitInterrupted(BaseException):
+    """Raised by the signal handlers installed around foreground waits
+    (`p9 watch`, `p9 wait-for`). BaseException on purpose: a broad
+    `except Exception` inside a poll loop must not swallow a kill."""
+
+    def __init__(self, signum: int):
+        super().__init__(f"interrupted by signal {signum}")
+        self.signum = signum
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dataclasses
 # ─────────────────────────────────────────────────────────────────────────────
@@ -330,6 +399,21 @@ class PRStateEvent:
     # Scope key (current_session_id). Default "" so old rows and positional
     # callers stay valid; "" means "unscoped / legacy global".
     session_id: str = ""
+
+    def to_jsonl(self) -> str:
+        return json.dumps(dataclasses.asdict(self), separators=(",", ":"))
+
+
+@dataclass
+class WaitEvent:
+    """One row of waits.jsonl (generic non-PR waits)."""
+    ts: str
+    wait_id: str
+    name: str
+    from_state: str
+    to_state: str
+    session_id: str = ""
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_jsonl(self) -> str:
         return json.dumps(dataclasses.asdict(self), separators=(",", ":"))
@@ -1184,23 +1268,352 @@ def open_prs(session_id: str | None = None) -> list[dict[str, Any]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Notify dispatcher (BRO-1701) — push watcher/wait state changes off-terminal
+# ─────────────────────────────────────────────────────────────────────────────
+def _load_notify_config() -> tuple[list[dict[str, Any]], str | None]:
+    """Channels from $P9_HOME/notify.json plus env quick-config.
+
+    Config shape:
+        {"channels": [
+            {"type": "ntfy",    "topic": "...", "url": "https://ntfy.sh",
+             "token": "...", "tags": "robot"},
+            {"type": "webhook", "url": "https://..."},
+            {"type": "command", "cmd": "path/to/hook.sh", "timeout": 15}
+        ]}
+
+    Env quick-config: BROOMVA_P9_NTFY_TOPIC adds an ntfy.sh channel without a
+    config file. Returns (channels, config_error) — a malformed file is
+    reported in the audit row, never raised.
+    """
+    channels: list[dict[str, Any]] = []
+    err: str | None = None
+    path = notify_config_path()
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            for ch in raw.get("channels", []):
+                if isinstance(ch, dict) and ch.get("type"):
+                    channels.append(ch)
+        except (json.JSONDecodeError, OSError, AttributeError) as e:
+            err = f"notify.json unreadable: {type(e).__name__}: {e}"
+    topic = os.environ.get("BROOMVA_P9_NTFY_TOPIC", "").strip()
+    if topic and not any(c.get("type") == "ntfy" for c in channels):
+        channels.append({"type": "ntfy", "topic": topic})
+    return channels, err
+
+
+def _deliver_ntfy(ch: dict[str, Any], title: str, body: str) -> None:
+    base = (ch.get("url") or "https://ntfy.sh").rstrip("/")
+    headers = {"Title": title, "Tags": str(ch.get("tags", "robot"))}
+    if ch.get("token"):
+        headers["Authorization"] = f"Bearer {ch['token']}"
+    req = urllib.request.Request(
+        f"{base}/{ch['topic']}", data=body.encode("utf-8"),
+        headers=headers, method="POST",
+    )
+    urllib.request.urlopen(req, timeout=10).read()
+
+
+def _deliver_webhook(ch: dict[str, Any], title: str, body: str,
+                     payload: dict[str, Any]) -> None:
+    data = json.dumps(
+        {"title": title, "body": body, "payload": payload},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        ch["url"], data=data,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    urllib.request.urlopen(req, timeout=10).read()
+
+
+def _deliver_command(ch: dict[str, Any], title: str, body: str,
+                     payload: dict[str, Any]) -> None:
+    data = json.dumps(
+        {"title": title, "body": body, "payload": payload},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    subprocess.run(
+        ch["cmd"], shell=True, input=data,
+        timeout=float(ch.get("timeout", 15)), check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def notify(kind: str, title: str, body: str,
+           payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Best-effort fan-out to all configured channels.
+
+    ALWAYS appends an audit row to notify.jsonl (per-channel delivery
+    results included) — even with zero channels configured. Channel and
+    audit failures are recorded/suppressed, never raised: a notification
+    must never take down the watcher it reports on.
+    """
+    payload = payload or {}
+    deliveries: list[dict[str, Any]] = []
+    channels, cfg_err = _load_notify_config()
+    if cfg_err:
+        deliveries.append({"channel": "config", "ok": False, "error": cfg_err})
+    # Escalation kinds additionally fire the policy escalation hook — the
+    # ci_heal.escalation_channel.notify_hook config predates this dispatcher
+    # and was never invoked from code until now.
+    if kind.startswith("escalat"):
+        with contextlib.suppress(Exception):
+            hook = load_policy().ci_heal.escalation_channel.notify_hook
+            hook_path = Path(hook)
+            if not hook_path.is_absolute():
+                hook_path = policy_yaml_path().parent.parent / hook
+            if hook_path.exists():
+                channels = channels + [{"type": "command", "cmd": str(hook_path)}]
+    for ch in channels:
+        ctype = str(ch.get("type"))
+        try:
+            if ctype == "ntfy":
+                _deliver_ntfy(ch, title, body)
+            elif ctype == "webhook":
+                _deliver_webhook(ch, title, body, payload)
+            elif ctype == "command":
+                _deliver_command(ch, title, body, payload)
+            else:
+                raise ValueError(f"unknown channel type {ctype!r}")
+            deliveries.append({"channel": ctype, "ok": True})
+        except Exception as e:  # noqa: BLE001 — per-channel isolation is the point
+            deliveries.append(
+                {"channel": ctype, "ok": False,
+                 "error": f"{type(e).__name__}: {e}"})
+    row = {"ts": _utcnow(), "kind": kind, "title": title, "body": body,
+           "payload": payload, "deliveries": deliveries}
+    with contextlib.suppress(Exception):
+        jsonl_append(notify_jsonl(), json.dumps(row, separators=(",", ":")),
+                     notify_lock_path())
+    return row
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Termination reports (BRO-1701) — the P9 termination invariant
+#
+# > On watcher termination (success, failure, OR kill) always report
+# > state + next action. Killed watchers must not die silently.
+#
+# Every exit path of `p9 watch` / `p9 wait-for`, every reaped row, and every
+# stuck finding produces one of these. The Tier-1 #1 post-notification
+# reconcile rule consumes this shape — keep fields additive-only.
+# ─────────────────────────────────────────────────────────────────────────────
+REPORT_MARKER = "P9-TERMINATION-REPORT"
+
+_NEXT_ACTION: dict[str, str] = {
+    PRState.PUSHED.value: "p9 watch <pr>",
+    PRState.WATCHING.value: ("watcher live — no action; `p9 stuck-scan` if it "
+                             "looks wedged"),
+    PRState.GREEN.value: ("p9 merge-status <pr>, then p9 merge-ready <pr> "
+                          "(merge authorization stays with the policy)"),
+    PRState.RED_CLASSIFIED.value: ("p9 heal <pr> --classify, then --apply if "
+                                   "evaluator-positive"),
+    PRState.RED_UNCLASSIFIED.value: ("inspect failing checks "
+                                     "(`gh pr checks <pr>`); escalate via "
+                                     "Linear if unclassifiable"),
+    PRState.HEALING.value: "let the heal finish; p9 status --pr <pr>",
+    PRState.MERGE_READY.value: "p9 auto-merge <pr> (policy-gated)",
+    PRState.MERGED.value: "done — no action",
+    PRState.ESCALATED.value: ("human decision required — see the Linear "
+                              "escalation ticket"),
+    PRState.ABANDONED.value: ("re-arm: p9 watch <pr> --adopt (or `p9 rearm` "
+                              "to re-arm every dead watcher)"),
+}
+
+_WAIT_NEXT_ACTION: dict[str, str] = {
+    WaitState.WAITING.value: ("wait live — no action; `p9 stuck-scan` if the "
+                              "heartbeat looks stale"),
+    WaitState.SUCCEEDED.value: "done — continue the arc that was blocked on it",
+    WaitState.FAILED.value: ("command not runnable — fix the command and "
+                             "re-run p9 wait-for"),
+    WaitState.TIMED_OUT.value: ("inspect the target (deploy/build) directly; "
+                                "re-run p9 wait-for with a larger --timeout"),
+    WaitState.KILLED.value: "re-arm: p9 rearm (re-spawns from the recorded argv)",
+    WaitState.ABANDONED.value: "re-arm: p9 rearm (re-spawns from the recorded argv)",
+}
+
+
+def _log_tail(path: Path | str | None, lines: int = 20) -> list[str]:
+    if not path:
+        return []
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return text.splitlines()[-lines:]
+
+
+def pr_termination_report(row: dict[str, Any], *, cause: str,
+                          with_log_tail: bool = True) -> dict[str, Any]:
+    state = str(row.get("to_state", ""))
+    extra = row.get("extra") or {}
+    report: dict[str, Any] = {
+        "report": "p9-termination",
+        "kind": "pr-watch",
+        "ts": _utcnow(),
+        "last_event_ts": row.get("ts", ""),
+        "pr": row.get("pr"),
+        "repo": row.get("repo", ""),
+        "state": state,
+        "cause": cause,
+        "watcher_id": row.get("watcher_id", ""),
+        "session_id": row.get("session_id", ""),
+        "next_action": _NEXT_ACTION.get(state, "p9 status"),
+    }
+    if extra.get("reason"):
+        report["reason"] = extra["reason"]
+    if with_log_tail and extra.get("log"):
+        report["log"] = extra["log"]
+        tail = _log_tail(extra["log"])
+        if tail:
+            report["log_tail"] = tail
+    return report
+
+
+def wait_termination_report(row: dict[str, Any], *, cause: str) -> dict[str, Any]:
+    state = str(row.get("to_state", ""))
+    extra = row.get("extra") or {}
+    report: dict[str, Any] = {
+        "report": "p9-termination",
+        "kind": "wait",
+        "ts": _utcnow(),
+        "last_event_ts": row.get("ts", ""),
+        "wait_id": row.get("wait_id", ""),
+        "name": row.get("name", ""),
+        "state": state,
+        "cause": cause,
+        "session_id": row.get("session_id", ""),
+        "next_action": _WAIT_NEXT_ACTION.get(state, "p9 status"),
+    }
+    for k in ("cmd", "reason", "polls", "last_exit"):
+        if extra.get(k) is not None:
+            report[k] = extra[k]
+    return report
+
+
+def emit_termination_report(report: dict[str, Any], *,
+                            do_notify: bool = True) -> None:
+    """Print the report (stderr, marker-prefixed, greppable) and push it.
+
+    stderr on purpose: `p9 status --json` / `p9 watch --json` keep stdout
+    machine-parseable even when a preflight reap emits reports.
+    """
+    print(f"{REPORT_MARKER} " + json.dumps(report, separators=(",", ":")),
+          file=sys.stderr)
+    human = (f"p9: {report['kind']} "
+             f"{report.get('pr') or report.get('name')} → {report['state']} "
+             f"({report['cause']}); next: {report['next_action']}")
+    print(human, file=sys.stderr)
+    if do_notify:
+        ident = (f"PR #{report['pr']} {report.get('repo', '')}"
+                 if report["kind"] == "pr-watch"
+                 else f"wait '{report.get('name', '')}'")
+        notify(
+            f"termination:{report['state'].lower()}",
+            f"p9 {ident} → {report['state']}",
+            f"cause={report['cause']}; next: {report['next_action']}",
+            report,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generic waits (BRO-1701) — `p9 wait-for`: non-PR blocking operations
+# (deploy readiness, long extractions) get the same lifecycle discipline
+# as PR watches: state rows, heartbeats, termination reports, re-arm.
+# ─────────────────────────────────────────────────────────────────────────────
+def append_wait_event(event: WaitEvent) -> None:
+    jsonl_append(waits_jsonl(), event.to_jsonl(), waits_lock_path())
+
+
+def all_wait_rows() -> dict[str, dict[str, Any]]:
+    """Latest row per wait_id."""
+    rows, _ = jsonl_read_all(waits_jsonl())
+    seen: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        wid = r.get("wait_id")
+        if wid:
+            seen[wid] = r
+    return seen
+
+
+def open_waits(session_id: str | None = None) -> list[dict[str, Any]]:
+    out = []
+    for r in all_wait_rows().values():
+        if r.get("to_state") != WaitState.WAITING.value:
+            continue
+        if session_id is not None and r.get("session_id", "") != session_id:
+            continue
+        out.append(r)
+    return out
+
+
+def wait_heartbeat_path(wait_id: str) -> Path:
+    return heartbeats_dir() / f"wait-{wait_id}"
+
+
+def touch_wait_heartbeat(wait_id: str) -> None:
+    with contextlib.suppress(OSError):
+        heartbeats_dir().mkdir(parents=True, exist_ok=True)
+        wait_heartbeat_path(wait_id).write_text(_utcnow(), encoding="utf-8")
+
+
+# Convenience templates over --cmd, substituting {target} from --target.
+# Deploy-CLI output shapes drift across versions — verify against your
+# installed CLI (P11) and fall back to an explicit --cmd when they do.
+_WAIT_PRESETS: dict[str, str] = {
+    # Railway: newest deployment reached SUCCESS.
+    "railway": ("railway status --json | "
+                "python3 -c \"import json,sys; d=json.load(sys.stdin); "
+                "s=[e.get('status') for e in "
+                "(d if isinstance(d, list) else d.get('deployments', [d])) "
+                "if isinstance(e, dict) and e.get('status')]; "
+                "sys.exit(0 if s and s[0] in ('SUCCESS','DEPLOYED') else 1)\""),
+    # Vercel: inspect --wait exits 0 once the deployment is READY.
+    "vercel": "vercel inspect {target} --wait",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Watcher manager (subprocess control for `gh pr checks --watch`)
 # ─────────────────────────────────────────────────────────────────────────────
+def watch_log_path(watcher_id: str) -> Path:
+    return logs_dir() / f"watch-{watcher_id}.log"
+
+
 def spawn_watcher(pr: int, repo: str | None = None,
-                  *, dry_run: bool = False) -> subprocess.Popen[bytes] | None:
+                  *, dry_run: bool = False,
+                  watcher_id: str = "") -> subprocess.Popen[bytes] | None:
     """Spawn `gh pr checks <pr> --watch` detached. Returns the Popen or None
-    in dry_run mode (used by tests and `--background --dry-run`)."""
+    in dry_run mode (used by tests and `--background --dry-run`).
+
+    With a watcher_id, gh output lands in logs/watch-<id>.log instead of
+    the void — the log's mtime is a progress signal for `p9 stuck-scan`
+    and its tail goes into termination reports (full details on failure,
+    per BRO-1701). Falls back to DEVNULL if the log can't be opened."""
     if dry_run:
         return None
     cmd = ["gh", "pr", "checks", str(pr), "--watch"]
     if repo:
         cmd += ["--repo", repo]
-    return subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    out: Any = subprocess.DEVNULL
+    if watcher_id:
+        try:
+            logs_dir().mkdir(parents=True, exist_ok=True)
+            out = open(watch_log_path(watcher_id), "ab")
+        except OSError:
+            out = subprocess.DEVNULL
+    try:
+        return subprocess.Popen(
+            cmd,
+            stdout=out,
+            stderr=subprocess.STDOUT if out is not subprocess.DEVNULL
+            else subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    finally:
+        if out is not subprocess.DEVNULL:
+            out.close()  # child holds its own fd after fork
 
 
 def is_watcher_alive(pid: int) -> bool:
@@ -1284,12 +1697,21 @@ def reap_stale_watchers(*, grace_seconds: float | None = None,
         repo = row.get("repo") or ""
         pr = row["pr"]
         to_state, reason = _reconcile_dead_watcher(pr, repo, reconcile)
-        append_state_event(PRStateEvent(
+        event = PRStateEvent(
             ts=_utcnow(), pr=pr, repo=repo,
             from_state=state.value, to_state=to_state.value,
             watcher_id="reap", session_id=row.get("session_id", ""),
-            extra={"reason": reason, "dead_pid": pid},
-        ))
+            extra={"reason": reason, "dead_pid": pid,
+                   **({"log": (row.get("extra") or {}).get("log")}
+                      if (row.get("extra") or {}).get("log") else {})},
+        )
+        append_state_event(event)
+        # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
+        # trapped by the watcher itself — the reap path is where those become
+        # a report + notification instead of a silent slot leak.
+        emit_termination_report(
+            pr_termination_report(dataclasses.asdict(event),
+                                  cause="reaped:dead-watcher"))
         enriched = dict(row)
         enriched.update(to_state=to_state.value, reason=reason)
         reaped.append(enriched)
@@ -1356,6 +1778,22 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
             f"references/scoring-rubric.md missing at {rubric_md_path()} "
             f"(builtin rubric still available but markdown is the human-canonical source)"
         )
+
+    # 5. Notify config parses; report configured channel count (BRO-1701).
+    channels, cfg_err = _load_notify_config()
+    if cfg_err:
+        problems.append(f"notify: {cfg_err}")
+    elif not channels:
+        # Informational, not a problem: the notify.jsonl audit floor still
+        # applies, but nothing reaches a phone until a channel is configured.
+        print("p9 doctor: note — no notify channels configured "
+              f"(add {notify_config_path()} or set BROOMVA_P9_NTFY_TOPIC)")
+
+    # 6. Logs dir writable (watch logs + wait logs land here)
+    try:
+        logs_dir().mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        problems.append(f"logs directory not writable: {e}")
 
     if not problems:
         print("p9 doctor: ok")
@@ -1646,8 +2084,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
     enforce_concurrency_ceiling(policy, session_id=sid)
     watcher_id = uuid.uuid4().hex[:12]
-    proc = spawn_watcher(pr, repo, dry_run=args.dry_run)
+    proc = spawn_watcher(pr, repo, dry_run=args.dry_run, watcher_id=watcher_id)
     pid = proc.pid if proc else 0
+    log_path = str(watch_log_path(watcher_id)) if proc is not None else None
     append_state_event(PRStateEvent(
         ts=_utcnow(),
         pr=pr,
@@ -1657,7 +2096,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         watcher_id=watcher_id,
         attempt=0,
         session_id=sid,
-        extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach},
+        extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach,
+               **({"log": log_path} if log_path else {})},
     ))
     if args.json:
         print(json.dumps({
@@ -1675,20 +2115,59 @@ def cmd_watch(args: argparse.Namespace) -> int:
     if args.detach or args.dry_run or proc is None:
         return EXIT_OK
 
-    # Foreground: block on subprocess, then fold result into a state event.
-    rc = proc.wait()
+    # Foreground: block on subprocess, then fold the result into a state
+    # event. Termination invariant (BRO-1701): EVERY exit path — green, red,
+    # signal, unexpected exception — folds a state event, emits a termination
+    # report (state + next action), and notifies. A killed watcher must not
+    # die silently. SIGKILL is untrappable by design; that path is covered by
+    # `p9 reap` / `p9 rearm`, which emit the same report shape.
+    def _fold_and_report(next_state: PRState, *, cause: str,
+                         extra: dict[str, Any]) -> dict[str, Any]:
+        if log_path:
+            extra.setdefault("log", log_path)
+        event = PRStateEvent(
+            ts=_utcnow(), pr=pr, repo=repo or "",
+            from_state=PRState.WATCHING.value, to_state=next_state.value,
+            watcher_id=watcher_id, attempt=0, session_id=sid, extra=extra,
+        )
+        append_state_event(event)
+        report = pr_termination_report(dataclasses.asdict(event), cause=cause)
+        emit_termination_report(report)
+        return report
+
+    def _on_signal(signum: int, _frame: Any) -> None:
+        raise _WaitInterrupted(signum)
+
+    prev_handlers = {}
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        with contextlib.suppress(OSError, ValueError):
+            prev_handlers[s] = signal.signal(s, _on_signal)
+    try:
+        rc = proc.wait()
+    except _WaitInterrupted as exc:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+        signame = signal.Signals(exc.signum).name
+        _fold_and_report(PRState.ABANDONED, cause=f"killed:{signame}", extra={
+            "reason": f"watcher killed by {signame}",
+            "termination": "killed", "dead_pid": pid,
+        })
+        return EXIT_DEGRADED
+    except BaseException as exc:  # unexpected — the invariant still holds
+        with contextlib.suppress(Exception):
+            proc.terminate()
+        _fold_and_report(PRState.ABANDONED, cause=f"error:{type(exc).__name__}",
+                         extra={"reason": f"watcher crashed: {exc}",
+                                "termination": "error", "dead_pid": pid})
+        raise
+    finally:
+        for s, h in prev_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(s, h)
+
     next_state = PRState.GREEN if rc == 0 else PRState.RED_UNCLASSIFIED
-    append_state_event(PRStateEvent(
-        ts=_utcnow(),
-        pr=pr,
-        repo=repo or "",
-        from_state=PRState.WATCHING.value,
-        to_state=next_state.value,
-        watcher_id=watcher_id,
-        attempt=0,
-        session_id=sid,
-        extra={"gh_exit_code": rc, "folded_by": "p9 watch"},
-    ))
+    _fold_and_report(next_state, cause="gh-exit",
+                     extra={"gh_exit_code": rc, "folded_by": "p9 watch"})
     if args.json:
         print(json.dumps({"watcher_id": watcher_id, "result": next_state.value, "gh_exit_code": rc}))
     else:
@@ -1708,11 +2187,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     rows = open_prs(session_id=session_id)
     if args.pr is not None:
         rows = [r for r in rows if r["pr"] == int(args.pr)]
+    wrows = open_waits(session_id=session_id)
     if args.json:
-        print(json.dumps({"open_prs": rows}, indent=2))
+        # open_waits is additive (BRO-1701) — consumers keyed on open_prs
+        # keep working unchanged.
+        print(json.dumps({"open_prs": rows, "open_waits": wrows}, indent=2))
     else:
-        if not rows:
-            print("no PRs in flight")
+        if not rows and not wrows:
+            print("no PRs or waits in flight")
             return EXIT_OK
         for r in rows:
             sess = r.get("session_id", "") or "-"
@@ -1721,6 +2203,15 @@ def cmd_status(args: argparse.Namespace) -> int:
                 f"{(r.get('repo') or '-'):<24} "
                 f"session={sess} watcher={r['watcher_id']} "
                 f"attempt={r.get('attempt', 0)}"
+            )
+        for w in wrows:
+            sess = w.get("session_id", "") or "-"
+            extra = w.get("extra") or {}
+            print(
+                f"wait  {w.get('name', '-'):<18} "
+                f"{w['to_state']:<18} "
+                f"session={sess} wait_id={w.get('wait_id', '')} "
+                f"pid={extra.get('pid', '-')}"
             )
     return EXIT_OK
 
@@ -1999,6 +2490,440 @@ def cmd_merge_ready(args: argparse.Namespace) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers (gh integration, cwd repo detection, time parsing)
 # ─────────────────────────────────────────────────────────────────────────────
+def _iso_to_epoch(ts: str) -> float:
+    try:
+        return _dt.datetime.fromisoformat(ts).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def cmd_wait_for(args: argparse.Namespace) -> int:
+    """Generic non-PR wait (BRO-1701): poll a command until it exits 0.
+
+    Same lifecycle discipline as a PR watch — a waits.jsonl row, a heartbeat
+    touched on every poll (the stuck-scan progress signal), and the
+    termination invariant on every exit path (success, failure, timeout,
+    OR kill): fold + report + notify.
+    """
+    sid = current_session_id()
+    name = args.name
+    if args.preset:
+        template = _WAIT_PRESETS.get(args.preset)
+        if template is None:
+            print(f"unknown preset {args.preset!r}; known: "
+                  f"{', '.join(sorted(_WAIT_PRESETS))}", file=sys.stderr)
+            return EXIT_USAGE
+        if "{target}" in template and not args.target:
+            print(f"preset {args.preset!r} needs --target", file=sys.stderr)
+            return EXIT_USAGE
+        cmd = template.replace("{target}", args.target or "")
+    else:
+        cmd = args.cmd or ""
+    if not cmd.strip():
+        print("wait-for needs --cmd or --preset", file=sys.stderr)
+        return EXIT_USAGE
+
+    interval = max(0.1, float(args.interval))
+    timeout = max(interval, float(args.timeout))
+    wait_id = args.wait_id or uuid.uuid4().hex[:12]
+    script = str(Path(__file__).resolve())
+    # Recorded with the RESOLVED command so `p9 rearm` can re-exec without
+    # re-deriving preset/target. Built from controlled fields only.
+    rearm_argv = [sys.executable, script, "wait-for", name,
+                  "--cmd", cmd, "--interval", str(interval),
+                  "--timeout", str(timeout)]
+
+    if args.detach:
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        log_path = logs_dir() / f"wait-{wait_id}.log"
+        child_argv = rearm_argv + ["--wait-id", wait_id]
+        with open(log_path, "ab") as out:
+            child = subprocess.Popen(child_argv, stdout=out,
+                                     stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+        info = {"wait_id": wait_id, "pid": child.pid, "name": name,
+                "log": str(log_path), "mode": "detach"}
+        print(json.dumps(info) if args.json else
+              f"wait_id={wait_id} pid={child.pid} name={name} log={log_path}")
+        return EXIT_OK
+
+    base_extra: dict[str, Any] = {
+        "cmd": cmd, "interval": interval, "timeout": timeout,
+        "pid": os.getpid(), "argv": rearm_argv,
+        **({"preset": args.preset} if args.preset else {}),
+        **({"rearmed_from": args.rearmed_from} if args.rearmed_from else {}),
+    }
+    append_wait_event(WaitEvent(
+        ts=_utcnow(), wait_id=wait_id, name=name,
+        from_state="NEW", to_state=WaitState.WAITING.value,
+        session_id=sid, extra=dict(base_extra),
+    ))
+    touch_wait_heartbeat(wait_id)
+    if args.json:
+        print(json.dumps({"wait_id": wait_id, "pid": os.getpid(),
+                          "name": name, "mode": "foreground"}), flush=True)
+    else:
+        print(f"wait_id={wait_id} pid={os.getpid()} name={name} "
+              f"interval={interval}s timeout={timeout}s", flush=True)
+
+    polls = 0
+    last_exit: int | None = None
+    stderr_tail: list[str] = []
+
+    def _fold_and_report(state: WaitState, *, cause: str,
+                         reason: str | None = None) -> None:
+        extra = dict(base_extra)
+        extra.update(polls=polls, last_exit=last_exit)
+        if stderr_tail:
+            extra["stderr_tail"] = stderr_tail[-5:]
+        if reason:
+            extra["reason"] = reason
+        event = WaitEvent(
+            ts=_utcnow(), wait_id=wait_id, name=name,
+            from_state=WaitState.WAITING.value, to_state=state.value,
+            session_id=sid, extra=extra,
+        )
+        append_wait_event(event)
+        emit_termination_report(
+            wait_termination_report(dataclasses.asdict(event), cause=cause))
+
+    def _on_signal(signum: int, _frame: Any) -> None:
+        raise _WaitInterrupted(signum)
+
+    prev_handlers = {}
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        with contextlib.suppress(OSError, ValueError):
+            prev_handlers[s] = signal.signal(s, _on_signal)
+
+    started = time.monotonic()
+    try:
+        while True:
+            poll_budget = max(1.0, min(interval * 3.0 + 10.0,
+                                       timeout - (time.monotonic() - started)))
+            try:
+                res = subprocess.run(cmd, shell=True, capture_output=True,
+                                     text=True, timeout=poll_budget,
+                                     check=False)
+                last_exit = res.returncode
+                if res.stderr:
+                    stderr_tail = res.stderr.splitlines()[-5:]
+            except subprocess.TimeoutExpired:
+                last_exit = None
+                stderr_tail = [f"poll exceeded {poll_budget:.0f}s budget"]
+            polls += 1
+            touch_wait_heartbeat(wait_id)
+            if last_exit == 0:
+                _fold_and_report(WaitState.SUCCEEDED, cause="predicate-true")
+                return EXIT_OK
+            if polls == 1 and last_exit in (126, 127):
+                _fold_and_report(
+                    WaitState.FAILED, cause="command-not-runnable",
+                    reason=f"command exited {last_exit} on first poll "
+                           f"(not found / not executable)")
+                return EXIT_EXTERNAL_ERROR
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                _fold_and_report(
+                    WaitState.TIMED_OUT, cause="deadline",
+                    reason=f"predicate still false after {timeout:.0f}s "
+                           f"({polls} polls)")
+                return EXIT_DEGRADED
+            time.sleep(min(interval, remaining))
+    except _WaitInterrupted as exc:
+        signame = signal.Signals(exc.signum).name
+        _fold_and_report(WaitState.KILLED, cause=f"killed:{signame}",
+                         reason=f"wait killed by {signame}")
+        return EXIT_DEGRADED
+    except BaseException as exc:  # unexpected — the invariant still holds
+        _fold_and_report(WaitState.KILLED, cause=f"error:{type(exc).__name__}",
+                         reason=f"wait crashed: {exc}")
+        raise
+    finally:
+        for s, h in prev_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(s, h)
+
+
+def _sane_rearm_argv(argv: Any) -> bool:
+    """Recorded by p9 itself from controlled fields, but validate shape
+    anyway — the state dir is plain JSONL on disk."""
+    return (isinstance(argv, list) and len(argv) >= 4
+            and all(isinstance(a, str) for a in argv)
+            and "wait-for" in argv)
+
+
+def cmd_rearm(args: argparse.Namespace) -> int:
+    """Re-arm dead-but-unfinished watchers and waits (BRO-1701).
+
+    The complement of the termination invariant for untrappable deaths
+    (SIGKILL, machine reboot): a dead PR watcher re-enters via
+    `p9 watch --adopt`; a dead generic wait is folded ABANDONED and
+    re-spawned from its recorded argv.
+    """
+    grace = 0.0 if args.now else _watcher_grace_seconds()
+    script = str(Path(__file__).resolve())
+    actions: list[dict[str, Any]] = []
+
+    for row in open_prs():
+        state = PRState(row["to_state"])
+        if state not in (PRState.WATCHING, PRState.HEALING):
+            continue
+        pid = _row_pid(row)
+        if pid > 0 and is_watcher_alive(pid):
+            continue
+        if _iso_age_seconds(row.get("ts", "")) < grace:
+            continue
+        pr, repo = row["pr"], row.get("repo") or ""
+        action = {"kind": "pr-watch", "pr": pr, "repo": repo,
+                  "dead_pid": pid}
+        if args.dry_run:
+            action["would"] = "re-watch via p9 watch --adopt"
+        else:
+            argv = [sys.executable, script, "watch", str(pr)]
+            if repo:
+                argv += ["--repo", repo]
+            argv.append("--force" if args.now else "--adopt")
+            logs_dir().mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir() / f"rearm-watch-{pr}.log"
+            with open(log_path, "ab") as out:
+                child = subprocess.Popen(argv, stdout=out,
+                                         stderr=subprocess.STDOUT,
+                                         start_new_session=True)
+            action.update(rearmed_pid=child.pid, log=str(log_path))
+        actions.append(action)
+
+    for row in open_waits():
+        extra = row.get("extra") or {}
+        pid = int(extra.get("pid", 0) or 0)
+        if pid > 0 and is_watcher_alive(pid):
+            continue
+        if _iso_age_seconds(row.get("ts", "")) < grace:
+            continue
+        wid, name = row.get("wait_id", ""), row.get("name", "")
+        argv = extra.get("argv")
+        action = {"kind": "wait", "wait_id": wid, "name": name,
+                  "dead_pid": pid}
+        if not _sane_rearm_argv(argv):
+            action["skipped"] = "no runnable argv recorded"
+            actions.append(action)
+            continue
+        if args.dry_run:
+            action["would"] = "fold ABANDONED + re-spawn recorded argv"
+        else:
+            event = WaitEvent(
+                ts=_utcnow(), wait_id=wid, name=name,
+                from_state=WaitState.WAITING.value,
+                to_state=WaitState.ABANDONED.value,
+                session_id=row.get("session_id", ""),
+                extra={**extra, "reason": "dead wait superseded by rearm"},
+            )
+            append_wait_event(event)
+            emit_termination_report(
+                wait_termination_report(dataclasses.asdict(event),
+                                        cause="reaped:dead-wait"))
+            logs_dir().mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir() / f"rearm-wait-{name or wid}.log"
+            with open(log_path, "ab") as out:
+                child = subprocess.Popen(
+                    list(argv) + ["--rearmed-from", wid], stdout=out,
+                    stderr=subprocess.STDOUT, start_new_session=True)
+            action.update(rearmed_pid=child.pid, log=str(log_path))
+        actions.append(action)
+
+    if args.json:
+        print(json.dumps({"rearmed": actions}, indent=2))
+    elif not actions:
+        print("nothing to re-arm")
+    else:
+        for a in actions:
+            ident = a.get("pr") or a.get("name") or a.get("wait_id")
+            verb = a.get("would") or a.get("skipped") or \
+                f"re-armed pid={a.get('rearmed_pid')}"
+            print(f"{a['kind']} {ident}: {verb}")
+    return EXIT_OK
+
+
+def _stuck_threshold_seconds(args: argparse.Namespace) -> float:
+    if getattr(args, "threshold_min", None) is not None:
+        return max(60.0, float(args.threshold_min) * 60.0)
+    raw = os.environ.get("BROOMVA_P9_STUCK_MIN", "45")
+    try:
+        return max(60.0, float(raw) * 60.0)
+    except ValueError:
+        return 45 * 60.0
+
+
+def _stuck_marker_path(kind: str, ident: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", f"{kind}-{ident}")
+    return stuck_markers_dir() / f"{safe}.json"
+
+
+def _already_notified(marker: Path, progress_epoch: float) -> bool:
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        return float(data.get("progress_epoch", -1.0)) >= progress_epoch
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return False
+
+
+def _write_stuck_marker(marker: Path, progress_epoch: float) -> None:
+    with contextlib.suppress(OSError):
+        stuck_markers_dir().mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({"progress_epoch": progress_epoch,
+                        "notified_at": _utcnow()}),
+            encoding="utf-8")
+
+
+def cmd_stuck_scan(args: argparse.Namespace) -> int:
+    """Stuck-detector (BRO-1701): live watchers/waits with no progress
+    inside the threshold produce a structured failure dump + notification.
+
+    Progress signal = newest of (last state event, watch-log mtime,
+    heartbeat mtime). Dead pids are reap/rearm territory, not stuck.
+    One notification per stall episode: a marker keyed on the progress
+    timestamp dedups until progress moves again (--renotify overrides).
+    """
+    threshold = _stuck_threshold_seconds(args)
+    now = time.time()
+    findings: list[dict[str, Any]] = []
+
+    def _consider(kind: str, ident: str, row: dict[str, Any],
+                  progress_epoch: float, pid: int,
+                  log_path: str | None, next_action: str) -> None:
+        age = now - progress_epoch
+        if age < threshold:
+            return
+        marker = _stuck_marker_path(kind, ident)
+        deduped = _already_notified(marker, progress_epoch) and not args.renotify
+        finding: dict[str, Any] = {
+            "report": "p9-stuck", "kind": kind, "state": row.get("to_state"),
+            "pid": pid, "progress_age_s": round(age),
+            "threshold_s": round(threshold),
+            "last_event_ts": row.get("ts", ""),
+            "session_id": row.get("session_id", ""),
+            "next_action": next_action, "notified": not deduped,
+        }
+        if kind == "pr-watch":
+            finding.update(pr=row.get("pr"), repo=row.get("repo", ""))
+        else:
+            finding.update(wait_id=row.get("wait_id"), name=row.get("name"))
+        if log_path:
+            finding["log"] = log_path
+            tail = _log_tail(log_path)
+            if tail:
+                finding["log_tail"] = tail
+        findings.append(finding)
+        if deduped:
+            return
+        ident_h = (f"PR #{row.get('pr')} {row.get('repo', '')}"
+                   if kind == "pr-watch" else f"wait '{row.get('name')}'")
+        notify("stuck",
+               f"p9 STUCK: {ident_h} — no progress in "
+               f"{round(age / 60)} min",
+               f"pid={pid} state={row.get('to_state')}; next: {next_action}",
+               finding)
+        _write_stuck_marker(marker, progress_epoch)
+
+    for row in open_prs():
+        if PRState(row["to_state"]) not in (PRState.WATCHING, PRState.HEALING):
+            continue
+        pid = _row_pid(row)
+        if not (pid > 0 and is_watcher_alive(pid)):
+            continue  # dead → reap/rearm, not stuck
+        progress = _iso_to_epoch(row.get("ts", ""))
+        log_path = (row.get("extra") or {}).get("log")
+        if log_path:
+            with contextlib.suppress(OSError):
+                progress = max(progress, Path(log_path).stat().st_mtime)
+        _consider(
+            "pr-watch", f"{row.get('repo', '')}-{row['pr']}", row, progress,
+            pid, log_path,
+            f"inspect the watch log, then kill {pid} and `p9 rearm` "
+            f"(raise --threshold-min if this CI legitimately runs long)")
+
+    for row in open_waits():
+        extra = row.get("extra") or {}
+        pid = int(extra.get("pid", 0) or 0)
+        if not (pid > 0 and is_watcher_alive(pid)):
+            continue
+        progress = _iso_to_epoch(row.get("ts", ""))
+        hb = wait_heartbeat_path(row.get("wait_id", ""))
+        with contextlib.suppress(OSError):
+            progress = max(progress, hb.stat().st_mtime)
+        _consider(
+            "wait", row.get("wait_id", ""), row, progress, pid, None,
+            f"inspect the waited-on target, then kill {pid} and `p9 rearm`")
+
+    if args.json:
+        print(json.dumps({"stuck": findings}, indent=2))
+    elif not findings:
+        print("nothing stuck")
+    else:
+        for f in findings:
+            ident = f.get("pr") or f.get("name") or f.get("wait_id")
+            print(f"STUCK {f['kind']} {ident}: no progress in "
+                  f"{f['progress_age_s']}s (pid={f['pid']}) — "
+                  f"{f['next_action']}")
+    return EXIT_DEGRADED if findings else EXIT_OK
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    """Render termination reports (state + next action) on demand.
+
+    The read-side of the termination invariant: `p9 report` is what a
+    fresh session (or the Tier-1 #1 post-notification reconcile rule) runs
+    to learn what every tracked watcher/wait last did and what to do next.
+    """
+    reports: list[dict[str, Any]] = []
+    rows, _ = jsonl_read_all(state_jsonl())
+    latest: dict[tuple[str, int], dict[str, Any]] = {}
+    for r in rows:
+        latest[(r.get("repo", ""), r["pr"])] = r
+    pr_rows = list(latest.values())
+    if args.pr is not None:
+        pr_rows = [r for r in pr_rows if r["pr"] == int(args.pr)]
+    if args.repo:
+        pr_rows = [r for r in pr_rows if r.get("repo", "") == args.repo]
+    with_tail = args.pr is not None
+    for r in pr_rows:
+        reports.append(pr_termination_report(r, cause="report",
+                                             with_log_tail=with_tail))
+    if args.pr is None:
+        for r in all_wait_rows().values():
+            reports.append(wait_termination_report(r, cause="report"))
+    reports.sort(key=lambda r: r.get("last_event_ts", ""), reverse=True)
+    limit = max(1, int(args.limit))
+    reports = reports[:limit] if args.pr is None else reports
+    if args.json:
+        print(json.dumps({"reports": reports}, indent=2))
+    elif not reports:
+        print("no tracked watchers or waits")
+    else:
+        for rep in reports:
+            ident = (f"PR #{rep.get('pr')} {rep.get('repo', '')}"
+                     if rep["kind"] == "pr-watch"
+                     else f"wait '{rep.get('name')}'")
+            print(f"{ident}: {rep['state']} — next: {rep['next_action']}")
+    return EXIT_OK
+
+
+def cmd_notify(args: argparse.Namespace) -> int:
+    """Manual/agent-driven push through the configured channels — also the
+    channel smoke test (`p9 notify "test" --body "hello"`)."""
+    row = notify(args.kind, args.title, args.body or "", {"manual": True})
+    failed = [d for d in row["deliveries"] if not d.get("ok")]
+    if args.json:
+        print(json.dumps(row, indent=2))
+    else:
+        n_ok = len(row["deliveries"]) - len(failed)
+        print(f"notify: {n_ok}/{len(row['deliveries'])} channels delivered "
+              f"(audit row appended to {notify_jsonl()})")
+        for d in failed:
+            print(f"  - {d['channel']}: {d.get('error')}", file=sys.stderr)
+    return EXIT_DEGRADED if failed else EXIT_OK
+
+
 def _detect_repo() -> str | None:
     try:
         out = subprocess.run(
@@ -2169,6 +3094,76 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--dry-run", action="store_true",
                     help="Print the planned merge instead of executing it")
     pa.set_defaults(func=cmd_auto_merge)
+
+    pwf = sub.add_parser(
+        "wait-for",
+        help="Generic non-PR wait: poll a command until it exits 0 "
+             "(deploy readiness, long extractions) with the full "
+             "termination invariant (report + notify on every exit)")
+    pwf.add_argument("name", help="Human-readable wait name (e.g. railway-deploy)")
+    pwf.add_argument("--cmd", default=None,
+                     help="Shell command polled until exit 0 (the predicate)")
+    pwf.add_argument("--preset", default=None,
+                     help=f"Command template: {', '.join(sorted(_WAIT_PRESETS))} "
+                          "(verify against your CLI version; --cmd overrides)")
+    pwf.add_argument("--target", default=None,
+                     help="Substituted into the preset's {target} placeholder")
+    pwf.add_argument("--interval", type=float, default=30.0,
+                     help="Seconds between polls (default 30)")
+    pwf.add_argument("--timeout", type=float, default=3600.0,
+                     help="Give up (TIMED_OUT) after this many seconds "
+                          "(default 3600)")
+    pwf.add_argument("--detach", action="store_true",
+                     help="Spawn the wait detached; output lands in "
+                          "logs/wait-<id>.log")
+    pwf.add_argument("--wait-id", default=None, help=argparse.SUPPRESS)
+    pwf.add_argument("--rearmed-from", default=None, help=argparse.SUPPRESS)
+    pwf.add_argument("--json", action="store_true")
+    pwf.set_defaults(func=cmd_wait_for)
+
+    prm = sub.add_parser(
+        "rearm",
+        help="Re-arm dead-but-unfinished watchers and waits (the "
+             "SIGKILL/reboot complement of the termination invariant)")
+    prm.add_argument("--dry-run", action="store_true",
+                     help="List what would be re-armed without spawning")
+    prm.add_argument("--now", action="store_true",
+                     help="Ignore the grace window; supersede immediately")
+    prm.add_argument("--json", action="store_true")
+    prm.set_defaults(func=cmd_rearm)
+
+    pss = sub.add_parser(
+        "stuck-scan",
+        help="Detect live watchers/waits with no progress inside the "
+             "threshold → structured failure dump + notification")
+    pss.add_argument("--threshold-min", type=float, default=None,
+                     help="Stall threshold in minutes (default: "
+                          "BROOMVA_P9_STUCK_MIN or 45)")
+    pss.add_argument("--renotify", action="store_true",
+                     help="Notify again even within the same stall episode")
+    pss.add_argument("--json", action="store_true")
+    pss.set_defaults(func=cmd_stuck_scan)
+
+    prt = sub.add_parser(
+        "report",
+        help="Render termination reports (state + next action) for tracked "
+             "watchers and waits — the read-side of the termination invariant")
+    prt.add_argument("--pr", default=None, help="Filter to one PR number")
+    prt.add_argument("--repo", default=None, help="Filter to OWNER/REPO")
+    prt.add_argument("--limit", type=int, default=10,
+                     help="Max reports when unfiltered (default 10)")
+    prt.add_argument("--json", action="store_true")
+    prt.set_defaults(func=cmd_report)
+
+    pn = sub.add_parser(
+        "notify",
+        help="Push a message through the configured notify channels "
+             "(also the channel smoke test)")
+    pn.add_argument("title")
+    pn.add_argument("--body", default="")
+    pn.add_argument("--kind", default="manual")
+    pn.add_argument("--json", action="store_true")
+    pn.set_defaults(func=cmd_notify)
 
     pd = sub.add_parser("doctor", help="Health-check P9 dependencies")
     pd.set_defaults(func=cmd_doctor)

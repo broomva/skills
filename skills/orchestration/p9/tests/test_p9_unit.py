@@ -406,7 +406,7 @@ class TestCLISmoke:
         rc = p9.main(["status"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "no PRs in flight" in out
+        assert "no PRs or waits in flight" in out
 
     def test_main_wait_queue_push_pop_list(self, p9, capsys):
         rc = p9.main(["wait-queue", "push", "--source", "session", "--item", "X"])
