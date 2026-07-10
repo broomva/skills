@@ -1,0 +1,17 @@
+# Timer for the governed-autonomy-loop oneshot service. ~30-min poke (a cheap
+# gate; the real cadence is the durable next-fire-at). Install:
+#   cp *.service *.timer ~/.config/systemd/user/
+#   loginctl enable-linger "$USER"     # keep --user units alive without a login
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now {{UNIT_NAME}}.timer
+[Unit]
+Description={{LOOP_NAME}} governor timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

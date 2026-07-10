@@ -1,0 +1,23 @@
+# Runtime adapter: systemd --user (Linux, always-on host). Oneshot fired by the
+# sibling .timer. `%h` auto-expands to the user's home — no path substitution
+# needed if the workspace is at the documented path. KillMode=process so a
+# `systemctl --user stop` TERMs tick.sh (its EXIT trap takes the governor + lock
+# down) while already-dispatched arcs keep running. Nice+idle IO so an on-box
+# validation build never starves co-located services.
+[Unit]
+Description={{LOOP_NAME}} governor tick (governed-autonomy-loop)
+After=network-online.target
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+Environment=GAL_STATE_DIR=%h/.config/broomva/{{STATE_SUBDIR}}
+Environment=GAL_REPO=%h/{{REPO_REL}}
+Environment=GAL_WORKDIR=%h/{{WORKDIR_REL}}
+Environment=GAL_RUNNER_PROMPT=%h/{{RUNNER_PROMPT_REL}}
+Environment=GAL_DENYLIST_FILE=%h/{{DENYLIST_REL}}
+Environment=GAL_CONFIG_TEMPLATE=%h/{{CONFIG_TEMPLATE_REL}}
+Environment=GAL_PARTITION_TAG={{PARTITION_TAG}}
+Environment=GAL_CLAUDE_BIN=%h/.local/bin/claude
+ExecStart=/bin/bash %h/{{TICK_REL}}

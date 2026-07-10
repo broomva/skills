@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runtime adapter: macOS launchd. Fires tick.sh every 15 min as a cheap gate
+  (the durable next-fire-at inside STATE_DIR is the real ~2h schedule). Copy to
+  ~/Library/LaunchAgents/, substitute {{PLACEHOLDERS}}, then:
+    launchctl load ~/Library/LaunchAgents/{{LABEL}}.plist
+  The loop starts DRY_RUN=1 (seeded template posture); review a digest, then arm
+  by flipping DRY_RUN=0 in $GAL_STATE_DIR/config.env.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{LABEL}}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{SKILL_DIR}}/scripts/tick.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GAL_STATE_DIR</key>   <string>{{STATE_DIR}}</string>
+        <key>GAL_REPO</key>        <string>{{REPO_DIR}}</string>
+        <key>GAL_WORKDIR</key>     <string>{{WORKDIR}}</string>
+        <key>GAL_RUNNER_PROMPT</key><string>{{RUNNER_PROMPT}}</string>
+        <key>GAL_DENYLIST_FILE</key><string>{{DENYLIST_FILE}}</string>
+        <key>GAL_CLAUDE_BIN</key>  <string>{{CLAUDE_BIN}}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/Library/Logs/{{LABEL}}.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/Library/Logs/{{LABEL}}.log</string>
+</dict>
+</plist>
