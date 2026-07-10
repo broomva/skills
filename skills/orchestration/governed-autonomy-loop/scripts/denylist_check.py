@@ -15,9 +15,17 @@ listed in BOTH places that carry the denylist.* When the tracker gains a new
 write tool — or at a Kanon cutover that swaps the MCP behind the same name — a
 denylist that isn't re-derived from the tool surface silently fails open.
 
-This check makes that a test: given the tracker's authoritative write surface and
-the two denylists, assert each denylist is a superset of the surface, and report
-exactly which tools are uncovered.
+This check makes that a test: given the tracker's write surface and the two
+denylists, assert each denylist is a superset of the surface, and report exactly
+which tools are uncovered.
+
+HONEST SCOPE: `write_surface` is an OPERATOR-MAINTAINED list, not introspected from
+a live MCP — this script has no network and cannot enumerate the server's tools. So
+it guarantees "the two denylists cover the surface you DECLARED", not "the denylists
+cover every tool the server actually exposes". If the server gains a write tool and
+you don't add it to `write_surface`, the check passes vacuously. Re-derive
+`write_surface` from the server's tool list by hand at every queue change / MCP
+cutover; this check then catches a denylist that lags the surface.
 
 Pure stdlib. Zero network. Deterministic.
 """

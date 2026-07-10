@@ -56,7 +56,7 @@ scripts are pinned by 65 unit/integration tests + an E2E smoke.
 ## The invariant spine vs the swappable adapters
 
 Keep the spine verbatim (`references/invariant-spine.md`): the loop shape (outer
-A–E + inner F), the eight safety invariants, the metacognitive gate, the
+A–E + inner F), the ten binding invariants, the metacognitive gate, the
 irreversible-act delegation, resumability + rot-reseed, comment-first attribution,
 the trust boundary. Fill four adapters (`references/adapters.md`):
 
@@ -117,7 +117,7 @@ the trust boundary. Fill four adapters (`references/adapters.md`):
 
 ## References
 
-- `references/invariant-spine.md` — the fixed control-loop core + the 8 invariants.
+- `references/invariant-spine.md` — the fixed control-loop core + the 10 invariants.
 - `references/adapters.md` — the four adapter contracts + the optional Step-F adapters.
 - `references/server-side-net.md` — the mandatory checklist for autonomous acts.
 - `references/scenarios.md` — the run-41 defer / reseed-exhaust / merge_not_authorized

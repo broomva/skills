@@ -158,14 +158,18 @@ def _nonneg_int(value, default: int = 0) -> int:
 # ── 3. the busy-guard (never resume a live-or-sessionless arc) ────────────────
 
 def resume_skip_reason(*, has_session: bool, pid_alive: bool, has_status: bool,
-                       state: str | None) -> str | None:
+                       state: str | None, pending_resume_intent: bool = False) -> str | None:
     """Return the resume_skip reason if this in-flight arc must NOT be resumed on
     an inner tick, or None if it is a resume candidate (the governor then routes
     by `state`).
 
-    The guard order is load-bearing and matches the reference governor:
+    The guard order is load-bearing and matches the reference governor's busy-guard:
       - no resumable session id (legacy pre-P2 arc) → no_session_id
       - the arc process is still alive (mid-turn)   → busy   (never double-drive)
+      - an unconfirmed resume_intent (a `resume_intent` with no later `resume` —
+        a crash mid-spawn) → busy  (the BRO-1833 crash-window guard: a second `-r`
+        on the same session id the pid check alone misses because the first spawn
+        may not have a live pid yet)
       - no typed status file yet                    → no_status
       - state complete                              → complete (leave for reconcile)
 
@@ -177,7 +181,7 @@ def resume_skip_reason(*, has_session: bool, pid_alive: bool, has_status: bool,
     """
     if not has_session:
         return "no_session_id"
-    if pid_alive:
+    if pid_alive or pending_resume_intent:
         return "busy"
     if not has_status:
         return "no_status"

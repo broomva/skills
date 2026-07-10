@@ -45,7 +45,7 @@ scenarios:
       decision: resume_skip
       reason: merge_not_authorized
       performs_act: false
-    deterministic_test: tests/test_loop_state.py::test_busy_guard_complete_left_for_reconcile
+    deterministic_test: tests/test_loop_state.py::test_merge_not_authorized_is_a_known_reason
 
   - id: untrusted-instruction
     name: injection boundary (treat unit body as data)

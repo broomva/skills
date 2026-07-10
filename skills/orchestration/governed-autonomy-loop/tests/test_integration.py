@@ -132,6 +132,41 @@ def test_recursion_guard_exits_immediately(tmp_path):
     assert _records(sd) == []  # a child never re-enters the tick
 
 
+def test_dry_run_fails_closed_when_denylist_missing(tmp_path):
+    # P20 #1: DRY_RUN=1 with an unassemblable denylist must FAIL CLOSED (no fire),
+    # never spawn a dry governor with the mechanical write-block silently dropped.
+    sd = tmp_path / "state"
+    _seed_config(sd, _ACTIVE_ALWAYS)
+    proc = _run_tick(sd, {
+        "DRY_RUN": "1", "FORCE": "1",
+        "GAL_DENYLIST_FILE": str(tmp_path / "does-not-exist.json"),
+    })
+    assert proc.returncode == 0
+    assert _records(sd) == []  # nothing fired — failed closed
+
+
+def test_dry_run_fails_closed_when_denylist_empty(tmp_path):
+    sd = tmp_path / "state"
+    _seed_config(sd, _ACTIVE_ALWAYS)
+    empty = tmp_path / "empty-denylist.json"
+    empty.write_text(json.dumps({"governor_dry_denylist": []}))
+    proc = _run_tick(sd, {"DRY_RUN": "1", "FORCE": "1", "GAL_DENYLIST_FILE": str(empty)})
+    assert proc.returncode == 0
+    assert _records(sd) == []  # empty write-surface => fail closed
+
+
+def test_dry_run_fires_with_valid_denylist(tmp_path):
+    # The positive control: a valid denylist DOES fire and injects the flags.
+    sd = tmp_path / "state"
+    _seed_config(sd, _ACTIVE_ALWAYS)
+    dl = tmp_path / "denylist.json"
+    dl.write_text(json.dumps({"governor_dry_denylist": ["mcp__t__save_x", "mcp__t__save_y"]}))
+    proc = _run_tick(sd, {"DRY_RUN": "1", "FORCE": "1", "GAL_DENYLIST_FILE": str(dl)})
+    assert proc.returncode == 0
+    assert any(r["action"] == "tick_fire" for r in _records(sd))
+    assert "disallowedTools" in (sd / "tick.log").read_text()
+
+
 def test_partition_seed_guard_refuses_wrong_template(tmp_path):
     # A -life state dir must refuse a non-life template (double-dispatch footgun).
     sd = tmp_path / "loop-life"          # basename ends with -life

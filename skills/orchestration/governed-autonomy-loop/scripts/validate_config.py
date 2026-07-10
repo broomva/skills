@@ -91,7 +91,16 @@ def parse_env(text: str) -> dict[str, str]:
 
 def kill_switch_enabled(raw: dict[str, str]) -> bool:
     """The loop fires IFF DISPATCH_ENABLED is exactly "1" (after whitespace
-    strip). Everything else — including a missing key — disables it."""
+    strip). Everything else — including a missing key — disables it.
+
+    Divergence note (deliberate, fail-safe): this reflects the *sourced* value
+    (parse_env strips an unquoted inline comment, mirroring how the shell sources
+    config.env). tick.sh applies an ADDITIONAL, STRICTER raw-line kill switch
+    (`grep '^DISPATCH_ENABLED=' | cut | tr -d '[:space:]'` must equal "1"), so e.g.
+    `DISPATCH_ENABLED=1 # note` reads enabled HERE but disabled in tick.sh. A
+    validator "enabled" is therefore NECESSARY-BUT-NOT-SUFFICIENT for tick.sh to
+    fire — never the dangerous direction (this never reports disabled-when-tick-
+    would-fire). Keep the value comment-free for the two to agree exactly."""
     return raw.get("DISPATCH_ENABLED", "").strip() == "1"
 
 

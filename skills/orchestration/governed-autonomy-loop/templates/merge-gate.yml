@@ -13,6 +13,16 @@
 # Native `gh api` only — no third-party actions on the merge-critical path
 # (supply-chain hygiene). Copy into .github/workflows/ and require "Merge Gate" in
 # the branch ruleset (see references/server-side-net.md for the ruleset recipe).
+#
+# KNOWN LIMITATION (read before generalizing to deploy/publish): `n` counts only
+# check-runs that ALREADY EXIST at poll time. For CI co-triggered by this same
+# `pull_request` event that is safe (all checks register together). But a check
+# that registers LATE (a `workflow_run`/`deployment`/late-status check — common in
+# the DEPLOY/PUBLISH generalizations this skill promotes) can be absent when the
+# existing checks all read complete, and the gate would PASS early. If your act
+# depends on late-registering checks, set MIN_CHECKS below to the number you REQUIRE
+# to have registered before an all-green pass is honoured (0 = the permissive CI
+# default; the loop below already refuses to pass on any BLOCKING conclusion).
 name: merge-gate
 
 on:
@@ -39,6 +49,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
+          # Minimum OTHER checks that must have registered before an all-green pass
+          # is honoured. 0 = permissive CI default (safe when all checks co-trigger
+          # on this pull_request event). Raise it (repo/org variable
+          # MERGE_GATE_MIN_CHECKS) for deploy/publish loops with late-registering
+          # workflow_run/deployment checks — see the KNOWN LIMITATION header.
+          MIN_CHECKS: ${{ vars.MERGE_GATE_MIN_CHECKS || 0 }}
         run: |
           set -euo pipefail
           # Conclusions that BLOCK a merge. success / skipped / neutral do NOT block.
@@ -60,12 +76,15 @@ jobs:
             n=$(printf '%s\n' "$runs" | grep -c . || true)
             incomplete=$(printf '%s\n' "$runs" | awk -F'\t' 'NF>=2 && $2 != "completed"{c++} END{print c+0}')
 
-            if [ "$n" -gt 0 ] && [ "$incomplete" -eq 0 ] && { [ "$st_state" = "success" ] || [ "$st_state" = "pending" ]; }; then
-              echo "Merge Gate PASS — $n check(s) completed, none failed (commit status: $st_state)."
+            if [ "$n" -ge "$MIN_CHECKS" ] && [ "$n" -gt 0 ] && [ "$incomplete" -eq 0 ] \
+               && { [ "$st_state" = "success" ] || [ "$st_state" = "pending" ]; }; then
+              echo "Merge Gate PASS — $n check(s) completed (>= MIN_CHECKS=$MIN_CHECKS), none failed (commit status: $st_state)."
               exit 0
             fi
-            # No other checks after a short grace = path-filtered/docs-only PR → nothing to gate.
-            if [ "$n" -eq 0 ] && [ "$i" -ge 5 ]; then
+            # No other checks after a short grace = path-filtered/docs-only PR → nothing
+            # to gate. Only honoured when MIN_CHECKS=0 (a loop that requires checks must
+            # never treat "none registered yet" as a pass).
+            if [ "$MIN_CHECKS" -eq 0 ] && [ "$n" -eq 0 ] && [ "$i" -ge 5 ]; then
               echo "Merge Gate PASS — no other checks after grace (CI path-filtered / docs-only)."
               exit 0
             fi

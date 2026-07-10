@@ -115,6 +115,14 @@ def test_busy_guard_live_pid_is_busy():
                                  state="awaiting_ci") == "busy"
 
 
+def test_busy_guard_unconfirmed_resume_intent_is_busy():
+    # The BRO-1833 crash-window guard: a dead pid but an unconfirmed resume_intent
+    # must still skip (never a second -r on the same session), which the pid check
+    # alone misses.
+    assert ls.resume_skip_reason(has_session=True, pid_alive=False, has_status=True,
+                                 state="awaiting_ci", pending_resume_intent=True) == "busy"
+
+
 def test_busy_guard_no_status():
     assert ls.resume_skip_reason(has_session=True, pid_alive=False, has_status=False,
                                  state=None) == "no_status"
@@ -140,6 +148,12 @@ def test_busy_guard_blocked_human_is_resume_candidate():
     # blocked_human is routed (escalate), which counts as a candidate here.
     assert ls.resume_skip_reason(has_session=True, pid_alive=False, has_status=True,
                                  state="blocked_human") is None
+
+
+def test_merge_not_authorized_is_a_known_reason():
+    # The delegation-boundary outcome (scenario merge-not-authorized) must be a
+    # recognized resume_skip reason the governor can record.
+    assert "merge_not_authorized" in ls.RESUME_SKIP_REASONS
 
 
 # ── the typed arc-status contract ────────────────────────────────────────────

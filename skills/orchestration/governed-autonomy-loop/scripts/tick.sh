@@ -190,6 +190,28 @@ FORCE="${ENV_FORCE:-0}"
 # DRY_RUN fails toward DRY: live requires exactly 0.
 [ "$DRY_RUN" != "0" ] && DRY_RUN=1
 
+# ── DRY_RUN write-block: assemble it NOW and FAIL CLOSED if it is empty ───────
+# The reference tick.sh inlined the tracker write tools, so the block could never
+# be lost. Generalizing the denylist to an adapter FILE reintroduced a fail-OPEN:
+# a missing / malformed / empty / non-list adapter would spawn a dry governor with
+# NO --disallowedTools, silently dropping the "dry never writes — mechanically"
+# guarantee at the exact moment an operator is authoring a new tracker adapter.
+# So assemble the denylist BEFORE any fire and fail CLOSED (no fire) if it is
+# unassemblable. LIVE mode (DRY_RUN=0) needs no governor denylist — arcs carry
+# their own via the arc prompt — so this gate applies only to dry ticks.
+DRY_DENY_TOOLS=""
+if [ "$DRY_RUN" = "1" ]; then
+  DRY_DENY_TOOLS=$(python3 -c "import json,sys
+d = json.load(open(sys.argv[1]))
+ts = d.get('governor_dry_denylist', [])
+assert isinstance(ts, list) and ts and all(isinstance(t, str) and t for t in ts)
+print(chr(10).join(ts))" "$DENYLIST_FILE" 2>/dev/null)
+  if [ -z "$DRY_DENY_TOOLS" ]; then
+    log "DRY_RUN=1 but the tracker write-denylist is unassemblable from ${DENYLIST_FILE} (missing / malformed / empty / non-list governor_dry_denylist) — FAILING CLOSED: refusing to spawn a dry governor without the mechanical write block. Fix the adapter (scripts/denylist_check.py) to resume."
+    exit 0
+  fi
+fi
+
 NOW=$(now_epoch)
 
 # ── quiet hours: defer to next active-window start ───────────────────────────
@@ -270,17 +292,17 @@ log "FIRING run $N mode=$TICK_MODE (dry_run=$DRY_RUN force=$FORCE); next $TICK_M
 
 # ── mechanical dry-run enforcement (denylist from the tracker adapter) ───────
 # DRY_RUN=1 blocks every tracker WRITE tool at the harness level, from the
-# adapter's governor_dry_denylist[] — so "dry never writes" is mechanical.
+# adapter's governor_dry_denylist[] — so "dry never writes" is mechanical. The
+# list was already assembled + validated non-empty above (fail-closed gate), so
+# here we only need to expand DRY_DENY_TOOLS into the flag array.
 DRY_FLAGS=()
-if [ "$DRY_RUN" = "1" ] && [ -f "$DENYLIST_FILE" ]; then
+if [ "$DRY_RUN" = "1" ]; then
   DRY_FLAGS=(--disallowedTools)
   while IFS= read -r _tool; do
     [ -n "$_tool" ] && DRY_FLAGS=("${DRY_FLAGS[@]}" "$_tool")
   done <<EOF
-$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(chr(10).join(d.get('governor_dry_denylist',[])))" "$DENYLIST_FILE" 2>/dev/null)
+$DRY_DENY_TOOLS
 EOF
-  # If the adapter yielded no tools, drop the bare --disallowedTools flag.
-  [ "${#DRY_FLAGS[@]}" -le 1 ] && DRY_FLAGS=()
 fi
 
 # ── spawn the governor session ───────────────────────────────────────────────

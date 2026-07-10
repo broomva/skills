@@ -143,8 +143,10 @@ For each in-flight arc, read its typed `<worktree>/.claude/arc-status.json` and
 route it. **Apply the deterministic guards via `scripts/loop_state.py` — do not
 re-derive them in prose:**
 
-1. **Busy-guard** (`resume_skip_reason`): skip a live-pid arc (`busy`), a
-   session-less legacy arc (`no_session_id`), a statusless arc (`no_status`), a
+1. **Busy-guard** (`resume_skip_reason`): skip a session-less legacy arc
+   (`no_session_id`), a live-pid arc OR one with an unconfirmed `resume_intent`
+   (`busy` — never a second `-r` on the same session; the intent guard catches the
+   crash-window the pid check alone misses), a statusless arc (`no_status`), a
    `complete` arc (leave for reconcile), a dead-but-`working` arc
    (`working_but_dead`, GOVERN territory).
 2. **Route by `state`** (a candidate that passed the busy-guard):
