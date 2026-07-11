@@ -1,5 +1,27 @@
 # Changelog — governed-autonomy-loop
 
+## 0.4.0 — 2026-07-11
+
+Cure the arc-wedge root cause with a CLOSED-LOOP backstop (BRO-1857). Two arcs in
+a row (BRO-1481, BRO-1322) opened green PRs then died before writing their typed
+status — because they deferred the status write to a background poll that never
+fires for a headless one-shot session. Critically, the arc prompt *already forbade*
+this, emphatically, citing the prior incident — and the arc violated it anyway.
+That is the incantation-to-control thesis proven on the loop itself: a prose rule
+is open-loop and will be violated, so the fix must be mechanical.
+
+- **Step F derive-from-artifact self-heal**: when an arc's `arc-status.json` is
+  missing, the governor no longer gives up (`no_status` → wedge). It derives state
+  from the DURABLE, independent artifact (`h ⟂ U`): an open **non-draft** PR → treat
+  as `awaiting_ci`, route to CI → merge/reconcile (reseeding a fresh session since
+  the arc is dead). Only a draft/absent PR is a genuine wedge. Bounded by the reseed
+  generation cap. This recovers the crashed-before-status case with no operator.
+- **Arc-prompt execution-model note** (secondary, marginal — the rule already
+  existed + failed): the arc is headless + single-turn with NO background
+  re-invocation; bounded-poll = foreground sleep-loop THIS turn; else write
+  `awaiting_ci`.
+- +2 scenario evals (`no-status-open-pr-self-heal`, `no-status-no-pr-genuine-wedge`).
+
 ## 0.3.0 — 2026-07-11
 
 Close the silent-block gap (BRO-1851): a dead-arc wedge that pins a WIP slot now

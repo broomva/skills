@@ -120,3 +120,38 @@ scenarios:
       reconcile) AND Step D (stall: dead pid, no new commits). The governor must NOT
       re-dispatch it (it is complete) and must NOT treat the stall as a crash — it is
       waiting on the merge. reconcile (Step A, open_pr) closes it once the PR merges.
+
+  - id: no-status-open-pr-self-heal
+    name: dead arc, NO status file, but an open non-draft PR — derive from the artifact, don't wedge
+    state:
+      arc_status_file: missing        # arc crashed before writing it
+      arc_pid_alive: false
+      pr: open_non_draft
+      pr_ci: green
+    expect:
+      resume_decision: derive_from_pr   # treat as awaiting_ci, route to CI/merge
+      reseeds_to_finalize: true         # arc session dead → fresh session from checkpoint
+      wedge_escalated: false            # NOT a wedge — the durable PR is the signal (h ⟂ U)
+    provenance: "VPS BRO-1322/PR#1778 (+ BRO-1481/#1777): arc opened a green PR then died before writing arc-status.json — the exact crashed-before-status case"
+    note: >-
+      The CLOSED-LOOP fix (BRO-1857). The arc's self-report is agent-generated +
+      unreliable — a prose rule to write status is open-loop and WAS violated despite
+      an explicit incident-citing warning. So the governor derives state from the
+      durable artifact: an open non-draft PR = the arc judged the work shippable →
+      drive it to CI/merge (reseeding since the arc is dead). Only a draft/absent PR
+      (below) is a genuine wedge.
+
+  - id: no-status-no-pr-genuine-wedge
+    name: dead arc, no status AND no shippable PR — genuine wedge, escalate
+    state:
+      arc_status_file: missing
+      arc_pid_alive: false
+      pr: none                          # or a draft PR — arc never reached a shippable artifact
+    expect:
+      resume_decision: resume_skip
+      resume_reason: no_status
+      wedge_escalated: true             # GOVERN Step D → why:wedged push
+    note: >-
+      The contrast: no durable artifact to derive from → the governor cannot safely
+      infer completion, so it does NOT resume blind — it wedge-escalates to a human
+      (BRO-1851). Self-heal (open non-draft PR) vs wedge (draft/no PR) is the line.

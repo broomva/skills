@@ -148,6 +148,16 @@ Progress, spawn a detached `claude -p` arc with a **deterministic `--session-id`
 `--disallowedTools` from `$DENYLIST_FILE` — invariant 10), then write `dispatch`.
 The arc goal is the unit body treated as DATA (invariant 3).
 
+The arc prompt MUST state the **execution model** explicitly: the arc is a
+detached, headless, single-turn session — it is NOT re-invoked when a background
+task completes (that harness mechanism is interactive-only; a backgrounded process
+dies with the turn). Its turn boundary is a TERMINATION, not a suspension: all
+state must be durable (artifact committed + typed status written) before it stops.
+If validation cannot finish in-turn, it writes `awaiting_ci` and stops — never
+defers the status write to a background notification that will never come. (This is
+prose, hence open-loop and unreliable on its own — Step F's derive-from-artifact
+self-heal is the closed-loop backstop that does not depend on the arc obeying it.)
+
 ## Step D — GOVERN (outer)
 
 Stall detection: an in-flight arc with no commits AND no arc-log writes in
@@ -178,9 +188,21 @@ re-derive them in prose:**
 1. **Busy-guard** (`resume_skip_reason`): skip a session-less legacy arc
    (`no_session_id`), a live-pid arc OR one with an unconfirmed `resume_intent`
    (`busy` — never a second `-r` on the same session; the intent guard catches the
-   crash-window the pid check alone misses), a statusless arc (`no_status`), a
-   `complete` arc (leave for reconcile), a dead-but-`working` arc
-   (`working_but_dead`, GOVERN territory).
+   crash-window the pid check alone misses), a `complete` arc (leave for reconcile),
+   a dead-but-`working` arc (`working_but_dead`, GOVERN territory).
+1b. **`no_status` → DERIVE FROM THE DURABLE ARTIFACT (the self-heal — do not give
+   up).** The typed status is an OPTIMIZATION; the DURABLE, INDEPENDENT truth is the
+   reversible artifact (the PR) + its CI (`h ⟂ U`). An arc's self-report is
+   agent-generated and unreliable — a prose rule telling it to write status is
+   *open-loop* and WILL be violated (observed: an arc opened a green PR then died
+   without writing status, wedging on a background wait despite an explicit rule
+   forbidding it). So when the status file is missing, check the artifact BEFORE
+   giving up: an **open, shippable (non-draft) artifact** → treat as `awaiting_ci`
+   and route it through step 2 (CI → merge/reconcile), reseeding a fresh session
+   from the checkpoint since the arc is dead. A **draft or absent artifact** → NOW
+   it is a genuine wedge (`no_status`) → GOVERN wedge-escalation surfaces it.
+   Bounded by the reseed generation cap. This is the closed-loop backstop that makes
+   the loop robust to a misbehaving arc — the prose rule alone is not enough.
 2. **Route by `state`** (a candidate that passed the busy-guard):
    - `awaiting_ci` → check CI ({{CI_ADAPTER}}); resume the arc with the result.
    - `needs_decision` → answer IF determinable from policy/conventions/the unit
