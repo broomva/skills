@@ -57,6 +57,7 @@ npx skills add broomva/skills --skill '*'
 | Skill | What it does |
 |---|---|
 | [`autonomous`](skills/orchestration/autonomous/) | Use when the user has agreed on a plan or selected from suggested options and wants the agent to execute the work autonomously without further instruction |
+| [`governed-autonomy-loop`](skills/orchestration/governed-autonomy-loop/) | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
 | [`handoff`](skills/orchestration/handoff/) | Fresh-session handoff doc drafting |
 | [`p9`](skills/orchestration/p9/) | P9 — Broomva productive-wait primitive (the wait optimizer) |
 | [`persist`](skills/orchestration/persist/) | bstack P12 — Persistent Loop Discipline |

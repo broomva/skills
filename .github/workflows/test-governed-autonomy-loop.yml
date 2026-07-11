@@ -1,0 +1,49 @@
+name: test-governed-autonomy-loop
+
+# Test gate for the `governed-autonomy-loop` skill
+# (skills/orchestration/governed-autonomy-loop/). Path-filtered so it runs ONLY
+# when that skill changes. Runs the deterministic-core unit + integration tests
+# and the E2E DRY-tick smoke (spawnless — GAL_CLAUDE_BIN=echo, zero side effects).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/orchestration/governed-autonomy-loop/**'
+      - '.github/workflows/test-governed-autonomy-loop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/orchestration/governed-autonomy-loop/**'
+      - '.github/workflows/test-governed-autonomy-loop.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-governed-autonomy-loop-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/orchestration/governed-autonomy-loop
+
+jobs:
+  test:
+    name: pytest + smoke (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Shell syntax check (tick.sh)
+        run: bash -n scripts/tick.sh
+      - name: Unit + integration tests
+        run: python -m pytest tests/ -v
+      - name: E2E DRY-tick smoke (spawnless, zero side effects)
+        run: bash tests/smoke.sh
