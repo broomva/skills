@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 import sys
 
 import loop_state as ls  # same scripts/ dir
@@ -56,15 +57,23 @@ _CONTROLLED_REASONS = (set(ls.RECONCILE_SKIP_REASONS) | set(ls.RESUME_SKIP_REASO
                        | {"branch_exists", "wip_full"})  # fixed dispatch tokens
 _FIELD_VOCAB = {"reason": _CONTROLLED_REASONS, "why": _ESCALATE_WHY,
                 "state": set(ls.ARC_STATES)}
+# A `ticket` must be a tracker id (e.g. BRO-1742) — never free text. Validating its
+# STRUCTURE (not its name) closes the "trust the field name" class entirely.
+_TICKET_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
 
 
 def _safe_value(field: str, value):
-    """A vocab-controlled field's value is kept iff it is in that vocab; any other
-    string is dropped to the redaction marker (fails closed — an unrecognized value
-    in a vocab field is treated as untrusted free text). Non-vocab fields (ids,
-    ints, bools) pass through."""
+    """A vocab-controlled field's value is kept iff it is in that vocab; a `ticket`
+    iff it is a tracker id; any other string is dropped to the redaction marker
+    (fails closed — an unrecognized value is treated as untrusted free text). The
+    empty string passes through (an absent-reason field is '', not hidden text), and
+    non-string fields (ints, bools) pass through unchanged."""
+    if not isinstance(value, str) or value == "":
+        return value
+    if field == "ticket":
+        return value if _TICKET_RE.match(value) else _REDACTED
     vocab = _FIELD_VOCAB.get(field)
-    if vocab is not None and isinstance(value, str) and value not in vocab:
+    if vocab is not None and value not in vocab:
         return _REDACTED
     return value
 

@@ -110,6 +110,22 @@ def test_controlled_reason_survives_redaction():
     assert m._safe_value("why", "some free text") == m._REDACTED
 
 
+def test_empty_reason_not_over_redacted():
+    # An absent-reason field ('') must render as empty, not as hidden text (P20 r4).
+    assert m._safe_value("reason", "") == ""
+    fixtures = m.decision_fixtures([{"action": "tick_fire"}])
+    assert fixtures[0]["reason"] == ""       # not the redaction marker
+
+
+def test_ticket_field_validated_as_tracker_id():
+    # A ticket must be a tracker id; free text in the ticket slot is redacted too.
+    assert m._safe_value("ticket", "BRO-1742") == "BRO-1742"
+    assert m._safe_value("ticket", "not a ticket, free text") == m._REDACTED
+    red = m._redact({"action": "reconcile_skip", "reason": "no_pr",
+                     "ticket": "arbitrary free text here"})
+    assert red["ticket"] == m._REDACTED
+
+
 def test_summarize_structure_and_in_flight():
     rep = m.summarize(_recs())
     assert rep["total_records"] == 7
