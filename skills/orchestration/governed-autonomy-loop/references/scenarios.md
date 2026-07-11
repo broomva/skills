@@ -89,3 +89,14 @@ assert the decision matches `expect`. Log the verdict; a miss blocks arming.
 This is deliberately NOT wired into CI — LLM-evals are expensive and gated to the
 ~few high-stakes moments (arming a new autonomous loop), per the skillify step-5
 discipline (`research/entities/concept/skillify.md`).
+
+## Live-grounded scenarios (mined, not paraphrased)
+
+Scenarios 1–4 above were seeded from the reference build's *narration*. `evals/
+scenarios.yaml` adds three more (`reconcile-skip-no-pr`, `reconcile-skip-arc-live`,
+`complete-arc-with-stuck-pr`) drawn from ACTUAL records in the two production loops
+(mined + redacted via `scripts/mine_loop_log.py`; each carries a `provenance` line
+citing the live count). They ground the eval where the loop's real effort goes —
+reconcile-SKIP dominates (~65% of all records), not the dramatic resume/merge
+decisions. See `references/live-telemetry.md` for the full observed taxonomy and
+the drift check that keeps this in sync.

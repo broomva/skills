@@ -48,6 +48,7 @@ paging a human, and self-healed to close its arc — all observable in
 | `loop_state.py` — in-flight fold, **reseed gate arithmetic**, busy-guard, arc-status contract | dispatch selection (which candidate, trust-bounded) |
 | `validate_config.py` — fail-closed kill switch, DRY_RUN, num_or, partition guard | the govern/escalate judgment |
 | `denylist_check.py` — tracker write-surface coverage | the adversarial (P20) review verdict |
+| `mine_loop_log.py` — taxonomy + fixtures + drift-check from a running loop's log | the reconcile_skip reason *classification* (which reason to record) |
 
 The rule: *precision work with one right answer per input lives in tested code; the
 model's intelligence builds the constraint that then constrains the model.* The
@@ -90,6 +91,12 @@ the trust boundary. Fill four adapters (`references/adapters.md`):
 7. **Dogfood the generalization**: instantiate a SECOND loop (a different queue or
    partition) — proving the spine/adapter factoring holds is the real test that you
    skillified the *pattern*, not re-described the instance.
+8. **Keep it learning** (once a loop is running): periodically
+   `mine_loop_log.py taxonomy <loop-log>` — it grounds the controller in the loop's
+   observed behavior and **exits 3 on drift** (a reason the loop emits that the
+   skill's contract does not yet know), the signal to update `loop_state` + Step A.
+   The reference loops mine to **✓ no drift** across 1,836 live decisions. See
+   `references/live-telemetry.md`.
 
 ## Key parameters (config.env)
 
@@ -120,8 +127,10 @@ the trust boundary. Fill four adapters (`references/adapters.md`):
 - `references/invariant-spine.md` — the fixed control-loop core + the 10 invariants.
 - `references/adapters.md` — the four adapter contracts + the optional Step-F adapters.
 - `references/server-side-net.md` — the mandatory checklist for autonomous acts.
-- `references/scenarios.md` — the run-41 defer / reseed-exhaust / merge_not_authorized
-  gradeable scenarios (latent-decision evals).
+- `references/scenarios.md` — the gradeable latent-decision scenarios (the run-41
+  defer / reseed-exhaust / merge_not_authorized cases + live-grounded ones).
+- `references/live-telemetry.md` — what the reference loops actually do (mined from
+  1,836 live decisions), the drift check, and how to keep the skill learning.
 - Reference implementation: broomva `scripts/ticket-dispatch/` (BRO-1740 + BRO-1833).
   Composes bstack primitives P3/P4/P5/P9/P12/P19/P20; it is the concrete realization
   of P19's external-trigger + across-session cube cell.

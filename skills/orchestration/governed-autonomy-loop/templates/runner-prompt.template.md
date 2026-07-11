@@ -104,10 +104,28 @@ In dry mode, accounting-relevant actions carry a `_dry` suffix + `"dry_run":true
 For each in-flight or recently-active unit (cap `RECONCILE_MAX`): determine
 whether its artifact reached the terminal reversible state ({{ARTIFACT_DONE}} —
 e.g. PR merged). Match artifact↔unit by an explicit key (word-boundary id match)
-and VERIFY (do not trust a title). Respect `RECONCILE_QUIET_HOURS`: a unit idle
-less than that, or with a live arc, is NOT closed (shields multi-artifact arcs
-from premature closure). On a verified close: attribution comment FIRST, then set
-the unit Done (`reconcile_done`). This is the ONLY step that frees a WIP slot.
+and VERIFY (do not trust a title). On a verified close: attribution comment FIRST,
+then set the unit Done (`reconcile_done`). This is the ONLY step that frees a WIP
+slot.
+
+**Reconcile is mostly the decision NOT to close.** In the reference production
+loops, `reconcile_skip` is ~65% of ALL records (mined via `scripts/mine_loop_log.py`
+across ~1.9K live decisions) — closing is the exception, skipping is the norm. When
+you do not close a unit, record `reconcile_skip` with exactly one reason from the
+observed taxonomy (`loop_state.RECONCILE_SKIP_REASONS`); **never guess a close**:
+
+| reason | fires when… |
+|---|---|
+| `no_pr` | the in-progress unit has NO matching artifact — it was not loop-dispatched (by far the most common: ~62% of all reconcile records). Not yours to close; no action. |
+| `open_pr` | a matching artifact exists but is still OPEN — work in flight, not done. |
+| `recently_active` | the unit was touched inside `RECONCILE_QUIET_HOURS` (governor comments never count; arc/human comments do). Shields multi-artifact arcs from premature closure. |
+| `arc_live` | a live arc is working it — never close regardless of the quiet window. |
+| `epic_in_progress` | a matching artifact merged, but it is only a PARTIAL slice; the unit's roadmap/body is still open. A partial merge is not a completion signal. |
+| `phases_open` | child/phase artifacts are still open — the parent unit is not complete. |
+
+If a unit does not close and none of these fit, that is a NEW reason — record it
+and surface it (running `mine_loop_log.py` against your loop-log flags any reason
+the contract does not know, so the skill learns the case).
 
 ## Step B — SWEEP + LABEL (outer)
 

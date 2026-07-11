@@ -1,0 +1,84 @@
+"""Unit tests for the loop-log miner.
+
+Pins: the dry-suffix fold, the reason taxonomy, the DRIFT detector (an unknown
+reason a live loop emits must be flagged — the skill-self-evolution hook), and the
+redaction guarantee (free text never leaves the log).
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+import mine_loop_log as m  # noqa: E402
+import loop_state as ls    # noqa: E402
+
+
+def _recs():
+    return [
+        {"action": "tick_fire"},
+        {"action": "reconcile_skip", "ticket": "BRO-1", "reason": "no_pr"},
+        {"action": "reconcile_skip", "ticket": "BRO-2", "reason": "open_pr"},
+        {"action": "reconcile_skip_dry", "ticket": "BRO-3", "reason": "no_pr"},  # dry folds
+        {"action": "resume_skip", "ticket": "BRO-4", "reason": "complete"},
+        {"action": "dispatch", "ticket": "BRO-5"},
+        {"action": "stall", "ticket": "BRO-5", "pid_alive": False,
+         "last_commit_age_s": 14000, "title": "SECRET FREE TEXT"},  # untrusted free text
+    ]
+
+
+def test_action_histogram_folds_dry_suffix():
+    h = m.action_histogram(_recs())
+    assert h["reconcile_skip"] == 3        # 2 live + 1 _dry folded
+    assert h["tick_fire"] == 1
+
+
+def test_reason_taxonomy():
+    tax = m.reason_taxonomy(_recs(), "reconcile_skip")
+    assert tax["no_pr"] == 2               # incl. the _dry one
+    assert tax["open_pr"] == 1
+
+
+def test_unknown_reasons_empty_when_all_known():
+    assert m.unknown_reasons(_recs()) == {}
+
+
+def test_unknown_reasons_flags_drift():
+    # A live loop emitting a reason the contract doesn't know is the drift signal.
+    recs = _recs() + [{"action": "reconcile_skip", "ticket": "BRO-9", "reason": "brand_new_reason"}]
+    drift = m.unknown_reasons(recs)
+    assert drift == {"reconcile_skip": ["brand_new_reason"]}
+
+
+def test_known_reasons_are_the_live_observed_ones():
+    # The contract must contain every reason the reference loops actually emit
+    # (no_pr/open_pr/recently_active/arc_live/epic_in_progress/phases_open).
+    for r in ("no_pr", "open_pr", "recently_active", "arc_live",
+              "epic_in_progress", "phases_open"):
+        assert r in ls.RECONCILE_SKIP_REASONS
+
+
+def test_decision_fixtures_ranked_and_redacted():
+    fixtures = m.decision_fixtures(_recs())
+    # ranked by count desc — reconcile_skip/no_pr (2) is first
+    assert fixtures[0]["action"] == "reconcile_skip"
+    assert fixtures[0]["reason"] == "no_pr"
+    assert fixtures[0]["count"] == 2
+    # the stall example must NOT carry the free-text title
+    stall = next(f for f in fixtures if f["action"] == "stall")
+    assert "title" not in stall["example"]
+    assert stall["example"]["last_commit_age_s"] == 14000
+
+
+def test_redact_strips_free_text():
+    red = m._redact({"action": "reconcile_skip", "reason": "no_pr", "ticket": "BRO-1",
+                     "title": "untrusted", "detail": "also untrusted"})
+    assert red == {"action": "reconcile_skip", "reason": "no_pr", "ticket": "BRO-1"}
+
+
+def test_summarize_structure_and_in_flight():
+    rep = m.summarize(_recs())
+    assert rep["total_records"] == 7
+    assert rep["reconcile_skip_reasons"]["no_pr"] == 2
+    # BRO-5 dispatched, never reconciled/abandoned => in flight
+    assert rep["in_flight"] == ["BRO-5"]
+    assert rep["unknown_reasons"] == {}

@@ -47,6 +47,21 @@ RESUME_SKIP_REASONS = (
     "merge_not_authorized", "working_but_dead",
 )
 
+# ── the reconcile_skip reason vocabulary (the "why NOT close" taxonomy) ───────
+# This is the single most common governor decision in practice: across the two
+# reference production loops (Mac ticket-dispatch + VPS Life-governor), reconcile_skip
+# is ~65% of all records. The reasons below are the OBSERVED vocabulary (mined via
+# mine_loop_log.py from ~1.9K live records); the CLASSIFICATION into one of them is a
+# latent Step-A judgment, but the vocabulary is a contract a reader can rely on.
+RECONCILE_SKIP_REASONS = (
+    "no_pr",             # in-progress unit has no matching artifact (PR) — not loop-dispatched
+    "open_pr",           # matching artifact still open — work in flight, not done
+    "recently_active",   # unit touched inside RECONCILE_QUIET_HOURS — shields multi-artifact arcs
+    "arc_live",          # a live arc is working it — never close regardless of quiet window
+    "epic_in_progress",  # matching merged artifact is only a partial slice; the unit's roadmap is open
+    "phases_open",       # child/phase artifacts still open — the parent is not complete
+)
+
 # The three outcomes of the reseed gate.
 RESEED_RESUME, RESEED_RESEED, RESEED_ESCALATE = "resume", "reseed", "escalate"
 

@@ -44,7 +44,8 @@ digest, and arm with `DRY_RUN=0`. Full procedure in `SKILL.md`.
 - `scripts/` — the tested deterministic core: `tick.sh` (scheduler),
   `loop_state.py` (in-flight fold + reseed gate + busy-guard + arc-status
   contract), `validate_config.py` (fail-closed config), `denylist_check.py`
-  (tracker write-surface coverage).
+  (tracker write-surface coverage), `mine_loop_log.py` (distill a running loop's
+  history into taxonomy + fixtures + a drift check — keeps the skill learning).
 - `templates/` — the latent controller (`runner-prompt.template.md` with adapter
   slots), `config.env.template`, the tracker denylist adapter, `merge-gate.yml`
   (server-side net), launchd + systemd runtime adapters.

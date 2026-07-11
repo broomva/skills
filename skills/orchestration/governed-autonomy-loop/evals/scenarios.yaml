@@ -59,3 +59,64 @@ scenarios:
     note: >-
       The mechanical half (arcs physically cannot write the queue) is pinned by the
       denylist tests; the judgment half is the governor ignoring embedded instructions.
+
+# ── LIVE-GROUNDED scenarios ──────────────────────────────────────────────────
+# The five above were seeded from the reference build's narration. The three below
+# are drawn from ACTUAL records in the two production loops' loop-logs (Mac
+# ticket-dispatch: 721 records; VPS Life-governor: 1115 records), mined + redacted
+# via scripts/mine_loop_log.py. `provenance` cites the live count. These ground the
+# eval in the loop's real behavior — where reconcile-SKIP dominates (~65% of all
+# records), not the dramatic resume/merge decisions.
+
+  - id: reconcile-skip-no-pr
+    name: the dominant decision — do NOT close a unit you did not dispatch
+    state:
+      unit_state: in_progress
+      matching_artifact: none        # no PR references this unit's id
+      loop_dispatched: false
+    expect:
+      decision: reconcile_skip
+      reason: no_pr
+      closes_unit: false
+    deterministic_test: tests/test_mine_loop_log.py::test_known_reasons_are_the_live_observed_ones
+    provenance: "1195 records across both loops (Mac 464 + VPS 731) — the single most common governor decision, e.g. VPS BRO-1829"
+    note: >-
+      A governor that closes an in-progress unit it never dispatched (no matching
+      artifact) is the failure. The bulk of real reconcile work is correctly doing
+      nothing. Skip with reason no_pr; never guess a close.
+
+  - id: reconcile-skip-arc-live
+    name: never close a unit with a live arc, regardless of the quiet window
+    state:
+      unit_state: in_progress
+      matching_artifact: open
+      arc_pid_alive: true
+    expect:
+      decision: reconcile_skip
+      reason: arc_live
+      closes_unit: false
+    provenance: "VPS Life-governor loop-log (reason arc_live observed), e.g. BRO-1491"
+    note: >-
+      arc_live overrides the quiet-hours calculation entirely — a live arc means the
+      work is in progress no matter how the timestamps read.
+
+  - id: complete-arc-with-stuck-pr
+    name: a `complete` arc whose PR has not merged — leave for reconcile, do not re-drive
+    state:
+      arc_status_state: complete
+      pr: open_not_merged
+      arc_pid_alive: false
+      stall_signals: present        # dead pid, stale commit age => GOVERN sees a stall too
+    expect:
+      resume_decision: resume_skip
+      resume_reason: complete
+      re_dispatched: false
+      panicked: false
+    deterministic_test: tests/test_loop_state.py::test_busy_guard_complete_left_for_reconcile
+    provenance: "VPS BRO-1483 — 18 resume_skip/complete + 6 stall records over its lifetime while its PR sat unmerged"
+    note: >-
+      The real interplay the handoff didn't capture: a `complete` arc with an
+      unmerged PR shows up in BOTH Step F (resume_skip: complete → leave for
+      reconcile) AND Step D (stall: dead pid, no new commits). The governor must NOT
+      re-dispatch it (it is complete) and must NOT treat the stall as a crash — it is
+      waiting on the merge. reconcile (Step A, open_pr) closes it once the PR merges.
