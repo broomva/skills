@@ -1,5 +1,23 @@
 # Changelog — governed-autonomy-loop
 
+## 0.3.0 — 2026-07-11
+
+Close the silent-block gap (BRO-1851): a dead-arc wedge that pins a WIP slot now
+ESCALATES off-terminal instead of only landing in the digest. Found in production —
+the VPS Life-governor silently blocked the operator for ~8h on a crashed arc
+(BRO-1481) that opened its PR but died before writing its typed status.
+
+- **`mine_loop_log.py health`** (+7 tests): a deterministic wedge detector — an
+  in-flight arc that is dead (`stall`/`arc_exit`/`resume_skip:no_status|working_but_dead`)
+  with no forward progress for ≥`--min-ticks` (default 2) → exit 3. Validated on the
+  live VPS log: correctly flags the real BRO-1481 wedge (`resume_skip:no_status`, 18
+  ticks pinned) — would have paged after ~1h instead of 8h.
+- **Controller Step D GOVERN** now escalates a WEDGE (`why: wedged`) via the
+  escalation adapter, once per episode — the case the arc-status contract can't
+  self-report (a crashed arc). `WEDGE_ESCALATE_TICKS` knob (default 2).
+- The escalation `why` vocab gains `wedged` alongside `needs_decision`/
+  `blocked_human`/`reseed_exhausted`.
+
 ## 0.2.0 — 2026-07-10
 
 Ground the skill in the two reference production loops' operational history (Mac

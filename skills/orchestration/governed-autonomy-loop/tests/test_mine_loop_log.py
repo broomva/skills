@@ -133,3 +133,83 @@ def test_summarize_structure_and_in_flight():
     # BRO-5 dispatched, never reconciled/abandoned => in flight
     assert rep["in_flight"] == ["BRO-5"]
     assert rep["unknown_reasons"] == {}
+
+
+# ── --health wedge detector (BRO-1851) ───────────────────────────────────────
+
+def test_health_flags_wedged_arc():
+    # dispatched → dead (stall) → 2 ticks with no progress → WEDGED (the BRO-1481 shape).
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-1"},
+        {"action": "stall", "ticket": "BRO-1", "pid_alive": False},
+        {"action": "tick_fire"},
+        {"action": "tick_fire"},
+    ]
+    rep = m.health(recs, min_ticks=2)
+    assert rep["in_flight"] == 1
+    assert len(rep["wedged"]) == 1
+    assert rep["wedged"][0]["ticket"] == "BRO-1"
+    assert rep["wedged"][0]["last_state"] == "stall"
+    assert rep["wedged"][0]["ticks_pinned"] == 2
+
+
+def test_health_flags_resume_skip_no_status_wedge():
+    # the exact BRO-1481 signature: arc died without writing status.
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-1"},
+        {"action": "resume_skip", "ticket": "BRO-1", "reason": "no_status"},
+        {"action": "tick_fire"}, {"action": "tick_fire"}, {"action": "tick_fire"},
+    ]
+    rep = m.health(recs, min_ticks=2)
+    assert rep["wedged"][0]["last_state"] == "resume_skip:no_status"
+
+
+def test_health_ok_for_live_working_arc():
+    # dispatched, no dead signal => not wedged (arc is presumably working).
+    recs = [{"action": "dispatch", "ticket": "BRO-2"},
+            {"action": "tick_fire"}, {"action": "tick_fire"}]
+    assert m.health(recs)["wedged"] == []
+
+
+def test_health_progress_clears_dead_signal():
+    # a re-dispatch / resume AFTER a stall clears the dead signal — not a false wedge.
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-3"},
+        {"action": "stall", "ticket": "BRO-3"},
+        {"action": "tick_fire"}, {"action": "tick_fire"},
+        {"action": "resume", "ticket": "BRO-3"},   # forward progress
+    ]
+    assert m.health(recs, min_ticks=2)["wedged"] == []
+
+
+def test_health_respects_min_ticks():
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-4"},
+        {"action": "stall", "ticket": "BRO-4"},
+        {"action": "tick_fire"},                    # only 1 tick since dispatch
+    ]
+    assert m.health(recs, min_ticks=2)["wedged"] == []
+    assert len(m.health(recs, min_ticks=1)["wedged"]) == 1
+
+
+def test_health_complete_arc_not_wedged():
+    # a `complete` arc (done, waiting for merge) with an EARLIER stall must NOT be
+    # flagged — it mirrors the governor's Step D complete-carve-out (BRO-1483 shape).
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-6"},
+        {"action": "stall", "ticket": "BRO-6"},
+        {"action": "resume_skip", "ticket": "BRO-6", "reason": "complete"},
+        {"action": "tick_fire"}, {"action": "tick_fire"},
+    ]
+    assert m.health(recs, min_ticks=2)["wedged"] == []
+
+
+def test_health_ignores_reconciled_ticket():
+    # a dead arc that then reconciled is no longer in flight → not wedged.
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-5"},
+        {"action": "stall", "ticket": "BRO-5"},
+        {"action": "tick_fire"}, {"action": "tick_fire"},
+        {"action": "reconcile_done", "ticket": "BRO-5"},
+    ]
+    assert m.health(recs, min_ticks=2)["wedged"] == []

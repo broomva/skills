@@ -17,8 +17,14 @@ running instance's `loop-log.jsonl` and it produces
      unknown reason is the signal to update the contract: the loop learned
      something the skill hasn't. This is the skill-self-evolution hook.
 
+A fourth mode — `health` — is a loop-health alarm (distinct from #3 drift): it
+flags a WEDGED in-flight arc (dead + pinning a WIP slot for ≥N ticks, exit 3), the
+silent-block condition that halts the loop. Wire it into a cron/watch to page when
+a governor gets stuck (BRO-1851).
+
 Run it against a live instance (local or over ssh) to keep the skill learning:
     python3 mine_loop_log.py taxonomy ~/.config/broomva/ticket-dispatch/loop-log.jsonl
+    python3 mine_loop_log.py health   ~/.config/broomva/ticket-dispatch/loop-log.jsonl
     ssh host 'cat .../loop-log.jsonl' | python3 mine_loop_log.py taxonomy -
 
 Redaction: fixtures + reports carry only controlled fields (action, ticket id, pr
@@ -139,6 +145,59 @@ def decision_fixtures(records: list[dict]) -> list[dict]:
     return sorted(groups.values(), key=lambda g: -g["count"])
 
 
+def health(records: list[dict], min_ticks: int = 2) -> dict:
+    """Detect WEDGED in-flight arcs — the silent-block condition (BRO-1851).
+
+    An arc is WEDGED when it holds a WIP slot (in-flight) but its process is
+    dead/stuck (`stall` / `arc_exit`, or `resume_skip` with reason `no_status` /
+    `working_but_dead`) AND there has been no forward progress (dispatch/resume)
+    for ≥ `min_ticks` tick_fires. The governor can neither route it (no typed
+    status) nor reconcile it (PR not closed), so at a low WIP_CAP it blocks ALL
+    dispatch — exactly the case that silently blocked the operator for ~8h
+    (BRO-1481). This is loop HEALTH, orthogonal to the reason-drift check: drift
+    asks "is the vocabulary complete?"; health asks "is the loop actually moving?"
+
+    Deterministic: a forward-progress record (dispatch/resume) CLEARS a prior dead
+    signal, so a re-dispatched arc is not falsely flagged.
+    """
+    live = ls.in_flight(records)
+    tick_idx: list[int] = []
+    last_progress: dict[str, int] = {}
+    dead_signal: dict[str, tuple[int, str]] = {}
+    for i, r in enumerate(records):
+        if not isinstance(r, dict) or r.get("dry_run") is True:
+            continue
+        a = _base_action(r.get("action", ""))
+        if a == "tick_fire":
+            tick_idx.append(i)
+            continue
+        t = r.get("ticket")
+        if not t:
+            continue
+        if a in ("dispatch", "dispatch_intent", "resume"):
+            last_progress[t] = i
+            dead_signal.pop(t, None)                       # progress clears a dead signal
+        elif a == "resume_skip" and r.get("reason") == "complete":
+            dead_signal.pop(t, None)                       # a `complete` arc is DONE, not
+            # wedged — it is legitimately idle waiting for its PR to merge (mirrors the
+            # governor's Step D `complete`/`blocked_human` stall carve-out). Clear any
+            # earlier dead signal so a done-but-unmerged arc is not falsely flagged.
+        elif a in ("stall", "arc_exit"):
+            dead_signal[t] = (i, a)
+        elif a == "resume_skip" and r.get("reason") in ("no_status", "working_but_dead"):
+            dead_signal[t] = (i, "resume_skip:" + str(r.get("reason")))
+    wedged = []
+    for t in sorted(live):
+        if t not in dead_signal:
+            continue
+        lp = last_progress.get(t, -1)
+        ticks_since = sum(1 for ti in tick_idx if ti > lp)
+        if ticks_since >= min_ticks:
+            wedged.append({"ticket": t, "last_state": dead_signal[t][1],
+                           "ticks_pinned": ticks_since})
+    return {"in_flight": len(live), "min_ticks": min_ticks, "wedged": wedged}
+
+
 def summarize(records: list[dict]) -> dict:
     return {
         "total_records": len(records),
@@ -189,13 +248,24 @@ def _print_report(rep: dict) -> None:
         print("\n✓ no drift — every reason is in the skill's contract vocabulary.")
 
 
+def _flag_int(argv: list[str], name: str, default: int) -> int:
+    if name in argv:
+        i = argv.index(name)
+        if i + 1 < len(argv):
+            try:
+                return max(1, int(argv[i + 1]))
+            except ValueError:
+                pass
+    return default
+
+
 def _main(argv: list[str]) -> int:
     if not argv:
-        print("usage: mine_loop_log.py {taxonomy|fixtures|report} <loop-log.jsonl|->",
+        print("usage: mine_loop_log.py {taxonomy|fixtures|health|report} <loop-log.jsonl|->",
               file=sys.stderr)
         return 2
     cmd = argv[0]
-    if cmd in ("taxonomy", "fixtures", "report"):
+    if cmd in ("taxonomy", "fixtures", "health", "report"):
         if len(argv) < 2:
             print(f"{cmd}: need a loop-log path (or - for stdin)", file=sys.stderr)
             return 2
@@ -213,6 +283,21 @@ def _main(argv: list[str]) -> int:
             for f in fixtures:
                 print(f"  {f['count']:>6}  {f['action']}/{f['reason'] or '-'}  e.g. {f['example']}")
         return 0
+
+    if cmd == "health":
+        rep = health(records, min_ticks=_flag_int(argv, "--min-ticks", 2))
+        if "--json" in argv:
+            print(json.dumps(rep, indent=2))
+        elif rep["wedged"]:
+            print(f"⚠ WEDGED — {len(rep['wedged'])} in-flight arc(s) pinned + dead for "
+                  f"≥{rep['min_ticks']} ticks (of {rep['in_flight']} in flight):")
+            for w in rep["wedged"]:
+                print(f"  {w['ticket']}  {w['last_state']}  ({w['ticks_pinned']} ticks pinned)"
+                      "  → escalate/abandon/merge its PR")
+        else:
+            print(f"✓ healthy — no wedged arcs ({rep['in_flight']} in flight).")
+        # exit 3 on a wedge so a cron/CI caller can page (mirrors the drift exit code).
+        return 3 if rep["wedged"] else 0
 
     rep = summarize(records)
     if "--json" in argv:

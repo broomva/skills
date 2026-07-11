@@ -155,6 +155,20 @@ Stall detection: an in-flight arc with no commits AND no arc-log writes in
 unconfirmed `dispatch_intent` records (crash mid-dispatch). Never free a slot
 here — GOVERN observes and reports.
 
+**Wedge escalation (the silent-block guard — do NOT let a stuck loop stay silent).**
+A stall is not just a digest line. A **WEDGE** — an in-flight arc whose process is
+dead (a `stall`/`arc_exit`, or an inner-tick `resume_skip` with reason `no_status`
+/ `working_but_dead`) with NO forward progress (dispatch/resume/reconcile) for
+≥ `WEDGE_ESCALATE_TICKS` ticks (default 2) — MUST **ESCALATE** to the operator via
+{{ESCALATION_ADAPTER}} with `why: wedged`, once per episode. This is precisely the
+case the arc-status contract cannot self-report: the arc crashed before writing its
+typed status, so the governor won't guess (`no_status`) AND cannot reconcile it —
+and at a low `WIP_CAP` a single wedge blocks ALL dispatch. A wedge halts the loop,
+so digest-only is unacceptable — it **pushes**. `scripts/mine_loop_log.py health
+<loop-log>` is the deterministic detector (exit 3 on a wedge, `--min-ticks N`); the
+governor's judgment mirrors it. Re-escalate once per episode until a forward-progress
+record (re-dispatch / resume / reconcile / operator `abandoned`) clears it.
+
 ## Step F — RESUME (inner only)
 
 For each in-flight arc, read its typed `<worktree>/.claude/arc-status.json` and
@@ -194,9 +208,13 @@ re-derive them in prose:**
 
 **ESCALATE** = the {{ESCALATION_ADAPTER}} surface, fired ONCE per episode: an
 attribution comment on the unit (comment-only) + a best-effort push notification,
-then pause the arc (its draft artifact holds its WIP slot). The operator answers
-via {{ANSWER_CHANNEL}}; consume each answer once (`answer_ref`) and resume the arc
-on a later inner tick. If the arc re-raises the same question, re-escalate (the
+then pause the arc (its draft artifact holds its WIP slot). The `why` records the
+trigger: a self-reported block (`needs_decision`/`blocked_human`), a runaway guard
+(`reseed_exhausted`), or a silent wedge (`wedged`, Step D). **The push is not
+optional for a wedge** — the escalation surface exists so a stuck loop reaches a
+human off-terminal, not just the digest. The operator answers via
+{{ANSWER_CHANNEL}}; consume each answer once (`answer_ref`) and resume the arc on a
+later inner tick. If the arc re-raises the same question, re-escalate (the
 loop-breaker) rather than auto-answering again.
 
 ## Step E — LOG + DIGEST
