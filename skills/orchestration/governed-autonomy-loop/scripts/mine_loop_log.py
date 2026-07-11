@@ -58,7 +58,7 @@ _SAFE_FIELDS = ("action", "reason", "ticket", "pr", "turn", "generation",
 # in the field's controlled vocab, else replace with a marker. Fails CLOSED.
 _REDACTED = "<redacted:free-text>"
 _ESCALATE_WHY = {"fork", "unsafe", "undeterminable", "governance", "re-raised",
-                 "blocked_human", "reseed_exhausted"}
+                 "blocked_human", "reseed_exhausted", "wedged"}
 _CONTROLLED_REASONS = (set(ls.RECONCILE_SKIP_REASONS) | set(ls.RESUME_SKIP_REASONS)
                        | {"branch_exists", "wip_full"})  # fixed dispatch tokens
 _FIELD_VOCAB = {"reason": _CONTROLLED_REASONS, "why": _ESCALATE_WHY,
@@ -169,7 +169,12 @@ def health(records: list[dict], min_ticks: int = 2) -> dict:
             continue
         a = _base_action(r.get("action", ""))
         if a == "tick_fire":
-            tick_idx.append(i)
+            # Count OUTER ticks only, matching the governor's WEDGE_ESCALATE_TICKS
+            # cadence (Step D escalates on outer ticks) — so `health` and the
+            # governor encode the SAME rule/latency, not a faster any-tick alarm.
+            # A tick_fire with no `mode` (pre-BRO-1833 records) defaults to outer.
+            if r.get("mode") != "inner":
+                tick_idx.append(i)
             continue
         t = r.get("ticket")
         if not t:
@@ -290,9 +295,9 @@ def _main(argv: list[str]) -> int:
             print(json.dumps(rep, indent=2))
         elif rep["wedged"]:
             print(f"⚠ WEDGED — {len(rep['wedged'])} in-flight arc(s) pinned + dead for "
-                  f"≥{rep['min_ticks']} ticks (of {rep['in_flight']} in flight):")
+                  f"≥{rep['min_ticks']} outer ticks (of {rep['in_flight']} in flight):")
             for w in rep["wedged"]:
-                print(f"  {w['ticket']}  {w['last_state']}  ({w['ticks_pinned']} ticks pinned)"
+                print(f"  {w['ticket']}  {w['last_state']}  ({w['ticks_pinned']} outer ticks pinned)"
                       "  → escalate/abandon/merge its PR")
         else:
             print(f"✓ healthy — no wedged arcs ({rep['in_flight']} in flight).")

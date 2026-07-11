@@ -7,11 +7,18 @@ ESCALATES off-terminal instead of only landing in the digest. Found in productio
 the VPS Life-governor silently blocked the operator for ~8h on a crashed arc
 (BRO-1481) that opened its PR but died before writing its typed status.
 
-- **`mine_loop_log.py health`** (+7 tests): a deterministic wedge detector — an
+- **`mine_loop_log.py health`** (+10 tests): a deterministic wedge detector — an
   in-flight arc that is dead (`stall`/`arc_exit`/`resume_skip:no_status|working_but_dead`)
-  with no forward progress for ≥`--min-ticks` (default 2) → exit 3. Validated on the
-  live VPS log: correctly flags the real BRO-1481 wedge (`resume_skip:no_status`, 18
-  ticks pinned) — would have paged after ~1h instead of 8h.
+  with no forward progress for ≥`--min-ticks` **outer** ticks (default 2) → exit 3.
+  Counts OUTER ticks only, matching the governor's escalation cadence (same rule, not
+  a faster any-tick alarm). A `resume_skip:complete` clears the dead signal (a
+  complete arc is done-waiting-for-merge, not wedged). Validated on the live VPS log:
+  flags the real BRO-1481 wedge (`resume_skip:no_status`, 3 outer ticks pinned) —
+  would have paged after 2 outer ticks (~4h) instead of 8h.
+- P20-hardened (round 4): `_ESCALATE_WHY` gains `wedged` (else the skill would
+  redact its own governor's `wedged` records); `RECONCILE_SKIP_REASONS` gains
+  `life_partition` (the drift check flagged it live on the Mac log mid-review — the
+  self-evolution mechanism working in the wild).
 - **Controller Step D GOVERN** now escalates a WEDGE (`why: wedged`) via the
   escalation adapter, once per episode — the case the arc-status contract can't
   self-report (a crashed arc). `WEDGE_ESCALATE_TICKS` knob (default 2).

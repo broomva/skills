@@ -172,14 +172,33 @@ def test_health_ok_for_live_working_arc():
 
 
 def test_health_progress_clears_dead_signal():
-    # a re-dispatch / resume AFTER a stall clears the dead signal — not a false wedge.
+    # resume BEFORE the ticks: last_progress alone would still count 2 ticks after
+    # the resume, so ONLY the dead_signal.pop keeps this from false-flagging. (P20:
+    # the earlier fixture put resume AFTER the ticks, so ticks_since=0 suppressed it
+    # regardless — the pop wasn't exercised. This ordering makes the pop load-bearing.)
     recs = [
         {"action": "dispatch", "ticket": "BRO-3"},
         {"action": "stall", "ticket": "BRO-3"},
+        {"action": "resume", "ticket": "BRO-3"},   # forward progress clears the dead signal
         {"action": "tick_fire"}, {"action": "tick_fire"},
-        {"action": "resume", "ticket": "BRO-3"},   # forward progress
     ]
     assert m.health(recs, min_ticks=2)["wedged"] == []
+
+
+def test_health_counts_outer_ticks_only():
+    # inner ticks do NOT count toward the wedge threshold — matches the governor's
+    # outer-tick escalation cadence (P20: keep health and the governor the same rule).
+    recs = [
+        {"action": "dispatch", "ticket": "BRO-7"},
+        {"action": "stall", "ticket": "BRO-7"},
+        {"action": "tick_fire", "mode": "inner"},
+        {"action": "tick_fire", "mode": "inner"},
+        {"action": "tick_fire", "mode": "inner"},
+    ]
+    assert m.health(recs, min_ticks=2)["wedged"] == []      # 3 inner ticks, 0 outer
+    recs2 = recs + [{"action": "tick_fire", "mode": "outer"},
+                    {"action": "tick_fire", "mode": "outer"}]
+    assert len(m.health(recs2, min_ticks=2)["wedged"]) == 1  # now 2 outer ticks → wedged
 
 
 def test_health_respects_min_ticks():
