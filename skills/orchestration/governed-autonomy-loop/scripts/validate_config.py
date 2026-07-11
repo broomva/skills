@@ -48,6 +48,7 @@ NUMERIC_KNOBS: dict[str, tuple[int, int]] = {
     "INNER_TIMEOUT_MIN": (15, 1),
     "RESEED_TURN_CAP": (8, 1),
     "RESEED_MAX_GENERATIONS": (3, 0),
+    "WEDGE_ESCALATE_TICKS": (2, 1),
 }
 
 _INT_RE = re.compile(r"^\d+$")

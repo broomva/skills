@@ -60,6 +60,7 @@ RECONCILE_SKIP_REASONS = (
     "arc_live",          # a live arc is working it — never close regardless of quiet window
     "epic_in_progress",  # matching merged artifact is only a partial slice; the unit's roadmap is open
     "phases_open",       # child/phase artifacts still open — the parent is not complete
+    "life_partition",    # unit owned by a DIFFERENT partition (disjoint-label) governor — not ours
 )
 
 # The three outcomes of the reseed gate.
