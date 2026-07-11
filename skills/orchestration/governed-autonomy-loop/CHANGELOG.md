@@ -23,6 +23,12 @@ decisions), mined via the new `scripts/mine_loop_log.py`.
   18 resume_skip/complete + 6 stall records) instead of handoff paraphrase.
 - **`references/live-telemetry.md`**: the observed taxonomy, redaction guarantee,
   and the keep-learning workflow (sense → distill → fold-into-contract → re-sense).
+- P20-hardened: `reason` on `label_apply`/`dispatch_skip` is FREE TEXT (the
+  eligibility rationale, derived from the untrusted unit body), not a vocab token —
+  so redaction now whitelist-VALIDATES `reason`/`why`/`state` against controlled
+  vocab and drops non-vocab values (both the fixture example AND the group label),
+  making "safe to commit" mechanical instead of an assumption. +3 regression tests
+  using the real leaked record. Drift-vs-redaction scope disambiguated in the doc.
 
 ## 0.1.0 — 2026-07-10
 

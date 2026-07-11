@@ -95,7 +95,7 @@ scenarios:
       decision: reconcile_skip
       reason: arc_live
       closes_unit: false
-    provenance: "VPS Life-governor loop-log (reason arc_live observed), e.g. BRO-1491"
+    provenance: "VPS Life-governor loop-log — the sole arc_live record belongs to BRO-1483"
     note: >-
       arc_live overrides the quiet-hours calculation entirely — a live arc means the
       work is in progress no matter how the timestamps read.
@@ -113,7 +113,7 @@ scenarios:
       re_dispatched: false
       panicked: false
     deterministic_test: tests/test_loop_state.py::test_busy_guard_complete_left_for_reconcile
-    provenance: "VPS BRO-1483 — 18 resume_skip/complete + 6 stall records over its lifetime while its PR sat unmerged"
+    provenance: "VPS BRO-1483 — 18 resume_skip/complete + 4 stall records over its lifetime while its PR sat unmerged"
     note: >-
       The real interplay the handoff didn't capture: a `complete` arc with an
       unmerged PR shows up in BOTH Step F (resume_skip: complete → leave for

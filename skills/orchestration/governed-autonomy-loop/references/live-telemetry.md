@@ -32,16 +32,26 @@ Step A's table; the skill's contract vocabulary covers all six.
 
 ### The observed `resume_skip` taxonomy
 
-`complete` (19) · `no_status` (7) · `no_session_id` (2) · `busy` (2) — all already
-in `loop_state.RESUME_SKIP_REASONS`.
+`complete` (19) · `no_status` (8) · `no_session_id` (2) · `busy` (1) — all already
+in `loop_state.RESUME_SKIP_REASONS`. (Live counts drift as the loops append; these
+are a snapshot.)
 
 ## The drift check (the skill-self-evolution hook)
 
-`mine_loop_log.py` cross-checks every emitted reason against the skill's contract
-vocabularies and **exits 3 if a live loop emits a reason the skill does not know**.
-Run against both reference loops today: **✓ no drift — every reason is in the
-contract.** That is the empirical validation that the extraction matches reality,
-and the mechanism that catches the moment reality moves ahead of the skill.
+`mine_loop_log.py` cross-checks every **skip-action** reason (`reconcile_skip` /
+`resume_skip` — the actions whose `reason` is a controlled vocabulary) against the
+skill's contract and **exits 3 if a live loop emits a skip reason the skill does
+not know**. Run against both reference loops today: **✓ no drift — every skip reason
+is in the contract.** That is the empirical validation that the SKIP taxonomies
+match reality, and the mechanism that catches the moment reality moves ahead.
+
+**Scope, precisely:** "no drift" is a claim about the skip-reason *vocabularies*,
+not about the whole log. Other actions carry a FREE-TEXT `reason` by design —
+`label_apply`'s eligibility rationale is derived from the untrusted unit body — so
+those are NOT vocab-checked (every one would read as "unknown"); they are handled by
+**redaction** instead (whitelist-validated out of every report/fixture). Two
+independent guarantees: drift = *the skip vocab is complete*; redaction = *no free
+text is committable*. Do not conflate them.
 
 ## How to keep a loop's learnings flowing back
 

@@ -21,9 +21,12 @@ Run it against a live instance (local or over ssh) to keep the skill learning:
     python3 mine_loop_log.py taxonomy ~/.config/broomva/ticket-dispatch/loop-log.jsonl
     ssh host 'cat .../loop-log.jsonl' | python3 mine_loop_log.py taxonomy -
 
-Redaction: fixtures + reports carry only controlled fields (action, reason,
-ticket id, pr number, integer ages) — never unit titles / bodies / free-text
-(those are DATA, and untrusted; invariant 3). So a mined report is safe to commit.
+Redaction: fixtures + reports carry only controlled fields (action, ticket id, pr
+number, integer ages, and vocab-VALIDATED reason/why/state) — never unit titles /
+bodies / free-text (those are DATA, and untrusted; invariant 3). Crucially, a
+field name is not trusted: `reason` is a vocab token on skip actions but FREE TEXT
+on `label_apply`, so it is whitelist-validated (unknown value → redacted), making
+"safe to commit" a mechanical guarantee, not an assumption.
 
 Pure stdlib. Zero network (reads a file or stdin). Deterministic.
 """
@@ -35,14 +38,42 @@ import sys
 
 import loop_state as ls  # same scripts/ dir
 
-# Controlled (safe-to-emit) fields only — never free text.
+# Structurally-controlled fields (ids / ints / bools) — safe to pass through.
 _SAFE_FIELDS = ("action", "reason", "ticket", "pr", "turn", "generation",
                 "pid_alive", "last_commit_age_s", "last_log_age_s", "why", "state")
 
+# CRITICAL: the field NAME is not enough. `reason` is a controlled vocab token on
+# the skip actions, but FREE TEXT on `label_apply` (the eligibility rationale the
+# governor forms by reading the UNTRUSTED unit body) and on some `dispatch_skip`
+# records. Trusting the name leaks untrusted-derived free text into a committable
+# report (invariant 3 violation). So vocab fields are whitelist-VALIDATED, not
+# name-trusted (the BRO-1797 whitelist-of-one discipline): keep the value iff it is
+# in the field's controlled vocab, else replace with a marker. Fails CLOSED.
+_REDACTED = "<redacted:free-text>"
+_ESCALATE_WHY = {"fork", "unsafe", "undeterminable", "governance", "re-raised",
+                 "blocked_human", "reseed_exhausted"}
+_CONTROLLED_REASONS = (set(ls.RECONCILE_SKIP_REASONS) | set(ls.RESUME_SKIP_REASONS)
+                       | {"branch_exists", "wip_full"})  # fixed dispatch tokens
+_FIELD_VOCAB = {"reason": _CONTROLLED_REASONS, "why": _ESCALATE_WHY,
+                "state": set(ls.ARC_STATES)}
+
+
+def _safe_value(field: str, value):
+    """A vocab-controlled field's value is kept iff it is in that vocab; any other
+    string is dropped to the redaction marker (fails closed — an unrecognized value
+    in a vocab field is treated as untrusted free text). Non-vocab fields (ids,
+    ints, bools) pass through."""
+    vocab = _FIELD_VOCAB.get(field)
+    if vocab is not None and isinstance(value, str) and value not in vocab:
+        return _REDACTED
+    return value
+
 
 def _redact(record: dict) -> dict:
-    """Keep only controlled fields (invariant 3: log free text is untrusted DATA)."""
-    return {k: record[k] for k in _SAFE_FIELDS if k in record}
+    """Keep only controlled fields, whitelist-validating the vocab fields
+    (invariant 3: a log's free text is untrusted DATA and must never reach a
+    committable report). This is the safe-to-commit guarantee, mechanically."""
+    return {k: _safe_value(k, record[k]) for k in _SAFE_FIELDS if k in record}
 
 
 def _base_action(action: str) -> str:
@@ -87,8 +118,11 @@ def decision_fixtures(records: list[dict]) -> list[dict]:
     groups: dict[tuple, dict] = {}
     for r in records:
         a = _base_action(r.get("action", ""))
-        key = (a, r.get("reason", ""))
-        g = groups.setdefault(key, {"action": a, "reason": r.get("reason", ""),
+        # Redact the reason used in the GROUP KEY + label too — not just the
+        # example — else a free-text label_apply reason leaks via the fixture label.
+        reason = _safe_value("reason", r.get("reason", ""))
+        key = (a, reason)
+        g = groups.setdefault(key, {"action": a, "reason": reason,
                                     "count": 0, "example": None})
         g["count"] += 1
         if g["example"] is None:

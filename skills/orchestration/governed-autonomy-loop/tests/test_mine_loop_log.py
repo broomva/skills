@@ -75,6 +75,41 @@ def test_redact_strips_free_text():
     assert red == {"action": "reconcile_skip", "reason": "no_pr", "ticket": "BRO-1"}
 
 
+# P20 round-3 regression: a FREE-TEXT `reason` (label_apply eligibility rationale,
+# derived from the untrusted unit body) must NOT leak — the exact real record from
+# the Mac loop (BRO-1742). The field name `reason` is not enough; it is validated.
+_LEAKY = {
+    "action": "label_apply", "ticket": "BRO-1742",
+    "reason": ("M0 build (provenance CLI + tests per merged spec PR #184): workspace "
+               "code, CI-adjudicable, git-reversible, no deploy/spend/governance surface"),
+}
+
+
+def test_redact_drops_free_text_reason():
+    red = m._redact(_LEAKY)
+    assert red["reason"] == m._REDACTED
+    assert "provenance" not in str(red)      # no untrusted text survives
+    assert red["ticket"] == "BRO-1742"       # structural fields still pass through
+
+
+def test_fixtures_do_not_leak_free_text_reason():
+    # BOTH channels: the group key/label AND the example must be redacted.
+    fixtures = m.decision_fixtures([_LEAKY])
+    blob = str(fixtures)
+    assert "provenance" not in blob and "git-reversible" not in blob
+    assert fixtures[0]["reason"] == m._REDACTED
+
+
+def test_controlled_reason_survives_redaction():
+    # A real vocab reason must NOT be over-redacted.
+    assert m._safe_value("reason", "no_pr") == "no_pr"
+    assert m._safe_value("reason", "complete") == "complete"
+    assert m._safe_value("why", "reseed_exhausted") == "reseed_exhausted"
+    assert m._safe_value("state", "awaiting_ci") == "awaiting_ci"
+    # a non-vocab why/state is dropped too
+    assert m._safe_value("why", "some free text") == m._REDACTED
+
+
 def test_summarize_structure_and_in_flight():
     rep = m.summarize(_recs())
     assert rep["total_records"] == 7
