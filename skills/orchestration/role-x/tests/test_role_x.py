@@ -11,8 +11,17 @@ SCRIPT = Path(__file__).parent.parent / "scripts" / "role-x.py"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def run_cli(*args: str, input_text: str | None = None, env: dict | None = None) -> tuple[int, str, str]:
-    """Run role-x.py with args; return (returncode, stdout, stderr)."""
+def run_cli(
+    *args: str,
+    input_text: str | None = None,
+    env: dict | None = None,
+    timeout: float | None = None,
+) -> tuple[int, str, str]:
+    """Run role-x.py with args; return (returncode, stdout, stderr).
+
+    ``timeout`` (seconds) bounds the run so a hang (e.g. a blocking FIFO open in the
+    intake hook) surfaces as ``subprocess.TimeoutExpired`` instead of wedging CI.
+    """
     full_env = {**os.environ, **(env or {})}
     result = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
@@ -20,6 +29,7 @@ def run_cli(*args: str, input_text: str | None = None, env: dict | None = None) 
         text=True,
         input=input_text,
         env=full_env,
+        timeout=timeout,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -1665,3 +1675,99 @@ def test_fed_traversal_entity_is_not_persona_scoped(tmp_path):
     assert rc == 0, f"stderr={err}"
     assert "TRAVERSAL LEAK" not in out  # workspace confinement still holds
     assert "· store" not in out  # never treated as a store lookup
+
+
+# --- P20 hardening: never-block, missing-vs-refused, same-fd TOCTOU core --------
+
+def test_fed_fifo_leaf_does_not_block_the_hook(tmp_path):
+    """A FIFO named <slug>.md must NOT wedge the intake hook (never-block invariant).
+
+    Mutation-proof: without O_NONBLOCK on the leaf open, os.open(O_RDONLY) blocks
+    forever waiting for a writer → the subprocess times out → this test fails.
+    """
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    os.mkfifo(store / "test-railway.md")
+    try:
+        rc, out, err = run_cli(
+            "intake", "--prompt", _FED_PROMPT, "--workspace", str(ws),
+            "--session", "fed-fifo", env=env, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        raise AssertionError(
+            "intake blocked on a FIFO leaf — O_NONBLOCK missing (never-block invariant broken)"
+        )
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "could not be safely read" in out  # FIFO refused (not a regular file), loudly
+
+
+def test_fed_refused_vs_missing_messages_differ(tmp_path):
+    """A security-refused facet says 'could not be safely read'; an absent one says
+    'not found' — a refusal can never masquerade as mere absence."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    secret = home / "s.md"
+    secret.write_text('---\ntype: persona\ncore_claim: "X"\n---\n', encoding="utf-8")
+    os.symlink(secret, store / "test-railway.md")  # present but refused (symlink)
+    rc, out, err = _run_fed(home, ws, env, "fed-refmsg")
+    assert rc == 0, f"stderr={err}"
+    assert "could not be safely read" in out
+    assert "not found in the per-user store" not in out
+
+
+def _load_role_x_module():
+    """Import role-x.py as a module (hyphenated filename → importlib)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("role_x_under_test", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_fd_walk_read_reads_from_opened_fd_not_by_path(tmp_path):
+    """The leaf is read from the fstat'd fd — never reopened by path (the P0 TOCTOU core).
+
+    Mutation-proof: a fake os.fstat swaps the leaf for a symlink→secret right after
+    the real fstat (emulating a check→read race). A correct same-fd read returns the
+    ORIGINAL bytes; a reopen-by-path would follow the symlink and leak the secret.
+    Deleting the `data = os.read(leaf_fd, …)` line's fd-read (reopening by path)
+    fails this test.
+    """
+    import stat as _stat
+    from unittest import mock
+
+    mod = _load_role_x_module()
+    home = tmp_path / "home"
+    store = home / ".config" / "broomva" / "persona"
+    store.mkdir(parents=True)
+    for d in (home, home / ".config", home / ".config" / "broomva", store):
+        os.chmod(d, 0o755)
+    leaf = store / "who-am-i.md"
+    leaf.write_text("ORIGINAL-FACET", encoding="utf-8")
+    os.chmod(leaf, 0o644)
+    secret = home / "secret.md"
+    secret.write_text("SECRET-LEAK", encoding="utf-8")
+
+    real_fstat = os.fstat
+    swapped = {"done": False}
+
+    def fake_fstat(fd):
+        st = real_fstat(fd)
+        # On the first regular-file fstat (the leaf), win the race: replace the path
+        # with a symlink to the secret. The already-open fd still points at the
+        # original inode; only a path-reopen would follow the new symlink.
+        if _stat.S_ISREG(st.st_mode) and not swapped["done"]:
+            swapped["done"] = True
+            os.remove(leaf)
+            os.symlink(secret, leaf)
+        return st
+
+    rel = [".config", "broomva", "persona", "who-am-i.md"]
+    with mock.patch.object(mod.os, "fstat", fake_fstat):
+        status, data = mod._fd_walk_read(home, rel, 256 * 1024)
+
+    assert swapped["done"], "the leaf fstat never fired — test would be vacuous"
+    assert status == "ok"
+    assert data == b"ORIGINAL-FACET"  # read from the fd, NOT the swapped-in symlink
+    assert data != b"SECRET-LEAK"

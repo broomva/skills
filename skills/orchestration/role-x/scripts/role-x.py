@@ -17,6 +17,7 @@ selection happens deterministically before every substantive prompt.
 from __future__ import annotations
 
 import argparse
+import errno
 import fnmatch
 import hashlib
 import json
@@ -341,8 +342,9 @@ PERSONA_MAX_BYTES = 256 * 1024
 # The persona root is fixed under this trusted user-config base; a workspace
 # `_meta` may reference facets by slug but can never relocate the root.
 PERSONA_TRUSTED_BASE_PARTS = (".config", "broomva")
-_PERSONA_ENTITY_RE = re.compile(r"^research/entities/persona/([a-z0-9][a-z0-9-]*)\.md$")
-_PERSONA_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# \Z (not $) so a trailing newline can never sneak past the slug/entity match.
+_PERSONA_ENTITY_RE = re.compile(r"^research/entities/persona/([a-z0-9][a-z0-9-]*)\.md\Z")
+_PERSONA_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
 
 def _find_workspace_root(start: Path | None = None) -> Path:
@@ -706,6 +708,20 @@ def _confined_entity_path(rel_path: str, workspace: Path | None) -> Path | None:
         return None
 
 
+def _clean_claim_line(claim: str) -> str:
+    """Collapse a ``core_claim`` to one safe inline line.
+
+    Whitespace-collapsed (kills newlines → no standalone-directive-line injection),
+    non-printable control chars removed (kills terminal escape / BEL injection), then
+    length-capped. Shared by the workspace reader and the persona-store reader so a
+    poisoned claim from either source can't shape the every-turn block beyond a
+    benign one-liner.
+    """
+    collapsed = " ".join(claim.split())
+    cleaned = "".join(c for c in collapsed if c.isprintable())
+    return cleaned[:240]
+
+
 def _entity_core_claim(path: Path | None) -> str | None:
     """Read a confined entity file's ``core_claim``, collapsed to one capped line.
 
@@ -724,7 +740,7 @@ def _entity_core_claim(path: Path | None) -> str | None:
             return None  # frontmatter that isn't a mapping has no core_claim
         claim = fm.get("core_claim")
         if isinstance(claim, str) and claim.strip():
-            return " ".join(claim.split())[:240]  # single line, length-capped
+            return _clean_claim_line(claim)  # single safe line, length-capped
     except Exception:
         return None  # never fail the user's turn
     return None
@@ -751,56 +767,78 @@ def _fs_node_safe(st: os.stat_result, uid: int) -> bool:
     return st.st_uid == uid and not (st.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
 
 
-def _fd_walk_read(anchor: Path, rel_parts: list[str], max_bytes: int) -> bytes | None:
+def _fd_walk_read(
+    anchor: Path, rel_parts: list[str], max_bytes: int
+) -> tuple[str, bytes | None]:
     """Read ``anchor/rel_parts`` WITHOUT following any symlink in any component.
 
     A pure openat/dir-fd walk (portable across macOS + Linux): each directory
     component is opened ``O_NOFOLLOW`` relative to the previous dir fd and its
-    owner+mode validated; the leaf is opened ``O_NOFOLLOW`` (a symlink leaf raises
-    ELOOP → rejected), ``fstat``'d for regular-file + ``st_nlink == 1`` (hardlink
-    bypass) + ownership + size, then read from THE SAME fd — never reopened by
-    path. This is the P0 TOCTOU fix (fstat + read share one fd) and yields P1
-    ancestry (no symlink/foreign-owner/writable dir in the chain) for free.
-    Returns bytes, or None on any failure. Never raises.
+    owner+mode validated; the leaf is opened ``O_NOFOLLOW | O_NONBLOCK`` (a symlink
+    leaf raises ELOOP → refused; a FIFO/device opens immediately instead of blocking
+    the hook forever), ``fstat``'d for regular-file + ``st_nlink == 1`` (hardlink
+    bypass) + ownership + size, then read from THE SAME fd — never reopened by path.
+    This is the P0 TOCTOU fix (fstat + read share one fd) and yields P1 ancestry
+    (no symlink/foreign-owner/writable dir in the chain) for free.
+
+    Returns ``(status, data)``: ``("ok", bytes)`` · ``("missing", None)`` (a path
+    component does not exist) · ``("refused", None)`` (present but blocked by a
+    security guard, or any other error). Never raises.
+
+    Trust anchor: ``anchor`` (``Path.home()``) is the root of trust — its OWN
+    ancestors (e.g. ``/Users``) are resolved by the kernel and assumed system-owned;
+    a workspace cannot set ``$HOME``, so this is outside the persona threat model.
+    Everything AT and BELOW the anchor is validated no-follow, per-component.
     """
     if not rel_parts:
-        return None
+        return ("refused", None)
     uid = os.getuid()
     o_dir = getattr(os, "O_DIRECTORY", 0)
+    o_nonblock = getattr(os, "O_NONBLOCK", 0)
     fds: list[int] = []
     try:
         cur = os.open(str(anchor), os.O_RDONLY | os.O_NOFOLLOW | o_dir)
         fds.append(cur)
         st = os.fstat(cur)
         if not stat.S_ISDIR(st.st_mode) or not _fs_node_safe(st, uid):
-            return None
+            return ("refused", None)
         *dir_parts, leaf = rel_parts
         for part in dir_parts:
             if part in ("", ".", "..") or "/" in part:
-                return None
+                return ("refused", None)
             nxt = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | o_dir, dir_fd=cur)
             fds.append(nxt)
             cur = nxt
             st = os.fstat(cur)
             if not stat.S_ISDIR(st.st_mode) or not _fs_node_safe(st, uid):
-                return None
+                return ("refused", None)
         if leaf in ("", ".", "..") or "/" in leaf:
-            return None
-        leaf_fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=cur)
+            return ("refused", None)
+        # O_NONBLOCK so a FIFO/device leaf can never wedge the every-turn hook; the
+        # S_ISREG check below then refuses it. O_NOFOLLOW refuses a symlink leaf.
+        leaf_fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | o_nonblock, dir_fd=cur)
         fds.append(leaf_fd)
         lst = os.fstat(leaf_fd)
-        if not stat.S_ISREG(lst.st_mode):
-            return None
+        if not stat.S_ISREG(lst.st_mode):  # FIFO / device / dir / socket / symlink
+            return ("refused", None)
         if lst.st_nlink != 1:  # hardlink bypass (P1)
-            return None
+            return ("refused", None)
         if not _fs_node_safe(lst, uid):
-            return None
+            return ("refused", None)
         if lst.st_size > max_bytes:
-            return None
+            return ("refused", None)
         data = os.read(leaf_fd, max_bytes + 1)  # read from the SAME fd (P0 TOCTOU)
-        return data if len(data) <= max_bytes else None
-    except (OSError, ValueError):
-        return None
+        if len(data) > max_bytes:
+            return ("refused", None)
+        return ("ok", data)
+    except OSError as exc:
+        # A genuinely absent component → "missing"; any other fs error (ELOOP from a
+        # symlink, EACCES, ELOOP, …) is a security refusal → "refused".
+        if getattr(exc, "errno", None) == errno.ENOENT:
+            return ("missing", None)
+        return ("refused", None)
+    except ValueError:
+        return ("refused", None)
     finally:
         for fd in reversed(fds):
             try:
@@ -850,26 +888,30 @@ def _resolve_persona_federation(
     return (root, allowed) if allowed else None
 
 
-def _persona_facet_from_store(
-    persona_root: Path, slug: str
-) -> tuple[str, str | None] | None:
-    """Read a facet from the per-user store; return ``(status, claim)`` or None.
+def _persona_facet_from_store(persona_root: Path, slug: str) -> tuple[str, str | None]:
+    """Read a facet from the per-user store; return ``(status, claim)``.
 
-    ``status`` is ``"ok"`` (a valid persona facet was read; ``claim`` may be None
-    for a claimless facet) or ``"blocked"`` (present but wrong-type / undecodable /
-    malformed — surfaced as a warning, never rendered). Returns None when the file
-    is missing or blocked by the fd-walk's filesystem security. All filesystem
-    hardening lives in ``_fd_walk_read``; this only decodes + type-gates the bytes.
+    ``status`` is one of:
+      * ``"ok"``      — a valid persona facet was read (``claim`` may be None for a
+                        claimless-but-valid facet);
+      * ``"missing"`` — no such facet in the store (a component does not exist);
+      * ``"blocked"`` — present but refused: fs-security block (symlink/hardlink/
+                        foreign-owner/writable/non-regular/oversize) OR wrong-type /
+                        undecodable / malformed frontmatter.
+    The caller warns loudly on both ``missing`` and ``blocked`` — never silent-drops.
+    All filesystem hardening lives in ``_fd_walk_read``; this decodes + type-gates.
     """
     if not _PERSONA_SLUG_RE.match(slug):
-        return None
+        return ("blocked", None)
     try:
         rel_parts = list(persona_root.relative_to(Path.home()).parts) + [f"{slug}.md"]
     except ValueError:
-        return None
-    data = _fd_walk_read(Path.home(), rel_parts, PERSONA_MAX_BYTES)
-    if data is None:
-        return None  # missing OR blocked by fs security → caller warns loudly
+        return ("blocked", None)
+    status, data = _fd_walk_read(Path.home(), rel_parts, PERSONA_MAX_BYTES)
+    if status == "missing":
+        return ("missing", None)
+    if status != "ok" or data is None:
+        return ("blocked", None)  # refused by fs security
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -882,7 +924,7 @@ def _persona_facet_from_store(
         return ("blocked", None)  # persona-type-only — never surface a non-persona file
     claim = fm.get("core_claim")
     if isinstance(claim, str) and claim.strip():
-        return ("ok", " ".join(claim.split())[:240])
+        return ("ok", _clean_claim_line(claim))
     return ("ok", None)
 
 
@@ -1149,21 +1191,22 @@ def _format_intake_context(
                     f"workspace  ·  [{display} · store]"
                 )
                 continue
-            facet = _persona_facet_from_store(root, slug)
-            if facet is None:
+            status, claim = _persona_facet_from_store(root, slug)
+            if status == "missing":
                 # Noisy-missing (design §4.4): a listed facet absent from the store
                 # WARNS — it is never silently dropped.
                 entity_lines.append(
                     f"  - ⚠ persona facet '{safe_slug}' listed but not found in the "
                     f"per-user store  ·  [{display} · store]"
                 )
-            elif facet[0] == "blocked":
+            elif status == "blocked":
+                # Present but refused by a security guard (or malformed) — warn,
+                # never render.
                 entity_lines.append(
                     f"  - ⚠ persona facet '{safe_slug}' could not be safely read from "
                     f"the store  ·  [{display} · store]"
                 )
             else:
-                claim = facet[1]
                 entity_lines.append(
                     f"  - {claim}  ·  [{display} · store]" if claim
                     else f"  - {display} · store"
