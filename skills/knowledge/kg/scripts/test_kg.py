@@ -306,11 +306,108 @@ def test_tier2_confidence_trigger():
         kg.BROOMVA_ROOT, kg.CATALOG_PATH, kg.ENTITIES_DIR, kg.STALE_WARN_SECONDS = orig
 
 
+# ── Repo-native path resolution (BRO-1903) ────────────────────────────────────
+# These use real `assert` (not check()) so they gate under pytest too — the
+# check() harness only surfaces failures via main()'s exit code.
+
+def _write_policy(repo, knowledge_block):
+    ctl = repo / ".control"
+    ctl.mkdir(parents=True, exist_ok=True)
+    body = "gates:\n  - G1\n"
+    if knowledge_block is not None:
+        body += knowledge_block
+    (ctl / "policy.yaml").write_text(body)
+
+
+def _have_yaml():
+    try:
+        import yaml  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def test_resolve_default_and_env():
+    default_root = Path.home() / "broomva"
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)  # isolated — no .control/policy.yaml up-tree
+        root, ent, cat = kg._resolve_knowledge_paths(start_dir=tmp, env={})
+        assert root == default_root, f"default root (got {root})"
+        assert ent == default_root / "research" / "entities"
+        assert cat == default_root / "docs" / "knowledge-index.md"
+        check(True, "default resolution → ~/broomva layout")
+
+        root, _, cat = kg._resolve_knowledge_paths(start_dir=tmp, env={"BROOMVA_ROOT": "/opt/g"})
+        assert root == Path("/opt/g") and cat == Path("/opt/g/docs/knowledge-index.md")
+        check(True, "legacy BROOMVA_ROOT env honored")
+
+        root, ent, cat = kg._resolve_knowledge_paths(
+            start_dir=tmp, env={"KG_ROOT": "/r", "KG_ENTITIES_DIR": "/e", "KG_CATALOG": "/c.md"})
+        assert (root, ent, cat) == (Path("/r"), Path("/e"), Path("/c.md"))
+        check(True, "KG_* env overrides each key independently")
+
+
+def test_resolve_config_block():
+    if not _have_yaml():
+        check(True, "config-block test skipped (PyYAML absent — soft dep)")
+        return
+    with tempfile.TemporaryDirectory() as d:
+        repo = Path(d).resolve() / "repo"  # resolve() so it matches the resolver's canonicalized path (macOS /var→/private/var)
+        _write_policy(repo, "knowledge:\n  entities_dir: docs/research/entities\n"
+                            "  catalog_path: docs/research/knowledge-index.md\n")
+        deep = repo / "src" / "deep"
+        deep.mkdir(parents=True)
+        root, ent, cat = kg._resolve_knowledge_paths(start_dir=deep, env={})
+        assert root == repo, f"block anchors root at repo (got {root})"
+        assert ent == repo / "docs" / "research" / "entities"
+        assert cat == repo / "docs" / "research" / "knowledge-index.md"
+        check(True, "knowledge: block → docs/research (SRI opt-in shape)")
+
+        root2, _, _ = kg._resolve_knowledge_paths(start_dir=deep, env={"BROOMVA_ROOT": "/ignored"})
+        assert root2 == repo, "config block must beat BROOMVA_ROOT env"
+        check(True, "config block beats BROOMVA_ROOT env")
+
+
+def test_resolve_plants_knowledge_ignored():
+    if not _have_yaml():
+        check(True, "plants.knowledge test skipped (PyYAML absent)")
+        return
+    with tempfile.TemporaryDirectory() as d:
+        repo = Path(d).resolve() / "repo"
+        _write_policy(repo, "plants:\n  knowledge:\n    entities_dir: SHOULD_NOT_BE_READ\n")
+        root, ent, _ = kg._resolve_knowledge_paths(start_dir=repo, env={})
+        assert root == Path.home() / "broomva", "nested plants.knowledge must not be read as config"
+        assert "SHOULD_NOT_BE_READ" not in str(ent)
+        check(True, "nested plants.knowledge ignored (backward-compat linchpin)")
+
+
+def test_resolve_malformed_config_degrades():
+    # A non-str value (YAML `entities_dir: 123` → int) or a typo'd key must NOT
+    # crash the module at import — it degrades to the default / env root.
+    if not _have_yaml():
+        check(True, "malformed-config test skipped (PyYAML absent)")
+        return
+    with tempfile.TemporaryDirectory() as d:
+        repo = Path(d).resolve() / "repo"
+        _write_policy(repo, "knowledge:\n  entities_dir: 123\n")  # int, not a str
+        root, ent, _ = kg._resolve_knowledge_paths(start_dir=repo, env={})
+        assert root == Path.home() / "broomva", "non-str value must degrade to default (no crash)"
+        assert ent == Path.home() / "broomva" / "research" / "entities"
+        check(True, "non-str knowledge value degrades to default (no import crash)")
+
+        _write_policy(repo, "knowledge:\n  entities_dirr: docs/research/entities\n")  # typo key
+        root2, _, _ = kg._resolve_knowledge_paths(start_dir=repo, env={"BROOMVA_ROOT": "/env/root"})
+        assert root2 == Path("/env/root"), "typo-only block must not hijack root off env"
+        check(True, "typo-only block does not hijack root")
+
+
 def main():
     for fn in (test_tokenize, test_score_and_trace, test_terms_expansion_dedupe,
                test_hub_tiebreak, test_parse_catalog, test_alias_scoring,
                test_parse_tolerates_space_bearing_score, test_cmd_load_integration,
-               test_tier2_confidence_trigger):
+               test_tier2_confidence_trigger,
+               test_resolve_default_and_env, test_resolve_config_block,
+               test_resolve_plants_knowledge_ignored, test_resolve_malformed_config_degrades):
         fn()
     print()
     if _failures:

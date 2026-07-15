@@ -54,7 +54,11 @@ def write_entity(root: Path, type_dir: str, slug: str, *,
 @pytest.fixture
 def temp_substrate(tmp_path, monkeypatch):
     """Set up a research/entities/ tree under tmp_path and patch the module's
-    BROOMVA_ROOT + ENTITIES_DIR to point at it."""
+    BROOMVA_ROOT + ENTITIES_DIR + CATALOG_PATH to point at it.
+
+    CATALOG_PATH is now a first-class resolved constant (the cmd_index write
+    path), decoupled from BROOMVA_ROOT, so redirecting the data root means
+    patching all three."""
     root = tmp_path
     entities = root / "research" / "entities"
     entities.mkdir(parents=True)
@@ -62,6 +66,7 @@ def temp_substrate(tmp_path, monkeypatch):
     docs.mkdir()
     monkeypatch.setattr(bookkeeping, "BROOMVA_ROOT", root)
     monkeypatch.setattr(bookkeeping, "ENTITIES_DIR", entities)
+    monkeypatch.setattr(bookkeeping, "CATALOG_PATH", docs / "knowledge-index.md")
     return root
 
 
@@ -352,6 +357,7 @@ class TestKgTier2BodyFallback:
         docs.mkdir()
         monkeypatch.setattr(bookkeeping, "BROOMVA_ROOT", tmp_path)
         monkeypatch.setattr(bookkeeping, "ENTITIES_DIR", entities)
+        monkeypatch.setattr(bookkeeping, "CATALOG_PATH", docs / "knowledge-index.md")
 
         write_entity(
             entities, "concept", "carrier",

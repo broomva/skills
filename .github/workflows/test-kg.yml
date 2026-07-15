@@ -40,6 +40,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install pytest
-        run: pip install pytest
+        # PyYAML is a soft runtime dep (config-driven path resolution reads the
+        # top-level knowledge: block in .control/policy.yaml); install it so the
+        # config-block resolver tests exercise the real path instead of skipping.
+        run: pip install pytest PyYAML
       - name: Tests
         run: python -m pytest scripts/test_kg.py -v

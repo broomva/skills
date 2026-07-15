@@ -35,12 +35,121 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Resolve workspace root the same way bookkeeping does.
-# BROOMVA_ROOT env var override unblocks non-standard host layouts (CI
-# runners, co-developers with different paths). Closes BRO-1223 I5/I6.
-BROOMVA_ROOT = Path(os.environ.get("BROOMVA_ROOT", Path.home() / "broomva"))
-CATALOG_PATH = BROOMVA_ROOT / "docs" / "knowledge-index.md"
-ENTITIES_DIR = BROOMVA_ROOT / "research" / "entities"
+# Knowledge-graph paths resolve repo-native + config-driven, defaulting to
+# today's behavior so the personal ~/broomva graph is unchanged. This mirrors
+# bookkeeping.py's _resolve_knowledge_paths (the two skills install
+# independently, so each keeps a self-contained copy). Precedence (highest
+# first): a TOP-LEVEL `knowledge:` block in the nearest .control/policy.yaml
+# (found by walking up from CWD; keys root/entities_dir/catalog_path,
+# root-relative unless absolute) > KG_ROOT/KG_ENTITIES_DIR/KG_CATALOG (legacy
+# BROOMVA_ROOT still honored for root) > ~/broomva + research/entities +
+# docs/knowledge-index.md. Only the top-level `knowledge:` key is read — a
+# nested `plants.knowledge` control-plant block is deliberately ignored.
+
+
+def _find_policy_file(start):
+    """Nearest-ancestor .control/policy.yaml walking up from `start` (inclusive)."""
+    start = Path(start).resolve()
+    for d in (start, *start.parents):
+        cand = d / ".control" / "policy.yaml"
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _read_knowledge_block(policy):
+    """Top-level `knowledge:` dict from policy.yaml, or {} if absent/unreadable.
+
+    PyYAML is a soft dependency — absent it, returns {} (default resolution).
+    A missing file, malformed YAML, non-dict root, or non-dict `knowledge:`
+    all degrade to {}.
+    """
+    if policy is None:
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(policy.read_text()) or {}
+    except Exception:
+        return {}
+    kn = data.get("knowledge") if isinstance(data, dict) else None
+    return kn if isinstance(kn, dict) else {}
+
+
+def _abs_or_rel(value, base):
+    """Expand `value`; return as-is if absolute, else joined under `base`."""
+    p = Path(value).expanduser()
+    return p if p.is_absolute() else (base / p)
+
+
+def _resolve_knowledge_paths(start_dir=None, env=None):
+    """Resolve (root, entities_dir, catalog_path). See precedence comment above.
+
+    Pure/testable: `start_dir` defaults to CWD, `env` to os.environ.
+    """
+    env = os.environ if env is None else env
+    start_dir = Path.cwd() if start_dir is None else Path(start_dir)
+
+    # (3) default root, honoring legacy BROOMVA_ROOT
+    root = Path(env.get("BROOMVA_ROOT") or (Path.home() / "broomva")).expanduser()
+    entities_dir = None
+    catalog_path = None
+
+    # (2) KG_* env overrides (per-key)
+    if env.get("KG_ROOT"):
+        root = Path(env["KG_ROOT"]).expanduser()
+    if env.get("KG_ENTITIES_DIR"):
+        entities_dir = Path(env["KG_ENTITIES_DIR"]).expanduser()
+    if env.get("KG_CATALOG"):
+        catalog_path = Path(env["KG_CATALOG"]).expanduser()
+
+    # (1) top-level `knowledge:` block wins (per-key), anchoring root at the repo
+    policy = _find_policy_file(start_dir)
+    kn = _read_knowledge_block(policy)
+    if kn and policy is not None:  # non-empty kn implies policy was found
+        repo_root = policy.parent.parent  # .control/policy.yaml → repo root
+        # Accept only string path values. A non-str value (YAML coerces
+        # `entities_dir: yes` → bool, a bare date → date, `123` → int, a list),
+        # or an unrecognized key, is ignored with a warning — so a mis-authored
+        # policy DEGRADES to the default rather than crashing every command at
+        # import time (resolution runs at module load). Honors the
+        # _read_knowledge_block "degrade to default" contract for bad values too.
+        for key in kn:
+            if key not in ("root", "entities_dir", "catalog_path"):
+                print(f"[kg] ignoring unrecognized knowledge.{key} in {policy}",
+                      file=sys.stderr)
+
+        def _cfg(key):
+            v = kn.get(key)
+            if v is None:
+                return None
+            if not isinstance(v, str):
+                print(f"[kg] knowledge.{key} must be a string path (got "
+                      f"{type(v).__name__}) in {policy}; ignoring", file=sys.stderr)
+                return None
+            return v or None  # empty string → treat as unset
+
+        kroot, kent, kcat = _cfg("root"), _cfg("entities_dir"), _cfg("catalog_path")
+        # Only relocate when a recognized path key is actually set — a block with
+        # only unknown/typo'd keys must NOT silently hijack root off the env.
+        if kroot or kent or kcat:
+            root = _abs_or_rel(kroot, repo_root) if kroot else repo_root
+            if kent:
+                entities_dir = _abs_or_rel(kent, root)
+            if kcat:
+                catalog_path = _abs_or_rel(kcat, root)
+
+    # derive any unset path from the resolved root (today's layout)
+    if entities_dir is None:
+        entities_dir = root / "research" / "entities"
+    if catalog_path is None:
+        catalog_path = root / "docs" / "knowledge-index.md"
+    return root, entities_dir, catalog_path
+
+
+BROOMVA_ROOT, ENTITIES_DIR, CATALOG_PATH = _resolve_knowledge_paths()
 POLICY_PATH = BROOMVA_ROOT / ".control" / "policy.yaml"
 
 # Defaults — used when policy.yaml is missing OR has no catalog: block.
@@ -344,8 +453,14 @@ def render_load_output(
     out.append(f" KG LOAD: {topic}")
     out.append(sep)
     out.append("")
+    # Show the resolved catalog path (default → "docs/knowledge-index.md",
+    # unchanged; a relocated catalog → its real repo-relative path).
+    try:
+        _catalog_disp = CATALOG_PATH.relative_to(BROOMVA_ROOT)
+    except ValueError:
+        _catalog_disp = CATALOG_PATH
     loaded_line = (f"Loaded {len(matches)}/{total_in_catalog} entities "
-                   f"from docs/knowledge-index.md")
+                   f"from {_catalog_disp}")
     if n_expand:
         loaded_line += f"  ({n_primary} matched + {n_expand} via graph expansion)"
     out.append(loaded_line)
