@@ -11,8 +11,17 @@ SCRIPT = Path(__file__).parent.parent / "scripts" / "role-x.py"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def run_cli(*args: str, input_text: str | None = None, env: dict | None = None) -> tuple[int, str, str]:
-    """Run role-x.py with args; return (returncode, stdout, stderr)."""
+def run_cli(
+    *args: str,
+    input_text: str | None = None,
+    env: dict | None = None,
+    timeout: float | None = None,
+) -> tuple[int, str, str]:
+    """Run role-x.py with args; return (returncode, stdout, stderr).
+
+    ``timeout`` (seconds) bounds the run so a hang (e.g. a blocking FIFO open in the
+    intake hook) surfaces as ``subprocess.TimeoutExpired`` instead of wedging CI.
+    """
     full_env = {**os.environ, **(env or {})}
     result = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
@@ -20,6 +29,7 @@ def run_cli(*args: str, input_text: str | None = None, env: dict | None = None) 
         text=True,
         input=input_text,
         env=full_env,
+        timeout=timeout,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -1370,3 +1380,394 @@ def test_intake_non_utf8_catalog_does_not_crash(tmp_path):
         "--workspace", str(workspace), "--session", "task-6",
     )
     assert rc == 0, f"stderr={err}"  # no traceback; the hook never blocks the turn
+
+
+# ============================================================================
+# Persona federation (F3′ — BRO-1901): confined 2nd trusted root + threat matrix
+# ============================================================================
+#
+# Each test maps to a guard in the S1 security contract (design §3 S0-result):
+#   TOCTOU/no-follow (P0) · workspace→persona binding (P0) · ancestry+ownership
+#   (P1) · hardlink (P1) · trusted-base+allowlist trust boundary. The scratch
+#   workspace's research/entities/persona is left EMPTY so any surfaced claim
+#   MUST have come from the per-user store — proving the federated read path.
+
+_STORE_FACET_RAILWAY = """---
+id: persona/test-railway
+type: persona
+core_claim: "Default deploy target is Railway; suggest AWS only on explicit ask."
+---
+# store facet
+Body.
+"""
+
+_FED_PROMPT = "how should I deploy this new production service to the cloud today"
+
+
+def _fed_setup(
+    tmp_path,
+    *,
+    meta_entities=("research/entities/persona/test-railway.md",),
+    store_facets=(("test-railway.md", _STORE_FACET_RAILWAY),),
+    allowed=("test-railway",),
+    allowlist_workspace=True,
+    federation=True,
+    root_config="~/.config/broomva/persona",
+    create_workspace_facet=False,
+):
+    """Build HOME + trusted config + per-user store + a scratch workspace.
+
+    Returns (home, workspace, store, env). Perms are set explicitly so tests are
+    deterministic regardless of the runner's umask.
+    """
+    home = tmp_path / "home"
+    role_dir = home / ".config" / "broomva" / "role"
+    role_dir.mkdir(parents=True)
+    store = home / ".config" / "broomva" / "persona"
+    store.mkdir(parents=True)
+    for name, body in store_facets:
+        f = store / name
+        f.write_text(body, encoding="utf-8")
+        os.chmod(f, 0o644)
+    # Deterministic safe perms on the whole trusted chain (no group/other write).
+    for d in (home, home / ".config", home / ".config" / "broomva", role_dir, store):
+        os.chmod(d, 0o755)
+
+    workspace = home / "ws"
+    (workspace / "roles").mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# AGENTS\n", encoding="utf-8")
+    meta = _FIXTURE_META_WITH_ENTITY.replace(
+        '["research/entities/persona/test-railway.md"]',
+        "[" + ", ".join(f'"{e}"' for e in meta_entities) + "]",
+    )
+    (workspace / "roles" / "_meta.md").write_text(meta, encoding="utf-8")
+    if create_workspace_facet:
+        wsp = workspace / "research" / "entities" / "persona"
+        wsp.mkdir(parents=True)
+        (wsp / "test-railway.md").write_text(_ENTITY_RAILWAY, encoding="utf-8")
+
+    ws_key = str(workspace.resolve())
+    if federation:
+        workspaces = {ws_key: list(allowed)} if allowlist_workspace else {}
+        config = {"persona_federation": {"root": root_config, "workspaces": workspaces}}
+    else:
+        config = {}
+    (role_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    return home, workspace, store, {"HOME": str(home)}
+
+
+def _run_fed(home, workspace, env, session="fed"):
+    return run_cli(
+        "intake", "--prompt", _FED_PROMPT,
+        "--workspace", str(workspace), "--session", session, env=env,
+    )
+
+
+# --- positives -------------------------------------------------------------
+
+def test_fed_surfaces_facet_from_store(tmp_path):
+    """Federation active: the claim resolves from the store, workspace being empty."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    rc, out, err = _run_fed(home, ws, env, "fed-ok")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" in out  # came from the per-user store
+    assert "· store" in out  # provenance is honest about the source
+    # prove it wasn't the workspace: the workspace has no persona dir at all
+    assert not (ws / "research" / "entities" / "persona").exists()
+
+
+def test_fed_off_by_default_preserves_phase2(tmp_path):
+    """No persona_federation config ⇒ pure Phase-2: claim from the WORKSPACE, no store tag."""
+    home, ws, store, env = _fed_setup(tmp_path, federation=False, create_workspace_facet=True)
+    rc, out, err = _run_fed(home, ws, env, "fed-off")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" in out  # from the workspace file
+    assert "· store" not in out  # federation never engaged
+
+
+def test_fed_claimless_facet_renders_bare_path(tmp_path):
+    """A valid persona facet with no core_claim renders a bare `· store` line, no warn."""
+    facet = "---\nid: persona/test-railway\ntype: persona\n---\n# no claim\n"
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=(("test-railway.md", facet),))
+    rc, out, err = _run_fed(home, ws, env, "fed-bare")
+    assert rc == 0, f"stderr={err}"
+    assert "· store" in out
+    assert "⚠" not in out  # it read fine — just no claim to show
+
+
+# --- noisy-missing (design §4.4) -------------------------------------------
+
+def test_fed_missing_facet_warns_loudly(tmp_path):
+    """A listed facet absent from the store WARNS — it is never silently dropped."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())  # empty store
+    rc, out, err = _run_fed(home, ws, env, "fed-missing")
+    assert rc == 0, f"stderr={err}"
+    assert "⚠" in out
+    assert "test-railway" in out and "not found in the per-user store" in out
+    assert "Default deploy target is Railway" not in out
+
+
+# --- P0: workspace→persona binding ----------------------------------------
+
+def test_fed_binding_blocks_unpermitted_facet(tmp_path):
+    """An allowlisted workspace cannot request a facet outside its allowed set."""
+    home, ws, store, env = _fed_setup(tmp_path, allowed=("some-other-facet",))
+    rc, out, err = _run_fed(home, ws, env, "fed-bind")
+    assert rc == 0, f"stderr={err}"
+    assert "not permitted for this workspace" in out
+    assert "Default deploy target is Railway" not in out  # binding held
+
+
+def test_fed_unallowlisted_workspace_surfaces_nothing(tmp_path):
+    """A non-allowlisted workspace (hostile clone) loads NOTHING from the store."""
+    home, ws, store, env = _fed_setup(tmp_path, allowlist_workspace=False)
+    rc, out, err = _run_fed(home, ws, env, "fed-clone")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "· store" not in out  # federation never engaged for this workspace
+
+
+# --- P0: TOCTOU / no-follow (symlink leaf + root) --------------------------
+
+def test_fed_symlink_leaf_is_not_followed(tmp_path):
+    """A store facet that is a symlink to an outside secret is refused (O_NOFOLLOW)."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    secret = home / "secret.md"
+    secret.write_text(
+        '---\ntype: persona\ncore_claim: "LEAKED VIA SYMLINK"\n---\n', encoding="utf-8"
+    )
+    os.symlink(secret, store / "test-railway.md")
+    rc, out, err = _run_fed(home, ws, env, "fed-symleaf")
+    assert rc == 0, f"stderr={err}"
+    assert "LEAKED VIA SYMLINK" not in out
+    assert "⚠" in out  # refused, and loudly
+
+
+def test_fed_root_symlink_replacement_is_refused(tmp_path):
+    """If the store root itself is swapped for a symlink, the walk refuses it."""
+    home = tmp_path / "home"
+    (home / ".config" / "broomva" / "role").mkdir(parents=True)
+    for d in (home, home / ".config", home / ".config" / "broomva"):
+        os.chmod(d, 0o755)
+    evil = home / "evil-store"
+    evil.mkdir()
+    (evil / "test-railway.md").write_text(
+        '---\ntype: persona\ncore_claim: "EVIL ROOT SYMLINK"\n---\n', encoding="utf-8"
+    )
+    os.symlink(evil, home / ".config" / "broomva" / "persona")  # root is now a symlink
+    workspace = home / "ws"
+    (workspace / "roles").mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# AGENTS\n", encoding="utf-8")
+    (workspace / "roles" / "_meta.md").write_text(_FIXTURE_META_WITH_ENTITY, encoding="utf-8")
+    config = {"persona_federation": {
+        "root": "~/.config/broomva/persona",
+        "workspaces": {str(workspace.resolve()): ["test-railway"]},
+    }}
+    (home / ".config" / "broomva" / "role" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    rc, out, err = _run_fed(home, workspace, {"HOME": str(home)}, "fed-rootsym")
+    assert rc == 0, f"stderr={err}"
+    assert "EVIL ROOT SYMLINK" not in out
+    assert "⚠" in out
+
+
+# --- P1: hardlink bypass ---------------------------------------------------
+
+def test_fed_hardlink_facet_is_rejected(tmp_path):
+    """A facet hardlinked to an inode reachable outside the store (st_nlink>1) is rejected."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    outside = home / "outside.md"
+    outside.write_text(
+        '---\ntype: persona\ncore_claim: "HARDLINK LEAK"\n---\n', encoding="utf-8"
+    )
+    os.link(outside, store / "test-railway.md")  # nlink becomes 2
+    rc, out, err = _run_fed(home, ws, env, "fed-hardlink")
+    assert rc == 0, f"stderr={err}"
+    assert "HARDLINK LEAK" not in out
+    assert "⚠" in out
+
+
+# --- P1 / trust boundary: ownership + mode ---------------------------------
+
+def test_fed_world_writable_root_is_rejected(tmp_path):
+    """A world-writable store root is refused (reject world/group-writable)."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    os.chmod(store, 0o777)
+    rc, out, err = _run_fed(home, ws, env, "fed-wwroot")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "⚠" in out
+
+
+def test_fed_group_writable_ancestor_is_rejected(tmp_path):
+    """A group-writable ancestor dir in the trusted chain fails the ancestry check."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    os.chmod(home / ".config" / "broomva", 0o775)  # group-writable ancestor
+    rc, out, err = _run_fed(home, ws, env, "fed-gwanc")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "⚠" in out
+
+
+# --- persona-type-only + size + trusted-base + traversal -------------------
+
+def test_fed_wrong_type_is_refused(tmp_path):
+    """A store file whose type != persona is refused (persona-type-only)."""
+    facet = '---\ntype: concept\ncore_claim: "NOT A PERSONA FACET"\n---\n'
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=(("test-railway.md", facet),))
+    rc, out, err = _run_fed(home, ws, env, "fed-wrongtype")
+    assert rc == 0, f"stderr={err}"
+    assert "NOT A PERSONA FACET" not in out
+    assert "⚠" in out
+
+
+def test_fed_oversized_facet_is_refused(tmp_path):
+    """A store facet larger than the byte cap is refused before parsing."""
+    big = _STORE_FACET_RAILWAY + ("x" * (256 * 1024 + 10))
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=(("test-railway.md", big),))
+    rc, out, err = _run_fed(home, ws, env, "fed-oversize")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "⚠" in out
+
+
+def test_fed_relative_root_disables_federation(tmp_path):
+    """A non-absolute configured root disables federation (falls back to workspace)."""
+    home, ws, store, env = _fed_setup(tmp_path, root_config="relative/persona")
+    rc, out, err = _run_fed(home, ws, env, "fed-relroot")
+    assert rc == 0, f"stderr={err}"
+    assert "· store" not in out  # federation never engaged
+    assert "Default deploy target is Railway" not in out  # not read from the real store either
+
+
+def test_fed_root_outside_trusted_base_disables_federation(tmp_path):
+    """A root outside ~/.config/broomva is refused — a workspace can never relocate it."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    outside_store = home / "outside-store"
+    outside_store.mkdir()
+    os.chmod(outside_store, 0o755)
+    (outside_store / "test-railway.md").write_text(_STORE_FACET_RAILWAY, encoding="utf-8")
+    # rewrite config to point root outside the trusted base
+    config = {"persona_federation": {
+        "root": str(outside_store),
+        "workspaces": {str(ws.resolve()): ["test-railway"]},
+    }}
+    (home / ".config" / "broomva" / "role" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    rc, out, err = _run_fed(home, ws, env, "fed-outside")
+    assert rc == 0, f"stderr={err}"
+    assert "· store" not in out  # federation disabled by trusted-base rule
+
+
+def test_fed_traversal_entity_is_not_persona_scoped(tmp_path):
+    """A `..`-bearing persona-looking path is NOT store-scoped and cannot escape."""
+    # ../ ×4 from persona/ climbs persona→entities→research→ws→home, so this
+    # resolves to <home>/ws-secret.md — OUTSIDE the workspace (a real escape attempt).
+    home, ws, store, env = _fed_setup(
+        tmp_path, meta_entities=("research/entities/persona/../../../../ws-secret.md",),
+    )
+    (home / "ws-secret.md").write_text(
+        '---\ncore_claim: "TRAVERSAL LEAK"\n---\n', encoding="utf-8"
+    )
+    rc, out, err = _run_fed(home, ws, env, "fed-traversal")
+    assert rc == 0, f"stderr={err}"
+    assert "TRAVERSAL LEAK" not in out  # workspace confinement still holds
+    assert "· store" not in out  # never treated as a store lookup
+
+
+# --- P20 hardening: never-block, missing-vs-refused, same-fd TOCTOU core --------
+
+def test_fed_fifo_leaf_does_not_block_the_hook(tmp_path):
+    """A FIFO named <slug>.md must NOT wedge the intake hook (never-block invariant).
+
+    Mutation-proof: without O_NONBLOCK on the leaf open, os.open(O_RDONLY) blocks
+    forever waiting for a writer → the subprocess times out → this test fails.
+    """
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    os.mkfifo(store / "test-railway.md")
+    try:
+        rc, out, err = run_cli(
+            "intake", "--prompt", _FED_PROMPT, "--workspace", str(ws),
+            "--session", "fed-fifo", env=env, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        raise AssertionError(
+            "intake blocked on a FIFO leaf — O_NONBLOCK missing (never-block invariant broken)"
+        )
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "could not be safely read" in out  # FIFO refused (not a regular file), loudly
+
+
+def test_fed_refused_vs_missing_messages_differ(tmp_path):
+    """A security-refused facet says 'could not be safely read'; an absent one says
+    'not found' — a refusal can never masquerade as mere absence."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    secret = home / "s.md"
+    secret.write_text('---\ntype: persona\ncore_claim: "X"\n---\n', encoding="utf-8")
+    os.symlink(secret, store / "test-railway.md")  # present but refused (symlink)
+    rc, out, err = _run_fed(home, ws, env, "fed-refmsg")
+    assert rc == 0, f"stderr={err}"
+    assert "could not be safely read" in out
+    assert "not found in the per-user store" not in out
+
+
+def _load_role_x_module():
+    """Import role-x.py as a module (hyphenated filename → importlib)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("role_x_under_test", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_fd_walk_read_reads_from_opened_fd_not_by_path(tmp_path):
+    """The leaf is read from the fstat'd fd — never reopened by path (the P0 TOCTOU core).
+
+    Mutation-proof: a fake os.fstat swaps the leaf for a symlink→secret right after
+    the real fstat (emulating a check→read race). A correct same-fd read returns the
+    ORIGINAL bytes; a reopen-by-path would follow the symlink and leak the secret.
+    Deleting the `data = os.read(leaf_fd, …)` line's fd-read (reopening by path)
+    fails this test.
+    """
+    import stat as _stat
+    from unittest import mock
+
+    mod = _load_role_x_module()
+    home = tmp_path / "home"
+    store = home / ".config" / "broomva" / "persona"
+    store.mkdir(parents=True)
+    for d in (home, home / ".config", home / ".config" / "broomva", store):
+        os.chmod(d, 0o755)
+    leaf = store / "who-am-i.md"
+    leaf.write_text("ORIGINAL-FACET", encoding="utf-8")
+    os.chmod(leaf, 0o644)
+    secret = home / "secret.md"
+    secret.write_text("SECRET-LEAK", encoding="utf-8")
+
+    real_fstat = os.fstat
+    swapped = {"done": False}
+
+    def fake_fstat(fd):
+        st = real_fstat(fd)
+        # On the first regular-file fstat (the leaf), win the race: replace the path
+        # with a symlink to the secret. The already-open fd still points at the
+        # original inode; only a path-reopen would follow the new symlink.
+        if _stat.S_ISREG(st.st_mode) and not swapped["done"]:
+            swapped["done"] = True
+            os.remove(leaf)
+            os.symlink(secret, leaf)
+        return st
+
+    rel = [".config", "broomva", "persona", "who-am-i.md"]
+    with mock.patch.object(mod.os, "fstat", fake_fstat):
+        status, data = mod._fd_walk_read(home, rel, 256 * 1024)
+
+    assert swapped["done"], "the leaf fstat never fired — test would be vacuous"
+    assert status == "ok"
+    assert data == b"ORIGINAL-FACET"  # read from the fd, NOT the swapped-in symlink
+    assert data != b"SECRET-LEAK"

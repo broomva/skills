@@ -17,11 +17,13 @@ selection happens deterministically before every substantive prompt.
 from __future__ import annotations
 
 import argparse
+import errno
 import fnmatch
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -321,8 +323,28 @@ CONFIG_DEFAULTS: dict[str, object] = {
     "sanitization_strategy": "keywords",  # one of: "keywords" | "first_chars"
     "sanitization_top_n_keywords": 5,
     "sanitization_first_chars": 80,
+    # v0.6.0 — persona federation (F3′, BRO-1901). Absent/None ⇒ OFF (the default);
+    # a workspace can never set it (it lives only in trusted user config). Shape:
+    # {"root": "~/.config/broomva/persona", "workspaces": {"<abs ws path>": ["slug", …]}}
+    "persona_federation": None,
 }
 SANITIZATION_STRATEGIES = {"keywords", "first_chars"}
+
+# ── Persona federation (F3′ — BRO-1901) ──────────────────────────────────────
+# A confined SECOND trusted root lets persona facets live in a per-user store
+# (~/.config/broomva/persona/) and ride every turn from ANY workspace WITHOUT
+# weakening Phase-2's workspace confinement. Security contract (design §3
+# S0-result): fd-based no-follow read (TOCTOU, P0) · workspace→persona binding
+# (P0) · ancestry/ownership (P1) · hardlink reject (P1). OFF by default — active
+# only when trusted user config declares a root AND allowlists the *canonical*
+# workspace, so a hostile cloned repo surfaces nothing.
+PERSONA_MAX_BYTES = 256 * 1024
+# The persona root is fixed under this trusted user-config base; a workspace
+# `_meta` may reference facets by slug but can never relocate the root.
+PERSONA_TRUSTED_BASE_PARTS = (".config", "broomva")
+# \Z (not $) so a trailing newline can never sneak past the slug/entity match.
+_PERSONA_ENTITY_RE = re.compile(r"^research/entities/persona/([a-z0-9][a-z0-9-]*)\.md\Z")
+_PERSONA_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
 
 def _find_workspace_root(start: Path | None = None) -> Path:
@@ -686,6 +708,20 @@ def _confined_entity_path(rel_path: str, workspace: Path | None) -> Path | None:
         return None
 
 
+def _clean_claim_line(claim: str) -> str:
+    """Collapse a ``core_claim`` to one safe inline line.
+
+    Whitespace-collapsed (kills newlines → no standalone-directive-line injection),
+    non-printable control chars removed (kills terminal escape / BEL injection), then
+    length-capped. Shared by the workspace reader and the persona-store reader so a
+    poisoned claim from either source can't shape the every-turn block beyond a
+    benign one-liner.
+    """
+    collapsed = " ".join(claim.split())
+    cleaned = "".join(c for c in collapsed if c.isprintable())
+    return cleaned[:240]
+
+
 def _entity_core_claim(path: Path | None) -> str | None:
     """Read a confined entity file's ``core_claim``, collapsed to one capped line.
 
@@ -704,10 +740,202 @@ def _entity_core_claim(path: Path | None) -> str | None:
             return None  # frontmatter that isn't a mapping has no core_claim
         claim = fm.get("core_claim")
         if isinstance(claim, str) and claim.strip():
-            return " ".join(claim.split())[:240]  # single line, length-capped
+            return _clean_claim_line(claim)  # single safe line, length-capped
     except Exception:
         return None  # never fail the user's turn
     return None
+
+
+def _persona_slug_from_entity(rel_path: str) -> str | None:
+    """Return the facet slug iff ``rel_path`` is a persona entity path, else None.
+
+    Only ``research/entities/persona/<slug>.md`` with a strict ``[a-z0-9-]`` slug
+    is persona-scoped. Anything else — traversal (``../``), a newline/bracket
+    injection, an absolute path, or a non-persona entity type — returns None and
+    is handled by the workspace-confined path instead, so a malicious ``_meta``
+    entry can never be coerced into a store lookup.
+    """
+    clean = rel_path.split("#", 1)[0].strip()
+    if clean.startswith("./"):
+        clean = clean[2:]
+    m = _PERSONA_ENTITY_RE.match(clean)
+    return m.group(1) if m else None
+
+
+def _fs_node_safe(st: os.stat_result, uid: int) -> bool:
+    """True iff a filesystem node is owned by us and not group/other-writable."""
+    return st.st_uid == uid and not (st.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+
+
+def _fd_walk_read(
+    anchor: Path, rel_parts: list[str], max_bytes: int
+) -> tuple[str, bytes | None]:
+    """Read ``anchor/rel_parts`` WITHOUT following any symlink in any component.
+
+    A pure openat/dir-fd walk (portable across macOS + Linux): each directory
+    component is opened ``O_NOFOLLOW`` relative to the previous dir fd and its
+    owner+mode validated; the leaf is opened ``O_NOFOLLOW | O_NONBLOCK`` (a symlink
+    leaf raises ELOOP → refused; a FIFO/device opens immediately instead of blocking
+    the hook forever), ``fstat``'d for regular-file + ``st_nlink == 1`` (hardlink
+    bypass) + ownership + size, then read from THE SAME fd — never reopened by path.
+    This is the P0 TOCTOU fix (fstat + read share one fd) and yields P1 ancestry
+    (no symlink/foreign-owner/writable dir in the chain) for free.
+
+    Returns ``(status, data)``: ``("ok", bytes)`` · ``("missing", None)`` (a path
+    component does not exist) · ``("refused", None)`` (present but blocked by a
+    security guard, or any other error). Never raises.
+
+    Trust anchor: ``anchor`` (``Path.home()``) is the root of trust — its OWN
+    ancestors (e.g. ``/Users``) are resolved by the kernel and assumed system-owned;
+    a workspace cannot set ``$HOME``, so this is outside the persona threat model.
+    Everything AT and BELOW the anchor is validated no-follow, per-component.
+    """
+    if not rel_parts:
+        return ("refused", None)
+    uid = os.getuid()
+    o_dir = getattr(os, "O_DIRECTORY", 0)
+    o_nonblock = getattr(os, "O_NONBLOCK", 0)
+    fds: list[int] = []
+    try:
+        cur = os.open(str(anchor), os.O_RDONLY | os.O_NOFOLLOW | o_dir)
+        fds.append(cur)
+        st = os.fstat(cur)
+        if not stat.S_ISDIR(st.st_mode) or not _fs_node_safe(st, uid):
+            return ("refused", None)
+        *dir_parts, leaf = rel_parts
+        for part in dir_parts:
+            if part in ("", ".", "..") or "/" in part:
+                return ("refused", None)
+            nxt = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | o_dir, dir_fd=cur)
+            fds.append(nxt)
+            cur = nxt
+            st = os.fstat(cur)
+            if not stat.S_ISDIR(st.st_mode) or not _fs_node_safe(st, uid):
+                return ("refused", None)
+        if leaf in ("", ".", "..") or "/" in leaf:
+            return ("refused", None)
+        # O_NONBLOCK so a FIFO/device leaf can never wedge the every-turn hook; the
+        # S_ISREG check below then refuses it. O_NOFOLLOW refuses a symlink leaf.
+        leaf_fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | o_nonblock, dir_fd=cur)
+        fds.append(leaf_fd)
+        lst = os.fstat(leaf_fd)
+        if not stat.S_ISREG(lst.st_mode):  # FIFO / device / dir / socket / symlink
+            return ("refused", None)
+        if lst.st_nlink != 1:  # hardlink bypass (P1)
+            return ("refused", None)
+        if not _fs_node_safe(lst, uid):
+            return ("refused", None)
+        if lst.st_size > max_bytes:
+            return ("refused", None)
+        # Drain from THE SAME fd (P0 TOCTOU — never reopen by path); loop to tolerate
+        # short reads. Cap at max_bytes + 1 so an oversize/growing file is refused.
+        chunks: list[bytes] = []
+        remaining = max_bytes + 1
+        while remaining > 0:
+            chunk = os.read(leaf_fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > max_bytes:
+            return ("refused", None)
+        return ("ok", data)
+    except OSError as exc:
+        # A genuinely absent component → "missing"; any other fs error (ELOOP from a
+        # symlink, EACCES, ELOOP, …) is a security refusal → "refused".
+        if getattr(exc, "errno", None) == errno.ENOENT:
+            return ("missing", None)
+        return ("refused", None)
+    except ValueError:
+        return ("refused", None)
+    finally:
+        for fd in reversed(fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _resolve_persona_federation(
+    workspace: Path | None, config: dict
+) -> tuple[Path, set[str]] | None:
+    """Return ``(persona_root, allowed_slugs)`` if federation is active here, else None.
+
+    Config-only (no store filesystem access — per-facet fs security is enforced at
+    read time by ``_fd_walk_read``). Active requires ALL of: a ``persona_federation``
+    mapping in TRUSTED user config; an absolute ``root`` UNDER ``~/.config/broomva``
+    (a workspace can never relocate it); and the *canonical* workspace present in
+    the ``workspaces`` allowlist with a non-empty, slug-valid allowed set (the P0
+    workspace→persona binding — ``_meta`` paths are lookup keys, not free paths).
+    """
+    fed = config.get("persona_federation")
+    if not isinstance(fed, dict):
+        return None
+    root_raw = fed.get("root")
+    if not isinstance(root_raw, str) or not root_raw.strip():
+        return None
+    root = Path(os.path.expanduser(root_raw.strip()))
+    if not root.is_absolute():
+        return None  # relative root rejected — trusted config must fix an absolute path
+    trusted_base = Path.home().joinpath(*PERSONA_TRUSTED_BASE_PARTS)
+    try:
+        if not root.is_relative_to(trusted_base):
+            return None  # root must live under the trusted user-config base
+    except ValueError:
+        return None
+    ws_map = fed.get("workspaces")
+    if not isinstance(ws_map, dict) or workspace is None:
+        return None
+    try:
+        ws_key = str(workspace.resolve())
+    except (OSError, RuntimeError):
+        return None
+    allowed_raw = ws_map.get(ws_key)
+    if not isinstance(allowed_raw, list):
+        return None  # workspace not allowlisted → a hostile clone surfaces nothing
+    allowed = {s for s in allowed_raw if isinstance(s, str) and _PERSONA_SLUG_RE.match(s)}
+    return (root, allowed) if allowed else None
+
+
+def _persona_facet_from_store(persona_root: Path, slug: str) -> tuple[str, str | None]:
+    """Read a facet from the per-user store; return ``(status, claim)``.
+
+    ``status`` is one of:
+      * ``"ok"``      — a valid persona facet was read (``claim`` may be None for a
+                        claimless-but-valid facet);
+      * ``"missing"`` — no such facet in the store (a component does not exist);
+      * ``"blocked"`` — present but refused: fs-security block (symlink/hardlink/
+                        foreign-owner/writable/non-regular/oversize) OR wrong-type /
+                        undecodable / malformed frontmatter.
+    The caller warns loudly on both ``missing`` and ``blocked`` — never silent-drops.
+    All filesystem hardening lives in ``_fd_walk_read``; this decodes + type-gates.
+    """
+    if not _PERSONA_SLUG_RE.match(slug):
+        return ("blocked", None)
+    try:
+        rel_parts = list(persona_root.relative_to(Path.home()).parts) + [f"{slug}.md"]
+    except ValueError:
+        return ("blocked", None)
+    status, data = _fd_walk_read(Path.home(), rel_parts, PERSONA_MAX_BYTES)
+    if status == "missing":
+        return ("missing", None)
+    if status != "ok" or data is None:
+        return ("blocked", None)  # refused by fs security
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return ("blocked", None)
+    try:
+        fm = parse_frontmatter(text)
+    except (ValueError, yaml.YAMLError):
+        return ("blocked", None)
+    if not isinstance(fm, dict) or fm.get("type") != "persona":
+        return ("blocked", None)  # persona-type-only — never surface a non-persona file
+    claim = fm.get("core_claim")
+    if isinstance(claim, str) and claim.strip():
+        return ("ok", _clean_claim_line(claim))
+    return ("ok", None)
 
 
 def _safe_inline(text: str) -> str:
@@ -878,13 +1106,20 @@ def _clean_claim_or_none(claim: str) -> str | None:
     return c
 
 
-def _format_intake_context(selection: dict, workspace: Path | None = None) -> str:
+def _format_intake_context(
+    selection: dict, workspace: Path | None = None, config: dict | None = None
+) -> str:
     """Render the selection as a markdown block that becomes agent context.
 
     ``workspace`` (when provided) lets the entities loader resolve each
     ``context_loaders.entities`` path to its ``core_claim`` one-liner, so the
     constraints ride every turn. When ``None``, entities render as bare paths.
+    ``config`` (trusted user config; loaded on demand when ``None``) enables
+    persona federation (F3′): persona-scoped entities resolve from the per-user
+    store instead of the workspace, when active for this workspace.
     """
+    cfg = config if config is not None else _load_config()
+    persona_fed = _resolve_persona_federation(workspace, cfg)
     lenses_selected = selection["lenses_selected"]
     extension_chain = selection["lenses_extended"]
     mode = selection["mode"]
@@ -951,10 +1186,46 @@ def _format_intake_context(selection: dict, workspace: Path | None = None) -> st
             lines.append(f"  - {f}")
     entity_lines: list[str] = []
     for ent in context_entities:
+        display = _safe_inline(ent)  # sanitize provenance for the every-turn block
+        slug = _persona_slug_from_entity(ent)
+        if persona_fed is not None and slug is not None:
+            # Federation active + persona-scoped entity → resolve from the per-user
+            # store via the confined 2nd root (F3′). Never falls back to the
+            # workspace for a persona facet (the binding is authoritative).
+            root, allowed = persona_fed
+            safe_slug = _safe_inline(slug)
+            if slug not in allowed:
+                # P0 binding: this workspace is not entitled to this facet.
+                entity_lines.append(
+                    f"  - ⚠ persona facet '{safe_slug}' is not permitted for this "
+                    f"workspace  ·  [{display} · store]"
+                )
+                continue
+            status, claim = _persona_facet_from_store(root, slug)
+            if status == "missing":
+                # Noisy-missing (design §4.4): a listed facet absent from the store
+                # WARNS — it is never silently dropped.
+                entity_lines.append(
+                    f"  - ⚠ persona facet '{safe_slug}' listed but not found in the "
+                    f"per-user store  ·  [{display} · store]"
+                )
+            elif status == "blocked":
+                # Present but refused by a security guard (or malformed) — warn,
+                # never render.
+                entity_lines.append(
+                    f"  - ⚠ persona facet '{safe_slug}' could not be safely read from "
+                    f"the store  ·  [{display} · store]"
+                )
+            else:
+                entity_lines.append(
+                    f"  - {claim}  ·  [{display} · store]" if claim
+                    else f"  - {display} · store"
+                )
+            continue
+        # Workspace-confined path (unchanged Phase-2 behavior).
         path = _confined_entity_path(ent, workspace)
         if workspace is not None and path is None:
             continue  # path escapes the workspace — never surface it
-        display = _safe_inline(ent)  # sanitize provenance for the every-turn block
         claim = _entity_core_claim(path)
         entity_lines.append(f"  - {claim}  ·  [{display}]" if claim else f"  - {display}")
     if entity_lines:
@@ -1076,13 +1347,14 @@ def cmd_intake(args: argparse.Namespace) -> int:
     if not roles_dir.is_dir():
         return 0  # no lens registry → nothing to do, exit silently
 
+    config = _load_config()  # trusted user config (observability + persona federation)
     signals = _git_signals(workspace)
     selection = _select_lenses(roles_dir, signals, prompt)
     selection["prompt"] = prompt  # v0.5.0 — enables task-entity catalog scan
     # v0.4.1: attach authoring nudge for _meta-only domain-rich prompts
     selection["authoring_nudge"] = _build_authoring_nudge(prompt, selection)
-    _emit_event(session_id, prompt, selection)
-    print(_format_intake_context(selection, workspace=workspace))
+    _emit_event(session_id, prompt, selection, config=config)
+    print(_format_intake_context(selection, workspace=workspace, config=config))
     return 0
 
 
