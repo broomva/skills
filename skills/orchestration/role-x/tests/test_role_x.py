@@ -1370,3 +1370,298 @@ def test_intake_non_utf8_catalog_does_not_crash(tmp_path):
         "--workspace", str(workspace), "--session", "task-6",
     )
     assert rc == 0, f"stderr={err}"  # no traceback; the hook never blocks the turn
+
+
+# ============================================================================
+# Persona federation (F3′ — BRO-1901): confined 2nd trusted root + threat matrix
+# ============================================================================
+#
+# Each test maps to a guard in the S1 security contract (design §3 S0-result):
+#   TOCTOU/no-follow (P0) · workspace→persona binding (P0) · ancestry+ownership
+#   (P1) · hardlink (P1) · trusted-base+allowlist trust boundary. The scratch
+#   workspace's research/entities/persona is left EMPTY so any surfaced claim
+#   MUST have come from the per-user store — proving the federated read path.
+
+_STORE_FACET_RAILWAY = """---
+id: persona/test-railway
+type: persona
+core_claim: "Default deploy target is Railway; suggest AWS only on explicit ask."
+---
+# store facet
+Body.
+"""
+
+_FED_PROMPT = "how should I deploy this new production service to the cloud today"
+
+
+def _fed_setup(
+    tmp_path,
+    *,
+    meta_entities=("research/entities/persona/test-railway.md",),
+    store_facets=(("test-railway.md", _STORE_FACET_RAILWAY),),
+    allowed=("test-railway",),
+    allowlist_workspace=True,
+    federation=True,
+    root_config="~/.config/broomva/persona",
+    create_workspace_facet=False,
+):
+    """Build HOME + trusted config + per-user store + a scratch workspace.
+
+    Returns (home, workspace, store, env). Perms are set explicitly so tests are
+    deterministic regardless of the runner's umask.
+    """
+    home = tmp_path / "home"
+    role_dir = home / ".config" / "broomva" / "role"
+    role_dir.mkdir(parents=True)
+    store = home / ".config" / "broomva" / "persona"
+    store.mkdir(parents=True)
+    for name, body in store_facets:
+        f = store / name
+        f.write_text(body, encoding="utf-8")
+        os.chmod(f, 0o644)
+    # Deterministic safe perms on the whole trusted chain (no group/other write).
+    for d in (home, home / ".config", home / ".config" / "broomva", role_dir, store):
+        os.chmod(d, 0o755)
+
+    workspace = home / "ws"
+    (workspace / "roles").mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# AGENTS\n", encoding="utf-8")
+    meta = _FIXTURE_META_WITH_ENTITY.replace(
+        '["research/entities/persona/test-railway.md"]',
+        "[" + ", ".join(f'"{e}"' for e in meta_entities) + "]",
+    )
+    (workspace / "roles" / "_meta.md").write_text(meta, encoding="utf-8")
+    if create_workspace_facet:
+        wsp = workspace / "research" / "entities" / "persona"
+        wsp.mkdir(parents=True)
+        (wsp / "test-railway.md").write_text(_ENTITY_RAILWAY, encoding="utf-8")
+
+    ws_key = str(workspace.resolve())
+    if federation:
+        workspaces = {ws_key: list(allowed)} if allowlist_workspace else {}
+        config = {"persona_federation": {"root": root_config, "workspaces": workspaces}}
+    else:
+        config = {}
+    (role_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    return home, workspace, store, {"HOME": str(home)}
+
+
+def _run_fed(home, workspace, env, session="fed"):
+    return run_cli(
+        "intake", "--prompt", _FED_PROMPT,
+        "--workspace", str(workspace), "--session", session, env=env,
+    )
+
+
+# --- positives -------------------------------------------------------------
+
+def test_fed_surfaces_facet_from_store(tmp_path):
+    """Federation active: the claim resolves from the store, workspace being empty."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    rc, out, err = _run_fed(home, ws, env, "fed-ok")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" in out  # came from the per-user store
+    assert "· store" in out  # provenance is honest about the source
+    # prove it wasn't the workspace: the workspace has no persona dir at all
+    assert not (ws / "research" / "entities" / "persona").exists()
+
+
+def test_fed_off_by_default_preserves_phase2(tmp_path):
+    """No persona_federation config ⇒ pure Phase-2: claim from the WORKSPACE, no store tag."""
+    home, ws, store, env = _fed_setup(tmp_path, federation=False, create_workspace_facet=True)
+    rc, out, err = _run_fed(home, ws, env, "fed-off")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" in out  # from the workspace file
+    assert "· store" not in out  # federation never engaged
+
+
+def test_fed_claimless_facet_renders_bare_path(tmp_path):
+    """A valid persona facet with no core_claim renders a bare `· store` line, no warn."""
+    facet = "---\nid: persona/test-railway\ntype: persona\n---\n# no claim\n"
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=(("test-railway.md", facet),))
+    rc, out, err = _run_fed(home, ws, env, "fed-bare")
+    assert rc == 0, f"stderr={err}"
+    assert "· store" in out
+    assert "⚠" not in out  # it read fine — just no claim to show
+
+
+# --- noisy-missing (design §4.4) -------------------------------------------
+
+def test_fed_missing_facet_warns_loudly(tmp_path):
+    """A listed facet absent from the store WARNS — it is never silently dropped."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())  # empty store
+    rc, out, err = _run_fed(home, ws, env, "fed-missing")
+    assert rc == 0, f"stderr={err}"
+    assert "⚠" in out
+    assert "test-railway" in out and "not found in the per-user store" in out
+    assert "Default deploy target is Railway" not in out
+
+
+# --- P0: workspace→persona binding ----------------------------------------
+
+def test_fed_binding_blocks_unpermitted_facet(tmp_path):
+    """An allowlisted workspace cannot request a facet outside its allowed set."""
+    home, ws, store, env = _fed_setup(tmp_path, allowed=("some-other-facet",))
+    rc, out, err = _run_fed(home, ws, env, "fed-bind")
+    assert rc == 0, f"stderr={err}"
+    assert "not permitted for this workspace" in out
+    assert "Default deploy target is Railway" not in out  # binding held
+
+
+def test_fed_unallowlisted_workspace_surfaces_nothing(tmp_path):
+    """A non-allowlisted workspace (hostile clone) loads NOTHING from the store."""
+    home, ws, store, env = _fed_setup(tmp_path, allowlist_workspace=False)
+    rc, out, err = _run_fed(home, ws, env, "fed-clone")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "· store" not in out  # federation never engaged for this workspace
+
+
+# --- P0: TOCTOU / no-follow (symlink leaf + root) --------------------------
+
+def test_fed_symlink_leaf_is_not_followed(tmp_path):
+    """A store facet that is a symlink to an outside secret is refused (O_NOFOLLOW)."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    secret = home / "secret.md"
+    secret.write_text(
+        '---\ntype: persona\ncore_claim: "LEAKED VIA SYMLINK"\n---\n', encoding="utf-8"
+    )
+    os.symlink(secret, store / "test-railway.md")
+    rc, out, err = _run_fed(home, ws, env, "fed-symleaf")
+    assert rc == 0, f"stderr={err}"
+    assert "LEAKED VIA SYMLINK" not in out
+    assert "⚠" in out  # refused, and loudly
+
+
+def test_fed_root_symlink_replacement_is_refused(tmp_path):
+    """If the store root itself is swapped for a symlink, the walk refuses it."""
+    home = tmp_path / "home"
+    (home / ".config" / "broomva" / "role").mkdir(parents=True)
+    for d in (home, home / ".config", home / ".config" / "broomva"):
+        os.chmod(d, 0o755)
+    evil = home / "evil-store"
+    evil.mkdir()
+    (evil / "test-railway.md").write_text(
+        '---\ntype: persona\ncore_claim: "EVIL ROOT SYMLINK"\n---\n', encoding="utf-8"
+    )
+    os.symlink(evil, home / ".config" / "broomva" / "persona")  # root is now a symlink
+    workspace = home / "ws"
+    (workspace / "roles").mkdir(parents=True)
+    (workspace / "AGENTS.md").write_text("# AGENTS\n", encoding="utf-8")
+    (workspace / "roles" / "_meta.md").write_text(_FIXTURE_META_WITH_ENTITY, encoding="utf-8")
+    config = {"persona_federation": {
+        "root": "~/.config/broomva/persona",
+        "workspaces": {str(workspace.resolve()): ["test-railway"]},
+    }}
+    (home / ".config" / "broomva" / "role" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    rc, out, err = _run_fed(home, workspace, {"HOME": str(home)}, "fed-rootsym")
+    assert rc == 0, f"stderr={err}"
+    assert "EVIL ROOT SYMLINK" not in out
+    assert "⚠" in out
+
+
+# --- P1: hardlink bypass ---------------------------------------------------
+
+def test_fed_hardlink_facet_is_rejected(tmp_path):
+    """A facet hardlinked to an inode reachable outside the store (st_nlink>1) is rejected."""
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=())
+    outside = home / "outside.md"
+    outside.write_text(
+        '---\ntype: persona\ncore_claim: "HARDLINK LEAK"\n---\n', encoding="utf-8"
+    )
+    os.link(outside, store / "test-railway.md")  # nlink becomes 2
+    rc, out, err = _run_fed(home, ws, env, "fed-hardlink")
+    assert rc == 0, f"stderr={err}"
+    assert "HARDLINK LEAK" not in out
+    assert "⚠" in out
+
+
+# --- P1 / trust boundary: ownership + mode ---------------------------------
+
+def test_fed_world_writable_root_is_rejected(tmp_path):
+    """A world-writable store root is refused (reject world/group-writable)."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    os.chmod(store, 0o777)
+    rc, out, err = _run_fed(home, ws, env, "fed-wwroot")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "⚠" in out
+
+
+def test_fed_group_writable_ancestor_is_rejected(tmp_path):
+    """A group-writable ancestor dir in the trusted chain fails the ancestry check."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    os.chmod(home / ".config" / "broomva", 0o775)  # group-writable ancestor
+    rc, out, err = _run_fed(home, ws, env, "fed-gwanc")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "⚠" in out
+
+
+# --- persona-type-only + size + trusted-base + traversal -------------------
+
+def test_fed_wrong_type_is_refused(tmp_path):
+    """A store file whose type != persona is refused (persona-type-only)."""
+    facet = '---\ntype: concept\ncore_claim: "NOT A PERSONA FACET"\n---\n'
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=(("test-railway.md", facet),))
+    rc, out, err = _run_fed(home, ws, env, "fed-wrongtype")
+    assert rc == 0, f"stderr={err}"
+    assert "NOT A PERSONA FACET" not in out
+    assert "⚠" in out
+
+
+def test_fed_oversized_facet_is_refused(tmp_path):
+    """A store facet larger than the byte cap is refused before parsing."""
+    big = _STORE_FACET_RAILWAY + ("x" * (256 * 1024 + 10))
+    home, ws, store, env = _fed_setup(tmp_path, store_facets=(("test-railway.md", big),))
+    rc, out, err = _run_fed(home, ws, env, "fed-oversize")
+    assert rc == 0, f"stderr={err}"
+    assert "Default deploy target is Railway" not in out
+    assert "⚠" in out
+
+
+def test_fed_relative_root_disables_federation(tmp_path):
+    """A non-absolute configured root disables federation (falls back to workspace)."""
+    home, ws, store, env = _fed_setup(tmp_path, root_config="relative/persona")
+    rc, out, err = _run_fed(home, ws, env, "fed-relroot")
+    assert rc == 0, f"stderr={err}"
+    assert "· store" not in out  # federation never engaged
+    assert "Default deploy target is Railway" not in out  # not read from the real store either
+
+
+def test_fed_root_outside_trusted_base_disables_federation(tmp_path):
+    """A root outside ~/.config/broomva is refused — a workspace can never relocate it."""
+    home, ws, store, env = _fed_setup(tmp_path)
+    outside_store = home / "outside-store"
+    outside_store.mkdir()
+    os.chmod(outside_store, 0o755)
+    (outside_store / "test-railway.md").write_text(_STORE_FACET_RAILWAY, encoding="utf-8")
+    # rewrite config to point root outside the trusted base
+    config = {"persona_federation": {
+        "root": str(outside_store),
+        "workspaces": {str(ws.resolve()): ["test-railway"]},
+    }}
+    (home / ".config" / "broomva" / "role" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    rc, out, err = _run_fed(home, ws, env, "fed-outside")
+    assert rc == 0, f"stderr={err}"
+    assert "· store" not in out  # federation disabled by trusted-base rule
+
+
+def test_fed_traversal_entity_is_not_persona_scoped(tmp_path):
+    """A `..`-bearing persona-looking path is NOT store-scoped and cannot escape."""
+    # ../ ×4 from persona/ climbs persona→entities→research→ws→home, so this
+    # resolves to <home>/ws-secret.md — OUTSIDE the workspace (a real escape attempt).
+    home, ws, store, env = _fed_setup(
+        tmp_path, meta_entities=("research/entities/persona/../../../../ws-secret.md",),
+    )
+    (home / "ws-secret.md").write_text(
+        '---\ncore_claim: "TRAVERSAL LEAK"\n---\n', encoding="utf-8"
+    )
+    rc, out, err = _run_fed(home, ws, env, "fed-traversal")
+    assert rc == 0, f"stderr={err}"
+    assert "TRAVERSAL LEAK" not in out  # workspace confinement still holds
+    assert "· store" not in out  # never treated as a store lookup

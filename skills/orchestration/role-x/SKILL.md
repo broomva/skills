@@ -103,6 +103,24 @@ The intake reflex routes prompts in real-time. The meta-progression discipline e
 
 > **No `act as X` persona rewrites.** Lenses load substantive context (files, conventions, checklists, optional suggestions). They do *not* insert persona declarations into the model's working context. The 2026 research (PRISM USC, Zheng et al. arXiv 2311.10054, Anthropic best-practices) is clear: persona declarations don't add expertise and frequently hurt accuracy for code/factual tasks (MMLU drops 71.6% → 66.3% with long expert personas).
 
+## Persona federation (F3′ — the confined 2nd root)
+
+`context_loaders.entities` normally resolve **workspace-relative** (Phase 2). Federation lets persona facets (`research/entities/persona/<slug>.md`, `type: persona`) live in a **per-user store** — `~/.config/broomva/persona/` — so the same identity rides every turn from *any* workspace, without weakening workspace confinement. It is **OFF by default** and enabled only via trusted user config:
+
+```jsonc
+// ~/.config/broomva/role/config.json  (trusted user-level — a workspace can never set this)
+{
+  "persona_federation": {
+    "root": "~/.config/broomva/persona",         // fixed under ~/.config/broomva; canonicalized
+    "workspaces": {                                // the workspace→persona binding (an allowlist)
+      "/abs/path/to/workspace": ["railway-deploy-default", "auth-better-auth"]
+    }
+  }
+}
+```
+
+Security contract (design §3 S0-result — enforced in `role-x.py`): **fd-based no-follow read** (single `O_NOFOLLOW` open relative to a root dir-fd; `fstat` + read from the *same* fd — TOCTOU-safe, never reopened by path) · **workspace→persona binding** (`_meta` slugs are lookup keys constrained to the workspace's allowed set, not free paths) · **ancestry + ownership** (no symlink/foreign-owner/group-or-world-writable dir in the chain) · **hardlink reject** (`st_nlink == 1`) · **persona-type-only**. A workspace that isn't allowlisted surfaces **nothing** (a hostile clone can't load your identity); a listed facet missing from the store **warns loudly** — it is never silently dropped. Reading persona from the store is marked `· store` in the intake block.
+
 ## Files
 
 - `roles/_meta.md` — always-loaded base lens (the workspace's implicit "bstack-aware autonomous senior engineer" contract made addressable). Lives in the consuming workspace, not in this skill repo.
@@ -114,6 +132,8 @@ The intake reflex routes prompts in real-time. The meta-progression discipline e
 - `~/.config/broomva/role/events.jsonl` — telemetry log (M2).
 - `~/.config/broomva/role/status.json` — per-lens stats cache (M2).
 - `~/.config/broomva/role/consolidation-runs/` — dream-cycle snapshots (M4).
+- `~/.config/broomva/role/config.json` — trusted user config: observability opt-in (v0.4.0) + `persona_federation` (F3′, OFF by default; see above).
+- `~/.config/broomva/persona/` — the per-user persona store (F3′ confined 2nd root; its own git repo for cross-machine sync). Populated by the S2 migration.
 
 ## Related
 
