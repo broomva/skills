@@ -69,8 +69,16 @@ When the artifact doesn't fit a row, default to the **GitHub-repo shape**
    work>)."* Proceed — no question.
 2. **Contextualize** — snapshot active work; search existing notes/knowledge for
    the topic. Name what's already known.
-3. **Deep research** — right engine per artifact type; **verify every URL**;
-   scale depth to stakes (deep only per the costly-step carve-out).
+3. **Deep research — traverse to the primitives** — right engine per artifact
+   type, then **read the primary source verbatim** (a WebFetch/search summary of
+   a landing page is *discovery*, not the source): **repo** → walk the full tree
+   (`gh api …/git/trees/<ref>?recursive=1` or clone) + read SPEC/README/key
+   sources; **docs** → follow the doc tree; **paper** → mechanism-bearing
+   sections. **Verify every URL.** **Provenance honesty:** a `[HIGH]` tag names
+   the artifact actually read; a summary is `[MED]`, labeled — never
+   "spec/repo-verified" against a source not opened. **Exhaustion check:** what
+   canonical material is still unopened? Scale depth to stakes; never below the
+   source's own primitives.
 4. **Analyze** — mechanism / claim / result; novel? load-bearing? confirms or
    contradicts existing knowledge? tag HIGH / MED / LOW.
 5. **Connect** — ≥1 explicit link to existing knowledge; mutation gated by the
@@ -96,6 +104,12 @@ When the artifact doesn't fit a row, default to the **GitHub-repo shape**
 8. **Barreling into a costly/irreversible action on a guess** — running a deep
    fan-out or mutating a note on an inference instead of surfacing it as a next
    step (the carve-out violation).
+9. **Landing-page-summary-as-source** — accepting a WebFetch/search summary of an
+   artifact's front page as if the primary source were read. The canonical text
+   (spec, README, key source files, doc tree, paper sections) must be opened
+   verbatim before any `[HIGH]` claim.
+10. **False provenance** — tagging a claim `[HIGH — X verified]` against a source
+    not actually opened. The confidence tag must name what was read.
 
 ## Self-test
 
@@ -107,6 +121,11 @@ A checkit response is well-formed iff:
 - [ ] Any costly/irreversible step was *surfaced as a ranked next step*, not run
       on a guess.
 - [ ] Existing knowledge was searched first (what's already known is named).
+- [ ] The primary source was traversed to its primitives and read verbatim (repo
+      tree walked + spec/README/key files read; doc tree followed; paper sections
+      read) — not merely a landing-page/search summary.
+- [ ] Every `[HIGH]` tag traces to a verbatim primary-source read; summaries are
+      labeled `[MED]`/`[LOW]` as summaries.
 - [ ] Deep research ran and every external URL was verified.
 - [ ] ≥1 link to existing knowledge was made.
 - [ ] ≥1 finding was filed proactively — reported, not asked.

@@ -67,11 +67,23 @@ note-taking tools in sequence; it does **not** reimplement them.
    for the topic before going external**. Surface what's already known.
    *Knowledge-first prevents re-researching solved problems.*
 
-3. **Deep research** — pick the engine by artifact type (general web research /
-   academic-paper search / single-page fetch). **Verify every external URL
-   before citing it** — hallucinated links are a catastrophic failure. Scale
-   depth to stakes (a single article is quick; a repo/paper that could change a
-   decision warrants extensive/deep, subject to the costly-step carve-out).
+3. **Deep research — traverse to the primitives.** Pick the engine by artifact
+   type (general web research / academic-paper search / single-page fetch), then
+   **read the primary source verbatim** — a WebFetch/search answer over a landing
+   page is *discovery* (it routes you to what to read), never the citation
+   source. Depth floor by type: **repo** → walk the full tree
+   (`gh api repos/<o>/<r>/git/trees/<ref>?recursive=1` or clone) and read the
+   canonical files (`SPEC.md` / `README` / key sources) verbatim; **docs site** →
+   follow the doc tree (many pages), not one; **paper** → read the
+   mechanism-bearing sections, not the abstract; **long file** → read it, not the
+   first screen. **Verify every external URL** — hallucinated links are a
+   catastrophic failure. **Provenance honesty:** a `[HIGH]` tag names the
+   artifact *actually read* verbatim; a landing-page/search summary is `[MED]` at
+   most, labeled as a summary — never tag a claim "spec/repo-verified" against a
+   source you did not open. **Exhaustion check before filing:** "what canonical
+   material have I not opened?" (linked spec, referenced files, sub-pages, cited
+   sources). Scale depth to stakes, but never below reading the source's own
+   primitives.
 
 4. **Analyze the sources** — extract the mechanism / claim / result. What's
    novel? load-bearing? confirms or contradicts what you already knew? Tag every
@@ -114,6 +126,8 @@ note-taking tools in sequence; it does **not** reimplement them.
 | "I'll research it but skip writing it down." | Research-without-integration leaves knowledge cold; next session re-solves it. Filing is not optional. |
 | "Should I create a note for this?" | Never ask — file proactively, report after. |
 | "I'll trust my training data on this repo/paper." | Verify with live research; training data is stale. Verify every URL. |
+| "A WebFetch/search summary of the page is enough." | A summary is *discovery*, not the source. Traverse to the primitives — read the spec / README / key files / doc tree / paper sections verbatim before any `[HIGH]` claim. |
+| "I confirmed the repo/page exists — that's verification." | Existence ≠ contents. `[HIGH]` requires reading the canonical text; a tag naming a source you didn't open is false provenance. |
 | "This artifact isn't obviously about our work." | For a focused builder/researcher it almost always is — find the link to active work before defaulting to a neutral read. |
 | "Let me just kick off the deep multi-agent run on this guess." | Costly/irreversible on an inference → surface it as a next step instead (the carve-out). |
 
@@ -129,10 +143,12 @@ note-taking tools in sequence; it does **not** reimplement them.
 A `/checkit` run is complete iff: an inferred-intent line appears **before** any
 research and **no bounce-back question** was asked for read/research steps; any
 costly/irreversible step was surfaced as a ranked next step (not run on a guess);
-existing knowledge was searched first; deep research ran with every URL verified;
-≥1 link to existing knowledge was made; ≥1 finding was filed proactively; and a
-ranked next-steps list ties the finding to active work. (Full checklist:
-[`references/checkit-lens.md`](references/checkit-lens.md).)
+existing knowledge was searched first; **the primary source was traversed to its
+primitives and read verbatim (not a landing-page/search summary), with every
+`[HIGH]` claim tracing to that verbatim read**; deep research ran with every URL
+verified; ≥1 link to existing knowledge was made; ≥1 finding was filed
+proactively; and a ranked next-steps list ties the finding to active work. (Full
+checklist: [`references/checkit-lens.md`](references/checkit-lens.md).)
 
 ## References
 
