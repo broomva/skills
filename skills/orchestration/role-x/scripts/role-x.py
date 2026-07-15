@@ -827,7 +827,17 @@ def _fd_walk_read(
             return ("refused", None)
         if lst.st_size > max_bytes:
             return ("refused", None)
-        data = os.read(leaf_fd, max_bytes + 1)  # read from the SAME fd (P0 TOCTOU)
+        # Drain from THE SAME fd (P0 TOCTOU — never reopen by path); loop to tolerate
+        # short reads. Cap at max_bytes + 1 so an oversize/growing file is refused.
+        chunks: list[bytes] = []
+        remaining = max_bytes + 1
+        while remaining > 0:
+            chunk = os.read(leaf_fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
         if len(data) > max_bytes:
             return ("refused", None)
         return ("ok", data)
