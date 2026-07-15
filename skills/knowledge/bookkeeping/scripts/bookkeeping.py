@@ -43,15 +43,146 @@ from render import render_markdown_to_html  # noqa: E402
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# BROOMVA_ROOT env var override unblocks non-standard host layouts and the
-# haystack benchmark harness (fixtures live under /tmp/kg-bench-N{scale}/).
-# Closes a BRO-1223 follow-up gap surfaced during the haystack benchmark
-# build: `bookkeeping index` previously wrote to ~/broomva/docs/ regardless
-# of the BROOMVA_ROOT env var, so isolated-fixture runs accidentally
-# overwrote the live workspace's catalog.
-BROOMVA_ROOT = Path(os.environ.get("BROOMVA_ROOT", Path.home() / "broomva"))
-ENTITIES_DIR = BROOMVA_ROOT / "research" / "entities"
-NOTES_DIR = BROOMVA_ROOT / "research" / "notes"
+# Knowledge-graph paths resolve repo-native + config-driven, defaulting to
+# today's behavior so the personal ~/broomva graph is byte-for-byte unchanged.
+# Precedence (highest first):
+#   1. Explicit config — a TOP-LEVEL `knowledge:` block in the nearest
+#      .control/policy.yaml (found by walking up from CWD). Keys: root,
+#      entities_dir, catalog_path — each root-relative unless absolute. A
+#      non-empty block anchors the root at the repo owning that policy file,
+#      letting a consumer repo (e.g. SRI → docs/research) opt in with no env
+#      vars. Distinct from the nested `plants.knowledge` control-plant block —
+#      only the top-level `knowledge:` key is read here.
+#   2. Env override — KG_ROOT / KG_ENTITIES_DIR / KG_CATALOG. Legacy
+#      BROOMVA_ROOT is still honored for root (haystack benchmark harness with
+#      fixtures under /tmp/kg-bench-N{scale}/, and CI runners with other paths).
+#   3. Default — ~/broomva + research/entities + docs/knowledge-index.md.
+# Backward-compat invariant: with no top-level `knowledge:` block AND no KG_*
+# env, the result is exactly the pre-config paths.
+
+
+def _find_policy_file(start):
+    """Nearest-ancestor .control/policy.yaml walking up from `start` (inclusive)."""
+    start = Path(start).resolve()
+    for d in (start, *start.parents):
+        cand = d / ".control" / "policy.yaml"
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _read_knowledge_block(policy):
+    """Top-level `knowledge:` dict from policy.yaml, or {} if absent/unreadable.
+
+    PyYAML is a soft dependency — absent it, returns {} (default resolution).
+    A missing file, malformed YAML, non-dict root, or non-dict `knowledge:`
+    all degrade to {}. Only the TOP-LEVEL `knowledge:` key is read — a nested
+    `plants.knowledge` control-plant block is deliberately ignored.
+    """
+    if policy is None:
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    try:
+        data = yaml.safe_load(policy.read_text()) or {}
+    except Exception:
+        return {}
+    kn = data.get("knowledge") if isinstance(data, dict) else None
+    return kn if isinstance(kn, dict) else {}
+
+
+def _abs_or_rel(value, base):
+    """Expand `value`; return as-is if absolute, else joined under `base`."""
+    p = Path(value).expanduser()
+    return p if p.is_absolute() else (base / p)
+
+
+def _resolve_knowledge_paths(start_dir=None, env=None):
+    """Resolve (root, entities_dir, catalog_path). See precedence comment above.
+
+    Pure/testable: `start_dir` defaults to CWD, `env` to os.environ.
+    """
+    env = os.environ if env is None else env
+    start_dir = Path.cwd() if start_dir is None else Path(start_dir)
+
+    # (3) default root, honoring legacy BROOMVA_ROOT
+    root = Path(env.get("BROOMVA_ROOT") or (Path.home() / "broomva")).expanduser()
+    entities_dir = None
+    catalog_path = None
+
+    # (2) KG_* env overrides (per-key)
+    if env.get("KG_ROOT"):
+        root = Path(env["KG_ROOT"]).expanduser()
+    if env.get("KG_ENTITIES_DIR"):
+        entities_dir = Path(env["KG_ENTITIES_DIR"]).expanduser()
+    if env.get("KG_CATALOG"):
+        catalog_path = Path(env["KG_CATALOG"]).expanduser()
+
+    # (1) top-level `knowledge:` block wins (per-key), anchoring root at the repo.
+    #     KG_NO_POLICY=1 skips this layer entirely — the escape hatch that pins
+    #     the graph via KG_* env with NO policy override (the bench harness sets
+    #     it so its child loader reads exactly the supplied catalog, even when
+    #     the child CWD walks up into some configured repo).
+    policy = None if env.get("KG_NO_POLICY") else _find_policy_file(start_dir)
+    kn = _read_knowledge_block(policy)
+    if kn and policy is not None:  # non-empty kn implies policy was found
+        repo_root = policy.parent.parent  # .control/policy.yaml → repo root
+        # Accept only string path values. A non-str value (YAML coerces
+        # `entities_dir: yes` → bool, a bare date → date, `123` → int, a list),
+        # or an unrecognized key, is ignored with a warning — so a mis-authored
+        # policy DEGRADES to the default rather than crashing every command at
+        # import time (resolution runs at module load). Honors the
+        # _read_knowledge_block "degrade to default" contract for bad values too.
+        for key in kn:
+            if key not in ("root", "entities_dir", "catalog_path"):
+                print(f"[kg] ignoring unrecognized knowledge.{key} in {policy}",
+                      file=sys.stderr)
+
+        def _cfg(key):
+            v = kn.get(key)
+            if v is None:
+                return None
+            if not isinstance(v, str):
+                print(f"[kg] knowledge.{key} must be a string path (got "
+                      f"{type(v).__name__}) in {policy}; ignoring", file=sys.stderr)
+                return None
+            return v or None  # empty string → treat as unset
+
+        kroot, kent, kcat = _cfg("root"), _cfg("entities_dir"), _cfg("catalog_path")
+        # Only relocate when a recognized path key is actually set — a block with
+        # only unknown/typo'd keys must NOT silently hijack root off the env.
+        if kroot or kent or kcat:
+            root = _abs_or_rel(kroot, repo_root) if kroot else repo_root
+            if kent:
+                entities_dir = _abs_or_rel(kent, root)
+            if kcat:
+                catalog_path = _abs_or_rel(kcat, root)
+
+    # derive any unset path from the resolved root (today's layout)
+    if entities_dir is None:
+        entities_dir = root / "research" / "entities"
+    if catalog_path is None:
+        catalog_path = root / "docs" / "knowledge-index.md"
+    return root, entities_dir, catalog_path
+
+
+BROOMVA_ROOT, ENTITIES_DIR, _RESOLVED_CATALOG_PATH = _resolve_knowledge_paths()
+# NOTES_DIR tracks the entity tree's parent (research/ by default, or
+# docs/research/ when a consumer relocates entities via the knowledge: block).
+NOTES_DIR = ENTITIES_DIR.parent / "notes"
+
+
+def _display_path(p):
+    """Render `p` relative to BROOMVA_ROOT when contained, else absolute — so a
+    configured path OUTSIDE the root (an absolute knowledge.entities_dir /
+    catalog_path, or KG_ENTITIES_DIR / KG_CATALOG) never crashes output
+    formatting on `.relative_to`."""
+    try:
+        return p.relative_to(BROOMVA_ROOT)
+    except ValueError:
+        return p
 CONFIG_DIR = Path.home() / ".config" / "bookkeeping"
 RUN_LOG = CONFIG_DIR / "run-log.jsonl"
 STATUS_CACHE = CONFIG_DIR / "status.json"
@@ -1303,7 +1434,7 @@ def promote_item(
         wrote = _update_entity_page_if_changed(entity_path, dry_run=dry_run)
         if verbose:
             verb = "updated existing" if wrote else "unchanged (skipped)"
-            print(f"  [promote] {verb}: {entity_path.relative_to(BROOMVA_ROOT)}")
+            print(f"  [promote] {verb}: {_display_path(entity_path)}")
         # Return the path only when a real write happened, so the caller's
         # entities_updated counter reflects substantive updates — not no-ops.
         # (dry_run is reported as a no-op write: nothing was written.)
@@ -1342,10 +1473,10 @@ def promote_item(
         entity_dir.mkdir(parents=True, exist_ok=True)
         entity_path.write_text(page)
         if verbose:
-            print(f"  [promote] created: {entity_path.relative_to(BROOMVA_ROOT)}")
+            print(f"  [promote] created: {_display_path(entity_path)}")
     else:
         if verbose:
-            print(f"  [promote] dry-run: would create {entity_path.relative_to(BROOMVA_ROOT)}")
+            print(f"  [promote] dry-run: would create {_display_path(entity_path)}")
 
     return entity_path if not dry_run else None
 
@@ -2496,11 +2627,11 @@ def run_query(slug: str, verbose: bool = False) -> None:
         else:
             print(f"[query] Multiple matches for {slug!r}:")
             for m in matches:
-                print(f"  {m} ({all_pages[m].relative_to(BROOMVA_ROOT)})")
+                print(f"  {m} ({_display_path(all_pages[m])})")
             path = all_pages[matches[0]]
             print(f"  → Showing {matches[0]}")
 
-    print(f"\n{path.relative_to(BROOMVA_ROOT)}")
+    print(f"\n{_display_path(path)}")
     print("─" * 60)
     print(path.read_text())
 
@@ -2721,7 +2852,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
 # All three read the SAME substrate the live system reads (research/entities/ +
 # docs/knowledge-index.md), so the numbers describe the real graph, not a mock.
 
-CATALOG_PATH = BROOMVA_ROOT / "docs" / "knowledge-index.md"
+CATALOG_PATH = _RESOLVED_CATALOG_PATH  # resolved at module load (repo-native)
 BENCH_LATEST = CONFIG_DIR / "bench-latest.json"
 
 # Stopwords for query tokenization — mirrors kg.py's tokenize_topic so the
@@ -3129,12 +3260,18 @@ def retrieve_via_kg(query: str, k: int, extra_flags=(), root: Optional[Path] = N
     excluded — they are context enrichment, not routing results. Returns [] on
     any failure (no matches / non-zero exit / bad JSON) — a miss, never a crash.
     """
-    root = root or (CATALOG_PATH.parent.parent)
+    root = root or BROOMVA_ROOT
     if not KG_PY.exists():
         raise RuntimeError(f"kg.py not found at {KG_PY}; set KG_PY to override")
     cmd = [sys.executable, str(KG_PY), "load", query, "--n", str(k),
            "--json", "--quiet", *extra_flags]
-    env = {**os.environ, "BROOMVA_ROOT": str(root)}
+    # Pin the child loader to the SAME catalog we resolved. KG_NO_POLICY stops
+    # the child from re-resolving through a policy walk-up (which outranks
+    # KG_CATALOG) — without it a subprocess CWD inside some configured repo could
+    # read a different catalog than the parent benched.
+    catalog = CATALOG_PATH if root == BROOMVA_ROOT else root / "docs" / "knowledge-index.md"
+    env = {**os.environ, "BROOMVA_ROOT": str(root),
+           "KG_CATALOG": str(catalog), "KG_NO_POLICY": "1"}
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
     except (subprocess.TimeoutExpired, OSError):
@@ -3203,9 +3340,11 @@ def run_bench_real(fixture_path: Path, k: int = 5, modes=None, root: Optional[Pa
     Returns the baseline mode at the top level (same shape run_bench() returns,
     so cmd_bench prints it the same way) plus a `modes` map for A/B comparison.
     """
-    root = root or (CATALOG_PATH.parent.parent)
+    root = root or BROOMVA_ROOT
     cases = load_bench_fixture(fixture_path)
-    catalog = root / "docs" / "knowledge-index.md"
+    # Respect a relocated catalog (knowledge.catalog_path) when benching the
+    # resolved root; fall back to root-relative for isolated fixture roots.
+    catalog = CATALOG_PATH if root == BROOMVA_ROOT else root / "docs" / "knowledge-index.md"
     if not catalog.exists():
         raise RuntimeError(
             f"catalog not found at {catalog} — run `bookkeeping index` first")
@@ -4649,7 +4788,7 @@ def cmd_index(args: argparse.Namespace) -> None:
     elif getattr(args, "no_compact", False):
         compact = False
     output = _catalog_render(state, compact=compact)
-    out_path = BROOMVA_ROOT / "docs" / "knowledge-index.md"
+    out_path = CATALOG_PATH  # repo-native write path (resolved at module load)
 
     if args.dry_run:
         print(output)
@@ -4667,7 +4806,7 @@ def cmd_index(args: argparse.Namespace) -> None:
     tmp.replace(out_path)
 
     print(
-        f"[index] {len(state['nodes'])} entities → {out_path.relative_to(BROOMVA_ROOT)} "
+        f"[index] {len(state['nodes'])} entities → {_display_path(out_path)} "
         f"(~{_catalog_estimate_tokens(output)} tokens)"
     )
 
