@@ -401,13 +401,35 @@ def test_resolve_malformed_config_degrades():
         check(True, "typo-only block does not hijack root")
 
 
+def test_resolve_kg_no_policy_and_display():
+    # KG_NO_POLICY bypasses the policy layer; _display_path never crashes on a
+    # configured path outside the root.
+    if _have_yaml():
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d).resolve() / "repo"
+            _write_policy(repo, "knowledge:\n  entities_dir: docs/research/entities\n")
+            root, _, _ = kg._resolve_knowledge_paths(
+                start_dir=repo, env={"KG_NO_POLICY": "1", "BROOMVA_ROOT": "/env/root"})
+            assert root == Path("/env/root"), "KG_NO_POLICY must bypass the policy block"
+            check(True, "KG_NO_POLICY bypasses config → env root wins")
+    orig = kg.BROOMVA_ROOT
+    try:
+        kg.BROOMVA_ROOT = Path("/root")
+        assert kg._display_path(Path("/root/docs/x.md")) == Path("docs/x.md")
+        assert kg._display_path(Path("/other/abs.md")) == Path("/other/abs.md")  # no crash
+        check(True, "_display_path: relative inside root, absolute (no crash) outside")
+    finally:
+        kg.BROOMVA_ROOT = orig
+
+
 def main():
     for fn in (test_tokenize, test_score_and_trace, test_terms_expansion_dedupe,
                test_hub_tiebreak, test_parse_catalog, test_alias_scoring,
                test_parse_tolerates_space_bearing_score, test_cmd_load_integration,
                test_tier2_confidence_trigger,
                test_resolve_default_and_env, test_resolve_config_block,
-               test_resolve_plants_knowledge_ignored, test_resolve_malformed_config_degrades):
+               test_resolve_plants_knowledge_ignored, test_resolve_malformed_config_degrades,
+               test_resolve_kg_no_policy_and_display):
         fn()
     print()
     if _failures:

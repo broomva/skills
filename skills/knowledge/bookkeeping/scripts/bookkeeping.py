@@ -120,8 +120,12 @@ def _resolve_knowledge_paths(start_dir=None, env=None):
     if env.get("KG_CATALOG"):
         catalog_path = Path(env["KG_CATALOG"]).expanduser()
 
-    # (1) top-level `knowledge:` block wins (per-key), anchoring root at the repo
-    policy = _find_policy_file(start_dir)
+    # (1) top-level `knowledge:` block wins (per-key), anchoring root at the repo.
+    #     KG_NO_POLICY=1 skips this layer entirely — the escape hatch that pins
+    #     the graph via KG_* env with NO policy override (the bench harness sets
+    #     it so its child loader reads exactly the supplied catalog, even when
+    #     the child CWD walks up into some configured repo).
+    policy = None if env.get("KG_NO_POLICY") else _find_policy_file(start_dir)
     kn = _read_knowledge_block(policy)
     if kn and policy is not None:  # non-empty kn implies policy was found
         repo_root = policy.parent.parent  # .control/policy.yaml → repo root
@@ -168,6 +172,17 @@ BROOMVA_ROOT, ENTITIES_DIR, _RESOLVED_CATALOG_PATH = _resolve_knowledge_paths()
 # NOTES_DIR tracks the entity tree's parent (research/ by default, or
 # docs/research/ when a consumer relocates entities via the knowledge: block).
 NOTES_DIR = ENTITIES_DIR.parent / "notes"
+
+
+def _display_path(p):
+    """Render `p` relative to BROOMVA_ROOT when contained, else absolute — so a
+    configured path OUTSIDE the root (an absolute knowledge.entities_dir /
+    catalog_path, or KG_ENTITIES_DIR / KG_CATALOG) never crashes output
+    formatting on `.relative_to`."""
+    try:
+        return p.relative_to(BROOMVA_ROOT)
+    except ValueError:
+        return p
 CONFIG_DIR = Path.home() / ".config" / "bookkeeping"
 RUN_LOG = CONFIG_DIR / "run-log.jsonl"
 STATUS_CACHE = CONFIG_DIR / "status.json"
@@ -1419,7 +1434,7 @@ def promote_item(
         wrote = _update_entity_page_if_changed(entity_path, dry_run=dry_run)
         if verbose:
             verb = "updated existing" if wrote else "unchanged (skipped)"
-            print(f"  [promote] {verb}: {entity_path.relative_to(BROOMVA_ROOT)}")
+            print(f"  [promote] {verb}: {_display_path(entity_path)}")
         # Return the path only when a real write happened, so the caller's
         # entities_updated counter reflects substantive updates — not no-ops.
         # (dry_run is reported as a no-op write: nothing was written.)
@@ -1458,10 +1473,10 @@ def promote_item(
         entity_dir.mkdir(parents=True, exist_ok=True)
         entity_path.write_text(page)
         if verbose:
-            print(f"  [promote] created: {entity_path.relative_to(BROOMVA_ROOT)}")
+            print(f"  [promote] created: {_display_path(entity_path)}")
     else:
         if verbose:
-            print(f"  [promote] dry-run: would create {entity_path.relative_to(BROOMVA_ROOT)}")
+            print(f"  [promote] dry-run: would create {_display_path(entity_path)}")
 
     return entity_path if not dry_run else None
 
@@ -2612,11 +2627,11 @@ def run_query(slug: str, verbose: bool = False) -> None:
         else:
             print(f"[query] Multiple matches for {slug!r}:")
             for m in matches:
-                print(f"  {m} ({all_pages[m].relative_to(BROOMVA_ROOT)})")
+                print(f"  {m} ({_display_path(all_pages[m])})")
             path = all_pages[matches[0]]
             print(f"  → Showing {matches[0]}")
 
-    print(f"\n{path.relative_to(BROOMVA_ROOT)}")
+    print(f"\n{_display_path(path)}")
     print("─" * 60)
     print(path.read_text())
 
@@ -3250,11 +3265,13 @@ def retrieve_via_kg(query: str, k: int, extra_flags=(), root: Optional[Path] = N
         raise RuntimeError(f"kg.py not found at {KG_PY}; set KG_PY to override")
     cmd = [sys.executable, str(KG_PY), "load", query, "--n", str(k),
            "--json", "--quiet", *extra_flags]
-    # Pin the child loader to the SAME catalog we resolved. Without KG_CATALOG the
-    # child re-resolves to root/docs/knowledge-index.md and would read a different
-    # (or missing) file for a config-relocated graph — parent/child disagreeing.
+    # Pin the child loader to the SAME catalog we resolved. KG_NO_POLICY stops
+    # the child from re-resolving through a policy walk-up (which outranks
+    # KG_CATALOG) — without it a subprocess CWD inside some configured repo could
+    # read a different catalog than the parent benched.
     catalog = CATALOG_PATH if root == BROOMVA_ROOT else root / "docs" / "knowledge-index.md"
-    env = {**os.environ, "BROOMVA_ROOT": str(root), "KG_CATALOG": str(catalog)}
+    env = {**os.environ, "BROOMVA_ROOT": str(root),
+           "KG_CATALOG": str(catalog), "KG_NO_POLICY": "1"}
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
     except (subprocess.TimeoutExpired, OSError):
@@ -4789,7 +4806,7 @@ def cmd_index(args: argparse.Namespace) -> None:
     tmp.replace(out_path)
 
     print(
-        f"[index] {len(state['nodes'])} entities → {out_path.relative_to(BROOMVA_ROOT)} "
+        f"[index] {len(state['nodes'])} entities → {_display_path(out_path)} "
         f"(~{_catalog_estimate_tokens(output)} tokens)"
     )
 

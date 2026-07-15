@@ -110,6 +110,16 @@ class TestConfigBlock:
         assert root == repo                     # block presence beats BROOMVA_ROOT
         assert ent == repo / "docs" / "research" / "entities"
 
+    def test_kg_no_policy_bypasses_config(self, tmp_path):
+        # KG_NO_POLICY=1 skips the policy layer entirely so KG_*/BROOMVA_ROOT
+        # pin the graph unambiguously (used by the bench harness's child loader).
+        repo = tmp_path / "repo"
+        _write_policy(repo, "knowledge:\n  entities_dir: docs/research/entities\n")
+        root, ent, _ = bookkeeping._resolve_knowledge_paths(
+            start_dir=repo, env={"KG_NO_POLICY": "1", "BROOMVA_ROOT": "/env/root"})
+        assert root == Path("/env/root")        # block ignored, env wins
+        assert ent == Path("/env/root/research/entities")
+
 
 class TestBackwardCompatGuards:
     def test_nested_plants_knowledge_ignored(self, tmp_path):
@@ -169,7 +179,50 @@ class TestBackwardCompatGuards:
         policy = personal / ".control" / "policy.yaml"
         if not policy.is_file():
             pytest.skip("no personal ~/broomva/.control/policy.yaml on this host")
+        # A host that legitimately opts into a top-level knowledge: block would
+        # NOT resolve to the default — skip rather than assert against mutable
+        # host config (the synthetic nested-plants test already locks the
+        # backward-compat mechanism).
+        try:
+            import yaml
+            data = yaml.safe_load(policy.read_text()) or {}
+            if isinstance(data, dict) and isinstance(data.get("knowledge"), dict):
+                pytest.skip("host policy opts into a top-level knowledge: block")
+        except ImportError:
+            pass  # no yaml → resolver ignores any block → default holds anyway
         root, ent, cat = bookkeeping._resolve_knowledge_paths(start_dir=personal, env={})
         assert root == personal
         assert ent == personal / "research" / "entities"
         assert cat == personal / "docs" / "knowledge-index.md"
+
+
+class TestDisplayPathNeverCrashes:
+    """`_display_path` must format a configured path OUTSIDE the root (an
+    absolute knowledge.catalog_path / entities_dir) as absolute instead of
+    raising ValueError on `.relative_to` — the crash CodeRabbit flagged."""
+
+    def test_relative_when_inside_root(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(bookkeeping, "BROOMVA_ROOT", tmp_path)
+        assert bookkeeping._display_path(tmp_path / "docs" / "x.md") == Path("docs/x.md")
+
+    def test_absolute_when_outside_root(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(bookkeeping, "BROOMVA_ROOT", tmp_path)
+        outside = Path("/some/abs/cat.md")
+        assert bookkeeping._display_path(outside) == outside     # no ValueError
+
+    def test_cmd_index_catalog_outside_root_no_crash(self, tmp_path, monkeypatch):
+        # End-to-end: an absolute CATALOG_PATH outside BROOMVA_ROOT must write +
+        # print the completion line without crashing (out_path.relative_to).
+        root = tmp_path / "graph"
+        entities = root / "research" / "entities" / "concept"
+        entities.mkdir(parents=True)
+        (entities / "x.md").write_text(
+            "---\ntype: concept\nstatus: entity\ncore_claim: A claim.\n---\nBody.\n")
+        catalog = tmp_path / "outside" / "cat.md"    # sibling of root → outside it
+        catalog.parent.mkdir()
+        monkeypatch.setattr(bookkeeping, "BROOMVA_ROOT", root)
+        monkeypatch.setattr(bookkeeping, "ENTITIES_DIR", root / "research" / "entities")
+        monkeypatch.setattr(bookkeeping, "CATALOG_PATH", catalog)
+        import argparse
+        bookkeeping.cmd_index(argparse.Namespace(dry_run=False))  # must NOT raise
+        assert catalog.is_file()

@@ -105,8 +105,12 @@ def _resolve_knowledge_paths(start_dir=None, env=None):
     if env.get("KG_CATALOG"):
         catalog_path = Path(env["KG_CATALOG"]).expanduser()
 
-    # (1) top-level `knowledge:` block wins (per-key), anchoring root at the repo
-    policy = _find_policy_file(start_dir)
+    # (1) top-level `knowledge:` block wins (per-key), anchoring root at the repo.
+    #     KG_NO_POLICY=1 skips this layer entirely — the escape hatch that pins
+    #     the graph via KG_* env with NO policy override (the bench harness sets
+    #     it so this loader reads exactly the supplied catalog, even when the CWD
+    #     walks up into some configured repo).
+    policy = None if env.get("KG_NO_POLICY") else _find_policy_file(start_dir)
     kn = _read_knowledge_block(policy)
     if kn and policy is not None:  # non-empty kn implies policy was found
         repo_root = policy.parent.parent  # .control/policy.yaml → repo root
@@ -151,6 +155,17 @@ def _resolve_knowledge_paths(start_dir=None, env=None):
 
 BROOMVA_ROOT, ENTITIES_DIR, CATALOG_PATH = _resolve_knowledge_paths()
 POLICY_PATH = BROOMVA_ROOT / ".control" / "policy.yaml"
+
+
+def _display_path(p):
+    """Render `p` relative to BROOMVA_ROOT when contained, else absolute — so a
+    configured path OUTSIDE the root (an absolute knowledge.entities_dir /
+    catalog_path, or KG_ENTITIES_DIR / KG_CATALOG) never crashes output
+    formatting on `.relative_to`."""
+    try:
+        return p.relative_to(BROOMVA_ROOT)
+    except ValueError:
+        return p
 
 # Defaults — used when policy.yaml is missing OR has no catalog: block.
 # Each consumer (kg.py here, knowledge-catalog-refresh-hook.sh, bstack
@@ -455,10 +470,7 @@ def render_load_output(
     out.append("")
     # Show the resolved catalog path (default → "docs/knowledge-index.md",
     # unchanged; a relocated catalog → its real repo-relative path).
-    try:
-        _catalog_disp = CATALOG_PATH.relative_to(BROOMVA_ROOT)
-    except ValueError:
-        _catalog_disp = CATALOG_PATH
+    _catalog_disp = _display_path(CATALOG_PATH)
     loaded_line = (f"Loaded {len(matches)}/{total_in_catalog} entities "
                    f"from {_catalog_disp}")
     if n_expand:
@@ -473,7 +485,7 @@ def render_load_output(
         via_tag = f" ↳ via {via}" if via else ""
         out.append(f"╭─ #{idx} · relevance {score} · {score_str} ── "
                    f"{entry.slug} [{entry.type}·{entry.status}]{via_tag} " + "─" * 8)
-        out.append(f"│ Source: {body_path.relative_to(BROOMVA_ROOT)}")
+        out.append(f"│ Source: {_display_path(body_path)}")
         out.append(f"│ Claim: {entry.claim}")
         if entry.out_links:
             out.append(f"│ → {', '.join(entry.out_links)}")
@@ -526,7 +538,7 @@ def render_json_output(topic: str, matches: list, metadata: dict, full_bodies: b
                 "in_links": e.in_links,
                 "tags": e.tags,
                 "sources": e.sources,
-                "path": str(body_path.relative_to(BROOMVA_ROOT)),
+                "path": str(_display_path(body_path)),
                 "via": via,  # None=primary match, "<seed>"=1-hop expansion
                 "body": body_path.read_text(errors="replace") if full_bodies else None,
             }
@@ -779,7 +791,7 @@ def cmd_info(_args: argparse.Namespace) -> int:
     age = time.time() - CATALOG_PATH.stat().st_mtime
     age_h = age / 3600
 
-    print(f"Catalog: {CATALOG_PATH.relative_to(BROOMVA_ROOT)}")
+    print(f"Catalog: {_display_path(CATALOG_PATH)}")
     print(f"  generated: {metadata.get('generated', '?')}")
     print(f"  age:       {age_h:.1f}h")
     print(f"  entities:  {len(entries)}")
