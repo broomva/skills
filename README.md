@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**68 skills** organized into **21 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**75 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -213,9 +213,15 @@ npx skills add broomva/skills --skill '*'
 
 | Skill | What it does |
 |---|---|
-| [`alkosto-wait-optimizer`](skills/commerce/alkosto-wait-optimizer/) | Estimate optimal waiting time for Alkosto's "every 25/50 customers" promotion using either checkout-flow observations or winner announcement timestamps |
 | [`procurer`](skills/commerce/procurer/) | Grounded procurement research for any real-world need |
 | [`swapit`](skills/commerce/swapit/) | Stateful, local-first household toxics inventory + swap engine |
+
+### Everyday utilities — `skills/utilities/`
+
+| Skill | What it does |
+|---|---|
+| [`gasgo`](skills/utilities/gasgo/) | Find the cheapest fuel/GNCV near a Colombian location — engine over live per-station open data (SICOM GNCV via datos.gov.co) with an explicit freshness verdict and honest coordinate resolution (municipal-centroid distances shown approximate) |
+| [`alkosto-wait-optimizer`](skills/utilities/alkosto-wait-optimizer/) | Estimate optimal waiting time for Alkosto's "every 25/50 customers" promotion using either checkout-flow observations or winner announcement timestamps |
 
 ## Catalog inventory
 
