@@ -48,6 +48,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`agentic-control-kernel`](skills/governance/agentic-control-kernel/) | Unifying control-systems metalayer for LLM-as-controller agent development |
 | [`architecture-design-principles`](skills/governance/architecture-design-principles/) | Distilled architecture & design principles for building self-service developer platforms, control-plane / data-plane separation, and edge-centralized cross-cutting… |
+| [`bstack`](skills/governance/bstack/) | bstack primer — the agent-readable contract for the Broomva Stack's twenty automation primitives (P1–P20) that turn an agent-driven workspace into a self-operating system (the primer skill; the bstack CLI is a separate clone + bootstrap product) |
 | [`cross-review`](skills/governance/cross-review/) | bstack P20 — Cross-Model Adversarial Review Gate |
 | [`dogfood`](skills/governance/dogfood/) | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | [`harness-engineering-playbook`](skills/governance/harness-engineering-playbook/) | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture… |
@@ -57,6 +58,7 @@ npx skills add broomva/skills --skill '*'
 | Skill | What it does |
 |---|---|
 | [`autonomous`](skills/orchestration/autonomous/) | Use when the user has agreed on a plan or selected from suggested options and wants the agent to execute the work autonomously without further instruction |
+| [`eve-forge`](skills/orchestration/eve-forge/) | Forge a personalized eve agent for a business end-to-end — absorb the business's artifacts, author the `agent/` dir, validate, and deploy |
 | [`governed-autonomy-loop`](skills/orchestration/governed-autonomy-loop/) | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
 | [`handoff`](skills/orchestration/handoff/) | Fresh-session handoff doc drafting |
 | [`p9`](skills/orchestration/p9/) | P9 — Broomva productive-wait primitive (the wait optimizer) |
@@ -127,6 +129,7 @@ npx skills add broomva/skills --skill '*'
 | [`creative-review`](skills/video/creative-review/) | Meta-review skill for validating generated creative assets (videos, images, designs) against a reference style brief |
 | [`launch-video`](skills/video/launch-video/) | Produce polished product launch videos using the Liquid Glass aesthetic — dark void backgrounds, 3D perspective floating UI panels, particle effects, spring… |
 | [`ltx-video`](skills/video/ltx-video/) | Set up, configure, and run LTX-2/LTX-2.3 (Lightricks) for AI video and audio generation |
+| [`video-cut`](skills/video/video-cut/) | Edit raw footage into a finished cut by conversation, fully local |
 
 ### Audio & music — `skills/audio/`
 
@@ -142,6 +145,7 @@ npx skills add broomva/skills --skill '*'
 | [`arcan-glass`](skills/design/arcan-glass/) | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | [`brand-icons`](skills/design/brand-icons/) | Brand icon and visual identity management for BroomVA projects |
 | [`design-engineering`](skills/design/design-engineering/) | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE… |
+| [`tekton`](skills/design/tekton/) | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
 
 ### Finance & payments — `skills/finance/`
 
