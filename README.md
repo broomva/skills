@@ -33,7 +33,7 @@ npx skills add broomva/skills --skill '*'
 | Path | Purpose |
 |---|---|
 | [`skills/`](skills/) | **The monorepo.** Skills bucketed by single-noun category at `skills/<category>/<name>/` (depth-2), each with `SKILL.md` + optional `references/`/`scripts/`/`assets/` per the [agentskills.io spec](https://agentskills.io/specification). Includes the catalog skill at [`skills/tooling/skills-catalog/`](skills/tooling/skills-catalog/). |
-| [`references/skills-inventory.md`](references/skills-inventory.md) | Full categorized inventory across all 15 domains (companion to the catalog skill) |
+| [`skills-catalog/references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md) | Full categorized inventory across all 22 buckets (companion to the catalog skill) |
 | [`skills-showcase/`](skills-showcase/) | Remotion video + X thread renderer for the inventory |
 | [`.github/workflows/`](.github/workflows/) | CI: SKILL.md frontmatter lint (validates `name` matches parent dir + required fields present per agentskills.io spec) |
 | `_shared/` | (reserved) shared utilities used by multiple Tier-2 skills |
@@ -73,7 +73,7 @@ npx skills add broomva/skills --skill '*'
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of 84 agent skills across 15 domains, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 75 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -229,27 +229,34 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The inventory covers every layer of the stack:
+The 75 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
 
-| Category | Count |
-|---|---|
-| AI & Agent Systems | 7 |
-| Memory & Knowledge | 5 |
-| Research & Intelligence | 5 |
-| Observability & Debugging | 5 |
-| Deployment & Infrastructure | 6 |
-| Next.js & React | 8 |
-| Mobile & Expo | 7 |
-| Design & UI Systems | 6 |
-| JSON-Render Ecosystem | 5 |
-| MCP & Protocol Integration | 4 |
-| Database & API | 4 |
-| QA & Browser Testing | 5 |
-| CLI & Workflow Tooling | 6 |
-| Design Tooling | 3 |
-| Platform Specialties | 8 |
+| Category | Bucket | Count |
+|---|---|---|
+| Governance & control | `skills/governance/` | 6 |
+| Orchestration & autonomy | `skills/orchestration/` | 7 |
+| Skill & prompt tooling | `skills/tooling/` | 5 |
+| Knowledge & memory | `skills/knowledge/` | 4 |
+| Research | `skills/research/` | 2 |
+| Strategy & decisions | `skills/strategy/` | 5 |
+| Operating cadence | `skills/cadence/` | 4 |
+| Publishing & growth | `skills/publishing/` | 5 |
+| Video & multimedia | `skills/video/` | 6 |
+| Audio & music | `skills/audio/` | 2 |
+| Design & brand | `skills/design/` | 4 |
+| Finance & payments | `skills/finance/` | 4 |
+| Compute infrastructure | `skills/compute/` | 3 |
+| Model runtimes | `skills/models/` | 2 |
+| Messaging channels | `skills/messaging/` | 2 |
+| Robotics | `skills/robotics/` | 2 |
+| Aerospace & RF | `skills/aerospace/` | 2 |
+| Neuroscience & BCI | `skills/neuroscience/` | 3 |
+| Healthcare | `skills/healthcare/` | 2 |
+| Science | `skills/science/` | 1 |
+| Commerce & procurement | `skills/commerce/` | 2 |
+| Everyday utilities | `skills/utilities/` | 2 |
 
-Full details with descriptions in [`references/skills-inventory.md`](references/skills-inventory.md).
+Full details with descriptions in [`references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md).
 
 ## Skills showcase
 

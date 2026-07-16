@@ -1,171 +1,198 @@
 # Skills Inventory
 
-> 84 specialized skills across 15 domains. Last updated: 2026-05-05.
+> 75 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-07-16.
 
-## AI & Agent Systems (7)
+## Governance & control — `skills/governance/` (6)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `ai-sdk` | Vercel AI SDK integration — generateText, streamText, tool calling, structured output |
-| `claude-api` | Anthropic Claude API and SDK usage for building AI-powered features |
-| `agentic-control-kernel` | LLM-as-controller architecture with typed plant/action/trace schemas and safety shields |
-| `autoany` | Evaluator-Governed Recursive Improvement (EGRI) for turning ambiguous goals into safe optimization loops |
-| `control-metalayer-loop` | Control-system metalayer for autonomous code-agent development with stability and entropy controls |
-| `harness-engineering-playbook` | Agent-first harness engineering with AGENTS.md, smoke tests, and architecture boundaries |
-| `p9` | CI watcher + productive-wait primitive — replaces sleep with event-driven control loop, classifier+evaluator self-heal, and policy-gated auto-merge with governance-paths-always-block safety |
+| `agentic-control-kernel` | Unifying control-systems metalayer for LLM-as-controller agent development |
+| `architecture-design-principles` | Distilled architecture & design principles for building self-service developer platforms, control-plane / data-plane separation, and edge-centralized cross-cutting |
+| `bstack` | bstack primer — the agent-readable contract for the Broomva Stack's twenty automation primitives (P1–P20) that turn an agent-driven workspace into a self-operating system (the primer skill; the bstack CLI is a separate clone + bootstrap product) |
+| `cross-review` | bstack P20 — Cross-Model Adversarial Review Gate |
+| `dogfood` | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
+| `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
 
-## Memory & Knowledge (5)
+## Orchestration & autonomy — `skills/orchestration/` (7)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `agent-consciousness` | Persistent consciousness architecture synthesizing control metalayer, knowledge graph, and episodic memory |
-| `knowledge-graph-memory` | Bridge conversation logs to an Obsidian knowledge graph for persistent agent memory |
-| `obsidian-markdown` | Obsidian-flavored Markdown with wikilinks, embeds, callouts, and frontmatter |
-| `obsidian-bases` | Obsidian Bases (.base files) with views, filters, formulas, and summaries |
-| `obsidian-cli` | Interact with Obsidian vaults via CLI — read, create, search, manage notes and plugins |
+| `autonomous` | Use when the user has agreed on a plan or selected from suggested options and wants the agent to execute the work autonomously without further instruction |
+| `eve-forge` | Forge a personalized eve agent for a business end-to-end — absorb the business's artifacts, author the `agent/` dir, validate, and deploy |
+| `governed-autonomy-loop` | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
+| `handoff` | Fresh-session handoff doc drafting |
+| `p9` | P9 — Broomva productive-wait primitive (the wait optimizer) |
+| `persist` | bstack P12 — Persistent Loop Discipline |
+| `role-x` | bstack P17 — Lens-Routed Request Articulation |
 
-## Research & Intelligence (5)
+## Skill & prompt tooling — `skills/tooling/` (5)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `deep-research` | Multi-source research synthesis with citation tracking and verification (10+ sources) |
-| `deep-dive-research-orchestrator` | Coordinated multi-dimensional research using specialized AI research agents |
-| `financial-deep-research` | Financial market analysis with regulatory compliance and verified claims |
-| `competitor-intel` | Competitive intelligence — verified metrics, leverage strategies, predicted next moves |
-| `technical-research` | Timeboxed technical spike investigations and technology evaluation |
+| `broomva-cli` | CLI for broomva.tech — manage prompts, skills, and context from the terminal |
+| `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
+| `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
+| `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
+| `skills-catalog` | Canonical reference inventory of the 75 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
-## Observability & Debugging (5)
+## Knowledge & memory — `skills/knowledge/` (4)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `sentry-fix-issues` | Find and fix Sentry errors — stack traces, breadcrumbs, traces, root cause analysis |
-| `sentry-react-setup` | Setup Sentry in React apps with @sentry/react |
-| `sentry-setup-logging` | Sentry structured logging with Pino, Winston, Loguru integration |
-| `langsmith-trace` | LangSmith observability — add tracing, query traces, debug agent execution |
-| `langsmith-fetch` | Debug LangChain/LangGraph agents by fetching execution traces from LangSmith Studio |
+| `bookkeeping` | Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph |
+| `braindump` | Takes raw unstructured thoughts, voice transcript dumps, or stream-of-consciousness text and auto-files them into the right Obsidian vault folders with tags, |
+| `colombia-conflict` | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
+| `kg` | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 
-## Deployment & Infrastructure (6)
+## Research — `skills/research/` (2)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `use-railway` | Railway infrastructure ops — projects, services, databases, environments, troubleshooting |
-| `railway-deployment` | Railway deployment lifecycle — logs, redeploy, restart, remove |
-| `vercel-cli` | Deploy, manage, and develop projects on Vercel from the CLI |
-| `deployment` | Deploy Expo apps to App Store, Play Store, web hosting, and API routes |
-| `cicd-workflows` | EAS workflow YAML for Expo CI/CD pipelines and deployment automation |
-| `symphony` | Symphony Rust orchestration engine for coding agents — install, configure, monitor |
+| `checkit` | Ingest-and-integrate an artifact someone points at with a terse, deliberately under-articulated directive — "check this out", "lets research this", "look into this", |
+| `deep-dive-research-orchestrator` | Conduct comprehensive multi-dimensional research on any subject using coordinated AI research specialists |
 
-## Next.js & React (8)
+## Strategy & decisions — `skills/strategy/` (5)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `next-best-practices` | Next.js conventions — file routing, RSC boundaries, data patterns, metadata, error handling |
-| `next-cache-components` | Next.js 16 PPR, use cache directive, cacheLife, cacheTag, updateTag |
-| `next-upgrade` | Next.js version migration with official codemods |
-| `next-forge` | next-forge production-grade Turborepo template for Next.js SaaS apps |
-| `vercel-react-best-practices` | React/Next.js performance optimization from Vercel Engineering |
-| `vercel-composition-patterns` | Scalable React composition — compound components, render props, context |
-| `cra-to-next-migration` | Migrate Create React App to Next.js App Router and Server Components |
-| `data-fetching` | Network requests, API calls, caching, offline support, error handling patterns |
+| `decision-log` | Captures a decision with context, alternatives considered, and rationale, then links it to the relevant project doc in the vault |
+| `phronesis` | AI-native advisory practice for the Broomva ecosystem |
+| `pre-mortem` | Assumes a project has already failed, works backward to identify the top causes, scores them by likelihood and impact, and outputs a mitigation plan |
+| `premortem` | Run a premortem on any plan, launch, product, hire, strategy, or decision |
+| `strategy-critique` | Reads a strategy doc and writes a red-team critique with gaps, risks, and missing assumptions |
 
-## Mobile & Expo (7)
+## Operating cadence — `skills/cadence/` (4)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `building-ui` | Build apps with Expo Router — styling, components, navigation, animations, native tabs |
-| `vercel-react-native-skills` | React Native/Expo best practices for performance, animations, native modules |
-| `tailwind-setup` | Tailwind CSS v4 in Expo with react-native-css and NativeWind v5 |
-| `use-dom` | Expo DOM components — run web code in native webview, migrate incrementally |
-| `dev-client` | Build and distribute Expo development clients locally or via TestFlight |
-| `upgrading-expo` | Expo SDK version upgrades and dependency issue resolution |
-| `api-routes` | API routes in Expo Router with EAS Hosting |
+| `drift-check` | Compares stated priorities against where time and effort actually went, and produces a strategy drift report |
+| `morning-briefing` | Reads open action items, this week's priorities, and recent vault updates, then produces a focused "start your day" brief |
+| `stakeholder-update` | Takes one set of project facts and generates three versions: technical for engineering, business-impact for leadership, and customer-facing for success teams |
+| `weekly-review` | Scans the vault for updates from the past week, surfaces what changed, and flags what needs attention |
 
-## Design & UI Systems (6)
+## Publishing & growth — `skills/publishing/` (5)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `building-components` | Modern, accessible, composable UI components with design tokens |
-| `frontend-design` | Production-grade frontend interfaces with high design quality |
-| `web-design-guidelines` | Review UI against Web Interface Guidelines for accessibility and UX |
-| `liquid-glass-design` | iOS 26 Liquid Glass — blur, reflection, morphing for SwiftUI/UIKit/WidgetKit |
-| `axiom-liquid-glass` | Liquid Glass implementation, debugging, performance — WWDC 2025 |
-| `streamdown` | Streaming-optimized React Markdown renderer with syntax highlighting and Mermaid |
+| `blog-post` | Full-stack blog post production — turns a topic, idea, or brief into a complete publishing package across written, social, and multimedia surfaces |
+| `content-creation` | Full-stack content creation pipeline: idea or reference to published blog post, audio narration, video, and social media distribution |
+| `revenuecast` | revenuecast — turn a real-world capability into a self-demonstrating, high-throughput generative-AI revenue engine (the "Kleos" method) |
+| `seo-llmeo` | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
+| `social-intelligence` | Autonomous social engagement + knowledge extraction loop for Moltbook and X/Twitter |
 
-## JSON-Render Ecosystem (5)
+## Video & multimedia — `skills/video/` (6)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `json-render-core` | Core schemas, catalogs, and AI prompt generation for json-render |
-| `json-render-react` | React renderer — turn JSON specs into React components |
-| `json-render-react-native` | React Native renderer — JSON specs to native mobile UIs |
-| `json-render-shadcn` | Pre-built shadcn/ui + Radix UI + Tailwind components for json-render |
-| `json-render-remotion` | Remotion renderer — JSON timeline specs to video compositions |
+| `brainrot-for-good` | Produce high-retention, dopamine-aware video content using brainrot editing techniques — fast cuts, word-by-word captions, sound design, visual velocity, pattern |
+| `content-engine` | Full-stack AI content studio — orchestrates visual DNA compilation, cinematic generation (via Higgsfield CLI or MCP), browser-automated tool execution, and |
+| `creative-review` | Meta-review skill for validating generated creative assets (videos, images, designs) against a reference style brief |
+| `launch-video` | Produce polished product launch videos using the Liquid Glass aesthetic — dark void backgrounds, 3D perspective floating UI panels, particle effects, spring |
+| `ltx-video` | Set up, configure, and run LTX-2/LTX-2.3 (Lightricks) for AI video and audio generation |
+| `video-cut` | Edit raw footage into a finished cut by conversation, fully local |
 
-## MCP & Protocol Integration (4)
+## Audio & music — `skills/audio/` (2)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `building-mcp-servers` | Build MCP servers in TypeScript/Python/C# with tools, resources, and OAuth |
-| `mcp-builder` | MCP tool design, resource patterns, best practices |
-| `mcp-integration-expert` | MCP integration workflows, security, multi-language SDK usage |
-| `ucp` | Universal Commerce Protocol implementation for Next.js ecommerce |
+| `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
+| `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 
-## Database & API (4)
+## Design & brand — `skills/design/` (4)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `using-neon` | Neon Serverless Postgres — connection methods, auth, CLI, Platform API |
-| `api-documentation` | API and code interface documentation best practices |
-| `workflow` | Durable, resumable workflows with Vercel Workflow DevKit |
-| `workflow-init` | Install and configure Vercel Workflow DevKit in any framework |
+| `arcan-glass` | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
+| `brand-icons` | Brand icon and visual identity management for BroomVA projects |
+| `design-engineering` | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE |
+| `tekton` | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
 
-## QA & Browser Testing (5)
+## Finance & payments — `skills/finance/` (4)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `dogfood` | Exploratory QA — systematic bug hunting with screenshots and repro evidence |
-| `gstack` | Headless browser for QA — navigate, interact, verify, screenshot (~100ms/command) |
-| `agent-browser` | Browser automation CLI — navigate, fill forms, click, scrape, test |
-| `before-and-after` | Visual diff screenshots for UI change comparison |
-| `rams` | Accessibility and visual design review |
+| `finance-substrate` | Personal finance and tax management substrate for Colombian residents |
+| `haima` | Agentic finance engine for the Agent OS — x402 machine-to-machine payments, on-chain settlement, per-task revenue billing, and wallet management |
+| `investment-management` | Investment management skill — portfolio construction, analysis, and execution |
+| `wealth-management` | Wealth management, financial planning, and investment analytics skill |
 
-## CLI & Workflow Tooling (6)
+## Compute infrastructure — `skills/compute/` (3)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `domain-cli` | CLI tool development with clap, TUI, ratatui, shell completion |
-| `turborepo` | Turborepo monorepo — task pipelines, caching, --filter, --affected, CI |
-| `autoship` | Automated changeset-based releases with AI-generated descriptions |
-| `linear-cli` | Linear issue management from the command line |
-| `gsd` | Get Shit Done — project management system for solo developers |
-| `spec-driven-development` | Three-phase spec-driven development (Requirements → Design → Tasks) |
+| `agentic-vps` | Provision and harden a fresh Linux VPS into an autonomous-agent dev host using the capability-preserving model — the box IS the sandbox: full agent autonomy inside it |
+| `colab-remote` | Orchestrate Google Colab Pro/Pro+ GPU instances as remote training backends via SSH |
+| `remote-gpu` | Orchestrate a headless GPU server (NUC, cloud VM, or any SSH-accessible machine) from a local Mac or workstation |
 
-## Design Tooling (3)
+## Model runtimes — `skills/models/` (2)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `remotion-best-practices` | Remotion video creation in React — animations, timing, transitions |
-| `ai-elements` | AI chat UI components for ai-elements library |
-| `app-store-optimization` | ASO toolkit for Apple App Store and Google Play |
+| `bitnet` | Microsoft BitNet — 1-bit LLM setup, inference, and benchmarking on CPU |
+| `heretic-abliteration` | Heretic — fully automatic LLM censorship removal (abliteration) and serving the result via Ollama |
 
-## Platform Specialties (8)
+## Messaging channels — `skills/messaging/` (2)
 
-| Skill | Description |
+| Skill | What it does |
 |---|---|
-| `rust-best-practices` | Idiomatic Rust — borrowing, error handling, testing, performance |
-| `local-llm-ops` | Local LLM operations with Ollama on Apple Silicon |
-| `garmin-connect` | Garmin Connect fitness/health data — activities, sleep, heart rate, stress |
-| `find-skills` | Discover and install agent skills from the ecosystem |
-| `skill-creator` | Guide for creating effective, distributable agent skills |
-| `alkosto-wait-optimizer` | Probability model for Alkosto store promotion timing |
-| `ralph-loop` | Ralph Loop plugin and commands |
-| `loop` | Recurring task runner on configurable intervals |
+| `claude-code-channels` | Set up Claude Code messaging channels for Telegram and Discord — bot creation, plugin installation, token configuration, access control (pairing, allowlists, guild |
+| `claude-remote-sessions` | Per-channel remote sessions for Claude Code via Discord and Telegram — each channel, thread, or chat gets its own isolated Claude Code session via tmux, with |
+
+## Robotics — `skills/robotics/` (2)
+
+| Skill | What it does |
+|---|---|
+| `capx-agentic-robotics` | Agentic robotics with CaP-X — LLM-driven robot manipulation via code generation |
+| `orcahand` | Full-stack skill for the ORCA Hand — 17-DOF tendon-driven robotic hand (ETH Zurich) |
+
+## Aerospace & RF — `skills/aerospace/` (2)
+
+| Skill | What it does |
+|---|---|
+| `openrocket-sim` | Headless rocket design, simulation, and optimization using OpenRocket's Java core engine |
+| `sdr-satellite` | Software-defined radio (SDR) and satellite reception toolkit — what to install, what you can hear from space, and how to compose the open-source stack (SatDump, |
+
+## Neuroscience & BCI — `skills/neuroscience/` (3)
+
+| Skill | What it does |
+|---|---|
+| `tribe-v2-agent-alignment` | Use Meta's TRIBE v2 brain encoder to validate cortical alignment of AI model representations (LLaMA, V-JEPA2, Wav2Vec, or any encoder) and inform model selection in |
+| `tribe-v2-bci-applied` | Applied BCI research and neuro-informed content optimization using Meta's TRIBE v2 brain encoder |
+| `tribe-v2-neuroscience` | In-silico neuroscience experiments using Meta's TRIBE v2 (TRansformer for In-silico Brain Experiments) |
+
+## Healthcare — `skills/healthcare/` (2)
+
+| Skill | What it does |
+|---|---|
+| `founder-mode-oncology` | Personalized cancer treatment navigation — maximal diagnostics, parallel therapy, therapeutic development, structure-based protein design |
+| `health` | Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note |
+
+## Science — `skills/science/` (1)
+
+| Skill | What it does |
+|---|---|
+| `ocean-genomics` | Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics, protein structure prediction, and marine biodiversity analysis |
+
+## Commerce & procurement — `skills/commerce/` (2)
+
+| Skill | What it does |
+|---|---|
+| `procurer` | Grounded procurement research for any real-world need |
+| `swapit` | Stateful, local-first household toxics inventory + swap engine |
+
+## Everyday utilities — `skills/utilities/` (2)
+
+| Skill | What it does |
+|---|---|
+| `gasgo` | Find the cheapest fuel/GNCV near a Colombian location — engine over live per-station open data (SICOM GNCV via datos.gov.co) with an explicit freshness verdict and honest coordinate resolution (municipal-centroid distances shown approximate) |
+| `alkosto-wait-optimizer` | Estimate optimal waiting time for Alkosto's "every 25/50 customers" promotion using either checkout-flow observations or winner announcement timestamps |
 
 ---
 
 ## Aggregates
 
-- **Total skills**: 84
-- **Total categories**: 15
-- **Largest category**: Next.js & React (8)
-- **Smallest categories**: Design Tooling (3), MCP & Protocol Integration (4), Database & API (4)
+- **Total skills**: 75
+- **Total category buckets**: 22
+- **Largest bucket**: Orchestration & autonomy (7)
+- **Smallest buckets** (1): Science
+- Taxonomy = the 22 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
