@@ -71,7 +71,12 @@ embeddings = model.embed("ATGCGATCG...")
   Positioned as a new scaling frontier relative to ESM-2 for long-range structural understanding.
 - **ESMFold2**: structure prediction trained on a **frozen ESMC 6B** + a **diffusion** structure
   head. All-atom output. Unlike ESMFold, it predicts **all biomolecules** — small molecules, DNA,
-  RNA, and modified amino acids. Optional MSA input; single-sequence mode for large speedup.
+  RNA, and modified amino acids. Optional MSA input. Model names `esmfold2-2026-05` and
+  `esmfold2-fast-2026-05`.
+- **ESMFold2-Fast** is a **separately released model**, not a runtime flag on ESMFold2 — 24
+  folding layers instead of 48, no MSA context. Preprint: 1024 residues in **9.4 s** vs
+  ESMFold2's 15.8 s. It outperforms full ESMFold2 on protein-ligand (63% ± 1 vs 61% ± 1) while
+  giving up ground on protein-protein (68% ± 1 vs 76% ± 1) — so "fast" is not uniformly "worse".
 - **ESM Atlas (Biohub, current)**: **6.8B proteins**, >1B predicted structures, at
   `biohub.ai/esm/protein/atlas`. Organized by ESMC's internal representation space (SAE features),
   not by sequence similarity.
@@ -112,6 +117,17 @@ with torch.inference_mode():
 ```
 
 ### Usage — ESMFold2 all-atom structure (protein + DNA + ligand)
+
+> ⚠️ **Requires the Biohub `transformers` fork — stock transformers will not work.**
+> `transformers.models.esmfold2` does **not** exist in upstream `huggingface/transformers`
+> (404 on `main`), and `biohub/ESMFold2` ships only `config.json` + `model.safetensors`, so
+> `trust_remote_code` will not rescue it either. The fork is pulled transitively by
+> `pip install esm@git+https://github.com/Biohub/esm.git@main`, whose `pyproject.toml` pins
+> `transformers @ git+https://github.com/Biohub/transformers.git@main`. A plain
+> `pip install transformers` leaves the import below failing with `ModuleNotFoundError`.
+>
+> **Python 3.12 only** — `requires-python = ">=3.12,<3.13"`. This is a hard blocker in
+> QIIME2 / nf-core environments commonly pinned to 3.10–3.11; use a separate env.
 
 ```python
 from esm.models.esmfold2 import (
@@ -184,40 +200,68 @@ with torch.no_grad():
 
 > **ESMFold2 vs AlphaFold 3 — what actually holds (verified 2026-07-21).**
 > Biohub's README claims ESMFold2 "matches or exceeds AlphaFold3 **across diverse evaluation
-> datasets**." An adversarial check against the preprint and the independent FoldBench leaderboard
-> found that claim **partially supported** — the task-specific wins are real, the sweeping version
-> is not:
+> datasets**." Checked against the preprint full text and the independent FoldBench leaderboard,
+> that claim is **partially supported** — two task-specific wins are solid, the sweeping version
+> is not.
 >
-> | FoldBench task | AF3 (independent leaderboard) | ESMFold2 (preprint, MSA) | |
+> **Head-to-head, both numbers from the preprint's own runs** (the only apples-to-apples rows):
+>
+> | FoldBench task | AlphaFold 3 | ESMFold2 (MSA) | Winner |
 > |---|---|---|---|
-> | Protein-protein | 72.93% | **76% ± 1** | ESMFold2 ✅ |
-> | Antibody-antigen | 47.90% | **53% ± 2** | ESMFold2 ✅ |
-> | Protein-ligand | **64.90%** | 61% ± 1 | AlphaFold 3 ✅ |
-> | Protein-DNA | 79.18% | 79% ± 1 | tie |
+> | Protein-protein | 73% ± 1 | **76% ± 1** | ESMFold2 |
+> | Antibody-antigen | 47% ± 2 | **53% ± 2** | ESMFold2 |
 >
-> Points **in favor** of the numbers: the authors ran AF3 from official released code, and their
-> AF3 results reproduce the independent Fudan-maintained FoldBench leaderboard to within ~1 point
-> — the baseline was not sandbagged. Training cutoff (2021-09-30) is *more* conservative than
-> FoldBench requires, unlike Boltz-2/RosettaFold3 which FoldBench flags for possible leakage.
+> **Where the preprint publishes no in-text AF3 head-to-head** — it reports only its own scores,
+> so the AF3 column below comes from the *independent* leaderboard and the comparison is
+> **cross-source, not apples-to-apples**. Read these as indicative, not decisive:
 >
-> Points **against**: every number was produced in-house (ESMFold2 is not on the official
-> leaderboard); no independent replication exists; not peer reviewed. Notable single-sequence
-> result — 50% ± 2 antibody-antigen with **no MSA**, above AF3's 47% ± 2 *with* one — but
+> | FoldBench task | AF3 (independent leaderboard) | ESMFold2 (preprint) | Indicative |
+> |---|---|---|---|
+> | Protein-ligand | 64.90% | 61% ± 1 | AlphaFold 3 ahead |
+> | Protein-DNA | 79.18% | 79% ± 1 | see caveat |
+>
+> ⚠️ **Protein-DNA caveat.** Secondary coverage of the paper reports the authors' own AF3 rerun at
+> **82%** on protein-DNA vs ESMFold2's 79% — i.e. AF3 ahead by ~3 points, not level. The apparent
+> tie above is an artifact of comparing against the leaderboard's 79.18% instead. **Do not read
+> protein-DNA as a tie**; treat AlphaFold 3 as the safer default there.
+>
+> Note the phrasing in the paper itself: "strongest model across all tasks" is scoped to *three*
+> tasks, while protein-ligand and protein-DNA get the softer "also maintains strong performance."
+> The hedge tracks exactly where the wins stop.
+>
+> Points **in favor**: the authors ran AF3 from official released code, and their AF3 numbers on
+> protein-protein (73%) and antibody-antigen (47%) track the independent Fudan-maintained
+> FoldBench leaderboard (72.93%, 47.90%) closely — the baseline was not sandbagged, which is the
+> usual way a "beats AF3" result is manufactured. Training cutoff (2021-09-30) is *more*
+> conservative than FoldBench requires, unlike Boltz-2/RosettaFold3 which FoldBench flags for
+> possible target leakage.
+>
+> Points **against**: every ESMFold2 number was produced in-house (it is not on the official
+> leaderboard); no independent replication exists; not peer reviewed. The notable single-sequence
+> result — 50% ± 2 antibody-antigen with **no MSA**, above AF3's 47% ± 2 *with* one — is real, but
 > single-sequence protein-protein (70%) falls below AF3's 73%, so "single-sequence beats MSA" is
 > task-specific, not general.
 >
-> **Practical routing:** prefer ESMFold2 for protein-protein and antibody-antigen; prefer
-> AlphaFold 3 for protein-ligand; treat protein-DNA as a coin flip and decide on license. Then
-> benchmark your own targets — none of this has been replicated by a third party.
+> **Practical routing:** ESMFold2 for protein-protein and antibody-antigen; AlphaFold 3 for
+> protein-ligand and protein-DNA. Then benchmark your own targets — none of this has been
+> replicated by a third party.
 
 ## Compute Requirements
 
 | Model | GPU | RAM | Storage | Speed |
 |-------|-----|-----|---------|-------|
-| ESMC 300M / 600M | 1x A100 40GB | 32 GB | Minimal | Seconds |
-| ESMC 6B | multi-GPU (`device_map="auto"`) | 64 GB+ | ~12 GB weights | Seconds |
-| ESMFold2 | 1x A100 80GB (ESMC 6B backbone) | 64 GB | ~12 GB+ | Seconds–minutes; single-seq mode fastest |
+| ESMC 300M / 600M | 8–12 GB consumer GPU, or CPU | 16 GB | ~1.2 / ~2.4 GB (F32) | Seconds |
+| ESMC 6B | multi-GPU (`device_map="auto"`) | 64 GB+ | **25.4 GB** (F32, 6 shards) | Seconds |
+| ESMFold2 | 1x A100 80GB (needs ESMC 6B backbone) | 64 GB | **~1.4 GB** head (0.94 GB weights + 0.42 GB `ccd.pkl`) **+ 25.4 GB backbone** | Seconds–minutes |
+| ESMFold2-Fast | 1x A100 80GB | 64 GB | same as ESMFold2 | ~9.4 s / 1024 residues |
 | ESMFold *(legacy)* | 1x A100 40GB | 32 GB | Minimal | Seconds |
+
+> Storage figures read from the HuggingFace blob API, not derived. Biohub ships **F32**
+> (`config.json`: `"dtype": "float32"`) — a bf16 assumption would halve these and be wrong.
+> ESMFold2's own head is small; the 25.4 GB is the frozen ESMC 6B backbone it requires.
+>
+> **ESMC context window: 2048 tokens.** Sequences longer than that need chunking — relevant for
+> long metagenomic ORFs. (Trained at 512 for 1M steps, extended to 2048 for the final 500k.)
 | ColabFold | Free Colab | Minimal | Minimal | 1-5 min |
 | AlphaFold 3 | 1x A100 80GB | 64 GB | ~1 TB | 5-30 min |
 | Evo 2 (7B) | 1x A100 80GB | 64 GB | ~15 GB | Seconds |
@@ -230,8 +274,9 @@ with torch.no_grad():
 | DNA variant effects | Evo 2 | Zero-shot, cross-species |
 | Protein embeddings | ESMC (300M/600M local, 6B for max quality) | Current generation; ESM-2 is the legacy fallback |
 | Fast protein structure | ESMFold2 single-sequence mode | No MSA; large speedup over MSA path |
-| Structure with ligands / DNA / RNA / modified AA | ESMFold2 or AlphaFold 3 | Both handle full biomolecule range; ESMFold2 is MIT |
-| High-accuracy complexes | Benchmark ESMFold2 vs AlphaFold 3 / OpenFold-3 on **your** targets | Vendor rankings are self-reported and unreplicated — measure, don't inherit |
+| Structure with ligands / DNA / RNA / modified AA | **AlphaFold 3** (ESMFold2 if MIT is required) | Both cover the range, but AF3 leads protein-ligand and protein-DNA |
+| Protein-protein or antibody-antigen complexes | **ESMFold2** | Beats AF3 head-to-head on both (76 vs 73, 53 vs 47) |
+| High-accuracy, anything else | Benchmark ESMFold2 vs AlphaFold 3 / OpenFold-3 on **your** targets | Vendor rankings are self-reported and unreplicated — measure, don't inherit |
 | Batch structure screening | ColabFold | Free GPU, 1000/day |
 | Structural homolog search | Foldseek | Finds function from shape |
 | Interpretable protein features | ESMC SAEs | ~16k named features; functional organization, not sequence similarity |

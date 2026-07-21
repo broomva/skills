@@ -119,7 +119,7 @@ Input: Protein sequences (FASTA)
 
 2. Structure prediction (if novel / no homolog)
    → Fast screening: ESMFold2 single-sequence mode (no MSA) — legacy: ESMFold
-   → With ligands / DNA / RNA / modified AA: ESMFold2 or AlphaFold 3
+   → With ligands / DNA / RNA / modified AA: AlphaFold 3 (leads both subsets); ESMFold2 if MIT required
    → High accuracy: benchmark ESMFold2 vs AlphaFold 3 / ColabFold on your targets
    → Check confidence: pLDDT >70 = reliable fold
 
@@ -189,10 +189,10 @@ Output: Variant effect scores, structural impact, conservation context
 
 | Task | Tool | Command/API |
 |------|------|-------------|
-| Fast structure (no MSA) | ESMFold2 single-seq | `ESMFold2InputBuilder().fold(model, spi, ...)` |
+| Fast structure (no MSA) | ESMFold2 / ESMFold2-Fast | `ESMFold2InputBuilder().fold(model, spi, ...)` |
 | Fast structure (legacy) | ESMFold | `model.infer_pdb(sequence)` |
 | High-accuracy structure | ColabFold | `colabfold_batch input.fasta output/` |
-| Complex w/ ligand/DNA/RNA | ESMFold2 | `StructurePredictionInput(sequences=[ProteinInput(...), LigandInput(...)])` |
+| Complex w/ ligand/DNA/RNA | AlphaFold 3 (ESMFold2 if MIT req.) | `StructurePredictionInput(sequences=[ProteinInput(...), LigandInput(...)])` |
 | Complex prediction | AlphaFold 3 | `python run_alphafold.py --input_dir inputs/` |
 | Structural search | Foldseek | `foldseek easy-search query.pdb afdb result.m8 tmp` |
 
@@ -250,10 +250,19 @@ gget.pdb("1BNA")                   # PDB structure
 | **ColabFold** | AF2+ESMFold | Protein | Batch structure prediction | `pip install colabfold` |
 | **ProGen3** | Billions | Conditioning | Novel protein generation | Proprietary |
 
-> ESM lineage: Meta FAIR → EvolutionaryScale → **Chan Zuckerberg Biohub**. Repo moved to
+> ESM stewardship: Meta FAIR → EvolutionaryScale → **Chan Zuckerberg Biohub**. Repo moved to
 > `github.com/Biohub/esm` and relicensed to **MIT** (2026-05-27); `facebookresearch/esm` is
-> archived. Accuracy rankings between ESMFold2 and AlphaFold 3 are vendor-self-reported and not
-> independently replicated as of 2026-07-21 — benchmark on your own targets.
+> archived.
+>
+> Accuracy is **task-dependent**, vendor-self-reported, and not independently replicated as of
+> 2026-07-21: ESMFold2 beats AlphaFold 3 head-to-head on protein-protein (76 vs 73) and
+> antibody-antigen (53 vs 47), but AF3 leads protein-ligand and protein-DNA. Benchmark your own
+> targets.
+>
+> ⚠️ Local ESMFold2 needs the **Biohub `transformers` fork** (stock transformers has no
+> `esmfold2` module) and **Python 3.12 only** — install via
+> `pip install esm@git+https://github.com/Biohub/esm.git@main`. **ESMC context window: 2048
+> tokens** — chunk longer metagenomic ORFs.
 
 For detailed specifications on each model, see [references/foundation-models.md](references/foundation-models.md).
 
