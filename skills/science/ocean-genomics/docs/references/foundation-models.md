@@ -80,7 +80,9 @@ embeddings = model.embed("ATGCGATCG...")
   metagenomic focus makes it directly relevant to environmental/eDNA work. Use both.
 - **ESMC SAEs**: sparse autoencoders over ESMC activations (reference:
   `ESMC-6B-sae-layer60-k64-codebook16384`, ~16k features) with agent-generated natural-language
-  feature descriptions. See `../../../knowledge/` KG entity `tool/esm-biohub-world-model`.
+  feature descriptions. Collection on HF under
+  `biohub/esmc-saes-for-hidden-states-all-layers`; usage tutorial at
+  `cookbook/tutorials/esmc_sae_feature_interpretation.ipynb` in the ESM repo.
 - **Source**: `github.com/Biohub/esm` · weights on HF under `biohub/`
 
 ### Licensing (changed 2026-05-27 — verify before citing older guidance)
