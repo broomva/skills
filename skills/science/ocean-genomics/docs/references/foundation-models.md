@@ -77,9 +77,10 @@ embeddings = model.embed("ATGCGATCG...")
   folding layers instead of 48, trained for single-sequence folding, no MSA context. Preprint:
   1024 residues in **9.4 s** vs ESMFold2's 15.8 s (2.2× vs 1.3× faster than AlphaFold3).
   Compared **like-for-like in single-sequence mode**, it trails full ESMFold2 slightly —
-  protein-protein 68% ± 1 vs 70% ± 1, protein-ligand 63% ± 1 vs 66% ± 1 — which is the
-  preprint's own framing: *"generally performing on par with the larger model in single sequence
-  mode."* It still beats AlphaFold3 on antibody-antigen (50% ± 2) **without an MSA**, and with
+  protein-protein 68% ± 1 vs 70% ± 1, protein-ligand 63% ± 1 vs 66% ± 1 (protein-ligand here is
+  the **Runs N' Poses** benchmark, distinct from the FoldBench 61% in the table above) — which is
+  the preprint's own framing: *"generally performing on par with the larger model in single
+  sequence mode."* It still beats AlphaFold3 on antibody-antigen (50% ± 2) **without an MSA**, and with
   inference-time seed scaling reaches 65% at 1000 seeds, tied with full ESMFold2.
   > Do **not** compare Fast's single-sequence scores against ESMFold2's MSA scores — they are
   > different modes, and the mixed pairing wrongly makes Fast look like it wins on protein-ligand.
@@ -223,7 +224,7 @@ with torch.no_grad():
 >
 > | FoldBench task | AF3 (independent leaderboard) | ESMFold2 (preprint) | Indicative |
 > |---|---|---|---|
-> | Protein-ligand | 64.90% | 61% ± 1 | AlphaFold 3 ahead |
+> | Protein-ligand *(FoldBench)* | 64.90% | 61% ± 1 | AlphaFold 3 ahead |
 > | Protein-DNA | 79.18% | 79% ± 1 | see caveat |
 >
 > ⚠️ **Protein-DNA caveat.** The AF3 protein-DNA figure appears in the paper's *figures* rather
