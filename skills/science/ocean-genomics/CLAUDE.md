@@ -37,9 +37,9 @@ ocean-genomics/
 - **Sequencing Technologies**: Illumina short reads, Oxford Nanopore long reads, MinION portable
 - **eDNA Metabarcoding**: Water sampling → filtration → CO1 amplification → species ID
 - **Metagenomics**: Shotgun sequencing of environmental samples for functional + taxonomic profiling
-- **Protein Structure Prediction**: AlphaFold 3, ESMFold, OpenFold-3, ColabFold, Boltz-2
-- **Foundation Models**: Evo 2 (DNA), ESM-2 (protein), ProGen3 (protein generation)
-- **Marine Databases**: OBIS, BOLD, DOO, Tara Oceans, ESM Metagenomic Atlas
+- **Protein Structure Prediction**: ESMFold2, AlphaFold 3, OpenFold-3, ColabFold, Boltz-2
+- **Foundation Models**: Evo 2 (DNA), ESMC (protein, current gen), ESM-2 (legacy), ProGen3 (protein generation)
+- **Marine Databases**: OBIS, BOLD, DOO, Tara Oceans, ESM Metagenomic Atlas (Meta), ESM Atlas (Biohub)
 - **Pipeline Orchestration**: Nextflow + nf-core, Snakemake, QIIME2
 - **MCP Integration**: gget-MCP, bio-mcp, BioinfoMCP
 

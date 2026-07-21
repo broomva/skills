@@ -154,7 +154,7 @@ handle = Entrez.efetch(db="nucleotide", id="NM_001301717", rettype="fasta")
 curl -O https://alphafold.ebi.ac.uk/files/AF-P00520-F1-model_v4.pdb
 ```
 
-### ESM Metagenomic Atlas
+### ESM Metagenomic Atlas (Meta FAIR — legacy, still live)
 
 | Property | Value |
 |----------|-------|
@@ -164,6 +164,21 @@ curl -O https://alphafold.ebi.ac.uk/files/AF-P00520-F1-model_v4.pdb
 | **Records** | 617M+ structures |
 | **Significance** | 3x larger than all prior structural databases combined |
 | **Source** | Environmental metagenomes (ocean, soil, gut, etc.) |
+
+> Verified live 2026-07-21. **Not superseded** by the Biohub Atlas below — different artifact,
+> different host. Its metagenomic/environmental focus keeps it the more directly relevant of the
+> two for eDNA and ocean work.
+
+### ESM Atlas (Biohub — current generation)
+
+| Property | Value |
+|----------|-------|
+| **URL** | biohub.ai/esm/protein/atlas |
+| **Developer** | Chan Zuckerberg Biohub |
+| **Scope** | Map of protein biodiversity, structures predicted by ESMFold2 |
+| **Records** | 6.8B proteins; >1B predicted structures |
+| **Organization** | By ESMC's learned representation space — ~16k sparse-autoencoder features with agent-generated natural-language descriptions, **not** sequence similarity |
+| **Significance** | Navigable by *function* as the model represents it, enabling "find proteins like this one functionally" rather than by sequence homology |
 
 ### UniProt
 
