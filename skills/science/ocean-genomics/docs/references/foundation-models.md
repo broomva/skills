@@ -74,9 +74,15 @@ embeddings = model.embed("ATGCGATCG...")
   RNA, and modified amino acids. Optional MSA input. Model names `esmfold2-2026-05` and
   `esmfold2-fast-2026-05`.
 - **ESMFold2-Fast** is a **separately released model**, not a runtime flag on ESMFold2 — 24
-  folding layers instead of 48, no MSA context. Preprint: 1024 residues in **9.4 s** vs
-  ESMFold2's 15.8 s. It outperforms full ESMFold2 on protein-ligand (63% ± 1 vs 61% ± 1) while
-  giving up ground on protein-protein (68% ± 1 vs 76% ± 1) — so "fast" is not uniformly "worse".
+  folding layers instead of 48, trained for single-sequence folding, no MSA context. Preprint:
+  1024 residues in **9.4 s** vs ESMFold2's 15.8 s (2.2× vs 1.3× faster than AlphaFold3).
+  Compared **like-for-like in single-sequence mode**, it trails full ESMFold2 slightly —
+  protein-protein 68% ± 1 vs 70% ± 1, protein-ligand 63% ± 1 vs 66% ± 1 — which is the
+  preprint's own framing: *"generally performing on par with the larger model in single sequence
+  mode."* It still beats AlphaFold3 on antibody-antigen (50% ± 2) **without an MSA**, and with
+  inference-time seed scaling reaches 65% at 1000 seeds, tied with full ESMFold2.
+  > Do **not** compare Fast's single-sequence scores against ESMFold2's MSA scores — they are
+  > different modes, and the mixed pairing wrongly makes Fast look like it wins on protein-ligand.
 - **ESM Atlas (Biohub, current)**: **6.8B proteins**, >1B predicted structures, at
   `biohub.ai/esm/protein/atlas`. Organized by ESMC's internal representation space (SAE features),
   not by sequence similarity.
@@ -220,10 +226,12 @@ with torch.no_grad():
 > | Protein-ligand | 64.90% | 61% ± 1 | AlphaFold 3 ahead |
 > | Protein-DNA | 79.18% | 79% ± 1 | see caveat |
 >
-> ⚠️ **Protein-DNA caveat.** Secondary coverage of the paper reports the authors' own AF3 rerun at
-> **82%** on protein-DNA vs ESMFold2's 79% — i.e. AF3 ahead by ~3 points, not level. The apparent
-> tie above is an artifact of comparing against the leaderboard's 79.18% instead. **Do not read
-> protein-DNA as a tie**; treat AlphaFold 3 as the safer default there.
+> ⚠️ **Protein-DNA caveat.** The AF3 protein-DNA figure appears in the paper's *figures* rather
+> than its running text; [deeplearning.ai's The Batch](https://www.deeplearning.ai/the-batch/biological-molecules-as-language)
+> reads it off as **82%** — *"ESMFold2 (79 percent) matched Protenix-v1 but underperformed
+> AlphaFold3 (82 percent)"* — i.e. AF3 ahead by ~3 points, not level. Pairing ESMFold2's 79%
+> against the *leaderboard's* 79.18% instead produces a spurious tie. **Do not read protein-DNA
+> as a tie**; treat AlphaFold 3 as the safer default there.
 >
 > Note the phrasing in the paper itself: "strongest model across all tasks" is scoped to *three*
 > tasks, while protein-ligand and protein-DNA get the softer "also maintains strong performance."
@@ -250,22 +258,28 @@ with torch.no_grad():
 
 | Model | GPU | RAM | Storage | Speed |
 |-------|-----|-----|---------|-------|
-| ESMC 300M / 600M | 8–12 GB consumer GPU, or CPU | 16 GB | ~1.2 / ~2.4 GB (F32) | Seconds |
-| ESMC 6B | multi-GPU (`device_map="auto"`) | 64 GB+ | **25.4 GB** (F32, 6 shards) | Seconds |
-| ESMFold2 | 1x A100 80GB (needs ESMC 6B backbone) | 64 GB | **~1.4 GB** head (0.94 GB weights + 0.42 GB `ccd.pkl`) **+ 25.4 GB backbone** | Seconds–minutes |
-| ESMFold2-Fast | 1x A100 80GB | 64 GB | same as ESMFold2 | ~9.4 s / 1024 residues |
+| ESMC 300M | 8–12 GB consumer GPU, or CPU | 16 GB | 1.33 GB (F32) | Seconds |
+| ESMC 600M | 8–12 GB consumer GPU, or CPU | 16 GB | 2.30 GB (F32) | Seconds |
+| ESMC 6B | multi-GPU (`device_map="auto"`) | 64 GB+ | **25.41 GB** (F32, 6 shards) | Seconds |
+| ESMFold2 | 1x A100/H100 80GB (needs ESMC 6B backbone) | 64 GB | **1.36 GB** head (0.94 weights + 0.42 `ccd.pkl`) **+ 25.41 GB backbone** | ~15.8 s / 1024 res (H100) |
+| ESMFold2-Fast | 1x A100/H100 80GB (needs ESMC 6B backbone) | 64 GB | **0.76 GB** head (no `ccd.pkl`) **+ 25.41 GB backbone** | ~9.4 s / 1024 res (H100) |
 | ESMFold *(legacy)* | 1x A100 40GB | 32 GB | Minimal | Seconds |
-
-> Storage figures read from the HuggingFace blob API, not derived. Biohub ships **F32**
-> (`config.json`: `"dtype": "float32"`) — a bf16 assumption would halve these and be wrong.
-> ESMFold2's own head is small; the 25.4 GB is the frozen ESMC 6B backbone it requires.
->
-> **ESMC context window: 2048 tokens.** Sequences longer than that need chunking — relevant for
-> long metagenomic ORFs. (Trained at 512 for 1M steps, extended to 2048 for the final 500k.)
 | ColabFold | Free Colab | Minimal | Minimal | 1-5 min |
 | AlphaFold 3 | 1x A100 80GB | 64 GB | ~1 TB | 5-30 min |
 | Evo 2 (7B) | 1x A100 80GB | 64 GB | ~15 GB | Seconds |
 | Evo 2 (40B) | 4x A100 80GB | 256 GB | ~80 GB | Seconds |
+
+> **Storage figures for the `biohub/*` rows were read from the HuggingFace blob API** (byte
+> counts, rounded to 2 dp); the non-Biohub rows are inherited estimates. Biohub ships **F32**
+> (`config.json`: `"dtype": "float32"`) — a bf16 assumption halves these and is wrong. The
+> ESMFold2 heads are small; the 25.41 GB is the frozen ESMC 6B backbone both require.
+>
+> Timings are the preprint's, measured on a **single H100 80 GB** at sequence length 1024:
+> ESMFold2 15.8 s (1.3× faster than AlphaFold3), ESMFold2-Fast 9.4 s (2.2× faster). Memory
+> grows **O(L²)**, which bounds the protein length that fits on a given GPU.
+>
+> **ESMC context window: 2048 tokens.** Sequences longer than that need chunking — relevant for
+> long metagenomic ORFs. (Trained at 512 for 1M steps, extended to 2048 for the final 500k.)
 
 ## Decision Matrix
 
