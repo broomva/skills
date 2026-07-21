@@ -108,17 +108,29 @@ generated = model.generate(
 - **Accuracy**: Slightly below AlphaFold 2/3 for well-studied proteins, competitive for metagenomic proteins
 - **Sweet spot**: Rapid screening of millions of metagenomic proteins
 
-### ESM Metagenomic Atlas
-- **Scale**: 617 million metagenomic protein structures — the largest structural database ever
+### ESM Metagenomic Atlas (Meta FAIR — still live)
+- **Scale**: 617 million metagenomic protein structures
 - **Source**: Environmental metagenomes (ocean, soil, gut)
-- **Significance**: 3x larger than all prior structural databases combined
+- **Significance**: at release, 3x larger than all prior structural databases combined
 - **Access**: esmatlas.com
+
+> Superseded in raw scale (not retired) by the **Biohub ESM Atlas** below. Its purely
+> metagenomic composition still makes it the closer match for environmental/eDNA work.
+
+### ESM Atlas (Biohub — current generation)
+- **Scale**: 6.8 billion proteins; >1 billion predicted structures (ESMFold2)
+- **Organization**: by ESMC's learned representation space — ~16k sparse-autoencoder features,
+  each described in natural language by an agentic pipeline mapping features onto known biology
+- **Why it differs**: navigable by *function as the model represents it*, not by sequence homology
+- **Access**: biohub.ai/esm/protein/atlas
 
 ### Why This Matters for Ocean Genomics
 When you discover a new protein from deep-sea metagenomics:
-1. ESMFold gives you a structure prediction in seconds (vs. hours for AlphaFold)
-2. ESM-2 embeddings cluster proteins by function — even without sequence homology
-3. ESM Atlas may already contain the structure from a related environmental sample
+1. ESMFold2 gives a structure prediction in seconds — single-sequence mode needs no MSA
+2. ESMC embeddings cluster proteins by function — even without sequence homology
+3. Either Atlas may already contain the structure from a related environmental sample
+4. ESMC SAE features let you ask "what is this protein *functionally like*" when homology
+   search returns nothing — the failure case that dominates deep-sea novel-protein discovery
 
 ## ProGen3 — Protein Generation
 

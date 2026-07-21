@@ -5,9 +5,9 @@ description: >
   Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics,
   protein structure prediction, and marine biodiversity analysis. Use when: (1) Working with DNA/RNA
   sequences (FASTQ, FASTA, SAM/BAM, VCF files), (2) Running BLAST, QIIME2, Kraken2, or Nextflow
-  pipelines, (3) Predicting protein structures via AlphaFold, ESMFold, or ColabFold, (4) Analyzing
+  pipelines, (3) Predicting protein structures via ESMFold2, AlphaFold, or ColabFold, (4) Analyzing
   environmental DNA (eDNA) from marine samples, (5) Querying marine databases (OBIS, BOLD, DOO,
-  GenBank, UniProt), (6) Using biological foundation models (Evo 2, ESM-2, ProGen3), (7) Setting up
+  GenBank, UniProt), (6) Using biological foundation models (Evo 2, ESMC/ESMFold2, ProGen3), (7) Setting up
   MCP servers for bioinformatics (gget-mcp, bio-mcp), (8) Building agentic bioinformatics workflows,
   (9) Ocean biodiversity research, deep-sea species discovery, extremophile enzyme characterization,
   (10) Any task involving genomics, proteomics, transcriptomics, or computational biology.
@@ -118,8 +118,9 @@ Input: Protein sequences (FASTA)
    → If match found: annotate function from homolog
 
 2. Structure prediction (if novel / no homolog)
-   → Fast screening: ESMFold (seconds per protein, no MSA)
-   → High accuracy: AlphaFold 3 / ColabFold (minutes, needs MSA)
+   → Fast screening: ESMFold2 single-sequence mode (no MSA) — legacy: ESMFold
+   → With ligands / DNA / RNA / modified AA: ESMFold2 or AlphaFold 3
+   → High accuracy: benchmark ESMFold2 vs AlphaFold 3 / ColabFold on your targets
    → Check confidence: pLDDT >70 = reliable fold
 
 3. Structural search
@@ -188,8 +189,10 @@ Output: Variant effect scores, structural impact, conservation context
 
 | Task | Tool | Command/API |
 |------|------|-------------|
-| Fast structure (no MSA) | ESMFold | `model.infer_pdb(sequence)` |
+| Fast structure (no MSA) | ESMFold2 single-seq | `ESMFold2InputBuilder().fold(model, spi, ...)` |
+| Fast structure (legacy) | ESMFold | `model.infer_pdb(sequence)` |
 | High-accuracy structure | ColabFold | `colabfold_batch input.fasta output/` |
+| Complex w/ ligand/DNA/RNA | ESMFold2 | `StructurePredictionInput(sequences=[ProteinInput(...), LigandInput(...)])` |
 | Complex prediction | AlphaFold 3 | `python run_alphafold.py --input_dir inputs/` |
 | Structural search | Foldseek | `foldseek easy-search query.pdb afdb result.m8 tmp` |
 
@@ -229,7 +232,8 @@ gget.pdb("1BNA")                   # PDB structure
 | **GenBank** | ncbi.nlm.nih.gov/genbank | All nucleotide sequences |
 | **UniProt** | uniprot.org | Protein sequences + function |
 | **AlphaFold DB** | alphafold.ebi.ac.uk | 200M+ predicted structures |
-| **ESM Atlas** | esmatlas.com | 617M metagenomic protein structures |
+| **ESM Metagenomic Atlas** | esmatlas.com | 617M metagenomic protein structures (Meta FAIR, still live) |
+| **ESM Atlas** | biohub.ai/esm/protein/atlas | 6.8B proteins, >1B structures, SAE-feature organized |
 | **Tara Oceans** | fondationtaraocean.org | Global ocean microbiome |
 | **WoRMS** | marinespecies.org | Marine species taxonomy |
 
@@ -238,11 +242,18 @@ gget.pdb("1BNA")                   # PDB structure
 | Model | Scale | Input | Best For | Install |
 |-------|-------|-------|----------|---------|
 | **Evo 2** | 40B params | DNA | Variant effects, genome design | `pip install evo2` |
-| **ESM-2** | 15B params | Protein | Embeddings, contacts | `pip install fair-esm` |
-| **ESMFold** | Based on ESM-2 | Protein | Fast structure prediction | `pip install fair-esm` |
+| **ESMC** | 300M/600M/6B | Protein | Embeddings, SAE features (current gen) | `pip install esm@git+https://github.com/Biohub/esm.git@main` |
+| **ESMFold2** | On frozen ESMC 6B | Protein+DNA+RNA+ligand+modified AA | All-atom structure, binder design | same as ESMC · HF `biohub/ESMFold2` |
+| **ESM-2** *(legacy)* | 15B params | Protein | Embeddings, contacts | `pip install fair-esm` |
+| **ESMFold** *(legacy)* | Based on ESM-2 | Protein | Fast structure prediction | `pip install fair-esm` |
 | **AlphaFold 3** | N/A | Protein+DNA+RNA+ligand | High-accuracy complexes | Docker + weights request |
 | **ColabFold** | AF2+ESMFold | Protein | Batch structure prediction | `pip install colabfold` |
 | **ProGen3** | Billions | Conditioning | Novel protein generation | Proprietary |
+
+> ESM lineage: Meta FAIR → EvolutionaryScale → **Chan Zuckerberg Biohub**. Repo moved to
+> `github.com/Biohub/esm` and relicensed to **MIT** (2026-05-27); `facebookresearch/esm` is
+> archived. Accuracy rankings between ESMFold2 and AlphaFold 3 are vendor-self-reported and not
+> independently replicated as of 2026-07-21 — benchmark on your own targets.
 
 For detailed specifications on each model, see [references/foundation-models.md](references/foundation-models.md).
 
