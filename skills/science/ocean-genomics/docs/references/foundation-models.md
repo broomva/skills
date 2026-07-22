@@ -110,6 +110,15 @@ not a restriction on the weights. Automated license scans will misreport this re
 
 ### Usage — ESMC embeddings (current)
 
+> ⚠️ **ESMC needs the Biohub `transformers` fork too — stock transformers will not load it.**
+> The `esmc` model type is **not registered** in upstream `huggingface/transformers`. Verified
+> empirically 2026-07-22: on stock transformers **5.4.0**, `AutoModel*.from_pretrained("biohub/ESMC-*")`
+> fails with `KeyError: 'esmc'` → *"Transformers does not recognize this architecture."* Biohub's
+> own README installs the `esm` package first for exactly this reason. Prerequisite:
+> `pip install esm@git+https://github.com/Biohub/esm.git@main` (pulls the fork
+> `transformers @ git+https://github.com/Biohub/transformers.git@main`; note the `esm` package
+> pins **Python 3.12**). The snippet below assumes that fork is installed.
+
 ```python
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer
