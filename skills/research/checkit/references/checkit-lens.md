@@ -56,6 +56,7 @@ contract travels to any agent environment installed from skills.sh.
 | **Competitor / product / startup** | Competitive + differentiation analysis: what they do, what we'd adopt, where our edge is → file with a "bearing on our work" note. |
 | **Blog post / article / thread** | Extract the insight → is it actionable for us → connect to existing knowledge → a synthesis note if it combines with ≥2 prior notes. |
 | **Image / screenshot / diagram** | Identify what it is → relevance → if it encodes a decision/architecture, transcribe into text (don't leave knowledge trapped in a PNG). |
+| **Video / reel / short / TikTok** | *Watch it, don't just transcribe.* Transcript first (default transcript-first, escalate to frames on signal); sample on change not on a clock; contact-sheet for one cheap Read → extract the insight → connect → file. Recipe: `research/entities/pattern/adaptive-video-ingest.md`. |
 | **File in our repo / @-mention** | Review current state → trace dependencies → what's the next step → tie to a task. |
 | **Bare topic string** | Prospective scoped research: triangulate ≥2 sources → landscape / best-practices map → file + suggest the decision it informs. |
 
@@ -74,7 +75,9 @@ When the artifact doesn't fit a row, default to the **GitHub-repo shape**
    a landing page is *discovery*, not the source): **repo** → walk the full tree
    (`gh api …/git/trees/<ref>?recursive=1` or clone) + read SPEC/README/key
    sources; **docs** → follow the doc tree; **paper** → mechanism-bearing
-   sections. **Verify every URL.** **Provenance honesty:** a `[HIGH]` tag names
+   sections; **video** → transcript-first then escalate to change-sampled frames
+   on signal (adaptive-video-ingest), never uniform-poll per second. **Verify
+   every URL.** **Provenance honesty:** a `[HIGH]` tag names
    the artifact actually read; a summary is `[MED]`, labeled — never
    "spec/repo-verified" against a source not opened. **Exhaustion check:** what
    canonical material is still unopened? Scale depth to stakes; never below the
