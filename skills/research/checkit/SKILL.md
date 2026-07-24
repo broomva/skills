@@ -76,7 +76,17 @@ note-taking tools in sequence; it does **not** reimplement them.
    canonical files (`SPEC.md` / `README` / key sources) verbatim; **docs site** →
    follow the doc tree (many pages), not one; **paper** → read the
    mechanism-bearing sections, not the abstract; **long file** → read it, not the
-   first screen. **Verify every external URL** — hallucinated links are a
+   first screen; **video / reel / short / TikTok** → *watch it, don't just
+   transcribe it* via the adaptive-video-ingest recipe: acquire (yt-dlp; or
+   Interceptor on logged-in Chrome for gated content) → pull the transcript first
+   (YouTube auto-subs free; whisper otherwise) → **default transcript-first,
+   escalate to frames only on signal** (deixis like "look/here/as you can see",
+   high ffmpeg scene-change rate, or suspected on-screen text) → sample on
+   *change* not on a clock (`ffmpeg select='gt(scene,0.3)'`, one frame per distinct
+   visual state) → tile to a montage contact sheet for ONE cheap Read → re-sample
+   only the windows the coarse pass couldn't resolve. Never uniform-poll every
+   second (drowns talking heads, aliases fast screencasts). Full spec:
+   `research/entities/pattern/adaptive-video-ingest.md`. **Verify every external URL** — hallucinated links are a
    catastrophic failure. **Provenance honesty:** a `[HIGH]` tag names the
    artifact *actually read* verbatim; a landing-page/search summary is `[MED]` at
    most, labeled as a summary — never tag a claim "spec/repo-verified" against a
