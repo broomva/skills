@@ -112,6 +112,11 @@ class TestCatalogExtractLinksTypeQualifier:
     def test_alias_anchor_and_qualifier_all_stripped(self):
         assert _catalog_extract_links("[[tool/x|X]] [[pattern/y#z]]") == ["x", "y"]
 
+    def test_mixed_case_and_space_slugified(self):
+        # [[concept/Foo Bar]] must resolve to the node key 'foo-bar' (nodes are
+        # slugified stems), not the raw 'Foo Bar' — else the catalog edge dangles.
+        assert _catalog_extract_links("[[concept/Foo Bar]]") == ["foo-bar"]
+
 
 class TestRemediationPlanTypeQualifier:
     """BRO-1976 site 4: build_remediation_plan groups broken wikilinks by the

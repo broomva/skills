@@ -4426,13 +4426,17 @@ def _catalog_coerce_str_list(v) -> list[str]:
 
 
 def _catalog_extract_links(text: str) -> list[str]:
-    """Extract wikilink targets (canonical slug only, no display text, anchor, or
-    type qualifier). A type-qualified ``[[concept/foo]]`` resolves to the bare
-    stem ``foo`` (stems never contain ``/``) so catalog edges connect to their
-    node instead of dangling (BRO-1976)."""
+    """Extract wikilink targets as canonical slugs via the shared resolver.
+
+    Routes through ``wikilink_slug`` (not just delimiter-stripping) so a
+    type-qualified ``[[concept/foo]]`` resolves to the bare stem ``foo`` AND a
+    mixed-case/spaced ``[[concept/Foo Bar]]`` resolves to ``foo-bar`` — matching
+    the node keys (also slugified stems), so catalog edges connect to their node
+    instead of dangling. All 4 wikilink-resolution sites now share one resolver
+    (BRO-1976)."""
     out: list[str] = []
     for raw in re.findall(r"\[\[([^\]]+)\]\]", text):
-        target = raw.split("|", 1)[0].split("#", 1)[0].rsplit("/", 1)[-1].strip()
+        target = wikilink_slug(raw)
         if target:
             out.append(target)
     return out
