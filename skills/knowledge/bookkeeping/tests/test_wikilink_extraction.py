@@ -1,6 +1,11 @@
-"""Tests for wikilink extraction (MD and HTML)."""
+"""Tests for wikilink extraction (MD and HTML) and resolution (BRO-1976)."""
 import pytest
-from bookkeeping import extract_wikilinks_md, extract_wikilinks_html
+from bookkeeping import (
+    extract_wikilinks_md,
+    extract_wikilinks_html,
+    wikilink_slug,
+    _catalog_extract_links,
+)
 
 
 class TestExtractWikilinksMD:
@@ -69,3 +74,67 @@ class TestExtractWikilinksHTML:
         """One attr double-quoted, the other single-quoted — both work."""
         html = '<a href="../concept/foo.md" data-relation=\'references\'>foo</a>'
         assert extract_wikilinks_html(html) == [("concept/foo", "references")]
+
+
+class TestWikilinkSlug:
+    """BRO-1976: type-qualified [[type/slug]] links must resolve to the bare stem
+    (they were miscounted as dangling because slugify() drops the '/')."""
+
+    def test_type_qualified_strips_qualifier(self):
+        assert wikilink_slug("concept/knowledge-graph") == "knowledge-graph"
+
+    def test_bare_slug_unchanged(self):
+        assert wikilink_slug("bookkeeping") == "bookkeeping"
+
+    def test_qualifier_plus_alias(self):
+        assert wikilink_slug("concept/foo|Display Text") == "foo"
+
+    def test_qualifier_plus_anchor(self):
+        assert wikilink_slug("concept/foo#a-heading") == "foo"
+
+    def test_slugify_still_applies(self):
+        assert wikilink_slug("Foo Bar") == "foo-bar"
+
+    def test_regression_slugify_alone_would_break(self):
+        """The exact bug: slugify() alone collapses the '/' into a phantom slug."""
+        from bookkeeping import slugify
+        assert slugify("concept/knowledge-graph") == "conceptknowledge-graph"  # the bug
+        assert wikilink_slug("concept/knowledge-graph") == "knowledge-graph"     # the fix
+
+
+class TestCatalogExtractLinksTypeQualifier:
+    """BRO-1976: catalog edge extraction must also strip the type qualifier so
+    edges connect to their node instead of dangling."""
+
+    def test_type_qualified_resolves_to_stem(self):
+        assert _catalog_extract_links("[[concept/foo]] and [[bar]]") == ["foo", "bar"]
+
+    def test_alias_anchor_and_qualifier_all_stripped(self):
+        assert _catalog_extract_links("[[tool/x|X]] [[pattern/y#z]]") == ["x", "y"]
+
+    def test_mixed_case_and_space_slugified(self):
+        # [[concept/Foo Bar]] must resolve to the node key 'foo-bar' (nodes are
+        # slugified stems), not the raw 'Foo Bar' — else the catalog edge dangles.
+        assert _catalog_extract_links("[[concept/Foo Bar]]") == ["foo-bar"]
+
+
+class TestRemediationPlanTypeQualifier:
+    """BRO-1976 site 4: build_remediation_plan groups broken wikilinks by the
+    bare stem, so type-qualified refs to the same missing entity count as ONE
+    entity-to-create (not one per type qualifier)."""
+
+    def test_type_qualified_broken_links_group_by_stem(self):
+        from bookkeeping import build_remediation_plan, LintError
+        errs = [
+            LintError("a.md", "wikilink",
+                      "Broken wikilink: [[concept/new-thing]] (slug 'conceptnew-thing' not found)", "warning"),
+            LintError("b.md", "wikilink",
+                      "Broken wikilink: [[tool/new-thing]] (slug 'toolnew-thing' not found)", "warning"),
+            LintError("c.md", "wikilink",
+                      "Broken wikilink: [[new-thing]] (slug 'new-thing' not found)", "warning"),
+        ]
+        plan = build_remediation_plan(errs)
+        step = next(s for s in plan if s["category"] == "broken-wikilink-targets")
+        assert step["count"] == 1, step        # one missing entity, not three
+        assert step["leverage"] == 3           # unblocks 3 dangling refs
+        assert "new-thing" in step["detail"] and "conceptnew-thing" not in step["detail"]

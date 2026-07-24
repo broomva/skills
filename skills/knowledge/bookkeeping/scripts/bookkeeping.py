@@ -355,6 +355,20 @@ def slugify(text: str) -> str:
     return text.strip("-")[:80]
 
 
+def wikilink_slug(target: str) -> str:
+    """Resolve a wikilink target to the candidate entity slug.
+
+    A wikilink may carry a display alias (``[[slug|Text]]``), a heading anchor
+    (``[[slug#h]]``), and/or a **type qualifier** (``[[concept/slug]]``). Entity
+    stems never contain ``/``, so the slug is always the final path segment.
+    Stripping the qualifier before slugifying is the fix for the catalog/lint
+    counting type-qualified links as dangling (BRO-1976): ``slugify`` alone drops
+    the ``/`` and yields ``conceptslug`` — a phantom that never resolves.
+    """
+    core = target.split("|", 1)[0].split("#", 1)[0].rsplit("/", 1)[-1]
+    return slugify(core)
+
+
 def ensure_dirs() -> None:
     """Create required directories if they don't exist."""
     for d in [ENTITIES_DIR, NOTES_DIR, CONFIG_DIR]:
@@ -1898,7 +1912,7 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
     wikilinks = extract_wikilinks_md(body)
     existing = set(existing_entity_slugs())
     for target, _edge in wikilinks:
-        slug = slugify(target)
+        slug = wikilink_slug(target)
         if slug and slug not in existing:
             errors.append(LintError(
                 path_str, "wikilink",
@@ -3554,7 +3568,7 @@ def find_gaps(verbose: bool = False) -> dict:
                 if isinstance(rel_val, str):
                     link_text += " " + rel_val
         for target, _edge in extract_wikilinks_md(link_text):
-            tslug = slugify(target)
+            tslug = wikilink_slug(target)
             if tslug and tslug != slug:
                 inbound.setdefault(tslug, set()).add(slug)
 
@@ -3813,7 +3827,10 @@ def build_remediation_plan(errors: list[LintError]) -> list[dict]:
     for e in errors:
         if e.field == "wikilink" and e.message.startswith("Broken wikilink"):
             m = re.search(r"\[\[([^\]]+)\]\]", e.message)
-            target = slugify(m.group(1)) if m else e.message
+            # wikilink_slug (not slugify): type-qualified [[concept/foo]] must
+            # group with [[foo]] on the bare stem, else remediation over-counts
+            # "missing entities to create" and mislabels targets (BRO-1976).
+            target = wikilink_slug(m.group(1)) if m else e.message
             broken_by_target[target] = broken_by_target.get(target, 0) + 1
         elif e.field == "core_claim" and "missing" in e.message:
             missing_claim += 1
@@ -4409,10 +4426,17 @@ def _catalog_coerce_str_list(v) -> list[str]:
 
 
 def _catalog_extract_links(text: str) -> list[str]:
-    """Extract wikilink targets (canonical slug only, no display text or anchor)."""
+    """Extract wikilink targets as canonical slugs via the shared resolver.
+
+    Routes through ``wikilink_slug`` (not just delimiter-stripping) so a
+    type-qualified ``[[concept/foo]]`` resolves to the bare stem ``foo`` AND a
+    mixed-case/spaced ``[[concept/Foo Bar]]`` resolves to ``foo-bar`` — matching
+    the node keys (also slugified stems), so catalog edges connect to their node
+    instead of dangling. All 4 wikilink-resolution sites now share one resolver
+    (BRO-1976)."""
     out: list[str] = []
     for raw in re.findall(r"\[\[([^\]]+)\]\]", text):
-        target = raw.split("|", 1)[0].split("#", 1)[0].strip()
+        target = wikilink_slug(raw)
         if target:
             out.append(target)
     return out
