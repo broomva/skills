@@ -33,9 +33,11 @@ Guarantees (each backed by a test in tests/test_ccr.py):
     touches the filesystem, and the resolved record must be a real file inside
     the cache dir. Handles come back from model output; they are untrusted.
   * ATOMIC + VERIFIED. Records are published by temp-file + os.replace, so a
-    concurrent reader never sees a partial record; every read recomputes the
-    sha256 and refuses a mismatch; an unusable record is treated as absent so
-    the store self-heals rather than cementing corruption.
+    concurrent reader never sees a partial record; every read — retrieve,
+    compress's self-heal check and stats — recomputes the sha256 and refuses a
+    mismatch; an unusable record is treated as absent so the store self-heals
+    rather than cementing corruption; a temp file orphaned by a hard kill is
+    collected at the next cache open, once too old to be a live publish.
 
 Usage:
     python3 ccr.py compress <file|->  [--type auto|json|code|text]
@@ -57,8 +59,11 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 import tempfile
+import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -272,6 +277,11 @@ def compact_text(
     head/tail are clamped to >= 0. Negative values previously produced a view
     LARGER than the original with a misreported elision count, and `tail=0`
     silently disabled compression entirely (`lines[-0:]` is the whole list).
+
+    `line_budget <= 0` disables the CHARACTER budget only — the same meaning
+    `_clamp_line` already gives it, and the meaning `--help` and SKILL.md
+    promise ("0 disables the char budget"). It does NOT disable the line
+    budget: `--line-budget 0 --head 3 --tail 2` still elides the middle.
     """
     head, tail = max(0, head), max(0, tail)
     lines = payload.splitlines()
@@ -281,7 +291,15 @@ def compact_text(
         # over budget do we return the payload untouched (this fast path is
         # load-bearing: joining splitlines() back up would drop a trailing
         # newline and normalise \r\n, so the "unchanged" view must be `payload`).
-        if all(len(ln) <= line_budget for ln in lines):
+        #
+        # `line_budget <= 0` must reach that fast path. Without the guard,
+        # `len(ln) <= 0` was False for every non-empty line, so DISABLING the
+        # budget routed multi-line input down the join path it was meant to
+        # avoid: `compact_text("a\r\nb\r\n", line_budget=0)` returned "a\nb" —
+        # a trailing newline dropped, CRLF normalised, and a reported 50%
+        # saving with nothing marked elided. A view that silently rewrites
+        # bytes is the one thing a "no compression" flag must not do.
+        if line_budget <= 0 or all(len(ln) <= line_budget for ln in lines):
             return payload
         return "\n".join(_clamp_line(ln, line_budget) for ln in lines)
     elided = len(lines) - head - tail
@@ -377,7 +395,9 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-def _read_record(sha: str, cache_dir: Path) -> tuple[dict | None, str]:
+def _read_record(
+    sha: str, cache_dir: Path, path: Path | None = None
+) -> tuple[dict | None, str]:
     """Read + VERIFY one cache record. Returns (record | None, reason).
 
     A content-addressed store that hands back unverified bytes is not
@@ -387,12 +407,22 @@ def _read_record(sha: str, cache_dir: Path) -> tuple[dict | None, str]:
     Absent / unparsable / mis-digested all collapse to `None` on purpose:
     compress() treats "unusable" as "not there" and rewrites, so a partial
     record SELF-HEALS instead of being cemented forever by an `exists()` check.
+
+    `path` lets a caller that already HAS the entry (stats(), scanning the
+    directory) pass it instead of having it re-derived from `sha`. The two
+    agree for every well-formed record name, but not for every file that can
+    sit in the directory: `Path(".json").stem` is `".json"`, so the derived
+    path would be `.json.json` and the reason reported for the real file would
+    be "absent" — a reason the caller never established. `sha` stays the digest
+    the content is checked against either way; only the file read changes.
     """
-    p = _record_path(sha, cache_dir)
+    p = _record_path(sha, cache_dir) if path is None else path
     if not _is_confined(p, cache_dir):
         return None, "outside-cache"
     if not p.is_file():
-        return None, "absent"
+        # A directory or a device node named `<sha>.json` EXISTS but is not a
+        # record. Calling that "absent" would misreport it to stats().
+        return None, "absent" if not p.exists() else "not-a-file"
     try:
         rec = json.loads(p.read_text(encoding="utf-8"))
     except (ValueError, OSError):
@@ -411,7 +441,9 @@ def _write_record(sha: str, cache_dir: Path, rec: dict) -> None:
     reader observes the half-written file (measured: 235 torn reads during one
     60MB write). os.replace is atomic within a filesystem, so the canonical
     path only ever appears complete — and a crash mid-write leaves a stray
-    temp file, never a poisoned record.
+    temp file, never a poisoned record. The `except BaseException` below
+    unlinks that temp file when the publish FAILS; a hard kill runs no handler,
+    so `_reap_stale_parts` collects what it leaves behind.
     """
     _ensure_cache_dir(cache_dir)
     # ensure_ascii=True so any lone surrogate / non-BMP char is escaped to ASCII
@@ -439,13 +471,97 @@ def _write_record(sha: str, cache_dir: Path, rec: dict) -> None:
         raise
 
 
+# A `.ccr-tmp-*.part` file exists only between the temp-file create and the
+# os.replace that publishes it — sub-second even for the 60MB record measured
+# in the atomicity work. `_write_record`'s `except BaseException` unlinks it
+# when the publish FAILS, but SIGKILL and power loss run no handler, so a hard
+# kill mid-publish orphans one forever: nothing else in the store ever looks at
+# a `.part` name (it is deliberately outside the `*.json` glob).
+#
+# AGE, not an exclusivity check, is what gates the delete. A reaper is a delete
+# path in a directory concurrent processes write to, and the failure it must
+# not introduce is unlinking a temp file a LIVE process is mid-publish on.
+# mtime advances while that process writes, so a `.part` whose mtime is hours
+# stale cannot belong to a live publish. flock would be a stronger same-host
+# signal, but it is POSIX-only, unreliable on NFS, cannot cover orphans created
+# before it existed, and would put a new syscall in the concurrency-critical
+# write path the atomicity guarantee rests on. Prune only what is too old for a
+# concurrent writer to own — the same *shape* of rule as git's `gc.pruneExpire`,
+# though not its magnitude (git ships two weeks; the window below is 56x
+# tighter and rests on its own measurement, not on git's choice).
+#
+# The window is measured, not guessed: instrumenting os.replace across 640
+# concurrent publishes puts the LONGEST a `.part` was ever live at 15ms
+# (median 0.1ms). 6h is ~1.4 million times that.
+#
+# The one case age does NOT cover, stated rather than left implicit: a FORWARD
+# CLOCK STEP larger than the TTL — a VM snapshot restore, a wrong RTC that NTP
+# then corrects, a container inheriting a skewed clock — makes every live
+# `.part` look stale at once. The blast radius is bounded, and was measured by
+# forcing it (a reaper at ttl=0 against 640 concurrent publishes): publishes
+# fail LOUDLY with FileNotFoundError — 6.2% on one run, 12.7% on an
+# independent reviewer's, i.e. load-dependent — and BOTH runs corrupted 0
+# records. That is an availability fault on a retryable operation, not an
+# integrity one, which is why age is still the right trade against putting a
+# lock in the write path.
+_PART_TTL_SECONDS = 6 * 3600
+
+# Reaping is a full directory scan (measured 4.7ms on a 5,000-record cache —
+# 26x the cost of a cache-hit compress), so it runs ONCE per process per cache
+# dir rather than on every write. Orphans are rare and inert; collecting them
+# at cache-open is enough to bound the leak. A test that plants a `.part`
+# AFTER the cache has been opened in the same process must clear this set.
+_REAPED_CACHE_DIRS: set[str] = set()
+
+
+def _reap_stale_parts(cache_dir: Path, ttl: float = _PART_TTL_SECONDS) -> int:
+    """Unlink temp files orphaned by a hard kill.
+
+    Returns the number of unlinks THIS call believes it made — a signal, not a
+    ledger. Two processes reaping the same directory can both be told an
+    unlink succeeded (observed on APFS), so summing the return value across
+    concurrent reapers can exceed the number of files that existed. Callers
+    use it for "did this reap anything", never as a count of distinct files.
+
+    Every failure mode is swallowed on purpose: this is opportunistic GC, and
+    a reaper that can break `compress` is worse than the leak it collects. An
+    OSError here means the entry was already unlinked by its owner or by a
+    concurrently-reaping process — both are the desired end state.
+    """
+    now = time.time()
+    reaped = 0
+    try:
+        candidates = list(cache_dir.glob(".ccr-tmp-*.part"))
+    except OSError:
+        return 0
+    for p in candidates:
+        try:
+            st = os.lstat(p)
+            if not stat.S_ISREG(st.st_mode):
+                continue  # not something _write_record created — leave it
+            if now - st.st_mtime <= ttl:
+                continue  # young enough to be a LIVE publish — leave it
+            os.unlink(p)
+            reaped += 1
+        except OSError:
+            continue
+    return reaped
+
+
 def _ensure_cache_dir(cache_dir: Path) -> None:
-    """Create the cache dir 0700. It holds full plaintext originals."""
+    """Create the cache dir 0700, then GC temp files orphaned by a hard kill.
+
+    It holds full plaintext originals, hence 0700.
+    """
     cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         os.chmod(cache_dir, 0o700)  # tighten a dir created by an older version
     except OSError:
         pass
+    key = os.path.realpath(cache_dir)
+    if key not in _REAPED_CACHE_DIRS:
+        _REAPED_CACHE_DIRS.add(key)  # marked first: one attempt per open, win or lose
+        _reap_stale_parts(cache_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -534,26 +650,69 @@ def retrieve(handle: str, *, cache_dir: Path | None = None) -> str:
 
 
 def stats(*, cache_dir: Path | None = None) -> dict:
-    """Cache-wide rollup: entries, bytes cached, cumulative token savings."""
+    """Cache-wide rollup over DIGEST-VERIFIED records: entries, bytes, savings.
+
+    "Every read recomputes the sha256 and refuses a mismatch" is the store's
+    stated invariant, and `stats` is a read. It used to be the one path that
+    opted out, so a record `retrieve` refused as tampered was still counted
+    here.
+
+    Verification alone does NOT make the rollup honest, because the sha256
+    covers exactly one field — `original`. The stored `original_chars` /
+    `compact_chars` counters are outside it, so tampering `original_chars` to
+    1e9 kept the digest valid and reported `cumulative_saved_pct: 100.0`. So
+    the rollup is DERIVED from the verified field (`len(rec["original"])`)
+    rather than trusting the counter, and `compact_chars` — which cannot be
+    recomputed, since the view is not stored — is only accepted inside the
+    range every record this program writes satisfies: `0 <= compact <= orig`
+    (compress clamps the view to the payload's length). Anything outside it is
+    counted as `unusable` rather than folded into the totals.
+
+    Cost, stated rather than hidden: this is linear in cached BYTES, which it
+    already was — the old version json-parsed every record's full `original`
+    too. Measured on a 5,000-record / 20MB cache: 545ms before, 802ms after
+    (+47% on an already-linear scan). `stats` is a diagnostic command, not a
+    hot path; a rollup that can be inflated by editing one integer is worse
+    than a slower one.
+
+    Excluded entries are reported WITH the reason `_read_record` established —
+    `unusable_reasons` is a per-reason count, not a lump sum. An earlier
+    revision returned the lump sum and let the CLI narrate a cause ("digest
+    mismatch or impossible counters — re-compress those payloads to heal
+    them"), which is false for a stray `hello.json`, a dangling symlink or a
+    directory named `adir.json`: none of those is either shape, and none heals
+    by re-compressing. Asserting more than was verified is the exact defect
+    class this pass exists to remove, so the reason is carried through instead
+    of being reconstructed downstream.
+    """
     cache_dir = cache_dir or CCR_HOME
     entries = 0
+    reasons: Counter[str] = Counter()
     orig_chars = comp_chars = 0
     if cache_dir.exists():
         for p in cache_dir.glob("*.json"):
-            if not _is_confined(p, cache_dir):
+            # `path=p` so the reason describes the file actually scanned, and
+            # `_read_record` applies the confinement, parse and digest checks
+            # in one place — the reason this loop no longer has its own copy.
+            rec, reason = _read_record(p.stem, cache_dir, path=p)
+            if rec is None:
+                reasons[reason] += 1
                 continue
-            try:
-                rec = json.loads(p.read_text(encoding="utf-8"))
-            except (ValueError, OSError):
+            n = len(rec["original"])
+            c = rec.get("compact_chars")
+            if type(c) is not int or not 0 <= c <= n:
+                reasons["impossible-counters"] += 1
                 continue
             entries += 1
-            orig_chars += rec.get("original_chars", 0)
-            comp_chars += rec.get("compact_chars", 0)
+            orig_chars += n
+            comp_chars += c
     orig_tok, comp_tok = math.ceil(orig_chars / 4), math.ceil(comp_chars / 4)
     saved_pct = round(100 * (1 - comp_tok / orig_tok), 1) if orig_tok else 0.0
     return {
         "cache_dir": str(cache_dir),
         "entries": entries,
+        "unusable": sum(reasons.values()),
+        "unusable_reasons": dict(sorted(reasons.items())),
         "original_chars": orig_chars,
         "compact_chars": comp_chars,
         "original_tokens": orig_tok,
@@ -696,6 +855,17 @@ def main(argv: list[str] | None = None) -> int:
                     f"  {s['original_tokens']}→{s['compact_tokens']} tok cached "
                     f"(−{s['cumulative_saved_pct']}% if all served compact)"
                 )
+                if s["unusable"]:
+                    # Reported, not swallowed: a rollup that silently omits
+                    # entries would disagree with the file count for no visible
+                    # reason. The breakdown is `_read_record`'s OWN reason for
+                    # each exclusion — this line does not infer a cause, and in
+                    # particular does not tell the user to re-compress, which
+                    # only heals the corrupt-record shapes.
+                    breakdown = ", ".join(
+                        f"{k} {v}" for k, v in s["unusable_reasons"].items()
+                    )
+                    print(f"  {s['unusable']} entr(ies) excluded: {breakdown}")
             return 0
     except KeyError as e:
         print(f"ccr: {e}", file=sys.stderr)

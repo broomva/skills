@@ -37,8 +37,10 @@ python3 scripts/ccr.py stats
   come back from model output, i.e. the untrusted side.
 - **Atomic + verified + self-healing.** Records are published by temp-file +
   `os.replace`, so a concurrent reader never sees a partial record; every read
-  recomputes the sha256 and refuses a mismatch; an unusable record is treated as
-  absent, so the next `compress` rewrites it.
+  — `retrieve`, `compress`'s self-heal check *and* `stats` — recomputes the
+  sha256 and refuses a mismatch; an unusable record is treated as absent, so the
+  next `compress` rewrites it; a temp file orphaned by a hard kill is collected
+  at the next cache open once it is too old to belong to a live publish.
 - **Private.** Cache dir `0700`, records `0600` — it holds plaintext originals.
 
 See [`SKILL.md`](./SKILL.md) for the full contract.
@@ -46,6 +48,6 @@ See [`SKILL.md`](./SKILL.md) for the full contract.
 ## Test
 
 ```bash
-python3 -m pytest tests/ -q        # 49 tests
+python3 -m pytest tests/ -q        # 55 tests
 python3 tests/test_ccr.py          # no pytest needed
 ```

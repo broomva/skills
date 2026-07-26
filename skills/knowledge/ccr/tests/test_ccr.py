@@ -228,6 +228,7 @@ def test_stats_rollup(tmp_path):
     ccr.compress(TEXT_PAYLOAD, "text", cache_dir=tmp_path)
     s = ccr.stats(cache_dir=tmp_path)
     assert s["entries"] == 2
+    assert s["unusable"] == 0 and s["unusable_reasons"] == {}
     assert s["original_chars"] > s["compact_chars"]
     assert 0 < s["cumulative_saved_pct"] < 100
 
@@ -955,6 +956,316 @@ def test_lone_surrogate_round_trips_through_the_api(tmp_path):
         payload = f"before {chr(cp)} after"
         res = ccr.compress(payload, "text", cache_dir=tmp_path)
         assert ccr.retrieve(res["handle"], cache_dir=tmp_path) == payload, hex(cp)
+
+
+# ── BRO-1992: the three LOW residuals from P20 round-2 verification ──────────
+#
+# Each was reproduced before it was fixed (repro output in the PR body), and
+# each test below is mutation-proven: revert the named fix in scripts/ccr.py
+# and the test goes red.
+
+
+def test_line_budget_zero_disables_only_the_char_budget(tmp_path):
+    """D3 — `--help` says `0` disables the CHAR budget. It did, for a payload of
+    ONE line (`test_char_budget_is_tunable_and_disableable` covered that). For
+    MULTI-line input `len(ln) <= 0` was False for every non-empty line, so
+    disabling the budget routed the payload down the join path it was meant to
+    avoid: `compact_text("a\\r\\nb\\r\\n", line_budget=0)` returned `"a\\nb"` —
+    trailing newline dropped, CRLF normalised, `saved_pct: 50.0`, and nothing
+    marked elided. A "no compression" flag that silently rewrites bytes is
+    worse than one that does nothing.
+
+    Asserted on `compact_text` DIRECTLY as well as through `compress`, per this
+    suite's convention: `compress`'s `len(view) >= len(payload)` clamp does not
+    rescue this one (the mangled view is SHORTER), but the compactor is the
+    layer that can actually break.
+
+    The second half is the over-correction guard. The ticket's suggested fix
+    reads as "make `line_budget <= 0` take the `return payload` fast path" —
+    correct for the fast path INSIDE the head/tail branch, and wrong if applied
+    at the top of the function, which would make `--line-budget 0` disable the
+    LINE budget too. Both budgets are asserted here so neither reading can
+    pass silently.
+    """
+    for payload in ("a\r\nb\r\n", "one\ntwo\nthree\n", "trailing\n",
+                    "no-trailing-newline", "a\rb\rc", "x" * 100_000, "", "\n\n"):
+        for budget in (0, -1, -2000):
+            got = ccr.compact_text(payload, line_budget=budget)
+            assert got == payload, (
+                f"line_budget={budget} rewrote the payload: "
+                f"{payload[:20]!r} -> {got[:20]!r}"
+            )
+
+    res = ccr.compress("a\r\nb\r\n", "text", cache_dir=tmp_path, line_budget=0)
+    assert res["view"] == "a\r\nb\r\n", "the view must be the payload, byte for byte"
+    assert res["saved_pct"] == 0.0, f"phantom saving reported: {res['saved_pct']}"
+    assert "elided" not in res["view"]
+    assert ccr.retrieve(res["handle"], cache_dir=tmp_path) == "a\r\nb\r\n"
+
+    # ...and disabling the CHARACTER budget must not disable the LINE budget.
+    text = "\n".join(f"line {i}" for i in range(500))
+    res = ccr.compress(text, "text", cache_dir=tmp_path, head=3, tail=2, line_budget=0)
+    assert "lines elided" in res["view"], "--line-budget 0 disabled the LINE budget too"
+    assert res["saved_pct"] > 90, f"line budget stopped compressing: {res['saved_pct']}"
+
+
+def test_hard_kill_mid_publish_orphans_a_part_that_is_reaped_on_the_next_open(tmp_path):
+    """D4 — SIGKILL at `os.replace` leaks `.ccr-tmp-<rand>.part` forever.
+
+    `_write_record`'s `except BaseException` covers a FAILED publish
+    (`test_failed_publish_leaves_no_temp_file`); a hard kill runs no handler at
+    all, and nothing else in the store ever looks at a `.part` name — it is
+    deliberately outside the `*.json` glob. The leak was therefore permanent.
+
+    This drives the real crash shape in a subprocess (`os.kill(getpid(),
+    SIGKILL)` from inside `os.replace`), then asserts the whole lifecycle: the
+    orphan appears, atomicity still holds, a YOUNG orphan is left alone because
+    it is indistinguishable from a live publish, and only a stale one is
+    collected on the next cache open.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    killer = tmp_path / "killer.py"
+    killer.write_text(textwrap.dedent("""
+        import importlib.util, os, signal, sys
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("ccr", sys.argv[1])
+        ccr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ccr)
+
+        def hard_kill(src, dst):
+            os.kill(os.getpid(), signal.SIGKILL)  # no finally, no atexit
+
+        ccr.os.replace = hard_kill
+        ccr.compress("payload-killed-mid-publish", "text", cache_dir=Path(sys.argv[2]))
+    """))
+    proc = subprocess.run(
+        [sys.executable, str(killer), str(SCRIPT), str(cache)], capture_output=True
+    )
+    assert proc.returncode == -9, (
+        f"fixture must die by SIGKILL, got {proc.returncode}: {proc.stderr!r}"
+    )
+    orphans = [p.name for p in cache.iterdir() if p.name.endswith(".part")]
+    assert len(orphans) == 1, f"fixture must orphan exactly one temp file: {orphans}"
+    assert list(cache.glob("*.json")) == [], \
+        "atomicity: a hard kill must leave NO record at the canonical path"
+
+    # A YOUNG orphan survives — the reaper cannot tell it from a live publish.
+    ccr._REAPED_CACHE_DIRS.clear()
+    ccr.compress("unrelated-payload", "text", cache_dir=cache)
+    assert [p.name for p in cache.iterdir() if p.name.endswith(".part")] == orphans, \
+        "a young .part must NOT be reaped — it may be another process's live write"
+
+    # Aged past the TTL, it is collected on the next cache open.
+    stale = time.time() - ccr._PART_TTL_SECONDS - 60
+    for name in orphans:
+        os.utime(cache / name, (stale, stale))
+    ccr._REAPED_CACHE_DIRS.clear()
+    res = ccr.compress("unrelated-payload-2", "text", cache_dir=cache)
+    assert [p.name for p in cache.iterdir() if p.name.endswith(".part")] == [], \
+        "the stale orphan was never collected"
+    assert ccr.retrieve(res["handle"], cache_dir=cache) == "unrelated-payload-2", \
+        "the store must still work after a reap"
+    assert len(list(cache.glob("*.json"))) == 2, "the reaper touched real records"
+
+
+def test_reaper_never_deletes_a_temp_file_a_live_publish_owns(tmp_path):
+    """D4, the half that matters more than the fix: a reaper is a DELETE path in
+    a directory concurrent processes write to.
+
+    Rather than assert an mtime rule statically, this races the reaper against
+    a real in-flight publish — it runs from inside `os.replace`, at the one
+    instant the temp file exists and is young. With the TTL guard removed the
+    reaper unlinks that file and the publish dies with FileNotFoundError.
+    """
+    observed = {}
+    real_replace = ccr.os.replace
+
+    def reaping_replace(src, dst):
+        observed["reaped"] = ccr._reap_stale_parts(tmp_path)
+        observed["survived"] = os.path.exists(src)
+        return real_replace(src, dst)
+
+    ccr.os.replace = reaping_replace
+    try:
+        res = ccr.compress("live-publish-payload", "text", cache_dir=tmp_path)
+    finally:
+        ccr.os.replace = real_replace
+
+    assert observed["survived"], "the reaper deleted a temp file mid-publish"
+    assert observed["reaped"] == 0, f"reaped {observed['reaped']} live temp file(s)"
+    assert ccr.retrieve(res["handle"], cache_dir=tmp_path) == "live-publish-payload"
+
+    # ...and it does collect a genuinely stale one (a reaper that never deletes
+    # anything would satisfy the assertions above).
+    stale = tmp_path / ".ccr-tmp-orphaned.part"
+    stale.write_text("orphan")
+    old = time.time() - ccr._PART_TTL_SECONDS - 60
+    os.utime(stale, (old, old))
+    assert ccr._reap_stale_parts(tmp_path) == 1, "a stale orphan must be reaped"
+    assert not stale.exists()
+    # a `.part` that is NOT a regular file is not ours to collect
+    link = tmp_path / ".ccr-tmp-symlink.part"
+    link.symlink_to(tmp_path / "nowhere")
+    os.utime(link, (old, old), follow_symlinks=False)
+    assert ccr._reap_stale_parts(tmp_path) == 0
+    assert link.is_symlink()
+
+
+def test_concurrent_writers_and_a_reaper_produce_no_corrupt_records(tmp_path):
+    """D4 under CONCURRENCY — the condition the reaper's regressions live in.
+
+    Both other reaper tests are single-process. A reaper is a delete path in a
+    directory concurrent processes write to, and this is the change whose
+    failure mode only appears when a real publish and a real reap overlap, so
+    the claim needs a test in CI rather than a number in a changelog.
+
+    Trimmed to stay ~1s: 4 writer processes x 20 payloads, plus a 5th process
+    reaping continuously for the whole run. `reaped == 0` is the load-bearing
+    assertion — every `.part` in this directory belongs to a live publish, so
+    a correct reaper must collect NOTHING no matter how often it looks.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (tmp_path / "worker.py").write_text(textwrap.dedent("""
+        import importlib.util, sys
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("ccr", sys.argv[1])
+        ccr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ccr)
+        cache, wid, n = Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+        for i in range(n):
+            payload = f"w{wid}-p{i}-" + "x" * (1000 * (i % 20 + 1))
+            res = ccr.compress(payload, "text", cache_dir=cache)
+            got = ccr.retrieve(res["handle"], cache_dir=cache)
+            assert got == payload, f"w{wid} p{i}: round trip differed"
+    """))
+    (tmp_path / "reaper.py").write_text(textwrap.dedent("""
+        import importlib.util, sys, time
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("ccr", sys.argv[1])
+        ccr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ccr)
+        cache, sentinel = Path(sys.argv[2]), Path(sys.argv[3])
+        reaped, deadline = 0, time.time() + 120
+        while not sentinel.exists() and time.time() < deadline:
+            reaped += ccr._reap_stale_parts(cache)
+        print(reaped)
+    """))
+    sentinel = tmp_path / "DONE"
+    reaper = subprocess.Popen(
+        [sys.executable, str(tmp_path / "reaper.py"), str(SCRIPT),
+         str(cache), str(sentinel)],
+        stdout=subprocess.PIPE, text=True,
+    )
+    WORKERS, PER = 4, 20
+    writers = [
+        subprocess.Popen(
+            [sys.executable, str(tmp_path / "worker.py"), str(SCRIPT),
+             str(cache), str(w), str(PER)],
+            stderr=subprocess.PIPE, text=True,
+        )
+        for w in range(WORKERS)
+    ]
+    try:
+        for w, proc in enumerate(writers):
+            err = proc.communicate(timeout=180)[1]
+            assert proc.returncode == 0, f"writer {w} failed:\n{err}"
+    finally:
+        sentinel.touch()
+    reaped = int(reaper.communicate(timeout=60)[0].strip())
+
+    assert reaped == 0, (
+        f"the reaper collected {reaped} temp file(s) a live publish owned — "
+        "every .part in this directory belonged to a running writer"
+    )
+    records = sorted(cache.glob("*.json"))
+    assert len(records) == WORKERS * PER, \
+        f"{len(records)} records for {WORKERS * PER} publishes"
+    bad = [(p.name, ccr._read_record(p.stem, cache, path=p)[1])
+           for p in records if ccr._read_record(p.stem, cache, path=p)[0] is None]
+    assert bad == [], f"corrupt records after concurrent publish+reap: {bad}"
+    assert [p.name for p in cache.iterdir() if p.name.endswith(".part")] == []
+    s = ccr.stats(cache_dir=cache)
+    assert (s["entries"], s["unusable"]) == (WORKERS * PER, 0), s
+
+
+def test_stats_refuses_a_digest_mismatched_record(tmp_path):
+    """D5 — SKILL.md: "EVERY read recomputes the sha256 and refuses a mismatch".
+    `stats()` was the one read that opted out, so a record `retrieve` refused as
+    tampered was still rolled into the totals as if it were sound.
+    """
+    honest = ccr.compress("honest-content", "text", cache_dir=tmp_path)
+    bad = ccr.compress("will-be-tampered", "text", cache_dir=tmp_path)
+    bad_path = tmp_path / f"{bad['handle'].removeprefix(ccr.HANDLE_PREFIX)}.json"
+    rec = json.loads(bad_path.read_text())
+    rec["original"] = "TAMPERED-CONTENT"
+    bad_path.write_text(json.dumps(rec))
+
+    s = ccr.stats(cache_dir=tmp_path)
+    assert s["entries"] == 1, f"a digest-mismatched record was counted: {s}"
+    assert s["unusable"] == 1, f"the refused record must be reported, not dropped: {s}"
+    assert s["original_chars"] == len("honest-content"), s
+    # cross-check: retrieve() refuses the very record stats() must not count
+    _must_reject(lambda h: ccr.retrieve(h, cache_dir=tmp_path), bad["handle"],
+                 "fixture guard: the tampered record must be refused")
+    assert ccr.retrieve(honest["handle"], cache_dir=tmp_path) == "honest-content"
+
+    # ...and the exclusion is reported with the reason `_read_record` actually
+    # established, per shape. An earlier revision returned only a lump sum and
+    # let the CLI narrate "digest mismatch or impossible counters — re-compress
+    # to heal", which is false for all three shapes added below: none is either
+    # of those, and none heals by re-compressing. Naming a cause that was never
+    # checked is the defect class this whole pass exists to remove.
+    (tmp_path / "hello.json").write_text("not a record at all")
+    (tmp_path / "dangling.json").symlink_to(tmp_path / "nowhere-at-all")
+    (tmp_path / "adir.json").mkdir()
+    s = ccr.stats(cache_dir=tmp_path)
+    assert s["entries"] == 1, s
+    assert s["unusable_reasons"] == {
+        "digest-mismatch": 1,   # the tampered record
+        "unparsable": 1,        # hello.json
+        "outside-cache": 1,     # the dangling symlink
+        "not-a-file": 1,        # the directory
+    }, f"reasons must be carried through, not inferred downstream: {s}"
+    assert s["unusable"] == 4 == sum(s["unusable_reasons"].values()), s
+
+
+def test_stats_counters_are_derived_from_the_verified_field_not_trusted(tmp_path):
+    """D5, the half a digest check alone does NOT fix.
+
+    The sha256 covers exactly one field — `original`. The `original_chars` /
+    `compact_chars` counters sit outside it, so the ticket's own repro (edit
+    `original_chars` to 1e9) keeps the digest valid and still reported
+    `cumulative_saved_pct: 100.0`. The rollup must therefore be DERIVED from
+    the verified field, and `compact_chars` — which cannot be recomputed, since
+    the view is not stored — accepted only inside the range every record this
+    program writes satisfies: `0 <= compact <= original`.
+    """
+    res = ccr.compress("honest-content", "text", cache_dir=tmp_path)
+    p = tmp_path / f"{res['handle'].removeprefix(ccr.HANDLE_PREFIX)}.json"
+    true_chars = len("honest-content")
+
+    def _tamper(**fields):
+        rec = json.loads(p.read_text())
+        rec.update(fields)
+        p.write_text(json.dumps(rec))
+        return ccr.stats(cache_dir=tmp_path)
+
+    s = _tamper(original_chars=1_000_000_000)
+    assert s["original_chars"] == true_chars, f"inflated counter was trusted: {s}"
+    assert s["cumulative_saved_pct"] == 0.0, f"phantom savings: {s}"
+    assert s["entries"] == 1, "the record itself is sound — only its counter lied"
+
+    for impossible in (true_chars + 1, -1, "1000", True, None):
+        s = _tamper(compact_chars=impossible)
+        assert s["entries"] == 0 and s["unusable"] == 1, (
+            f"impossible compact_chars={impossible!r} was folded into the totals: {s}"
+        )
+    s = _tamper(compact_chars=1)
+    assert s["entries"] == 1 and s["compact_chars"] == 1, s
+    assert ccr.retrieve(res["handle"], cache_dir=tmp_path) == "honest-content", \
+        "metadata sanity is a stats() concern — it must not break retrieve()"
 
 
 if __name__ == "__main__":

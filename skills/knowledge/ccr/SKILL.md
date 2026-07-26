@@ -65,6 +65,15 @@ the "compact view". Truncated JSON lands here by construction: `detect_type`
 needs a *successful* `json.loads`, so a streamed/cut-off document routes to
 `text`.
 
+The budgets are **independent**: `--line-budget 0` (or any value `≤ 0`)
+disables the *character* budget only, and `--head`/`--tail` keep eliding. It
+used to disable neither cleanly — for multi-line input `len(ln) <= 0` was false
+for every non-empty line, so *disabling* the budget routed the payload down the
+join path it was meant to avoid: `compact_text("a\r\nb\r\n", line_budget=0)`
+returned `"a\nb"`, dropping a trailing newline, normalising CRLF, and reporting
+a 50% saving with nothing marked elided. A "no compression" flag that silently
+rewrites bytes is worse than one that does nothing.
+
 The char budget applies to the **code** outline too. It initially did not:
 `compact_code(payload, **_)` swallowed `line_budget`, so a minified JS/TS
 bundle — one enormous line that still matches `_DEF_RE`, and the canonical
@@ -101,8 +110,10 @@ exists to catch.
 | **Byte-exact.** `retrieve` returns the input's exact bytes: CRLF, lone CR, missing trailing newline, NUL, BOM, 4-byte UTF-8, lone surrogates, and raw non-UTF-8 bytes all survive. | `compress` reads **bytes** (`read_bytes` + `surrogateescape`) — `read_text` applies universal-newline translation, which rewrote `\r\n` → `\n` *before hashing*, destroying the original. `retrieve` writes through `stdout.buffer`. |
 | **Confined.** A handle is `[0-9a-f]{8,64}` and nothing else, validated **before** it touches the filesystem; the resolved record must be a real file inside the cache dir. | Handles come back from *model output* — the untrusted side. `Path.__truediv__` silently discards the cache dir for an absolute token and keeps `..` for a relative one, and a `<sha>.json` symlink can point anywhere. |
 | **Atomic.** A concurrent reader never observes a partial record. | Records are published by temp-file + `os.replace`, never streamed into the final name. |
-| **Verified.** Every read recomputes the sha256 and refuses a mismatch. | A content-addressed store that hands back unverified bytes is not content-addressed. |
+| **Verified.** Every read recomputes the sha256 and refuses a mismatch — `retrieve`, `compress`'s self-heal check, **and `stats`**. | A content-addressed store that hands back unverified bytes is not content-addressed. `stats` was the one read that opted out, so a record `retrieve` refused as tampered was still rolled into the totals. |
+| **Honest rollup.** `stats` derives its totals from the digest-covered field (`len(original)`), and reports every excluded entry **with the reason that excluded it** (`unusable_reasons`), never a lump sum. | The sha256 covers `original` and nothing else, so the stored `original_chars` counter sits *outside* it: editing it to `1e9` kept the digest valid and reported `cumulative_saved_pct: 100.0`. `compact_chars` cannot be recomputed (the view is not stored), so it is accepted only inside the range every record satisfies by construction: `0 ≤ compact ≤ original`. A lump `unusable` count invited the CLI to narrate a cause it never checked — "digest mismatch … re-compress to heal" is false for a stray `hello.json`, a dangling symlink, or a directory named `adir.json`. |
 | **Self-healing.** A truncated or tampered record is treated as *absent*, so the next `compress` of that payload rewrites it. | The old `if not rec_path.exists()` short-circuit made a partial record permanent. |
+| **Self-collecting.** A `.ccr-tmp-*.part` orphaned by SIGKILL or power loss is unlinked at the next cache open, once older than a 6h TTL. | `_write_record`'s cleanup covers a *failed* publish; a hard kill runs no handler, and nothing else in the store looks at `.part` names, so the leak was permanent. **Age**, not an exclusivity check, gates the delete: mtime advances while a live publish writes, so an hours-stale temp file cannot be one. The window is measured — instrumenting `os.replace` across 640 concurrent publishes puts the longest a `.part` was ever live at **15ms** (median 0.1ms), so a 6h TTL carries ~10⁶× margin on its own evidence. Held under concurrency by `test_concurrent_writers_and_a_reaper_produce_no_corrupt_records` (4 writers + a continuously-reaping 5th, in CI, ~0.15s); an ad-hoc 16-writer run of the same shape produced 640 records, 0 failures, 0 corrupt. |
 | **Private.** Cache dir `0700`, records `0600`. | The cache holds full plaintext originals. |
 | **Linear.** Both code regexes are line-bounded (`[ \t]*`, `[^\n]*`). | `^\s*` matches `\n`, so `_IMPORT_RE` ran to EOF and backtracked at every line start — quadratic (32KB of blank lines took 5.6s), reachable from `--type auto`. |
 
@@ -145,7 +156,7 @@ original = ccr.retrieve(r["handle"])                # expand on demand
 ## Tests
 
 ```bash
-python3 -m pytest skills/knowledge/ccr/tests/ -q     # 49 tests
+python3 -m pytest skills/knowledge/ccr/tests/ -q     # 55 tests
 python3 skills/knowledge/ccr/tests/test_ccr.py       # no pytest needed
 ```
 
@@ -156,6 +167,27 @@ lone surrogate, raw non-UTF-8) as well as through the Python API. Plus:
 64-char traversal/absolute/symlink handle rejection, cache atomicity + digest
 verification + self-healing, `0700`/`0600` permissions, ReDoS bounds on **both**
 code regexes, the character budget, head/tail clamping, and deep-JSON recursion.
+
+The temp-file reaper is tested at the shape that produced it: a child process
+`SIGKILL`s itself from inside `os.replace`, and the test asserts the whole
+lifecycle — the orphan appears, no record lands at the canonical path, a
+*young* orphan survives (it is indistinguishable from another process's live
+publish), and only a stale one is collected. A second test races the reaper
+against a real in-flight publish rather than asserting the mtime rule
+statically: remove the age guard and the publish dies with `FileNotFoundError`.
+A third runs the whole thing **concurrently** — 4 writer processes plus a fifth
+reaping continuously — because a delete path in a shared directory is where a
+reaper's regressions actually live, and a claim about concurrency that only
+exists in a changelog is not re-verifiable. It asserts the reaper collected
+*nothing*: every `.part` in that directory belongs to a running writer.
+
+**Scope limit, stated rather than left implicit.** Age does not cover a forward
+clock step larger than the TTL (VM snapshot restore, an RTC that NTP then
+corrects). Forcing that case — a reaper at `ttl=0` against 640 concurrent
+publishes — makes publishes fail *loudly* with `FileNotFoundError` (6.2% on one
+run, 12.7% on an independent reviewer's; load-dependent) and corrupted **0**
+records in both. An availability fault on a retryable operation, not an
+integrity one.
 
 Tests assert at the layer that can actually break. `test_small_text_not_mangled`
 asserts `compact_text` **directly** — routed through `compress()` it cannot

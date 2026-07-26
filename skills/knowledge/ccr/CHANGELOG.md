@@ -1,5 +1,58 @@
 # Changelog — ccr
 
+## 0.1.2 — 2026-07-26
+
+The three LOW residuals left open by 0.1.1's P20 round-2 verification
+(BRO-1992). Each was reproduced first; each fix is mutation-proven.
+
+- **`--line-budget 0` did not disable the char budget for multi-line input.**
+  `len(ln) <= 0` is false for every non-empty line, so *disabling* the budget
+  routed the payload down the join path it was meant to avoid:
+  `compact_text("a\r\nb\r\n", line_budget=0)` returned `"a\nb"` — trailing
+  newline dropped, CRLF normalised, `saved_pct: 50.0`, nothing marked elided.
+  `line_budget <= 0` now reaches the verbatim fast path. Only the *character*
+  budget is disabled; `--head`/`--tail` keep eliding, so the two budgets are
+  independently controllable as documented.
+- **A hard kill mid-publish orphaned a `.ccr-tmp-*.part` file forever.**
+  `_write_record` cleans up a *failed* publish, but SIGKILL runs no handler and
+  nothing else in the store looks at `.part` names. Stale temp files are now
+  reaped at cache open. **Age** gates the delete (6h TTL, mtime-based), not an
+  exclusivity check: mtime advances while a live publish writes, so an
+  hours-stale temp cannot belong to one. The window is measured, not borrowed —
+  instrumenting `os.replace` across 640 concurrent publishes puts the longest a
+  `.part` was ever live at **15ms** (median 0.1ms), so 6h carries ~10⁶× margin
+  on its own evidence. (The *shape* of the rule matches git's `gc.pruneExpire`;
+  the magnitude does not — git ships two weeks.) The scan runs once per process
+  per cache dir (a full directory scan costs 4.7ms on a 5,000-record cache, 26×
+  a cache-hit `compress`). Held under concurrency by a committed test — 4
+  writer processes plus a continuously-reaping 5th, ~0.15s — which asserts the
+  reaper collected *nothing*; an ad-hoc 16-writer run of the same shape gave
+  640 records, 0 publish failures, 0 corrupt.
+
+  Scope limit, stated: age does not cover a forward clock step larger than the
+  TTL (VM snapshot restore, an RTC that NTP then corrects). Forced via `ttl=0`
+  against 640 concurrent publishes, that fails publishes **loudly** with
+  `FileNotFoundError` (6.2% on one run, 12.7% on an independent reviewer's) and
+  corrupted **0** records in both — availability, not integrity.
+- **`stats()` did not digest-verify**, contradicting "*every* read recomputes
+  the sha256". It now reads through `_read_record` like every other path.
+  Verification alone was not enough: the sha256 covers only `original`, so the
+  ticket's own repro — editing `original_chars` to `1e9` — kept the digest
+  valid and reported `cumulative_saved_pct: 100.0`. The rollup is therefore
+  *derived* from the verified field, and `compact_chars` (not recomputable, the
+  view is not stored) is accepted only within `0 ≤ compact ≤ original`, which
+  every record satisfies by construction. Excluded entries are reported with
+  **the reason that excluded them** (`unusable_reasons`, a per-reason count),
+  so `entries` cannot quietly disagree with the file count *and* the CLI cannot
+  narrate a cause nobody checked: a lump sum invited "digest mismatch —
+  re-compress to heal", which is false for a stray `hello.json`, a dangling
+  symlink or a directory named `adir.json`. Cost: +47% on a scan that was
+  already linear in cached bytes (545ms → 802ms on a 5,000-record / 20MB cache)
+  — `stats` is a diagnostic command, and a rollup inflatable by editing one
+  integer is worse than a slower one.
+
+Tests: 49 → **55**.
+
 ## 0.1.1 — 2026-07-26
 
 Pre-merge hardening pass. A cross-model adversarial review (P20) blocked 0.1.0
