@@ -228,7 +228,7 @@ def test_stats_rollup(tmp_path):
     ccr.compress(TEXT_PAYLOAD, "text", cache_dir=tmp_path)
     s = ccr.stats(cache_dir=tmp_path)
     assert s["entries"] == 2
-    assert s["unusable"] == 0
+    assert s["unusable"] == 0 and s["unusable_reasons"] == {}
     assert s["original_chars"] > s["compact_chars"]
     assert 0 < s["cumulative_saved_pct"] < 100
 
@@ -1112,6 +1112,84 @@ def test_reaper_never_deletes_a_temp_file_a_live_publish_owns(tmp_path):
     assert link.is_symlink()
 
 
+def test_concurrent_writers_and_a_reaper_produce_no_corrupt_records(tmp_path):
+    """D4 under CONCURRENCY — the condition the reaper's regressions live in.
+
+    Both other reaper tests are single-process. A reaper is a delete path in a
+    directory concurrent processes write to, and this is the change whose
+    failure mode only appears when a real publish and a real reap overlap, so
+    the claim needs a test in CI rather than a number in a changelog.
+
+    Trimmed to stay ~1s: 4 writer processes x 20 payloads, plus a 5th process
+    reaping continuously for the whole run. `reaped == 0` is the load-bearing
+    assertion — every `.part` in this directory belongs to a live publish, so
+    a correct reaper must collect NOTHING no matter how often it looks.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (tmp_path / "worker.py").write_text(textwrap.dedent("""
+        import importlib.util, sys
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("ccr", sys.argv[1])
+        ccr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ccr)
+        cache, wid, n = Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+        for i in range(n):
+            payload = f"w{wid}-p{i}-" + "x" * (1000 * (i % 20 + 1))
+            res = ccr.compress(payload, "text", cache_dir=cache)
+            got = ccr.retrieve(res["handle"], cache_dir=cache)
+            assert got == payload, f"w{wid} p{i}: round trip differed"
+    """))
+    (tmp_path / "reaper.py").write_text(textwrap.dedent("""
+        import importlib.util, sys, time
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location("ccr", sys.argv[1])
+        ccr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ccr)
+        cache, sentinel = Path(sys.argv[2]), Path(sys.argv[3])
+        reaped, deadline = 0, time.time() + 120
+        while not sentinel.exists() and time.time() < deadline:
+            reaped += ccr._reap_stale_parts(cache)
+        print(reaped)
+    """))
+    sentinel = tmp_path / "DONE"
+    reaper = subprocess.Popen(
+        [sys.executable, str(tmp_path / "reaper.py"), str(SCRIPT),
+         str(cache), str(sentinel)],
+        stdout=subprocess.PIPE, text=True,
+    )
+    WORKERS, PER = 4, 20
+    writers = [
+        subprocess.Popen(
+            [sys.executable, str(tmp_path / "worker.py"), str(SCRIPT),
+             str(cache), str(w), str(PER)],
+            stderr=subprocess.PIPE, text=True,
+        )
+        for w in range(WORKERS)
+    ]
+    try:
+        for w, proc in enumerate(writers):
+            err = proc.communicate(timeout=180)[1]
+            assert proc.returncode == 0, f"writer {w} failed:\n{err}"
+    finally:
+        sentinel.touch()
+    reaped = int(reaper.communicate(timeout=60)[0].strip())
+
+    assert reaped == 0, (
+        f"the reaper collected {reaped} temp file(s) a live publish owned — "
+        "every .part in this directory belonged to a running writer"
+    )
+    records = sorted(cache.glob("*.json"))
+    assert len(records) == WORKERS * PER, \
+        f"{len(records)} records for {WORKERS * PER} publishes"
+    bad = [(p.name, ccr._read_record(p.stem, cache, path=p)[1])
+           for p in records if ccr._read_record(p.stem, cache, path=p)[0] is None]
+    assert bad == [], f"corrupt records after concurrent publish+reap: {bad}"
+    assert [p.name for p in cache.iterdir() if p.name.endswith(".part")] == []
+    s = ccr.stats(cache_dir=cache)
+    assert (s["entries"], s["unusable"]) == (WORKERS * PER, 0), s
+
+
 def test_stats_refuses_a_digest_mismatched_record(tmp_path):
     """D5 — SKILL.md: "EVERY read recomputes the sha256 and refuses a mismatch".
     `stats()` was the one read that opted out, so a record `retrieve` refused as
@@ -1132,6 +1210,25 @@ def test_stats_refuses_a_digest_mismatched_record(tmp_path):
     _must_reject(lambda h: ccr.retrieve(h, cache_dir=tmp_path), bad["handle"],
                  "fixture guard: the tampered record must be refused")
     assert ccr.retrieve(honest["handle"], cache_dir=tmp_path) == "honest-content"
+
+    # ...and the exclusion is reported with the reason `_read_record` actually
+    # established, per shape. An earlier revision returned only a lump sum and
+    # let the CLI narrate "digest mismatch or impossible counters — re-compress
+    # to heal", which is false for all three shapes added below: none is either
+    # of those, and none heals by re-compressing. Naming a cause that was never
+    # checked is the defect class this whole pass exists to remove.
+    (tmp_path / "hello.json").write_text("not a record at all")
+    (tmp_path / "dangling.json").symlink_to(tmp_path / "nowhere-at-all")
+    (tmp_path / "adir.json").mkdir()
+    s = ccr.stats(cache_dir=tmp_path)
+    assert s["entries"] == 1, s
+    assert s["unusable_reasons"] == {
+        "digest-mismatch": 1,   # the tampered record
+        "unparsable": 1,        # hello.json
+        "outside-cache": 1,     # the dangling symlink
+        "not-a-file": 1,        # the directory
+    }, f"reasons must be carried through, not inferred downstream: {s}"
+    assert s["unusable"] == 4 == sum(s["unusable_reasons"].values()), s
 
 
 def test_stats_counters_are_derived_from_the_verified_field_not_trusted(tmp_path):

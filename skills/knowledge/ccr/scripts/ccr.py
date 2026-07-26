@@ -63,6 +63,7 @@ import stat
 import sys
 import tempfile
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -394,7 +395,9 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-def _read_record(sha: str, cache_dir: Path) -> tuple[dict | None, str]:
+def _read_record(
+    sha: str, cache_dir: Path, path: Path | None = None
+) -> tuple[dict | None, str]:
     """Read + VERIFY one cache record. Returns (record | None, reason).
 
     A content-addressed store that hands back unverified bytes is not
@@ -404,12 +407,22 @@ def _read_record(sha: str, cache_dir: Path) -> tuple[dict | None, str]:
     Absent / unparsable / mis-digested all collapse to `None` on purpose:
     compress() treats "unusable" as "not there" and rewrites, so a partial
     record SELF-HEALS instead of being cemented forever by an `exists()` check.
+
+    `path` lets a caller that already HAS the entry (stats(), scanning the
+    directory) pass it instead of having it re-derived from `sha`. The two
+    agree for every well-formed record name, but not for every file that can
+    sit in the directory: `Path(".json").stem` is `".json"`, so the derived
+    path would be `.json.json` and the reason reported for the real file would
+    be "absent" — a reason the caller never established. `sha` stays the digest
+    the content is checked against either way; only the file read changes.
     """
-    p = _record_path(sha, cache_dir)
+    p = _record_path(sha, cache_dir) if path is None else path
     if not _is_confined(p, cache_dir):
         return None, "outside-cache"
     if not p.is_file():
-        return None, "absent"
+        # A directory or a device node named `<sha>.json` EXISTS but is not a
+        # record. Calling that "absent" would misreport it to stats().
+        return None, "absent" if not p.exists() else "not-a-file"
     try:
         rec = json.loads(p.read_text(encoding="utf-8"))
     except (ValueError, OSError):
@@ -472,8 +485,25 @@ def _write_record(sha: str, cache_dir: Path, rec: dict) -> None:
 # stale cannot belong to a live publish. flock would be a stronger same-host
 # signal, but it is POSIX-only, unreliable on NFS, cannot cover orphans created
 # before it existed, and would put a new syscall in the concurrency-critical
-# write path the atomicity guarantee rests on. This is git's `gc.pruneExpire`
-# reasoning: prune only what is too old for a concurrent writer to own.
+# write path the atomicity guarantee rests on. Prune only what is too old for a
+# concurrent writer to own — the same *shape* of rule as git's `gc.pruneExpire`,
+# though not its magnitude (git ships two weeks; the window below is 56x
+# tighter and rests on its own measurement, not on git's choice).
+#
+# The window is measured, not guessed: instrumenting os.replace across 640
+# concurrent publishes puts the LONGEST a `.part` was ever live at 15ms
+# (median 0.1ms). 6h is ~1.4 million times that.
+#
+# The one case age does NOT cover, stated rather than left implicit: a FORWARD
+# CLOCK STEP larger than the TTL — a VM snapshot restore, a wrong RTC that NTP
+# then corrects, a container inheriting a skewed clock — makes every live
+# `.part` look stale at once. The blast radius is bounded, and was measured by
+# forcing it (a reaper at ttl=0 against 640 concurrent publishes): publishes
+# fail LOUDLY with FileNotFoundError — 6.2% on one run, 12.7% on an
+# independent reviewer's, i.e. load-dependent — and BOTH runs corrupted 0
+# records. That is an availability fault on a retryable operation, not an
+# integrity one, which is why age is still the right trade against putting a
+# lock in the write path.
 _PART_TTL_SECONDS = 6 * 3600
 
 # Reaping is a full directory scan (measured 4.7ms on a 5,000-record cache —
@@ -485,7 +515,13 @@ _REAPED_CACHE_DIRS: set[str] = set()
 
 
 def _reap_stale_parts(cache_dir: Path, ttl: float = _PART_TTL_SECONDS) -> int:
-    """Unlink temp files orphaned by a hard kill. Returns the number reaped.
+    """Unlink temp files orphaned by a hard kill.
+
+    Returns the number of unlinks THIS call believes it made — a signal, not a
+    ledger. Two processes reaping the same directory can both be told an
+    unlink succeeded (observed on APFS), so summing the return value across
+    concurrent reapers can exceed the number of files that existed. Callers
+    use it for "did this reap anything", never as a count of distinct files.
 
     Every failure mode is swallowed on purpose: this is opportunistic GC, and
     a reaper that can break `compress` is worse than the leak it collects. An
@@ -637,26 +673,35 @@ def stats(*, cache_dir: Path | None = None) -> dict:
     too. Measured on a 5,000-record / 20MB cache: 545ms before, 802ms after
     (+47% on an already-linear scan). `stats` is a diagnostic command, not a
     hot path; a rollup that can be inflated by editing one integer is worse
-    than a slower one. Records the digest refuses are reported, not silently
-    dropped, so `entries` never quietly disagrees with the file count.
+    than a slower one.
+
+    Excluded entries are reported WITH the reason `_read_record` established —
+    `unusable_reasons` is a per-reason count, not a lump sum. An earlier
+    revision returned the lump sum and let the CLI narrate a cause ("digest
+    mismatch or impossible counters — re-compress those payloads to heal
+    them"), which is false for a stray `hello.json`, a dangling symlink or a
+    directory named `adir.json`: none of those is either shape, and none heals
+    by re-compressing. Asserting more than was verified is the exact defect
+    class this pass exists to remove, so the reason is carried through instead
+    of being reconstructed downstream.
     """
     cache_dir = cache_dir or CCR_HOME
-    entries = unusable = 0
+    entries = 0
+    reasons: Counter[str] = Counter()
     orig_chars = comp_chars = 0
     if cache_dir.exists():
         for p in cache_dir.glob("*.json"):
-            # `_read_record` re-derives the path from the stem, which is the
-            # same file for any `*.json` name, and applies the confinement,
-            # parse and digest checks in one place — the reason this loop no
-            # longer has its own copy of them.
-            rec, _reason = _read_record(p.stem, cache_dir)
+            # `path=p` so the reason describes the file actually scanned, and
+            # `_read_record` applies the confinement, parse and digest checks
+            # in one place — the reason this loop no longer has its own copy.
+            rec, reason = _read_record(p.stem, cache_dir, path=p)
             if rec is None:
-                unusable += 1
+                reasons[reason] += 1
                 continue
             n = len(rec["original"])
             c = rec.get("compact_chars")
             if type(c) is not int or not 0 <= c <= n:
-                unusable += 1
+                reasons["impossible-counters"] += 1
                 continue
             entries += 1
             orig_chars += n
@@ -666,7 +711,8 @@ def stats(*, cache_dir: Path | None = None) -> dict:
     return {
         "cache_dir": str(cache_dir),
         "entries": entries,
-        "unusable": unusable,
+        "unusable": sum(reasons.values()),
+        "unusable_reasons": dict(sorted(reasons.items())),
         "original_chars": orig_chars,
         "compact_chars": comp_chars,
         "original_tokens": orig_tok,
@@ -810,14 +856,16 @@ def main(argv: list[str] | None = None) -> int:
                     f"(−{s['cumulative_saved_pct']}% if all served compact)"
                 )
                 if s["unusable"]:
-                    # Reported, not swallowed: these are records the digest
-                    # check refused, and a rollup that silently omits them
-                    # would disagree with the file count for no visible reason.
-                    print(
-                        f"  {s['unusable']} unusable record(s) excluded "
-                        "(digest mismatch or impossible counters) — "
-                        "re-compress those payloads to heal them"
+                    # Reported, not swallowed: a rollup that silently omits
+                    # entries would disagree with the file count for no visible
+                    # reason. The breakdown is `_read_record`'s OWN reason for
+                    # each exclusion — this line does not infer a cause, and in
+                    # particular does not tell the user to re-compress, which
+                    # only heals the corrupt-record shapes.
+                    breakdown = ", ".join(
+                        f"{k} {v}" for k, v in s["unusable_reasons"].items()
                     )
+                    print(f"  {s['unusable']} entr(ies) excluded: {breakdown}")
             return 0
     except KeyError as e:
         print(f"ccr: {e}", file=sys.stderr)

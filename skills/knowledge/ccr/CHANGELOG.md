@@ -18,11 +18,22 @@ The three LOW residuals left open by 0.1.1's P20 round-2 verification
   nothing else in the store looks at `.part` names. Stale temp files are now
   reaped at cache open. **Age** gates the delete (6h TTL, mtime-based), not an
   exclusivity check: mtime advances while a live publish writes, so an
-  hours-stale temp cannot belong to one — git's `gc.pruneExpire` reasoning.
-  The scan runs once per process per cache dir (a full directory scan costs
-  4.7ms on a 5,000-record cache, 26× a cache-hit `compress`). Re-verified
-  against 16 concurrent writers plus a continuously-reaping 17th process: 640
-  records, 0 publish failures, 0 corrupt.
+  hours-stale temp cannot belong to one. The window is measured, not borrowed —
+  instrumenting `os.replace` across 640 concurrent publishes puts the longest a
+  `.part` was ever live at **15ms** (median 0.1ms), so 6h carries ~10⁶× margin
+  on its own evidence. (The *shape* of the rule matches git's `gc.pruneExpire`;
+  the magnitude does not — git ships two weeks.) The scan runs once per process
+  per cache dir (a full directory scan costs 4.7ms on a 5,000-record cache, 26×
+  a cache-hit `compress`). Held under concurrency by a committed test — 4
+  writer processes plus a continuously-reaping 5th, ~0.15s — which asserts the
+  reaper collected *nothing*; an ad-hoc 16-writer run of the same shape gave
+  640 records, 0 publish failures, 0 corrupt.
+
+  Scope limit, stated: age does not cover a forward clock step larger than the
+  TTL (VM snapshot restore, an RTC that NTP then corrects). Forced via `ttl=0`
+  against 640 concurrent publishes, that fails publishes **loudly** with
+  `FileNotFoundError` (6.2% on one run, 12.7% on an independent reviewer's) and
+  corrupted **0** records in both — availability, not integrity.
 - **`stats()` did not digest-verify**, contradicting "*every* read recomputes
   the sha256". It now reads through `_read_record` like every other path.
   Verification alone was not enough: the sha256 covers only `original`, so the
@@ -30,14 +41,17 @@ The three LOW residuals left open by 0.1.1's P20 round-2 verification
   valid and reported `cumulative_saved_pct: 100.0`. The rollup is therefore
   *derived* from the verified field, and `compact_chars` (not recomputable, the
   view is not stored) is accepted only within `0 ≤ compact ≤ original`, which
-  every record satisfies by construction. Refused records are reported as a new
-  `unusable` count rather than silently dropped, so `entries` cannot quietly
-  disagree with the file count. Cost: +47% on a scan that was already linear in
-  cached bytes (545ms → 802ms on a 5,000-record / 20MB cache) — `stats` is a
-  diagnostic command, and a rollup inflatable by editing one integer is worse
-  than a slower one.
+  every record satisfies by construction. Excluded entries are reported with
+  **the reason that excluded them** (`unusable_reasons`, a per-reason count),
+  so `entries` cannot quietly disagree with the file count *and* the CLI cannot
+  narrate a cause nobody checked: a lump sum invited "digest mismatch —
+  re-compress to heal", which is false for a stray `hello.json`, a dangling
+  symlink or a directory named `adir.json`. Cost: +47% on a scan that was
+  already linear in cached bytes (545ms → 802ms on a 5,000-record / 20MB cache)
+  — `stats` is a diagnostic command, and a rollup inflatable by editing one
+  integer is worse than a slower one.
 
-Tests: 49 → **54**.
+Tests: 49 → **55**.
 
 ## 0.1.1 — 2026-07-26
 

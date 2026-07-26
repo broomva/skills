@@ -48,6 +48,6 @@ See [`SKILL.md`](./SKILL.md) for the full contract.
 ## Test
 
 ```bash
-python3 -m pytest tests/ -q        # 54 tests
+python3 -m pytest tests/ -q        # 55 tests
 python3 tests/test_ccr.py          # no pytest needed
 ```
