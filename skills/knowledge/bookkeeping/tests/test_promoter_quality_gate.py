@@ -631,3 +631,88 @@ def test_name_drop_density_not_just_count():
     assert len(sparse) < bookkeeping._MAX_PROMOTABLE_ITEM_CHARS
     assert "arcan" in _build_entity_slug_candidates(_item(dense))
     assert "arcan" not in _build_entity_slug_candidates(_item(sparse))
+
+
+# ── One item ⇒ at most one entity page (BRO-1990) ─────────────────────────────
+#
+# `run_pipeline` promoted `resolved[:2]` — "max 2 entities per item" — calling
+# `promote_item(scored, slug)` twice with the SAME `scored`. Both pages
+# therefore carried an identical `core_claim`, identical evidence and identical
+# source, differing only in slug and title. Because candidates are ordered by
+# centrality, the second slug named something the claim was NOT about.
+#
+# Measured on the live graph before the fix: 10 claims were each shared by 2
+# pages (20 pages), e.g. `groq-compound` + `hugging-face` both asserting a fact
+# about Firecracker, and `prompt-sampler` + `spaces` both carrying an
+# evolutionary-LLM-optimizer claim. A single scheduled run produced 27 pages of
+# which 23 had a claim unrelated to their own slug.
+#
+# Note this is a PROVENANCE invariant, not a semantic one. A "does the claim
+# mention the slug?" check was measured against the 803 committed pages and
+# flagged 36% of them — acronym and abbreviation slugs (`eip-3009`,
+# `cloud-optimized-geotiff`, `colombia-1340-uvt-deduction-cap`) legitimately
+# do not repeat themselves in their claim. That heuristic is therefore NOT a
+# gate. "Two pages, one item, one claim" is decidable without reading meaning.
+
+
+class TestOneEntityPerItem:
+    # Yields exactly two candidates, with the claim about the first only.
+    TWO_CANDIDATE_BODY = (
+        "Cloud Hypervisor is the only agent-sandbox substrate where "
+        "snapshot-restore is a first-class product surface. Cloud Hypervisor "
+        "boots a microVM in 125ms. Hugging Face Endpoints, by contrast, trade "
+        "that latency for managed hosting. Hugging Face Endpoints and Cloud "
+        "Hypervisor solve different halves. Hugging Face Endpoints is not a "
+        "substrate at all."
+    )
+
+    def _run(self, tmp_path, monkeypatch):
+        notes = tmp_path / "research" / "notes"
+        notes.mkdir(parents=True)
+        monkeypatch.setattr(bookkeeping, "NOTES_DIR", notes)
+        monkeypatch.setattr(bookkeeping, "CONFIG_DIR", tmp_path / ".config")
+        monkeypatch.setattr(bookkeeping, "RUN_LOG", tmp_path / ".config" / "run-log.jsonl")
+        monkeypatch.setattr(bookkeeping, "STATUS_CACHE", tmp_path / ".config" / "status.json")
+        (notes / "2026-07-26-substrates-raw.md").write_text(
+            "---\nsource: research\n---\n\n"
+            "## Item 1 — @someone (web)\n\n"
+            "**Score**: 7/9 — novelty:3 specificity:2 relevance:2\n\n"
+            "**Our angle**: " + self.TWO_CANDIDATE_BODY + "\n"
+        )
+        bookkeeping.run_pipeline(verbose=False)
+
+    def test_item_yields_two_candidates(self):
+        """Guard the fixture itself: if this stops producing 2 candidates the
+        tests below would pass vacuously."""
+        cands = _build_entity_slug_candidates(_item(self.TWO_CANDIDATE_BODY))
+        assert len(cands) >= 2, f"fixture no longer exercises fan-out: {cands}"
+
+    def test_mints_exactly_one_entity(self, temp_entities, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch)
+        pages = sorted(p.stem for p in temp_entities.rglob("*.md"))
+        assert len(pages) == 1, f"one item must mint one entity, got {pages}"
+
+    def test_no_two_pages_share_a_core_claim(self, temp_entities, tmp_path, monkeypatch):
+        """The provenance invariant, stated directly."""
+        self._run(tmp_path, monkeypatch)
+        import re
+        from collections import Counter
+
+        claims = []
+        for p in temp_entities.rglob("*.md"):
+            m = re.search(r"^core_claim:\s*(.*)$", p.read_text(), re.M)
+            if m:
+                claims.append(m.group(1).strip().strip('"'))
+        dupes = [c for c, n in Counter(claims).items() if n > 1]
+        assert not dupes, f"same claim on >1 page: {dupes}"
+
+    def test_surviving_page_is_the_primary_candidate(
+        self, temp_entities, tmp_path, monkeypatch
+    ):
+        """The page that survives must be the one the claim is actually about —
+        not an arbitrary member of the candidate list."""
+        self._run(tmp_path, monkeypatch)
+        pages = [p.stem for p in temp_entities.rglob("*.md")]
+        assert pages == ["cloud-hypervisor"], (
+            f"expected the claim's subject to survive, got {pages}"
+        )

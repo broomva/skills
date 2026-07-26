@@ -3098,7 +3098,23 @@ def run_pipeline(
             items_raw_only += 1
             continue
 
-        for slug, is_existing in resolved[:2]:  # max 2 entities per item
+        # ONE item carries ONE core_claim, so it can support at most ONE entity
+        # page. This was `resolved[:2]`, which minted a second page from the
+        # SAME `scored` object — identical core_claim, identical evidence,
+        # identical source, differing only in slug and title. The second slug is
+        # by construction the LESS central candidate, so its title described
+        # something the claim was not about: `groq-compound` and `hugging-face`
+        # both ended up asserting a fact about Firecracker; `prompt-sampler` and
+        # `spaces` both carried an evolutionary-LLM-optimizer claim. Measured on
+        # the live graph (BRO-1990): 20 committed pages in 10 such pairs, plus
+        # 23 of 27 pages from one scheduled run whose claim was not about their
+        # own slug.
+        #
+        # `cmd_promote` (the single-file path) already used `resolved[:1]`; only
+        # the pipeline path fanned out, so the two entry points disagreed about
+        # the same invariant. Relationships between entities belong in `related:`
+        # edges, never in a duplicated claim on a second page.
+        for slug, is_existing in resolved[:1]:
             path = promote_item(scored, slug, dry_run=dry_run, verbose=verbose)
             if is_existing:
                 # promote_item returns the path only when a substantive
