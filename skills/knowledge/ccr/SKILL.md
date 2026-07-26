@@ -145,7 +145,7 @@ original = ccr.retrieve(r["handle"])                # expand on demand
 ## Tests
 
 ```bash
-python3 -m pytest skills/knowledge/ccr/tests/ -q     # 47 tests
+python3 -m pytest skills/knowledge/ccr/tests/ -q     # 49 tests
 python3 skills/knowledge/ccr/tests/test_ccr.py       # no pytest needed
 ```
 

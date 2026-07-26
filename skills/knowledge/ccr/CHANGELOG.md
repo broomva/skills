@@ -53,7 +53,7 @@ Correctness
   above: accepting non-UTF-8 input put lone surrogates into the *view*, and
   `print()` encodes stdout strictly.
 
-Tests: 18 → **40**. The suite now drives the real CLI over a byte-level fixture
+Tests: 18 → **49**. The suite now drives the real CLI over a byte-level fixture
 matrix (`\r\n`, lone `\r`, no trailing newline, NUL, BOM, 4-byte UTF-8, lone
 surrogate, raw non-UTF-8) — 0.1.0 contained no `\r` anywhere and never invoked
 the CLI. Three 0.1.0 tests were green for reasons unrelated to their names and

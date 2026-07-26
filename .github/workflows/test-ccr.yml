@@ -23,6 +23,13 @@ concurrency:
 defaults:
   run:
     working-directory: skills/knowledge/ccr
+    # GitHub's default Linux shell is `bash -e {0}` — WITHOUT pipefail. The
+    # smoke steps below pipe `compress --json` into a JSON reader, and a
+    # pipeline's status is its LAST command's, so a non-zero `compress` was
+    # masked: it surfaced only indirectly, as a confusing downstream failure,
+    # or not at all. A smoke test that cannot fail on the step it is testing is
+    # the same defect class this PR exists to fix.
+    shell: bash -euo pipefail {0}
 
 jobs:
   test:

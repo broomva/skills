@@ -925,6 +925,38 @@ def test_code_fallback_carries_the_callers_budgets(tmp_path):
     )
 
 
+def test_encode_out_handles_every_lone_surrogate(tmp_path):
+    """CodeRabbit, PR #50: `_encode_out` crashed on U+DD00-U+DFFF.
+
+    `surrogateescape` encodes exactly U+DC80-U+DCFF; the guard's upper bound
+    was a hand-picked U+DC7F, so U+DD00-U+DFFF took the surrogateescape branch
+    and raised — contradicting the docstring's "any lone surrogate".
+
+    Sweeps the WHOLE surrogate block rather than the two values that were
+    broken, so a future hand-picked bound cannot reintroduce a gap elsewhere in
+    the range.
+    """
+    failures = []
+    for cp in range(0xD800, 0xE000):
+        ch = chr(cp)
+        try:
+            out = ccr._encode_out(ch)
+        except UnicodeEncodeError as e:
+            failures.append((hex(cp), str(e)))
+            continue
+        if not isinstance(out, bytes):
+            failures.append((hex(cp), f"not bytes: {type(out)}"))
+    assert not failures, f"{len(failures)} lone surrogates unencodable: {failures[:5]}"
+
+
+def test_lone_surrogate_round_trips_through_the_api(tmp_path):
+    """The payload-level contract behind the fix above."""
+    for cp in (0xD800, 0xDC7F, 0xDC80, 0xDCFF, 0xDD00, 0xDFFF):
+        payload = f"before {chr(cp)} after"
+        res = ccr.compress(payload, "text", cache_dir=tmp_path)
+        assert ccr.retrieve(res["handle"], cache_dir=tmp_path) == payload, hex(cp)
+
+
 if __name__ == "__main__":
     import tempfile
     import traceback
@@ -943,4 +975,5 @@ if __name__ == "__main__":
                 traceback.print_exc()
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
+
 

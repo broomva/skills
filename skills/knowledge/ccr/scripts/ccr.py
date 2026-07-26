@@ -594,12 +594,27 @@ def _encode_out(text: str) -> bytes:
     try:
         return text.encode("utf-8", "surrogateescape")
     except UnicodeEncodeError:
-        return b"".join(
-            ch.encode("utf-8", "surrogateescape")
-            if not ("\ud800" <= ch <= "\udc7f")
-            else ch.encode("utf-8", "surrogatepass")
-            for ch in text
-        )
+        return b"".join(_encode_char(ch) for ch in text)
+
+
+def _encode_char(ch: str) -> bytes:
+    """Encode one character, choosing the handler that can actually take it.
+
+    `surrogateescape` encodes exactly ONE slice of the surrogate range —
+    U+DC80-U+DCFF, the bytes `_read_source` minted for non-UTF-8 input. Every
+    other lone surrogate needs `surrogatepass`.
+
+    The bound here used to be `not ("\\ud800" <= ch <= "\\udc7f")`, which routed
+    U+DD00-U+DFFF to `surrogateescape` and raised, contradicting the docstring
+    above ("may hold ANY lone surrogate"). Splitting on what each handler can
+    encode — rather than on a hand-picked cut point — removes the gap by
+    construction instead of moving it.
+    """
+    if "\udc80" <= ch <= "\udcff":
+        return ch.encode("utf-8", "surrogateescape")
+    if "\ud800" <= ch <= "\udfff":
+        return ch.encode("utf-8", "surrogatepass")
+    return ch.encode("utf-8", "surrogateescape")
 
 
 def _write_out(text: str) -> None:
