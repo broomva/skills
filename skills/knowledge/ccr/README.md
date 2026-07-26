@@ -20,15 +20,32 @@ npx skills add broomva/skills --skill ccr
 ## Use
 
 ```bash
-python3 scripts/ccr.py compress big.json        # view + ccr:// handle
-python3 scripts/ccr.py retrieve ccr://<sha>      # byte-exact original
+python3 scripts/ccr.py compress big.json          # view + ccr:// handle
+python3 scripts/ccr.py retrieve ccr://<sha> > out # byte-exact original
 python3 scripts/ccr.py stats
 ```
+
+## Guarantees
+
+- **Byte-exact.** `retrieve` returns the input's exact bytes — CRLF, lone CR,
+  missing trailing newline, NUL, BOM, 4-byte UTF-8, lone surrogates and raw
+  non-UTF-8 all survive. (`compress` reads bytes; text-mode reads apply
+  universal-newline translation *before hashing*, which destroys the original.)
+- **Confined.** A handle is `[0-9a-f]{8,64}` and nothing else, validated before
+  it touches the filesystem; the record must be a real file inside the cache
+  dir — absolute, `..`-relative and symlinked handles are all refused. Handles
+  come back from model output, i.e. the untrusted side.
+- **Atomic + verified + self-healing.** Records are published by temp-file +
+  `os.replace`, so a concurrent reader never sees a partial record; every read
+  recomputes the sha256 and refuses a mismatch; an unusable record is treated as
+  absent, so the next `compress` rewrites it.
+- **Private.** Cache dir `0700`, records `0600` — it holds plaintext originals.
 
 See [`SKILL.md`](./SKILL.md) for the full contract.
 
 ## Test
 
 ```bash
-python3 -m pytest tests/ -q        # 18 tests
+python3 -m pytest tests/ -q        # 40 tests
+python3 tests/test_ccr.py          # no pytest needed
 ```

@@ -1,8 +1,8 @@
 name: test-ccr
 
-# Python test gate for the `ccr` skill (skills/knowledge/ccr/). Path-filtered so
-# it runs ONLY when skills/knowledge/ccr/** changes — the monorepo's
-# tests-optional default (lint-skill-md.yml) stands everywhere else.
+# Python test gate for the `ccr` skill (skills/knowledge/ccr/). Path-filtered so it runs
+# ONLY when skills/knowledge/ccr/** changes — the monorepo's tests-optional default
+# (lint-skill-md.yml) stands everywhere else.
 
 on:
   pull_request:
@@ -44,9 +44,43 @@ jobs:
         run: pip install -r tests/requirements-dev.txt
       - name: Tests
         run: python -m pytest tests/ -v
-      - name: Smoke — compress/retrieve round-trip is byte-exact
+      # LF-only input structurally CANNOT catch the newline-translation bug that
+      # made byte-exactness false (\r\n and lone \r were rewritten to \n before
+      # hashing). This fixture therefore carries CRLF, a lone CR, a NUL, a BOM,
+      # a 4-byte character and no trailing newline, and is compared with `cmp`
+      # on BYTES — `diff` is line-oriented and calls a CRLF/LF pair identical.
+      - name: Smoke — CRLF round-trip is byte-exact and handle == sha256(bytes)
         run: |
-          printf 'line one\nline two\nline three\n' > /tmp/ccr_smoke.txt
+          printf 'line one\r\nline two\r\nlone-cr\rtail\r\n' > /tmp/ccr_smoke.txt
+          printf '\xef\xbb\xbfbom\x00nul \xf0\x9f\x9a\x80 astral no-trailing-newline' >> /tmp/ccr_smoke.txt
           H=$(python3 scripts/ccr.py compress /tmp/ccr_smoke.txt --json | python3 -c "import json,sys;print(json.load(sys.stdin)['handle'])")
           python3 scripts/ccr.py retrieve "$H" > /tmp/ccr_smoke_rt.txt
-          diff /tmp/ccr_smoke.txt /tmp/ccr_smoke_rt.txt && echo "round-trip OK"
+          cmp /tmp/ccr_smoke.txt /tmp/ccr_smoke_rt.txt && echo "byte-exact round-trip OK"
+          # This fixture is valid UTF-8, so the handle must equal the sha256 of
+          # the file's BYTES. Under newline translation it equalled the sha256 of
+          # an LF-rewritten copy instead — this is the assertion that catches it.
+          EXPECT="ccr://$(python3 -c "import hashlib;print(hashlib.sha256(open('/tmp/ccr_smoke.txt','rb').read()).hexdigest())")"
+          test "$H" = "$EXPECT" || { echo "handle $H != sha256(bytes) $EXPECT"; exit 1; }
+          echo "handle == sha256(file bytes) OK"
+      # Non-UTF-8 input is addressed by its surrogateescape-decoded form, not by
+      # its raw bytes (surrogatepass keeps the digest collision-free), so only
+      # the byte-exactness of the round trip is asserted here.
+      - name: Smoke — non-UTF-8 payload round-trips byte-exactly
+        run: |
+          printf 'raw \xff\xfe bytes \x80\x81\n' > /tmp/ccr_bin.txt
+          H=$(python3 scripts/ccr.py compress /tmp/ccr_bin.txt --json | python3 -c "import json,sys;print(json.load(sys.stdin)['handle'])")
+          python3 scripts/ccr.py retrieve "$H" > /tmp/ccr_bin_rt.txt
+          cmp /tmp/ccr_bin.txt /tmp/ccr_bin_rt.txt && echo "non-utf8 round-trip OK"
+      # Coarse end-to-end sanity check only: exit 1, empty stdout. The
+      # layer-level proof (that _resolve_sha itself never returns a token
+      # resolving outside the cache, for 64-char relative/absolute/symlink
+      # shapes) lives in the unit suite, because the confinement and digest
+      # checks downstream would mask an escape from any end-to-end assertion.
+      - name: Smoke — a malformed handle is refused and leaks nothing
+        run: |
+          set +e
+          OUT=$(python3 scripts/ccr.py retrieve "../../../../etc/passwd" 2>/dev/null); RC=$?
+          set -e
+          test "$RC" -eq 1 || { echo "expected exit 1, got $RC"; exit 1; }
+          test -z "$OUT" || { echo "traversal handle leaked: $OUT"; exit 1; }
+          echo "traversal refused OK"

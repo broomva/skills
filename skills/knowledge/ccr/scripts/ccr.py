@@ -24,15 +24,29 @@ the value is the reversible-cache architecture, not the compression ratio.
 
 Architectural anchor: BRO-1521. Entity: research/entities/tool/headroom.md.
 
+Guarantees (each backed by a test in tests/test_ccr.py):
+
+  * BYTE-EXACT. compress reads raw bytes; retrieve writes raw bytes. CRLF,
+    lone CR, missing trailing newline, NUL, BOM, astral planes, lone
+    surrogates and non-UTF-8 bytes all survive the round trip unchanged.
+  * CONFINED. A handle is validated as 8-64 lowercase hex chars before it
+    touches the filesystem, and the resolved record must be a real file inside
+    the cache dir. Handles come back from model output; they are untrusted.
+  * ATOMIC + VERIFIED. Records are published by temp-file + os.replace, so a
+    concurrent reader never sees a partial record; every read recomputes the
+    sha256 and refuses a mismatch; an unusable record is treated as absent so
+    the store self-heals rather than cementing corruption.
+
 Usage:
     python3 ccr.py compress <file|->  [--type auto|json|code|text]
-                                      [--head N] [--tail N] [--json]
+                                      [--head N] [--tail N] [--line-budget N]
+                                      [--json]
     python3 ccr.py retrieve <handle|sha>          # expand back to the original
     python3 ccr.py stats [--json]                 # cache size + cumulative savings
 
 Exit codes:
     0  ok
-    1  no such handle / user error
+    1  no such handle / malformed handle / bad payload / user error
     2  internal error
 """
 from __future__ import annotations
@@ -44,6 +58,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +71,18 @@ CCR_HOME = Path(
 
 HANDLE_PREFIX = "ccr://"
 _MIN_PREFIX = 8  # shortest sha prefix accepted by retrieve()
+
+# A handle is a sha256 prefix and NOTHING else. Handles come back from *model
+# output* — the untrusted side — so the token is validated as lowercase hex
+# BEFORE it is ever joined onto a path. Without this, `cache_dir / token` is an
+# arbitrary-file-read: Path.__truediv__ silently DISCARDS cache_dir when the
+# token is absolute, and keeps `..` segments when it is relative.
+_HANDLE_RE = re.compile(r"[0-9a-f]{%d,64}\Z" % _MIN_PREFIX)
+
+# Per-line character budget for the text compactor. `compact_text` is otherwise
+# line-oriented, so a single-line 2MB blob (minified/truncated JSON, a one-line
+# log dump) compressed to 0%. Lines longer than this are elided by CHARACTER.
+LINE_CHAR_BUDGET = 2000
 
 # ---------------------------------------------------------------------------
 # token estimation
@@ -88,12 +115,20 @@ def detect_type(payload: str, filename: str | None = None) -> str:
     extension wins when it's available. Order: json (unambiguous) -> extension
     -> keyword-density heuristic -> text.
     """
-    stripped = payload.strip()
+    # A UTF-8 BOM ahead of `{`/`[` otherwise defeats JSON detection outright
+    # (the payload falls through to the text compactor). Stripped for DETECTION
+    # only — the cached original keeps every byte, BOM included.
+    stripped = payload.lstrip("﻿").strip()
     if stripped and stripped[0] in "{[":
         try:
             json.loads(stripped)
             return "json"
         except (ValueError, TypeError):
+            pass
+        except RecursionError:
+            # Deeply nested JSON blows the C scanner's stack. That is a payload
+            # we cannot shape-skeletonise, not an internal error — fall through
+            # to the text compactor instead of escaping compress() as exit 2.
             pass
     if filename:
         ext = Path(filename).suffix.lower()
@@ -123,6 +158,11 @@ def _shape(value, _depth: int = 0):
     if isinstance(value, list):
         if not value:
             return []
+        # Same depth cap as the dict branch. Without it a deeply nested ARRAY
+        # (`[[[[…]]]]`) recurses to RecursionError even though the dict branch
+        # is bounded — the list branch was the unguarded half.
+        if _depth >= 4:
+            return [f"…<{len(value)} items>"]
         return [_shape(value[0], _depth + 1), f"…<{len(value)} items>"]
     if isinstance(value, str):
         return f"str<{len(value)}>"
@@ -130,7 +170,9 @@ def _shape(value, _depth: int = 0):
 
 
 def compact_json(payload: str, **_) -> str:
-    data = json.loads(payload)
+    # lstrip the BOM to match detect_type: without it a BOM-prefixed payload
+    # detects as json and then fails to parse here (exit 1 on a valid document).
+    data = json.loads(payload.lstrip("﻿"))
     skeleton = _shape(data)
     head = "// json skeleton (types + shapes; values elided — retrieve to expand)\n"
     return head + json.dumps(skeleton, indent=1, ensure_ascii=False)
@@ -147,7 +189,15 @@ _DEF_RE = re.compile(
     r"(def|class|function|fn|func|impl|interface|struct|enum|type)\b[^\n]*$",
     re.MULTILINE,
 )
-_IMPORT_RE = re.compile(r"^\s*(import|from|use|#include|require)\b.*$", re.MULTILINE)
+# `^\s*` is a ReDoS: \s matches \n, so at EVERY line start the engine runs to
+# EOF over a whitespace run and backtracks — quadratic (measured 64KB of blank
+# lines = 26s; a 1MB log extrapolates to ~an hour). Reachable via `--type auto`,
+# since blank lines are excluded from the code-density denominator and a payload
+# of `"import x\n" + "\n"*N` auto-detects as code. `[ \t]*` is line-bounded, so
+# matching is linear — the same shape _DEF_RE already uses.
+_IMPORT_RE = re.compile(
+    r"^[ \t]*(import|from|use|#include|require)\b[^\n]*$", re.MULTILINE
+)
 
 
 def compact_code(payload: str, **_) -> str:
@@ -172,16 +222,60 @@ def compact_code(payload: str, **_) -> str:
     return "\n".join(out)
 
 
-def compact_text(payload: str, head: int = 20, tail: int = 10, **_) -> str:
+def _clamp_line(line: str, budget: int) -> str:
+    """Head/tail a single over-long line by CHARACTER (the char-budget half)."""
+    if budget <= 0 or len(line) <= budget:
+        return line
+    head_n = budget * 2 // 3
+    tail_n = budget - head_n
+    dropped = len(line) - head_n - tail_n
+    return (
+        line[:head_n]
+        + f"[… {dropped} chars elided — retrieve the handle to expand …]"
+        + line[len(line) - tail_n:]
+    )
+
+
+def compact_text(
+    payload: str,
+    head: int = 20,
+    tail: int = 10,
+    line_budget: int = LINE_CHAR_BUDGET,
+    **_,
+) -> str:
+    """Head + tail by LINE, then head + tail by CHARACTER on any over-long line.
+
+    Two budgets, because one is not enough:
+
+    * the LINE budget (head/tail) handles the many-short-lines case (logs);
+    * the CHARACTER budget (`line_budget`) handles the one-enormous-line case —
+      a minified or truncated JSON blob, a single-line dump. Without it those
+      payloads compressed to exactly 0%: `len(lines) <= head + tail` short-
+      circuited and returned the whole 2MB back as the "compact view".
+
+    head/tail are clamped to >= 0. Negative values previously produced a view
+    LARGER than the original with a misreported elision count, and `tail=0`
+    silently disabled compression entirely (`lines[-0:]` is the whole list).
+    """
+    head, tail = max(0, head), max(0, tail)
     lines = payload.splitlines()
     if len(lines) <= head + tail:
-        return payload
+        # Few enough lines to keep them all — but a single LINE can still be
+        # enormous, so the character budget still applies. Only when nothing is
+        # over budget do we return the payload untouched (this fast path is
+        # load-bearing: joining splitlines() back up would drop a trailing
+        # newline and normalise \r\n, so the "unchanged" view must be `payload`).
+        if all(len(ln) <= line_budget for ln in lines):
+            return payload
+        return "\n".join(_clamp_line(ln, line_budget) for ln in lines)
     elided = len(lines) - head - tail
-    return "\n".join(
+    kept = (
         lines[:head]
         + [f"[… {elided} lines elided — retrieve the handle to expand …]"]
-        + lines[-tail:]
+        # NOT lines[-tail:] — that is the whole list when tail == 0.
+        + lines[len(lines) - tail:]
     )
+    return "\n".join(_clamp_line(ln, line_budget) for ln in kept)
 
 
 _COMPACTORS = {"json": compact_json, "code": compact_code, "text": compact_text}
@@ -201,22 +295,141 @@ def _sha_from_handle(handle: str) -> str:
     return h
 
 
+def _is_confined(p: Path, cache_dir: Path) -> bool:
+    """True iff `p` is a real (non-symlink) entry that lives inside cache_dir.
+
+    Belt to the _HANDLE_RE braces: even a well-formed hex handle must not read
+    through a symlink someone planted in the cache directory.
+    """
+    try:
+        if p.is_symlink():
+            return False
+        return p.resolve().is_relative_to(cache_dir.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def _resolve_sha(token: str, cache_dir: Path) -> str:
-    """Accept a full sha or a unique prefix (>= _MIN_PREFIX chars)."""
-    if len(token) == 64 and _record_path(token, cache_dir).exists():
-        return token
-    if len(token) < _MIN_PREFIX:
-        raise KeyError(f"handle prefix too short (min {_MIN_PREFIX} chars): {token!r}")
+    """Accept a full sha or a unique prefix (>= _MIN_PREFIX chars).
+
+    The token is validated as lowercase hex BEFORE it touches the filesystem —
+    it arrives from model output, i.e. the untrusted side.
+    """
+    if not _HANDLE_RE.match(token):
+        raise KeyError(
+            f"malformed handle {token!r}: expected {_MIN_PREFIX}-64 lowercase "
+            "hex chars (a sha256 or a unique prefix of one)"
+        )
+    if len(token) == 64:
+        p = _record_path(token, cache_dir)
+        if _is_confined(p, cache_dir) and p.is_file():
+            return token
+        # fall through: the prefix scan below raises the precise not-found error
     if not cache_dir.exists():
         raise KeyError(f"no ccr cache at {cache_dir}")
     matches = [
-        p.stem for p in cache_dir.glob("*.json") if p.stem.startswith(token)
+        p.stem
+        for p in cache_dir.glob("*.json")
+        if p.stem.startswith(token)
+        and _HANDLE_RE.match(p.stem)
+        and len(p.stem) == 64
+        and _is_confined(p, cache_dir)
     ]
     if not matches:
         raise KeyError(f"no cached original for handle {token!r}")
     if len(matches) > 1:
         raise KeyError(f"ambiguous handle prefix {token!r} ({len(matches)} matches)")
     return matches[0]
+
+
+# ---------------------------------------------------------------------------
+# record I/O — atomic on write, digest-verified on read
+# ---------------------------------------------------------------------------
+def _digest(text: str) -> str:
+    """sha256 of the payload. For valid UTF-8 this IS sha256 of the raw bytes.
+
+    surrogatepass, because a payload may carry a lone surrogate — handed in
+    through the Python API, or produced by the CLI's surrogateescape decode of
+    a non-UTF-8 byte. surrogateescape only covers U+DC80-U+DCFF.
+
+    Do NOT "improve" this to surrogateescape to make the handle equal
+    sha256(file bytes) universally: surrogateescape maps the string "\\ud800"
+    and a file holding the bytes ED A0 80 onto the SAME digest, and with
+    verification in place the wrong payload would verify. Pinned by
+    tests/test_ccr.py::test_digest_domain_is_collision_free.
+    """
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _read_record(sha: str, cache_dir: Path) -> tuple[dict | None, str]:
+    """Read + VERIFY one cache record. Returns (record | None, reason).
+
+    A content-addressed store that hands back unverified bytes is not
+    content-addressed. Every read recomputes the digest, so a truncated or
+    tampered record is reported rather than silently served.
+
+    Absent / unparsable / mis-digested all collapse to `None` on purpose:
+    compress() treats "unusable" as "not there" and rewrites, so a partial
+    record SELF-HEALS instead of being cemented forever by an `exists()` check.
+    """
+    p = _record_path(sha, cache_dir)
+    if not _is_confined(p, cache_dir):
+        return None, "outside-cache"
+    if not p.is_file():
+        return None, "absent"
+    try:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None, "unparsable"
+    if not isinstance(rec, dict) or not isinstance(rec.get("original"), str):
+        return None, "malformed"
+    if _digest(rec["original"]) != sha:
+        return None, "digest-mismatch"
+    return rec, "ok"
+
+
+def _write_record(sha: str, cache_dir: Path, rec: dict) -> None:
+    """Publish one record ATOMICALLY (temp file in-dir, then os.replace).
+
+    `Path.write_text` streams straight into the final name, so a concurrent
+    reader observes the half-written file (measured: 235 torn reads during one
+    60MB write). os.replace is atomic within a filesystem, so the canonical
+    path only ever appears complete — and a crash mid-write leaves a stray
+    temp file, never a poisoned record.
+    """
+    _ensure_cache_dir(cache_dir)
+    # ensure_ascii=True so any lone surrogate / non-BMP char is escaped to ASCII
+    # in the stored record — the file then never holds a raw surrogate, and
+    # json.loads restores the exact original on retrieve.
+    blob = json.dumps(rec)
+    # prefix/suffix chosen so partial files never match the `*.json` glob that
+    # _resolve_sha and stats() scan.
+    fh = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=cache_dir,
+        prefix=".ccr-tmp-", suffix=".part", delete=False,
+    )
+    try:
+        with fh:
+            fh.write(blob)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(fh.name, 0o600)  # cached ORIGINALS are private, not 0644
+        os.replace(fh.name, _record_path(sha, cache_dir))
+    except BaseException:
+        try:
+            os.unlink(fh.name)
+        except OSError:
+            pass
+        raise
+
+
+def _ensure_cache_dir(cache_dir: Path) -> None:
+    """Create the cache dir 0700. It holds full plaintext originals."""
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(cache_dir, 0o700)  # tighten a dir created by an older version
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +442,7 @@ def compress(
     cache_dir: Path | None = None,
     head: int = 20,
     tail: int = 10,
+    line_budget: int = LINE_CHAR_BUDGET,
     filename: str | None = None,
 ) -> dict:
     """Compress a payload to a compact view + cache the original under a handle.
@@ -244,35 +458,35 @@ def compress(
     if content_type not in _COMPACTORS:
         raise ValueError(f"unknown content_type {content_type!r}")
 
-    view = _COMPACTORS[content_type](payload, head=head, tail=tail)
+    view = _COMPACTORS[content_type](
+        payload, head=head, tail=tail, line_budget=line_budget
+    )
     # Never emit a view larger than the original — on tiny/narrow inputs a
     # skeleton or elision marker can exceed what it replaces. Falling back to
     # the payload keeps saved_pct honest (>= 0) and the view never misleads.
     if len(view) >= len(payload):
         view = payload
-    # surrogatepass: a programmatic caller may hand us a str with a lone
-    # surrogate (file/stdin reads can't, but other tools can). The original is
-    # stored verbatim as a JSON string and round-trips regardless.
-    sha = hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+    sha = _digest(payload)
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    rec_path = _record_path(sha, cache_dir)
-    if not rec_path.exists():
-        # ensure_ascii=True so any lone surrogate / non-BMP char is escaped to
-        # ASCII in the stored record — write_text (utf-8) then never sees a raw
-        # surrogate, and json.loads restores the exact original on retrieve.
-        rec_path.write_text(
-            json.dumps(
-                {
-                    "sha256": sha,
-                    "content_type": content_type,
-                    "original": payload,
-                    "original_chars": len(payload),
-                    "compact_chars": len(view),
-                    "created": datetime.now(timezone.utc).isoformat(),
-                }
-            ),
-            encoding="utf-8",
+    # Up front, so a cache dir left 0755 by an older version is tightened even
+    # when this call turns out to be a cache hit and writes nothing.
+    _ensure_cache_dir(cache_dir)
+    # Rewrite whenever the cached record is absent OR unusable (torn, tampered,
+    # symlinked). The old `if not rec_path.exists()` made a partial record
+    # PERMANENT — the store could never heal itself.
+    rec, _reason = _read_record(sha, cache_dir)
+    if rec is None:
+        _write_record(
+            sha,
+            cache_dir,
+            {
+                "sha256": sha,
+                "content_type": content_type,
+                "original": payload,
+                "original_chars": len(payload),
+                "compact_chars": len(view),
+                "created": datetime.now(timezone.utc).isoformat(),
+            },
         )
 
     orig_tok, comp_tok = approx_tokens(payload), approx_tokens(view)
@@ -293,7 +507,13 @@ def retrieve(handle: str, *, cache_dir: Path | None = None) -> str:
     """Expand a handle back to the full original (the reversibility guarantee)."""
     cache_dir = cache_dir or CCR_HOME
     sha = _resolve_sha(_sha_from_handle(handle), cache_dir)
-    rec = json.loads(_record_path(sha, cache_dir).read_text(encoding="utf-8"))
+    rec, reason = _read_record(sha, cache_dir)
+    if rec is None:
+        raise KeyError(
+            f"cached record {sha[:12]}… is unusable ({reason}); the store is "
+            "content-addressed, so wrong bytes are refused rather than served — "
+            "re-compress the original"
+        )
     return rec["original"]
 
 
@@ -304,6 +524,8 @@ def stats(*, cache_dir: Path | None = None) -> dict:
     orig_chars = comp_chars = 0
     if cache_dir.exists():
         for p in cache_dir.glob("*.json"):
+            if not _is_confined(p, cache_dir):
+                continue
             try:
                 rec = json.loads(p.read_text(encoding="utf-8"))
             except (ValueError, OSError):
@@ -328,9 +550,53 @@ def stats(*, cache_dir: Path | None = None) -> dict:
 # CLI
 # ---------------------------------------------------------------------------
 def _read_source(src: str) -> str:
-    if src == "-":
-        return sys.stdin.read()
-    return Path(src).read_text(encoding="utf-8")
+    """Read the source as BYTES, then decode without touching a single one.
+
+    `Path.read_text()` opens in text mode, which applies universal-newline
+    translation: `\\r\\n` and a lone `\\r` become `\\n` BEFORE the payload is
+    hashed and cached. The original bytes are destroyed at that point and
+    retrieve() can never return them — the byte-exactness guarantee was simply
+    false for any CRLF file. Reading bytes keeps it true.
+
+    surrogateescape carries arbitrary non-UTF-8 bytes through the str API
+    (each maps to U+DC80-U+DCFF) so a binary-ish log is compressible and
+    recoverable instead of being rejected outright.
+    """
+    raw = sys.stdin.buffer.read() if src == "-" else Path(src).read_bytes()
+    return raw.decode("utf-8", "surrogateescape")
+
+
+def _encode_out(text: str) -> bytes:
+    """Encode a retrieved original for byte-exact stdout.
+
+    surrogateescape maps the U+DC80-U+DCFF surrogates `_read_source` minted for
+    non-UTF-8 bytes back to those exact bytes. A payload handed in through the
+    PYTHON API may hold any lone surrogate (U+D800-U+DFFF); surrogateescape
+    cannot encode those, so they fall back to surrogatepass per character
+    rather than crashing the CLI with exit 2.
+    """
+    try:
+        return text.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return b"".join(
+            ch.encode("utf-8", "surrogateescape")
+            if not ("\ud800" <= ch <= "\udc7f")
+            else ch.encode("utf-8", "surrogatepass")
+            for ch in text
+        )
+
+
+def _write_out(text: str) -> None:
+    """Write a payload-derived string to stdout as BYTES, plus a newline.
+
+    `print()` re-encodes through the locale codec with errors='strict', so a
+    view carrying the U+DC80-U+DCFF surrogates that `_read_source` mints for
+    non-UTF-8 input raises UnicodeEncodeError and kills the command. Going
+    through the byte buffer keeps stdout an exact channel.
+    """
+    sys.stdout.flush()
+    sys.stdout.buffer.write(_encode_out(text) + b"\n")
+    sys.stdout.buffer.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -342,6 +608,11 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--type", default="auto", choices=["auto", "json", "code", "text"])
     pc.add_argument("--head", type=int, default=20, help="text: head lines to keep")
     pc.add_argument("--tail", type=int, default=10, help="text: tail lines to keep")
+    pc.add_argument(
+        "--line-budget", type=int, default=LINE_CHAR_BUDGET,
+        help="text: per-line CHARACTER budget before a long line is elided "
+             f"(default {LINE_CHAR_BUDGET}; 0 disables the char budget)",
+    )
     pc.add_argument("--json", action="store_true", help="emit the full result as JSON")
 
     pr = sub.add_parser("retrieve", help="expand a handle back to the original")
@@ -357,12 +628,17 @@ def main(argv: list[str] | None = None) -> int:
             payload = _read_source(args.source)
             hint = None if args.source == "-" else args.source
             result = compress(
-                payload, args.type, head=args.head, tail=args.tail, filename=hint
+                payload, args.type, head=args.head, tail=args.tail,
+                line_budget=args.line_budget, filename=hint,
             )
             if args.json:
-                print(json.dumps(result, ensure_ascii=False, indent=2))
+                # ensure_ascii=True: --json is a MACHINE envelope, so it must
+                # always be pure-ASCII/valid-UTF-8 and pipeable. A view derived
+                # from non-UTF-8 input holds lone surrogates that ensure_ascii
+                # =False would emit raw, which no JSON reader can decode.
+                print(json.dumps(result, ensure_ascii=True, indent=2))
             else:
-                print(result["view"])
+                _write_out(result["view"])
                 print(
                     f"\n# ccr: {args.source} [{result['content_type']}]  "
                     f"{result['original_tokens']}→{result['compact_tokens']} tok "
@@ -372,13 +648,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.cmd == "retrieve":
-            sys.stdout.write(retrieve(args.handle))
+            # buffer.write, not stdout.write: text-mode stdout re-encodes with
+            # the locale codec and would mangle the very bytes we cached.
+            sys.stdout.flush()
+            sys.stdout.buffer.write(_encode_out(retrieve(args.handle)))
+            sys.stdout.buffer.flush()
             return 0
 
         if args.cmd == "stats":
             s = stats()
             if args.json:
-                print(json.dumps(s, ensure_ascii=False, indent=2))
+                print(json.dumps(s, ensure_ascii=True, indent=2))
             else:
                 print(
                     f"ccr cache: {s['entries']} entries @ {s['cache_dir']}\n"
@@ -391,6 +671,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except (ValueError, OSError) as e:
         print(f"ccr: {e}", file=sys.stderr)
+        return 1
+    except RecursionError:
+        # A payload nested past the parser's stack limit is a bad PAYLOAD
+        # (exit 1), not an internal fault (exit 2). Reachable with an explicit
+        # `--type json`; `--type auto` degrades to the text compactor instead.
+        print(
+            "ccr: json nesting exceeds the parser's depth limit — "
+            "retry with --type text",
+            file=sys.stderr,
+        )
         return 1
     except Exception as e:  # noqa: BLE001 — top-level guard
         print(f"ccr: internal error: {e}", file=sys.stderr)

@@ -49,21 +49,59 @@ heuristic, which beats nothing):
 |---|---|---|
 | `json` | type/shape skeleton (keys + value types + collection sizes; **no leaf data**) | yes (cache) |
 | `code` | structural outline (imports + `def`/`class`/`fn` signatures w/ line numbers; **bodies elided**) | yes (cache) |
-| `text` | head + tail with an elision marker | yes (cache) |
+| `text` | head + tail **by line**, then head + tail **by character** on any over-long line | yes (cache) |
 
 Deterministic, **stdlib-only, no ML** — the value is the reversible-cache
 architecture, not the compression ratio. Identical payloads are
 content-addressed (idempotent: one handle, one record). The view is never
 emitted larger than the original (tiny inputs fall back to the payload).
 
+**Two budgets in the text compactor.** `--head`/`--tail` bound the number of
+lines; `--line-budget` (default **2000 chars**, `0` disables) bounds each line.
+Without the second, a payload that is *one enormous line* — a minified or
+**truncated** JSON blob, a single-line dump — compressed to exactly 0%, because
+`len(lines) <= head + tail` returned the whole thing as the "compact view".
+Truncated JSON lands here by construction: `detect_type` needs a *successful*
+`json.loads`, so a streamed/cut-off document routes to `text`.
+
+## Guarantees
+
+Each is backed by a mutation-proven test — reverting the fix makes the named
+test fail.
+
+| Invariant | What holds it |
+|---|---|
+| **Byte-exact.** `retrieve` returns the input's exact bytes: CRLF, lone CR, missing trailing newline, NUL, BOM, 4-byte UTF-8, lone surrogates, and raw non-UTF-8 bytes all survive. | `compress` reads **bytes** (`read_bytes` + `surrogateescape`) — `read_text` applies universal-newline translation, which rewrote `\r\n` → `\n` *before hashing*, destroying the original. `retrieve` writes through `stdout.buffer`. |
+| **Confined.** A handle is `[0-9a-f]{8,64}` and nothing else, validated **before** it touches the filesystem; the resolved record must be a real file inside the cache dir. | Handles come back from *model output* — the untrusted side. `Path.__truediv__` silently discards the cache dir for an absolute token and keeps `..` for a relative one, and a `<sha>.json` symlink can point anywhere. |
+| **Atomic.** A concurrent reader never observes a partial record. | Records are published by temp-file + `os.replace`, never streamed into the final name. |
+| **Verified.** Every read recomputes the sha256 and refuses a mismatch. | A content-addressed store that hands back unverified bytes is not content-addressed. |
+| **Self-healing.** A truncated or tampered record is treated as *absent*, so the next `compress` of that payload rewrites it. | The old `if not rec_path.exists()` short-circuit made a partial record permanent. |
+| **Private.** Cache dir `0700`, records `0600`. | The cache holds full plaintext originals. |
+| **Linear.** Both code regexes are line-bounded (`[ \t]*`, `[^\n]*`). | `^\s*` matches `\n`, so `_IMPORT_RE` ran to EOF and backtracked at every line start — quadratic (32KB of blank lines took 5.6s), reachable from `--type auto`. |
+
+`--json` is a **machine envelope**: always pure ASCII, so it stays pipeable even
+when the payload holds bytes no JSON reader could otherwise decode.
+
+**Addressing.** For valid-UTF-8 input the handle is exactly
+`sha256(<the file's bytes>)`. Input that is *not* valid UTF-8 is addressed by
+its `surrogateescape`-decoded form instead, so the handle is not
+`sha256sum` of the file — this keeps the digest collision-free (a
+`surrogateescape` digest maps a lone-surrogate string and a file holding the
+corresponding raw bytes onto the same handle). Byte-exact recovery holds either
+way.
+
 ## Usage
 
 ```bash
 python3 scripts/ccr.py compress path/to/big.json          # view on stdout, savings on stderr
 cat huge.log | python3 scripts/ccr.py compress - --type text --head 30 --tail 10
-python3 scripts/ccr.py retrieve ccr://<sha256>            # byte-exact original (full handle or unique prefix)
+python3 scripts/ccr.py compress minified.json --line-budget 4000   # per-line char budget
+python3 scripts/ccr.py retrieve ccr://<sha256> > out.bin  # byte-exact original (full handle or unique prefix)
 python3 scripts/ccr.py stats --json                       # cache size + cumulative savings
 ```
+
+Exit codes: `0` ok · `1` no such / malformed handle, bad payload, user error ·
+`2` internal error.
 
 As a library:
 
@@ -75,19 +113,28 @@ original = ccr.retrieve(r["handle"])                # expand on demand
 ```
 
 `BROOMVA_CCR_HOME` relocates the content-addressed cache (default
-`~/.cache/broomva/ccr/`) for CI runners and non-standard layouts.
+`~/.cache/broomva/ccr/`, created `0700`) for CI runners and non-standard layouts.
 
 ## Tests
 
 ```bash
-python3 -m pytest skills/knowledge/ccr/tests/ -q     # 18 tests
+python3 -m pytest skills/knowledge/ccr/tests/ -q     # 40 tests
 python3 skills/knowledge/ccr/tests/test_ccr.py       # no pytest needed
 ```
 
 Core invariant under test: the view is lossy, but `retrieve(handle)` returns the
-original **byte-for-byte** for every content type — verified across empty /
-unicode / lone-surrogate / bare-scalar-JSON inputs, plus path-traversal
-rejection and a ReDoS guard.
+original **byte-for-byte** — asserted **through the CLI** over a byte-level
+fixture matrix (`\r\n`, lone `\r`, no trailing newline, NUL, BOM, 4-byte UTF-8,
+lone surrogate, raw non-UTF-8) as well as through the Python API. Plus:
+64-char traversal/absolute/symlink handle rejection, cache atomicity + digest
+verification + self-healing, `0700`/`0600` permissions, ReDoS bounds on **both**
+code regexes, the character budget, head/tail clamping, and deep-JSON recursion.
+
+Tests assert at the layer that can actually break. `test_small_text_not_mangled`
+asserts `compact_text` **directly** — routed through `compress()` it cannot
+fail, because the `len(view) >= len(payload)` clamp rescues even a deleted
+compactor. Likewise the traversal tests assert `_resolve_sha` directly, since
+the downstream digest check would otherwise mask an escape.
 
 ## Install
 
