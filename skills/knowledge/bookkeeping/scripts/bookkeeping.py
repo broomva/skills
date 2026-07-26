@@ -220,6 +220,10 @@ RAW_TEMPLATE = _TEMPLATES_DIR / "raw-extract.md"
 PROMOTE_THRESHOLD = 5
 DISCARD_THRESHOLD = 2
 IMMEDIATE_PROMOTE_THRESHOLD = 7
+
+# Max H1/H2 sections a markdown file may carry before it is treated as a
+# long-form document rather than a per-section raw extract (BRO-1983).
+_MAX_MARKDOWN_SECTION_ITEMS = 8
 LLM_JUDGE_AMBIGUOUS_LOW = 3
 LLM_JUDGE_AMBIGUOUS_HIGH = 6
 
@@ -386,6 +390,22 @@ def existing_entity_slugs() -> list[str]:
             for p in type_dir.glob("*.md"):
                 slugs.append(p.stem)
     return slugs
+
+
+def existing_entity_slug_types() -> "dict[str, set[str]]":
+    """Map each existing entity slug to the set of type dirs it appears in.
+
+    Used by `resolve_slug` so a low-confidence fuzzy match cannot attach a
+    candidate to an entity of a DIFFERENT type (BRO-1983). A slug may live in
+    more than one type dir (e.g. person/x and pattern/x), hence a set.
+    """
+    out: "dict[str, set[str]]" = {}
+    for et in ENTITY_TYPES:
+        type_dir = ENTITIES_DIR / et
+        if type_dir.exists():
+            for p in type_dir.glob("*.md"):
+                out.setdefault(p.stem, set()).add(et)
+    return out
 
 
 def log_run(entry: dict) -> None:
@@ -766,11 +786,30 @@ def _ingest_markdown(text: str, source_id: str, source_type: str) -> list[RawIte
         return items
 
     # ── Format 2: ## Section headers as item boundaries (synthesis notes) ───
-    section_pattern = re.compile(r"^#{1,3} .+", re.MULTILINE)
+    #
+    # Two hardenings (BRO-1983):
+    #   1. H1/H2 only. The old `^#{1,3} ` also split on H3, so sub-structure
+    #      *inside* a section became its own "entity". H3+ now stays in the
+    #      body of its parent section, where it belongs.
+    #   2. Section-count cap. A long-form research document with N headings is
+    #      NOT an N-item extract — treating it as one is exactly how one doc
+    #      became dozens of entity pages. Past the cap the format does not
+    #      apply and the document yields nothing here, rather than a swarm of
+    #      fragments (Format 3's paragraph split would be worse still, so the
+    #      over-cap case returns explicitly).
+    section_pattern = re.compile(r"^#{1,2} .+", re.MULTILINE)
     sections = section_pattern.split(body)
     headers = section_pattern.findall(body)
 
     if len(sections) > 2:  # more than just a preamble
+        if len(headers) > _MAX_MARKDOWN_SECTION_ITEMS:
+            print(
+                f"[ingest] {source_id}: {len(headers)} H1/H2 sections exceeds the "
+                f"{_MAX_MARKDOWN_SECTION_ITEMS}-section cap — treating as a long-form "
+                f"document, not a per-section extract (0 items)",
+                file=sys.stderr,
+            )
+            return []
         for header, section_body in zip(headers, sections[1:]):
             section_body = section_body.strip()
             if not section_body or len(section_body) < 60:
@@ -878,30 +917,211 @@ def heuristic_score(item: RawItem) -> tuple[int, int, int]:
     return novelty, specificity, relevance
 
 
+# ── Entity-slug shape gate (BRO-1983) ─────────────────────────────────────────
+#
+# The Title-Case-run regex below grabs ANY capitalized 2-6 word run out of a
+# section body. Left ungated it mints sentence fragments as permanent entity
+# pages — `pattern/the-goodhart`, `pattern/the-singularity-is-not`,
+# `project/stop-comparing`, `project/agents-without-disclosing`,
+# `tool/all-image-file-directories`. 182 of 810 live entity pages (22%) carried
+# this shape when the defect was traced.
+#
+# An entity slug must be NOUN-PHRASE shaped ("event-sourcing", "promotion-gate"),
+# not SENTENCE-FRAGMENT shaped (article-led, verb-led, or carrying a copula /
+# negation / subordinating preposition). The gate below is deliberately strict:
+# per the promoter invariant, minting a junk page is strictly worse than not
+# promoting, so a candidate that cannot be shown to be entity-shaped is dropped.
+
+# Determiners / articles / conjunctions / pronouns that cannot legitimately LEAD
+# an entity name. ("the-goodhart", "all-image-file-directories", "our-approach")
+_SLUG_LEAD_STOPWORDS = frozenset({
+    "the", "a", "an", "all", "any", "each", "every", "some", "no", "none",
+    "this", "that", "these", "those", "such", "both", "either", "neither",
+    "our", "your", "its", "my", "their", "his", "her", "it", "we", "they",
+    "you", "i", "he", "she", "us", "them", "me", "him",
+    "and", "or", "but", "nor", "so", "yet", "if", "then", "than", "as",
+    "because", "since", "although", "though", "while", "whereas", "unless",
+    "however", "moreover", "furthermore", "meanwhile", "instead", "therefore",
+    "thus", "hence", "also", "still", "now", "just", "only", "even", "very",
+    "more", "most", "less", "least", "much", "many", "few", "several",
+    "here", "there", "when", "where", "who", "whom", "whose", "which",
+    "of", "in", "on", "at", "to", "for", "with", "by", "from", "into",
+    "over", "under", "about", "after", "before", "during", "between",
+    "first", "second", "third", "next", "last", "other", "another", "same",
+})
+
+# Imperative verbs that mark an instruction fragment, not an entity.
+# ("stop-comparing", "look-at-the-data", "use-the-cli")
+_SLUG_LEAD_VERBS = frozenset({
+    "stop", "look", "make", "makes", "use", "uses", "see", "get", "gets",
+    "let", "lets", "do", "does", "put", "take", "takes", "give", "gives",
+    "go", "goes", "come", "keep", "keeps", "build", "builds", "ship",
+    "ships", "add", "adds", "remove", "removes", "avoid", "avoids",
+    "consider", "note", "notes", "read", "reads", "write", "writes",
+    "think", "thinks", "imagine", "remember", "forget", "check", "checks",
+    "try", "tries", "start", "starts", "begin", "begins", "run", "runs",
+    "call", "calls", "ask", "asks", "tell", "tells", "show", "shows",
+    "find", "finds", "know", "knows", "learn", "learns", "want", "wants",
+    "need", "needs", "help", "helps", "watch", "listen", "follow",
+    "choose", "pick", "set", "sets", "bring", "leave", "move", "turn",
+    "hold", "mean", "means", "become", "happen", "apply", "ensure",
+    "prefer", "treat", "reject", "accept", "assume", "expect", "explain",
+    "describe", "define", "compare", "replace", "update", "fix", "solve",
+})
+
+# Copulas / auxiliaries / negations / subordinators. Their presence ANYWHERE in
+# the slug proves the phrase is a clause, not a name.
+# ("the-singularity-is-not", "agents-without-disclosing", "what-we-can-do")
+_SLUG_CLAUSE_TOKENS = frozenset({
+    "is", "isnt", "are", "arent", "was", "wasnt", "were", "werent",
+    "be", "been", "being", "am", "not", "cannot", "cant", "dont", "doesnt",
+    "didnt", "wont", "wouldnt", "shouldnt", "couldnt", "hasnt", "havent",
+    "will", "would", "shall", "should", "can", "could", "may", "might",
+    "must", "has", "have", "had", "does", "did", "doing", "done",
+    "without", "unless", "whether", "because", "although", "though",
+    "therefore", "however", "instead", "while", "whereas",
+})
+
+# Function words that cannot legitimately END an entity name (dangling clause).
+_SLUG_TRAIL_STOPWORDS = frozenset({
+    "of", "in", "on", "at", "to", "for", "with", "by", "from", "into",
+    "over", "under", "about", "after", "before", "during", "between",
+    "and", "or", "but", "nor", "the", "a", "an", "as", "than", "then",
+    "that", "this", "these", "those", "is", "are", "was", "were", "not",
+    "it", "its", "we", "our", "your", "their", "his", "her", "they",
+})
+
+_SLUG_MIN_LEN = 3
+# How many times a curated LIFE_OS_TERMS name must recur in a body before an
+# incidental mention counts as the item being ABOUT that module. One mention is
+# a name-drop; a page that is genuinely about Arcan says "Arcan" repeatedly.
+_TERM_TOPICAL_MIN_HITS = 3
+
+# Control characters that must never reach a written entity page. Raw extracts
+# are built from session transcripts and tool output, which can carry NUL and
+# other C0 bytes; git then classifies the page as BINARY, which breaks diffing,
+# grep, the linter's own reader, and every editor tool. Two 71KB pages in the
+# workspace graph (pattern/arcan.md, pattern/autonomic.md) were NUL-corrupt this
+# way and silently regenerated on every run. Tab / LF / CR are legitimate.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_page_text(text: str) -> str:
+    """Strip control characters that would make a written page binary.
+
+    Applied at the write boundary rather than at ingest so it holds for every
+    producer path, including templates and future callers.
+    """
+    return _CONTROL_CHAR_RE.sub("", text)
+_SLUG_MAX_TOKENS = 6
+
+
+def is_entity_shaped_slug(slug: str) -> bool:
+    """True when `slug` is noun-phrase shaped and may become an entity page.
+
+    Rejects the sentence-fragment shapes the Title-Case-run regex produces
+    (BRO-1983). Deliberately conservative: `promote_item` treats "no candidate
+    passed" as a promotion-blocking signal rather than minting a junk page.
+    """
+    if not slug or not isinstance(slug, str):
+        return False
+    slug = slug.strip().strip("-")
+    if len(slug) < _SLUG_MIN_LEN:
+        return False
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+        return False
+    tokens = slug.split("-")
+    if len(tokens) > _SLUG_MAX_TOKENS:
+        return False
+    if tokens[0] in _SLUG_LEAD_STOPWORDS or tokens[0] in _SLUG_LEAD_VERBS:
+        return False
+    if any(t in _SLUG_CLAUSE_TOKENS for t in tokens):
+        return False
+    if len(tokens) > 1 and tokens[-1] in _SLUG_TRAIL_STOPWORDS:
+        return False
+    # A slug that is nothing but function words carries no referent.
+    if all(t in _SLUG_LEAD_STOPWORDS or t in _SLUG_TRAIL_STOPWORDS for t in tokens):
+        return False
+    return True
+
+
+# Title-Case runs of 2-6 words. Two hardenings over the original
+# `\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b`:
+#   1. `(?<![-\w])` — the original `\b` fired mid-hyphenated-compound, so
+#      "Game-Theoretic Foundation" yielded the orphan `theoretic-foundation`.
+#   2. `{1,5}` — the `{1,3}` cap truncated long titles into fragments
+#      ("The Singularity Is Not Near" → `the-singularity-is-not`). The shape
+#      gate above, not an arbitrary word cap, is what rejects fragments now.
+_TITLECASE_RUN_RE = re.compile(r"(?<![-\w])([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,5})(?![-\w])")
+
+# How many Title-Case runs to consider per item body. Bounded on purpose: the
+# gate must REDUCE what reaches disk, never widen it.
+_TITLECASE_SCAN_WINDOW = 12
+
+
 def _build_entity_slug_candidates(item: RawItem) -> list[str]:
     """
     Heuristic extraction of candidate entity slugs from item content.
 
-    Looks for capitalized multi-word phrases and known Life OS module names.
+    Looks for known Life OS module names (a curated vocabulary, trusted) and
+    capitalized multi-word phrases (untrusted — must pass `is_entity_shaped_slug`).
+
+    Returns [] when nothing entity-shaped is found. An empty result is a
+    promotion-blocking signal, NOT an invitation to invent a slug.
     """
     candidates = []
     text = item.content
 
-    # Known module names as direct candidates
+    # Known module names as direct candidates. LIFE_OS_TERMS is a curated
+    # vocabulary — every entry is already noun-phrase shaped, so it bypasses
+    # the SHAPE gate by construction. It does NOT bypass the ABOUTNESS test
+    # below, and must not: shape was never the problem here.
+    #
+    # The original test was a bare `term in text.lower()` — a substring MENTION.
+    # That is what produced the two worst pages in the graph: a prompt-patterns
+    # dump that merely name-dropped "arcan" and "autonomic" was promoted as
+    # pattern/arcan.md and pattern/autonomic.md, two 71KB NUL-corrupt pages that
+    # regenerated on every run. It is also the origin of the duplicate-slug
+    # problem in general — anima/arcan/bstack/broomva/praxis/relay/spaces/
+    # symphony all exist under 2-5 different type dirs, because each run
+    # re-minted them from an incidental mention and _infer_entity_type guessed
+    # a different type each time.
+    #
+    # A mention is not aboutness. Require one of:
+    #   - the term appears in the item's leading line (Format-2 ingest prepends
+    #     the section heading, so that line is the item's title), or
+    #   - the term recurs at least _TERM_TOPICAL_MIN_HITS times in the body.
+    # Matching is word-boundary so "relay" no longer fires on "relayed".
+    lowered = text.lower()
+    lead_line = lowered.split("\n", 1)[0]
     for term in LIFE_OS_TERMS:
-        if term in text.lower() and len(term) > 4:
+        if len(term) <= 4:
+            continue
+        term_re = re.compile(rf"(?<![-\w]){re.escape(term)}(?![-\w])")
+        if not term_re.search(lowered):
+            continue
+        in_title = bool(term_re.search(lead_line))
+        hits = len(term_re.findall(lowered))
+        if in_title or hits >= _TERM_TOPICAL_MIN_HITS:
             candidates.append(slugify(term))
 
-    # Capitalized phrases (2-4 words)
-    caps_phrases = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b", text)
-    for phrase in caps_phrases[:5]:
-        candidates.append(slugify(phrase))
+    # Capitalized phrases — last-resort path, strictly gated.
+    #
+    # The scan window is BOUNDED. The original took `caps_phrases[:5]` and then
+    # accepted all 5 unconditionally; scanning the whole body instead would turn
+    # a gate into a net-widener (more accepted candidates, hence more pages).
+    # The window is larger than the old 5 only so that a real name at position 6
+    # is not lost when the first five runs are all fragments.
+    for phrase in _TITLECASE_RUN_RE.findall(text)[:_TITLECASE_SCAN_WINDOW]:
+        slug = slugify(phrase)
+        if is_entity_shaped_slug(slug):
+            candidates.append(slug)
 
     # Deduplicate and return up to 5
     seen = set()
     result = []
     for c in candidates:
-        if c and c not in seen:
+        if c and c not in seen and is_entity_shaped_slug(c):
             seen.add(c)
             result.append(c)
     return result[:5]
@@ -1078,7 +1298,10 @@ def _call_authored_scorer(
     agent_input = {
         "item_text": item.content[:2000],
         "source_type": item.source_type,
-        "source_url": item.source_url or "",
+        # RawItem has no `source_url` field — the attribute access raised
+        # AttributeError on every authored-agents scoring call. The URL, when
+        # known, lives in `metadata`.
+        "source_url": (item.metadata or {}).get("source_url", "") or "",
     }
     if spec["name"] == "bookkeeping-novelty":
         agent_input["existing_entity_slugs"] = existing_slugs[:40]
@@ -1254,8 +1477,12 @@ def scatter(scored: ScoredItem, verbose: bool = False) -> list[str]:
 
     Returns the list of candidate slugs from the scorer, augmented by
     content analysis for items that had no LLM-derived candidates.
+
+    LLM-supplied `candidate_entities` are PREFERRED; the regex path in
+    `_build_entity_slug_candidates` is last-resort and strictly gated
+    (BRO-1983). Either way `resolve_candidates` re-applies the shape gate.
     """
-    candidates = list(scored.candidate_entities)
+    candidates = [c for c in scored.candidate_entities if is_entity_shaped_slug(c)]
     if not candidates:
         candidates = _build_entity_slug_candidates(scored.item)
     if verbose and candidates:
@@ -1265,30 +1492,81 @@ def scatter(scored: ScoredItem, verbose: bool = False) -> list[str]:
 
 # ── Stage 4: Resolve ──────────────────────────────────────────────────────────
 
-def resolve_slug(candidate: str, existing_slugs: list[str]) -> tuple[str, bool]:
-    """
-    Fuzzy-match a candidate slug against existing entity slugs.
+# A 0.80 difflib cutoff let an unrelated candidate silently ATTACH to (and then
+# rewrite) an existing entity — a live corruption vector, not merely noise.
+# 0.92 keeps typo/plural repair ("prosopo" → "prosopon") and drops the rest.
+_RESOLVE_FUZZY_CUTOFF = 0.92
 
-    Returns (resolved_slug, is_existing) where is_existing=True if the
-    candidate matches an existing slug (cutoff=0.80), False if it's new.
+
+def _fuzzy_match_is_safe(candidate: str, match: str) -> bool:
+    """Structural guard on a fuzzy slug attachment.
+
+    A near-string match is trusted only when the two slugs share the same
+    *shape* of name: identical token count, differing in at most one token
+    (typo / plural / tense). Anything else is an unrelated entity that merely
+    scored high on character overlap.
     """
-    matches = difflib.get_close_matches(candidate, existing_slugs, n=1, cutoff=0.80)
-    if matches:
-        return matches[0], True
+    ct, mt = candidate.split("-"), match.split("-")
+    if len(ct) != len(mt):
+        return False
+    return sum(1 for a, b in zip(ct, mt) if a != b) <= 1
+
+
+def resolve_slug(
+    candidate: str,
+    existing_slugs: list[str],
+    entity_type: "str | None" = None,
+    slug_types: "dict[str, set[str]] | None" = None,
+) -> tuple[str, bool]:
+    """
+    Match a candidate slug against existing entity slugs.
+
+    Returns (resolved_slug, is_existing). An EXACT match always attaches. A
+    fuzzy match must clear `_RESOLVE_FUZZY_CUTOFF`, `_fuzzy_match_is_safe`, and
+    — when `entity_type` / `slug_types` are supplied — must live in the same
+    type directory as the inferred type. Otherwise the candidate stays NEW
+    rather than overwriting an unrelated entity (BRO-1983).
+    """
+    if candidate in existing_slugs:
+        return candidate, True
+
+    matches = difflib.get_close_matches(
+        candidate, existing_slugs, n=3, cutoff=_RESOLVE_FUZZY_CUTOFF
+    )
+    for m in matches:
+        if not _fuzzy_match_is_safe(candidate, m):
+            continue
+        if entity_type is not None and slug_types is not None:
+            if entity_type not in slug_types.get(m, set()):
+                continue
+        return m, True
     return candidate, False
 
 
 def resolve_candidates(
-    candidates: list[str], existing_slugs: list[str], verbose: bool = False
+    candidates: list[str],
+    existing_slugs: list[str],
+    verbose: bool = False,
+    item: "RawItem | None" = None,
+    slug_types: "dict[str, set[str]] | None" = None,
 ) -> list[tuple[str, bool]]:
     """
     Resolve all candidate slugs, returning (slug, is_existing) pairs.
     Deduplicated by resolved slug.
+
+    Candidates that are not entity-shaped are dropped here as a final safety
+    net — including LLM-supplied ones, which are *preferred* (see `scatter`)
+    but not trusted blindly (BRO-1983).
     """
     seen = set()
     results = []
     for c in candidates:
-        resolved, is_existing = resolve_slug(c, existing_slugs)
+        if not is_entity_shaped_slug(c):
+            if verbose:
+                print(f"  resolve: {c!r} → REJECTED (not entity-shaped)")
+            continue
+        etype = _infer_entity_type(c, item) if item is not None else None
+        resolved, is_existing = resolve_slug(c, existing_slugs, etype, slug_types)
         if resolved not in seen:
             seen.add(resolved)
             results.append((resolved, is_existing))
@@ -1356,20 +1634,226 @@ Source: {source_ref} | Score: {score}/9 (n={novelty} s={specificity} r={relevanc
 """
 
 
+# ── core_claim derivation (BRO-1983) ──────────────────────────────────────────
+#
+# The original producer was `raw_claim[:137] + "..."` — a hard mid-word truncation
+# sized precisely to clear the linter's `len(core_claim) <= 140` rule. A quality
+# gate the producer satisfies BY CONSTRUCTION is not a gate: every mis-promoted
+# research doc shipped a 140-char shard of markdown as its permanent claim
+# ("VERIFIED VERDICTS (2026-07-20) — authoritative **The three novelty
+# checks:** - **(a) Model-invariant harness stability — PARTIAL YES, our...").
+#
+# The replacement derives a COMPLETE sentence. Order of attempts:
+#   1. first sentence that fits the limit and passes `_lint_core_claim_quality`
+#   2. else, the first *clause* of an over-long sentence, split at a semicolon /
+#      em-dash / colon — still a complete, self-contained proposition
+#   3. else None → PROMOTION-BLOCKING. The caller skips rather than minting a
+#      page with a truncated claim.
+# A `...` suffix is never emitted, at any step.
+
+_CORE_CLAIM_MAX = 140
+_CORE_CLAIM_MIN = 12          # shorter than this is a label, not a claim
+_CORE_CLAIM_MIN_WORDS = 3
+
+_MD_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_MD_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_MD_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
+_MD_HRULE_RE = re.compile(r"^\s{0,3}(?:[-*_]\s*){3,}$")
+_MD_TABLE_ROW_RE = re.compile(r"^\s*\|")
+_MD_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+_MD_BLOCKQUOTE_RE = re.compile(r"^\s*>+\s?")
+
+# Clause separators that end a self-contained proposition.
+_CLAUSE_SPLIT_RE = re.compile(r"\s*(?:;|—|–|--)\s+|\s+[:—]\s+")
+
+# A clause led by a coordinator / subordinator is a continuation of the clause
+# before it — standing alone it is a fragment ("but REFRAME REQUIRED").
+_CLAUSE_LEAD_REJECT = frozenset({
+    "but", "and", "or", "nor", "yet", "so", "however", "therefore", "thus",
+    "hence", "which", "that", "because", "although", "though", "while",
+    "whereas", "instead", "moreover", "furthermore", "meanwhile", "then",
+    "also", "plus", "besides", "otherwise", "still",
+})
+
+# Sentence terminator: . ! ? followed by whitespace/EOS, not part of a decimal
+# ("3.14"), an ellipsis, or a known abbreviation.
+_ABBREVIATIONS = ("e.g.", "i.e.", "etc.", "vs.", "cf.", "al.", "fig.", "no.",
+                  "dr.", "mr.", "mrs.", "ms.", "st.", "approx.", "est.", "inc.")
+
+
+def _strip_markdown_for_claim(body: str) -> str:
+    """Reduce a markdown body to plain prose suitable for claim extraction."""
+    text = _MD_FENCE_RE.sub(" ", body or "")
+    text = _MD_HTML_COMMENT_RE.sub(" ", text)
+
+    kept: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            kept.append("")
+            continue
+        if _MD_HEADING_RE.match(line) or _MD_HRULE_RE.match(line):
+            continue                      # section headers are not claims
+        if _MD_TABLE_ROW_RE.match(line) or "|" in line and line.count("|") >= 2:
+            continue                      # table rows are not claims
+        line = _MD_BLOCKQUOTE_RE.sub("", line)
+        line = _MD_LIST_MARKER_RE.sub("", line)
+        # A colon-terminated line with no sentence punctuation is a lead-in
+        # label ("**The three novelty checks:**"), not a claim. Keeping it
+        # glued the label onto the following list item and produced
+        # "The three novelty checks: (a) Model-invariant harness stability."
+        if re.sub(r"[*_`\s]+$", "", line).endswith(":") and not re.search(r"[.!?]", line):
+            continue
+        kept.append(line)
+
+    text = "\n".join(kept)
+    # Inline markup → plain text.
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)          # images
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)       # links
+    text = re.sub(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]", r"\1", text)  # wikilinks
+    text = re.sub(r"(\*\*|__)(.+?)\1", r"\2", text, flags=re.DOTALL)  # bold
+    text = re.sub(r"(?<!\w)([*_])(?!\s)(.+?)(?<!\s)\1(?!\w)", r"\2", text)  # emphasis
+    text = re.sub(r"~~(.+?)~~", r"\1", text)                   # strikethrough
+    text = text.replace("`", "")
+    # Any residual markup characters at claim boundaries.
+    text = re.sub(r"[ \t]*\n[ \t]*", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split prose into sentences, tolerating decimals and common abbreviations."""
+    sentences: list[str] = []
+    start = 0
+    for m in re.finditer(r"[.!?]+(?=\s|$)", text):
+        end = m.end()
+        head = text[start:end]
+        lowered = head.lower().rstrip()
+        if any(lowered.endswith(abbr) for abbr in _ABBREVIATIONS):
+            continue
+        # "3." inside "3.14" never matches (lookahead needs whitespace), but a
+        # trailing enumerator like "1. " would — require a letter in the chunk.
+        if not re.search(r"[A-Za-z]{2}", head):
+            continue
+        sentences.append(head.strip())
+        start = end
+    tail = text[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return [s for s in sentences if s]
+
+
+def _claim_is_acceptable(claim: str, limit: int) -> bool:
+    """A candidate claim must fit, be a real proposition, and pass the lint gate."""
+    if not claim:
+        return False
+    if len(claim) > limit or len(claim) < _CORE_CLAIM_MIN:
+        return False
+    if len(claim.split()) < _CORE_CLAIM_MIN_WORDS:
+        return False
+    if claim.endswith(("...", "…")):
+        return False
+    # The producer must clear the INDEPENDENT quality gate, not just the
+    # length rule it used to satisfy by construction.
+    return not _lint_core_claim_quality("<derive>", claim)
+
+
+def _yaml_safe_claim(claim: str) -> str:
+    """Make a claim safe to embed inside a double-quoted YAML scalar."""
+    claim = claim.replace("\\", "/").replace('"', "'")
+    claim = claim.replace("\n", " ").replace("\r", " ")
+    return re.sub(r"\s+", " ", claim).strip()
+
+
+def derive_core_claim(body: str, limit: int = _CORE_CLAIM_MAX) -> Optional[str]:
+    """Derive a complete, YAML-safe one-sentence core_claim from an item body.
+
+    Returns None when no clean claim can be derived — a promotion-blocking
+    signal. NEVER returns a truncated string (BRO-1983).
+    """
+    prose = _strip_markdown_for_claim(body)
+    if not prose:
+        return None
+
+    # 0 — the whole body already fits: nothing is truncated, so the body IS the
+    # claim. This is the branch the original code got right; only the >limit
+    # branch was defective.
+    whole = _yaml_safe_claim(prose)
+    if _claim_is_acceptable(whole, limit):
+        return whole
+
+    sentences = _split_sentences(prose)
+
+    # 1 — first complete sentence that fits.
+    for sentence in sentences:
+        candidate = _yaml_safe_claim(sentence)
+        if _claim_is_acceptable(candidate, limit):
+            return candidate
+
+    # 2 — first self-contained clause of an over-long sentence.
+    for sentence in sentences:
+        for clause in _CLAUSE_SPLIT_RE.split(sentence):
+            clause = (clause or "").strip().rstrip(",;:")
+            if not clause:
+                continue
+            first = re.sub(r"[^a-z]", "", clause.split()[0].lower())
+            if first in _CLAUSE_LEAD_REJECT:
+                continue  # a continuation fragment, not a standalone claim
+            # Restore terminal punctuation so the claim reads as a proposition.
+            if not clause.endswith((".", "!", "?")):
+                clause = clause + "."
+            candidate = _yaml_safe_claim(clause)
+            if _claim_is_acceptable(candidate, limit):
+                return candidate
+
+    return None
+
+
+# ── Entity-type inference (BRO-1983) ──────────────────────────────────────────
+#
+# The original used bare substring `in` tests over `slug + " " + content`, so
+# "api" matched *rapid*, "cli" matched *client*, "app" matched *happen*/*apply*,
+# and "how"/"why" matched arbitrary prose. First-match-wins turned those into
+# systematic type misassignment (and duplicate slugs across type dirs).
+
+def _keyword_re(words: "list[str]") -> "re.Pattern":
+    """Word-boundary alternation over `words` (case-insensitive)."""
+    return re.compile(
+        r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b", re.IGNORECASE
+    )
+
+
+_TYPE_PATTERN_RE = _keyword_re(["pattern", "patterns", "approach", "method",
+                                "strategy", "technique"])
+_TYPE_TOOL_RE = _keyword_re(["tool", "tools", "library", "framework", "sdk",
+                             "cli", "api"])
+_TYPE_PROJECT_RE = _keyword_re(["project", "platform", "product", "app",
+                                "system"])
+_TYPE_QUESTION_RE = _keyword_re(["open question", "open questions"])
+_TYPE_DISCOVERY_RE = _keyword_re(["discovered", "insight", "breakthrough"])
+_TYPE_PERSON_RE = re.compile(r"\b[A-Z][a-z]+ [A-Z][a-z]+\b")
+# An interrogative SENTENCE — not a stray '?' anywhere in the body, which is
+# what made `question/` a dumping ground.
+_INTERROGATIVE_RE = re.compile(
+    r"(?:^|[.!?]\s+)(?:who|what|when|where|why|how|which|is|are|do|does|"
+    r"did|can|could|should|would|will)\b[^.!?]*\?",
+    re.IGNORECASE,
+)
+
+
 def _infer_entity_type(slug: str, item: RawItem) -> str:
-    """Guess entity type from slug and content."""
-    text = (slug + " " + item.content).lower()
-    if any(w in text for w in ["pattern", "approach", "method", "strategy", "technique"]):
+    """Guess entity type from slug and content (word-boundary matched)."""
+    text = slug + " " + item.content
+    if _TYPE_PATTERN_RE.search(text):
         return "pattern"
-    if any(w in text for w in ["tool", "library", "framework", "sdk", "cli", "api"]):
+    if _TYPE_TOOL_RE.search(text):
         return "tool"
-    if re.search(r"\b[A-Z][a-z]+ [A-Z][a-z]+\b", item.author or ""):
+    if _TYPE_PERSON_RE.search(item.author or ""):
         return "person"
-    if any(w in text for w in ["project", "platform", "product", "app", "system"]):
+    if _TYPE_PROJECT_RE.search(text):
         return "project"
-    if "?" in item.content or any(w in text for w in ["why", "how", "what is", "open question"]):
+    if _TYPE_QUESTION_RE.search(text) or _INTERROGATIVE_RE.search(item.content):
         return "question"
-    if any(w in text for w in ["discovered", "found", "insight", "breakthrough"]):
+    if _TYPE_DISCOVERY_RE.search(text):
         return "discovery"
     return "concept"
 
@@ -1454,12 +1938,28 @@ def promote_item(
         # (dry_run is reported as a no-op write: nothing was written.)
         return entity_path if wrote else None
 
+    # A junk slug must never reach disk. `_build_entity_slug_candidates` and
+    # `resolve_candidates` already gate, but promote_item is also a public
+    # entry point (cmd_promote, callers in tests) — defence in depth.
+    if not is_entity_shaped_slug(entity_slug):
+        if verbose:
+            print(f"  [promote] SKIP (slug not entity-shaped): {entity_slug!r}")
+        return None
+
     template = _load_entity_template()
     title = entity_slug.replace("-", " ").title()
-    # core_claim must be a single YAML-safe line — strip newlines and escape double quotes
-    raw_claim = scored.item.content.replace("\n", " ").replace("\r", " ").replace('"', "'")
-    raw_claim = re.sub(r"\s+", " ", raw_claim).strip()
-    core_claim = (raw_claim[:137] + "...") if len(raw_claim) > 140 else raw_claim
+    # core_claim must be a single YAML-safe line. It is DERIVED as a complete
+    # sentence (or a complete clause), never truncated — see derive_core_claim.
+    # No derivable claim ⇒ promotion-blocking: skipping beats minting a page
+    # whose permanent claim is a 137-char shard of markdown (BRO-1983).
+    core_claim = derive_core_claim(scored.item.content)
+    if not core_claim:
+        if verbose:
+            print(
+                f"  [promote] SKIP (no complete claim ≤{_CORE_CLAIM_MAX} chars "
+                f"derivable): {entity_slug}"
+            )
+        return None
     source_ref = scored.item.source_id
     today = today_str()
 
@@ -1482,6 +1982,7 @@ def promote_item(
     page = template
     for key, value in content_map.items():
         page = page.replace("{" + key + "}", value)
+    page = _sanitize_page_text(page)
 
     if not dry_run:
         entity_dir.mkdir(parents=True, exist_ok=True)
@@ -1591,6 +2092,7 @@ def _update_entity_page_if_changed(entity_path: Path, dry_run: bool = False) -> 
         return False
 
     # Real semantic delta — write (with `updated:` bumped to today).
+    candidate = _sanitize_page_text(candidate)
     if not dry_run:
         entity_path.write_text(candidate)
     return True
@@ -1947,12 +2449,28 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
 # on core_claim, so a fragment claim is a catalog row that never matches a real
 # query AND crowds out real entities. These signatures are mechanically detectable;
 # clickbait-title claims need human judgment and are deliberately NOT flagged here.
+#
+# BRO-1983 — the gate must be able to reject the PRODUCER's known failure
+# output. Before this, the only length rule was `len(core_claim) <= 140` and
+# the producer emitted `body[:137] + "..."` — satisfying the gate by
+# construction, so lint could never catch a truncated markdown shard. The
+# second block below encodes the producer's actual observed garbage.
 _JUNK_CLAIM_PATTERNS: "list[tuple[re.Pattern, str]]" = [
     (re.compile(r"\s\|\s.*\|"), "contains markdown table pipes"),
     (re.compile(r"(?i)\braw extract\b"), "is a raw-extract header"),
     (re.compile(r"^\s*Pathway\s+[A-C]\b"), "is a 'Pathway X' action-item fragment"),
     (re.compile(r"(?i)^\s*bottom line\b"), "is a 'Bottom line' BLUF fragment"),
     (re.compile(r"^\s*\d+\.\d+\s+[A-Za-z]"), "is a numbered section-header fragment"),
+    # ── producer-failure signatures ──
+    (re.compile(r"(?:\.\.\.|…)\s*$"), "ends in a truncation marker (mid-sentence cut)"),
+    (re.compile(r"\*\*"), "contains raw markdown bold — an un-stripped body shard"),
+    (re.compile(r"^\s*\(?[A-Za-z0-9]{1,2}\)\s"), "starts with a bare list enumerator"),
+    (re.compile(r":\s*\(?[a-z]\)\s"), "splices a label onto an inline list enumerator"),
+    (re.compile(r"\bVERIFIED\s+VERDICTS?\b"), "is an ALL-CAPS 'VERIFIED VERDICT' header artifact"),
+    (re.compile(r"\bVERDICTS?\b(?=\s*[:—–-]|\s+[A-Z]{2,})"), "is a 'VERDICT:' header artifact"),
+    (re.compile(r"^\s*#{1,6}\s"), "is a markdown heading"),
+    (re.compile(r"^\s*>\s"), "is a markdown blockquote line"),
+    (re.compile(r"^\s*[-*+]\s+\S"), "is a markdown list item"),
 ]
 
 
@@ -1969,7 +2487,40 @@ def _lint_core_claim_quality(path_str: str, core_claim) -> "list[LintError]":
                 path_str, "core_claim",
                 f"core_claim {why} — mis-promotion artifact, not a distilled claim "
                 f"(BRO-1689): {cc[:60]!r}", "error")]
+    if _claim_is_allcaps_banner(cc):
+        return [LintError(
+            path_str, "core_claim",
+            "core_claim is an ALL-CAPS header/status banner — mis-promotion artifact, "
+            f"not a distilled claim (BRO-1689): {cc[:60]!r}", "error")]
     return []
+
+
+# Header artifacts SHOUT. A claim carrying a RUN of adjacent ALL-CAPS words is a
+# lifted status banner ("VERIFIED VERDICTS", "PARTIAL YES", "REFRAME REQUIRED"),
+# not prose. Generalizes past a VERDICT keyword list.
+#
+# Adjacency (not a bare ratio) plus a length floor is what keeps ordinary
+# acronym prose clean: "The HTTP API is versioned" and "GPT-5.4 beats HTML
+# rendering" are legitimate claims, and acronyms are almost always ≤4 chars —
+# so a run only counts when at least one of its words is ≥5 chars.
+_ALLCAPS_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+_ALLCAPS_RUN_MIN = 2       # adjacent shouted words needed to call it a banner
+_ALLCAPS_PROSE_LEN = 5     # a shouted word this long is prose, not an acronym
+
+
+def _claim_is_allcaps_banner(cc: str) -> bool:
+    """True when `cc` reads as an ALL-CAPS header/status banner rather than prose."""
+    run: "list[str]" = []
+    for word in _ALLCAPS_WORD_RE.findall(cc):
+        if word.isupper():
+            run.append(word)
+            if len(run) >= _ALLCAPS_RUN_MIN and any(
+                len(w) >= _ALLCAPS_PROSE_LEN for w in run
+            ):
+                return True
+        else:
+            run = []
+    return False
 
 
 _TIMELINE_HEADING_RE = re.compile(r"^##\s+Timeline\b.*$", re.MULTILINE)
@@ -2379,6 +2930,7 @@ def run_pipeline(
         return {}
 
     existing_slugs = existing_entity_slugs()
+    slug_types = existing_entity_slug_types()
 
     # Stage counters
     items_ingested = 0
@@ -2414,12 +2966,24 @@ def run_pipeline(
                 continue
 
             candidates = scatter(scored, verbose=verbose)
-            resolved = resolve_candidates(candidates, existing_slugs, verbose=verbose)
+            resolved = resolve_candidates(
+                candidates, existing_slugs, verbose=verbose,
+                item=item, slug_types=slug_types,
+            )
 
             if not resolved:
                 items_raw_only += 1
                 if verbose:
                     print(f"  [{item.item_id}] no candidates → raw-only")
+                continue
+
+            # A body with no derivable complete claim cannot become an entity
+            # page (BRO-1983). Filter here so the run counters stay honest —
+            # promote_item guards again, but by then it is already "promoted".
+            if derive_core_claim(item.content) is None:
+                items_raw_only += 1
+                if verbose:
+                    print(f"  [{item.item_id}] no complete core_claim → raw-only")
                 continue
 
             all_scored.append(scored)
@@ -2432,7 +2996,9 @@ def run_pipeline(
             continue
 
         candidates = scatter(scored)
-        resolved = resolve_candidates(candidates, existing_slugs)
+        resolved = resolve_candidates(
+            candidates, existing_slugs, item=scored.item, slug_types=slug_types
+        )
         if not resolved:
             items_raw_only += 1
             continue
@@ -2712,6 +3278,7 @@ def cmd_promote(args: argparse.Namespace) -> None:
     path = Path(args.file)
     items = ingest_file(path, verbose=args.verbose)
     existing = existing_entity_slugs()
+    slug_types = existing_entity_slug_types()
     ensure_dirs()
 
     promoted = 0
@@ -2723,9 +3290,16 @@ def cmd_promote(args: argparse.Namespace) -> None:
             continue
 
         candidates = scatter(scored, verbose=args.verbose)
-        resolved = resolve_candidates(candidates, existing, verbose=args.verbose)
+        resolved = resolve_candidates(
+            candidates, existing, verbose=args.verbose,
+            item=item, slug_types=slug_types,
+        )
         if not resolved:
             print(f"  [{item.item_id}] no entity candidates, skipping")
+            continue
+
+        if derive_core_claim(item.content) is None:
+            print(f"  [{item.item_id}] no complete core_claim derivable, skipping")
             continue
 
         for slug, is_existing in resolved[:1]:
@@ -2827,7 +3401,11 @@ def cmd_replay(args: argparse.Namespace) -> None:
                 # Would-promote: simulate without writing
                 promoted += 1
                 if args.verbose:
-                    print(f"  WOULD-PROMOTE [{item.item_id}] score={scored.total}/9 → {scored.suggested_slug}")
+                    # ScoredItem carries `candidate_entities`, never a
+                    # `suggested_slug` field — the old attribute raised
+                    # AttributeError on every `replay --verbose` run.
+                    _cands = scored.candidate_entities or ["(no candidate)"]
+                    print(f"  WOULD-PROMOTE [{item.item_id}] score={scored.total}/9 → {_cands[0]}")
 
         print(f"\n[replay] Phase 3 (Prune): {skipped} item(s) below threshold; {promoted} would-promote")
         if scores:
