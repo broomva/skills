@@ -66,7 +66,7 @@ What the session id buys you:
 
 | Dimension | Behavior |
 |---|---|
-| **Concurrency ceiling** | `max_concurrent_prs` is counted **per session, per repo** — N agents each hold their own watcher, and an in-flight PR in one repo never refuses a watch in another. A session's *own* second watch **in the same repo** still blocks at the ceiling. |
+| **Concurrency ceiling** | `max_concurrent_prs` is counted **per session**, and over the scope `ci_watch.max_concurrent_prs_scope` names (`repo`, the default, or `global`). A session's *own* second watch in the same scope still blocks. |
 | **PR identity** | Keyed by `(repo, pr)` — the same PR number in two repos never collides, in the state table *and* in the ceiling count. |
 | **Wait-queue** | `pop`/`list`/`clear` default to the **current session's** view (its items + legacy-unowned). `--all` crosses sessions. This is what "context-scoped" finally means in code. |
 | **Watcher de-dup** | A second `p9 watch` on a PR that already has a **live** watcher is refused (`--force` to supersede). A **dead** watcher is superseded automatically once aged, or now via `--adopt`. |
@@ -78,20 +78,52 @@ Every lifecycle command (`watch`, `merge-ready`, `merge-status`, `auto-merge`,
 answer for both the read key and the write key. Resolution order:
 
 1. `--repo OWNER/REPO`
-2. `BROOMVA_P9_REPO` — authoritative **when set at all**; an empty value pins
-   "no repo" rather than falling through. This is the deterministic hook for
-   tests and for harnesses that already know the target repo.
+2. `BROOMVA_P9_REPO` — the deterministic hook for tests and for harnesses that
+   already know the target. `-` pins "no repo"; an **empty value means unset**
+   (shell convention), so `export BROOMVA_P9_REPO=$(cmd_that_failed)` degrades
+   to normal detection instead of silently dropping into repo-less state. A
+   value that does not reduce to `OWNER/REPO` gets a stderr notice.
 3. `gh repo view` → `git remote get-url origin` from cwd (memoized per process).
+   The `git` fallback matters wherever `gh` is absent or unauthenticated (CI).
 
-Any spelling normalizes to `owner/name` (`https://…/o/r.git`,
-`git@github.com:o/r.git`, trailing slashes), and comparison is case-insensitive,
-so one logical repo never splits into two keys.
+Any spelling normalizes to `owner/name` — `https://host/o/r.git`,
+`git@host:o/r.git`, `ssh://git@host/o/r.git`, trailing slashes — and comparison
+is case-insensitive, so one logical repo never splits into two keys. Host
+parsing is generic, not a github.com allowlist: an allowlist made every repo on
+a GHE/GitLab host collapse to a single key. The host is stripped rather than
+keyed on, matching `gh --repo` (which takes a bare `OWNER/REPO` and gets its
+host from `GH_HOST`).
 
-**Legacy state migration.** Rows written before repo stamping carry
-`repo: ""`. On load they are attributed to the resolved repo; the next state
-write rewrites the log durably (atomic temp+rename, unparseable lines preserved
-verbatim, no row ever dropped). With no resolvable repo the log is left exactly
-as-is — the legacy key is kept rather than guessed at.
+**Ceiling scope** — `ci_watch.max_concurrent_prs_scope: repo | global`
+(default `repo`). `repo` counts in-flight PRs per `(session, repo)`; `global`
+is the pre-BRO-1988 cross-repo count — one bounded merge train across every
+repo, which is what the design spec describes. `repo` is the default because a
+global count let an in-flight PR in one repo refuse `p9 watch` in an unrelated
+one, and since `watch` is the only transition into GREEN that made the whole
+lifecycle unreachable there. The tradeoff is real and is why the knob exists:
+at `max_concurrent_prs: 1` across N repos a session holds N watchers, and the
+defer-into-wait-queue discipline stops firing cross-repo. Spec reconciliation
+is tracked separately. With no resolvable repo the count falls back to global —
+an ambiguous identity must not silently disable the ceiling.
+
+**Legacy state migration.** Rows written before repo stamping carry `repo: ""`.
+`p9` attributes them **once, durably**, at CLI entry — atomic temp+rename with
+fsync of both the file and the directory, every other field byte-identical, no
+row ever dropped. Two properties matter:
+
+- Attributed rows are stamped **`repo_inferred: true`**, and that label is
+  permanent. Attribution makes an orphaned row *reachable*; it does not make
+  the guess true. Anything that leaves the process — spawning
+  `gh pr checks --repo X`, asking GitHub "is #N merged in X?" — refuses an
+  inferred repo, so `p9 rearm` never re-watches a PR in a repo it was never in
+  and `p9 cleanup` never folds a row off a foreign PR's state.
+- Unparseable lines are **quarantined** to `state.jsonl.corrupt`, not left in
+  place. `jsonl_read_all` tolerates a torn *last* line but treats mid-file
+  corruption as an invariant violation, so sealing a torn tail behind a newline
+  would wedge every state read one append later.
+
+With no resolvable repo the log is left exactly as-is — the legacy key is kept
+rather than guessed at, and the decline stays retryable.
 
 ### Lifecycle / self-healing
 

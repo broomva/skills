@@ -34,15 +34,21 @@ _SCRIPTS = _HERE.parent / "scripts"
 _FIXTURES = _HERE / "fixtures"
 sys.path.insert(0, str(_SCRIPTS))
 
+# Ambient repo for commands invoked without --repo (and for the spawned
+# CLI in _cli_env). Named so assertions about it cannot drift.
+AMBIENT = "broomva/test"
+
 
 @pytest.fixture()
 def p9(tmp_path, monkeypatch):
     """Fresh p9 import with tmpdir state and good policy fixture."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
-    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
-    # shells out to gh/git and cross-repo keying is deterministic.
-    monkeypatch.setenv("BROOMVA_P9_REPO", "")
+    # Hermetic repo identity (BRO-1988): pin a REAL repo — the regime
+    # production actually runs in. Pinning tests to repo-less ("" / `-`) is
+    # what hid the rearm mis-attribution blocker: the guard under test only
+    # misbehaves once an ambient repo resolves.
+    monkeypatch.setenv("BROOMVA_P9_REPO", AMBIENT)
     monkeypatch.delenv("BROOMVA_P9_NTFY_TOPIC", raising=False)
     if "p9" in sys.modules:
         del sys.modules["p9"]
@@ -75,10 +81,11 @@ def _cli_env(tmp_path: Path, extra_path: Path | None = None) -> dict:
     env = dict(os.environ)
     env["BROOMVA_P9_HOME"] = str(tmp_path)
     env["BROOMVA_P9_POLICY"] = str(_FIXTURES / "policy-good.yaml")
-    # BRO-1988: pin repo resolution in the spawned CLI too. Without it the
-    # child would probe the PATH-shimmed `gh` (which is a `sleep`), stalling
-    # the first state write past the test's readiness window.
-    env["BROOMVA_P9_REPO"] = ""
+    # BRO-1988: pin repo resolution in the spawned CLI too — to a REAL repo,
+    # matching production. Without a pin the child would probe the
+    # PATH-shimmed `gh` (which is a `sleep`), stalling the first state write
+    # past the test's readiness window.
+    env["BROOMVA_P9_REPO"] = AMBIENT
     env.pop("BROOMVA_P9_NTFY_TOPIC", None)
     if extra_path:
         env["PATH"] = f"{extra_path}{os.pathsep}{env['PATH']}"
@@ -677,9 +684,9 @@ class TestP20Round1:
                      f"notify_hook: {hook}")
         )
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(policy))
-        # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
-        # shells out to gh/git and cross-repo keying is deterministic.
-        monkeypatch.setenv("BROOMVA_P9_REPO", "")
+        # Hermetic repo identity (BRO-1988): pin a REAL repo (see module
+        # fixture) — repo-less is not the regime production runs in.
+        monkeypatch.setenv("BROOMVA_P9_REPO", AMBIENT)
         row = p9.notify("termination:escalated", "t", "b")
         assert {"channel": "command", "ok": True} in row["deliveries"]
         assert json.loads(sink.read_text())["title"] == "t"
@@ -708,7 +715,15 @@ class TestP20Round1:
 
     def test_rearm_repo_less_row_is_folded_before_respawn(self, p9, monkeypatch, capsys):
         """MINOR #8: a repo-less WATCHING row can never be matched by the
-        re-spawned watch --adopt; rearm must fold it itself."""
+        re-spawned watch --adopt; rearm must fold it itself.
+
+        BRO-1988 round 2: this must hold **with an ambient repo resolvable**,
+        which is every real checkout. The fixture used to pin repo-less, and
+        that pin hid a live blocker — with an ambient repo the guard stopped
+        firing, the row was re-watched as `--repo <ambient>` against a PR
+        nobody targeted, and auto-merge could complete on it. So: assert the
+        fold happens AND that no repo is ever named to the child.
+        """
         spawned = []
 
         def fake_popen(argv, **kw):
@@ -726,8 +741,14 @@ class TestP20Round1:
         monkeypatch.setattr(p9.subprocess, "Popen", fake_popen)
         rc = p9.main(["rearm", "--now", "--json"])
         assert rc == 0
-        assert p9.current_pr_state(55, "") == p9.PRState.ABANDONED
+        # Migration attributed the row to the ambient repo (labelled inferred)
+        # and the fold landed on that same key — one terminal row, no leaked
+        # slot. What must NOT happen is the child being pointed at that repo.
+        assert p9.current_pr_state(55, AMBIENT) == p9.PRState.ABANDONED
+        assert p9.open_prs() == []
         assert spawned and "watch" in spawned[0]
+        assert "--repo" not in spawned[0], (
+            f"rearm named a repo for a row that never recorded one: {spawned[0]}")
 
     def test_webhook_channel_delivers_payload(self, p9, monkeypatch):
         calls = []

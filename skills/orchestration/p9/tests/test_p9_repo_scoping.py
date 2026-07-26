@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,17 +42,35 @@ WORKSPACE = "broomva/workspace"
 SKILLS = "broomva/skills"
 
 
+AMBIENT = "broomva/ambient"
+
+
 @pytest.fixture()
 def p9(tmp_path, monkeypatch):
-    """Fresh p9 with tmpdir state, max_concurrent_prs=1, and repo resolution
-    pinned to "no ambient repo" — every test that needs one is explicit."""
+    """Fresh p9 with tmpdir state and max_concurrent_prs=1.
+
+    The ambient repo is pinned to a REAL repo that is deliberately *unrelated*
+    to every repo under test, so nothing here can pass by accidentally being
+    the ambient one — and so the suite runs in the regime production runs in.
+    Tests that need "no repo at all" set the explicit `-` sentinel themselves.
+    """
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
-    monkeypatch.setenv("BROOMVA_P9_REPO", "")
+    monkeypatch.setenv("BROOMVA_P9_REPO", AMBIENT)
     monkeypatch.delenv("BROOMVA_P9_SESSION", raising=False)
     if "p9" in sys.modules:
         del sys.modules["p9"]
     return importlib.import_module("p9")
+
+
+@pytest.fixture()
+def no_probe(monkeypatch):
+    """Fail loudly if anything shells out. Repo resolution must not reach the
+    network on paths that claim not to."""
+    def boom(cmd, *a, **k):  # pragma: no cover - the assertion is the point
+        raise AssertionError(f"unexpected subprocess: {cmd}")
+    import p9 as _p9
+    monkeypatch.setattr(_p9.subprocess, "run", boom)
 
 
 def _event(p9, pr, repo, prev, curr, *, session_id="A", **extra):
@@ -91,13 +110,19 @@ class TestRepoResolution:
         monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
         assert p9.resolve_repo() == WORKSPACE
 
-    def test_env_set_empty_pins_no_repo_without_probing(self, p9, monkeypatch):
-        """An explicitly-empty env means "no repo", NOT "go ask gh" — that is
-        what makes the suite hermetic."""
-        def boom(*a, **k):  # pragma: no cover - must never run
-            raise AssertionError("resolution probed a subprocess")
-        monkeypatch.setattr(p9.subprocess, "run", boom)
+    def test_sentinel_pins_no_repo_without_probing(self, p9, monkeypatch, no_probe):
+        """`-` means "no repo", NOT "go ask gh"."""
+        monkeypatch.setenv("BROOMVA_P9_REPO", p9.REPO_NONE_SENTINEL)
         assert p9.resolve_repo() == ""
+
+    def test_empty_env_means_unset_not_repo_less(self, p9, monkeypatch):
+        """NIT-8. A wrapper doing `export BROOMVA_P9_REPO=$(cmd_that_failed)`
+        must degrade to normal detection, not silently drop into repo-less
+        state with a global ceiling and no diagnostic. Shell convention:
+        empty == unset."""
+        monkeypatch.setenv("BROOMVA_P9_REPO", "")
+        monkeypatch.setattr(p9, "_detect_repo_uncached", lambda: SKILLS)
+        assert p9.resolve_repo() == SKILLS
 
     @pytest.mark.parametrize("raw", [
         "broomva/workspace",
@@ -105,22 +130,71 @@ class TestRepoResolution:
         "broomva/workspace/",
         "https://github.com/broomva/workspace",
         "https://github.com/broomva/workspace.git",
+        "http://github.com/broomva/workspace",
         "git@github.com:broomva/workspace.git",
         "ssh://git@github.com/broomva/workspace.git",
+        "https://github.com/broomva/workspace/pull/5",
     ])
     def test_canonicalizes_every_spelling(self, p9, raw):
         assert p9.canonical_repo(raw) == WORKSPACE
 
+    def test_non_github_hosts_stay_distinct(self, p9):
+        """MAJOR-2. A github.com-only prefix allowlist left the scheme+host in
+        place, so `split("/")[:2]` returned `https:/<host>` and EVERY repo on
+        a GHE/GitLab host collapsed to one key — BRO-1988 again, host-wide.
+        Reachable via the `git remote get-url` fallback this PR added, and
+        `gh` supports GHE through `GH_HOST`."""
+        a = p9.canonical_repo("https://github.mycorp.com/teamA/repo1")
+        b = p9.canonical_repo("https://github.mycorp.com/teamB/repo2")
+        assert (a, b) == ("teamA/repo1", "teamB/repo2")
+        c = p9.canonical_repo("https://gitlab.com/a/b")
+        d = p9.canonical_repo("git@gitlab.com:c/d.git")
+        assert (c, d) == ("a/b", "c/d")
+        assert len({p9.repo_key(x) for x in (a, b, c, d)}) == 4
+
+    def test_ghe_rows_do_not_shadow_each_other(self, p9):
+        """The same collapse, end to end: two GHE repos, same PR number."""
+        _watching(p9, 42, "https://github.mycorp.com/teamA/repo1")
+        _green(p9, 42, "https://github.mycorp.com/teamB/repo2")
+        assert p9.current_pr_state(42, "teamA/repo1") == p9.PRState.WATCHING
+        assert p9.current_pr_state(42, "teamB/repo2") == p9.PRState.GREEN
+        assert len(p9.open_prs()) == 2
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("weird", "weird"),           # 1 segment: kept, never aliased onto ""
+        ("https://github.com/", ""),  # 0 segments: nothing left to keep
+        ("/", ""),
+        ("//", ""),
+        ("   ", ""),
+        ("", ""),
+        (None, ""),
+    ])
+    def test_canonical_repo_boundaries(self, p9, raw, expected):
+        """MAJOR-2, second defect: the docstring claimed odd values are *never*
+        collapsed to "", but `https://github.com/`, `/` and `//` all were, and
+        the old test only probed `"weird"`. Pin the real contract."""
+        assert p9.canonical_repo(raw) == expected
+
     def test_odd_repo_values_are_kept_not_collapsed(self, p9):
-        """A value that isn't `owner/name` must survive. Collapsing it to ""
-        would alias it onto the legacy no-repo key and erase its identity."""
-        assert p9.canonical_repo("weird") == "weird"
+        """A single-segment value must survive. Collapsing it to "" would
+        alias it onto the legacy no-repo key and erase its identity."""
         assert p9.repo_key("weird") == "weird"
         assert p9.repo_key("weird") != p9.repo_key("")
         _watching(p9, 7, "weird")
         assert [r["repo"] for r in _raw_rows(p9)] == ["weird"]
         assert p9.current_pr_state(7, "weird") == p9.PRState.WATCHING
         assert p9.current_pr_state(7, "") is None
+
+    def test_unusable_explicit_repo_warns(self, p9, capsys):
+        """Silence is how a garbage `--repo` becomes an invisible slide into
+        repo-less state."""
+        assert p9.resolve_repo("https://github.com/") == ""
+        assert "does not reduce to OWNER/REPO" in capsys.readouterr().err
+
+    def test_unusable_env_repo_warns(self, p9, monkeypatch, capsys):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "/")
+        assert p9.resolve_repo() == ""
+        assert "does not reduce to OWNER/REPO" in capsys.readouterr().err
 
     def test_repo_key_is_case_insensitive(self, p9):
         assert p9.repo_key("GetStimulus/SRI") == p9.repo_key("getstimulus/sri")
@@ -217,6 +291,7 @@ class TestCrossRepoConcurrency:
         """With no repo, identity is ambiguous — the ceiling must degrade to
         the cross-repo count, not vanish."""
         monkeypatch.setenv("BROOMVA_P9_SESSION", "A")
+        monkeypatch.setenv("BROOMVA_P9_REPO", p9.REPO_NONE_SENTINEL)
         _watching(p9, 307, SRI, session_id="A")
         assert p9.main(["watch", "50", "--dry-run"]) == p9.EXIT_CONCURRENCY_CEILING
 
@@ -387,11 +462,30 @@ def _write_legacy(p9, pr, to_state="WATCHING", *, session_id=""):
 
 
 class TestLegacyMigration:
-    def test_legacy_row_is_readable_under_the_resolved_repo(self, p9, monkeypatch):
+    """Attribution is DURABLE and LABELLED.
+
+    An earlier design attributed legacy rows in memory on every read. That put
+    a `gh repo view` API call on the read path, and let reads and the durable
+    rewrite disagree about a row's key. Now the migration runs once at CLI
+    entry, stamps `repo_inferred`, and every reader sees the same bytes.
+    """
+
+    def test_migration_attributes_and_labels_the_guess(self, p9, monkeypatch):
         _write_legacy(p9, 36)
         monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        assert p9.migrate_legacy_state_repos() == 1
+        row = _raw_rows(p9)[0]
+        assert row["repo"] == WORKSPACE
+        assert row["repo_inferred"] is True
         assert p9.current_pr_state(36, WORKSPACE) == p9.PRState.WATCHING
         assert [(r["repo"], r["pr"]) for r in p9.open_prs()] == [(WORKSPACE, 36)]
+
+    def test_cli_entry_runs_the_migration(self, p9, monkeypatch):
+        """Once, up front — so a command's reads and writes agree on keys."""
+        _write_legacy(p9, 36)
+        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        assert p9.main(["status", "--no-reap", "--json"]) == p9.EXIT_OK
+        assert _raw_rows(p9)[0]["repo"] == WORKSPACE
 
     def test_legacy_in_flight_state_is_not_discarded(self, p9, monkeypatch):
         """A live legacy watcher must survive the migration, not vanish."""
@@ -401,34 +495,56 @@ class TestLegacyMigration:
         p9.migrate_legacy_state_repos()
         after = _raw_rows(p9)
         assert len(after) == before
-        assert after[0]["repo"] == WORKSPACE
         assert after[0]["extra"] == {"pid": 20307}  # every other field intact
         assert after[0]["watcher_id"] == "legacy"
+        assert after[0]["to_state"] == "WATCHING"
 
-    def test_migration_persists_on_next_save(self, p9, monkeypatch):
-        """Read-path attribution is in memory; the next state write makes it
-        durable."""
+    def test_reads_never_resolve_a_repo(self, p9, no_probe):
+        """MINOR-5. `gh repo view` is a network call with a 10s timeout; it
+        must not sit on the path of listing rows. `no_probe` makes any
+        subprocess an error."""
+        _watching(p9, 42, WORKSPACE)
+        assert p9.current_pr_state(42, WORKSPACE) == p9.PRState.WATCHING
+        assert len(p9.open_prs()) == 1
+        assert p9.latest_row(42, WORKSPACE) is not None
+
+    def test_read_of_a_migrated_store_is_network_free(self, p9, monkeypatch, no_probe):
+        """After the one-time migration, even a store that HAD legacy rows
+        never resolves again — the pre-check is a plain file scan."""
         _write_legacy(p9, 36)
         monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
-        _watching(p9, 99, WORKSPACE)  # any append triggers the rewrite
-        assert all(r["repo"] for r in _raw_rows(p9))
+        p9.migrate_legacy_state_repos()
+        p9._STATE_MIGRATION_DONE = False   # simulate a fresh process
+        monkeypatch.setenv("BROOMVA_P9_REPO", "")  # and no env hint
+        assert p9.migrate_legacy_state_repos() == 0  # no_probe would fire
+        assert len(p9.open_prs()) == 1
 
-    def test_pure_read_does_not_rewrite_the_log(self, p9, monkeypatch):
-        _write_legacy(p9, 36)
-        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
-        raw_before = p9.state_jsonl().read_text(encoding="utf-8")
-        p9.open_prs()
-        p9.current_pr_state(36, WORKSPACE)
-        assert p9.state_jsonl().read_text(encoding="utf-8") == raw_before
-
-    def test_migration_declines_when_no_repo_resolves(self, p9):
+    def test_migration_declines_when_no_repo_resolves(self, p9, monkeypatch):
         """Attributing a row to a repo we cannot name would be a guess; the
         legacy key is kept instead."""
         _write_legacy(p9, 36)
+        monkeypatch.setenv("BROOMVA_P9_REPO", p9.REPO_NONE_SENTINEL)
         raw_before = p9.state_jsonl().read_text(encoding="utf-8")
         assert p9.migrate_legacy_state_repos() == 0
         assert p9.state_jsonl().read_text(encoding="utf-8") == raw_before
         assert p9.current_pr_state(36, "") == p9.PRState.WATCHING
+
+    def test_declining_does_not_latch(self, p9, monkeypatch):
+        """A decline must stay retryable: latching would leave the row
+        unmigrated while later code assumes the post-migration invariant."""
+        _write_legacy(p9, 36)
+        monkeypatch.setenv("BROOMVA_P9_REPO", p9.REPO_NONE_SENTINEL)
+        assert p9.migrate_legacy_state_repos() == 0
+        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        assert p9.migrate_legacy_state_repos() == 1
+
+    def test_missing_file_does_not_latch(self, p9, monkeypatch):
+        """Rows can appear later in the same process (first-ever event)."""
+        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        assert not p9.state_jsonl().exists()
+        assert p9.migrate_legacy_state_repos() == 0
+        _write_legacy(p9, 36)
+        assert p9.migrate_legacy_state_repos() == 1
 
     def test_migration_is_idempotent(self, p9, monkeypatch):
         _write_legacy(p9, 36)
@@ -439,27 +555,182 @@ class TestLegacyMigration:
         assert p9.migrate_legacy_state_repos() == 0
         assert p9.state_jsonl().read_text(encoding="utf-8") == raw
 
-    def test_torn_last_line_survives_migration(self, p9, monkeypatch):
-        """A crash-torn trailing write must not be silently deleted by the
-        rewrite, and must not crash it."""
+    def test_corruption_is_quarantined_not_sealed(self, p9, monkeypatch):
+        """MAJOR-3. `jsonl_read_all` tolerates a torn LAST line but raises on
+        corruption anywhere else. The rewrite terminates the torn tail with a
+        newline, so one ordinary append later it is no longer last — and every
+        state read wedges permanently. Move it out instead of sealing it in.
+        """
         _write_legacy(p9, 36)
         with p9.state_jsonl().open("a", encoding="utf-8") as f:
             f.write('{"ts":"par')
         monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
         assert p9.migrate_legacy_state_repos() == 1
+
+        # Preserved verbatim, out of the way.
+        assert p9.state_corrupt_path().read_text(encoding="utf-8") == '{"ts":"par\n'
         text = p9.state_jsonl().read_text(encoding="utf-8")
-        assert '{"ts":"par' in text
+        assert '{"ts":"par' not in text
         assert json.loads(text.splitlines()[0])["repo"] == WORKSPACE
 
-    def test_missing_state_file_is_a_no_op(self, p9, monkeypatch):
-        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
-        assert not p9.state_jsonl().exists()
-        assert p9.migrate_legacy_state_repos() == 0
+        # The whole point: append after the migration and the log still reads.
+        _watching(p9, 99, WORKSPACE)
+        rows, dropped = p9.jsonl_read_all(p9.state_jsonl())
+        assert dropped == 0 and len(rows) == 2
+        assert p9.current_pr_state(99, WORKSPACE) == p9.PRState.WATCHING
 
     def test_legacy_row_does_not_shadow_a_real_repo_pr(self, p9, monkeypatch):
         """Migration attributes the legacy row to the resolved repo — it must
         not leak into a *different* repo's lookup."""
         _write_legacy(p9, 256)
         monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        p9.migrate_legacy_state_repos()
         assert p9.current_pr_state(256, WORKSPACE) == p9.PRState.WATCHING
         assert p9.current_pr_state(256, SRI) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLOCKER-1 — an inferred repo is never ACTED on
+# ─────────────────────────────────────────────────────────────────────────────
+class TestInferredRepoIsNeverActedOn:
+    """Attribution makes an orphaned row reachable; it does not make the guess
+    true. Everything that leaves the process must still refuse it.
+
+    The live chain this closes: `rearm` re-watched a repo-less row as
+    `watch <pr> --repo <ambient>`, the watcher went GREEN against a PR nobody
+    targeted, and with `auto_merge.enabled` + a matching branch rule the
+    actuator merged it.
+    """
+
+    def _dead_legacy_row(self, p9, pr=55):
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        row = {"ts": "2020-01-01T00:00:00+00:00", "pr": pr, "repo": "",
+               "from_state": "PUSHED", "to_state": "WATCHING",
+               "watcher_id": "wnorepo", "attempt": 0, "evaluator_score": None,
+               "extra": {"pid": dead.pid}, "session_id": ""}
+        p9.jsonl_append(p9.state_jsonl(), json.dumps(row), p9.state_lock_path())
+
+    @pytest.mark.parametrize("ambient", ["-", "broomva/skills"])
+    def test_rearm_never_names_a_repo_for_an_inferred_row(
+            self, p9, monkeypatch, ambient):
+        """Must hold in BOTH regimes. Pinning tests to repo-less is exactly
+        what hid this: the guard only misbehaves once a repo resolves."""
+        monkeypatch.setenv("BROOMVA_P9_REPO", ambient)
+        self._dead_legacy_row(p9)
+        spawned = []
+
+        class _FP:
+            pid = 99999
+
+        monkeypatch.setattr(p9.subprocess, "Popen",
+                            lambda argv, **kw: (spawned.append(argv), _FP())[1])
+        assert p9.main(["rearm", "--now", "--json"]) == p9.EXIT_OK
+        assert "--repo" not in spawned[0], (
+            f"re-watched a row that recorded no repo against one: {spawned[0]}")
+        # Folded, and the slot is actually freed (the fold landed on the same
+        # key as the row it retires — attribution included).
+        assert p9.open_prs() == []
+
+    def test_inferred_label_survives_into_the_next_process(self, p9, monkeypatch):
+        """The guard cannot depend on migration timing: once persisted, the
+        row looks exactly like one a command recorded unless it stays
+        labelled."""
+        _write_legacy(p9, 36)
+        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        p9.migrate_legacy_state_repos()
+        p9._STATE_MIGRATION_DONE = False          # fresh process
+        row = p9.latest_row(36, WORKSPACE)
+        assert row["repo"] == WORKSPACE           # reachable
+        assert p9._row_repo(row) == ""            # but never acted on
+
+    def test_cleanup_will_not_ask_github_about_an_inferred_repo(
+            self, p9, monkeypatch, capsys):
+        """`cleanup` folds rows terminal off a GitHub answer. Asking "is #36
+        merged?" of the wrong repo is the false-positive cleanup this command
+        promises never to do."""
+        _write_legacy(p9, 36)
+        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        p9.migrate_legacy_state_repos()
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run",
+                            lambda cmd, *a, **k: calls.append(cmd))
+        assert p9.main(["cleanup"]) == p9.EXIT_OK
+        assert not calls, f"queried GitHub on an inferred repo: {calls}"
+        assert "no repo recorded" in capsys.readouterr().out
+        assert p9.current_pr_state(36, WORKSPACE) == p9.PRState.WATCHING
+
+    def test_reap_will_not_reconcile_an_inferred_repo_against_github(
+            self, p9, monkeypatch):
+        _write_legacy(p9, 36)
+        monkeypatch.setenv("BROOMVA_P9_REPO", WORKSPACE)
+        p9.migrate_legacy_state_repos()
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run",
+                            lambda cmd, *a, **k: calls.append(cmd))
+        reaped = p9.reap_stale_watchers(grace_seconds=0.0, reconcile=True)
+        assert len(reaped) == 1
+        assert not calls, f"queried GitHub on an inferred repo: {calls}"
+        # Folded on its own key — no leaked slot.
+        assert p9.open_prs() == []
+
+    def test_a_real_repo_row_is_still_acted_on(self, p9, monkeypatch):
+        """The guard must not disarm rearm for ordinary rows."""
+        self._dead_legacy_row(p9)
+        # Overwrite with a row that genuinely recorded a repo.
+        p9.state_jsonl().unlink()
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        _watching(p9, 55, WORKSPACE, session_id="", pid=dead.pid,
+                  ts="2020-01-01T00:00:00+00:00")
+        spawned = []
+
+        class _FP:
+            pid = 99999
+
+        monkeypatch.setattr(p9.subprocess, "Popen",
+                            lambda argv, **kw: (spawned.append(argv), _FP())[1])
+        assert p9.main(["rearm", "--now", "--json"]) == p9.EXIT_OK
+        assert "--repo" in spawned[0] and WORKSPACE in spawned[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAJOR-4 — the ceiling scope is an explicit policy setpoint
+# ─────────────────────────────────────────────────────────────────────────────
+class TestCeilingScopePolicy:
+    def _policy(self, tmp_path, scope):
+        src = (_FIXTURES / "policy-good.yaml").read_text(encoding="utf-8")
+        if scope is not None:
+            src = src.replace("max_concurrent_prs: 1",
+                              f"max_concurrent_prs: 1\n"
+                              f"  max_concurrent_prs_scope: {scope}")
+        path = tmp_path / f"policy-{scope}.yaml"
+        path.write_text(src, encoding="utf-8")
+        return path
+
+    def test_defaults_to_repo(self, p9):
+        cfg = p9.load_policy(_FIXTURES / "policy-good.yaml")
+        assert cfg.ci_watch.max_concurrent_prs_scope == "repo"
+
+    def test_global_scope_restores_the_cross_repo_count(
+            self, p9, tmp_path, monkeypatch):
+        """The knob is the point: a workspace that WANTS one bounded merge
+        train across every repo can still have it."""
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "A")
+        monkeypatch.setenv("BROOMVA_P9_POLICY",
+                           str(self._policy(tmp_path, "global")))
+        _watching(p9, 307, SRI, session_id="A")
+        assert p9.main(["watch", "50", "--repo", SKILLS,
+                        "--dry-run"]) == p9.EXIT_CONCURRENCY_CEILING
+
+    def test_repo_scope_is_what_unblocks_it(self, p9, tmp_path, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "A")
+        monkeypatch.setenv("BROOMVA_P9_POLICY",
+                           str(self._policy(tmp_path, "repo")))
+        _watching(p9, 307, SRI, session_id="A")
+        assert p9.main(["watch", "50", "--repo", SKILLS,
+                        "--dry-run"]) == p9.EXIT_OK
+
+    def test_invalid_scope_fails_closed(self, p9, tmp_path):
+        with pytest.raises(p9.PolicyError):
+            p9.load_policy(self._policy(tmp_path, "per-moon-phase"))

@@ -22,14 +22,22 @@ _SCRIPTS = _HERE.parent / "scripts"
 _FIXTURES = _HERE / "fixtures"
 sys.path.insert(0, str(_SCRIPTS))
 
+# The ambient repo. Commands invoked WITHOUT --repo resolve to this, so
+# seeded rows must use the same constant — the coupling is real (that is
+# what the no-flag path means) and is named here rather than duplicated
+# as a literal that silently has to match.
+AMBIENT = "broomva/test"
+
 
 @pytest.fixture()
 def p9(tmp_path, monkeypatch):
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
-    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
-    # shells out to gh/git and cross-repo keying is deterministic.
-    monkeypatch.setenv("BROOMVA_P9_REPO", "broomva/test")
+    # Hermetic repo identity (BRO-1988): pin a REAL repo — the regime
+    # production actually runs in. Pinning tests to repo-less ("" / `-`) is
+    # what hid the rearm mis-attribution blocker: the guard under test only
+    # misbehaves once an ambient repo resolves.
+    monkeypatch.setenv("BROOMVA_P9_REPO", AMBIENT)
     if "p9" in sys.modules:
         del sys.modules["p9"]
     return importlib.import_module("p9")
@@ -123,7 +131,7 @@ class TestAbandon:
         # Seed a WATCHING state
         p9.append_state_event(p9.PRStateEvent(
             ts="2026-05-05T20:00:00+00:00",
-            pr=600, repo="broomva/test",
+            pr=600, repo=AMBIENT,
             from_state=p9.PRState.PUSHED.value,
             to_state=p9.PRState.WATCHING.value,
             watcher_id="seed",
@@ -139,7 +147,7 @@ class TestAbandon:
     def test_abandon_idempotent_on_terminal(self, p9):
         p9.append_state_event(p9.PRStateEvent(
             ts="2026-05-05T20:00:00+00:00",
-            pr=700, repo="broomva/test",
+            pr=700, repo=AMBIENT,
             from_state=p9.PRState.PUSHED.value,
             to_state=p9.PRState.WATCHING.value,
             watcher_id="seed",
@@ -152,7 +160,7 @@ class TestAbandon:
         ]:
             p9.append_state_event(p9.PRStateEvent(
                 ts="2026-05-05T20:00:00+00:00",
-                pr=700, repo="broomva/test",
+                pr=700, repo=AMBIENT,
                 from_state=prev.value, to_state=curr.value,
                 watcher_id="seed",
             ))
@@ -164,14 +172,14 @@ class TestAbandon:
     def test_abandon_from_green_legal(self, p9):
         p9.append_state_event(p9.PRStateEvent(
             ts="2026-05-05T20:00:00+00:00",
-            pr=750, repo="broomva/test",
+            pr=750, repo=AMBIENT,
             from_state=p9.PRState.PUSHED.value,
             to_state=p9.PRState.WATCHING.value,
             watcher_id="seed",
         ))
         p9.append_state_event(p9.PRStateEvent(
             ts="2026-05-05T20:00:00+00:00",
-            pr=750, repo="broomva/test",
+            pr=750, repo=AMBIENT,
             from_state=p9.PRState.WATCHING.value,
             to_state=p9.PRState.GREEN.value,
             watcher_id="seed",
@@ -194,7 +202,7 @@ class _FakeRun:
 def _seed_watching(p9, pr):
     p9.append_state_event(p9.PRStateEvent(
         ts="2026-05-05T20:00:00+00:00",
-        pr=pr, repo="broomva/test",
+        pr=pr, repo=AMBIENT,
         from_state=p9.PRState.PUSHED.value,
         to_state=p9.PRState.WATCHING.value,
         watcher_id="seed",
