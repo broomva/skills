@@ -29,7 +29,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -1837,6 +1837,11 @@ def _split_sentences(text: str) -> list[str]:
     return [s for s in sentences if s]
 
 
+# Arrows, list bullets, table pipes, blockquotes, headings, enumerators — the
+# leading glyphs of a document fragment rather than a sentence.
+_CLAIM_STRUCTURAL_PREFIX_RE = re.compile(r"^\s*(?:[→←↔⇒⇐»]|[-*•]\s|\||>|#|\d+\.\s)")
+
+
 def _claim_is_acceptable(claim: str, limit: int) -> bool:
     """A candidate claim must fit, be a real proposition, and pass the lint gate."""
     if not claim:
@@ -1846,6 +1851,17 @@ def _claim_is_acceptable(claim: str, limit: int) -> bool:
     if len(claim.split()) < _CORE_CLAIM_MIN_WORDS:
         return False
     if claim.endswith(("...", "…")):
+        return False
+    # A claim that opens with a structural glyph is a document fragment the
+    # markdown stripper failed to shed — a continuation arrow, list bullet,
+    # table cell or blockquote — not a proposition. Observed live (BRO-1991):
+    # pattern/environment-contract carried "→ In our taxonomy: an arm-B system."
+    #
+    # Measured against all 804 committed pages before shipping: 0 flagged
+    # (0.00%). Unlike the "does the claim mention its slug?" heuristic — which
+    # flagged 36% of the same corpus and was therefore rejected — this tests a
+    # structural property, so it does not need to interpret meaning.
+    if _CLAIM_STRUCTURAL_PREFIX_RE.match(claim):
         return False
     # The producer must clear the INDEPENDENT quality gate, not just the
     # length rule it used to satisfy by construction.
@@ -5002,6 +5018,107 @@ def cmd_status(_args: argparse.Namespace) -> None:
     """Print knowledge graph statistics."""
     run_status()
 
+# ── Layer-2 retention (BRO-1991) ──────────────────────────────────────────────
+#
+# CLAUDE.md has always specified "Layer 2 — Raw Extracts ... Retained 30 days,
+# then archived", but nothing implemented it, so `research/notes/*-raw.md`
+# accumulated without bound: 20 of 26 extracts were past the window when this
+# landed, the oldest at 111 days. Every scheduled run re-ingested all of them
+# and re-promoted fragments, which is why deleting the minted pages never stuck
+# — the next run regenerated them from the same April notes.
+#
+# Archiving MOVES, never deletes. Entity provenance is safe across the move
+# because `sources:` values are note BASENAMES, not paths (pinned by a test).
+
+RAW_ARCHIVE_DIRNAME = "archive"
+DEFAULT_RETENTION_DAYS = 30
+
+_RAW_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-")
+
+
+def raw_extract_age_days(path: Path, today: "date | None" = None) -> "int | None":
+    """Age of a Layer-2 raw extract in days.
+
+    Prefers the `YYYY-MM-DD-` filename prefix, which is the note's logical date
+    and survives copies, rebases and checkouts. Falls back to mtime only when
+    the name carries no date. Returns None if neither is usable, and the caller
+    treats that as "do not touch" — an unparseable name must never be archived
+    by guesswork.
+    """
+    ref = today or date.today()
+    m = _RAW_DATE_RE.match(path.name)
+    if m:
+        try:
+            d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+        return (ref - d).days
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime).date()
+    except OSError:
+        return None
+    return (ref - mtime).days
+
+
+def run_archive(
+    days: int = DEFAULT_RETENTION_DAYS,
+    apply: bool = False,
+    notes_dir: "Path | None" = None,
+    today: "date | None" = None,
+) -> "list[tuple[Path, int]]":
+    """Move raw extracts older than `days` into `<notes>/archive/`.
+
+    Returns the list of (path, age_days) that were (or would be) archived.
+    """
+    base = notes_dir or NOTES_DIR
+    if not base.exists():
+        print(f"[archive] no notes dir at {base}")
+        return []
+
+    archive_dir = base / RAW_ARCHIVE_DIRNAME
+    aged: "list[tuple[Path, int]]" = []
+    skipped_undated = 0
+
+    for p in sorted(base.glob("*-raw.md")):
+        age = raw_extract_age_days(p, today=today)
+        if age is None:
+            skipped_undated += 1
+            continue
+        if age > days:
+            aged.append((p, age))
+
+    if not aged:
+        print(f"[archive] nothing older than {days}d in {base}")
+        return []
+
+    for p, age in aged:
+        if apply:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = archive_dir / p.name
+            if dest.exists():
+                # Never clobber an existing archived note; the on-disk copy is
+                # the older, authoritative one.
+                print(f"  [skip] {p.name} — already archived")
+                continue
+            p.rename(dest)
+            print(f"  archived {p.name} ({age}d)")
+        else:
+            print(f"  [dry-run] would archive {p.name} ({age}d)")
+
+    if skipped_undated:
+        print(f"[archive] {skipped_undated} undated file(s) left alone")
+    verb = "archived" if apply else "would archive"
+    print(f"[archive] {verb} {len(aged)} extract(s) older than {days}d → {archive_dir}")
+    if not apply:
+        print("[archive] DRY RUN — pass --apply to move them")
+    return aged
+
+
+def cmd_archive(args: argparse.Namespace) -> None:
+    """Enforce the Layer-2 retention window."""
+    run_archive(days=args.days, apply=args.apply)
+
+
 
 def cmd_query(args: argparse.Namespace) -> None:
     """Find and display an entity page."""
@@ -5649,6 +5766,16 @@ def build_parser() -> argparse.ArgumentParser:
     # status
     p_status = sub.add_parser("status", help="Print knowledge graph stats")
     p_status.set_defaults(func=cmd_status)
+
+    # archive — Layer-2 retention window (BRO-1991)
+    p_archive = sub.add_parser(
+        "archive",
+        help="Archive Layer-2 raw extracts past the retention window (default 30d)")
+    p_archive.add_argument("--days", type=int, default=DEFAULT_RETENTION_DAYS,
+                           help=f"retention window in days (default {DEFAULT_RETENTION_DAYS})")
+    p_archive.add_argument("--apply", action="store_true",
+                           help="actually move the files (default is dry-run)")
+    p_archive.set_defaults(func=cmd_archive)
 
     # merge — fold a duplicate entity into a canonical (tombstone + repoint, BRO-1442)
     p_merge = sub.add_parser(
