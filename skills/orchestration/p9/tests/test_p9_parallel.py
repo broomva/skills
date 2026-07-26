@@ -26,6 +26,9 @@ sys.path.insert(0, str(_SCRIPTS))
 def p9(tmp_path, monkeypatch):
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+    # shells out to gh/git and cross-repo keying is deterministic.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "")
     # Ensure no leaked session id from the ambient environment.
     monkeypatch.delenv("BROOMVA_P9_SESSION", raising=False)
     if "p9" in sys.modules:

@@ -26,6 +26,9 @@ def p9(tmp_path, monkeypatch):
     """Fresh import of p9 with a tmpdir state home and the good-policy fixture."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+    # shells out to gh/git and cross-repo keying is deterministic.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "")
     if "p9" in sys.modules:
         del sys.modules["p9"]
     mod = importlib.import_module("p9")

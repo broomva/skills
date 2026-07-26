@@ -21,6 +21,9 @@ def p9_am(tmp_path, monkeypatch):
     """Fresh p9 import with auto-merge policy enabled."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-with-auto-merge.yaml"))
+    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+    # shells out to gh/git and cross-repo keying is deterministic.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "")
     if "p9" in sys.modules:
         del sys.modules["p9"]
     return importlib.import_module("p9")
@@ -239,6 +242,9 @@ class TestCommand:
         # Use the default good policy (no auto_merge block → disabled)
         monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+        # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+        # shells out to gh/git and cross-repo keying is deterministic.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "")
         if "p9" in sys.modules:
             del sys.modules["p9"]
         mod = importlib.import_module("p9")

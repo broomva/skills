@@ -40,6 +40,9 @@ def p9(tmp_path, monkeypatch):
     """Fresh p9 import with tmpdir state and good policy fixture."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+    # shells out to gh/git and cross-repo keying is deterministic.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "")
     monkeypatch.delenv("BROOMVA_P9_NTFY_TOPIC", raising=False)
     if "p9" in sys.modules:
         del sys.modules["p9"]
@@ -72,6 +75,10 @@ def _cli_env(tmp_path: Path, extra_path: Path | None = None) -> dict:
     env = dict(os.environ)
     env["BROOMVA_P9_HOME"] = str(tmp_path)
     env["BROOMVA_P9_POLICY"] = str(_FIXTURES / "policy-good.yaml")
+    # BRO-1988: pin repo resolution in the spawned CLI too. Without it the
+    # child would probe the PATH-shimmed `gh` (which is a `sleep`), stalling
+    # the first state write past the test's readiness window.
+    env["BROOMVA_P9_REPO"] = ""
     env.pop("BROOMVA_P9_NTFY_TOPIC", None)
     if extra_path:
         env["PATH"] = f"{extra_path}{os.pathsep}{env['PATH']}"
@@ -670,6 +677,9 @@ class TestP20Round1:
                      f"notify_hook: {hook}")
         )
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(policy))
+        # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+        # shells out to gh/git and cross-repo keying is deterministic.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "")
         row = p9.notify("termination:escalated", "t", "b")
         assert {"channel": "command", "ok": True} in row["deliveries"]
         assert json.loads(sink.read_text())["title"] == "t"

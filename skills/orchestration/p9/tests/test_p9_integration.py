@@ -29,6 +29,9 @@ def p9(tmp_path, monkeypatch):
     """Fresh p9 import with tmpdir state and good policy fixture."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+    # shells out to gh/git and cross-repo keying is deterministic.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "")
     if "p9" in sys.modules:
         del sys.modules["p9"]
     return importlib.import_module("p9")
@@ -181,6 +184,9 @@ class TestMultiPR:
                        .replace("max_concurrent_prs: 1",
                                 "max_concurrent_prs: 2"), encoding="utf-8")
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+        # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+        # shells out to gh/git and cross-repo keying is deterministic.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "")
         # Re-import to pick up env
         if "p9" in sys.modules:
             del sys.modules["p9"]
@@ -264,6 +270,9 @@ class TestDoctor:
     ):
         monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-missing-ci-watch.yaml"))
+        # Hermetic repo identity (BRO-1988): pin the resolved repo so no test
+        # shells out to gh/git and cross-repo keying is deterministic.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "")
         if "p9" in sys.modules:
             del sys.modules["p9"]
         mod = importlib.import_module("p9")
