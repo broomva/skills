@@ -29,6 +29,11 @@ def p9(tmp_path, monkeypatch):
     """Fresh p9 import with tmpdir state and good policy fixture."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    # Hermetic repo identity (BRO-1988): pin a REAL repo — the regime
+    # production actually runs in. Pinning tests to repo-less ("" / `-`) is
+    # what hid the rearm mis-attribution blocker: the guard under test only
+    # misbehaves once an ambient repo resolves.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "broomva/test")
     if "p9" in sys.modules:
         del sys.modules["p9"]
     return importlib.import_module("p9")
@@ -181,6 +186,9 @@ class TestMultiPR:
                        .replace("max_concurrent_prs: 1",
                                 "max_concurrent_prs: 2"), encoding="utf-8")
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+        # Hermetic repo identity (BRO-1988): pin a REAL repo (see module
+        # fixture) — repo-less is not the regime production runs in.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "broomva/test")
         # Re-import to pick up env
         if "p9" in sys.modules:
             del sys.modules["p9"]
@@ -264,6 +272,9 @@ class TestDoctor:
     ):
         monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-missing-ci-watch.yaml"))
+        # Hermetic repo identity (BRO-1988): pin a REAL repo (see module
+        # fixture) — repo-less is not the regime production runs in.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "broomva/test")
         if "p9" in sys.modules:
             del sys.modules["p9"]
         mod = importlib.import_module("p9")

@@ -34,12 +34,21 @@ _SCRIPTS = _HERE.parent / "scripts"
 _FIXTURES = _HERE / "fixtures"
 sys.path.insert(0, str(_SCRIPTS))
 
+# Ambient repo for commands invoked without --repo (and for the spawned
+# CLI in _cli_env). Named so assertions about it cannot drift.
+AMBIENT = "broomva/test"
+
 
 @pytest.fixture()
 def p9(tmp_path, monkeypatch):
     """Fresh p9 import with tmpdir state and good policy fixture."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    # Hermetic repo identity (BRO-1988): pin a REAL repo — the regime
+    # production actually runs in. Pinning tests to repo-less ("" / `-`) is
+    # what hid the rearm mis-attribution blocker: the guard under test only
+    # misbehaves once an ambient repo resolves.
+    monkeypatch.setenv("BROOMVA_P9_REPO", AMBIENT)
     monkeypatch.delenv("BROOMVA_P9_NTFY_TOPIC", raising=False)
     if "p9" in sys.modules:
         del sys.modules["p9"]
@@ -72,6 +81,11 @@ def _cli_env(tmp_path: Path, extra_path: Path | None = None) -> dict:
     env = dict(os.environ)
     env["BROOMVA_P9_HOME"] = str(tmp_path)
     env["BROOMVA_P9_POLICY"] = str(_FIXTURES / "policy-good.yaml")
+    # BRO-1988: pin repo resolution in the spawned CLI too — to a REAL repo,
+    # matching production. Without a pin the child would probe the
+    # PATH-shimmed `gh` (which is a `sleep`), stalling the first state write
+    # past the test's readiness window.
+    env["BROOMVA_P9_REPO"] = AMBIENT
     env.pop("BROOMVA_P9_NTFY_TOPIC", None)
     if extra_path:
         env["PATH"] = f"{extra_path}{os.pathsep}{env['PATH']}"
@@ -670,6 +684,9 @@ class TestP20Round1:
                      f"notify_hook: {hook}")
         )
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(policy))
+        # Hermetic repo identity (BRO-1988): pin a REAL repo (see module
+        # fixture) — repo-less is not the regime production runs in.
+        monkeypatch.setenv("BROOMVA_P9_REPO", AMBIENT)
         row = p9.notify("termination:escalated", "t", "b")
         assert {"channel": "command", "ok": True} in row["deliveries"]
         assert json.loads(sink.read_text())["title"] == "t"
@@ -696,9 +713,23 @@ class TestP20Round1:
         out = json.loads(capsys.readouterr().out)
         assert all(r["kind"] == "pr-watch" for r in out["reports"])
 
-    def test_rearm_repo_less_row_is_folded_before_respawn(self, p9, monkeypatch, capsys):
-        """MINOR #8: a repo-less WATCHING row can never be matched by the
-        re-spawned watch --adopt; rearm must fold it itself."""
+    def test_rearm_folds_a_repo_less_row_and_does_not_respawn(
+            self, p9, monkeypatch, capsys):
+        """MINOR #8, corrected. A repo-less WATCHING row is folded — and NOT
+        re-armed at all.
+
+        This test previously required a respawn (`assert spawned and "watch"
+        in spawned[0]`), and that requirement was itself the hazard: the
+        re-spawned child calls `resolve_repo(None)` and, sharing cwd and env
+        with its parent, resolves the ambient repo — so it watched a PR nobody
+        targeted and, with auto_merge enabled, could merge it. Omitting
+        `--repo` from the argv does not help; there is no correct repo to
+        re-arm against, so the only safe act is none.
+
+        The end-to-end version of this claim (real child, PATH-shimmed `gh`,
+        assert nothing was invoked) lives in
+        test_p9_repo_scoping.py::TestRepoLessRowIsNeverReArmed.
+        """
         spawned = []
 
         def fake_popen(argv, **kw):
@@ -716,8 +747,14 @@ class TestP20Round1:
         monkeypatch.setattr(p9.subprocess, "Popen", fake_popen)
         rc = p9.main(["rearm", "--now", "--json"])
         assert rc == 0
+        # Folded on its OWN key — p9 never invents a repo for it — so the
+        # slot is freed without the row being attributed to anything.
         assert p9.current_pr_state(55, "") == p9.PRState.ABANDONED
-        assert spawned and "watch" in spawned[0]
+        assert p9.current_pr_state(55, AMBIENT) is None
+        assert p9.open_prs() == []
+        assert spawned == [], f"a watcher was re-armed for a repo-less row: {spawned}"
+        action = json.loads(capsys.readouterr().out)["rearmed"][0]
+        assert "no repo recorded" in action["skipped"]
 
     def test_webhook_channel_delivers_payload(self, p9, monkeypatch):
         calls = []

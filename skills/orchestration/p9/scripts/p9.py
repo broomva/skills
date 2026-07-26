@@ -206,6 +206,196 @@ def rubric_md_path() -> Path:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Repo identity (BRO-1988)
+#
+# A PR is identified by the composite ``(repo, pr_number)``. Keying on the
+# bare number let a foreign repo's PR consume the concurrency slot AND shadow
+# another repo's lifecycle state (`p9 merge-ready 256` read GetStimulus/sri#256
+# = ABANDONED for a freshly-green broomva/workspace#256, wedging
+# watch → merge-ready → auto-merge). Everything below exists so that ONE
+# resolution answer is used for both the write key and the read key inside a
+# single invocation — a mismatch silently creates orphan state.
+# ─────────────────────────────────────────────────────────────────────────────
+# `scheme://[user@]host[:port]/` and the scp-like `user@host:` git shorthand.
+_REPO_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+_REPO_SCP_RE = re.compile(r"^[^/@]+@[^/:]+:")
+# Schemes whose "path" is a filesystem location, not an owner/name.
+_REPO_LOCAL_SCHEMES = frozenset({"file"})
+# GitHub web-URL tails that follow OWNER/REPO and may safely be dropped.
+_REPO_URL_TAILS = frozenset({
+    "pull", "pulls", "tree", "blob", "issues", "commit", "commits",
+    "compare", "actions", "releases", "wiki", "branches",
+})
+
+
+def canonical_repo(raw: str | None) -> str:
+    """Normalize any spelling of a repo to ``owner/name``. "" when it does not
+    reduce to a path at all.
+
+    Accepts what the CLI, ``gh``, and ``git remote`` actually hand us:
+    ``owner/name``, ``https://host/owner/name(.git)``,
+    ``git@host:owner/name.git``, ``ssh://git@host/owner/name.git``, trailing
+    slashes, stray whitespace.
+
+    The **host is stripped, not keyed on** — deliberately. ``gh --repo`` takes
+    a bare ``OWNER/REPO`` and gets its host from ``GH_HOST``/config, so within
+    one state store the host is fixed; keying on it would mean ``--repo o/r``
+    and the same repo discovered via ``git remote`` (a full URL) hashed to two
+    different keys, which is the exact stranding this module exists to stop.
+    Host parsing is generic rather than a github.com allowlist: an allowlist
+    made every repo on a GHE/GitLab host collapse to one key (``https:/host``),
+    recreating BRO-1988 host-wide.
+
+    Return shape, exactly:
+      * ``owner/name`` plus a recognized GitHub URL tail (``/pull/5``,
+        ``/tree/main``, …) → ``owner/name``. Only *known* tails are dropped.
+      * 2 segments → those two.
+      * >2 segments with no recognized tail → **all** of them, unchanged.
+        Truncating would fold nested namespaces together
+        (``group/sub/repo`` and ``group/sub/other`` both → ``group/sub``),
+        which is the same collapse this function exists to prevent. Such a
+        value is not a GitHub ``OWNER/REPO``, so it will fail loudly at
+        ``gh --repo`` rather than silently targeting the wrong repo.
+      * exactly 1 segment → that segment, intact. Not ``owner/name``, but
+        collapsing it to "" would alias it onto the legacy no-repo key.
+      * ``file://`` URLs and 0-segment inputs (``https://github.com/``, ``/``,
+        ``//``, whitespace) → "". A local-path remote names no GitHub repo,
+        and ``file:///Users/x/repos/A`` must not become ``Users/x`` and get
+        handed to ``gh --repo``. Callers that need a usable repo check the
+        result (see :func:`resolve_repo`, which warns).
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    m = _REPO_SCHEME_RE.match(s)
+    if m:
+        scheme = s[:m.end() - 3].lower()
+        if scheme in _REPO_LOCAL_SCHEMES:
+            return ""  # a filesystem path is not a repo identity
+        # Drop scheme, then the authority ([user@]host[:port]) up to the path.
+        _, _, s = s[m.end():].partition("/")
+    elif _REPO_SCP_RE.match(s):
+        s = s.split(":", 1)[1]
+    s = s.strip().strip("/")
+    if s.lower().endswith(".git"):
+        s = s[:-4]
+    parts = [p for p in s.split("/") if p]
+    if len(parts) > 2 and parts[2].lower() in _REPO_URL_TAILS:
+        parts = parts[:2]
+    return "/".join(parts)
+
+
+def repo_key(raw: str | None) -> str:
+    """The comparison key for ``(repo, pr)`` identity.
+
+    Case-folded because GitHub owner/name are case-insensitive: a row written
+    as ``GetStimulus/sri`` and a lookup for ``getstimulus/sri`` are the same
+    logical repo, and treating them as different would strand state under a
+    key nothing reads. Unresolvable/absent repo folds to "" (the legacy key).
+    """
+    return canonical_repo(raw).casefold()
+
+
+# Process-lifetime memo for the *detected* (not env/flag-supplied) repo, so a
+# single invocation can never resolve two different answers — and so we shell
+# out to gh/git at most once per process.
+_DETECTED_REPO: str | None = None
+
+
+def _detect_repo_uncached() -> str:
+    """Ask the environment which repo we're in. "" when undeterminable.
+
+    ``gh`` first (it knows the real ``nameWithOwner``, including renames),
+    then ``git remote`` — the fallback matters on CI runners and any box
+    where ``gh`` is absent or unauthenticated.
+    """
+    try:
+        out = subprocess.run(
+            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if out.returncode == 0:
+            repo = canonical_repo(out.stdout)
+            if repo:
+                return repo
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    for remote in ("origin", "upstream"):
+        try:
+            out = subprocess.run(
+                ["git", "remote", "get-url", remote],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if out.returncode == 0:
+                repo = canonical_repo(out.stdout)
+                if repo:
+                    return repo
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return ""
+
+
+# `BROOMVA_P9_REPO=-` means "explicitly no repo" — the deliberate pin used by
+# tests and by any caller that must NOT fall through to cwd detection. An
+# *empty* value means unset (the shell convention), so a wrapper doing
+# `export BROOMVA_P9_REPO=$(cmd_that_failed)` degrades to normal detection
+# instead of silently reverting to repo-less state.
+REPO_NONE_SENTINEL = "-"
+
+_WARNED_REPOS: set[tuple[str, str]] = set()
+
+
+def _warn_unusable_repo(source: str, value: str) -> None:
+    """One stderr notice per (source, value). Silence here is how a garbage
+    repo string becomes an invisible slide into repo-less state."""
+    if (source, value) in _WARNED_REPOS:
+        return
+    _WARNED_REPOS.add((source, value))
+    print(f"p9: {source}={value!r} does not reduce to OWNER/REPO; "
+          f"continuing without a repo (state will use the legacy no-repo key)",
+          file=sys.stderr)
+
+
+def resolve_repo(explicit: str | None = None, *, probe: bool = True) -> str:
+    """Resolve the repo half of ``(repo, pr)`` identity. "" when unknown.
+
+    Precedence — deterministic and testable end to end:
+      1. ``explicit`` (the ``--repo`` flag). Never overridden by detection —
+         an explicit target must never silently become a *different* repo.
+      2. ``BROOMVA_P9_REPO`` env. ``-`` pins "no repo"; empty means unset.
+      3. ``gh repo view`` / ``git remote get-url`` from cwd, memoized.
+
+    ``probe=False`` returns only what is knowable **for free** — env, or a
+    detection this process already paid for — and never spawns a subprocess.
+    No read path resolves a repo at all today (state rows are read exactly as
+    written), so this exists for callers that want a best-effort answer
+    without paying for a ``gh repo view`` network round-trip.
+    """
+    if explicit is not None and str(explicit).strip():
+        raw = str(explicit).strip()
+        repo = canonical_repo(raw)
+        if not repo:
+            _warn_unusable_repo("--repo", raw)
+        return repo
+    env = (os.environ.get("BROOMVA_P9_REPO") or "").strip()
+    if env == REPO_NONE_SENTINEL:
+        return ""
+    if env:
+        repo = canonical_repo(env)
+        if not repo:
+            _warn_unusable_repo("BROOMVA_P9_REPO", env)
+        return repo
+    global _DETECTED_REPO
+    if not probe:
+        return _DETECTED_REPO or ""
+    if _DETECTED_REPO is None:
+        _DETECTED_REPO = _detect_repo_uncached()
+    return _DETECTED_REPO
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Errors
 # ─────────────────────────────────────────────────────────────────────────────
 class P9Error(Exception):
@@ -322,10 +512,30 @@ class IsolationTierMap:
     governance: str = "blocked"
 
 
+CEILING_SCOPES = ("repo", "global")
+
+
 @dataclass(frozen=True)
 class CIWatchPolicy:
     enabled: bool = True
     max_concurrent_prs: int = 1
+    # BRO-1988. What `max_concurrent_prs` counts over — an explicit setpoint,
+    # because changing it implicitly would be a governance-class change to a
+    # control-metalayer knob.
+    #
+    #   "repo"   (default) — count in-flight PRs per (session, repo). Chosen
+    #            because a global count let an in-flight PR in one repo refuse
+    #            `p9 watch` in an unrelated repo, and since `watch` is the only
+    #            transition into GREEN that made the whole lifecycle
+    #            unreachable there.
+    #   "global" — the pre-BRO-1988 cross-repo count: one session drives one
+    #            bounded merge train across every repo. This is what the design
+    #            spec (docs/superpowers/specs/2026-05-04-p9-ci-watcher-design.md
+    #            §3 L7 "bounded merge train", §5.4, §6.6 "workspace-wide")
+    #            describes; set it if you want the defer-into-wait-queue
+    #            discipline to fire across repos too. Spec reconciliation is
+    #            tracked separately.
+    max_concurrent_prs_scope: str = "repo"
     isolation_tier_map: IsolationTierMap = field(default_factory=IsolationTierMap)
 
 
@@ -706,10 +916,17 @@ def _parse_policy(data: dict[str, Any]) -> PolicyConfig:
     types_raw = ch_raw.get("classified_failure_types") or ()
     if not isinstance(types_raw, (list, tuple)):
         raise PolicyError("ci_heal.classified_failure_types must be a list")
+    scope = str(cw_raw.get("max_concurrent_prs_scope", "repo"))
+    if scope not in CEILING_SCOPES:
+        raise PolicyError(
+            f"ci_watch.max_concurrent_prs_scope must be one of {CEILING_SCOPES}, "
+            f"got {scope!r}"
+        )
     return PolicyConfig(
         ci_watch=CIWatchPolicy(
             enabled=bool(cw_raw.get("enabled", True)),
             max_concurrent_prs=int(cw_raw.get("max_concurrent_prs", 1)),
+            max_concurrent_prs_scope=scope,
             isolation_tier_map=IsolationTierMap(
                 research=str(iso_raw.get("research", "none")),
                 docs=str(iso_raw.get("docs", "none")),
@@ -1204,8 +1421,40 @@ def _utcnow() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
+def _read_state_rows() -> list[dict[str, Any]]:
+    """The state log, as recorded. **Pure file read — no resolution, no
+    subprocess, no network.**
+
+    A bare-number legacy row (``repo == ""``) is returned exactly as written.
+    p9 does **not** attribute it to the ambient repo, because "" is already
+    the row's true identity and a perfectly good key: it collides with no real
+    repo, so it can neither shadow one nor — with a repo-scoped ceiling — hold
+    its slot; ``current_pr_state(pr, "")`` still reaches it; and ``reap`` /
+    ``rearm`` still drain it. Nothing about such a row is discarded; p9 simply
+    declines to invent the one thing it does not know.
+    """
+    rows, _ = jsonl_read_all(state_jsonl())
+    return rows
+
+
+def _row_repo(row: dict[str, Any]) -> str:
+    """The repo a row **actually recorded**. "" for a bare-number legacy row.
+
+    "" means p9 does not know, and **unknown is never acted on**. Callers that
+    leave the process — spawning ``gh pr checks --repo X``, asking GitHub "is
+    #N merged in X?", re-arming a watcher — must route through this accessor
+    and refuse when it is empty, because a wrong repo there is acted upon.
+
+    This is deliberately the whole of it: there is no inference to unwind,
+    because p9 no longer invents a repo for rows that never recorded one.
+    """
+    return row.get("repo") or ""
+
+
 def append_state_event(event: PRStateEvent) -> None:
     assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
+    # Normalize on write so the stored key is exactly what repo_key() reads.
+    event.repo = canonical_repo(event.repo)
     jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
 
 
@@ -1213,13 +1462,20 @@ def current_pr_state(pr: int, repo: str | None = None) -> PRState | None:
     """Latest state for a PR. When ``repo`` is given, identity is the
     composite ``(repo, pr)`` — so the same PR number in two repos never
     resolves to each other's state. ``repo=None`` keeps the legacy
-    match-by-number behavior for callers that don't know the repo."""
-    rows, _ = jsonl_read_all(state_jsonl())
+    match-by-number behavior for callers that don't know the repo.
+
+    Every lifecycle command passes a repo: reading bare-number here is the
+    exact defect BRO-1988 fixes (``merge-ready 256`` answering with another
+    repo's #256). Matching is via :func:`repo_key`, so case and URL spelling
+    differences never split one logical repo into two keys.
+    """
+    rows = _read_state_rows()
+    want = repo_key(repo) if repo is not None else None
     last: PRState | None = None
     for r in rows:
         if r.get("pr") != pr:
             continue
-        if repo is not None and r.get("repo", "") != repo:
+        if want is not None and repo_key(r.get("repo", "")) != want:
             continue
         last = PRState(r["to_state"])
     return last
@@ -1229,12 +1485,13 @@ def latest_row(pr: int, repo: str | None = None) -> dict[str, Any] | None:
     """The most recent raw event row for a PR (composite ``(repo, pr)`` when
     repo is given). Used for watcher de-dup — we need the pid + state, not
     just the state."""
-    rows, _ = jsonl_read_all(state_jsonl())
+    rows = _read_state_rows()
+    want = repo_key(repo) if repo is not None else None
     last: dict[str, Any] | None = None
     for r in rows:
         if r.get("pr") != pr:
             continue
-        if repo is not None and r.get("repo", "") != repo:
+        if want is not None and repo_key(r.get("repo", "")) != want:
             continue
         last = r
     return last
@@ -1243,7 +1500,7 @@ def latest_row(pr: int, repo: str | None = None) -> dict[str, Any] | None:
 def open_prs(session_id: str | None = None) -> list[dict[str, Any]]:
     """All PRs that haven't reached a terminal state.
 
-    Keyed by ``(repo, pr)`` so the same PR number in two repos never
+    Keyed by ``(repo_key(repo), pr)`` so the same PR number in two repos never
     collides (the bare-number keying clobbered cross-repo state).
 
     When ``session_id`` is given, only rows owned by that session are
@@ -1253,10 +1510,10 @@ def open_prs(session_id: str | None = None) -> list[dict[str, Any]]:
     Legacy rows (no ``session_id``) belong to no session, so they never
     count against a real session's ceiling — they are drained by ``reap``.
     """
-    rows, _ = jsonl_read_all(state_jsonl())
+    rows = _read_state_rows()
     seen: dict[tuple[str, int], dict[str, Any]] = {}
     for r in rows:
-        seen[(r.get("repo", ""), r["pr"])] = r
+        seen[(repo_key(r.get("repo", "")), r["pr"])] = r
     out: list[dict[str, Any]] = []
     for r in seen.values():
         if is_terminal(PRState(r["to_state"])):
@@ -1732,7 +1989,11 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
             continue  # healthy watcher — leave it
         if _iso_age_seconds(row.get("ts", "")) < grace:
             continue  # too fresh — the fold may still land
-        repo = row.get("repo") or ""
+        # `_row_repo` gates the GitHub query: asking "is #N merged?" of the
+        # *ambient* repo, for a row that recorded none, would fold it terminal
+        # on a foreign PR's state. It is also the key the fold is written to,
+        # so the fold always lands on the row it retires and the slot is freed.
+        repo = _row_repo(row)
         pr = row["pr"]
         to_state, reason = _reconcile_dead_watcher(pr, repo, reconcile)
         event = PRStateEvent(
@@ -1762,6 +2023,7 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
 def enforce_concurrency_ceiling(
     policy: PolicyConfig, session_id: str | None = None,
     exclude: tuple[str, int] | None = None,
+    repo: str | None = None,
 ) -> None:
     """Enforce ``max_concurrent_prs``.
 
@@ -1770,18 +2032,40 @@ def enforce_concurrency_ceiling(
     each hold their own watcher. ``session_id=None`` keeps the global count
     (direct/legacy callers and tests).
 
+    ``repo`` (BRO-1988): scope the count to one repo. Callers do not decide
+    this on their own — ``cmd_watch`` reads
+    ``ci_watch.max_concurrent_prs_scope`` from ``.control/policy.yaml``
+    (default ``repo``) and passes the result, because the meaning of a
+    control-metalayer setpoint is policy's to set, not this function's.
+    ``repo=None`` counts across repos (scope ``global``, and the behavior
+    every pre-BRO-1988 caller got).
+
+    Why ``repo`` is the default: counting globally let an open PR in one repo
+    refuse ``p9 watch`` in an unrelated repo, and since ``watch`` is the only
+    transition into GREEN, that made the entire lifecycle unreachable there —
+    a worse failure than one extra concurrent watcher. The tradeoff is real
+    and is why the knob exists: at ``max_concurrent_prs: 1`` across N repos a
+    session now holds N watchers, and the defer-into-wait-queue discipline
+    stops firing cross-repo.
+
     ``exclude`` (BRO-1701): the ``(repo, pr)`` about to be watched. The
     ceiling bounds *distinct* in-flight PRs; a re-watch replaces its own
     row (open_prs keys by (repo, pr)), so without the exclusion a PR's own
     non-terminal row — e.g. a RED fold from a transient gh error — would
     block its own re-watch at max_concurrent_prs=1."""
     rows = open_prs(session_id=session_id)
+    if repo is not None:
+        want = repo_key(repo)
+        rows = [r for r in rows if repo_key(r.get("repo", "")) == want]
     if exclude is not None:
+        ex = (repo_key(exclude[0]), exclude[1])
         rows = [r for r in rows
-                if (r.get("repo", ""), r["pr"]) != exclude]
+                if (repo_key(r.get("repo", "")), r["pr"]) != ex]
     open_count = len(rows)
     if open_count >= policy.ci_watch.max_concurrent_prs:
         scope = f" for session {session_id}" if session_id else ""
+        if repo is not None:
+            scope += f" in {canonical_repo(repo) or 'repo-unknown'}"
         raise ConcurrencyCeilingError(
             f"max_concurrent_prs={policy.ci_watch.max_concurrent_prs} "
             f"already in flight ({open_count} open{scope})"
@@ -1868,14 +2152,19 @@ def cmd_abandon(args: argparse.Namespace) -> int:
     re-flag it.
     """
     pr = int(args.pr)
-    state = current_pr_state(pr)
+    # Resolve the repo BEFORE reading: the read key and the write key must be
+    # the same, or abandon folds a terminal row under a key nothing tracks and
+    # leaves the real row open forever (BRO-1988).
+    repo = resolve_repo(args.repo)
+    state = current_pr_state(pr, repo)
     if state is None:
-        print(f"PR #{pr}: no state to abandon", file=sys.stderr)
+        print(f"PR #{pr} ({repo or 'repo-unknown'}): no state to abandon",
+              file=sys.stderr)
         return EXIT_DEGRADED
     if is_terminal(state):
-        print(f"PR #{pr}: already terminal ({state.value}); no-op")
+        print(f"PR #{pr} ({repo or 'repo-unknown'}): already terminal "
+              f"({state.value}); no-op")
         return EXIT_OK
-    repo = args.repo or _detect_repo() or ""
     append_state_event(PRStateEvent(
         ts=_utcnow(), pr=pr, repo=repo,
         from_state=state.value,
@@ -1883,7 +2172,7 @@ def cmd_abandon(args: argparse.Namespace) -> int:
         watcher_id="abandon",
         extra={"reason": args.reason or "manual abandon"},
     ))
-    print(f"PR #{pr}: {state.value} → ABANDONED")
+    print(f"PR #{pr} ({repo or 'repo-unknown'}): {state.value} → ABANDONED")
     return EXIT_OK
 
 
@@ -1904,10 +2193,18 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     skipped = 0
     for row in rows:
         pr = row["pr"]
-        repo = row.get("repo") or _detect_repo() or ""
-        cmd = ["gh", "pr", "view", str(pr), "--json", "state,mergedAt"]
-        if repo:
-            cmd += ["--repo", repo]
+        # _row_repo, never a guess: cleanup folds rows terminal off a
+        # GitHub answer, and "is #<pr> merged?" asked of the wrong repo is a
+        # false-positive cleanup — the one thing this command promises not to
+        # do. A row that names no repo is skipped, never guessed at.
+        repo = _row_repo(row)
+        if not repo:
+            print(f"  #{pr}: no repo recorded; leaving as {row['to_state']} "
+                  f"(cannot ask GitHub about a PR whose repo is unknown)")
+            skipped += 1
+            continue
+        cmd = ["gh", "pr", "view", str(pr), "--json", "state,mergedAt",
+               "--repo", repo]
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 timeout=30, check=False)
         if result.returncode != 0:
@@ -1956,16 +2253,19 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
          indicating block reason, return 7 (EXIT_AUTO_MERGE_BLOCKED).
     """
     pr = int(args.pr)
-    repo = args.repo or _detect_repo() or ""
+    repo = resolve_repo(args.repo)
     policy = load_policy()
     if not policy.auto_merge.enabled:
         print("auto_merge.enabled=false in policy; refusing to merge", file=sys.stderr)
         return EXIT_POLICY_ERROR
 
-    state = current_pr_state(pr)
+    # Repo-qualified read (BRO-1988): merging on another repo's MERGE_READY
+    # would be the worst possible shadowing outcome.
+    state = current_pr_state(pr, repo)
     if state != PRState.MERGE_READY:
         print(
-            f"PR #{pr} not in MERGE_READY (current={state.value if state else 'UNKNOWN'}); "
+            f"PR #{pr} ({repo or 'repo-unknown'}) not in MERGE_READY "
+            f"(current={state.value if state else 'UNKNOWN'}); "
             f"call `p9 merge-ready` first",
             file=sys.stderr,
         )
@@ -2095,7 +2395,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return EXIT_POLICY_ERROR
     sid = current_session_id()
     pr = int(args.pr)
-    repo = args.repo or _detect_repo()
+    # One resolution for the whole invocation (BRO-1988): the de-dup read, the
+    # ceiling count, the WATCHING row and the terminal fold all key on it.
+    repo = resolve_repo(args.repo)
 
     # Preflight: reap *this session's* dead-watcher rows so a prior crashed
     # watch doesn't permanently consume the slot we're about to claim.
@@ -2112,7 +2414,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         fresh = _iso_age_seconds(existing.get("ts", "")) < _watcher_grace_seconds()
         if alive and not force:
             print(
-                f"PR #{pr} already has a live watcher (pid={epid}, "
+                f"PR #{pr} ({repo or 'repo-unknown'}) already has a live "
+                f"watcher (pid={epid}, "
                 f"session={existing.get('session_id', '') or 'legacy'}). "
                 f"Refusing to double-watch; pass --force to supersede.",
                 file=sys.stderr,
@@ -2135,8 +2438,15 @@ def cmd_watch(args: argparse.Namespace) -> int:
                    "dead_pid": epid, "forced": force, "adopt": adopt},
         ))
 
-    enforce_concurrency_ceiling(policy, session_id=sid,
-                                exclude=(repo or "", pr))
+    # Scope comes from policy (BRO-1988), not from this code's opinion.
+    # `repo or None` on top of that: with no resolvable repo, identity is
+    # ambiguous, so fall back to the cross-repo count rather than silently
+    # disabling the ceiling (a repo-less scope would count ~nothing).
+    ceiling_repo = (repo or None
+                    if policy.ci_watch.max_concurrent_prs_scope == "repo"
+                    else None)
+    enforce_concurrency_ceiling(policy, session_id=sid, repo=ceiling_repo,
+                                exclude=(repo, pr))
     watcher_id = uuid.uuid4().hex[:12]
 
     # Termination invariant (BRO-1701): EVERY exit path — green, red, signal,
@@ -2266,7 +2576,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     wrows = [] if args.pr is not None else open_waits(session_id=session_id)
     if args.json:
         # open_waits is additive (BRO-1701) — consumers keyed on open_prs
-        # keep working unchanged.
+        # keep working unchanged. Rows are printed exactly as recorded: p9
+        # neither adds read-path bookkeeping to a row nor invents a repo for
+        # one, so there is nothing to strip and nothing unlabelled to leak.
         print(json.dumps({"open_prs": rows, "open_waits": wrows}, indent=2))
     else:
         if not rows and not wrows:
@@ -2506,7 +2818,7 @@ def cmd_merge_status(args: argparse.Namespace) -> int:
     """Query + print the real merge predicate for a PR. The agent calls this
     instead of trusting the watcher exit code. Exit 0 iff merge-ready."""
     pr = int(args.pr)
-    repo = args.repo or _detect_repo()
+    repo = resolve_repo(args.repo)
     v = merge_ready_verdict(pr, repo)
     if args.json:
         print(json.dumps(v))
@@ -2519,14 +2831,19 @@ def cmd_merge_status(args: argparse.Namespace) -> int:
 
 def cmd_merge_ready(args: argparse.Namespace) -> int:
     pr = int(args.pr)
-    state = current_pr_state(pr)
+    # BRO-1988: resolve the repo FIRST and qualify the state read with it.
+    # Reading bare-number here is the reproduced defect — `p9 merge-ready 256`
+    # answered "not GREEN (current=ABANDONED)" for a freshly-green
+    # broomva/workspace#256 because GetStimulus/sri#256 owned that key.
+    repo = resolve_repo(args.repo)
+    state = current_pr_state(pr, repo)
     if state != PRState.GREEN:
         print(
-            f"PR #{pr} not GREEN (current={state.value if state else 'UNKNOWN'})",
+            f"PR #{pr} ({repo or 'repo-unknown'}) not GREEN "
+            f"(current={state.value if state else 'UNKNOWN'})",
             file=sys.stderr,
         )
         return EXIT_DEGRADED
-    repo = args.repo or _detect_repo()
 
     # Verify the REAL merge predicate before authorizing MERGE_READY. The GREEN
     # state only means `gh pr checks --watch` exited 0 — necessary, not
@@ -2778,32 +3095,51 @@ def cmd_rearm(args: argparse.Namespace) -> int:
             continue
         if _iso_age_seconds(row.get("ts", "")) < grace:
             continue
-        pr, repo = row["pr"], row.get("repo") or ""
+        pr = row["pr"]
+        repo = _row_repo(row)
         action = {"kind": "pr-watch", "pr": pr, "repo": repo,
                   "dead_pid": pid}
         try:
             if args.dry_run:
-                action["would"] = "re-watch via p9 watch --adopt"
+                action["would"] = ("fold ABANDONED (no repo recorded)"
+                                   if not repo else
+                                   "re-watch via p9 watch --adopt")
+            elif not repo:
+                # A row that recorded no repo is FOLDED AND NOT RE-ARMED.
+                #
+                # Omitting `--repo` from the child argv is NOT sufficient and
+                # was the round-2 mistake: the child runs `resolve_repo(None)`
+                # itself, and since parent and child share cwd and env it
+                # resolves the *same* ambient repo. The observed chain was
+                # `gh pr checks <pr> --watch --repo <ambient>` -> GREEN ->
+                # merge-ready -> `gh pr merge` on a PR nobody targeted.
+                #
+                # There is no correct repo to re-arm against — that is the
+                # whole content of "no repo recorded" — so the only safe act
+                # is none. The fold frees the slot (P20 finding #8); recovery
+                # is an explicit `p9 watch <pr> --repo <owner/name> --adopt`,
+                # which is a human naming the repo p9 could not.
+                stale = PRStateEvent(
+                    ts=_utcnow(), pr=pr, repo="",
+                    from_state=state.value,
+                    to_state=PRState.ABANDONED.value,
+                    watcher_id="rearm",
+                    session_id=row.get("session_id", ""),
+                    extra={"reason": "repo-less row superseded by rearm",
+                           "dead_pid": pid},
+                )
+                append_state_event(stale)
+                emit_termination_report(pr_termination_report(
+                    dataclasses.asdict(stale), cause="reaped:dead-watcher"))
+                action["skipped"] = (
+                    "no repo recorded; folded ABANDONED without re-arming — "
+                    "re-watch explicitly with `p9 watch "
+                    f"{pr} --repo <owner/name> --adopt`")
+                actions.append(action)
+                continue
             else:
-                if not repo:
-                    # The child watch detects its repo from cwd and can never
-                    # match this repo-less row for the adopt-supersede — fold
-                    # it here so it stops holding a slot (P20 finding #8).
-                    stale = PRStateEvent(
-                        ts=_utcnow(), pr=pr, repo="",
-                        from_state=state.value,
-                        to_state=PRState.ABANDONED.value,
-                        watcher_id="rearm",
-                        session_id=row.get("session_id", ""),
-                        extra={"reason": "repo-less row superseded by rearm",
-                               "dead_pid": pid},
-                    )
-                    append_state_event(stale)
-                    emit_termination_report(pr_termination_report(
-                        dataclasses.asdict(stale), cause="reaped:dead-watcher"))
-                argv = [sys.executable, script, "watch", str(pr)]
-                if repo:
-                    argv += ["--repo", repo]
+                argv = [sys.executable, script, "watch", str(pr),
+                        "--repo", repo]
                 argv.append("--force" if args.now else "--adopt")
                 logs_dir().mkdir(parents=True, exist_ok=True)
                 log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
@@ -2940,7 +3276,7 @@ def cmd_stuck_scan(args: argparse.Namespace) -> int:
             "next_action": next_action, "notified": not deduped,
         }
         if kind == "pr-watch":
-            finding.update(pr=row.get("pr"), repo=row.get("repo", ""))
+            finding.update(pr=row.get("pr"), repo=_row_repo(row))
         else:
             finding.update(wait_id=row.get("wait_id"), name=row.get("name"))
         if log_path:
@@ -2951,7 +3287,7 @@ def cmd_stuck_scan(args: argparse.Namespace) -> int:
         findings.append(finding)
         if deduped:
             return
-        ident_h = (f"PR #{row.get('pr')} {row.get('repo', '')}"
+        ident_h = (f"PR #{row.get('pr')} {_row_repo(row) or 'repo-unknown'}"
                    if kind == "pr-watch" else f"wait '{row.get('name')}'")
         notify("stuck",
                f"p9 STUCK: {ident_h} — no progress in "
@@ -2971,8 +3307,10 @@ def cmd_stuck_scan(args: argparse.Namespace) -> int:
         if log_path:
             with contextlib.suppress(OSError):
                 progress = max(progress, Path(log_path).stat().st_mtime)
+        # repo_key so one logical repo can't produce two stall-dedup markers
+        # (NIT-9); _row_repo so a repo-less row markers under its true key.
         _consider(
-            "pr-watch", f"{row.get('repo', '')}-{row['pr']}", row, progress,
+            "pr-watch", f"{repo_key(_row_repo(row))}-{row['pr']}", row, progress,
             pid, log_path,
             f"inspect the watch log, then kill {pid} and `p9 rearm` "
             f"(raise --threshold-min if this CI legitimately runs long)")
@@ -3011,15 +3349,16 @@ def cmd_report(args: argparse.Namespace) -> int:
     to learn what every tracked watcher/wait last did and what to do next.
     """
     reports: list[dict[str, Any]] = []
-    rows, _ = jsonl_read_all(state_jsonl())
+    rows = _read_state_rows()
     latest: dict[tuple[str, int], dict[str, Any]] = {}
     for r in rows:
-        latest[(r.get("repo", ""), r["pr"])] = r
+        latest[(repo_key(r.get("repo", "")), r["pr"])] = r
     pr_rows = list(latest.values())
     if args.pr is not None:
         pr_rows = [r for r in pr_rows if r["pr"] == int(args.pr)]
     if args.repo:
-        pr_rows = [r for r in pr_rows if r.get("repo", "") == args.repo]
+        want = repo_key(args.repo)
+        pr_rows = [r for r in pr_rows if repo_key(r.get("repo", "")) == want]
     with_tail = args.pr is not None
     for r in pr_rows:
         reports.append(pr_termination_report(r, cause="report",
@@ -3061,16 +3400,8 @@ def cmd_notify(args: argparse.Namespace) -> int:
 
 
 def _detect_repo() -> str | None:
-    try:
-        out = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-        if out.returncode == 0:
-            return out.stdout.strip() or None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    return None
+    """Back-compat alias for the detection half of :func:`resolve_repo`."""
+    return resolve_repo() or None
 
 
 def _gh_log_failed(pr: int, repo: str | None) -> str:

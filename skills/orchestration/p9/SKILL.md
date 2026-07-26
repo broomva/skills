@@ -66,10 +66,69 @@ What the session id buys you:
 
 | Dimension | Behavior |
 |---|---|
-| **Concurrency ceiling** | `max_concurrent_prs` is counted **per session** — N agents each hold their own watcher. A session's *own* second watch still blocks at the ceiling. |
-| **PR identity** | Keyed by `(repo, pr)` — the same PR number in two repos never collides. |
+| **Concurrency ceiling** | `max_concurrent_prs` is counted **per session**, and over the scope `ci_watch.max_concurrent_prs_scope` names (`repo`, the default, or `global`). A session's *own* second watch in the same scope still blocks. |
+| **PR identity** | Keyed by `(repo, pr)` — the same PR number in two repos never collides, in the state table *and* in the ceiling count. |
 | **Wait-queue** | `pop`/`list`/`clear` default to the **current session's** view (its items + legacy-unowned). `--all` crosses sessions. This is what "context-scoped" finally means in code. |
 | **Watcher de-dup** | A second `p9 watch` on a PR that already has a **live** watcher is refused (`--force` to supersede). A **dead** watcher is superseded automatically once aged, or now via `--adopt`. |
+
+### Repo identity (BRO-1988)
+
+Every lifecycle command (`watch`, `merge-ready`, `merge-status`, `auto-merge`,
+`abandon`) resolves the repo **once, before it reads state**, and uses that one
+answer for both the read key and the write key. Resolution order:
+
+1. `--repo OWNER/REPO`
+2. `BROOMVA_P9_REPO` — the deterministic hook for tests and for harnesses that
+   already know the target. `-` pins "no repo"; an **empty value means unset**
+   (shell convention), so `export BROOMVA_P9_REPO=$(cmd_that_failed)` degrades
+   to normal detection instead of silently dropping into repo-less state. A
+   value that does not reduce to `OWNER/REPO` gets a stderr notice.
+3. `gh repo view` → `git remote get-url origin` from cwd (memoized per process).
+   The `git` fallback matters wherever `gh` is absent or unauthenticated (CI).
+
+Any spelling normalizes to `owner/name` — `https://host/o/r.git`,
+`git@host:o/r.git`, `ssh://git@host/o/r.git`, trailing slashes — and comparison
+is case-insensitive, so one logical repo never splits into two keys. Host
+parsing is generic, not a github.com allowlist: an allowlist made every repo on
+a GHE/GitLab host collapse to a single key. The host is stripped rather than
+keyed on, matching `gh --repo` (which takes a bare `OWNER/REPO` and gets its
+host from `GH_HOST`).
+
+**Ceiling scope** — `ci_watch.max_concurrent_prs_scope: repo | global`
+(default `repo`). `repo` counts in-flight PRs per `(session, repo)`; `global`
+is the pre-BRO-1988 cross-repo count — one bounded merge train across every
+repo, which is what the design spec describes. `repo` is the default because a
+global count let an in-flight PR in one repo refuse `p9 watch` in an unrelated
+one, and since `watch` is the only transition into GREEN that made the whole
+lifecycle unreachable there. The tradeoff is real and is why the knob exists:
+at `max_concurrent_prs: 1` across N repos a session holds N watchers, and the
+defer-into-wait-queue discipline stops firing cross-repo. Spec reconciliation
+is tracked separately. With no resolvable repo the count falls back to global —
+an ambiguous identity must not silently disable the ceiling.
+
+**Rows with no recorded repo.** Rows written before repo stamping carry
+`repo: ""`, and p9 does **not** migrate them.
+It keeps that key: `""` is the row's true identity and a perfectly good one —
+it collides with no real repo, so it can neither shadow one nor (under a
+repo-scoped ceiling) hold its slot. `current_pr_state(pr, "")` still reaches
+such a row, and `reap` / `rearm` still drain it. Nothing is discarded; p9
+simply declines to invent the one thing it does not know.
+
+Attributing them to the ambient repo was tried and reverted, because:
+
+- it put a `gh repo view` call on every state read;
+- it let `p9 rearm` re-watch the PR against the ambient repo — and omitting
+  `--repo` from the child argv does **not** help, because the child calls
+  `resolve_repo(None)` itself and, sharing cwd and env, resolves the same
+  value. The observed chain ended in `gh pr merge` on a PR nobody targeted;
+- and when the ambient repo genuinely had a PR of the same number, the guess
+  *shadowed* the real row — recreating the exact defect BRO-1988 fixes.
+
+So a row with no recorded repo is **folded and not re-armed**. There is no
+correct repo to re-arm against; that is the whole content of "no repo
+recorded". Folding frees the concurrency slot, and recovery is an explicit
+`p9 watch <pr> --repo <owner/name> --adopt` — a human naming the repo p9
+could not.
 
 ### Lifecycle / self-healing
 

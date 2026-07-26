@@ -21,6 +21,11 @@ def p9_am(tmp_path, monkeypatch):
     """Fresh p9 import with auto-merge policy enabled."""
     monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
     monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-with-auto-merge.yaml"))
+    # Hermetic repo identity (BRO-1988): pin a REAL repo — the regime
+    # production actually runs in. Pinning tests to repo-less ("" / `-`) is
+    # what hid the rearm mis-attribution blocker: the guard under test only
+    # misbehaves once an ambient repo resolves.
+    monkeypatch.setenv("BROOMVA_P9_REPO", "broomva/test")
     if "p9" in sys.modules:
         del sys.modules["p9"]
     return importlib.import_module("p9")
@@ -239,6 +244,9 @@ class TestCommand:
         # Use the default good policy (no auto_merge block → disabled)
         monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path))
         monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+        # Hermetic repo identity (BRO-1988): pin a REAL repo (see module
+        # fixture) — repo-less is not the regime production runs in.
+        monkeypatch.setenv("BROOMVA_P9_REPO", "broomva/test")
         if "p9" in sys.modules:
             del sys.modules["p9"]
         mod = importlib.import_module("p9")
