@@ -76,17 +76,45 @@ note-taking tools in sequence; it does **not** reimplement them.
    canonical files (`SPEC.md` / `README` / key sources) verbatim; **docs site** →
    follow the doc tree (many pages), not one; **paper** → read the
    mechanism-bearing sections, not the abstract; **long file** → read it, not the
-   first screen; **video / reel / short / TikTok** → *watch it, don't just
-   transcribe it* via the adaptive-video-ingest recipe: acquire (yt-dlp; or
-   Interceptor on logged-in Chrome for gated content) → pull the transcript first
-   (YouTube auto-subs free; whisper otherwise) → **default transcript-first,
-   escalate to frames only on signal** (deixis like "look/here/as you can see",
-   high ffmpeg scene-change rate, or suspected on-screen text) → sample on
-   *change* not on a clock (`ffmpeg select='gt(scene,0.3)'`, one frame per distinct
-   visual state) → tile to a montage contact sheet for ONE cheap Read → re-sample
-   only the windows the coarse pass couldn't resolve. Never uniform-poll every
-   second (drowns talking heads, aliases fast screencasts). Full spec:
-   `research/entities/pattern/adaptive-video-ingest.md`. **Verify every external URL** — hallucinated links are a
+   first screen;
+   **social-network link → use the validated path, do not improvise a pipeline.**
+   Two shapes, each with a dogfooded route:
+     - **Video** (YouTube / Shorts / TikTok / IG Reel / hosted mp4) → run the tested
+       tool, not a hand-rolled ffmpeg loop:
+       `python3 scripts/video_ingest.py '<url>' --query '<the question you inferred>'`
+       (from the broomva workspace; from any other cwd use the absolute
+       `~/broomva/scripts/video_ingest.py`). **Single-quote the URL and the query** —
+       both are untrusted external input, so a hostile link's shell metacharacters must
+       never reach the shell unescaped (the script itself takes argv, `shell=False`). It
+       is BRO-1979 — self-degrading (scenedetect/imagehash optional → falls back to
+       ffmpeg + Pillow) and prints a JSON manifest to **stdout** (also written to
+       `<outdir>/manifest.json` — pass `--outdir DIR` to pin the location, else it's a
+       temp dir echoed as `manifest.outdir`). Then **Read `manifest.contact_sheet`** (ONE
+       cheap vision Read of the whole visual arc — title cards, diagrams, on-screen text
+       the audio skips), **Read `manifest.transcript_path` only when it is non-null**
+       (it's null for no-speech `frames-mandatory` clips — skip the Read then), and
+       follow `manifest.recommendation.mode`: `transcript-only` (speech-dense, no signal)
+       · `escalate-frames` (deixis / high scene-rate / on-screen text → Read the
+       per-window frames) · `frames-mandatory` (no speech). For **login-gated** IG/FB,
+       add `--cookies-from-browser chrome`, or drive Interceptor on real logged-in Chrome
+       (`interceptor open '<url>'`) — this reads *your own* local browser session to reach
+       *your own* gated content; the cookies stay local (video_ingest writes only the
+       manifest + frames — never logs or uploads them), so use it only on content you're
+       authorized to access. *If the
+       script is somehow absent*, the manual recipe it automates: yt-dlp acquire →
+       transcript-first → sample on *change* not a clock (`ffmpeg select='gt(scene,0.3)'`,
+       one frame per distinct visual state) → montage contact sheet → escalate only
+       unresolved windows; never uniform-poll per second (drowns talking heads,
+       aliases fast screencasts). Spec: `research/entities/pattern/adaptive-video-ingest.md`.
+     - **Thread / image post** (X/Twitter thread, IG photo post, FB) → text is only
+       half the artifact; **pull the pixels too** — a markdown extractor silently drops
+       the images (the modality gap). Browser-screenshot→Read + in-browser image fetch
+       (WebFetch 402s on x.com; agent-browser/Interceptor loads it, then fetch the
+       CDN-signed `og:image` in-session). Faster reads when you don't need the full
+       reply tree: twitterapi.io or FxTwitter (X, no login), Jina Reader
+       `x-with-generated-alt` (inline VLM image captions). Spec:
+       `research/entities/pattern/full-fidelity-content-ingest.md`.
+   **Verify every external URL** — hallucinated links are a
    catastrophic failure. **Provenance honesty:** a `[HIGH]` tag names the
    artifact *actually read* verbatim; a landing-page/search summary is `[MED]` at
    most, labeled as a summary — never tag a claim "spec/repo-verified" against a
