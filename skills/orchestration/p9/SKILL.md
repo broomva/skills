@@ -68,8 +68,10 @@ What the session id buys you:
 |---|---|
 | **Concurrency ceiling** | `max_concurrent_prs` is counted **per session, per repo** — N agents each hold their own watcher, and an in-flight PR in one repo never refuses a watch in another. A session's *own* second watch **in the same repo** still blocks at the ceiling. |
 | **PR identity** | Keyed by `(repo, pr)` — the same PR number in two repos never collides, in the state table *and* in the ceiling count. |
+| **Wait-queue** | `pop`/`list`/`clear` default to the **current session's** view (its items + legacy-unowned). `--all` crosses sessions. This is what "context-scoped" finally means in code. |
+| **Watcher de-dup** | A second `p9 watch` on a PR that already has a **live** watcher is refused (`--force` to supersede). A **dead** watcher is superseded automatically once aged, or now via `--adopt`. |
 
-#### Repo identity (BRO-1988)
+### Repo identity (BRO-1988)
 
 Every lifecycle command (`watch`, `merge-ready`, `merge-status`, `auto-merge`,
 `abandon`) resolves the repo **once, before it reads state**, and uses that one
@@ -90,8 +92,6 @@ so one logical repo never splits into two keys.
 write rewrites the log durably (atomic temp+rename, unparseable lines preserved
 verbatim, no row ever dropped). With no resolvable repo the log is left exactly
 as-is — the legacy key is kept rather than guessed at.
-| **Wait-queue** | `pop`/`list`/`clear` default to the **current session's** view (its items + legacy-unowned). `--all` crosses sessions. This is what "context-scoped" finally means in code. |
-| **Watcher de-dup** | A second `p9 watch` on a PR that already has a **live** watcher is refused (`--force` to supersede). A **dead** watcher is superseded automatically once aged, or now via `--adopt`. |
 
 ### Lifecycle / self-healing
 
