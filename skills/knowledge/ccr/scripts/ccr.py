@@ -200,8 +200,23 @@ _IMPORT_RE = re.compile(
 )
 
 
-def compact_code(payload: str, **_) -> str:
-    """Structural outline: imports + def/class/fn signature lines, in order."""
+def compact_code(
+    payload: str,
+    head: int = 20,
+    tail: int = 10,
+    line_budget: int = LINE_CHAR_BUDGET,
+    **_,
+) -> str:
+    """Structural outline: imports + def/class/fn signature lines, in order.
+
+    The char budget applies here too. This signature used to be
+    `compact_code(payload, **_)`, which silently swallowed `line_budget`,
+    `head` and `tail`: a minified JS/TS bundle — one enormous line that still
+    matches `_DEF_RE` — emitted that whole line as its "outline" and compressed
+    to exactly 0.0%, with no flag able to work around it. That is the same
+    defect `compact_text` was fixed for, surviving on the sibling path, and it
+    is the canonical shape of the artifact this skill exists to shrink.
+    """
     sigs = []
     for m in _DEF_RE.finditer(payload):
         line_no = payload.count("\n", 0, m.start()) + 1
@@ -213,12 +228,13 @@ def compact_code(payload: str, **_) -> str:
     out = [f"// code outline — {n_lines} lines, {len(sigs)} defs (bodies elided)"]
     if imports:
         out.append("// imports:")
-        out.extend(f"  {ln}" for ln in imports[:30])
+        out.extend(f"  {_clamp_line(ln, line_budget)}" for ln in imports[:30])
     out.append("// structure:")
-    out.extend(f"  L{n}: {sig}" for n, sig in sigs[:200])
+    out.extend(f"  L{n}: {_clamp_line(sig, line_budget)}" for n, sig in sigs[:200])
     if not sigs:
-        # no recognizable structure — degrade to text head/tail
-        return compact_text(payload)
+        # no recognizable structure — degrade to text head/tail, carrying the
+        # caller's budgets rather than silently resetting them to defaults.
+        return compact_text(payload, head=head, tail=tail, line_budget=line_budget)
     return "\n".join(out)
 
 

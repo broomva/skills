@@ -56,18 +56,45 @@ architecture, not the compression ratio. Identical payloads are
 content-addressed (idempotent: one handle, one record). The view is never
 emitted larger than the original (tiny inputs fall back to the payload).
 
-**Two budgets in the text compactor.** `--head`/`--tail` bound the number of
-lines; `--line-budget` (default **2000 chars**, `0` disables) bounds each line.
-Without the second, a payload that is *one enormous line* — a minified or
-**truncated** JSON blob, a single-line dump — compressed to exactly 0%, because
-`len(lines) <= head + tail` returned the whole thing as the "compact view".
-Truncated JSON lands here by construction: `detect_type` needs a *successful*
-`json.loads`, so a streamed/cut-off document routes to `text`.
+**Two budgets, and they apply on both line-oriented paths.** `--head`/`--tail`
+bound the number of lines; `--line-budget` (default **2000 chars**, `0`
+disables) bounds each line. Without the second, a payload that is *one enormous
+line* — a minified or **truncated** JSON blob, a single-line dump — compressed
+to exactly 0%, because `len(lines) <= head + tail` returned the whole thing as
+the "compact view". Truncated JSON lands here by construction: `detect_type`
+needs a *successful* `json.loads`, so a streamed/cut-off document routes to
+`text`.
+
+The char budget applies to the **code** outline too. It initially did not:
+`compact_code(payload, **_)` swallowed `line_budget`, so a minified JS/TS
+bundle — one enormous line that still matches `_DEF_RE`, and the canonical
+artifact this skill exists to shrink — emitted that whole line as its "outline"
+and still compressed to 0.0%, with no flag able to work around it. The same
+defect, surviving on the sibling path. Signature lines and the no-structure
+`compact_text` fallback now both carry the caller's budgets.
 
 ## Guarantees
 
-Each is backed by a mutation-proven test — reverting the fix makes the named
-test fail.
+Each row names the mechanism that holds the invariant, and is backed by a
+mutation-proven test — revert the fix and the named test fails.
+
+One scope note, stated rather than glossed. `_is_confined`'s `is_symlink()`
+guard is **defence-in-depth with no reachable behavioural difference**: delete
+it and the suite stays green, because content-addressing means a symlink can
+only ever serve content whose sha256 matches the requested handle, and no
+content hashes to the link's own name. It is an *equivalent mutant*, not an
+untested guard, so no test is claimed for it.
+
+That distinction is the point. An earlier revision of this file asserted
+"each is backed by a mutation-proven test" as a blanket claim; adversarial
+review showed it was false for the hex-validation row, whose *outcome* was
+upheld by a neighbouring guard while its stated **ordering** went unpinned.
+That gap is now closed by
+`test_malformed_handle_is_refused_BEFORE_the_filesystem_is_touched`, which
+distinguishes the two by pointing the cache at a nonexistent directory so the
+guards would give different errors. A blanket "everything is proven" line is
+itself an unverified claim — the exact failure mode this skill's review process
+exists to catch.
 
 | Invariant | What holds it |
 |---|---|
@@ -118,7 +145,7 @@ original = ccr.retrieve(r["handle"])                # expand on demand
 ## Tests
 
 ```bash
-python3 -m pytest skills/knowledge/ccr/tests/ -q     # 40 tests
+python3 -m pytest skills/knowledge/ccr/tests/ -q     # 47 tests
 python3 skills/knowledge/ccr/tests/test_ccr.py       # no pytest needed
 ```
 

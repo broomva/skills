@@ -790,6 +790,141 @@ def test_bom_does_not_defeat_json_detection(tmp_path):
 
 
 # --- no-pytest fallback runner ---------------------------------------------
+# ── Gaps proven by surviving mutations in P20 round 2 ─────────────────────────
+#
+# Round-2 verification mutated 27 sites; 20 were caught. Four survivors were
+# classified VACUOUS (a guard no test could fail on) rather than EQUIVALENT (a
+# mutation that changes no observable behaviour — `os.chmod(0600)` on a
+# NamedTemporaryFile is one, since the file is already 0600; that one is
+# correctly NOT tested here).
+#
+# None of the four was a security hole — traversal stayed refused throughout,
+# because each guard is backed by a second, independent one. What was missing
+# was coverage: delete a guard, and the suite stayed green on the strength of
+# its neighbour. These pin each guard on its own.
+
+
+def test_malformed_handle_is_refused_BEFORE_the_filesystem_is_touched(tmp_path):
+    """Kills M1 — pins the ORDERING, which is the part the docs claim.
+
+    A first attempt at this test planted a non-hex record in the cache and
+    asserted `retrieve` raised. It passed with the hex check DELETED, because
+    the digest verification rejected the planted record anyway. That is the
+    same defence-in-depth cover one layer deeper, and it is why "the mutation
+    survived" was the right thing to chase rather than explain away.
+
+    The ordering is only observable when the two guards would give DIFFERENT
+    answers. Point the cache at a directory that does not exist: with
+    validation first, a malformed token yields "malformed handle"; without it,
+    execution reaches the filesystem check and yields "no ccr cache". Asserting
+    on WHICH error distinguishes them.
+    """
+    missing_cache = tmp_path / "does-not-exist"
+    assert not missing_cache.exists()
+    try:
+        ccr.retrieve("ccr://" + "N" * 64, cache_dir=missing_cache)
+    except KeyError as e:
+        assert "malformed handle" in str(e), (
+            f"reached the filesystem before validating the handle: {e}"
+        )
+    else:
+        raise AssertionError("a malformed handle must raise")
+
+
+def test_symlink_whose_target_is_inside_the_cache_is_rejected(tmp_path):
+    """A symlinked record is refused even when its target is INSIDE the cache.
+
+    Honest scope note: this does NOT kill the `is_symlink()` mutation. Delete
+    that guard and this still passes, because the digest check refuses the
+    record anyway — a symlink can only ever serve content whose sha256 matches
+    the requested handle, and no content hashes to the link's own name.
+
+    That makes `if p.is_symlink()` an EQUIVALENT MUTANT under the current
+    design (defence-in-depth with no reachable behavioural difference), not an
+    untested guard. The distinction matters: writing a contrived test to force
+    it red would be manufacturing coverage rather than measuring it. The test
+    is kept because it pins the observable contract — symlinked records are
+    refused — which is what a caller depends on.
+    """
+    res = ccr.compress(TEXT_PAYLOAD, "text", cache_dir=tmp_path)
+    real_sha = res["handle"].removeprefix("ccr://")
+    link_sha = "b" * 64
+    link = tmp_path / f"{link_sha}.json"
+    link.symlink_to(tmp_path / f"{real_sha}.json")
+    assert link.resolve().is_relative_to(tmp_path.resolve()), (
+        "fixture guard: the target must be INSIDE the cache, or containment "
+        "would reject it and this test would pass vacuously"
+    )
+    try:
+        ccr.retrieve("ccr://" + link_sha, cache_dir=tmp_path)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("a symlinked record must be refused even when its "
+                             "target is inside the cache")
+
+
+def test_failed_publish_leaves_no_temp_file(tmp_path):
+    """Kills M5b — the temp-file cleanup on a failed publish was untested.
+
+    The existing atomicity test globs `*.json`, and a leaked temp file is named
+    `.ccr-tmp-*.part`, so it was invisible. This is also the direct cause of
+    the leaked-`.part`-on-SIGKILL defect.
+    """
+    def boom(*a, **k):
+        raise OSError("publish failed")
+
+    real_replace = ccr.os.replace
+    ccr.os.replace = boom
+    try:
+        ccr.compress(TEXT_PAYLOAD, "text", cache_dir=tmp_path)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("a failed publish must propagate")
+    finally:
+        ccr.os.replace = real_replace
+    leaked = [p.name for p in tmp_path.iterdir() if not p.name.endswith(".json")]
+    assert leaked == [], f"temp file leaked after a failed publish: {leaked}"
+
+
+def test_prefix_scan_ignores_non_64_char_stems(tmp_path):
+    """Kills M17 — the `len(stem) == 64` guard on the prefix scan was untested."""
+    ccr.compress(TEXT_PAYLOAD, "text", cache_dir=tmp_path)
+    (tmp_path / "deadbeef12.json").write_text(
+        json.dumps({"original": "PLANTED", "sha256": "deadbeef12"})
+    )
+    try:
+        ccr.retrieve("deadbeef", cache_dir=tmp_path)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("the prefix scan must ignore non-64-char stems")
+
+
+def test_minified_code_line_respects_the_char_budget(tmp_path):
+    """MAJOR 6 survived on the `code` path: `compact_code(payload, **_)`
+    swallowed `line_budget`, so a minified JS/TS bundle — one enormous line
+    that still matches `_DEF_RE` — compressed to exactly 0.0%."""
+    minified = "function f(){" + ("a;" * 100_000) + "}"
+    res = ccr.compress(minified, "auto", cache_dir=tmp_path)
+    assert res["content_type"] == "code", "fixture guard: must route to compact_code"
+    assert res["saved_pct"] > 90.0, f"still 0%-ish on the code path: {res['saved_pct']}"
+    assert len(res["view"]) < len(minified)
+    assert ccr.retrieve(res["handle"], cache_dir=tmp_path) == minified
+
+
+def test_code_fallback_carries_the_callers_budgets(tmp_path):
+    """`compact_code`'s no-structure fallback called `compact_text(payload)`
+    with DEFAULTS, silently discarding whatever the caller asked for."""
+    prose_like_code = "import x\n" + "\n".join(f"line {i}" for i in range(500))
+    tight = ccr.compress(prose_like_code, "code", cache_dir=tmp_path, head=1, tail=1)
+    loose = ccr.compress(prose_like_code, "code", cache_dir=tmp_path, head=100, tail=100)
+    assert len(tight["view"]) < len(loose["view"]), (
+        "head/tail had no effect through the code path — args were dropped"
+    )
+
+
 if __name__ == "__main__":
     import tempfile
     import traceback
@@ -808,3 +943,4 @@ if __name__ == "__main__":
                 traceback.print_exc()
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
+
