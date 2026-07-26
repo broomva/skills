@@ -992,6 +992,27 @@ _SLUG_TRAIL_STOPWORDS = frozenset({
 })
 
 _SLUG_MIN_LEN = 3
+# How many times a curated LIFE_OS_TERMS name must recur in a body before an
+# incidental mention counts as the item being ABOUT that module. One mention is
+# a name-drop; a page that is genuinely about Arcan says "Arcan" repeatedly.
+_TERM_TOPICAL_MIN_HITS = 3
+
+# Control characters that must never reach a written entity page. Raw extracts
+# are built from session transcripts and tool output, which can carry NUL and
+# other C0 bytes; git then classifies the page as BINARY, which breaks diffing,
+# grep, the linter's own reader, and every editor tool. Two 71KB pages in the
+# workspace graph (pattern/arcan.md, pattern/autonomic.md) were NUL-corrupt this
+# way and silently regenerated on every run. Tab / LF / CR are legitimate.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_page_text(text: str) -> str:
+    """Strip control characters that would make a written page binary.
+
+    Applied at the write boundary rather than at ingest so it holds for every
+    producer path, including templates and future callers.
+    """
+    return _CONTROL_CHAR_RE.sub("", text)
 _SLUG_MAX_TOKENS = 6
 
 
@@ -1053,9 +1074,35 @@ def _build_entity_slug_candidates(item: RawItem) -> list[str]:
 
     # Known module names as direct candidates. LIFE_OS_TERMS is a curated
     # vocabulary — every entry is already noun-phrase shaped, so it bypasses
-    # the shape gate by construction (it is still asserted below).
+    # the SHAPE gate by construction. It does NOT bypass the ABOUTNESS test
+    # below, and must not: shape was never the problem here.
+    #
+    # The original test was a bare `term in text.lower()` — a substring MENTION.
+    # That is what produced the two worst pages in the graph: a prompt-patterns
+    # dump that merely name-dropped "arcan" and "autonomic" was promoted as
+    # pattern/arcan.md and pattern/autonomic.md, two 71KB NUL-corrupt pages that
+    # regenerated on every run. It is also the origin of the duplicate-slug
+    # problem in general — anima/arcan/bstack/broomva/praxis/relay/spaces/
+    # symphony all exist under 2-5 different type dirs, because each run
+    # re-minted them from an incidental mention and _infer_entity_type guessed
+    # a different type each time.
+    #
+    # A mention is not aboutness. Require one of:
+    #   - the term appears in the item's leading line (Format-2 ingest prepends
+    #     the section heading, so that line is the item's title), or
+    #   - the term recurs at least _TERM_TOPICAL_MIN_HITS times in the body.
+    # Matching is word-boundary so "relay" no longer fires on "relayed".
+    lowered = text.lower()
+    lead_line = lowered.split("\n", 1)[0]
     for term in LIFE_OS_TERMS:
-        if term in text.lower() and len(term) > 4:
+        if len(term) <= 4:
+            continue
+        term_re = re.compile(rf"(?<![-\w]){re.escape(term)}(?![-\w])")
+        if not term_re.search(lowered):
+            continue
+        in_title = bool(term_re.search(lead_line))
+        hits = len(term_re.findall(lowered))
+        if in_title or hits >= _TERM_TOPICAL_MIN_HITS:
             candidates.append(slugify(term))
 
     # Capitalized phrases — last-resort path, strictly gated.
@@ -1935,6 +1982,7 @@ def promote_item(
     page = template
     for key, value in content_map.items():
         page = page.replace("{" + key + "}", value)
+    page = _sanitize_page_text(page)
 
     if not dry_run:
         entity_dir.mkdir(parents=True, exist_ok=True)
@@ -2044,6 +2092,7 @@ def _update_entity_page_if_changed(entity_path: Path, dry_run: bool = False) -> 
         return False
 
     # Real semantic delta — write (with `updated:` bumped to today).
+    candidate = _sanitize_page_text(candidate)
     if not dry_run:
         entity_path.write_text(candidate)
     return True

@@ -513,3 +513,66 @@ class TestPipelineMintsNoJunk:
         bookkeeping.run_pipeline(verbose=False)
         pages = list(temp_entities.rglob("*.md"))
         assert pages, "a legitimate raw extract must still promote"
+
+
+# ── Aboutness gate + control-char sanitation (BRO-1987, second pass) ───────────
+#
+# Found by running the FIXED promoter against a copy of the live graph: it still
+# re-minted research/entities/pattern/{arcan,autonomic}.md — two 71KB NUL-corrupt
+# pages — for a third time. Two causes the first pass missed:
+#
+#   1. LIFE_OS_TERMS was matched with a bare `term in text.lower()` substring
+#      test. A document that merely NAME-DROPS a module was promoted as a page
+#      ABOUT that module. This is also the origin of the duplicate-slug problem:
+#      anima / arcan / bstack / broomva / praxis / relay / spaces / symphony all
+#      existed under 2-5 type dirs, re-minted from incidental mentions.
+#   2. Nothing stripped control characters, so NUL bytes from session-transcript
+#      raw extracts reached disk and git classified the page as binary.
+
+NAME_DROP_BODY = (
+    "Prompt patterns from daily sessions\n\n"
+    "The user asks for dependency-chain reasoning and parallel agents. One "
+    "session touched the arcan shell loop and another mentioned autonomic once.\n"
+)
+
+ABOUT_ARCAN_BODY = (
+    "Arcan operating modes\n\n"
+    "Arcan answers stone-vs-water failure modes with a six-state OperatingMode. "
+    "Arcan transitions between Explore and Execute deterministically. Arcan is "
+    "the L0 agent loop.\n"
+)
+
+
+def test_name_drop_does_not_mint_a_module_entity():
+    """A passing mention of a curated module name must NOT become a page.
+
+    Pins the aboutness gate. Reverting it (back to `term in text.lower()`)
+    makes this return ['arcan', 'autonomic'] and the test fails.
+    """
+    candidates = _build_entity_slug_candidates(_item(NAME_DROP_BODY))
+    assert "arcan" not in candidates
+    assert "autonomic" not in candidates
+
+
+def test_document_actually_about_a_module_still_mints_it():
+    """The aboutness gate must not be so strict it blocks real module pages."""
+    candidates = _build_entity_slug_candidates(_item(ABOUT_ARCAN_BODY))
+    assert "arcan" in candidates
+
+
+def test_module_term_matching_is_word_bounded():
+    """'relay' must not fire on 'relayed'/'relaying'."""
+    body = "Webhook delivery\n\nThe event was relayed downstream. Relaying again relayed it.\n"
+    assert "relay" not in _build_entity_slug_candidates(_item(body))
+
+
+@pytest.mark.parametrize("ch", ["\x00", "\x0b", "\x1f", "\x7f"])
+def test_control_chars_are_stripped_from_written_pages(ch):
+    """NUL and friends must never reach disk — git would call the page binary."""
+    assert ch not in bookkeeping._sanitize_page_text(f"before{ch}after")
+
+
+def test_sanitizer_preserves_legitimate_whitespace():
+    """Tab, LF and CR are structural in markdown and must survive."""
+    text = "a\tb\nc\r\nd"
+    assert bookkeeping._sanitize_page_text(text) == text
