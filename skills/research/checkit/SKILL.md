@@ -81,19 +81,26 @@ note-taking tools in sequence; it does **not** reimplement them.
    Two shapes, each with a dogfooded route:
      - **Video** (YouTube / Shorts / TikTok / IG Reel / hosted mp4) → run the tested
        tool, not a hand-rolled ffmpeg loop:
-       `python3 scripts/video_ingest.py <url> --query "<the question you inferred>"`
+       `python3 scripts/video_ingest.py '<url>' --query '<the question you inferred>'`
        (from the broomva workspace; from any other cwd use the absolute
-       `~/broomva/scripts/video_ingest.py`). It is BRO-1979 — self-degrading
-       (scenedetect/imagehash optional → falls back to ffmpeg + Pillow) and prints a
-       JSON manifest to **stdout** (also written to `<outdir>/manifest.json` — pass
-       `--outdir DIR` to pin the location, else it's a temp dir echoed as
-       `manifest.outdir`). Then **Read `manifest.contact_sheet`** (ONE cheap vision Read of
-       the whole visual arc — title cards, diagrams, on-screen text the audio skips)
-       plus `manifest.transcript_path`, and follow `manifest.recommendation.mode`:
-       `transcript-only` (speech-dense, no signal) · `escalate-frames` (deixis / high
-       scene-rate / on-screen text → Read the per-window frames) · `frames-mandatory`
-       (no speech). For **login-gated** IG/FB, add `--cookies-from-browser chrome`, or
-       drive Interceptor on real logged-in Chrome (`interceptor open <url>`). *If the
+       `~/broomva/scripts/video_ingest.py`). **Single-quote the URL and the query** —
+       both are untrusted external input, so a hostile link's shell metacharacters must
+       never reach the shell unescaped (the script itself takes argv, `shell=False`). It
+       is BRO-1979 — self-degrading (scenedetect/imagehash optional → falls back to
+       ffmpeg + Pillow) and prints a JSON manifest to **stdout** (also written to
+       `<outdir>/manifest.json` — pass `--outdir DIR` to pin the location, else it's a
+       temp dir echoed as `manifest.outdir`). Then **Read `manifest.contact_sheet`** (ONE
+       cheap vision Read of the whole visual arc — title cards, diagrams, on-screen text
+       the audio skips), **Read `manifest.transcript_path` only when it is non-null**
+       (it's null for no-speech `frames-mandatory` clips — skip the Read then), and
+       follow `manifest.recommendation.mode`: `transcript-only` (speech-dense, no signal)
+       · `escalate-frames` (deixis / high scene-rate / on-screen text → Read the
+       per-window frames) · `frames-mandatory` (no speech). For **login-gated** IG/FB,
+       add `--cookies-from-browser chrome`, or drive Interceptor on real logged-in Chrome
+       (`interceptor open '<url>'`) — this reads *your own* local browser session to reach
+       *your own* gated content; the cookies stay local (video_ingest writes only the
+       manifest + frames — never logs or uploads them), so use it only on content you're
+       authorized to access. *If the
        script is somehow absent*, the manual recipe it automates: yt-dlp acquire →
        transcript-first → sample on *change* not a clock (`ffmpeg select='gt(scene,0.3)'`,
        one frame per distinct visual state) → montage contact sheet → escalate only
