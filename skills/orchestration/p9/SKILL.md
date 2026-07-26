@@ -106,14 +106,15 @@ defer-into-wait-queue discipline stops firing cross-repo. Spec reconciliation
 is tracked separately. With no resolvable repo the count falls back to global —
 an ambiguous identity must not silently disable the ceiling.
 
-**Legacy state migration.** Rows written before repo stamping carry `repo: ""`.
-`p9` keeps that key. It does **not** attribute them to the ambient repo — `""`
-is the row's true identity, and it is a perfectly good key: it collides with no
-real repo, so it can neither shadow one nor (under a repo-scoped ceiling) hold
-its slot. `current_pr_state(pr, "")` still reaches such a row, and `reap` /
-`rearm` still drain it. Nothing is discarded; only the guess.
+**Rows with no recorded repo.** Rows written before repo stamping carry
+`repo: ""`, and p9 does **not** migrate them.
+It keeps that key: `""` is the row's true identity and a perfectly good one —
+it collides with no real repo, so it can neither shadow one nor (under a
+repo-scoped ceiling) hold its slot. `current_pr_state(pr, "")` still reaches
+such a row, and `reap` / `rearm` still drain it. Nothing is discarded; p9
+simply declines to invent the one thing it does not know.
 
-Two review rounds established why attributing is worse than keeping `""`:
+Attributing them to the ambient repo was tried and reverted, because:
 
 - it put a `gh repo view` call on every state read;
 - it let `p9 rearm` re-watch the PR against the ambient repo — and omitting
@@ -128,11 +129,6 @@ correct repo to re-arm against; that is the whole content of "no repo
 recorded". Folding frees the concurrency slot, and recovery is an explicit
 `p9 watch <pr> --repo <owner/name> --adopt` — a human naming the repo p9
 could not.
-
-Unparseable lines are **quarantined** to `state.jsonl.corrupt`, not left in
-place. `jsonl_read_all` tolerates a torn *last* line but treats mid-file
-corruption as an invariant violation, so sealing a torn tail behind a newline
-would wedge every state read one append later.
 
 ### Lifecycle / self-healing
 

@@ -164,6 +164,40 @@ class TestRepoResolution:
         assert len(p9.open_prs()) == 2
 
     @pytest.mark.parametrize("raw, expected", [
+        # A recognized GitHub URL tail is dropped; OWNER/REPO survives.
+        ("https://github.com/o/r/pull/5", "o/r"),
+        ("https://github.com/o/r/tree/main/src", "o/r"),
+        ("https://github.com/o/r/issues/12", "o/r"),
+        # An UNrecognized third segment is NOT a tail — keep every segment.
+        # Truncating to two would fold nested namespaces together
+        # (`group/sub/repo` and `group/sub/other` -> `group/sub`), the exact
+        # collapse this function exists to prevent. The value is not a GitHub
+        # OWNER/REPO, so it fails loudly at `gh --repo` instead of silently
+        # targeting the wrong repo.
+        ("https://gitlab.com/group/sub/repo", "group/sub/repo"),
+        ("https://gitlab.com/group/sub/other", "group/sub/other"),
+        # A local-path remote names no GitHub repo at all. Without this,
+        # `file:///Users/x/repos/A` became `Users/x` and got handed to
+        # `gh --repo`.
+        ("file:///Users/x/repos/A", ""),
+        ("file://localhost/srv/git/A", ""),
+    ])
+    def test_canonical_repo_url_shapes(self, p9, raw, expected):
+        assert p9.canonical_repo(raw) == expected
+
+    def test_nested_namespaces_do_not_collide(self, p9):
+        a = p9.canonical_repo("https://gitlab.com/group/sub/repo")
+        b = p9.canonical_repo("https://gitlab.com/group/sub/other")
+        assert p9.repo_key(a) != p9.repo_key(b)
+
+    def test_bare_local_path_is_not_truncated_to_a_plausible_repo(self, p9):
+        """A schemeless local path retains every segment, so it can never be
+        mistaken for a real `owner/name`. Reachable via the `git remote
+        get-url` fallback when a remote is a local clone."""
+        assert p9.canonical_repo("/Users/broomva/broomva/skills") == \
+            "Users/broomva/broomva/skills"
+
+    @pytest.mark.parametrize("raw, expected", [
         ("weird", "weird"),           # 1 segment: kept, never aliased onto ""
         ("https://github.com/", ""),  # 0 segments: nothing left to keep
         ("/", ""),
@@ -532,106 +566,6 @@ class TestLegacyStateIsKeptNotGuessed:
         assert p9.main(["status", "--no-reap", "--json"]) == p9.EXIT_OK
 
 
-class TestCorruptionQuarantine:
-    """MAJOR-3. `jsonl_read_all` tolerates a torn LAST line but raises on
-    mid-file corruption, so a torn tail is a time bomb: one append later it is
-    no longer last and every read wedges."""
-
-    def _torn(self, p9):
-        _watching(p9, 36, WORKSPACE)
-        with p9.state_jsonl().open("a", encoding="utf-8") as f:
-            f.write('{"ts":"par')
-
-    def test_torn_line_is_moved_out_and_the_log_reads_back(self, p9):
-        self._torn(p9)
-        assert p9.quarantine_corrupt_state_lines() == 1
-        assert p9.state_corrupt_path().read_text(encoding="utf-8") == '{"ts":"par\n'
-        assert '{"ts":"par' not in p9.state_jsonl().read_text(encoding="utf-8")
-        # The whole point: append afterwards and the log still reads.
-        _watching(p9, 99, WORKSPACE)
-        rows, dropped = p9.jsonl_read_all(p9.state_jsonl())
-        assert dropped == 0 and len(rows) == 2
-        assert p9.current_pr_state(99, WORKSPACE) == p9.PRState.WATCHING
-
-    def test_quarantine_is_written_before_the_log_is_replaced(
-            self, p9, tmp_path, monkeypatch):
-        """M-F2. Ordering is what makes it crash-safe: if preserving the line
-        fails we must abort with the log untouched, not drop it.
-
-        The failure is injected narrowly — the quarantine path is pointed at a
-        location whose parent is a regular file, so `mkdir` raises. (Patching
-        `Path.open` globally and calling `monkeypatch.undo()` would also revert
-        the fixture's BROOMVA_P9_HOME and send the assertion at the real state
-        store; resolve the path once, up front, and never re-derive it.)
-        """
-        self._torn(p9)
-        state_path = p9.state_jsonl()
-        before = state_path.read_text(encoding="utf-8")
-        blocker = tmp_path / "blocked"
-        blocker.write_text("not a directory", encoding="utf-8")
-        monkeypatch.setattr(p9, "state_corrupt_path",
-                            lambda: blocker / "state.jsonl.corrupt")
-        assert p9.quarantine_corrupt_state_lines() == 0
-        # Log untouched — the torn line is still there, nothing was dropped.
-        assert state_path.read_text(encoding="utf-8") == before
-        assert '{"ts":"par' in before
-
-    def test_temp_file_is_fsynced_before_the_rename(self, p9, monkeypatch):
-        """M-N. `write` + `replace` is atomic for visibility, not durability."""
-        self._torn(p9)
-        synced = []
-        monkeypatch.setattr(p9.os, "fsync", lambda fd: synced.append(fd))
-        replaced = []
-        real_replace = p9.os.replace
-
-        def spy_replace(src, dst):
-            # At the moment of the rename, the temp file must already be
-            # fsynced (2 syncs: quarantine file, then temp).
-            replaced.append(len(synced))
-            return real_replace(src, dst)
-
-        monkeypatch.setattr(p9.os, "replace", spy_replace)
-        assert p9.quarantine_corrupt_state_lines() == 1
-        assert replaced == [2], f"fsyncs before rename: {replaced}"
-
-    def test_temp_file_is_cleaned_up_on_failure(self, p9, monkeypatch):
-        """M-O. A failed pass must not litter `.quarantine.tmp` beside a log
-        that other processes scan."""
-        self._torn(p9)
-        monkeypatch.setattr(p9.os, "replace",
-                            lambda *a: (_ for _ in ()).throw(OSError("nope")))
-        assert p9.quarantine_corrupt_state_lines() == 0
-        leftovers = list(p9.p9_home().glob("*.tmp"))
-        assert leftovers == [], f"temp files left behind: {leftovers}"
-
-    def test_clean_log_is_a_no_op_and_latches(self, p9):
-        _watching(p9, 36, WORKSPACE)
-        before = p9.state_jsonl().read_text(encoding="utf-8")
-        assert p9.quarantine_corrupt_state_lines() == 0
-        assert p9.state_jsonl().read_text(encoding="utf-8") == before
-        assert p9._STATE_QUARANTINE_DONE is True
-
-    def test_success_latches(self, p9):
-        """M-AC. Rescanning a 1600-row log on every call is pure waste."""
-        self._torn(p9)
-        assert p9.quarantine_corrupt_state_lines() == 1
-        assert p9._STATE_QUARANTINE_DONE is True
-        assert p9.quarantine_corrupt_state_lines() == 0
-
-    def test_missing_file_does_not_latch(self, p9):
-        """Rows arrive later in the same process on a fresh state dir."""
-        assert not p9.state_jsonl().exists()
-        assert p9.quarantine_corrupt_state_lines() == 0
-        assert p9._STATE_QUARANTINE_DONE is False
-        self._torn(p9)
-        assert p9.quarantine_corrupt_state_lines() == 1
-
-    def test_cli_entry_runs_it(self, p9):
-        self._torn(p9)
-        assert p9.main(["status", "--no-reap"]) == p9.EXIT_OK
-        assert '{"ts":"par' not in p9.state_jsonl().read_text(encoding="utf-8")
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # BLOCKER-1 — a row with no recorded repo is never re-armed
 # ─────────────────────────────────────────────────────────────────────────────
@@ -685,10 +619,20 @@ class TestRepoLessRowIsNeverReArmed:
         assert out.returncode == 0, out.stderr
         action = json.loads(out.stdout)["rearmed"][0]
 
-        # The safety property, asserted directly.
-        time.sleep(1.0)  # a spawned child would have reached `gh` by now
-        assert not ghlog.exists(), (
-            f"a child watcher invoked gh: {ghlog.read_text()!r}")
+        # The safety property, asserted directly — and given a real budget.
+        #
+        # A fixed `sleep(1.0)` here was NOT enough: measured against the
+        # round-2-design mutant, the spawned child's first `gh` call landed
+        # anywhere from 0.147s to 1.82s after `rearm` exited (2 of 6 runs over
+        # 1.0s). A too-short wait turns the headline anti-proxy assertion back
+        # into a coin flip, which is precisely the failure mode this class
+        # exists to avoid. Poll to a budget instead: a violation is detected as
+        # soon as it happens, and only a clean run pays the full wait.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            assert not ghlog.exists(), (
+                f"a child watcher invoked gh: {ghlog.read_text()!r}")
+            time.sleep(0.05)
         assert "rearmed_pid" not in action, f"a watcher was re-armed: {action}"
         assert "skipped" in action and "no repo recorded" in action["skipped"]
 
@@ -800,15 +744,28 @@ class TestStuckScan:
         markers = sorted(x.name for x in p9.stuck_markers_dir().iterdir())
         assert len(markers) == 2, markers
 
-    def test_case_variants_share_one_marker(self, p9, capsys):
-        """The flip side: one logical repo must not produce two markers."""
-        self._live_row(p9, 42, "GetStimulus/sri")
+    @pytest.mark.parametrize("spelling", ["GetStimulus/sri", "getstimulus/SRI"])
+    def test_marker_id_is_case_folded_at_the_call_site(
+            self, p9, monkeypatch, spelling):
+        """One logical repo must not produce two stall-dedup markers.
+
+        This spies on the ident `cmd_stuck_scan` actually passes, rather than
+        listing the marker directory. Two reasons. (1) The directory listing is
+        vacuous on a case-insensitive filesystem (macOS default): both
+        spellings collide on disk whatever the code does, so it would only
+        have teeth on ubuntu CI. (2) Asserting on `_stuck_marker_path`'s output
+        for an ident the test computes itself tests the helper, not the caller
+        — and the caller is where the case-folding lives. `_safe_slug` does not
+        lowercase, so dropping `repo_key` here really would split one repo into
+        two markers.
+        """
+        idents = []
+        real = p9._stuck_marker_path
+        monkeypatch.setattr(p9, "_stuck_marker_path",
+                            lambda kind, ident: idents.append((kind, ident)) or real(kind, ident))
+        self._live_row(p9, 42, spelling)
         p9.main(["stuck-scan", "--threshold-min", "1", "--json"])
-        first = sorted(x.name for x in p9.stuck_markers_dir().iterdir())
-        p9.state_jsonl().unlink()
-        self._live_row(p9, 42, "getstimulus/SRI")
-        p9.main(["stuck-scan", "--threshold-min", "1", "--json"])
-        assert sorted(x.name for x in p9.stuck_markers_dir().iterdir()) == first
+        assert idents == [("pr-watch", "getstimulus/sri-42")]
 
 
 class TestCeilingScopePolicy:

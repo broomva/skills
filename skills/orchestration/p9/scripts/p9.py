@@ -71,17 +71,6 @@ def state_jsonl() -> Path:
     return p9_home() / "state.jsonl"
 
 
-def state_corrupt_path() -> Path:
-    """Quarantine for unparseable state lines lifted out by the migration.
-
-    ``jsonl_read_all`` tolerates a torn *last* line but treats corruption
-    anywhere else as an invariant violation, so leaving a torn line in place
-    while appending after it permanently wedges every state read. The
-    migration is the one pass that rewrites the whole log under the lock, so
-    it is the right place to move corruption out rather than seal it in."""
-    return p9_home() / "state.jsonl.corrupt"
-
-
 def wait_queue_jsonl() -> Path:
     return p9_home() / "wait-queue.jsonl"
 
@@ -1432,124 +1421,17 @@ def _utcnow() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 
-# Set once the lazy legacy-repo rewrite has run (or been declined) in this
-# process — the migration is a whole-file pass, not something to repeat per
-# appended event.
-_STATE_QUARANTINE_DONE = False
-
-
-def quarantine_corrupt_state_lines() -> int:
-    """Lift unparseable lines out of state.jsonl into ``state.jsonl.corrupt``.
-
-    ``jsonl_read_all`` tolerates a torn **last** line but treats corruption
-    anywhere else as an invariant violation. So a torn tail is a time bomb: one
-    ordinary append later it is no longer last, and every state read raises
-    from then on. This pass is the only whole-file rewrite p9 performs, which
-    makes it the one place that can defuse it.
-
-    Deliberately does **not** touch ``repo``. An earlier round attributed
-    repo-less rows to the ambient repo here; that guess caused a live merge
-    hazard and a state-shadowing regression, and is gone — see
-    :func:`_row_repo`.
-
-    Properties:
-      * **Repo-free.** No resolution, no subprocess, no network — so running
-        it at CLI entry cannot put a ``gh repo view`` on a read-only command.
-      * **Non-destructive.** Parseable lines pass through byte-identically;
-        corrupt lines are preserved verbatim in the quarantine file, never
-        dropped.
-      * **Quarantine-before-replace.** The quarantine write is fsynced *before*
-        the log is rewritten, so a failure there aborts with the log untouched
-        rather than dropping lines we failed to preserve.
-      * **Durable.** fsync of the temp file *and* of the directory around the
-        atomic rename: ``write`` + ``replace`` buys visibility atomicity, not
-        durability.
-      * **Never raises.** Missing file, unreadable dir, lock contention — all
-        return 0. A caller recording state must not die here.
-
-    Returns the number of lines quarantined.
-    """
-    global _STATE_QUARANTINE_DONE
-    if _STATE_QUARANTINE_DONE:
-        return 0
-    path = state_jsonl()
-    tmp: Path | None = None
-    try:
-        if not path.exists():
-            # Do NOT latch: the first rows of a fresh state dir arrive later in
-            # this same process.
-            return 0
-        raw = path.read_text(encoding="utf-8")
-        out_lines: list[str] = []
-        corrupt: list[str] = []
-        for line in raw.splitlines():
-            if not line.strip():
-                out_lines.append(line)
-                continue
-            try:
-                json.loads(line.strip())
-            except json.JSONDecodeError:
-                corrupt.append(line)
-                continue
-            out_lines.append(line)  # byte-identical passthrough
-        if not corrupt:
-            _STATE_QUARANTINE_DONE = True  # clean log: never scan again
-            return 0
-        with file_lock(state_lock_path()):
-            cpath = state_corrupt_path()
-            cpath.parent.mkdir(parents=True, exist_ok=True)
-            with cpath.open("a", encoding="utf-8") as cf:
-                for line in corrupt:
-                    cf.write(line + "\n")
-                cf.flush()
-                os.fsync(cf.fileno())
-            tmp = path.with_suffix(f".{os.getpid()}.quarantine.tmp")
-            with tmp.open("w", encoding="utf-8") as f:
-                f.write("\n".join(out_lines) + ("\n" if out_lines else ""))
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, path)  # atomic: readers see old or new, never half
-            tmp = None
-            _fsync_dir(path.parent)  # make the rename itself durable
-            _STATE_QUARANTINE_DONE = True
-            return len(corrupt)
-    except (OSError, P9Error):
-        return 0
-    finally:
-        if tmp is not None:
-            with contextlib.suppress(OSError):
-                tmp.unlink()
-
-
-def _fsync_dir(directory: Path) -> None:
-    """Best-effort directory fsync so an atomic rename survives a crash."""
-    try:
-        fd = os.open(str(directory), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
-
-
 def _read_state_rows() -> list[dict[str, Any]]:
     """The state log, as recorded. **Pure file read — no resolution, no
     subprocess, no network.**
 
     A bare-number legacy row (``repo == ""``) is returned exactly as written.
-    p9 does **not** attribute it to the ambient repo. Two rounds of review
-    established why: attributing put a ``gh repo view`` call on every read,
-    let `p9 rearm` re-watch the PR in a repo it was never in, and — when the
-    ambient repo genuinely had a PR of the same number — made the guess
-    *shadow* the real one, recreating the very defect BRO-1988 fixes.
-
-    "" is the row's true identity and a perfectly good key: it collides with
-    no real repo, so it can neither shadow one nor (with a repo-scoped
-    ceiling) hold its slot; ``current_pr_state(pr, "")`` still reaches it; and
-    ``reap`` / ``rearm`` still drain it. Nothing is discarded — only the guess.
+    p9 does **not** attribute it to the ambient repo, because "" is already
+    the row's true identity and a perfectly good key: it collides with no real
+    repo, so it can neither shadow one nor — with a repo-scoped ceiling — hold
+    its slot; ``current_pr_state(pr, "")`` still reaches it; and ``reap`` /
+    ``rearm`` still drain it. Nothing about such a row is discarded; p9 simply
+    declines to invent the one thing it does not know.
     """
     rows, _ = jsonl_read_all(state_jsonl())
     return rows
@@ -1572,10 +1454,6 @@ def _row_repo(row: dict[str, Any]) -> str:
 def append_state_event(event: PRStateEvent) -> None:
     assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
     # Normalize on write so the stored key is exactly what repo_key() reads.
-    # (The legacy migration is NOT run here — it runs once at CLI entry, so
-    # every read and write in a command sees the same post-migration bytes.
-    # Migrating mid-command would let a fold land on a key the row it retires
-    # had just moved off.)
     event.repo = canonical_repo(event.repo)
     jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
 
@@ -3771,10 +3649,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Defuse a torn state line before any command reads or writes (see
-    # quarantine_corrupt_state_lines). Repo-free and network-free, so this is
-    # safe to run ahead of read-only commands too.
-    quarantine_corrupt_state_lines()
     try:
         return args.func(args)
     except P9Error as e:
