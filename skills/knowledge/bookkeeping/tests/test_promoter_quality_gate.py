@@ -576,3 +576,25 @@ def test_sanitizer_preserves_legitimate_whitespace():
     """Tab, LF and CR are structural in markdown and must survive."""
     text = "a\tb\nc\r\nd"
     assert bookkeeping._sanitize_page_text(text) == text
+
+
+def test_oversized_item_is_promotion_blocked():
+    """A whole-file dump is not an entity — no slug heuristic is trusted on it.
+
+    The 2026-05-12 prompt-patterns extract ingests as ONE 64,969-char item and
+    used to mint five module pages (arcan, autonomic, haima, anima, spaces)
+    plus Title-Case fragments, including a 71KB pattern/arcan.md that came back
+    on every run.
+    """
+    body = "Session transcript.\n\n" + ("Arcan and autonomic and haima appear here. " * 400)
+    assert len(body) > bookkeeping._MAX_PROMOTABLE_ITEM_CHARS
+    assert _build_entity_slug_candidates(_item(body)) == []
+
+
+def test_name_drop_density_not_just_count():
+    """An absolute hit floor alone is trivially cleared by a long document."""
+    dense = "Arcan modes\n\nArcan does X. Arcan does Y. Arcan does Z."
+    sparse = "Notes\n\n" + ("filler sentence here. " * 300) + " arcan arcan arcan "
+    assert len(sparse) < bookkeeping._MAX_PROMOTABLE_ITEM_CHARS
+    assert "arcan" in _build_entity_slug_candidates(_item(dense))
+    assert "arcan" not in _build_entity_slug_candidates(_item(sparse))

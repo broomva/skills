@@ -996,6 +996,15 @@ _SLUG_MIN_LEN = 3
 # incidental mention counts as the item being ABOUT that module. One mention is
 # a name-drop; a page that is genuinely about Arcan says "Arcan" repeatedly.
 _TERM_TOPICAL_MIN_HITS = 3
+# Mentions per 1000 characters required alongside the absolute floor. 0.5 means
+# roughly one mention per 2000 chars. Calibrated against the observed failure:
+# a 64,969-char transcript dump name-dropping "arcan" 12 times scores 0.18 and
+# is correctly rejected, while a genuinely on-topic section scores far higher.
+_TERM_TOPICAL_MIN_DENSITY = 0.5
+# Above this, an "item" is a dump rather than an entity and no slug heuristic is
+# trustworthy on it. Generous — real sections run a few thousand chars; the
+# observed failure was 64,969.
+_MAX_PROMOTABLE_ITEM_CHARS = 12000
 
 # Control characters that must never reach a written entity page. Raw extracts
 # are built from session transcripts and tool output, which can carry NUL and
@@ -1072,6 +1081,20 @@ def _build_entity_slug_candidates(item: RawItem) -> list[str]:
     candidates = []
     text = item.content
 
+    # An entity page is a concept, not a transcript. When ingest cannot find
+    # section boundaries it falls back to emitting the WHOLE file as one item —
+    # the 2026-05-12 prompt-patterns extract arrives as a single 64,969-char
+    # blob. Nothing that large is "one entity", and every slug heuristic below
+    # degrades on it: a name-drop looks topical, and any Title-Case pair
+    # anywhere in 65KB looks like a name. That is how five module pages plus
+    # assorted fragments got minted from one dump.
+    #
+    # Returning [] here is the documented promotion-blocking signal, so an
+    # oversized item is skipped rather than guessed at. The raw extract is not
+    # lost: it stays in research/notes/ for a human or a section-aware pass.
+    if len(text) > _MAX_PROMOTABLE_ITEM_CHARS:
+        return []
+
     # Known module names as direct candidates. LIFE_OS_TERMS is a curated
     # vocabulary — every entry is already noun-phrase shaped, so it bypasses
     # the SHAPE gate by construction. It does NOT bypass the ABOUTNESS test
@@ -1102,7 +1125,20 @@ def _build_entity_slug_candidates(item: RawItem) -> list[str]:
             continue
         in_title = bool(term_re.search(lead_line))
         hits = len(term_re.findall(lowered))
-        if in_title or hits >= _TERM_TOPICAL_MIN_HITS:
+        # Density, not a raw count. An absolute floor alone is trivially cleared
+        # by a large document: the 2026-05-12 prompt-patterns raw extract ingests
+        # as ONE 64,969-char item that name-drops "arcan" 12 times, "haima" 9,
+        # "autonomic"/"anima" 4 and "spaces" 3 — so a `hits >= 3` rule minted
+        # five module pages from one transcript dump, including the 71KB
+        # pattern/arcan.md that regenerated on every run.
+        #
+        # 12 mentions across 65KB is 0.18 per 1000 chars — incidental. A page
+        # genuinely about Arcan names it far more densely. Requiring BOTH an
+        # absolute floor and a density floor keeps short, genuinely-topical
+        # sections working while rejecting big dumps.
+        per_1k = (hits * 1000.0 / len(text)) if text else 0.0
+        topical = hits >= _TERM_TOPICAL_MIN_HITS and per_1k >= _TERM_TOPICAL_MIN_DENSITY
+        if in_title or topical:
             candidates.append(slugify(term))
 
     # Capitalized phrases — last-resort path, strictly gated.
