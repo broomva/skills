@@ -80,8 +80,8 @@ original = ccr.retrieve(r["handle"])                # expand on demand
 ## Tests
 
 ```bash
-python3 -m pytest skills/ccr/tests/ -q     # 18 tests
-python3 skills/ccr/tests/test_ccr.py       # no pytest needed
+python3 -m pytest skills/knowledge/ccr/tests/ -q     # 18 tests
+python3 skills/knowledge/ccr/tests/test_ccr.py       # no pytest needed
 ```
 
 Core invariant under test: the view is lossy, but `retrieve(handle)` returns the

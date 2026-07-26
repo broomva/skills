@@ -3,9 +3,9 @@
 test_ccr.py — unit tests for the ccr reversible-compression primitive (BRO-1521).
 
 Run:
-    python3 -m pytest skills/ccr/tests/ -q
+    python3 -m pytest skills/knowledge/ccr/tests/ -q
     # or, without pytest installed:
-    python3 skills/ccr/tests/test_ccr.py
+    python3 skills/knowledge/ccr/tests/test_ccr.py
 
 The load-bearing invariant under test: the compact VIEW is lossy, but the
 original is ALWAYS recoverable byte-for-byte via the handle (reversible-by-cache).

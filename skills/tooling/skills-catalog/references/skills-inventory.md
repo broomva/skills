@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 75 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-07-16.
+> 78 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-07-26.
 
 ## Governance & control — `skills/governance/` (6)
 
@@ -33,15 +33,17 @@
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 75 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 78 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
-## Knowledge & memory — `skills/knowledge/` (4)
+## Knowledge & memory — `skills/knowledge/` (6)
 
 | Skill | What it does |
 |---|---|
 | `bookkeeping` | Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph |
 | `braindump` | Takes raw unstructured thoughts, voice transcript dumps, or stream-of-consciousness text and auto-files them into the right Obsidian vault folders with tags, |
+| `ccr` | Reversible payload compression — shrink any blob before it enters context, while caching the original locally for byte-exact `retrieve(handle)` on demand; the payload-axis counterpart to `kg`'s retrieval axis |
 | `colombia-conflict` | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
+| `comprehend` | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
 | `kg` | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 
 ## Research — `skills/research/` (2)
@@ -98,12 +100,13 @@
 | `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 
-## Design & brand — `skills/design/` (4)
+## Design & brand — `skills/design/` (5)
 
 | Skill | What it does |
 |---|---|
 | `arcan-glass` | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | `brand-icons` | Brand icon and visual identity management for BroomVA projects |
+| `design-distill` | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill, not a reimplementation |
 | `design-engineering` | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE |
 | `tekton` | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
 
@@ -191,7 +194,7 @@
 
 ## Aggregates
 
-- **Total skills**: 75
+- **Total skills**: 78
 - **Total category buckets**: 22
 - **Largest bucket**: Orchestration & autonomy (7)
 - **Smallest buckets** (1): Science

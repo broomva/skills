@@ -1,18 +1,18 @@
 name: test-ccr
 
-# Python test gate for the `ccr` skill (skills/ccr/). Path-filtered so it runs
-# ONLY when skills/ccr/** changes — the monorepo's tests-optional default
-# (lint-skill-md.yml) stands everywhere else.
+# Python test gate for the `ccr` skill (skills/knowledge/ccr/). Path-filtered so
+# it runs ONLY when skills/knowledge/ccr/** changes — the monorepo's
+# tests-optional default (lint-skill-md.yml) stands everywhere else.
 
 on:
   pull_request:
     paths:
-      - 'skills/ccr/**'
+      - 'skills/knowledge/ccr/**'
       - '.github/workflows/test-ccr.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/ccr/**'
+      - 'skills/knowledge/ccr/**'
       - '.github/workflows/test-ccr.yml'
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: skills/ccr
+    working-directory: skills/knowledge/ccr
 
 jobs:
   test:

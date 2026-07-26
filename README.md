@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 68 Tier-2 skills + the catalog/showcase. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 78 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**75 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**78 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -81,7 +81,9 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`bookkeeping`](skills/knowledge/bookkeeping/) | Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph |
 | [`braindump`](skills/knowledge/braindump/) | Takes raw unstructured thoughts, voice transcript dumps, or stream-of-consciousness text and auto-files them into the right Obsidian vault folders with tags,… |
+| [`ccr`](skills/knowledge/ccr/) | Reversible payload compression — shrink any blob (tool output, log, RAG chunk, file) **before** it enters context, while caching the original locally for byte-exact `retrieve(handle)` on demand. The payload-axis counterpart to `kg`'s retrieval axis. Content-routed deterministic compactors (JSON skeleton / code outline / text head-tail), stdlib-only, no ML |
 | [`colombia-conflict`](skills/knowledge/colombia-conflict/) | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
+| [`comprehend`](skills/knowledge/comprehend/) | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 
 ### Research — `skills/research/`
@@ -144,6 +146,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`arcan-glass`](skills/design/arcan-glass/) | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | [`brand-icons`](skills/design/brand-icons/) | Brand icon and visual identity management for BroomVA projects |
+| [`design-distill`](skills/design/design-distill/) | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill that fires existing tools in sequence rather than reimplementing them |
 | [`design-engineering`](skills/design/design-engineering/) | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE… |
 | [`tekton`](skills/design/tekton/) | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
 

@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 75 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 78 agent skills in the broomva/skills monorepo,
   organized into 22 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -22,7 +22,7 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-75 skills across 22 category buckets (mirroring the `skills/<category>/` directory layout):
+78 skills across 22 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
