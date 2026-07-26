@@ -107,23 +107,32 @@ is tracked separately. With no resolvable repo the count falls back to global �
 an ambiguous identity must not silently disable the ceiling.
 
 **Legacy state migration.** Rows written before repo stamping carry `repo: ""`.
-`p9` attributes them **once, durably**, at CLI entry — atomic temp+rename with
-fsync of both the file and the directory, every other field byte-identical, no
-row ever dropped. Two properties matter:
+`p9` keeps that key. It does **not** attribute them to the ambient repo — `""`
+is the row's true identity, and it is a perfectly good key: it collides with no
+real repo, so it can neither shadow one nor (under a repo-scoped ceiling) hold
+its slot. `current_pr_state(pr, "")` still reaches such a row, and `reap` /
+`rearm` still drain it. Nothing is discarded; only the guess.
 
-- Attributed rows are stamped **`repo_inferred: true`**, and that label is
-  permanent. Attribution makes an orphaned row *reachable*; it does not make
-  the guess true. Anything that leaves the process — spawning
-  `gh pr checks --repo X`, asking GitHub "is #N merged in X?" — refuses an
-  inferred repo, so `p9 rearm` never re-watches a PR in a repo it was never in
-  and `p9 cleanup` never folds a row off a foreign PR's state.
-- Unparseable lines are **quarantined** to `state.jsonl.corrupt`, not left in
-  place. `jsonl_read_all` tolerates a torn *last* line but treats mid-file
-  corruption as an invariant violation, so sealing a torn tail behind a newline
-  would wedge every state read one append later.
+Two review rounds established why attributing is worse than keeping `""`:
 
-With no resolvable repo the log is left exactly as-is — the legacy key is kept
-rather than guessed at, and the decline stays retryable.
+- it put a `gh repo view` call on every state read;
+- it let `p9 rearm` re-watch the PR against the ambient repo — and omitting
+  `--repo` from the child argv does **not** help, because the child calls
+  `resolve_repo(None)` itself and, sharing cwd and env, resolves the same
+  value. The observed chain ended in `gh pr merge` on a PR nobody targeted;
+- and when the ambient repo genuinely had a PR of the same number, the guess
+  *shadowed* the real row — recreating the exact defect BRO-1988 fixes.
+
+So a row with no recorded repo is **folded and not re-armed**. There is no
+correct repo to re-arm against; that is the whole content of "no repo
+recorded". Folding frees the concurrency slot, and recovery is an explicit
+`p9 watch <pr> --repo <owner/name> --adopt` — a human naming the repo p9
+could not.
+
+Unparseable lines are **quarantined** to `state.jsonl.corrupt`, not left in
+place. `jsonl_read_all` tolerates a torn *last* line but treats mid-file
+corruption as an invariant violation, so sealing a torn tail behind a newline
+would wedge every state read one append later.
 
 ### Lifecycle / self-healing
 

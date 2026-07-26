@@ -713,16 +713,22 @@ class TestP20Round1:
         out = json.loads(capsys.readouterr().out)
         assert all(r["kind"] == "pr-watch" for r in out["reports"])
 
-    def test_rearm_repo_less_row_is_folded_before_respawn(self, p9, monkeypatch, capsys):
-        """MINOR #8: a repo-less WATCHING row can never be matched by the
-        re-spawned watch --adopt; rearm must fold it itself.
+    def test_rearm_folds_a_repo_less_row_and_does_not_respawn(
+            self, p9, monkeypatch, capsys):
+        """MINOR #8, corrected. A repo-less WATCHING row is folded — and NOT
+        re-armed at all.
 
-        BRO-1988 round 2: this must hold **with an ambient repo resolvable**,
-        which is every real checkout. The fixture used to pin repo-less, and
-        that pin hid a live blocker — with an ambient repo the guard stopped
-        firing, the row was re-watched as `--repo <ambient>` against a PR
-        nobody targeted, and auto-merge could complete on it. So: assert the
-        fold happens AND that no repo is ever named to the child.
+        This test previously required a respawn (`assert spawned and "watch"
+        in spawned[0]`), and that requirement was itself the hazard: the
+        re-spawned child calls `resolve_repo(None)` and, sharing cwd and env
+        with its parent, resolves the ambient repo — so it watched a PR nobody
+        targeted and, with auto_merge enabled, could merge it. Omitting
+        `--repo` from the argv does not help; there is no correct repo to
+        re-arm against, so the only safe act is none.
+
+        The end-to-end version of this claim (real child, PATH-shimmed `gh`,
+        assert nothing was invoked) lives in
+        test_p9_repo_scoping.py::TestRepoLessRowIsNeverReArmed.
         """
         spawned = []
 
@@ -741,14 +747,14 @@ class TestP20Round1:
         monkeypatch.setattr(p9.subprocess, "Popen", fake_popen)
         rc = p9.main(["rearm", "--now", "--json"])
         assert rc == 0
-        # Migration attributed the row to the ambient repo (labelled inferred)
-        # and the fold landed on that same key — one terminal row, no leaked
-        # slot. What must NOT happen is the child being pointed at that repo.
-        assert p9.current_pr_state(55, AMBIENT) == p9.PRState.ABANDONED
+        # Folded on its OWN key — p9 never invents a repo for it — so the
+        # slot is freed without the row being attributed to anything.
+        assert p9.current_pr_state(55, "") == p9.PRState.ABANDONED
+        assert p9.current_pr_state(55, AMBIENT) is None
         assert p9.open_prs() == []
-        assert spawned and "watch" in spawned[0]
-        assert "--repo" not in spawned[0], (
-            f"rearm named a repo for a row that never recorded one: {spawned[0]}")
+        assert spawned == [], f"a watcher was re-armed for a repo-less row: {spawned}"
+        action = json.loads(capsys.readouterr().out)["rearmed"][0]
+        assert "no repo recorded" in action["skipped"]
 
     def test_webhook_channel_delivers_payload(self, p9, monkeypatch):
         calls = []
