@@ -947,6 +947,7 @@ _SLUG_LEAD_STOPWORDS = frozenset({
     "here", "there", "when", "where", "who", "whom", "whose", "which",
     "of", "in", "on", "at", "to", "for", "with", "by", "from", "into",
     "over", "under", "about", "after", "before", "during", "between",
+    "without", "within", "through", "across", "despite", "against", "upon",
     "first", "second", "third", "next", "last", "other", "another", "same",
 })
 
@@ -972,14 +973,31 @@ _SLUG_LEAD_VERBS = frozenset({
 # Copulas / auxiliaries / negations / subordinators. Their presence ANYWHERE in
 # the slug proves the phrase is a clause, not a name.
 # ("the-singularity-is-not", "agents-without-disclosing", "what-we-can-do")
+# Tokens that mark a slug as a lifted CLAUSE rather than a name.
+#
+# Deliberately NARROW. An earlier version also listed copulas and negation
+# ("is", "are", "was", "not", "no", "without", "has", "have", modals). Measured
+# against the live graph, that rejected 50 existing entity slugs, most of them
+# legitimate — this knowledge graph's convention is CLAIM-SHAPED names:
+#   completion-is-an-endpoint-projection
+#   correlated-verifier-is-no-verifier
+#   freshness-is-the-wrong-invariant
+#   gradient-is-a-vector-not-a-reprimand
+#   isolation-is-a-reachability-property
+#   accuracy-without-attention
+# A copula is the load-bearing word in those, not a defect. Rejecting it would
+# block the graph's highest-value pages from ever being (re)created.
+#
+# What actually separates a good claim-slug from a fragment is not the presence
+# of a verb but whether the slug DANGLES — ends on a function word, leads with a
+# determiner/imperative, or carries a pronoun/discourse adverb. Those are handled
+# by _SLUG_LEAD_STOPWORDS, _SLUG_LEAD_VERBS, _SLUG_TRAIL_STOPWORDS and
+# _SLUG_INTERIOR_REJECT. This set keeps only subordinators, which introduce a
+# dependent clause and never appear in a well-formed entity name.
 _SLUG_CLAUSE_TOKENS = frozenset({
-    "is", "isnt", "are", "arent", "was", "wasnt", "were", "werent",
-    "be", "been", "being", "am", "not", "cannot", "cant", "dont", "doesnt",
+    "unless", "whether", "because", "although", "though", "whereas",
+    "isnt", "arent", "wasnt", "werent", "cannot", "cant", "dont", "doesnt",
     "didnt", "wont", "wouldnt", "shouldnt", "couldnt", "hasnt", "havent",
-    "will", "would", "shall", "should", "can", "could", "may", "might",
-    "must", "has", "have", "had", "does", "did", "doing", "done",
-    "without", "unless", "whether", "because", "although", "though",
-    "therefore", "however", "instead", "while", "whereas",
 })
 
 # Function words that cannot legitimately END an entity name (dangling clause).
@@ -991,6 +1009,18 @@ _SLUG_TRAIL_STOPWORDS = frozenset({
     "it", "its", "we", "our", "your", "their", "his", "her", "they",
 })
 
+# Function words that betray a lifted sentence when they appear INTERIOR to a
+# slug. Deliberately excludes prepositions and conjunctions ("of", "as", "by",
+# "for", "in", "to", "and"), which occur in legitimate entity names.
+_SLUG_INTERIOR_REJECT = frozenset({
+    # pronouns / possessives
+    "their", "our", "your", "its", "my", "his", "her", "them", "us", "we",
+    "they", "you", "it", "he", "she", "me", "him", "i",
+    # discourse adverbs
+    "just", "also", "even", "very", "however", "therefore", "thus",
+    "hence", "moreover", "furthermore", "meanwhile", "instead", "already",
+    "actually", "really", "simply", "merely", "basically",
+})
 _SLUG_MIN_LEN = 3
 # How many times a curated LIFE_OS_TERMS name must recur in a body before an
 # incidental mention counts as the item being ABOUT that module. One mention is
@@ -1022,7 +1052,13 @@ def _sanitize_page_text(text: str) -> str:
     producer path, including templates and future callers.
     """
     return _CONTROL_CHAR_RE.sub("", text)
-_SLUG_MAX_TOKENS = 6
+# Claim-shaped names are this graph's convention and run long:
+#   gradient-is-a-vector-not-a-reprimand        (7)
+#   common-mode-vs-differential-mode-drift-sensing (7)
+#   server-only-guard-blocks-non-next-runtimes  (7)
+# A cap of 6 rejected all three. 8 still rejects lifted sentences, which run
+# longer and are caught by the lead/interior/trailing rules anyway.
+_SLUG_MAX_TOKENS = 8
 
 
 def is_entity_shaped_slug(slug: str) -> bool:
@@ -1046,7 +1082,30 @@ def is_entity_shaped_slug(slug: str) -> bool:
         return False
     if any(t in _SLUG_CLAUSE_TOKENS for t in tokens):
         return False
+    # Function words INTERIOR to the slug also mark a sentence, but only a
+    # narrow subset is safe to reject: prepositions and conjunctions appear in
+    # real names ("llm-as-index-architecture", "chain-of-thought",
+    # "gate-satisfiable-by-construction"), so rejecting every stopword anywhere
+    # would be a false-positive machine. Pronouns, possessives and discourse
+    # adverbs effectively never appear in an entity name and reliably indicate
+    # a lifted sentence — e.g. "anthropic-just-dropped-their-claude-skills",
+    # which the lead-position checks miss because it starts with a proper noun.
+    if any(t in _SLUG_INTERIOR_REJECT for t in tokens[1:]):
+        return False
     if len(tokens) > 1 and tokens[-1] in _SLUG_TRAIL_STOPWORDS:
+        return False
+    # Dangling gerund: a slug ending in "-ing" directly after a function word is
+    # a truncated clause ("agents-without-disclosing"), whereas the same
+    # preposition with a noun object is a real name ("accuracy-without-
+    # attention"). The preposition is NOT the signal — the trailing participle
+    # is. A gerund after a content word is fine and common here
+    # ("common-mode-vs-differential-mode-drift-sensing").
+    if (
+        len(tokens) > 2
+        and tokens[-1].endswith("ing")
+        and len(tokens[-1]) > 4
+        and (tokens[-2] in _SLUG_LEAD_STOPWORDS or tokens[-2] in _SLUG_TRAIL_STOPWORDS)
+    ):
         return False
     # A slug that is nothing but function words carries no referent.
     if all(t in _SLUG_LEAD_STOPWORDS or t in _SLUG_TRAIL_STOPWORDS for t in tokens):

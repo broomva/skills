@@ -136,10 +136,40 @@ class TestSlugShapeGate:
                   "see-the-appendix", "make-it-faster"):
             assert not is_entity_shaped_slug(s), s
 
-    def test_copula_negation_rejected(self):
-        for s in ("singularity-is-not-near", "agents-are-the-answer",
-                  "memory-cannot-drift", "what-we-can-do"):
+    def test_subordinator_and_contraction_rejected(self):
+        """Subordinators and negated contractions mark a lifted clause.
+
+        NOTE: an earlier version of this test also asserted that bare copulas
+        and negation ("is", "are", "not", "cannot") were rejected. Measured
+        against the live graph that rule rejected 50 existing entity slugs,
+        most of them legitimate — claim-shaped names are THIS knowledge
+        graph's convention:
+
+            completion-is-an-endpoint-projection
+            correlated-verifier-is-no-verifier
+            freshness-is-the-wrong-invariant
+            gradient-is-a-vector-not-a-reprimand
+            accuracy-without-attention
+
+        A copula is the load-bearing word in those, not a defect, so the rule
+        was wrong rather than the pages. What actually separates a claim-name
+        from a fragment is DANGLING — a determiner/imperative lead, a trailing
+        function word, or a pronoun/discourse adverb — which the other tests in
+        this class pin. Rejections here are narrowed to subordinators.
+        """
+        for s in ("value-because-cost", "ship-unless-blocked",
+                  "memory-cannot-drift", "agents-doesnt-scale"):
             assert not is_entity_shaped_slug(s), s
+
+    def test_claim_shaped_names_are_accepted(self):
+        """Regression guard for the 50-false-positive rule above."""
+        for s in ("completion-is-an-endpoint-projection",
+                  "correlated-verifier-is-no-verifier",
+                  "freshness-is-the-wrong-invariant",
+                  "gradient-is-a-vector-not-a-reprimand",
+                  "accuracy-without-attention",
+                  "proxy-boundary-gate-not-engine-enforced"):
+            assert is_entity_shaped_slug(s), s
 
     def test_dangling_function_word_rejected(self):
         assert not is_entity_shaped_slug("the-cost-of")
@@ -416,6 +446,9 @@ class TestResolveSlugCorruption:
 
     def test_resolve_candidates_drops_unshaped_slugs(self):
         out = resolve_candidates(GARBAGE_SLUGS + ["event-sourcing"], [])
+        # "agents-without-disclosing" is rejected for its DANGLING trailing
+        # participle, not for containing "without" — see
+        # test_subordinator_and_contraction_rejected.
         assert out == [("event-sourcing", False)]
 
 
