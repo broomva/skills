@@ -3018,6 +3018,16 @@ def run_pipeline(
                 if path is not None or dry_run:
                     entities_created += 1
                     existing_slugs.append(slug)
+                    # Keep slug_types in step with existing_slugs. It is
+                    # snapshotted once before the loop, so without this an
+                    # entity created EARLIER IN THE SAME RUN is visible to
+                    # exact matching but invisible to the fuzzy type guard —
+                    # a later near-miss candidate fails the type check and
+                    # mints a near-duplicate page, which is the very failure
+                    # mode this gate exists to prevent.
+                    slug_types.setdefault(slug, set()).add(
+                        _infer_entity_type(slug, scored.item)
+                    )
 
         items_promoted += 1
 
@@ -3306,6 +3316,13 @@ def cmd_promote(args: argparse.Namespace) -> None:
             promote_item(scored, slug, dry_run=args.dry_run, verbose=True)
             if not is_existing:
                 existing.append(slug)
+                # Same snapshot-vs-growing-list hazard as the run_pipeline
+                # create branch: slug_types is built once before the loop, so a
+                # slug created earlier in this run must be registered here or
+                # the fuzzy type guard cannot see it.
+                slug_types.setdefault(slug, set()).add(
+                    _infer_entity_type(slug, scored.item)
+                )
         promoted += 1
 
     print(f"\n[promote] Done: {promoted} items promoted from {path.name}")
