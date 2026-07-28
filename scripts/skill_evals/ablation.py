@@ -66,6 +66,7 @@ ABLATION_MARGIN = 0.10
 VERDICT_NAME_COLLISION = "inconclusive-name-collision"
 VERDICT_UNDERPOWERED = "inconclusive-underpowered"
 VERDICT_NO_TRIGGER = "inconclusive-no-trigger"
+VERDICT_WEAK_CHECKS = "inconclusive-weak-checks"
 VERDICT_RETIRE = "retire-candidate"
 VERDICT_LOAD_BEARING = "load-bearing"
 VERDICT_INDETERMINATE = "indeterminate"
@@ -137,6 +138,10 @@ class ArmStats:
     graded_positive_trials: int
     outcome_passes: int
     trigger_events: int
+    #: How many graded checks FAILED in this arm. The discriminating-power counter:
+    #: if no check ever failed in either arm, a lift of zero is a tautology rather
+    #: than evidence of absorption.
+    check_failures: int = 0
 
     @property
     def outcome_pass_rate(self) -> float | None:
@@ -154,6 +159,7 @@ class ArmStats:
             "outcome_passes": self.outcome_passes,
             "outcome_pass_rate": self.outcome_pass_rate,
             "trigger_rate": self.trigger_rate,
+            "check_failures": self.check_failures,
         }
 
 
@@ -163,6 +169,10 @@ def arm_stats(report: dict[str, Any], non_pass: Sequence[str]) -> ArmStats:
         graded_positive_trials=len(trials),
         outcome_passes=sum(1 for t in trials if outcome_passed(t)),
         trigger_events=sum(1 for t in trials if t.get("triggered")),
+        check_failures=sum(
+            1 for t in trials for c in (t.get("checks") or [])
+            if _check_passed(c) is False
+        ),
     )
 
 
@@ -241,6 +251,25 @@ def decide_verdict(
             f"(present={present.graded_positive_trials}, absent={absent.graded_positive_trials}); "
             "raise --trials or add positive cases",
         )
+    # A retirement verdict needs the graded checks to have DEMONSTRATED that they can
+    # fail. If none ever did — in either arm — then lift is 0.0 by construction and
+    # says nothing about absorption; it says the checks do not discriminate.
+    #
+    # This is the shape kg's committed prompt set actually has: once the trigger check
+    # is (correctly) excluded from both arms, its remaining assertions are "a non-empty
+    # final answer" and "no permission denials", which an uninstalled baseline satisfies
+    # trivially. Lift is then exactly 0.0 regardless of how well the skill works, and
+    # the interval narrows below the margin as soon as n/arm >= 36 — at --trials 4,
+    # while the README recommends ~30 per arm. So the RECOMMENDED operating point was
+    # the false-retire regime.
+    if not (present.check_failures or absent.check_failures):
+        return undecided(
+            VERDICT_WEAK_CHECKS,
+            "no graded check failed in either arm, so the lift is 0.0 by construction "
+            "— these checks cannot tell the two arms apart. Strengthen the prompt set's "
+            "expected_checks before reading this as absorption",
+        )
+
     trig = present.trigger_rate
     if trig is None or trig < 0.5:
         return undecided(

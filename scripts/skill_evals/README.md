@@ -342,6 +342,7 @@ which is in `NON_PASS_ERRORS` and so drops out of `graded_trials` for free.
 | `indeterminate` | the interval straddles the margin — more trials needed |
 | `inconclusive-underpowered` | fewer than 10 graded positive trials in an arm |
 | `inconclusive-no-trigger` | present-arm trigger rate < 0.5 — cannot separate absorption from a trigger failure |
+| `inconclusive-weak-checks` | no graded check failed in *either* arm — lift is 0.0 by construction, so the checks cannot tell the arms apart |
 | `inconclusive-name-collision` | the name is a CLI built-in, so there is no absent arm |
 
 Every inconclusive verdict serialises `"skill_lift": null` — **never `0.0`**, because a
@@ -351,9 +352,14 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 
 - **The baseline is not a bare model.** The absent arm still has the CLI's built-in
   skills, so lift is marginal value over *those*.
-- **Tool-bearing skills are not comparable.** For `p9`, `kg`, `dogfood` the absent arm
-  removes executable scripts, not just instructions, so lift approaches 1.0 for a
-  reason unrelated to description rent.
+- **Tool-bearing skills are not comparable**, and the mechanic pushes the *opposite*
+  way from what you would guess. For `p9`, `kg`, `dogfood` the absent arm removes
+  executable scripts, so you might expect lift near 1.0 — but only if the prompt set's
+  `expected_checks` can actually detect the difference. `kg`'s committed set asserts a
+  non-empty answer and no permission denials, both of which an uninstalled baseline
+  satisfies, so its measured lift is exactly 0.0 and the verdict is
+  `inconclusive-weak-checks`. The check suite, not the skill, is the binding
+  constraint there.
 - **Absorption is a non-inferiority claim** and cannot be proven by a point estimate
   of zero. At the default 3 trials the interval is roughly ±0.28 wide, so most honest
   verdicts are `indeterminate`; a real retirement decision needs ~30 positive trials

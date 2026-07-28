@@ -125,9 +125,13 @@ def test_difference_interval_is_uninformative_with_no_data():
 # ---------------------------------------------------------------------------
 
 
-def stats(n, passes, triggers=None):
+def stats(n, passes, triggers=None, fails=None):
+    """`fails` defaults to n - passes: a trial that did not pass its outcome checks
+    did so BECAUSE a check failed, which is what gives the suite discriminating
+    power. Pass fails=0 explicitly to model checks that never fail anywhere."""
     return A.ArmStats(graded_positive_trials=n, outcome_passes=passes,
-                      trigger_events=n if triggers is None else triggers)
+                      trigger_events=n if triggers is None else triggers,
+                      check_failures=(n - passes) if fails is None else fails)
 
 
 def test_a_name_collision_refuses_before_spending():
@@ -333,13 +337,14 @@ def test_the_numerator_is_arm_symmetric():
     absent = report(skill="kg", cases=[case(True, [absent_trial()] * 27)])
 
     cmp = A.compare(present, absent, non_pass=NON_PASS, min_trials=10)
-    assert cmp["skill_lift"] == 0.0, cmp
     assert cmp["verdict"] != A.VERDICT_RETIRE, (
         "a skill passing its own eval gate must not be recommended for deletion")
-    assert cmp["verdict"] == A.VERDICT_INDETERMINATE, cmp
+    # kg's remaining checks cannot tell the arms apart once the trigger check is
+    # excluded from both, so the honest verdict is weak-checks and there is NO number.
+    assert cmp["verdict"] == A.VERDICT_WEAK_CHECKS, cmp
+    assert cmp["skill_lift"] is None, cmp
     # the trigger signal is not lost — it is reported on its own axis
     assert cmp["present"]["trigger_rate"] == pytest.approx(22 / 27)
-    assert cmp["end_to_end_lift"] is not None
     assert kg_checks  # documents the real shape this reconstructs
 
 
@@ -406,3 +411,57 @@ def test_ablate_dry_run_still_works():
         "--cli", "/bin/true", "--no-version-check", "--ablate", "--dry-run",
     ])
     assert rc == R.EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# round-2: the false retire survived the first fix, one operating point away
+# ---------------------------------------------------------------------------
+
+
+def test_checks_that_never_fail_cannot_support_a_retirement():
+    """The first fix moved the false retire from --trials 3 to --trials 4 — and the
+    README recommends ~30 trials per arm, so the RECOMMENDED operating point was the
+    false-retire regime.
+
+    Once `skill_triggered` is (correctly) excluded from both arms, kg's committed
+    prompt set asserts only "a non-empty final answer" and "no permission denials",
+    which an uninstalled baseline satisfies trivially. Lift is then exactly 0.0
+    regardless of how well the skill works, and the interval narrows below the margin
+    at n/arm >= 36. A lift of zero from checks that never failed is a tautology, not
+    evidence of absorption.
+    """
+    for n in (36, 45, 90):
+        v = A.decide_verdict(stats(n, n, fails=0), stats(n, n, triggers=0, fails=0),
+                             min_trials=10)
+        assert v["verdict"] == A.VERDICT_WEAK_CHECKS, (n, v)
+        assert v["skill_lift"] is None, "and it must not publish a number"
+
+
+def test_retirement_is_still_reachable_on_discriminating_evidence():
+    """FALSE-POSITIVE control, and the one that matters: the guard must not make
+    retirement impossible — only unearned retirement."""
+    present = A.ArmStats(90, 80, 90, check_failures=10)
+    absent = A.ArmStats(90, 80, 0, check_failures=10)
+    v = A.decide_verdict(present, absent, min_trials=10)
+    assert v["verdict"] == A.VERDICT_RETIRE
+    assert v["skill_lift"] == 0.0
+
+
+def test_a_load_bearing_skill_is_unaffected():
+    present = A.ArmStats(90, 88, 90, check_failures=4)
+    absent = A.ArmStats(90, 5, 0, check_failures=85)
+    v = A.decide_verdict(present, absent, min_trials=10)
+    assert v["verdict"] == A.VERDICT_LOAD_BEARING
+    assert v["skill_lift"] > 0.9
+
+
+def test_check_failures_are_counted_from_the_graded_checks_only():
+    """A skipped check is not a failure, and neither is a trigger check excluded in
+    both arms — or the counter would report discriminating power that is not there."""
+    rep = report(cases=[case(True, [
+        trial("PASS", [chk("skill_triggered", passed=False), chk("x", passed=True)]),
+        trial("PASS", [chk("skill_triggered", skipped=True), chk("x", passed=True)]),
+        trial("FAIL", [chk("x", passed=False)]),
+    ])])
+    st = A.arm_stats(rep, NON_PASS)
+    assert st.check_failures == 1, "only the real outcome-check failure counts"
