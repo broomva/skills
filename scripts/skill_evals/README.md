@@ -292,6 +292,63 @@ dependency happened to be installed, so a fixture recorded on one machine would
 read as stale on another. Agreement between the two paths is what makes the hash
 environment-independent, and it is asserted, not assumed.
 
+## Is the skill still earning its rent? (`--ablate`)
+
+Capability skills are temporary — every model release absorbs a little more of what
+they encode, and an absorbed skill is pure cost. `--ablate` runs the same prompt set
+twice, with the skill installed and without, and reports the difference.
+
+```bash
+python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --dry-run
+python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate
+```
+
+Negatives are not re-run in the baseline: an uninstalled skill cannot over-trigger,
+so the case asserts nothing and spending on it is just spending. They score
+`NOT_COMPARABLE`.
+
+**The grading has to change, not just the workspace.** In the absent arm
+`should_trigger` is meaningless. Scoring it with the present arm's rules gives the
+baseline a guaranteed zero — every skill looks maximally load-bearing and the sweep
+recommends nothing. So the baseline is graded on **outcome checks only**, and
+trigger-dependent checks are recorded with `passed: null`. Counting them *passed*
+inflates the baseline (lift too low → retire something load-bearing); counting them
+*failed* zeroes it (lift too high → the original vacuity).
+
+**`expect_visible` is now a bidirectional contract.** It used to be a skip switch, so
+a skill that leaked into the baseline scored as an ordinary result and the lift came
+out at zero — indistinguishable from absorption. A leaked baseline trial is `LEAKED`,
+which is in `NON_PASS_ERRORS` and so drops out of `graded_trials` for free.
+
+| verdict | meaning |
+|---|---|
+| `load-bearing` | the 95% interval for the lift is entirely above zero |
+| `retire-candidate` | the whole interval sits below the margin (default 0.10) |
+| `indeterminate` | the interval straddles the margin — more trials needed |
+| `inconclusive-underpowered` | fewer than 10 graded positive trials in an arm |
+| `inconclusive-no-trigger` | present-arm trigger rate < 0.5 — cannot separate absorption from a trigger failure |
+| `inconclusive-name-collision` | the name is a CLI built-in, so there is no absent arm |
+
+Every inconclusive verdict serialises `"skill_lift": null` — **never `0.0`**, because a
+defaulted zero reads as perfect absorption, the most dangerous vacuity available here.
+
+Three limits the harness cannot remove, each of which changes what a verdict is worth:
+
+- **The baseline is not a bare model.** The absent arm still has the CLI's built-in
+  skills, so lift is marginal value over *those*.
+- **Tool-bearing skills are not comparable.** For `p9`, `kg`, `dogfood` the absent arm
+  removes executable scripts, not just instructions, so lift approaches 1.0 for a
+  reason unrelated to description rent.
+- **Absorption is a non-inferiority claim** and cannot be proven by a point estimate
+  of zero. At the default 3 trials the interval is roughly ±0.28 wide, so most honest
+  verdicts are `indeterminate`; a real retirement decision needs ~30 positive trials
+  per arm (≈60 live CLI runs per skill).
+
+`--ablate` is **report-only** and can never soften the existing gate. An unusable
+baseline gets its own exit code (`4`), because nothing is wrong with the skill — the
+*measurement* is void, and reporting that as a threshold failure would send a reader
+to fix the wrong thing. `--fail-on-retire-candidate` is opt-in.
+
 ## What replay does and does not guarantee
 
 Being precise about this is load-bearing: an earlier version of this file claimed
@@ -337,9 +394,6 @@ python3 tests/skill_evals/fixtures/harness-selftest/generate.py
 
 ## Seams left open
 
-* **`--ablate`** (BRO-2006) — `VISIBILITY_REGISTRY` in `runner.py`. Skill visibility is
-  already a parameter of workspace construction and of grading (`expects_visible`);
-  the ablation arm is one registration plus a flag.
 * **LLM judge** — `make_judge_check` / `JUDGE_SCHEMA` in `checks.py`. Deliberately
   raises rather than stubbing a pass. Keep it a minority of any prompt set: if a
   skill's verdict hinges on judge calls, the outcome wasn't specified sharply enough.
