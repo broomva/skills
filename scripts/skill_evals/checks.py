@@ -77,7 +77,7 @@ class CheckContext:
         parts = [
             json.dumps(tu.input, ensure_ascii=False)
             for tu in self.transcript.tool_uses()
-            if (not wanted or tu.name in wanted) and self.transcript.executed_successfully(tu)
+            if (not wanted or tu.name in wanted) and self.transcript.executed(tu)
         ]
         return "\n".join(parts)
 
@@ -180,7 +180,7 @@ def _candidate_tool_uses(ctx: CheckContext) -> list["ToolUse"]:
     """
     out: list["ToolUse"] = []
     for tu in ctx.transcript.tool_uses():
-        if not ctx.transcript.executed_successfully(tu):
+        if not ctx.transcript.executed(tu):
             continue
         blob = json.dumps(tu.input, ensure_ascii=False)
         if refers_to_skill_content(ctx.skill, blob, ctx.workspace):

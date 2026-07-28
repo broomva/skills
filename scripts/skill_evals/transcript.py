@@ -141,6 +141,12 @@ class ToolUse:
         return self.parent_tool_use_id is not None
 
 
+#: The CLI wraps a REFUSAL in this marker: a permission denial, a Read-before-Edit
+#: rejection, a malformed call. It means the tool never did anything. Its absence on
+#: an ``is_error`` result means the tool RAN and reported a non-zero status.
+REFUSAL_MARKER = "<tool_use_error>"
+
+
 @dataclass(frozen=True)
 class ToolResult:
     """One ``tool_result`` block — what the CLI said actually happened (BRO-2016).
@@ -153,6 +159,26 @@ class ToolResult:
     tool_use_id: str
     is_error: bool
     content: str = ""
+
+    @property
+    def refused(self) -> bool:
+        """Did the tool decline to run at all — as opposed to running and failing?
+
+        ``is_error`` alone cannot answer this, and the difference is most of the
+        corpus. Measured over 500 real session transcripts: of 489 errored ``Bash``
+        results, **450 (92%) are ``Exit code N``** — the shell ran, the command
+        exited non-zero. ``grep`` with no matches exits 1; so does ``ls`` on a path
+        that is legitimately absent, in a run that then recovers with ``find`` and
+        genuinely inspects the tree. Treating those as "did not run" strips their
+        inputs from evidence and fails a correct run.
+
+        ``Write`` is the mirror image and the reason this fix exists at all: 212 of
+        212 errored ``Write`` results are refusals, every one a Read-before-Edit
+        rejection — precisely the shape that used to false-pass ``documents_finding``.
+
+        So the discriminator is the marker, not the flag.
+        """
+        return self.is_error and REFUSAL_MARKER in self.content
 
 
 def _is_error_flag(value: Any) -> bool:
@@ -279,6 +305,14 @@ class Transcript:
         return out
 
     def tool_results(self) -> dict[str, "ToolResult"]:
+        cached = getattr(self, "_tool_results_cache", None)
+        if cached is not None:
+            return cached
+        built = self._build_tool_results()
+        object.__setattr__(self, "_tool_results_cache", built)
+        return built
+
+    def _build_tool_results(self) -> dict[str, "ToolResult"]:
         """Every ``tool_result``, keyed by the ``tool_use_id`` it answers.
 
         BY ID, never by order: parallel tool calls were observed live resolving out
@@ -316,15 +350,20 @@ class Transcript:
         """
         return bool(self.tool_results())
 
-    def executed_successfully(self, tu: "ToolUse | str") -> bool:
+    def executed(self, tu: "ToolUse | str") -> bool:
         """ROOT PREDICATE (BRO-2016): did this tool call actually RUN?
+
+        Note the question. Not "did it succeed" — a command that runs and exits
+        non-zero HAS run, and its inputs are evidence of what the agent did. Asking
+        the wrong one of those two questions is a measured false-negative machine:
+        92% of errored ``Bash`` results in the real corpus are a shell that ran (see
+        :attr:`ToolResult.refused`).
 
         Every tool-side evidence check funnels through here, so the three-valued
         reality is collapsed once, in one place, rather than approximated per check:
 
-        * a matching result flagged as an error -> **False**. It errored. This is the
-          ticket's core claim and it is unconditional.
-        * a matching result otherwise -> **True**. It ran.
+        * a matching result that REFUSED -> **False**. The tool never acted.
+        * a matching result otherwise -> **True**. It ran, whatever it returned.
         * no matching result -> it depends, and the tie-breakers are what stop this
           fix from becoming a false-negative machine:
 
@@ -346,10 +385,15 @@ class Transcript:
         results = self.tool_results()
         found = results.get(tuid) if tuid else None
         if found is not None:
-            return not found.is_error
+            return not found.refused
         if not isinstance(tu, str) and tu.is_subagent:
             return True
         return not results
+
+    def executed_successfully(self, tu: "ToolUse | str") -> bool:
+        """Deprecated alias for :meth:`executed`, kept so a stale call site fails
+        loudly in review rather than silently asking the wrong question."""
+        return self.executed(tu)
 
     def tool_call_failed(self, tool_use_id: str) -> bool:
         """True only on a DEMONSTRATED failure. Deliberately weaker than
@@ -514,7 +558,7 @@ class Transcript:
         for tu in self.tool_uses():
             if tu.name not in RECOVERY_TOOLS:
                 continue
-            if not self.executed_successfully(tu):
+            if not self.executed(tu):
                 continue
             blob = json.dumps(tu.input, ensure_ascii=False)
             if refers_to_skill_content(skill, blob, workspace):

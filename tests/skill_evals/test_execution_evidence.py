@@ -50,7 +50,18 @@ def ev_ok(tid, content="done"):
                 {"type": "tool_result", "tool_use_id": tid, "content": content}]}}
 
 
-def ev_err(tid, content="Error: Exit code 1"):
+def ev_err(tid, content="<tool_use_error>the tool refused</tool_use_error>"):
+    """A REFUSAL — the tool never acted. The marker is the discriminator."""
+    return {"type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tid, "is_error": True,
+                 "content": content}]},
+            "tool_use_result": content}
+
+
+def ev_ran_nonzero(tid, content="Exit code 1\nls: /nope: No such file or directory"):
+    """The command RAN and exited non-zero. `is_error` is set, but nothing was
+    refused — 92% of errored Bash results in the real corpus are this shape."""
     return {"type": "user",
             "message": {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": tid, "is_error": True,
@@ -225,16 +236,64 @@ def test_documents_finding_still_passes_on_a_write_that_landed():
     assert res.passed, res.detail
 
 
-def test_walks_repo_rejects_a_failed_traversal():
+def test_walks_repo_rejects_a_traversal_the_tool_REFUSED():
+    """A refusal means nothing was traversed."""
     stream = ndjson(
         ev_init(),
-        ev_tool_use("Bash", {"command": "ls -la /nope"}, tid="toolu_01"),
-        ev_err("toolu_01", "Exit code 1\nls: /nope: No such file or directory"),
+        ev_tool_use("Bash", {"command": "ls -la /etc"}, tid="toolu_01"),
+        ev_err("toolu_01", "<tool_use_error>permission denied</tool_use_error>"),
         ev_text("Looked around."),
         ev_result("Looked around."),
     )
     res = checks_mod.CHECK_REGISTRY["walks_repo_tree_and_canonical_files"](ctx_for(stream))
     assert not res.passed, res.detail
+
+
+def test_a_command_that_RAN_and_exited_nonzero_is_still_evidence():
+    """THE correction, found by cross-review and confirmed on the corpus.
+
+    `is_error: true` conflates two different things, and for Bash it is
+    overwhelmingly the harmless one: of 489 errored Bash results across 500 real
+    session transcripts, **450 (92%) are `Exit code N`** — the shell ran. `grep`
+    with no matches exits 1; so does `ls` on a legitimately absent path in a run
+    that then recovers with `find` and genuinely inspects the tree.
+
+    Condemning those strips their inputs from evidence and FAILS A CORRECT RUN,
+    which is the overshoot this repo is named for. The question the predicate asks
+    is "did it run", not "did it succeed".
+    """
+    stream = ndjson(
+        ev_init(),
+        ev_tool_use("Bash", {"command": "ls -la docs/inbox"}, tid="toolu_01"),
+        ev_ran_nonzero("toolu_01"),
+        ev_tool_use("Bash", {"command": "find . -name '*.rs'"}, tid="toolu_02"),
+        ev_ok("toolu_02", "src/lib.rs"),
+        ev_text("Looked around."),
+        ev_result("Looked around."),
+    )
+    t = Transcript.from_ndjson(stream)
+    by_id = {tu.id: tu for tu in t.tool_uses()}
+    assert t.executed(by_id["toolu_01"]) is True, "a shell that ran is not a refusal"
+    assert checks_mod.CHECK_REGISTRY["walks_repo_tree_and_canonical_files"](
+        ctx_for(stream)).passed
+
+
+def test_write_rejections_are_still_caught():
+    """The mirror image, and the reason this fix exists: 212 of 212 errored Write
+    results in the corpus ARE refusals (Read-before-Edit rejections). The
+    correction above must not weaken this."""
+    stream = ndjson(
+        ev_init(),
+        ev_tool_use("Write", {"file_path": "research/notes/finding.md", "content": "x"},
+                    tid="toolu_01"),
+        ev_err("toolu_01",
+               "<tool_use_error>File has not been read yet. Read it first.</tool_use_error>"),
+        ev_text("All set."),
+        ev_result("All set."),
+    )
+    t = Transcript.from_ndjson(stream)
+    assert t.executed(t.tool_uses()[0]) is False
+    assert not checks_mod.CHECK_REGISTRY["documents_finding"](ctx_for(stream)).passed
 
 
 def test_walks_repo_still_passes_on_a_traversal_that_ran():
@@ -344,6 +403,32 @@ def test_a_successful_skill_md_read_is_still_recovery():
 # ---------------------------------------------------------------------------
 # the committed fixtures must keep exercising the tool arm
 # ---------------------------------------------------------------------------
+
+
+def test_the_result_index_is_built_once_not_per_tool_call(monkeypatch):
+    """`executed()` is called once per tool_use by the evidence funnel, and each
+    call used to rebuild the index by walking every event — quadratic, measured at
+    ~1.4s per trial on a 600-call transcript. Asserted by COUNTING builds rather
+    than by timing, so it cannot flake on a loaded machine."""
+    stream = ndjson(
+        ev_init(),
+        *[e for i in range(20) for e in (
+            ev_tool_use("Bash", {"command": f"ls {i}"}, tid=f"toolu_{i}"),
+            ev_ok(f"toolu_{i}"),
+        )],
+        ev_result("done"),
+    )
+    t = Transcript.from_ndjson(stream)
+    builds = {"n": 0}
+    real = t._build_tool_results
+
+    def counting():
+        builds["n"] += 1
+        return real()
+
+    monkeypatch.setattr(t, "_build_tool_results", counting)
+    assert all(t.executed(tu) for tu in t.tool_uses())
+    assert builds["n"] == 1, f"index rebuilt {builds['n']} times for 20 calls"
 
 
 def test_every_committed_fixture_resolves_every_tool_call():

@@ -63,10 +63,24 @@ it must not double as proof the artifact was ingested.
 And a tool call is evidence only if it **ran**. A `tool_use` block is the agent's
 *claim* to have called something; the matching `tool_result` is what happened. A
 `Write` the Read-before-Edit hook rejected used to prove `documents_finding`, and a
-`Skill` call whose launch returned `success: false` used to count as a trigger —
-neither is hypothetical: 28 of 84 `Write` results in a real-transcript sample carry
-`is_error: true`. Results are paired to calls **by `tool_use_id`, never by order**,
-because parallel calls resolve out of order.
+`Skill` call whose launch returned `success: false` used to count as a trigger.
+Results are paired to calls **by `tool_use_id`, never by order**, because parallel
+calls resolve out of order.
+
+"Ran" is not "succeeded", and getting that backwards is a false-negative machine.
+`is_error: true` covers two different events, and which one dominates depends
+entirely on the tool. Measured over 500 real session transcripts:
+
+| tool | errored results | of which the tool **refused** |
+|---|---|---|
+| `Bash` | 489 | 39 (8%) — the other 450 are `Exit code N`, i.e. the shell ran |
+| `Write` | 212 | 212 (100%) — every one a Read-before-Edit rejection |
+
+`grep` with no matches exits 1. So does `ls` on a legitimately absent path, in a run
+that recovers with `find` and genuinely inspects the tree. The discriminator is
+therefore the CLI's `<tool_use_error>` marker, which wraps a refusal, and not the
+`is_error` flag. An earlier version of this fix used the flag and was proven by
+cross-review to fail correct runs on the tool that carries most of the evidence.
 
 The carve-out matters as much as the rule: a transcript that models **no** results
 at all is not evidence that its calls failed, so it is not condemned. Absence of
