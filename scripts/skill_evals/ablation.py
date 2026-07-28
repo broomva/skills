@@ -45,8 +45,16 @@ vacuity available here.
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE.parent) not in sys.path:
+    sys.path.insert(0, str(_HERE.parent))
+
+from skill_evals import checks as checks_mod  # noqa: E402
 
 #: Below this many graded positive trials per arm, say "underpowered" rather than
 #: report a verdict a reader would act on.
@@ -69,8 +77,31 @@ VERDICT_INDETERMINATE = "indeterminate"
 
 
 def _check_passed(entry: dict[str, Any]) -> bool | None:
-    """``None`` for a check that was skipped in this arm — neither pass nor fail."""
+    """``None`` for a check that does not count toward the lift — neither pass nor fail.
+
+    A trigger-dependent check is excluded in BOTH arms, not only in the one that
+    marked it skipped. That is what makes the numerator arm-SYMMETRIC, and getting it
+    wrong does not round the answer off — it inverts it.
+
+    The first version excluded only what the absent arm had flagged, so the present
+    arm was graded on a strict SUPERSET: it had to fire AND satisfy the outcome
+    checks, while the baseline only had to satisfy the outcome checks. Every
+    present-arm trial where the skill did not fire became a lift PENALTY.
+
+    Reproduced on ``kg``'s committed prompt set — 9 positive cases, every one
+    asserting ``skill_triggered`` — at default flags: a skill firing on 22 of 27
+    trials (81%, which clears the harness's own 0.80 threshold) against a baseline
+    that trivially satisfies "non-empty answer, no permission denials" scores lift
+    **-0.19**, CI [-0.37, -0.02], verdict **retire-candidate**. A skill that passes
+    its own eval gate, recommended for deletion — the one consequence this module
+    exists to prevent, produced by the line named "the arm-symmetric numerator".
+
+    Nothing is lost by excluding it: trigger behaviour is reported separately and
+    correctly through :attr:`ArmStats.trigger_rate` and ``end_to_end_lift``.
+    """
     if entry.get("skipped"):
+        return None
+    if entry.get("check_id") in checks_mod.TRIGGER_DEPENDENT_CHECKS:
         return None
     passed = entry.get("passed")
     return bool(passed) if passed is not None else None

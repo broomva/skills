@@ -303,6 +303,12 @@ python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --dry
 python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate
 ```
 
+`--ablate` is **live-only**. It refuses `--replay` (both arms would replay the same
+fixtures, so the baseline is 100% `LEAKED` by construction) and `--record` (fixtures
+are stored per *case*, not per *arm*, so the absent arm would overwrite the present
+arm's transcripts and destroy the evidence just paid for). Both are refusals rather
+than caveats because each mode silently produced a wrong artifact.
+
 Negatives are not re-run in the baseline: an uninstalled skill cannot over-trigger,
 so the case asserts nothing and spending on it is just spending. They score
 `NOT_COMPARABLE`.
@@ -314,6 +320,15 @@ recommends nothing. So the baseline is graded on **outcome checks only**, and
 trigger-dependent checks are recorded with `passed: null`. Counting them *passed*
 inflates the baseline (lift too low → retire something load-bearing); counting them
 *failed* zeroes it (lift too high → the original vacuity).
+
+The exclusion applies to **both arms**, which is what makes the numerator
+arm-*symmetric* and is not a detail. Excluding it only where the absent arm flagged it
+grades the present arm on a strict superset — fire *and* satisfy the outcome checks,
+versus satisfy the outcome checks — so every trial where the skill did not fire
+becomes a lift penalty. On `kg`'s committed prompt set at default flags, a skill
+firing on 81% of trials (clearing the harness's own 0.80 threshold) scored lift
+**−0.19** and verdict **`retire-candidate`**. Trigger behaviour is not lost; it is
+reported on its own axis as `trigger_rate` and `end_to_end_lift`.
 
 **`expect_visible` is now a bidirectional contract.** It used to be a skip switch, so
 a skill that leaked into the baseline scored as an ordinary result and the lift came

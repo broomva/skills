@@ -18,6 +18,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -291,3 +293,116 @@ def test_a_positive_with_a_real_outcome_check_is_not_flagged():
     }
     _errors, warnings = R.validate_prompt_set(doc)
     assert not any("bias the lift upward" in w for w in warnings), warnings
+
+
+# ---------------------------------------------------------------------------
+# defects found by cross-review of PR #114
+# ---------------------------------------------------------------------------
+
+
+def test_the_numerator_is_arm_symmetric():
+    """THE blocker. The present arm was graded on a strict SUPERSET of the absent
+    arm's checks — it had to fire AND satisfy the outcome checks, while the baseline
+    only had to satisfy the outcome checks. Every present-arm trial where the skill
+    did not fire became a lift PENALTY.
+
+    Reproduced on `kg`'s real committed shape: 9 positive cases, every one asserting
+    ['skill_triggered','final_answer_non_empty','no_permission_denials'], at the
+    default --trials 3 = 27 graded trials per arm. A skill firing on 22/27 (81% —
+    clearing the harness's OWN 0.80 threshold) against a baseline that trivially
+    satisfies the two weak outcome checks scored `retire-candidate`.
+    """
+    kg_checks = ["skill_triggered", "final_answer_non_empty", "no_permission_denials"]
+
+    def present_trial(fired: bool):
+        return trial("PASS" if fired else "FAIL", [
+            chk("skill_triggered", passed=fired),
+            chk("final_answer_non_empty", passed=True),
+            chk("no_permission_denials", passed=True),
+        ], triggered=fired)
+
+    def absent_trial():
+        return trial("PASS", [
+            chk("skill_triggered", skipped=True),
+            chk("final_answer_non_empty", passed=True),
+            chk("no_permission_denials", passed=True),
+        ])
+
+    present = report(skill="kg", cases=[case(True,
+        [present_trial(True)] * 22 + [present_trial(False)] * 5)], positive_pass_rate=22 / 27)
+    absent = report(skill="kg", cases=[case(True, [absent_trial()] * 27)])
+
+    cmp = A.compare(present, absent, non_pass=NON_PASS, min_trials=10)
+    assert cmp["skill_lift"] == 0.0, cmp
+    assert cmp["verdict"] != A.VERDICT_RETIRE, (
+        "a skill passing its own eval gate must not be recommended for deletion")
+    assert cmp["verdict"] == A.VERDICT_INDETERMINATE, cmp
+    # the trigger signal is not lost — it is reported on its own axis
+    assert cmp["present"]["trigger_rate"] == pytest.approx(22 / 27)
+    assert cmp["end_to_end_lift"] is not None
+    assert kg_checks  # documents the real shape this reconstructs
+
+
+def test_a_present_trial_failing_only_the_trigger_check_does_not_depress_lift():
+    """The minimal form of the same defect."""
+    fired = trial("PASS", [chk("skill_triggered", passed=True), chk("x", passed=True)],
+                  triggered=True)
+    missed = trial("FAIL", [chk("skill_triggered", passed=False), chk("x", passed=True)])
+    absent = trial("PASS", [chk("skill_triggered", skipped=True), chk("x", passed=True)])
+
+    assert A.outcome_passed(fired) is True
+    assert A.outcome_passed(missed) is True, "outcome quality was identical; only the trigger differed"
+    assert A.outcome_passed(absent) is True
+
+
+def test_a_real_outcome_failure_still_counts():
+    """FALSE-POSITIVE control: excluding the trigger check must not blunt the
+    measurement of the checks that DO differ between arms."""
+    good = trial("PASS", [chk("skill_triggered", passed=True), chk("x", passed=True)],
+                 triggered=True)
+    bad = trial("FAIL", [chk("skill_triggered", passed=True), chk("x", passed=False)],
+                triggered=True)
+    assert A.outcome_passed(good) is True
+    assert A.outcome_passed(bad) is False
+
+    present = report(cases=[case(True, [good] * 30)], positive_pass_rate=1.0)
+    absent = report(cases=[case(True, [
+        trial("FAIL", [chk("skill_triggered", skipped=True), chk("x", passed=False)])] * 30)])
+    cmp = A.compare(present, absent, non_pass=NON_PASS, min_trials=10)
+    assert cmp["skill_lift"] == 1.0
+    assert cmp["verdict"] == A.VERDICT_LOAD_BEARING
+
+
+def test_ablate_refuses_replay():
+    """Both arms would replay the SAME fixtures, so the baseline is 100% LEAKED by
+    construction — the flag advertised a mode that could never produce a number."""
+    rc = R.main([
+        "--skill-dir", "tests/skill_evals/fixtures/harness-selftest/skill",
+        "--prompts", "tests/skill_evals/fixtures/harness-selftest/evals/prompts.json",
+        "--replay", "tests/skill_evals/fixtures/harness-selftest",
+        "--allow-synthetic-fixtures", "--ablate",
+    ])
+    assert rc == R.EXIT_USAGE
+
+
+def test_ablate_refuses_record():
+    """Fixtures are stored per CASE, not per ARM, so the absent arm overwrote the
+    present arm's transcripts — destroying the live evidence just paid for and
+    turning every positive into INVISIBLE on replay."""
+    rc = R.main([
+        "--skill-dir", "tests/skill_evals/fixtures/harness-selftest/skill",
+        "--prompts", "tests/skill_evals/fixtures/harness-selftest/evals/prompts.json",
+        "--cli", "/bin/true", "--no-version-check", "--ablate", "--record", "/tmp/never-written",
+    ])
+    assert rc == R.EXIT_USAGE
+    assert not Path("/tmp/never-written").exists()
+
+
+def test_ablate_dry_run_still_works():
+    """FALSE-POSITIVE control for the two refusals: the live path is untouched."""
+    rc = R.main([
+        "--skill-dir", "tests/skill_evals/fixtures/harness-selftest/skill",
+        "--prompts", "tests/skill_evals/fixtures/harness-selftest/evals/prompts.json",
+        "--cli", "/bin/true", "--no-version-check", "--ablate", "--dry-run",
+    ])
+    assert rc == R.EXIT_OK

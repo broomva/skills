@@ -1836,6 +1836,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("error: --ablate owns both arms; do not also pass --visibility",
                   file=sys.stderr)
             return EXIT_USAGE
+        # Both refusals are for the same missing piece: fixtures are stored per CASE,
+        # not per ARM, so the two arms of an ablation cannot coexist in one directory.
+        if args.record:
+            print(
+                "error: --ablate with --record would write the ABSENT arm's transcripts "
+                "over the PRESENT arm's, destroying the live evidence you just paid for "
+                "— every positive case would replay as INVISIBLE. Record the arms "
+                "separately (--visibility present / absent into different --record dirs) "
+                "until fixtures are arm-namespaced.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        if args.replay:
+            print(
+                "error: --ablate with --replay cannot produce a measurement: both arms "
+                "would replay the SAME fixtures, so the baseline is 100% LEAKED by "
+                "construction. Ablation needs live runs.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
         print(
             f"[skill-evals] ABLATION: {len(prompt_set.cases)}x{args.trials} present + "
             f"{len(prompt_set.positives)}x{args.trials} absent = {planned} trials "
