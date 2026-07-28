@@ -76,6 +76,24 @@ jobs:
       - name: Check registry is dispatchable
         run: python3 scripts/skill_evals/runner.py --list-checks
 
+      # BRO-2018. A live trial runs the skill's own scripts, and ours resolve their
+      # state from $HOME (p9's config dir, kg's entire workspace). Asserted here so
+      # the jail cannot regress silently between live runs — which are rare, so a
+      # regression would otherwise surface as a corrupted p9 store months later.
+      - name: ENV JAIL — case paths resolve inside the workspace
+        run: |
+          set -e
+          out=$(python3 scripts/skill_evals/runner.py --verify-jail)
+          echo "$out"
+          case "$out" in
+            *"jail HOLDS"*) : ;;
+            *) echo "::error::--verify-jail did not report a holding jail"; exit 1 ;;
+          esac
+          # That the guard can also say NO is proven in tests/skill_evals/test_jail.py
+          # (test_verify_jail_reports_an_escape_when_home_leaks), which the pytest step
+          # above runs — a green light wired to nothing is the failure mode, and it is
+          # covered there rather than duplicated as shell here.
+
       - name: Pilot prompt set validates against CHECK_REGISTRY
         run: |
           python3 scripts/skill_evals/runner.py \

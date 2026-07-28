@@ -17,6 +17,14 @@ agent recover skill content *without triggering*, scoring a trigger failure as a
 pass. The skill's own ``evals/`` directory is excluded from the copy for the same
 reason: it is the answer key.
 
+That isolation is *environmental* as well as filesystem-scoped (BRO-2018). A fresh
+cwd does nothing about a skill script that resolves its state from ``$HOME`` — and
+they do: p9 writes ``~/.config/broomva/p9``, kg locates the entire workspace at
+``Path.home()/"broomva"``. Since a positive trial exists precisely to make the agent
+run those scripts, the faithful path was also the destructive one. ``skill_evals.jail``
+gives each case a deny-by-default environment with ``HOME`` inside the workspace;
+``--verify-jail`` proves it holds before a live suite spends anything.
+
 **Distribution, not verdict.** N trials per case (default 3), reported as a
 per-case pass rate plus an aggregate. One trial is an anecdote, and the report
 says so: fewer trials than requested is an ERROR, never a silent clamp.
@@ -66,6 +74,7 @@ if str(_HERE.parent) not in sys.path:  # allow direct execution AND package impo
     sys.path.insert(0, str(_HERE.parent))
 
 from skill_evals import checks as checks_mod  # noqa: E402
+from skill_evals import jail as jail_mod  # noqa: E402
 from skill_evals.transcript import Transcript, normalize_skill_name  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -640,6 +649,12 @@ class LiveRunner:
     record_dir: Path | None = None
     disallow_recovery_tools: bool = False
     extra_args: Sequence[str] = ()
+    #: BRO-2018. When true (the default), the child gets a deny-by-default
+    #: environment with ``HOME`` inside the case workspace, so a skill script that
+    #: resolves its state from ``$HOME`` — p9's config dir, kg's whole workspace —
+    #: writes into the temp dir instead of the user's real one. Turning it OFF is
+    #: what the escape mutation-proof does; there is no other reason to.
+    env_jail: bool = True
     #: Written into every fixture so replay can detect a stale recording.
     skill: str = ""
     cli_version: str = ""
@@ -672,11 +687,18 @@ class LiveRunner:
 
     def run(self, prompt: str, workspace: Path, *, case_id: str, trial: int) -> Transcript:
         argv = self.build_argv(prompt)
+        # The jail is built HERE, at the one place in the harness that spawns a
+        # process, rather than in build_workspace: replay grades recorded bytes and
+        # can leak nothing, so it should not be paying for symlinks it never uses.
+        env = jail_mod.build_case_env(workspace) if self.env_jail else None
+        if self.env_jail:
+            jail_mod.prepare_jail(workspace)
         started = time.monotonic()
         try:
             proc = subprocess.run(
                 argv,
                 cwd=str(workspace),
+                env=env,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
@@ -1506,6 +1528,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--disallow-recovery-tools", action="store_true",
                    help="live only: block Read/Grep/Glob/Bash so the agent cannot read SKILL.md off disk")
     p.add_argument("--keep-workspaces", action="store_true", help="do not delete case temp dirs")
+    p.add_argument("--no-env-jail", action="store_true",
+                   help="live only, DANGEROUS: let case runs inherit the real environment. "
+                        "A skill script resolving state from $HOME (p9's config dir, kg's "
+                        "workspace) then reads and writes the REAL one. Exists so the escape "
+                        "mutation-proof has something to prove against.")
+    p.add_argument("--verify-jail", action="store_true",
+                   help="run the jail proof and exit; reports where a case run's $HOME, "
+                        "XDG paths and skill state dirs actually resolve")
+    p.add_argument("--fail-on-real-state-change", action="store_true",
+                   help="promote the real-state watch from a warning to a failure. Off by "
+                        "default because the watched stores are shared: a p9 watcher in "
+                        "another terminal is indistinguishable from a leak by mtime alone.")
     p.add_argument("--allow-errors", action="store_true",
                    help="diagnostics only: do not fail the run on ERROR trials (CLI/fixture "
                         "failures). INVISIBLE trials still fail — a run where the skill was "
@@ -1525,6 +1559,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             doc = (fn.__doc__ or "").strip().splitlines()
             print(f"{check_id:<40}{doc[0] if doc else ''}")
         return EXIT_OK
+
+    if args.verify_jail:
+        tmp = Path(tempfile.mkdtemp(prefix="skilleval-verify-jail-"))
+        try:
+            jail_mod.prepare_jail(tmp)
+            verdict = jail_mod.verify_jail(tmp)
+            for key, value in sorted(verdict.resolved.items()):
+                print(f"  {key:<16}{value}")
+            if verdict.holds:
+                print("\njail HOLDS: every probed path resolved inside the case workspace")
+                return EXIT_OK
+            for leak in verdict.escapes:
+                print(f"[skill-evals] ESCAPE   {leak}", file=sys.stderr)
+            return EXIT_BELOW_THRESHOLD
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     if not args.skill and not args.prompts:
         print("error: one of --skill or --prompts is required", file=sys.stderr)
@@ -1633,10 +1683,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             skill=skill,
             cli_version=version,
             fingerprint=fingerprint,
+            env_jail=not args.no_env_jail,
         )
         mode_line = f"mode=LIVE  cli={cli} ({version or 'unknown'})  model={args.model}"
         if args.record:
             mode_line += f"  record={args.record}"
+        mode_line += "  env-jail=" + ("ON" if not args.no_env_jail else "OFF")
 
     # The mode banner prints on EVERY invocation. A harness whose replay path is
     # indistinguishable from its live path is how mocks become the only path.
@@ -1708,7 +1760,58 @@ def main(argv: Sequence[str] | None = None) -> int:
         jobs=max(1, args.jobs),
         keep_workspaces=args.keep_workspaces,
     )
+
+    # BRO-2018. A live suite is about to run skill scripts for real, with
+    # bypassPermissions, N times per case. Prove the jail contains their path
+    # resolution BEFORE any of that — the proof is a subprocess launch, costs no
+    # model call, and the alternative is discovering the leak by reading the
+    # user's corrupted p9 store afterwards.
+    is_live = not isinstance(runner, ReplayRunner)
+    watch: jail_mod.RealStateWatch | None = None
+    if is_live and not args.no_env_jail:
+        probe_dir = Path(tempfile.mkdtemp(prefix="skilleval-jailcheck-"))
+        try:
+            jail_mod.prepare_jail(probe_dir)
+            verdict = jail_mod.verify_jail(probe_dir)
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+        if not verdict.holds:
+            print(
+                "[skill-evals] JAIL CHECK FAILED — refusing to run live. A case run's "
+                "paths resolve outside its workspace, so the suite would read and write "
+                "real skill state:",
+                file=sys.stderr,
+            )
+            for leak in verdict.escapes:
+                print(f"[skill-evals]   - {leak}", file=sys.stderr)
+            return EXIT_USAGE
+        print(f"[skill-evals] jail check OK  {jail_mod.describe_jail(Path('<case-ws>'))}",
+              file=sys.stderr)
+    elif is_live:
+        print(
+            "[skill-evals] WARNING  --no-env-jail: case runs inherit the real "
+            "environment. A skill that resolves state from $HOME will read and write "
+            "the REAL store. Use this only to prove the jail matters.",
+            file=sys.stderr,
+        )
+
+    if is_live:
+        watch = jail_mod.RealStateWatch()
+        watch.snapshot()
+
     case_results = run_suite(runner, prompt_set, cfg)
+
+    real_state_changes: list[str] = watch.changes() if watch is not None else []
+    if real_state_changes:
+        meta["real_state_changes"] = real_state_changes
+        print(
+            f"[skill-evals] REAL STATE CHANGED during this run — {len(real_state_changes)} "
+            f"path(s) under {', '.join(jail_mod.DEFAULT_WATCHED_PATHS)} moved. Either a case "
+            "escaped its jail, or another process on this machine wrote them:",
+            file=sys.stderr,
+        )
+        for line in real_state_changes[:8]:
+            print(f"[skill-evals]   - {line}", file=sys.stderr)
 
     if isinstance(runner, ReplayRunner):
         for msg in runner.provenance_notes:
@@ -1745,6 +1848,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         fixtures_unusable=fixtures_unusable,
         allow_errors=args.allow_errors,
     )
+    if real_state_changes and args.fail_on_real_state_change and exit_code == EXIT_OK:
+        print(
+            "[skill-evals] --fail-on-real-state-change: the numbers passed, but this run "
+            "did not leave the machine as it found it.",
+            file=sys.stderr,
+        )
+        exit_code = EXIT_BELOW_THRESHOLD
     report = build_report(
         prompt_set, case_results, agg,
         mode=runner.mode, threshold=args.threshold, exit_code=exit_code, meta=meta,
