@@ -109,6 +109,80 @@ TASK_ENTITY_STOPWORDS = frozenset({
     "very", "over", "only", "each", "both", "onto", "across", "these", "those",
 })
 
+# v0.5.1 — rarity gate on the *qualifying* token set (BRO-2020). A token that
+# matches a large share of the catalog cannot discriminate between entities: it
+# qualifies a pool far larger than TOP_N, the pool ties on score, and the five
+# entities the agent actually sees are an alphabetical accident. Such a token may
+# still CORROBORATE (it keeps its scoring weight once some rare token has
+# qualified the entity) — it just may not qualify an entity on its own.
+#
+# Expressed as a SHARE of the catalog, not an absolute count, so it scales as the
+# graph grows. Calibrated against the live 602-entity scored catalog: the only
+# tokens above 15% are `knowledge-graph` (23.6%), `control-theory` (18.1%) and
+# `agent` (17.9%) — genuine ambient vocabulary here — while `bstack` (14.6%) and
+# every project/tool name stay below it and keep qualifying.
+#
+# MEASURED CONTRIBUTION (ablation, BRO-2020): this gate alone changes 1 of 14 dev
+# prompts and 0 of 16 held-out prompts drawn from real session transcripts —
+# TASK_ENTITY_AMBIENT_TOKENS below does essentially all of the observed work. It
+# is kept because its measured collateral across those 30 prompts is ZERO, it is
+# the only half that needs no human maintenance, and it covers the one shape the
+# curated list cannot: a prompt built entirely of ambient + very-high-frequency
+# vocabulary ("what's the state of the agent data pattern here"), where `agent`
+# must be gated for the block to come back empty. Do not describe it as the fix.
+TASK_ENTITY_DF_MAX_SHARE = 0.15
+# ...plus an absolute floor, because a share is meaningless on a small catalog
+# (15% of 4 entities is 0.6 — every token would look generic and the block would
+# go permanently empty). A token matching at most TOP_N + 1 entities can never
+# flood the result set on its own, so it is never treated as generic no matter
+# how small the catalog is.
+TASK_ENTITY_DF_MIN_DOCS = TASK_ENTITY_TOP_N + 1
+# Document frequency is a *corpus* statistic and it provably cannot see generic
+# English vocabulary that happens to be rare in this catalog: `session` matches 6
+# of 602 scored entities — FEWER than `vercel` at 8, a token we must keep. No DF
+# threshold separates them, so this class is curated rather than inferred.
+#
+# CURATED HEURISTIC — NOT PRINCIPLED. This list is a maintained artifact with a
+# real rot mode; see the membership rule and the maintenance note below.
+#
+# Membership rule (applied uniformly, independent of any particular prompt). A
+# token is ambient iff ALL THREE hold:
+#   (A) it is ordinary English vocabulary for *doing or discussing work* — an
+#       operation verb (`remove`), a status word, or a generic container/medium
+#       noun (`data`, `state`, `file`) — rather than naming a domain, product,
+#       place, person, or named concept;
+#   (B) the entities it currently qualifies do NOT form one recognisable topic
+#       (a grab-bag, not a subject). A token qualifying ≤1 entity is untestable
+#       under (B) and admitted on (A) alone;
+#   (C) it qualifies at least one entity in the catalog TODAY. A token that
+#       qualifies nothing cannot change an outcome, so listing it is unfalsifiable
+#       surface area.
+#
+# (C) is what keeps this list at six entries instead of forty. It is also the rot
+# mode: membership is a function of the catalog, so the list goes stale as the
+# graph grows. Two failure directions, both silent:
+#   - a listed token stops being a grab-bag (a coherent cluster forms around it)
+#     ⇒ it should be REMOVED or real hits stay suppressed;
+#   - a new generic token starts qualifying entities ⇒ it should be ADDED.
+# You know it needs updating when a "Task-relevant knowledge" block shows an
+# entity unrelated to the prompt (add), or when `/kg load <slug>` finds an entity
+# the injected block should plausibly have surfaced and did not (remove).
+# Re-derive by listing, for each candidate, the entities it qualifies and asking
+# (A)/(B)/(C) again — evidence for the current membership is in the BRO-2020 PR.
+#
+# Applying the rule dropped `raw` (its matches — raw-extract,
+# sentinel-research-raw-extract — are one coherent topic, so (B) fails) and
+# `code` (all matches are `claude-code*`, a product name), even though both
+# appeared in the audit prompts. See the PR for the cost of that choice.
+TASK_ENTITY_AMBIENT_TOKENS = frozenset({
+    "data",     # agents-as-data · colombia fuel · construction ops · rice weights
+    "session",  # higgsfield oauth · shared-state locking
+    "state",    # async fusion · attested inference · carrier failure · event sourcing
+    "file",     # image dirs · atomic lock · repo format · soul-file
+    "pattern",  # 29 entities across banking/construction/energy/fin-services
+    "remove",   # operation verb; qualifies 1 entity, untestable under (B)
+})
+
 
 def parse_frontmatter(text: str) -> dict:
     """Extract YAML frontmatter from a markdown file."""
@@ -1006,19 +1080,97 @@ def _parse_catalog_entities(catalog_text: str) -> list[dict]:
     return records
 
 
-def _score_catalog_entity(rec: dict, prompt_tokens: set[str]) -> int:
-    """Weighted token-overlap score between a catalog record and the prompt."""
-    slug_tokens = {t for t in re.split(r"[-_]", rec["slug"].lower()) if t}
-    claim_tokens = {
+def _slug_tokens(slug: str) -> set[str]:
+    """Split an entity slug into its lowercase word tokens."""
+    return {t for t in re.split(r"[-_]", slug.lower()) if t}
+
+
+def _claim_tokens(claim: str) -> set[str]:
+    """Length-gated tokens of a catalog claim line."""
+    return {
         t
-        for t in _tokenize_prompt(rec.get("claim", ""))
+        for t in _tokenize_prompt(claim)
         if len(t) >= TASK_ENTITY_MIN_TOKEN_LEN
     }
+
+
+def _score_tokens(
+    slug_tokens: set[str],
+    tags: set[str],
+    claim_tokens: set[str],
+    prompt_tokens: set[str],
+) -> int:
+    """Weighted token-overlap score from pre-split record token sets."""
     return (
         TASK_ENTITY_W_SLUG * len(slug_tokens & prompt_tokens)
-        + TASK_ENTITY_W_TAG * len(rec["tags"] & prompt_tokens)
+        + TASK_ENTITY_W_TAG * len(tags & prompt_tokens)
         + TASK_ENTITY_W_CLAIM * len(claim_tokens & prompt_tokens)
     )
+
+
+def _score_catalog_entity(rec: dict, prompt_tokens: set[str]) -> int:
+    """Weighted token-overlap score between a catalog record and the prompt."""
+    return _score_tokens(
+        _slug_tokens(rec["slug"]),
+        rec["tags"],
+        _claim_tokens(rec.get("claim", "")),
+        prompt_tokens,
+    )
+
+
+def _prepare_catalog(
+    catalog_text: str,
+) -> tuple[list[tuple[dict, set[str], set[str]]], dict[str, int]]:
+    """Parse the catalog once into scorable records + a document-frequency map.
+
+    Returns ``(prepared, doc_freq)`` where ``prepared`` is one
+    ``(record, slug_tokens, claim_tokens)`` triple per *eligible* record (a real
+    slug, a substantive type) and ``doc_freq[token]`` is the number of eligible
+    records whose slug tokens, tags, or claim tokens contain ``token``.
+
+    Single pass: the token sets built here for the DF counter are the same ones
+    the scorer consumes, so the rarity gate costs one dict update per token
+    rather than a second scan of the catalog (BRO-2020). This runs on every
+    UserPromptSubmit, so the budget matters.
+    """
+    prepared: list[tuple[dict, set[str], set[str]]] = []
+    doc_freq: dict[str, int] = {}
+    for rec in _parse_catalog_entities(catalog_text):
+        slug = rec.get("slug") or ""
+        if not slug or rec.get("type") not in TASK_ENTITY_TYPES:
+            continue
+        slug_toks = _slug_tokens(slug)
+        claim_toks = _claim_tokens(rec.get("claim", ""))
+        prepared.append((rec, slug_toks, claim_toks))
+        for tok in slug_toks | rec["tags"] | claim_toks:
+            doc_freq[tok] = doc_freq.get(tok, 0) + 1
+    return prepared, doc_freq
+
+
+def _qualifying_tokens(
+    prompt_tokens: set[str],
+    doc_freq: dict[str, int],
+    doc_count: int,
+) -> set[str]:
+    """Rarity gate (BRO-2020): the prompt tokens allowed to *qualify* an entity.
+
+    Drops tokens that carry no discriminating signal — either because they match
+    more than ``TASK_ENTITY_DF_MAX_SHARE`` of the catalog (subject to the
+    ``TASK_ENTITY_DF_MIN_DOCS`` floor) or because they are curated ambient
+    vocabulary. Dropped tokens are *not* removed from scoring: once a rare token
+    qualifies an entity, ambient overlap still corroborates it.
+
+    Degrades to the ungated token set when no usable DF map was built, so a gate
+    failure restores pre-BRO-2020 behaviour instead of emptying the block.
+    """
+    if not doc_freq or doc_count <= 0:
+        return prompt_tokens
+    threshold = max(TASK_ENTITY_DF_MIN_DOCS, doc_count * TASK_ENTITY_DF_MAX_SHARE)
+    return {
+        tok
+        for tok in prompt_tokens
+        if tok not in TASK_ENTITY_AMBIENT_TOKENS and doc_freq.get(tok, 0) <= threshold
+    }
 
 
 def _load_task_entities(
@@ -1033,6 +1185,9 @@ def _load_task_entities(
     block the turn (so the except is broad: a single non-UTF-8 byte in a scraped
     claim must degrade gracefully, not crash). Only substantive knowledge types
     are considered; ``exclude_keys`` (``type/slug``) drops lens-surfaced entities.
+
+    Prompt tokens pass a rarity gate before they may qualify an entity — see
+    ``_qualifying_tokens`` (BRO-2020).
     """
     if workspace is None or not prompt:
         return []
@@ -1047,23 +1202,29 @@ def _load_task_entities(
             return []
         # errors="replace": one bad byte degrades a single claim, never crashes.
         text = catalog.read_text(encoding="utf-8", errors="replace")
+        # One pass: scorable records + the document-frequency map the rarity gate
+        # needs. Inside the try for the same reason the read is — a malformed
+        # catalog must degrade to "no block", never to a failed turn.
+        prepared, doc_freq = _prepare_catalog(text)
+        qualifying = _qualifying_tokens(prompt_tokens, doc_freq, len(prepared))
     except Exception:
         return []  # never block the turn
 
     scored: list[tuple[int, dict]] = []
-    for rec in _parse_catalog_entities(text):
-        slug = rec.get("slug") or ""
-        if not slug or rec.get("type") not in TASK_ENTITY_TYPES:
-            continue
-        if f"{rec['type']}/{slug}" in exclude_keys:
+    for rec, slug_tokens, claim_tokens in prepared:
+        if f"{rec['type']}/{rec['slug']}" in exclude_keys:
             continue
         # Require a curated (slug or tag) match — never surface on body-text
         # claim overlap alone. Entities with a missing/weak core_claim carry a
         # body excerpt in the catalog; scoring that excerpt is noise, not signal.
-        slug_tokens = {t for t in re.split(r"[-_]", slug.lower()) if t}
-        if not ((slug_tokens & prompt_tokens) or (rec["tags"] & prompt_tokens)):
+        # The match must come from a *qualifying* (rare, non-ambient) token: a
+        # token that matches a large slice of the catalog qualifies an arbitrary
+        # pool, so on its own it is noise too (BRO-2020).
+        if not ((slug_tokens & qualifying) or (rec["tags"] & qualifying)):
             continue
-        score = _score_catalog_entity(rec, prompt_tokens)
+        # Scoring still sees every prompt token — ambient overlap corroborates a
+        # hit that a rare token already earned; it just cannot create one.
+        score = _score_tokens(slug_tokens, rec["tags"], claim_tokens, prompt_tokens)
         if score >= TASK_ENTITY_MIN_SCORE:
             scored.append((score, rec))
     # Highest score first; tie-break on slug for deterministic output.

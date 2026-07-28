@@ -1382,6 +1382,161 @@ def test_intake_non_utf8_catalog_does_not_crash(tmp_path):
     assert rc == 0, f"stderr={err}"  # no traceback; the hook never blocks the turn
 
 
+# --- v0.5.1: rarity gate on the qualifying token set (BRO-2020) ---
+#
+# The catalog below is SYNTHETIC on purpose: the gate's behaviour is a function
+# of document frequency relative to catalog size, so pinning it against the live
+# knowledge graph would make these tests drift with every bookkeeping run.
+#
+# 21 entities → rarity threshold = max(TASK_ENTITY_DF_MIN_DOCS=6, 15% of 21=3.2)
+# = 6, so a token matching 7+ entities is generic.
+#   'widget'  → 8 slugs  ⇒ over threshold, cannot qualify
+#   'quasar'  → 2 slugs  ⇒ rare, qualifies
+#   'session' → 1 slug   ⇒ rare by DF, but curated-ambient, cannot qualify
+
+def _rarity_catalog() -> str:
+    """Build a dense-catalog-v2 index whose token DF is known by construction."""
+    blocks = [
+        "---\ngenerator: bookkeeping index\nschema: dense-catalog-v2\n---\n",
+        "\n# Knowledge Index\n\n## Entities\n\n### concept (21)\n\n",
+    ]
+
+    def block(slug: str, claim: str, tag: str) -> str:
+        return (
+            f"#### {slug} [concept·entity]\n"
+            f"{claim}\n"
+            f"→ x · #{tag} · src: note\n"
+            f"path: concept/{slug}.md\n\n"
+        )
+
+    # 8 entities carrying the token 'widget' → generic (DF 8 > 6).
+    for word in ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot",
+                 "golf", "india"):
+        blocks.append(block(
+            f"widget-{word}",
+            f"The {word} variant keeps its own invariant and reports upward.",
+            word,
+        ))
+    # Rare, meaningful tokens.
+    blocks.append(block(
+        "quasar-drive",
+        "The drive spins up lazily and refuses to start twice in one boot.",
+        "quasar",
+    ))
+    blocks.append(block(
+        "quasar-session-bridge",
+        "The bridge pins every hop to one identity and expires it on close.",
+        "bridge",
+    ))
+    blocks.append(block(
+        "session-holder-record",
+        "The holder pins each record to exactly one owner and rejects the rest.",
+        "holder",
+    ))
+    # Padding so the corpus is big enough for the share to bind meaningfully.
+    for word in ("juliet", "kilo", "lima", "mike", "november", "oscar",
+                 "papa", "quebec", "romeo", "sierra"):
+        blocks.append(block(
+            f"padding-{word}",
+            f"An unrelated {word} claim with no bearing on any prompt under test.",
+            word,
+        ))
+    return "".join(blocks)
+
+
+def _task_block(out: str) -> str:
+    """Return just the auto-loaded task-entity lines from an intake block."""
+    lines = out.splitlines()
+    for i, ln in enumerate(lines):
+        if "Task-relevant knowledge" in ln:
+            tail = []
+            for nxt in lines[i + 1:]:
+                if not nxt.startswith("  - "):
+                    break
+                tail.append(nxt)
+            return "\n".join(tail)
+    return ""
+
+
+def test_rarity_gate_generic_token_surfaces_nothing(tmp_path):
+    """A token matching more than the rarity share of the catalog qualifies an
+    arbitrary pool, so on its own it must surface no entity at all."""
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _rarity_catalog())
+    rc, out, err = run_cli(
+        "intake", "--prompt", "look at the widget please",
+        "--workspace", str(workspace), "--session", "rare-1",
+    )
+    assert rc == 0, f"stderr={err}"
+    assert "widget-" not in _task_block(out), out
+
+
+def test_rarity_gate_keeps_rare_token(tmp_path):
+    """A rare token still qualifies its entity — the gate drops noise, not signal."""
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _rarity_catalog())
+    rc, out, err = run_cli(
+        "intake", "--prompt", "how does the quasar drive boot",
+        "--workspace", str(workspace), "--session", "rare-2",
+    )
+    assert rc == 0, f"stderr={err}"
+    assert "concept/quasar-drive.md" in out, out
+
+
+def test_rarity_gate_ambient_token_cannot_qualify(tmp_path):
+    """Curated ambient vocabulary ('session', 'data', 'state', …) describes the
+    interaction, not a topic — it must not surface an entity on its own. It is
+    too RARE for the DF gate to catch (1 of 21 here), which is exactly why the
+    ambient class is curated rather than inferred."""
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _rarity_catalog())
+    rc, out, err = run_cli(
+        "intake", "--prompt", "show me the raw session data",
+        "--workspace", str(workspace), "--session", "rare-3",
+    )
+    assert rc == 0, f"stderr={err}"
+    assert "session-holder-record" not in _task_block(out), out
+    # ...and the same entity IS reachable through its non-ambient tokens, so the
+    # assertion above is about the gate, not about an unreachable fixture.
+    rc, out2, err = run_cli(
+        "intake", "--prompt", "who is the holder of each record",
+        "--workspace", str(workspace), "--session", "rare-4",
+    )
+    assert rc == 0, f"stderr={err}"
+    assert "concept/session-holder-record.md" in out2, out2
+
+
+def test_rarity_gate_ambient_token_still_corroborates(tmp_path):
+    """Gated tokens are dropped from QUALIFICATION, not from scoring: once a rare
+    token qualifies an entity, ambient overlap still ranks it up."""
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _rarity_catalog())
+    rc, out, err = run_cli(
+        "intake", "--prompt", "the quasar session",
+        "--workspace", str(workspace), "--session", "rare-5",
+    )
+    assert rc == 0, f"stderr={err}"
+    block = _task_block(out)
+    assert "concept/quasar-session-bridge.md" in block, out
+    assert "concept/quasar-drive.md" in block, out
+    # bridge scores 6 (quasar+session) vs drive's 3 (quasar) — only true if the
+    # ambient token still contributes weight after failing the qualifying gate.
+    assert block.index("quasar-session-bridge") < block.index("quasar-drive"), block
+
+
+def test_rarity_gate_floor_protects_small_catalog(tmp_path):
+    """On a tiny catalog the share is meaningless (15% of 4 is 0.6); the absolute
+    floor keeps every token qualifying so the block does not go permanently empty."""
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace)  # the 4-entity _FIXTURE_CATALOG
+    rc, out, err = run_cli(
+        "intake", "--prompt", "explain the stability budget margin",
+        "--workspace", str(workspace), "--session", "rare-6",
+    )
+    assert rc == 0, f"stderr={err}"
+    assert "concept/stability-budget.md" in out, out
+
+
 # ============================================================================
 # Persona federation (F3′ — BRO-1901): confined 2nd trusted root + threat matrix
 # ============================================================================
