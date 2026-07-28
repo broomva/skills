@@ -8,7 +8,9 @@ Claude Code injects the skill roster as a ``skill_listing`` attachment whose
 rendered ``content`` is capped. Measured on this machine across 1,199 listings in
 1,039 session transcripts, the largest listing ever delivered is 39,013 characters
 — and the 124 roster skills present on disk carry 94,800 characters of trigger
-surface, 2.4x that floor. So the harness rations: the skills that fit render as
+surface, 2.4x that floor (itself a lower bound: 22 more listed names are CLI
+built-ins whose descriptions are unmeasurable). So the harness rations: the skills
+that fit render as
 ``- name: <description>``, and the rest render as a bare ``- name`` line with **no
 trigger text at all**.
 
@@ -119,6 +121,11 @@ class Classification:
 
     states: dict[str, str] = field(default_factory=dict)
     unparsed: list[str] = field(default_factory=list)
+    #: How many entries the parser actually READ out of the content. Distinct from
+    #: len(states), which defaults every name in the attachment to BARE and is
+    #: therefore non-empty whenever the roster is — the reason R0 could not see a
+    #: total parse failure.
+    parsed_entries: int = 0
 
     def count(self, state: str) -> int:
         return sum(1 for v in self.states.values() if v == state)
@@ -142,6 +149,7 @@ class Classification:
             "bare_skills": self.bare,
             "truncated_skills": self.truncated,
             "unparsed": self.unparsed,
+            "parsed_entries": self.parsed_entries,
         }
 
 
@@ -303,7 +311,7 @@ def classify(listing: Listing) -> Classification:
     """
     entries, unparsed = parse_entries(listing)
     states = {name: entry_state(entries.get(name, "")) for name in listing.names}
-    return Classification(states=states, unparsed=unparsed)
+    return Classification(states=states, unparsed=unparsed, parsed_entries=len(entries))
 
 
 # ---------------------------------------------------------------------------
@@ -449,15 +457,27 @@ def budget_report(
     else:
         counted, unlisted, missing = masses, [], []
     total = sum(m.effective for m in counted)
+    # The DENOMINATOR is the roster, not the measurable subset. 22 of the 146 listed
+    # names here are CLI built-ins that exist nowhere on disk, yet 13 of them arrived
+    # FULL and consumed 6,404 of the 30,087 rendered chars — 21% of the delivered
+    # listing, charged at zero mass. Dividing the cap by the measurable 124 gave an
+    # affordable mean of 315 chars when the listing must fit 146 entries; an author
+    # trimming to 315 on that guidance still overflows. The honest figure is 267.
+    roster_size = len(listed) if listed is not None else len(counted)
     return {
         "skills": len(counted),
+        "roster_size": roster_size,
+        # A FLOOR, not a total: the unmeasurable built-ins add an unknown positive
+        # amount, so the real overshoot is worse than what this reports.
+        "effective_mass_is_a_floor": bool(missing),
         "on_disk_not_in_roster": len(unlisted),
+        "in_roster_not_on_disk_count": len(missing),
         "in_roster_not_on_disk": missing[:20],
         "effective_mass": total,
         "largest_observed_listing_chars": BUDGET_CHARS,
         "budget": BUDGET_CHARS,
         "overshoot": round(total / BUDGET_CHARS, 2) if BUDGET_CHARS else 0.0,
-        "affordable_mean_chars": round(BUDGET_CHARS / len(counted)) if counted else 0,
+        "affordable_mean_chars": round(BUDGET_CHARS / roster_size) if roster_size else 0,
         "over_per_skill_cap": [m.name for m in counted if m.effective > PER_SKILL_CHARS],
         "heaviest": [
             {"skill": m.name, "chars": m.effective, "path": m.path} for m in counted[:15]
@@ -521,13 +541,21 @@ def red_conditions(
     # with no red condition at all — for a 199-skill attachment where every line was
     # unreadable. Absence of parsed entries is not absence of bare skills; it is
     # absence of a measurement, and it has to say so.
-    if listing is not None and listing.content_chars > 0 and not cls.states:
+    # Keyed on PARSED entries, not on len(states): classify() defaults every name in
+    # the attachment to BARE, so states is non-empty whenever the roster is. The
+    # first version tested `not cls.states`, which is true only for an EMPTY names
+    # array — 2 of 1,203 real listings. On the reachable shape (Claude Code changes
+    # the line format, so a populated 199-name listing parses to nothing) it reported
+    # "199 of 199 BARE": the exact OPPOSITE diagnosis, with the disclaimer suppressed.
+    if listing is not None and listing.content_chars > 0 and not cls.parsed_entries:
         out.append(
             f"R0 the listing rendered {listing.content_chars:,} chars but parsed to ZERO "
             f"entries ({len(cls.unparsed)} unreadable lines) — this report is not a "
             "measurement, and the counts below mean nothing"
         )
-    elif cls.states and len(cls.unparsed) > len(cls.states):
+    # `>=`, not `>`: the canonical total-failure shape is exactly one unreadable line
+    # per skill, so equality is the NORM for that failure, not an edge of it.
+    elif cls.states and len(cls.unparsed) >= len(cls.states):
         out.append(
             f"R0 {len(cls.unparsed)} unreadable lines against only {len(cls.states)} parsed "
             "entries — the listing shape may have changed; treat the counts as suspect"
@@ -613,9 +641,16 @@ def main(argv: list[str] | None = None) -> int:
         for row in budget["heaviest"][: args.top]:
             print(f"{row['skill'][:37]:38}{row['chars']:>8}")
         print("-" * 46)
-        print(f"{'TOTAL':38}{budget['effective_mass']:>8}  vs {budget['budget']} cap "
+        floor = " (a FLOOR)" if budget.get("effective_mass_is_a_floor") else ""
+        print(f"{'TOTAL':38}{budget['effective_mass']:>8}{floor}  vs {budget['budget']} cap "
               f"({budget['overshoot']}x)")
-        print(f"\naffordable mean per skill at this count: "
+        # Printed, not just in the JSON: a reader who cannot see that N listed skills
+        # were dropped from the measurable set reads the total as complete.
+        if budget.get("in_roster_not_on_disk_count"):
+            names = ", ".join(budget["in_roster_not_on_disk"][:6])
+            print(f"\n{budget['in_roster_not_on_disk_count']} listed skill(s) are NOT on "
+                  f"disk (CLI built-ins) and consume budget we cannot measure: {names}…")
+        print(f"\naffordable mean per ROSTER entry ({budget['roster_size']}): "
               f"{budget['affordable_mean_chars']} chars")
         print("Trimming the heaviest few cannot reach the cap — the lever is the skill "
               "COUNT, not description length.")

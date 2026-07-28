@@ -430,3 +430,82 @@ def test_frontmatter_field_reads_a_block_scalar(tmp_path):
     got = L._frontmatter_field(md.read_text(), "when_to_use")
     assert "first line of the block" in got and "second line" in got
     assert len(got) > 40, got
+
+
+# ---------------------------------------------------------------------------
+# round-2 verification findings
+# ---------------------------------------------------------------------------
+
+
+def test_a_total_parse_failure_fires_r0_on_a_POPULATED_roster():
+    """R0 did not fire for the failure it is named after.
+
+    `classify` defaults every name in the attachment to BARE, so `states` is
+    non-empty whenever `names` is — the old `not cls.states` predicate was true only
+    for an EMPTY names array (2 of 1,203 real listings). On the REACHABLE shape — the
+    CLI changes the line format, so a populated 146-name listing whose descriptions
+    all arrived parses to nothing — it reported "146 of 146 BARE", the exact opposite
+    diagnosis, with the disclaimer suppressed.
+    """
+    names = tuple(f"skill{i}" for i in range(146))
+    content = "\n".join(f"* skill{i}: a real description that DID reach the model"
+                        for i in range(146))
+    lst = L.Listing(names=names, content=content, source="fmt-change.jsonl", is_initial=True)
+    cls = L.classify(lst)
+
+    assert cls.parsed_entries == 0
+    assert cls.count(L.BARE) == 146, "the misleading count is still produced..."
+    reds = L.red_conditions(cls, L.budget_report([]), lst)
+    assert reds and reds[0].startswith("R0"), "...but R0 must now lead and disclaim it"
+    assert "not a measurement" in reds[0]
+
+
+def test_r0_uses_gte_because_one_bad_line_per_skill_is_the_norm():
+    """The canonical total-failure shape is exactly one unreadable line per skill, so
+    a strict `>` missed it by one."""
+    names = ("a", "b")
+    lst = L.Listing(names=names, content="? a: x\n? b: y\n", source="t.jsonl")
+    cls = L.classify(lst)
+    assert len(cls.unparsed) == len(cls.states) == 2
+    assert any(r.startswith("R0") for r in L.red_conditions(cls, L.budget_report([]), lst))
+
+
+def test_a_healthy_listing_still_does_not_fire_r0():
+    """FALSE-POSITIVE control for both R0 branches."""
+    lst = L.Listing(names=("a", "b"), content="- a: x\n- b\n", source="t.jsonl")
+    cls = L.classify(lst)
+    assert cls.parsed_entries == 2
+    assert not any(r.startswith("R0") for r in L.red_conditions(cls, L.budget_report([]), lst))
+
+
+def test_the_affordable_mean_uses_the_ROSTER_as_denominator(tmp_path):
+    """22 of 146 listed names are CLI built-ins that exist nowhere on disk, yet 13 of
+    them arrived FULL and consumed 21% of the rendered listing. Dividing the cap by
+    the measurable 124 gave 315 chars; the listing must fit 146 entries, so an author
+    trimming to 315 on that guidance still overflows. Honest value: 267."""
+    root = tmp_path / "install"
+    root.mkdir()
+    d = root / "onlyone"
+    d.mkdir()
+    (d / "SKILL.md").write_text("---\nname: onlyone\ndescription: x\n---\n")
+
+    rep = L.budget_report([root], roster=["onlyone"] + [f"builtin{i}" for i in range(9)])
+    assert rep["skills"] == 1
+    assert rep["roster_size"] == 10
+    assert rep["in_roster_not_on_disk_count"] == 9
+    assert rep["effective_mass_is_a_floor"] is True
+    assert rep["affordable_mean_chars"] == round(L.BUDGET_CHARS / 10)
+
+
+def test_a_fully_measurable_roster_is_not_flagged_as_a_floor(tmp_path):
+    """FALSE-POSITIVE control — the floor caveat must not appear when nothing is missing."""
+    root = tmp_path / "install"
+    root.mkdir()
+    for n in ("a", "b"):
+        d = root / n
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: {n}\ndescription: x\n---\n")
+    rep = L.budget_report([root], roster=["a", "b"])
+    assert rep["effective_mass_is_a_floor"] is False
+    assert rep["in_roster_not_on_disk_count"] == 0
+    assert rep["affordable_mean_chars"] == round(L.BUDGET_CHARS / 2)

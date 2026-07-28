@@ -387,6 +387,13 @@ ever delivered **39,013 chars**; the trigger surface of the 124 roster skills fo
 on disk is **94,800 chars**, a 2.4× overshoot. In the session that produced the
 module: 146 skills → **34 full, 2 truncated, 110 BARE (75.3%)**.
 
+That mass is a **floor**. 22 of the 146 listed names are CLI built-ins that exist
+nowhere on disk, so their descriptions cannot be measured — yet 13 of them arrived
+FULL and consumed 6,404 of the 30,087 rendered chars. The real overshoot is worse
+than 2.4×, and the affordable mean is the cap divided by the **roster** (146), not by
+the measurable subset (124) — 267 chars, not 315. An author trimming to the larger
+number still overflows.
+
 The budget is scoped to the **roster** — the names the harness actually lists. An
 earlier version counted every `SKILL.md` it could reach and reported 369 skills
 against a 146-name roster, 60% of that mass from skills that have never been listed,
@@ -404,8 +411,8 @@ Two consequences worth stating plainly:
 
 - **A trigger eval on a bare skill measures nothing about its description**, because
   the model never received one. Coverage numbers should be read against delivery.
-- **Trimming descriptions cannot fix it.** The affordable mean at this skill count is
-  ~315 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
+- **Trimming descriptions cannot fix it.** The affordable mean per ROSTER entry is
+  ~267 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
   the model-invocable skill **count** (`disable-model-invocation` on the long tail),
   which is a governance decision, not this module's job.
 
