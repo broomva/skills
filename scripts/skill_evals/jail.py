@@ -250,6 +250,25 @@ print(json.dumps({
 """
 
 
+def _within(candidate: str | Path, root: Path) -> bool:
+    """Is *candidate* the jail root or a path underneath it?
+
+    Component-wise, never a string prefix: ``str.startswith`` has no path-boundary,
+    so a resolution landing in ``<workspace>/.eval-home-backup`` would read as
+    contained by the very check that is supposed to be the hard guarantee.
+
+    Both sides are resolved first, because they routinely disagree textually while
+    naming the same directory — on macOS a temp workspace is handed to us as
+    ``/var/folders/...`` and the child reports ``/private/var/folders/...``.
+    """
+    try:
+        return Path(candidate).resolve() == root.resolve() or Path(
+            candidate
+        ).resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
 @dataclass(frozen=True)
 class JailVerdict:
     """Where a probe's path resolution landed, and whether any of it escaped."""
@@ -290,11 +309,10 @@ def verify_jail(workspace: Path, *, python: str | None = None) -> JailVerdict:
         return JailVerdict(escapes=[f"probe emitted unparseable output: {exc}"])
 
     escapes: list[str] = []
-    root = str(home)
     for key in ("home", "tilde", "xdg_config", "p9_state", "kg_workspace"):
         value = str(resolved.get(key, ""))
-        if not value or not value.startswith(root):
-            escapes.append(f"{key} resolved to {value!r}, outside the jail at {root!r}")
+        if not value or not _within(value, home):
+            escapes.append(f"{key} resolved to {value!r}, outside the jail at {str(home)!r}")
     if resolved.get("api_key_present"):
         escapes.append(
             "ANTHROPIC_API_KEY survived into the case environment — a subscription "

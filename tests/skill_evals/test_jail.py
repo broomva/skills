@@ -230,6 +230,34 @@ def test_verify_jail_reports_an_escape_when_home_leaks(tmp_path, monkeypatch):
     assert any("home resolved to" in e for e in verdict.escapes)
 
 
+def test_containment_is_component_wise_not_a_string_prefix(tmp_path, monkeypatch):
+    """A sibling sharing the jail's textual prefix must NOT read as contained.
+
+    ``str.startswith`` would pass ``<ws>/.eval-home-backup``, which is a hole in the
+    one check the rest of the design defers to. Caught in review of BRO-2018.
+    """
+    ws = tmp_path / "ws"
+    J.prepare_jail(ws, link_auth=False)
+    sibling = ws / f"{J.JAIL_DIRNAME}-backup"
+    sibling.mkdir(parents=True)
+
+    assert J._within(J.jail_home(ws) / ".config", J.jail_home(ws))
+    assert J._within(J.jail_home(ws), J.jail_home(ws))
+    assert not J._within(sibling, J.jail_home(ws))
+
+    real_builder = J.build_case_env
+
+    def sibling_home(workspace, parent_env=None):
+        env = real_builder(workspace, parent_env)
+        env["HOME"] = str(sibling)
+        return env
+
+    monkeypatch.setattr(J, "build_case_env", sibling_home)
+    verdict = J.verify_jail(ws)
+    assert not verdict.holds
+    assert any("home resolved to" in e for e in verdict.escapes)
+
+
 def test_verify_jail_flags_a_surviving_api_key(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     J.prepare_jail(ws, link_auth=False)
