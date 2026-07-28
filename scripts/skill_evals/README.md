@@ -369,6 +369,47 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 baseline gets its own exit code (`4`), because nothing is wrong with the skill — the
 *measurement* is void, and reporting that as a threshold failure would send a reader
 to fix the wrong thing. `--fail-on-retire-candidate` is opt-in.
+## Does the description even reach the model? (`listing.py`)
+
+The arc's premise was that the description we author is the description the model
+sees. **It usually is not.** Claude Code injects the roster as a `skill_listing`
+attachment whose rendered `content` is capped; when the roster overflows, skills
+render as a bare `- name` line with no trigger text at all.
+
+```bash
+python3 scripts/skill_evals/listing.py            # classify the latest real listing
+python3 scripts/skill_evals/listing.py --budget   # mass vs cap, heaviest skills
+python3 scripts/skill_evals/listing.py --calibrate # re-derive the caps from disk
+```
+
+Measured here (1,199 listings across 1,039 session transcripts): largest listing
+ever delivered **39,013 chars**; our model-invocable trigger surface **101,654
+chars**, a 2.6× overshoot. In the session that produced the module: 146 skills →
+**34 full, 2 truncated, 110 BARE (75.3%)**.
+
+The bstack primitives are among the worst hit — `role-x` (P17), `persist` (P12),
+`cross-review` (P20), `orchestration` (P19) and `bookkeeping` (P6) all arrived
+**BARE**; `kg` and `dogfood` arrived truncated mid-sentence. Which skills win is not
+stable between sessions, so this is not a fixed set to design around.
+
+Two consequences worth stating plainly:
+
+- **A trigger eval on a bare skill measures nothing about its description**, because
+  the model never received one. Coverage numbers should be read against delivery.
+- **Trimming descriptions cannot fix it.** The affordable mean at this skill count is
+  ~106 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
+  the model-invocable skill **count** (`disable-model-invocation` on the long tail),
+  which is a governance decision, not this module's job.
+
+`BUDGET_CHARS` and `PER_SKILL_CHARS` are **observations, not assertions**, and
+`--calibrate` re-derives them and exits non-zero when one is stale. That is not
+decoration: its first real run rejected this module's own initial `BUDGET_CHARS`
+(30,000, from a smaller sample) against an observed 39,013.
+
+Deliberately **not** a CI gate. Its input is one machine's `~/.claude/projects`,
+which does not exist on a runner — a CI check over it would be green by
+construction, the exact vacuity this harness exists to hunt. It belongs in
+`bstack doctor` as an advisory section, next to P7 freshness.
 
 ## What replay does and does not guarantee
 
