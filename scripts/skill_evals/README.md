@@ -222,6 +222,15 @@ each measured rather than assumed:
   authorises by uid. The link narrows *which keychain file* is visible, not who may
   read it. This is not a regression — without the jail the case had the real `$HOME`
   and the same access — but it is not closed either.
+- **Skills document `~/.claude/skills/…` entry points**, and a HOME redirect alone
+  makes those ENOENT — `kg/SKILL.md` says
+  `python3 ~/.claude/skills/kg/scripts/kg.py load …`, and the `p9` wrapper on PATH
+  is `exec python3 "$HOME/.claude/skills/p9/scripts/p9.py"`. That would prevent the
+  state write by *breaking the skill*, and score as a trigger failure. So the jail
+  links `~/.claude/skills` to the copy materialised in the case workspace. Note
+  what that also fixes: **without** the jail those commands resolved to the
+  operator's real installed skill — a different artifact from the one under test —
+  so the pre-jail behaviour did not merely leak, it graded the wrong copy.
 - **Wrapper CLIs.** `shutil.which("claude")` can resolve to a wrapper that appends
   `--settings`, which `--setting-sources project` does *not* gate. The one on this
   machine gates its injection on `SUPERCONDUCTOR_*`, which deny-by-default drops, so

@@ -125,6 +125,13 @@ AUTH_PASSTHROUGH: dict[str, tuple[str, ...]] = {
 
 #: Real state a leak would land in, checked around a live suite. Narrow on purpose:
 #: see :class:`RealStateWatch` for why this is advisory rather than fatal.
+#:
+#: ``~/broomva`` — the store kg resolves, and the more severe of the two hazards —
+#: is deliberately NOT here. It is the operator's live workspace: an agent session,
+#: a bridge hook or a git operation writes it continuously, so watching it would
+#: report a change on essentially every run and teach the reader to ignore the
+#: warning. Containment there is proven by :func:`verify_jail`'s ``kg_workspace``
+#: probe, which has no concurrent-writer confound, rather than by this watch.
 DEFAULT_WATCHED_PATHS: tuple[str, ...] = ("~/.config/broomva",)
 
 
@@ -193,9 +200,38 @@ def prepare_jail(
     home = jail_home(workspace)
     for sub in ("", ".config", ".cache", ".local/share", ".local/state", "tmp"):
         (home / sub).mkdir(parents=True, exist_ok=True)
+    link_installed_skills(workspace)
     if link_auth:
         link_auth_material(home, real_home=real_home)
     return home
+
+
+def link_installed_skills(workspace: Path) -> Path | None:
+    """Point ``~/.claude/skills`` at the copy of the skill UNDER TEST.
+
+    Skills document their own entry points against the user-scope install path —
+    ``kg/SKILL.md`` says ``python3 ~/.claude/skills/kg/scripts/kg.py load …`` and the
+    ``p9`` wrapper on PATH is ``exec python3 "$HOME/.claude/skills/p9/scripts/p9.py"``.
+    Redirecting ``HOME`` without this makes both ENOENT, so the state write would be
+    prevented by BREAKING the skill rather than by redirecting it — which is the
+    overshoot ``anti-vacuity-fixes-overshoot-into-noise`` describes, and it would
+    score as a trigger failure rather than as the setup problem it is.
+
+    Without the jail those same commands resolved to the operator's REAL installed
+    skill — a *different artifact* from the one materialised into the case
+    workspace. So the pre-jail behaviour was not merely leaky, it graded the wrong
+    copy. One link fixes both: the documented command runs, it runs the artifact
+    under test, and everything it writes stays inside the workspace.
+    """
+    src = Path(workspace) / ".claude" / "skills"
+    if not src.is_dir():
+        return None
+    dest = jail_home(workspace) / ".claude" / "skills"
+    if dest.exists() or dest.is_symlink():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.symlink_to(src, target_is_directory=True)
+    return dest
 
 
 def build_case_env(

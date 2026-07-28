@@ -386,6 +386,53 @@ def test_rmtree_cannot_delete_the_real_credential_through_the_link(tmp_path):
     assert kc.exists() and kc.read_text() == "PRECIOUS"
 
 
+def test_the_documented_entry_point_still_works_inside_the_jail(tmp_path):
+    """FALSE-POSITIVE proof at the level that matters: the skill must still RUN.
+
+    Skills document their entry points against the user-scope install path
+    (``python3 ~/.claude/skills/kg/scripts/kg.py …``, and the p9 wrapper on PATH is
+    ``exec python3 "$HOME/.claude/skills/p9/scripts/p9.py"``). A HOME redirect makes
+    those ENOENT, so the state write would be prevented by BREAKING the skill rather
+    than redirecting it — and it would score as a trigger failure rather than the
+    setup problem it is. Caught by cross-model review of BRO-2018.
+    """
+    ws = tmp_path / "ws"
+    skill = ws / ".claude" / "skills" / "demo" / "scripts"
+    skill.mkdir(parents=True)
+    (skill / "demo.py").write_text("print('ran from the artifact under test')\n")
+
+    J.prepare_jail(ws, link_auth=False)
+    proc = subprocess.run(
+        [sys.executable, str(J.jail_home(ws) / ".claude/skills/demo/scripts/demo.py")],
+        env=J.build_case_env(ws), capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "ran from the artifact under test" in proc.stdout
+
+
+def test_home_scoped_skills_resolve_to_the_copy_under_test(tmp_path):
+    """And it must be the artifact UNDER TEST, not the operator's installed copy.
+
+    Without the jail, ``~/.claude/skills/kg/…`` resolved to the real installed
+    skill — a *different artifact* from the one materialised into the case
+    workspace. So the pre-jail behaviour did not merely leak state, it graded the
+    wrong copy.
+    """
+    ws = tmp_path / "ws"
+    (ws / ".claude" / "skills" / "demo").mkdir(parents=True)
+    J.prepare_jail(ws, link_auth=False)
+    linked = (J.jail_home(ws) / ".claude" / "skills").resolve()
+    assert linked == (ws / ".claude" / "skills").resolve()
+    assert str(linked).startswith(str(ws.resolve()))
+
+
+def test_no_skills_dir_is_not_an_error(tmp_path):
+    """Replay workspaces and probe dirs have no materialised skill."""
+    ws = tmp_path / "ws"
+    J.prepare_jail(ws, link_auth=False)
+    assert not (J.jail_home(ws) / ".claude" / "skills").exists()
+
+
 def test_prepare_jail_creates_the_xdg_tree(tmp_path):
     home = J.prepare_jail(tmp_path / "ws", link_auth=False)
     for sub in (".config", ".cache", ".local/share", ".local/state", "tmp"):
@@ -498,9 +545,20 @@ def test_replay_never_builds_a_jail(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-#: A home-shaped absolute path. The jail redirects ``~`` and every XDG variable, so
-#: this is the one shape it cannot reach.
-_ABSOLUTE_HOME_RE = __import__("re").compile(r"/(?:Users|home)/[A-Za-z0-9._-]+/")
+#: A home-shaped absolute path *at the start of the literal* — i.e. a value that IS
+#: a path, not prose that mentions one. The jail redirects ``~`` and every XDG
+#: variable, so this is the one shape it cannot reach.
+#:
+#: Anchored deliberately. An unanchored search flags a URL, an argparse ``help=``
+#: string and an error message that quote an example path — all correct code, and
+#: cross-model review demonstrated it firing on 5 of 10 constructed-correct modules.
+#: A guard that fires on documentation gets muted, and a muted guard is worse than
+#: no guard. What it still catches is the thing that actually escapes: a literal
+#: whose *value* is an absolute home path.
+_ABSOLUTE_HOME_RE = __import__("re").compile(r"^/(?:Users|home)/[A-Za-z0-9._-]+/")
+#: Shell has no docstrings, so the anchor there is an assignment or a quote — the
+#: positions where the path is a value rather than a word in a comment or message.
+_SH_ABSOLUTE_HOME_RE = __import__("re").compile(r"""[=("']/(?:Users|home)/[A-Za-z0-9._-]+/""")
 
 
 def _hardcoded_home_paths(src: Path) -> list[str]:
@@ -523,7 +581,7 @@ def _hardcoded_home_paths(src: Path) -> list[str]:
         return [
             f"{src.name}:{n}"
             for n, line in enumerate(text.splitlines(), 1)
-            if _ABSOLUTE_HOME_RE.search(line) and not line.lstrip().startswith("#")
+            if _SH_ABSOLUTE_HOME_RE.search(line) and not line.lstrip().startswith("#")
         ]
     try:
         tree = ast.parse(text)
@@ -582,3 +640,27 @@ def test_the_absolute_path_guard_can_actually_fail(tmp_path):
     code = tmp_path / "code.py"
     code.write_text('STATE = "/Users/broomva/.config/broomva"\n')
     assert _hardcoded_home_paths(code) == ["code.py:1"]
+
+
+def test_the_guard_does_not_fire_on_prose_that_mentions_a_path(tmp_path):
+    """FALSE-POSITIVE control. Cross-model review demonstrated the unanchored form
+    firing on 5 of 10 constructed-correct modules and 3 of 3 shell files — help
+    text, error messages and URLs all quote example paths, and all are correct
+    code. A guard that fires on documentation gets muted."""
+    ok = tmp_path / "ok.py"
+    ok.write_text(
+        'import argparse\n'
+        'p = argparse.ArgumentParser()\n'
+        'p.add_argument("--outdir", help="e.g. /Users/me/notes/ or ~/notes")\n'
+        'ERR = "could not read /Users/me/.config/thing — check permissions"\n'
+        'DOCS = "https://example.com/Users/me/guide/"\n'
+    )
+    assert _hardcoded_home_paths(ok) == []
+
+    sh_ok = tmp_path / "ok.sh"
+    sh_ok.write_text('echo "example: /Users/me/notes/ is not where we look"\n')
+    assert _hardcoded_home_paths(sh_ok) == []
+
+    sh_bad = tmp_path / "bad.sh"
+    sh_bad.write_text('STATE=/Users/broomva/.config/broomva/p9\n')
+    assert _hardcoded_home_paths(sh_bad) == ["bad.sh:1"]

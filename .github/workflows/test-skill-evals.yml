@@ -36,6 +36,12 @@ on:
       - 'tests/skill_evals/**'
       - 'skills/**/evals/**'
       - 'skills/**/SKILL.md'
+      # A skill's SCRIPTS decide whether the env jail can contain it: a new
+      # hardcoded absolute path escapes silently, and
+      # test_no_evaluated_skill_resolves_state_from_an_absolute_path is what
+      # catches it. Without this filter that guard never ran on the change class
+      # it guards (BRO-2018 review).
+      - 'skills/**/scripts/**'
       - '.github/workflows/test-skill-evals.yml'
   push:
     branches: [main]
@@ -44,6 +50,12 @@ on:
       - 'tests/skill_evals/**'
       - 'skills/**/evals/**'
       - 'skills/**/SKILL.md'
+      # A skill's SCRIPTS decide whether the env jail can contain it: a new
+      # hardcoded absolute path escapes silently, and
+      # test_no_evaluated_skill_resolves_state_from_an_absolute_path is what
+      # catches it. Without this filter that guard never ran on the change class
+      # it guards (BRO-2018 review).
+      - 'skills/**/scripts/**'
       - '.github/workflows/test-skill-evals.yml'
   workflow_dispatch:
 
