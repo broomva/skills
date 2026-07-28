@@ -60,6 +60,35 @@ Checks grade **tool inputs, never tool names**. `Bash` is not evidence of anythi
 is excluded from every evidence predicate — that read is the `RECOVERED` leak, so
 it must not double as proof the artifact was ingested.
 
+And a tool call is evidence only if it **ran**. A `tool_use` block is the agent's
+*claim* to have called something; the matching `tool_result` is what happened. A
+`Write` the Read-before-Edit hook rejected used to prove `documents_finding`, and a
+`Skill` call whose launch returned `success: false` used to count as a trigger.
+Results are paired to calls **by `tool_use_id`, never by order**, because parallel
+calls resolve out of order.
+
+"Ran" is not "succeeded", and getting that backwards is a false-negative machine.
+`is_error: true` covers two different events, and which one dominates depends
+entirely on the tool. Measured over 500 real session transcripts:
+
+| tool | errored results | of which the tool **refused** |
+|---|---|---|
+| `Bash` | 489 | 39 (8%) — the other 450 are `Exit code N`, i.e. the shell ran |
+| `Write` | 212 | 212 (100%) — every one a Read-before-Edit rejection |
+
+`grep` with no matches exits 1. So does `ls` on a legitimately absent path, in a run
+that recovers with `find` and genuinely inspects the tree. The discriminator is
+therefore the CLI's `<tool_use_error>` marker, which wraps a refusal, and not the
+`is_error` flag. An earlier version of this fix used the flag and was proven by
+cross-review to fail correct runs on the tool that carries most of the evidence.
+
+The carve-out matters as much as the rule: a transcript that models **no** results
+at all is not evidence that its calls failed, so it is not condemned. Absence of
+result modelling is not absence of execution — the version without that carve-out
+was measured to fail 9 correct runs. Same for calls made inside a subagent, whose
+result routing is unmeasured. An absent `is_error` means **success** (375 of 1327
+successful results omit the key).
+
 That exclusion is scoped to **the skill under test**, not to the string `SKILL.md`.
 The needle is `<workspace>/.claude/skills/…`, `skills/[<bucket>/]<skill>/…`, or
 `<skill>/…/SKILL.md`. Somebody *else's* `SKILL.md` — fetched from GitHub, read out

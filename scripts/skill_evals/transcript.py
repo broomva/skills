@@ -141,6 +141,60 @@ class ToolUse:
         return self.parent_tool_use_id is not None
 
 
+#: The CLI wraps a REFUSAL in this marker: a permission denial, a Read-before-Edit
+#: rejection, a malformed call. It means the tool never did anything. Its absence on
+#: an ``is_error`` result means the tool RAN and reported a non-zero status.
+REFUSAL_MARKER = "<tool_use_error>"
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """One ``tool_result`` block — what the CLI said actually happened (BRO-2016).
+
+    The missing half of the linkage. ``tool_use`` is the model's *claim* to have
+    called something; this is the outcome. Without it every tool-side evidence
+    predicate graded intent.
+    """
+
+    tool_use_id: str
+    is_error: bool
+    content: str = ""
+
+    @property
+    def refused(self) -> bool:
+        """Did the tool decline to run at all — as opposed to running and failing?
+
+        ``is_error`` alone cannot answer this, and the difference is most of the
+        corpus. Measured over 500 real session transcripts: of 489 errored ``Bash``
+        results, **450 (92%) are ``Exit code N``** — the shell ran, the command
+        exited non-zero. ``grep`` with no matches exits 1; so does ``ls`` on a path
+        that is legitimately absent, in a run that then recovers with ``find`` and
+        genuinely inspects the tree. Treating those as "did not run" strips their
+        inputs from evidence and fails a correct run.
+
+        ``Write`` is the mirror image and the reason this fix exists at all: 212 of
+        212 errored ``Write`` results are refusals, every one a Read-before-Edit
+        rejection — precisely the shape that used to false-pass ``documents_finding``.
+
+        So the discriminator is the marker, not the flag.
+        """
+        return self.is_error and REFUSAL_MARKER in self.content
+
+
+def _is_error_flag(value: Any) -> bool:
+    """Whether a ``tool_result``'s ``is_error`` field means failure.
+
+    Not ``bool(value)``. Absence means SUCCESS — 375 of 1327 successful results in a
+    real-transcript sample omit the key entirely (Read, Write, Edit, MCP, Skill,
+    WebFetch all do) — and the string ``"False"`` is truthy in Python, so a future
+    shape change from bool to string would silently invert the predicate and
+    condemn every successful call.
+    """
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
 @dataclass
 class Transcript:
     """A parsed CLI run: the event list plus process-level outcome metadata."""
@@ -250,6 +304,119 @@ class Transcript:
                 )
         return out
 
+    def tool_results(self) -> dict[str, "ToolResult"]:
+        cached = getattr(self, "_tool_results_cache", None)
+        if cached is not None:
+            return cached
+        built = self._build_tool_results()
+        object.__setattr__(self, "_tool_results_cache", built)
+        return built
+
+    def _build_tool_results(self) -> dict[str, "ToolResult"]:
+        """Every ``tool_result``, keyed by the ``tool_use_id`` it answers.
+
+        BY ID, never by order: parallel tool calls were observed live resolving out
+        of order (A, B issued; B, A returned), so any positional pairing attributes
+        one call's outcome to another — which is worse than not checking at all,
+        because it fails in both directions at once.
+        """
+        out: dict[str, ToolResult] = {}
+        for ev in self.events:
+            if ev.get("type") != "user":
+                continue
+            for block in self._blocks(ev):
+                if block.get("type") != "tool_result":
+                    continue
+                tuid = str(block.get("tool_use_id") or "")
+                if not tuid:
+                    continue
+                content = block.get("content")
+                text = content if isinstance(content, str) else json.dumps(content, default=str)
+                out[tuid] = ToolResult(
+                    tool_use_id=tuid,
+                    is_error=_is_error_flag(block.get("is_error")),
+                    content=text,
+                )
+        return out
+
+    def resolves_tool_results(self) -> bool:
+        """Does this transcript model tool results at all?
+
+        The capability probe that keeps :meth:`executed_successfully` from
+        overshooting. A transcript with no result blocks anywhere is not evidence
+        that its calls failed — it is evidence that this recording does not carry
+        outcomes, and condemning on it would fail every hand-built fixture and every
+        older recording.
+        """
+        return bool(self.tool_results())
+
+    def executed(self, tu: "ToolUse | str") -> bool:
+        """ROOT PREDICATE (BRO-2016): did this tool call actually RUN?
+
+        Note the question. Not "did it succeed" — a command that runs and exits
+        non-zero HAS run, and its inputs are evidence of what the agent did. Asking
+        the wrong one of those two questions is a measured false-negative machine:
+        92% of errored ``Bash`` results in the real corpus are a shell that ran (see
+        :attr:`ToolResult.refused`).
+
+        Every tool-side evidence check funnels through here, so the three-valued
+        reality is collapsed once, in one place, rather than approximated per check:
+
+        * a matching result that REFUSED -> **False**. The tool never acted.
+        * a matching result otherwise -> **True**. It ran, whatever it returned.
+        * no matching result -> it depends, and the tie-breakers are what stop this
+          fix from becoming a false-negative machine:
+
+          - the call came from inside a subagent (:attr:`ToolUse.is_subagent`) ->
+            **True**. Whether stream-json routes subagent results into the same
+            stream is UNMEASURED — the sampled corpus contained none — and
+            condemning on unmeasured plumbing is how a gate starts rejecting correct
+            runs.
+          - this transcript resolves results elsewhere -> **False**. It demonstrably
+            records outcomes and recorded none for this call, so the call never
+            finished.
+          - this transcript resolves nothing -> **True**. Absence of evidence is not
+            evidence of absence.
+
+        That last clause is the whole anti-overshoot guard: the naive rule ("evidence
+        requires a present non-error result") was measured to break 9 existing tests.
+        """
+        tuid = tu if isinstance(tu, str) else tu.id
+        results = self.tool_results()
+        found = results.get(tuid) if tuid else None
+        if found is not None:
+            return not found.refused
+        if not isinstance(tu, str) and tu.is_subagent:
+            return True
+        return not results
+
+    def executed_successfully(self, tu: "ToolUse | str") -> bool:
+        """Deprecated alias for :meth:`executed`, kept so a stale call site fails
+        loudly in review rather than silently asking the wrong question."""
+        return self.executed(tu)
+
+    def tool_call_failed(self, tool_use_id: str) -> bool:
+        """True only on a DEMONSTRATED failure. Deliberately weaker than
+        :meth:`executed_successfully`, which also condemns unresolved calls.
+
+        Used by the trigger detector, where Detector B already *is* the execution
+        channel — so tightening Detector A past demonstrated failure buys nothing
+        and risks calling a real trigger a miss.
+        """
+        found = self.tool_results().get(tool_use_id)
+        if found is not None and found.is_error:
+            return True
+        for ev in self.events:
+            res = ev.get("tool_use_result")
+            if isinstance(res, dict) and res.get("success") is False:
+                for block in self._blocks(ev):
+                    if (
+                        block.get("type") == "tool_result"
+                        and str(block.get("tool_use_id") or "") == tool_use_id
+                    ):
+                        return True
+        return False
+
     def assistant_text(self) -> str:
         parts: list[str] = []
         for ev in self.events:
@@ -329,9 +496,37 @@ class Transcript:
                 out.append(name.strip())
         return out
 
+    def skill_invocations_that_ran(self) -> list[str]:
+        """Detector A, minus names whose every Skill call was REJECTED (BRO-2016).
+
+        ``skill_invocations`` keeps raw-claim semantics — it is asserted directly by
+        the detector tests and used in reporting — so the filtering lives here.
+        A name survives if at least one of its Skill calls was not demonstrably
+        rejected: two attempts where the first errored and the second worked is a
+        trigger, not a miss.
+        """
+        surviving: list[str] = []
+        for tu in self.tool_uses():
+            if tu.name != SKILL_TOOL_NAME:
+                continue
+            for key in _SKILL_NAME_KEYS:
+                val = tu.input.get(key)
+                if isinstance(val, str) and val.strip():
+                    if not self.tool_call_failed(tu.id):
+                        surviving.append(val.strip())
+                    break
+        return surviving
+
     def triggered(self, skill: str) -> bool:
+        """Did the skill fire? A REJECTED Skill call is not a firing.
+
+        Detector A was the model's request and Detector B the CLI's confirmation,
+        unioned — so a run where the model asked for the skill and the launch came
+        back ``success: false`` scored as triggered. Detector A is now filtered to
+        calls that were not demonstrably rejected.
+        """
         target = self._norm(skill)
-        seen = {self._norm(s) for s in self.skill_invocations()}
+        seen = {self._norm(s) for s in self.skill_invocations_that_ran()}
         seen |= {self._norm(s) for s in self.skill_launches()}
         return target in seen
 
@@ -355,9 +550,15 @@ class Transcript:
         check-side exclusion can never drift apart. *workspace* is the case cwd,
         which is where the answer key was materialised; reading somebody else's
         ``SKILL.md`` off the internet is an ordinary artifact read, not recovery.
+
+        A read the tool REJECTED is not recovery either (BRO-2016) — nothing was
+        recovered. Gate-risk-free: it moves a trial from RECOVERED to FAIL, both
+        non-PASS, so it can only sharpen the diagnosis and can never green anything.
         """
         for tu in self.tool_uses():
             if tu.name not in RECOVERY_TOOLS:
+                continue
+            if not self.executed(tu):
                 continue
             blob = json.dumps(tu.input, ensure_ascii=False)
             if refers_to_skill_content(skill, blob, workspace):
