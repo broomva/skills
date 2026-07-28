@@ -54,6 +54,7 @@ def ev_tool_use(name, tool_input, tid):
 
 
 def ev_tool_result(tid, command_name):
+    """A successful Skill LAUNCH — Detector B's channel."""
     return {"type": "user",
             "message": {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": tid,
@@ -61,6 +62,29 @@ def ev_tool_result(tid, command_name):
                             f"Base directory for this skill: "
                             f"/tmp/skilleval-ws/.claude/skills/{command_name}"}]},
             "tool_use_result": {"success": True, "commandName": command_name}}
+
+
+def ev_tool_ok(tid, content="done"):
+    """An ordinary tool call that RAN (BRO-2016).
+
+    ``is_error`` is OMITTED, not set to False — that is the shape the CLI actually
+    emits for most successful results (Read, Write, Edit, MCP, Skill, WebFetch all
+    omit it), and a fixture set that only ever carries the explicit-False form would
+    not exercise the absent-means-success branch the predicate depends on.
+    """
+    return {"type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tid, "content": content}]},
+            "tool_use_result": {"stdout": content, "stderr": "", "interrupted": False}}
+
+
+def ev_tool_err(tid, content="Error: Exit code 1"):
+    """A tool call the CLI REJECTED. Its inputs are a claim, not evidence."""
+    return {"type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tid,
+                 "is_error": True, "content": content}]},
+            "tool_use_result": content}
 
 
 def ev_result(text, cost, duration, turns):
@@ -112,9 +136,11 @@ def positive_01():
         ev_tool_result("toolu_01", SKILL),
         ev_tool_use("WebFetch", {"url": "https://example.invalid/paper.pdf",
                                  "prompt": "extract the full argument"}, "toolu_02"),
+        ev_tool_ok("toolu_02", "full text of the paper, 8100 words"),
         ev_text("Fetched the paper; reading the whole thing before I judge it."),
         ev_tool_use("Write", {"file_path": "research/notes/2026-07-28-harness-selftest.md",
                               "content": "# finding\n"}, "toolu_03"),
+        ev_tool_ok("toolu_03", "File created successfully."),
         ev_text(POS1_ANSWER),
         ev_result(POS1_ANSWER, 0.0241, 51200, 7),
     ]
@@ -126,12 +152,15 @@ def positive_02():
         ev_init(),
         ev_text("Let me look at what is actually in the repo before I answer."),
         ev_tool_use("Glob", {"pattern": "docs/inbox/*.md"}, "toolu_01"),
+        ev_tool_ok("toolu_01", "docs/inbox/example-spec.md"),
         ev_tool_use("Bash", {"command": "ls -la docs/inbox && git ls-files | head -40"},
                     "toolu_02"),
+        ev_tool_ok("toolu_02", "README.md\nsrc/lib.rs\ndocs/contract.md"),
         ev_text("Now I have the shape of it."),
         ev_tool_use("Skill", {"skill": SKILL, "args": ""}, "toolu_03"),
         ev_tool_result("toolu_03", SKILL),
         ev_tool_use("Read", {"file_path": "docs/inbox/example-spec.md"}, "toolu_04"),
+        ev_tool_ok("toolu_04", "# spec\ntwo planes: runtime and contract"),
         ev_text(POS2_ANSWER),
         ev_result(POS2_ANSWER, 0.0198, 43900, 9),
     ]
@@ -141,8 +170,10 @@ def negative_01():
     return [
         ev_init(),
         ev_tool_use("Read", {"file_path": "parser.py"}, "toolu_01"),
+        ev_tool_ok("toolu_01", "def parse(buf): ..."),
         ev_tool_use("Edit", {"file_path": "parser.py", "old_string": "return None",
                              "new_string": "return b\"\""}, "toolu_02"),
+        ev_tool_ok("toolu_02", "The file has been updated."),
         ev_text(NEG1_ANSWER),
         ev_result(NEG1_ANSWER, 0.0091, 18400, 4),
     ]
@@ -152,6 +183,7 @@ def negative_02():
     return [
         ev_init(),
         ev_tool_use("Read", {"file_path": "CHANGELOG.md"}, "toolu_01"),
+        ev_tool_ok("toolu_01", "## unreleased\n- retry with backoff"),
         ev_text(NEG2_ANSWER),
         ev_result(NEG2_ANSWER, 0.0064, 11200, 3),
     ]

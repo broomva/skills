@@ -60,6 +60,21 @@ Checks grade **tool inputs, never tool names**. `Bash` is not evidence of anythi
 is excluded from every evidence predicate — that read is the `RECOVERED` leak, so
 it must not double as proof the artifact was ingested.
 
+And a tool call is evidence only if it **ran**. A `tool_use` block is the agent's
+*claim* to have called something; the matching `tool_result` is what happened. A
+`Write` the Read-before-Edit hook rejected used to prove `documents_finding`, and a
+`Skill` call whose launch returned `success: false` used to count as a trigger —
+neither is hypothetical: 28 of 84 `Write` results in a real-transcript sample carry
+`is_error: true`. Results are paired to calls **by `tool_use_id`, never by order**,
+because parallel calls resolve out of order.
+
+The carve-out matters as much as the rule: a transcript that models **no** results
+at all is not evidence that its calls failed, so it is not condemned. Absence of
+result modelling is not absence of execution — the version without that carve-out
+was measured to fail 9 correct runs. Same for calls made inside a subagent, whose
+result routing is unmeasured. An absent `is_error` means **success** (375 of 1327
+successful results omit the key).
+
 That exclusion is scoped to **the skill under test**, not to the string `SKILL.md`.
 The needle is `<workspace>/.claude/skills/…`, `skills/[<bucket>/]<skill>/…`, or
 `<skill>/…/SKILL.md`. Somebody *else's* `SKILL.md` — fetched from GitHub, read out

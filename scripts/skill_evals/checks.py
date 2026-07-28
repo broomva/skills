@@ -66,12 +66,18 @@ class CheckContext:
     # Inspect inputs (below, or the module-level `_*_tool_evidence` predicates).
 
     def tool_inputs_blob(self, *names: str) -> str:
-        """JSON-serialised inputs of every tool_use whose name is in *names*."""
+        """JSON-serialised inputs of every tool_use whose name is in *names*.
+
+        Filtered to calls that RAN, for the same reason ``_candidate_tool_uses`` is
+        (BRO-2016). No check references this today, which is exactly why it is
+        tightened now: leaving one un-tightened evidence accessor in the module
+        re-plants the defect for whoever writes the next check.
+        """
         wanted = set(names)
         parts = [
             json.dumps(tu.input, ensure_ascii=False)
             for tu in self.transcript.tool_uses()
-            if not wanted or tu.name in wanted
+            if (not wanted or tu.name in wanted) and self.transcript.executed_successfully(tu)
         ]
         return "\n".join(parts)
 
@@ -164,9 +170,18 @@ def _candidate_tool_uses(ctx: CheckContext) -> list["ToolUse"]:
     RECOVERED, and must not simultaneously prove the artifact was ingested. The
     exclusion is scoped to *this* skill's materialised copy (``ctx.workspace``),
     so fetching somebody else's ``SKILL.md`` off GitHub stays valid evidence.
+
+    A call that did not RUN is likewise not evidence (BRO-2016). This is the single
+    funnel for ``documents_finding``, ``walks_repo_tree_and_canonical_files`` and
+    ``ingests_full_artifact_not_metadata``, so the execution requirement is applied
+    once here rather than patched into each of the three — the root predicate is
+    ``Transcript.executed_successfully``, which carries the carve-outs that stop it
+    condemning transcripts that simply do not model results.
     """
     out: list["ToolUse"] = []
     for tu in ctx.transcript.tool_uses():
+        if not ctx.transcript.executed_successfully(tu):
+            continue
         blob = json.dumps(tu.input, ensure_ascii=False)
         if refers_to_skill_content(ctx.skill, blob, ctx.workspace):
             continue
@@ -358,7 +373,13 @@ def check_skill_triggered(ctx: CheckContext) -> CheckResult:
     return CheckResult(
         "skill_triggered",
         ok,
-        "Skill tool_use/tool_use_result observed" if ok else "no Skill event for this skill",
+        # Says what it now MEANS. The old wording ("tool_use/tool_use_result
+        # observed") described the union that let a REJECTED launch read as a
+        # firing; a detail string that misdescribes its own trigger is the
+        # forward-honesty failure this workspace's canon lens catches.
+        "Skill launch observed (a Skill call that was not rejected, or a successful launch)"
+        if ok
+        else "no Skill event for this skill, or every Skill call was rejected",
     )
 
 
