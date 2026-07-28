@@ -19,8 +19,15 @@ python3 scripts/skill_evals/runner.py --skill checkit --validate-only --replay /
 
 ## Prompt sets
 
-`skills/<bucket>/<name>/evals/prompts.json`, Schmid's 5/5/5 composition — 5 golden,
-5 near-miss negatives, 5 lifted verbatim from `docs/conversations/`.
+`skills/<bucket>/<name>/evals/prompts.json`, built on Schmid's 5/5/5 shape —
+authored goldens, near-miss negatives, and real production turns lifted verbatim
+from `docs/conversations/`.
+
+The shipped `checkit` pilot is **17 cases: 11 positive / 6 negative**, by origin
+5 golden + 6 real-trace + 6 negative. It grew past 5/5/5 during review: negatives
+that turned out to be verbatim lifts of the skill's own NOT-FOR clause were
+replaced with genuine near-misses, and a positive was added for the
+bare-topic-string branch the taxonomy names but no case covered.
 
 ```json
 { "skill": "checkit", "version": 1, "cases": [
@@ -58,24 +65,47 @@ The needle is `<workspace>/.claude/skills/…`, `skills/[<bucket>/]<skill>/…`,
 `<skill>/…/SKILL.md`. Somebody *else's* `SKILL.md` — fetched from GitHub, read out
 of a downloads folder — is an ordinary artifact and stays eligible as evidence.
 
-Two checks earn their names rather than approximating them:
+### Two checks are implemented but WITHDRAWN from the pilot
 
-* **`ingests_full_artifact_not_metadata`** scopes tool evidence to the artifact the
-  case actually names. A URL or path in the prompt yields distinctive tokens
-  (`gepa-ai`, `gepa`, never `github`/`blob`/`main`), and the fetch/read has to
-  reference one. `Read {"file_path": "/etc/hosts"}` is a read; it is not evidence
-  that *this* case's artifact was ingested. When the prompt names no artifact — a
-  bare topic, a pasted document — there is nothing to scope to and any
-  content-pulling call counts, because failing there would be a false-fail. The
-  textual arm is unchanged, so an unmodelled route still passes.
-* **`no_clarifying_question_bounced_back`** distinguishes *"tell me what you want"*
-  from *"here's the answer — want me to write it up?"*. Only the first is the
-  failure; the second is a correct bounded answer and is SKILL.md's own prescribed
-  closing shape. The discriminator is whether an answer survives once trailing
-  interrogative sentences are peeled off, plus whether those questions ask the user
-  to specify. Length is not the discriminator — the earlier `endswith("?") and
-  len < 400` rule false-failed 4 of the 5 negatives that assert this check, and
-  missed verbose bounces entirely.
+`ingests_full_artifact_not_metadata` and `no_clarifying_question_bounced_back`
+remain in `CHECK_REGISTRY` but are wired to **no case**. Both oscillated across
+four adversarial review rounds between false-passing and false-failing, and were
+withdrawn rather than shipped noisy. `prompts.json` carries the evidence under
+`known_gaps.checks_withdrawn_2026_07_28`.
+
+* **`ingests_full_artifact_not_metadata`** was meant to scope tool evidence to the
+  artifact the case names, so that `Read {"file_path": "/etc/hosts"}` is a read but
+  not evidence *this* case's artifact was ingested. It has failed in both
+  directions: an earlier form scoped to the **host**, so fetching a different
+  GitHub repo or a different arXiv paper passed; the current form drops one-slash
+  extensionless references (`gepa-ai/gepa`), emptying the token set — and with no
+  tokens the predicate returns True unconditionally, so it now fails **open**.
+  Correct scoping also has to survive redirect indirection (the pilot's `golden-04`
+  substance sits behind a `t.co` at `x.com/i/article/…`), which token matching
+  does not model.
+* **`no_clarifying_question_bounced_back`** was meant to distinguish *"tell me what
+  you want"* from *"here's the answer — want me to write it up?"*, the second being
+  a correct bounded answer and SKILL.md's own prescribed closing shape. Every
+  implementation approximated that distinction with a surface pattern and
+  false-failed correct answers: a length rule (`endswith("?") and len < 400`), then
+  a bare prefix match with no interrogative requirement (so the declarative
+  *"Which one wins depends on how often you bump the lockfile."* scored as a
+  clarifying question), then a second-person rule that flagged a wh-question the
+  agent answered in its own next clause. It was asserted on 17/17 cases, so its
+  false-fails depressed the whole pilot.
+
+Both encode a **semantic** judgement. A regex is the wrong instrument; they belong
+behind the LLM-judge seam, which this harness marks and does not build.
+
+Withdrawing them does not weaken the negatives: a negative's *primary* assertion is
+structural — the runner fails any negative where the skill triggered — and
+`expected_checks` were always supplementary. v1 grades **triggering**
+deterministically, which is the failure mode the arc measured.
+
+The general rule this produced: a check that rejects correct behaviour is worse
+than no check, because it depresses a correct implementation's pass rate until
+someone lowers the threshold. Every tightened check needs a **bidirectional**
+proof — mutation (can go RED) *and* false-positive (still GREEN on correct input).
 
 `final_answer_non_empty` counts **words, not characters**, for the same reason: a
 34-character reply can be the correct answer to a yes/no question, while `"ok"` is
