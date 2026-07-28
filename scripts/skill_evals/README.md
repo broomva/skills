@@ -383,9 +383,17 @@ python3 scripts/skill_evals/listing.py --calibrate # re-derive the caps from dis
 ```
 
 Measured here (1,199 listings across 1,039 session transcripts): largest listing
-ever delivered **39,013 chars**; our model-invocable trigger surface **101,654
-chars**, a 2.6× overshoot. In the session that produced the module: 146 skills →
-**34 full, 2 truncated, 110 BARE (75.3%)**.
+ever delivered **39,013 chars**; the trigger surface of the 124 roster skills found
+on disk is **94,800 chars**, a 2.4× overshoot. In the session that produced the
+module: 146 skills → **34 full, 2 truncated, 110 BARE (75.3%)**.
+
+The budget is scoped to the **roster** — the names the harness actually lists. An
+earlier version counted every `SKILL.md` it could reach and reported 369 skills
+against a 146-name roster, 60% of that mass from skills that have never been listed,
+while *missing* 84 that had: `Path.rglob` does not follow symlinks, and a skill
+install root is almost entirely symlinks (125 of 129 entries here — rglob found 3
+`SKILL.md` files, `iterdir` finds 128). The tell was a single run reporting `kg` and
+`dogfood` TRUNCATED from the transcript while `over_per_skill_cap` came back empty.
 
 The bstack primitives are among the worst hit — `role-x` (P17), `persist` (P12),
 `cross-review` (P20), `orchestration` (P19) and `bookkeeping` (P6) all arrived
@@ -397,7 +405,7 @@ Two consequences worth stating plainly:
 - **A trigger eval on a bare skill measures nothing about its description**, because
   the model never received one. Coverage numbers should be read against delivery.
 - **Trimming descriptions cannot fix it.** The affordable mean at this skill count is
-  ~106 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
+  ~315 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
   the model-invocable skill **count** (`disable-model-invocation` on the long tail),
   which is a governance decision, not this module's job.
 

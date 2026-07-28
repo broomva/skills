@@ -289,3 +289,144 @@ def test_no_listing_anywhere_reports_rather_than_crashes(tmp_path):
     _skill(skills, "alpha", "x" * 50)
     rc = L.main(["--transcripts", str(tmp_path), "--skill-root", str(skills)])
     assert rc == 2  # nothing to classify — distinct from "classified, all fine"
+
+
+# ---------------------------------------------------------------------------
+# defects found by cross-review of PR #113 — each with the shape that produced it
+# ---------------------------------------------------------------------------
+
+
+def test_skill_masses_sees_through_symlinks(tmp_path):
+    """THE blocker. `Path.rglob` does not descend into symlinked directories, and a
+    skill install root is almost entirely symlinks — 125 of 129 entries under
+    ~/.claude/skills. rglob found 3 SKILL.md files there; iterdir finds 128.
+
+    The rglob version measured a population 60% composed of skills that have never
+    been listed, while missing 84 of the 146 the roster carries.
+    """
+    real = tmp_path / "src" / "kg"
+    real.mkdir(parents=True)
+    (real / "SKILL.md").write_text("---\nname: kg\ndescription: real one\n---\n")
+    root = tmp_path / "install"
+    root.mkdir()
+    (root / "kg").symlink_to(real, target_is_directory=True)
+
+    names = {m.name for m in L.skill_masses([root])}
+    assert names == {"kg"}, "a symlinked skill must be counted"
+
+
+def test_nested_bundles_are_not_counted(tmp_path):
+    """`<root>/<skill>/.skills/<sub>` is not a roster entry; counting it inflates
+    the total, which is the other half of what rglob got wrong."""
+    root = tmp_path / "install"
+    top = root / "gstack"
+    (top / ".skills" / "plan-tune").mkdir(parents=True)
+    (top / "SKILL.md").write_text("---\nname: gstack\ndescription: top\n---\n")
+    (top / ".skills" / "plan-tune" / "SKILL.md").write_text(
+        "---\nname: plan-tune\ndescription: nested\n---\n")
+    assert {m.name for m in L.skill_masses([root])} == {"gstack"}
+
+
+def test_budget_is_scoped_to_the_roster(tmp_path):
+    """A skill on disk that never appears in a listing costs nothing, so folding it
+    into the total overstates the overshoot AND puts it on the trim list, where
+    removing it would save nothing."""
+    root = tmp_path / "install"
+    root.mkdir()
+    for name, desc in (("listed", "x" * 100), ("never-listed", "y" * 5000)):
+        d = root / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {desc}\n---\n")
+
+    rep = L.budget_report([root], roster=["listed"])
+    assert rep["skills"] == 1
+    assert rep["on_disk_not_in_roster"] == 1
+    assert rep["effective_mass"] < 200
+    assert [h["skill"] for h in rep["heaviest"]] == ["listed"]
+
+    unscoped = L.budget_report([root])
+    assert unscoped["effective_mass"] > 5000, "control: unscoped still counts everything"
+
+
+def test_a_roster_skill_missing_from_disk_is_reported(tmp_path):
+    root = tmp_path / "install"
+    root.mkdir()
+    d = root / "here"
+    d.mkdir()
+    (d / "SKILL.md").write_text("---\nname: here\ndescription: x\n---\n")
+    rep = L.budget_report([root], roster=["here", "gone"])
+    assert rep["in_roster_not_on_disk"] == ["gone"]
+
+
+def test_latest_listing_prefers_the_full_roster_over_an_increment(tmp_path):
+    """A session emits an initial full listing then INCREMENTAL 1-skill ones. Taking
+    the last attachment reported `0 BARE (0.0%)` on a machine where 110 of 146 are
+    bare — a clean bill of health produced by reading the wrong record."""
+    f = tmp_path / "66666666-6666-6666-6666-666666666666.jsonl"
+    full = {"type": "user", "attachments": [{"type": "skill_listing",
+            "names": ["alpha", "beta"], "content": "- alpha: described.\n- beta\n",
+            "skillCount": 2, "isInitial": True}]}
+    incr = {"type": "user", "attachments": [{"type": "skill_listing",
+            "names": ["gamma"], "content": "- gamma: described.\n",
+            "skillCount": 1, "isInitial": False}]}
+    f.write_text(json.dumps(full) + "\n" + json.dumps(incr) + "\n", encoding="utf-8")
+
+    lst = L.latest_listing(tmp_path)
+    assert lst.skill_count == 2
+    assert L.classify(lst).bare == ["beta"]
+
+
+def test_latest_listing_falls_back_to_the_largest_when_no_initial_flag(tmp_path):
+    f = tmp_path / "77777777-7777-7777-7777-777777777777.jsonl"
+    recs = [
+        {"type": "user", "attachments": [{"type": "skill_listing", "names": ["a", "b"],
+         "content": "- a: x\n- b\n", "skillCount": 2}]},
+        {"type": "user", "attachments": [{"type": "skill_listing", "names": ["c"],
+         "content": "- c: y\n", "skillCount": 1}]},
+    ]
+    f.write_text("\n".join(json.dumps(r) for r in recs) + "\n", encoding="utf-8")
+    assert L.latest_listing(tmp_path).skill_count == 2
+
+
+def test_an_unparseable_listing_is_not_a_clean_bill_of_health():
+    """R0. A 39,013-char attachment that parsed to zero entries reported
+    `0 BARE (0.0%)` with no red condition — absence of parsed entries is absence of
+    a MEASUREMENT, not absence of bare skills."""
+    lst = L.Listing(names=(), content="garbage\n" * 200, source="t.jsonl")
+    cls = L.classify(lst)
+    assert cls.states == {}
+    reds = L.red_conditions(cls, L.budget_report([]), lst)
+    assert reds and reds[0].startswith("R0")
+    assert "not a measurement" in reds[0]
+
+
+def test_a_healthy_listing_does_not_fire_r0():
+    """FALSE-POSITIVE control."""
+    lst = L.Listing(names=("alpha",), content="- alpha: described.\n", source="t.jsonl")
+    reds = L.red_conditions(L.classify(lst), L.budget_report([]), lst)
+    assert not any(r.startswith("R0") for r in reds), reds
+
+
+def test_frontmatter_field_ignores_the_body(tmp_path):
+    """`design-taste-frontend` has no `when_to_use` in its frontmatter but does have
+    the string on line 872 of its BODY; the whole-file scan charged it 110 phantom
+    characters."""
+    md = tmp_path / "SKILL.md"
+    md.write_text(
+        "---\nname: x\ndescription: d\n---\n\n# body\n\n"
+        'when_to_use: "Landing pages with one strong asset"\n'
+    )
+    assert L._frontmatter_field(md.read_text(), "when_to_use") == ""
+
+
+def test_frontmatter_field_reads_a_block_scalar(tmp_path):
+    """`p9`, `swapit` and `procurer` all use `when_to_use: |`; taking everything
+    after the colon measured the single character `|`, charging 4 instead of 320."""
+    md = tmp_path / "SKILL.md"
+    md.write_text(
+        "---\nname: x\ndescription: d\nwhen_to_use: |\n"
+        "  first line of the block\n  second line of the block\nother: y\n---\n# body\n"
+    )
+    got = L._frontmatter_field(md.read_text(), "when_to_use")
+    assert "first line of the block" in got and "second line" in got
+    assert len(got) > 40, got

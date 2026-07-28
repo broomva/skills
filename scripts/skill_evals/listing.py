@@ -7,8 +7,8 @@ description we author is the description the model sees. It usually is not.
 Claude Code injects the skill roster as a ``skill_listing`` attachment whose
 rendered ``content`` is capped. Measured on this machine across 1,199 listings in
 1,039 session transcripts, the largest listing ever delivered is 39,013 characters
-— and our model-invocable skills carry 101,654 characters of trigger surface, 2.6x
-that floor. So the harness rations: the skills that fit render as
+— and the 124 roster skills present on disk carry 94,800 characters of trigger
+surface, 2.4x that floor. So the harness rations: the skills that fit render as
 ``- name: <description>``, and the rest render as a bare ``- name`` line with **no
 trigger text at all**.
 
@@ -211,11 +211,25 @@ def iter_transcripts(root: Path) -> Iterable[Path]:
 
 
 def latest_listing(root: Path = DEFAULT_TRANSCRIPT_ROOT) -> Listing | None:
-    """The most recently written session's listing — what the model sees *now*."""
+    """The most recent session's FULL roster listing — what the model sees now.
+
+    Not simply the last attachment in the newest transcript. A session emits an
+    initial listing carrying the whole roster and then INCREMENTAL ones carrying a
+    single skill, so taking the last attachment routinely classifies a 1-skill
+    listing and reports ``0 BARE (0.0%)`` — a clean bill of health for a machine
+    where three quarters of the roster is bare. That was reproduced on a real
+    transcript from this machine, and hit by accident during review, which is how
+    reachable it is.
+
+    Prefers ``isInitial``; falls back to the largest by skill count, so a transcript
+    whose attachments predate that flag still yields the full roster.
+    """
     for path in sorted(iter_transcripts(root), key=lambda p: -p.stat().st_mtime):
         found = listings_in(path)
-        if found:
-            return found[-1]
+        if not found:
+            continue
+        initial = [lst for lst in found if lst.is_initial]
+        return max(initial or found, key=lambda lst: lst.skill_count)
     return None
 
 
@@ -298,19 +312,49 @@ def classify(listing: Listing) -> Classification:
 
 
 def _frontmatter_field(text: str, *keys: str) -> str:
-    """A scalar frontmatter field, taking the first of *keys* that is present.
+    """A frontmatter field, taking the first of *keys* that is present.
 
-    Several spellings are accepted because authors use both: the field on disk is
-    ``when_to_use`` (4 occurrences), but ``when-to-use`` is the shape a reader
-    expects from the hyphenated ``disable-model-invocation`` next to it. Reading
-    only one spelling silently measures zero for the other.
+    Scoped to the FRONTMATTER block, and block-scalar aware. The first version was
+    neither, and failed in both directions on real skills:
+
+    * it scanned the whole file, so ``design-taste-frontend`` — which has no
+      ``when_to_use`` in its frontmatter but does have the string on line 872 of its
+      BODY — was charged 110 phantom characters;
+    * it took everything after the colon, so ``when_to_use: |`` followed by a
+      317-character block scalar (``p9``, ``swapit``, ``procurer`` all use this)
+      measured as the single character ``|``.
+
+    Several spellings are accepted because authors use both ``when_to_use`` and
+    ``when-to-use``; reading one silently measures zero for the other.
     """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+    try:
+        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
+        return ""
+    block = lines[1:end]
+
     wanted = {k.lower() for k in keys}
-    for line in text.splitlines():
+    for idx, line in enumerate(block):
         if line[:1].isspace() or ":" not in line:
             continue
-        if line.split(":", 1)[0].strip().lower() in wanted:
-            return line.split(":", 1)[1].strip()
+        if line.split(":", 1)[0].strip().lower() not in wanted:
+            continue
+        rest = line.split(":", 1)[1].strip()
+        if rest not in (">", "|", ">-", "|-", ">+", "|+"):
+            return rest
+        # Block scalar: everything indented under the key, until dedent.
+        collected: list[str] = []
+        for cont in block[idx + 1:]:
+            if not cont.strip():
+                collected.append("")
+                continue
+            if not cont[:1].isspace():
+                break
+            collected.append(cont.strip())
+        return "\n".join(collected).strip()
     return ""
 
 
@@ -336,14 +380,34 @@ class SkillMass:
 
 
 def skill_masses(roots: Iterable[Path]) -> list[SkillMass]:
-    """Effective listing mass for every model-invocable skill under *roots*."""
+    """Effective listing mass for every model-invocable skill under *roots*.
+
+    TOP-LEVEL directories only, enumerated with ``iterdir``. Not ``rglob``, and the
+    difference is not cosmetic: ``Path.rglob`` does not descend into symlinked
+    directories, and a skill install root is almost entirely symlinks — 125 of the
+    129 entries under ``~/.claude/skills`` on this machine. ``rglob`` finds **3**
+    SKILL.md files there; ``iterdir`` finds **128**.
+
+    The first version of this function used ``rglob`` and therefore measured a
+    population that was 60% skills which have never appeared in any listing, while
+    missing 84 of the 146 the roster actually carries. It reported ``kg`` and
+    ``dogfood`` as TRUNCATED from the transcript in the same run that reported
+    ``over_per_skill_cap == []``, because those two are symlinks it could not see —
+    the R3 check was silent on the only two confirmed truncations in the corpus.
+    That is the install-dir-mistaken-for-source-tree vacuity, in a module written to
+    hunt vacuity.
+
+    Nested bundles (``<root>/<skill>/.skills/<sub>``) are deliberately NOT walked:
+    they are not roster entries and counting them inflates the total.
+    """
     seen: dict[str, SkillMass] = {}
     for root in roots:
         if not Path(root).is_dir():
             continue
-        for md in sorted(Path(root).rglob("SKILL.md")):
-            parts = set(md.parts)
-            if ".venv" in parts or "node_modules" in parts:
+        for entry in sorted(Path(root).iterdir()):
+            md = entry / "SKILL.md"
+            # is_file() resolves through the symlink, which is the whole point.
+            if not md.is_file():
                 continue
             try:
                 text = md.read_text(encoding="utf-8", errors="replace")
@@ -365,19 +429,38 @@ def skill_masses(roots: Iterable[Path]) -> list[SkillMass]:
     return sorted(seen.values(), key=lambda s: -s.effective)
 
 
-def budget_report(roots: Iterable[Path] = DEFAULT_SKILL_ROOTS) -> dict[str, Any]:
+def budget_report(
+    roots: Iterable[Path] = DEFAULT_SKILL_ROOTS, roster: Iterable[str] | None = None
+) -> dict[str, Any]:
+    """Mass against the cap, scoped to the roster the harness actually lists.
+
+    *roster* matters: a skill on disk that never appears in a listing costs nothing,
+    so folding it into the total both overstates the overshoot and puts skills on the
+    trim list whose removal would save nothing. The first version had no roster
+    parameter at all and reported 369 skills against a 146-name roster — 60% of the
+    mass from skills that have never been listed, while missing 84 that had.
+    """
     masses = skill_masses(roots)
-    total = sum(m.effective for m in masses)
+    listed = set(roster) if roster is not None else None
+    if listed is not None:
+        counted = [m for m in masses if m.name in listed]
+        unlisted = [m for m in masses if m.name not in listed]
+        missing = sorted(listed - {m.name for m in masses})
+    else:
+        counted, unlisted, missing = masses, [], []
+    total = sum(m.effective for m in counted)
     return {
-        "skills": len(masses),
+        "skills": len(counted),
+        "on_disk_not_in_roster": len(unlisted),
+        "in_roster_not_on_disk": missing[:20],
         "effective_mass": total,
         "largest_observed_listing_chars": BUDGET_CHARS,
         "budget": BUDGET_CHARS,
         "overshoot": round(total / BUDGET_CHARS, 2) if BUDGET_CHARS else 0.0,
-        "affordable_mean_chars": round(BUDGET_CHARS / len(masses)) if masses else 0,
-        "over_per_skill_cap": [m.name for m in masses if m.effective > PER_SKILL_CHARS],
+        "affordable_mean_chars": round(BUDGET_CHARS / len(counted)) if counted else 0,
+        "over_per_skill_cap": [m.name for m in counted if m.effective > PER_SKILL_CHARS],
         "heaviest": [
-            {"skill": m.name, "chars": m.effective, "path": m.path} for m in masses[:15]
+            {"skill": m.name, "chars": m.effective, "path": m.path} for m in counted[:15]
         ],
     }
 
@@ -428,9 +511,27 @@ def calibrate(root: Path = DEFAULT_TRANSCRIPT_ROOT) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def red_conditions(cls: Classification, budget: dict[str, Any]) -> list[str]:
+def red_conditions(
+    cls: Classification, budget: dict[str, Any], listing: Listing | None = None
+) -> list[str]:
     """What a reader should act on. Ordered by how directly each blocks triggering."""
     out: list[str] = []
+    # R0 first, because everything below it is only meaningful if the listing was
+    # actually read. A listing that parses to zero entries reported "0 BARE (0.0%)"
+    # with no red condition at all — for a 199-skill attachment where every line was
+    # unreadable. Absence of parsed entries is not absence of bare skills; it is
+    # absence of a measurement, and it has to say so.
+    if listing is not None and listing.content_chars > 0 and not cls.states:
+        out.append(
+            f"R0 the listing rendered {listing.content_chars:,} chars but parsed to ZERO "
+            f"entries ({len(cls.unparsed)} unreadable lines) — this report is not a "
+            "measurement, and the counts below mean nothing"
+        )
+    elif cls.states and len(cls.unparsed) > len(cls.states):
+        out.append(
+            f"R0 {len(cls.unparsed)} unreadable lines against only {len(cls.states)} parsed "
+            "entries — the listing shape may have changed; treat the counts as suspect"
+        )
     if cls.bare:
         out.append(
             f"R1 {len(cls.bare)} of {len(cls.states)} skills reached the model as a BARE "
@@ -475,7 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if (cal["budget_constant_is_stale"] or cal["per_skill_constant_is_stale"]) else 0
 
     listing = latest_listing(args.transcripts)
-    budget = budget_report(roots)
+    budget = budget_report(roots, roster=listing.names if listing else None)
 
     if listing is None:
         if args.as_json:
@@ -488,7 +589,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     cls = classify(listing)
-    reds = red_conditions(cls, budget)
+    reds = red_conditions(cls, budget, listing)
 
     if args.as_json:
         print(json.dumps({
