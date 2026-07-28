@@ -47,15 +47,16 @@ from typing import Iterable
 # Token estimation
 # --------------------------------------------------------------------------
 
-# Prose-markdown chars-per-token. Calibrated against tiktoken cl100k over nine
-# real governance surfaces (CLAUDE.md, AGENTS.md, METALAYER.md, SKILL.md files,
-# reference docs): observed range 3.71-4.37, mean 4.06, median 4.25. The mean is
-# used, so the estimate lands within roughly ±8% on this shape of text.
+# Prose-markdown chars-per-token. Calibrated against tiktoken cl100k over 12
+# real governance surfaces (CLAUDE.md, AGENTS.md, METALAYER.md, nine SKILL.md
+# files): observed range 3.67-4.58, mean 4.10. Using the mean, per-file error
+# spans about -10% to +13% — wide enough that a budget call landing within ~15%
+# of a threshold should be settled with the real tokenizer, not this.
 #
 # Used only when tiktoken is unavailable; every consumer labels the result
-# "estimate(...)" so a reader never mistakes it for an exact count. Budget
-# decisions near a threshold deserve the real tokenizer — `pip install tiktoken`.
-_CHARS_PER_TOKEN = 4.06
+# "estimate(...)" so a reader never mistakes it for an exact count.
+# `pip install tiktoken` for exact counts.
+_CHARS_PER_TOKEN = 4.10
 
 
 def estimate_tokens(text: str) -> int:
@@ -82,7 +83,31 @@ def tokenizer_name() -> str:
 # --------------------------------------------------------------------------
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-_FENCE = re.compile(r"^\s*(```|~~~)")
+# Capture the FULL run length: a ```` fence is closed only by a run of >= 4 of
+# the same char, so an inner ``` block does not terminate it. SKILL.md files
+# routinely wrap markdown examples in 4-backtick fences, and SKILL.md is a
+# first-class audit target — treating the inner fence as a close leaks example
+# headings into the section table.
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+
+def _scan_fences(lines: list[str]):
+    """Yield (index, line, in_fence) with CommonMark-ish fence nesting."""
+    open_char: str | None = None
+    open_len = 0
+    for i, line in enumerate(lines):
+        m = _FENCE.match(line)
+        if m:
+            run = m.group(1)
+            if open_char is None:
+                open_char, open_len = run[0], len(run)
+                yield i, line, True
+                continue
+            if run[0] == open_char and len(run) >= open_len:
+                open_char, open_len = None, 0
+                yield i, line, True
+                continue
+        yield i, line, open_char is not None
 
 
 @dataclass
@@ -114,18 +139,9 @@ def split_sections(text: str, path: str = "<text>") -> list[Section]:
     """
     lines = text.splitlines()
     marks: list[tuple[int, int, str]] = []  # (line_idx, level, heading)
-    fence: str | None = None
 
-    for i, line in enumerate(lines):
-        f = _FENCE.match(line)
-        if f:
-            tok = f.group(1)
-            if fence is None:
-                fence = tok
-            elif line.strip().startswith(fence):
-                fence = None
-            continue
-        if fence is not None:
+    for i, line, in_fence in _scan_fences(lines):
+        if in_fence:
             continue
         h = _HEADING.match(line)
         if h:
@@ -218,24 +234,39 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+|\n")
 # prohibition simply for quoting the rules they are proposing to delete.
 
 # (a) The keyword sits inside a quoted or code span — the sentence is citing.
+#
+# The single-quote alternative is boundary-gated. Ungated, an apostrophe pair
+# in ordinary prose forges a span: "Claude's output must never contain the
+# user's raw API key" reads `'s output must never contain the user'` as a
+# quotation and silently drops a real prohibition. The lookarounds require the
+# quote marks to sit outside a word, which still admits 'quoted rule' and
+# rejects possessives.
 _QUOTED_SPAN = re.compile(
-    r"\"[^\"\n]*\"|“[^”\n]*”|'[^'\n]{4,}'|`[^`\n]*`"
+    r"\"[^\"\n]*\"|“[^”\n]*”|(?<![A-Za-z0-9])'[^'\n]{4,}'(?![A-Za-z0-9])|`[^`\n]*`"
 )
 
 # (b) The keyword's subject is a third-person inanimate referent — the sentence
-# is describing behavior ("It never says delete", "the script must exit 0"),
+# is describing behavior ("It never says delete", "the hook never fires"),
 # not instructing the reader. Deliberately narrow:
-#   - an actor subject ("the agent must not…") stays a directive, because that
-#     is genuine constraint language;
-#   - `that` and `which` are excluded — in this corpus they are relative
-#     pronouns far more often than demonstrative subjects, and treating them as
-#     descriptive swallows real judgement framing ("code that reads like…").
+#   - an actor subject ("the agent must not…") stays a directive;
+#   - `that`/`which` are excluded — as relative pronouns they swallow real
+#     judgement framing ("code that reads like…");
+#   - `there`/`this` are excluded — "There must be a ticket for every work
+#     unit" and "This must be done before every merge" are directives.
 _DESCRIPTIVE_SUBJECT = re.compile(
-    r"\b(?:it|this|they|there|"
+    r"\b(?:it|they|"
     r"the\s+(?:script|tool|check|gate|hook|flag|rule|test|report|table|"
     r"column|command|file|pattern|regex|function))\s+(?:\w+ly\s+)?$",
     re.IGNORECASE,
 )
+
+# The descriptive-subject filter applies ONLY to these keywords. English does
+# not disambiguate "The script must exit 0" (describing) from "The file must be
+# committed" (instructing), so suppressing the must-family costs real
+# directives. This is a heuristic feeding a report, and the dangerous direction
+# is UNDER-counting rules — that reads as "your surface is already fine". So it
+# fails open: when ambiguous, count it as a directive.
+_SUPPRESSIBLE = re.compile(r"^(?:never|always|cannot|can't)$", re.IGNORECASE)
 
 
 def _spans(sentence: str) -> list[tuple[int, int]]:
@@ -247,23 +278,25 @@ def _is_mention_not_use(sentence: str, match: re.Match) -> bool:
     start = match.start()
     if any(a <= start < b for a, b in _spans(sentence)):
         return True
+    if not _SUPPRESSIBLE.match(match.group(0)):
+        return False
     return bool(_DESCRIPTIVE_SUBJECT.search(sentence[:start]))
 
 
+# A URL slug is not a directive. `never-merge-red` in a link would otherwise
+# classify the whole sentence as a prohibition.
+_URL = re.compile(r"<?https?://\S+>?|<?www\.\S+>?")
+
+
 def sentences(text: str) -> list[str]:
-    """Split into candidate directive sentences, minus fenced code."""
+    """Split into candidate directive sentences, minus fenced code.
+
+    URLs are left intact here so the contradiction report can quote a sentence
+    faithfully; they are stripped inside classify_sentence instead.
+    """
     out: list[str] = []
-    fence: str | None = None
-    for line in text.splitlines():
-        f = _FENCE.match(line)
-        if f:
-            tok = f.group(1)
-            if fence is None:
-                fence = tok
-            elif line.strip().startswith(fence):
-                fence = None
-            continue
-        if fence is not None:
+    for _, line, in_fence in _scan_fences(text.splitlines()):
+        if in_fence:
             continue
         for piece in _SENTENCE_SPLIT.split(line):
             piece = piece.strip(" \t-*|>#")
@@ -273,7 +306,13 @@ def sentences(text: str) -> list[str]:
 
 
 def classify_sentence(sentence: str) -> str:
-    """Classify a sentence's directive form, counting uses and not mentions."""
+    """Classify a sentence's directive form, counting uses and not mentions.
+
+    URLs are blanked first: a slug like `/docs/never-merge-red` would otherwise
+    read as a prohibition. Stripping here rather than in the splitter keeps
+    this correct from every entry point, including direct calls.
+    """
+    sentence = _URL.sub(" ", sentence)
     for name, pattern in _POLARITY_PATTERNS:
         for match in pattern.finditer(sentence):
             if not _is_mention_not_use(sentence, match):
@@ -321,15 +360,29 @@ _EXAMPLE_ROW = re.compile(
 )
 
 
+# Prose examples — the dominant form in prompts, where examples are lines
+# rather than table rows. Counted separately from table rows so neither form
+# is invisible.
+_EXAMPLE_LEAD = re.compile(
+    r"^\s*(?:[-*+]\s*|\d+[.)]\s*)?"
+    r"(?:example|for example|e\.g\.|for instance|such as:|sample)\b[:\s]",
+    re.IGNORECASE,
+)
+
+
 def count_examples(text: str) -> int:
-    """Fenced blocks plus example-flavoured table rows."""
+    """Fenced blocks, example-flavoured table rows, and example-lead lines."""
     fences = len(re.findall(r"^\s*(?:```|~~~)", text, re.MULTILINE)) // 2
-    rows = sum(
-        1
-        for line in text.splitlines()
-        if line.lstrip().startswith("|") and _EXAMPLE_ROW.search(line)
-    )
-    return fences + rows
+    rows = 0
+    leads = 0
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("|"):
+            if _EXAMPLE_ROW.search(line):
+                rows += 1
+        elif _EXAMPLE_LEAD.match(line):
+            leads += 1
+    return fences + rows + leads
 
 
 # --------------------------------------------------------------------------
@@ -372,6 +425,22 @@ _LOOKS_LIKE_PATH = re.compile(r"^[\w./\-]+\.(sh|py|ya?ml|toml|json|rs|ts|js)$")
 _LOOKS_LIKE_CMD = re.compile(r"^(make|npm|bun|cargo|pytest|python3?|gh|git)\s+[\w:.\-]+")
 
 
+def _within_root(repo_root: Path, ref: str) -> bool:
+    """Exists AND lives inside the audited repo.
+
+    An absolute ref (or one escaping via ../) would otherwise mark a section
+    anchored against a file that is not part of the surface being audited —
+    `repo_root / "/abs/x.sh"` silently discards repo_root.
+    """
+    if Path(ref).is_absolute():
+        return False
+    try:
+        target = (repo_root / ref).resolve()
+        return target.is_relative_to(repo_root.resolve()) and target.exists()
+    except (OSError, ValueError):
+        return False
+
+
 def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
     """Backtick-quoted executable paths/commands in a section, with existence.
 
@@ -389,7 +458,7 @@ def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
             continue
         if _LOOKS_LIKE_PATH.match(ref):
             kind = "path"
-            exists = bool(repo_root and (repo_root / ref).exists())
+            exists = bool(repo_root and _within_root(repo_root, ref))
         elif _LOOKS_LIKE_CMD.match(ref):
             kind = "command"
             exists = False
@@ -478,7 +547,7 @@ _SOFT = ("permission", "judgment")
 
 
 def find_contradictions(
-    sections: list[Section], max_results: int = 20
+    sections: list[Section], max_results: int | None = 20
 ) -> list[dict]:
     """Topics carrying both a hard rule and a soft allowance, in different sections.
 
@@ -507,35 +576,49 @@ def find_contradictions(
                     }
                 )
 
+    # One row per topic. Selecting the representative pair directly is O(H+S)
+    # per topic; materialising the full hard x soft cross-product and deduping
+    # afterwards was O(H*S) and peaked at 2.9 GB / 39 s on a 61k-token surface
+    # with concentrated vocabulary — to return three rows.
     out: list[dict] = []
     for topic, sides in index.items():
-        if not (sides["hard"] and sides["soft"]):
+        hard, soft = sides["hard"], sides["soft"]
+        if not (hard and soft):
             continue
-        for h in sides["hard"]:
-            for s in sides["soft"]:
-                if h["section"] == s["section"]:
-                    continue
-                out.append(
-                    {
-                        "topic": topic,
-                        "hard": h,
-                        "soft": s,
-                        # Rarer topic words make for more specific collisions.
-                        "specificity": round(
-                            1 / (len(sides["hard"]) + len(sides["soft"])), 3
-                        ),
-                    }
-                )
-    out.sort(key=lambda c: (-c["specificity"], c["topic"]))
-    # One row per topic keeps the report readable.
-    seen: set[str] = set()
-    deduped = []
-    for c in out:
-        if c["topic"] in seen:
-            continue
-        seen.add(c["topic"])
-        deduped.append(c)
-    return deduped[:max_results]
+
+        # Prefer a cross-section collision: a local pair is more often a rule
+        # beside its own stated carve-out, and so ranks lower.
+        h0 = hard[0]
+        pair = next(
+            ((h0, s) for s in soft if s["section"] != h0["section"]),
+            None,
+        ) or next(
+            ((h, soft[0]) for h in hard if h["section"] != soft[0]["section"]),
+            None,
+        )
+        if pair is None:
+            pair = (h0, soft[0])
+
+        h, s = pair
+        out.append(
+            {
+                "topic": topic,
+                "hard": h,
+                "soft": s,
+                # Same-section collisions are NOT excluded. A sentence carries
+                # exactly one polarity, so it can never pair with itself, and
+                # the article's own example ("DO NOT add comments" against
+                # "leave documentation as appropriate") is precisely a local
+                # collision. Excluding them also made contradiction detection
+                # dead in prompt mode, where everything is one section.
+                "same_section": h["section"] == s["section"],
+                # Rarer topic words make for more specific collisions.
+                "specificity": round(1 / (len(hard) + len(soft)), 3),
+            }
+        )
+
+    out.sort(key=lambda c: (c["same_section"], -c["specificity"], c["topic"]))
+    return out if max_results is None else out[:max_results]
 
 
 # --------------------------------------------------------------------------
@@ -604,6 +687,15 @@ DEFAULT_SPLIT_THRESHOLD = 2500
 _SURFACE_GLOBS = ("CLAUDE.md", "AGENTS.md", "SKILL.md", "AGENT.md")
 
 
+class NoSurfacesFound(Exception):
+    """A directory was audited but contained no known context surface.
+
+    Reported rather than swallowed: an empty run otherwise prints
+    "0 tok vs target 5000 -> within" and congratulates the user for pointing
+    the tool at the wrong directory.
+    """
+
+
 def collect_paths(inputs: Iterable[str]) -> list[Path]:
     paths: list[Path] = []
     for raw in inputs:
@@ -632,8 +724,11 @@ def audit(
     split_threshold: int = DEFAULT_SPLIT_THRESHOLD,
     repo_root: Path | None = None,
     dup_threshold: float = 0.25,
+    max_contradictions: int = 20,
 ) -> dict:
     paths = collect_paths(inputs)
+    if not paths:
+        raise NoSurfacesFound(", ".join(str(i) for i in inputs))
     all_sections: list[Section] = []
     disclosure: list[dict] = []
     per_file: list[dict] = []
@@ -660,6 +755,7 @@ def audit(
             disclosure.append(d)
         all_sections.extend(secs)
 
+    contradictions = find_contradictions(all_sections, max_results=None)
     total = sum(f["tokens"] for f in per_file)
     combined = {
         "prohibition": 0,
@@ -703,18 +799,20 @@ def audit(
             for s in sorted(all_sections, key=lambda x: -x.tokens)
         ],
         "duplication": find_duplicates(all_sections, dup_threshold),
-        "contradictions": find_contradictions(all_sections),
+        "contradictions": contradictions[:max_contradictions],
+        "contradictions_total": len(contradictions),
         "disclosure": disclosure,
     }
 
 
-def audit_prompt(text: str) -> dict:
+def audit_prompt(text: str, max_contradictions: int = 20) -> dict:
     """Prompt mode — the same signals, minus the always-on budget question."""
     secs = split_sections(text, "<prompt>")
     for s in secs:
         s.polarity, s.dominant = polarity_profile(s.text)
         s.examples = count_examples(s.text)
     counts, dominant = polarity_profile(text)
+    contradictions = find_contradictions(secs, max_results=None)
     return {
         "tokenizer": tokenizer_name(),
         "tokens": estimate_tokens(text),
@@ -723,7 +821,8 @@ def audit_prompt(text: str) -> dict:
         "rules_ratio": rules_ratio(counts),
         "dominant": dominant,
         "examples": count_examples(text),
-        "contradictions": find_contradictions(secs),
+        "contradictions": contradictions[:max_contradictions],
+        "contradictions_total": len(contradictions),
         "duplication": find_duplicates(secs, 0.3, min_tokens=25),
     }
 
@@ -776,9 +875,13 @@ def render(report: dict) -> str:
         add("")
 
     if report.get("contradictions"):
-        add("## Contradiction candidates (agent adjudicates)\n")
+        shown = min(10, len(report["contradictions"]))
+        total_c = report.get("contradictions_total", len(report["contradictions"]))
+        suffix = f" — showing {shown} of {total_c}" if total_c > shown else ""
+        add(f"## Contradiction candidates (agent adjudicates){suffix}\n")
         for c in report["contradictions"][:10]:
-            add(f"- **{c['topic']}**")
+            local = " _(same section — may be a rule plus its carve-out)_" if c["same_section"] else ""
+            add(f"- **{c['topic']}**{local}")
             add(f"  - `{c['hard']['polarity']}` {c['hard']['section']} — {c['hard']['sentence']}")
             add(f"  - `{c['soft']['polarity']}` {c['soft']['section']} — {c['soft']['sentence']}")
         add("")
@@ -813,17 +916,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET)
     ap.add_argument("--split-threshold", type=int, default=DEFAULT_SPLIT_THRESHOLD)
     ap.add_argument("--dup-threshold", type=float, default=0.25)
+    ap.add_argument("--max-contradictions", type=int, default=20)
     ap.add_argument("--repo-root", help="root for mechanism-reference existence checks")
     ap.add_argument("--json", action="store_true")
+    # Exit-code gates. Without one of these the tool always exits 0 — it is a
+    # report, not a judge. Opting in is what lets CI actually enforce something,
+    # rather than run the command and describe it as a gate.
+    ap.add_argument(
+        "--fail-over-budget",
+        action="store_true",
+        help="exit 1 when the surface exceeds --budget",
+    )
+    ap.add_argument(
+        "--max-rules-ratio",
+        type=float,
+        help="exit 1 when the hard-rule share of directives exceeds this",
+    )
     args = ap.parse_args(argv)
 
     if args.prompt_text or args.prompt_file:
-        text = (
-            args.prompt_text
-            if args.prompt_text
-            else Path(args.prompt_file).expanduser().read_text(encoding="utf-8")
-        )
-        report = audit_prompt(text)
+        if args.prompt_file:
+            try:
+                text = Path(args.prompt_file).expanduser().read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError as e:
+                print(f"error: cannot read prompt file: {e}", file=sys.stderr)
+                return 2
+        else:
+            text = args.prompt_text
+        report = audit_prompt(text, max_contradictions=args.max_contradictions)
     elif args.paths:
         root = Path(args.repo_root).expanduser() if args.repo_root else None
         if root is None:
@@ -836,15 +958,34 @@ def main(argv: list[str] | None = None) -> int:
                 split_threshold=args.split_threshold,
                 repo_root=root,
                 dup_threshold=args.dup_threshold,
+                max_contradictions=args.max_contradictions,
             )
         except FileNotFoundError as e:
             print(f"error: no such path: {e}", file=sys.stderr)
+            return 2
+        except NoSurfacesFound as e:
+            print(
+                f"error: no {'/'.join(_SURFACE_GLOBS)} found under {e}",
+                file=sys.stderr,
+            )
             return 2
     else:
         ap.print_help()
         return 2
 
     print(json.dumps(report, indent=2) if args.json else render(report))
+
+    failures: list[str] = []
+    if args.fail_over_budget and not report.get("budget", {}).get("within", True):
+        b = report["budget"]
+        failures.append(f"over budget by {b['over_by']} tokens")
+    if args.max_rules_ratio is not None and report["rules_ratio"] > args.max_rules_ratio:
+        failures.append(
+            f"rules-ratio {report['rules_ratio']} exceeds {args.max_rules_ratio}"
+        )
+    if failures:
+        print("\nFAIL: " + "; ".join(failures), file=sys.stderr)
+        return 1
     return 0
 
 

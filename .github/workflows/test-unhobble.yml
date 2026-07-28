@@ -4,10 +4,15 @@ name: test-unhobble
 # Path-filtered so it runs ONLY when that skill changes — the monorepo's
 # tests-optional default (lint-skill-md.yml) stands everywhere else.
 #
-# The dogfood step is the load-bearing one: unhobble audits its own SKILL.md
-# and fails if the skill preaches judgement framing while being written as pure
-# prohibition. That check has already caught a real regression in this file's
-# own history.
+# The dogfood step audits unhobble's own SKILL.md and fails it when the skill
+# drifts into the prohibition style it argues against.
+#
+# It is gated on `--max-rules-ratio`, which is what makes it a gate. The first
+# version of this step ran the auditor with no exit-code flag: the command
+# printed a report, always exited 0, and this comment claimed it enforced
+# something. P20 caught it. That is precisely the anchored-vs-claims-a-mechanism
+# distinction this skill exists to draw, so the failure is recorded rather than
+# quietly fixed.
 
 on:
   pull_request:
@@ -47,8 +52,19 @@ jobs:
         run: pip install -r tests/requirements-dev.txt
       - name: Unit + integration tests
         run: python -m pytest tests/ -v
-      - name: Dogfood — unhobble audits its own SKILL.md
-        run: python3 scripts/context_audit.py SKILL.md --repo-root . --budget 3000
+      - name: Dogfood — unhobble audits its own SKILL.md (real gate, exits 1 on breach)
+        run: |
+          python3 scripts/context_audit.py SKILL.md --repo-root . \
+            --budget 3000 --fail-over-budget --max-rules-ratio 0.6
+      - name: Prove the gate can fail (a gate that cannot fail is not a gate)
+        run: |
+          printf '# evil\n\nNever do this. Never do that. You must always obey.\n' > /tmp/evil.md
+          if python3 scripts/context_audit.py /tmp/evil.md --repo-root /tmp \
+               --max-rules-ratio 0.6 > /dev/null 2>&1; then
+            echo "::error::--max-rules-ratio exited 0 on a pure-prohibition surface"
+            exit 1
+          fi
+          echo "gate correctly rejected the pure-prohibition surface"
 
   tokenizer-fallback:
     name: estimator path (no tiktoken)

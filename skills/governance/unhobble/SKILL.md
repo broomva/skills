@@ -100,10 +100,11 @@ Applied when rewriting whatever survives. Each with a before/after in
 | Memory in CLAUDE.md | Auto-memory |
 | Simple specs | Rich references — HTML artifacts, test suites, rubrics, real code |
 
-The canonical rewrite, from the article: *"Default to writing no comments.
-Never write multi-paragraph docstrings…"* became *"Write code that reads like
-the surrounding code: match its comment density, naming, and idiom."* A
-judgement frame, not a prohibition.
+The canonical rewrite — a comment-style prohibition replaced by *"Write code
+that reads like the surrounding code: match its comment density, naming, and
+idiom"* — is quoted in full in the reference, along with why the judgement
+frame is both shorter and broader. It lives in one place on purpose; reversal 4
+applies to this skill too.
 
 ## Working shape
 
@@ -111,8 +112,9 @@ judgement frame, not a prohibition.
    cross-file duplication and contradictions are visible. A surface audited
    alone hides its collisions with its neighbours.
 2. **Adjudicate** — walk the section table, assign each row a tier. For
-   anchored candidates, confirm the mechanism genuinely produces a signal the
-   agent cannot write to; `keel` answers this properly if the call is close.
+   anchored candidates, confirm the mechanism produces a signal that lies
+   outside the governed actor's reach; `keel` answers this properly if the call
+   is close.
 3. **Cut and rewrite** — delete tiers 1–2, rewrite survivors into judgement
    form, move detail behind references.
 4. **Verify** — re-run the script. Budget down, rules-ratio down, contradiction
@@ -130,6 +132,25 @@ directive mix, examples, and internal contradictions; the rewrite is yours.
 Prompts fail the same way governance files do — a stack of prohibitions
 accumulated from past failures, several of which now fight each other and none
 of which the model still needs.
+
+## What the script cannot see
+
+The contradiction pass is **lexical**: it pairs a hard rule with a soft
+allowance when they share a topic word. Conflicts worded in different
+vocabulary are invisible to it. A real example, from a review prompt this skill
+was tested on:
+
+> "Do not comment on formatting — the formatter handles that."
+> "Feel free to note style concerns where appropriate."
+
+Those collide, and the script reports nothing, because *formatting* and *style*
+share no token. So read the surface yourself for semantic conflicts; a zero in
+that column means none were **lexically** detectable, not that none exist.
+
+Same caution on the other columns. `derivable` and `anchored_candidate` are
+heuristics over shape. The rules-ratio counts sentences, so one dense paragraph
+of judgement can outweigh ten terse prohibitions. The numbers are there to
+direct attention, not to substitute for reading.
 
 ## Scope
 
@@ -151,13 +172,34 @@ where this one prunes them.
 | "I'll just tighten the wording." | The finding was that refinement is the wrong move. If judgement now exceeds the rule, the rule goes. |
 | "The script didn't flag it, so it's fine." | The script flags *shape*, not correctness. Zero contradictions means none were lexically detectable. |
 
+## Flags
+
+| Flag | Effect |
+|---|---|
+| `--budget N` | always-on token target (default 5000) |
+| `--split-threshold N` | tokens above which a surface is expected to defer (default 2500) |
+| `--dup-threshold F` | Jaccard floor for near-duplicate pairs (default 0.25) |
+| `--max-contradictions N` | cap on emitted candidates (default 20; the report states the true total) |
+| `--repo-root DIR` | root for mechanism-reference existence checks |
+| `--json` | machine-readable report |
+| `--fail-over-budget` | exit 1 when over `--budget` |
+| `--max-rules-ratio F` | exit 1 when the hard-rule share exceeds F |
+
+The two exit-code flags are opt-in for a reason. By default this is a report,
+not a judge — it exits 0 whatever it finds. Only with a gate flag does a CI
+step running this command actually enforce anything; without one, such a step
+is a claim of enforcement rather than the thing itself, which is the exact
+confusion the adjudication table exists to resolve.
+
 ## Validation
 
-`tests/test_context_audit.py` covers segmentation, polarity classification,
-shingle duplication, contradiction pairing, and the anchored-candidate rule
-(including that `.md` references never anchor).
+`tests/` covers segmentation, polarity classification, shingle duplication,
+contradiction pairing, and the anchored-candidate rule — markdown references
+stay unanchored, since a citation carries no enforcement.
 
-Dogfood: run it on this skill's own `SKILL.md`.
+Dogfood: CI audits this skill's own `SKILL.md` under `--max-rules-ratio`, so
+the skill fails its build if it drifts into the prohibition style it argues
+against.
 
 ## References
 

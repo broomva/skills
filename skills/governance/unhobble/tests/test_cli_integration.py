@@ -149,6 +149,121 @@ def test_cli_no_args_prints_help():
     assert "usage:" in r.stdout.lower() or "usage:" in r.stderr.lower()
 
 
+# ------------------------------------------------------ exit-code gates (P20 #4)
+
+
+def test_default_run_never_fails_however_bad_the_surface(tmp_path):
+    """No gate flag => a report, not a judge. This is the documented default."""
+    p = tmp_path / "CLAUDE.md"
+    p.write_text("# evil\nNever do this. Never do that. You must always obey.\n")
+    r = run(str(p), "--repo-root", str(tmp_path), "--budget", "1")
+    assert r.returncode == 0
+
+
+def test_max_rules_ratio_gate_fails_on_pure_prohibition(tmp_path):
+    p = tmp_path / "CLAUDE.md"
+    p.write_text("# evil\nNever do this. Never do that. You must always obey.\n")
+    r = run(str(p), "--repo-root", str(tmp_path), "--max-rules-ratio", "0.6")
+    assert r.returncode == 1
+    assert "rules-ratio" in r.stderr
+
+
+def test_max_rules_ratio_gate_passes_judgement_framed_surface(tmp_path):
+    p = tmp_path / "CLAUDE.md"
+    p.write_text(
+        "# calm\nPrefer bun over npm. Write code that reads like the surrounding "
+        "code. Default to a worktree unless the change is a typo.\n"
+    )
+    r = run(str(p), "--repo-root", str(tmp_path), "--max-rules-ratio", "0.6")
+    assert r.returncode == 0, r.stderr
+
+
+def test_fail_over_budget_gate(tmp_path):
+    p = tmp_path / "CLAUDE.md"
+    p.write_text("# a\n" + "some governance prose here. " * 50)
+    assert run(str(p), "--repo-root", str(tmp_path), "--budget", "1").returncode == 0
+    over = run(
+        str(p), "--repo-root", str(tmp_path), "--budget", "1", "--fail-over-budget"
+    )
+    assert over.returncode == 1
+    assert "over budget" in over.stderr
+
+
+def test_own_ci_gate_invocation_passes():
+    """The exact command test-unhobble.yml runs. If this fails, CI fails."""
+    root = SCRIPT.parents[1]
+    r = run(
+        str(root / "SKILL.md"),
+        "--repo-root",
+        str(root),
+        "--budget",
+        "3000",
+        "--fail-over-budget",
+        "--max-rules-ratio",
+        "0.6",
+    )
+    assert r.returncode == 0, r.stderr
+
+
+# --------------------------------------------------------- error paths (P20 #10/11)
+
+
+def test_directory_with_no_surfaces_is_an_error_not_a_clean_bill(tmp_path):
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    r = run(str(empty))
+    assert r.returncode == 2
+    assert "no CLAUDE.md" in r.stderr
+    assert "within" not in r.stdout
+
+
+def test_prompt_file_missing_is_a_clean_error():
+    r = run("--prompt-file", "/nonexistent/nope.md")
+    assert r.returncode == 2
+    assert "cannot read prompt file" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_prompt_file_directory_is_a_clean_error(tmp_path):
+    r = run("--prompt-file", str(tmp_path))
+    assert r.returncode == 2
+    assert "cannot read prompt file" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_prompt_file_non_utf8_does_not_crash(tmp_path):
+    p = tmp_path / "prompt.md"
+    p.write_bytes(b"Never do \xff\xfe this thing here at all.\n")
+    r = run("--prompt-file", str(p))
+    assert r.returncode == 0, r.stderr
+    assert "Prompt audit" in r.stdout
+
+
+# -------------------------------------------------- truncation honesty (P20 #8)
+
+
+def test_contradiction_truncation_is_disclosed(tmp_path):
+    pairs = "\n".join(
+        f"## Sec{i}\nNever use the widget{i} adapter here.\n"
+        f"## Alt{i}\nUse the widget{i} adapter as appropriate.\n"
+        for i in range(30)
+    )
+    p = tmp_path / "CLAUDE.md"
+    p.write_text(pairs)
+    data = json.loads(
+        run(str(p), "--repo-root", str(tmp_path), "--json", "--max-contradictions", "5").stdout
+    )
+    assert len(data["contradictions"]) == 5
+    # Must be the TRUE total, not the cap. Asserting merely ">5" passed even
+    # when the count was itself silently clipped to the 20 default.
+    assert data["contradictions_total"] >= 30, (
+        "contradictions_total must count every candidate, not the emitted slice"
+    )
+
+    rendered = run(str(p), "--repo-root", str(tmp_path)).stdout
+    assert "showing" in rendered and "of" in rendered
+
+
 def test_cli_audits_its_own_skill_md():
     """Dogfood — the skill must survive its own audit."""
     skill_md = SCRIPT.parents[1] / "SKILL.md"

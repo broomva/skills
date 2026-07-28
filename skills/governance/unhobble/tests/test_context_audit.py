@@ -35,6 +35,21 @@ from context_audit import (  # noqa: E402
 def test_split_sections_captures_preamble():
     secs = split_sections("intro prose here\n\n## First\nbody\n", "f.md")
     assert [s.heading for s in secs] == ["(preamble)", "First"]
+    # Pin the preamble range too — asserting only headings left it free to drift.
+    assert (secs[0].start_line, secs[0].end_line) == (1, 2)
+    assert (secs[1].start_line, secs[1].end_line) == (3, 4)
+
+
+def test_four_backtick_fence_is_not_closed_by_an_inner_three():
+    # SKILL.md files wrap markdown examples in 4-backtick fences, and SKILL.md
+    # is a first-class audit target.
+    text = "# A\n````\n```\n# inner heading?\n```\n````\n# B\nreal\n"
+    assert [s.heading for s in split_sections(text, "t.md")] == ["A", "B"]
+
+
+def test_tilde_and_backtick_fences_do_not_close_each_other():
+    text = "# A\n```\n~~~\n# inner?\n~~~\n```\n# B\nreal\n"
+    assert [s.heading for s in split_sections(text, "t.md")] == ["A", "B"]
 
 
 def test_split_sections_line_ranges_are_contiguous():
@@ -110,13 +125,52 @@ def test_quoted_rule_is_a_mention_not_a_directive(sentence):
     "sentence",
     [
         'It never says "delete" anywhere in the output.',
-        "The script must exit non-zero on a missing path.",
-        "This always renders the disclaimer at the end.",
         "The hook never fires on read-only tools.",
+        "It always renders the disclaimer at the end.",
+        "They cannot reach the producer of that signal.",
     ],
 )
 def test_third_person_description_is_not_a_directive(sentence):
     assert classify_sentence(sentence) == "descriptive"
+
+
+@pytest.mark.parametrize(
+    "sentence,expected",
+    [
+        # English does not distinguish "the script must exit 0" (describing)
+        # from "the file must be committed" (instructing). Suppressing the
+        # must-family costs real directives, so it is never suppressed: the
+        # heuristic fails OPEN, because under-counting rules is the reading
+        # that wrongly says "your surface is already fine".
+        ("The script must exit non-zero on a missing path.", "mandate"),
+        ("The file must be committed before the runtime exits.", "mandate"),
+        ("The test must not be skipped in CI.", "prohibition"),
+        # `there` / `this` are directive subjects far too often to suppress.
+        ("There must be a Linear ticket for every work unit.", "mandate"),
+        ("This must be done before every merge.", "mandate"),
+    ],
+)
+def test_must_family_is_never_suppressed(sentence, expected):
+    assert classify_sentence(sentence) == expected
+
+
+@pytest.mark.parametrize(
+    "sentence,expected",
+    [
+        # An apostrophe pair must not forge a quoted span and swallow the rule.
+        ("Claude's output must never contain the user's raw API key.", "prohibition"),
+        ("The agent's worktree must always be clean before it's reused.", "mandate"),
+        # A genuine single-quoted citation still reads as a mention.
+        ("The line said 'never merge red' before we cut it.", "descriptive"),
+    ],
+)
+def test_possessives_do_not_forge_quoted_spans(sentence, expected):
+    assert classify_sentence(sentence) == expected
+
+
+def test_url_slug_is_not_a_directive():
+    s = "See https://example.com/docs/never-merge-red for the rationale."
+    assert classify_sentence(s) == "descriptive"
 
 
 @pytest.mark.parametrize(
@@ -151,12 +205,17 @@ def test_sentences_ignores_short_fragments():
 
 
 def test_polarity_profile_and_dominant():
-    text = "Never do X here. You must do Y always. Prefer Z over W."
+    # Weighted so `dominant` has one correct answer; the earlier 1-1-1 tie made
+    # the assertion accept every outcome it could produce.
+    text = (
+        "Never do X here. Never do V either. Never touch U.\n"
+        "You must do Y always. Prefer Z over W."
+    )
     counts, dominant = polarity_profile(text)
-    assert counts["prohibition"] == 1
+    assert counts["prohibition"] == 3
     assert counts["mandate"] == 1
     assert counts["judgment"] == 1
-    assert dominant in {"prohibition", "mandate", "judgment"}
+    assert dominant == "prohibition"
 
 
 def test_rules_ratio_all_hard():
@@ -208,6 +267,21 @@ def test_count_examples_zero_on_plain_prose():
     assert count_examples("Just some ordinary prose without any samples.") == 0
 
 
+def test_count_examples_counts_prose_example_lines():
+    # The dominant form in prompts: examples as lines, not table rows.
+    text = (
+        "Example: if you see a raw SQL concat, flag it.\n"
+        "Example: if you see a missing null check, flag it.\n"
+        "- For instance: an empty test file.\n"
+    )
+    assert count_examples(text) == 3
+
+
+def test_count_examples_ignores_example_mid_sentence():
+    # Only a leading example marker counts; the word in passing does not.
+    assert count_examples("This is not an example of a problem we care about.") == 0
+
+
 # ------------------------------------------------------------------ derivable
 
 
@@ -237,6 +311,25 @@ def test_is_derivable_false_for_prose_under_structural_heading():
 
 def test_is_derivable_false_for_empty_body():
     assert is_derivable(Section("f.md", "Structure", 2, 1, 1, "## Structure\n")) is False
+
+
+def test_is_derivable_generic_branch_without_a_structural_heading():
+    # Exercises the ratio>=0.7 branch; every prior case exited via the heading
+    # branch, leaving this one dead to the suite.
+    sec = Section(
+        "f.md",
+        "Where Things Live",
+        2,
+        1,
+        7,
+        "## Where Things Live\nsrc/core/\nsrc/api/\ntests/unit/\ntests/e2e/\nscripts/ci/\n",
+    )
+    assert is_derivable(sec) is True
+
+
+def test_is_derivable_generic_branch_needs_enough_lines():
+    sec = Section("f.md", "Where Things Live", 2, 1, 3, "## Where Things Live\nsrc/\napi/\n")
+    assert is_derivable(sec) is False
 
 
 # ------------------------------------------------------------------ mechanism
@@ -280,6 +373,29 @@ def test_prose_in_backticks_is_not_a_mechanism(tmp_path):
     assert mechanism_refs(sec, tmp_path) == []
 
 
+def test_absolute_path_outside_the_repo_never_anchors(tmp_path):
+    # `repo_root / "/abs/x.sh"` silently discards repo_root, which would mark a
+    # section anchored against a file that is not in the audited surface.
+    outside = tmp_path.parent / "outside_anchor_probe.sh"
+    outside.write_text("#!/bin/sh\n")
+    try:
+        sec = Section("f.md", "H", 2, 1, 2, f"Anchored by `{outside}`.")
+        refs = mechanism_refs(sec, tmp_path)
+        assert all(r["exists_on_disk"] is False for r in refs)
+    finally:
+        outside.unlink()
+
+
+def test_parent_traversal_never_anchors(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    escapee = tmp_path / "escape.sh"
+    escapee.write_text("#!/bin/sh\n")
+    sec = Section("f.md", "H", 2, 1, 2, "Anchored by `../escape.sh`.")
+    refs = mechanism_refs(sec, root)
+    assert all(r["exists_on_disk"] is False for r in refs)
+
+
 # ----------------------------------------------------------------- duplication
 
 
@@ -312,12 +428,19 @@ def test_find_duplicates_ignores_unrelated_sections():
     assert find_duplicates([a, b], threshold=0.25) == []
 
 
-def test_find_duplicates_skips_tiny_sections():
-    a = split_sections("## A\nsame short text\n", "one.md")[0]
-    b = split_sections("## B\nsame short text\n", "two.md")[0]
+def test_min_tokens_is_what_excludes_the_pair():
+    # The pair must be genuinely near-identical, so the ONLY thing separating
+    # the two assertions is min_tokens. The earlier version used two 6-token
+    # bodies that shingled to Jaccard 0.0 — it passed for an unrelated reason
+    # and left the filter untested.
+    body = " ".join(f"shared policy clause {i} about branch hygiene" for i in range(6))
+    a = split_sections(f"## A\n{body}\n", "one.md")[0]
+    b = split_sections(f"## B\n{body}\n", "two.md")[0]
     for s in (a, b):
         s.tokens = estimate_tokens(s.text)
-    assert find_duplicates([a, b], threshold=0.25, min_tokens=40) == []
+    assert 0 < a.tokens < 100, "fixture must sit between the two thresholds"
+    assert find_duplicates([a, b], threshold=0.25, min_tokens=0), "should pair"
+    assert find_duplicates([a, b], threshold=0.25, min_tokens=1000) == []
 
 
 # --------------------------------------------------------------- contradiction
@@ -346,12 +469,31 @@ def test_mandate_counts_as_the_hard_side_of_a_contradiction():
     assert {c["hard"]["polarity"] for c in hits} == {"mandate"}
 
 
-def test_contradiction_requires_two_different_sections():
+def test_contradiction_inside_one_section_still_counts_but_is_flagged():
+    # The article's own example is a LOCAL collision. Excluding same-section
+    # pairs also made prompt mode (one section) permanently blind.
     secs = split_sections(
         "## Both\nNever add documentation here. Leave documentation as appropriate.\n",
         "f.md",
     )
-    assert find_contradictions(secs) == []
+    hits = find_contradictions(secs)
+    assert "documentation" in {c["topic"] for c in hits}
+    assert all(c["same_section"] for c in hits)
+
+
+def test_cross_section_collisions_rank_above_local_ones():
+    secs = split_sections(
+        "## A\nNever use the legacy exporter for anything.\n"
+        "## B\nUse the legacy exporter as appropriate.\n"
+        "## C\nNever enable telemetry. Enable telemetry if needed.\n",
+        "f.md",
+    )
+    hits = find_contradictions(secs)
+    by_topic = {c["topic"]: c for c in hits}
+    assert by_topic["exporter"]["same_section"] is False
+    assert by_topic["telemetry"]["same_section"] is True
+    # Cross-section pairs sort first.
+    assert hits.index(by_topic["exporter"]) < hits.index(by_topic["telemetry"])
 
 
 def test_no_contradiction_when_polarities_agree():
@@ -419,6 +561,19 @@ def test_count_outbound_links_deduplicates():
     assert count_outbound_links("[a](x.md) and [again](x.md)") == 1
 
 
+@pytest.mark.parametrize(
+    "links,expected",
+    [(0, False), (1, False), (2, False), (3, True), (4, True)],
+)
+def test_disclosure_link_threshold_is_pinned_either_side(tmp_path, links, expected):
+    # Only 0 and 3 were exercised before, leaving 1 and 2 free to drift.
+    p = tmp_path / "CLAUDE.md"
+    text = " ".join(f"[d{i}](doc{i}.md)" for i in range(links))
+    p.write_text(text)
+    d = disclosure_check(p, text, 5000, 2500)
+    assert d is not None and d["defers"] is expected
+
+
 # ------------------------------------------------------------------- end-to-end
 
 
@@ -460,3 +615,18 @@ def test_audit_prompt_reports_without_budget():
 
 def test_estimate_tokens_monotonic():
     assert estimate_tokens("word " * 100) > estimate_tokens("word " * 10)
+
+
+def test_fallback_estimator_constant_is_pinned(monkeypatch):
+    """The no-tiktoken path is a CI job; nothing pinned its constant.
+
+    Monotonicity holds for any length-proportional estimator, so a 4x-wrong
+    constant passed the whole suite.
+    """
+    import context_audit as ca
+
+    monkeypatch.setitem(sys.modules, "tiktoken", None)
+    assert ca.tokenizer_name().startswith("estimate")
+    assert ca.estimate_tokens("x" * 4100) == 1000
+    # And the constant stays inside the band the docstring claims.
+    assert 3.6 <= ca._CHARS_PER_TOKEN <= 4.6
