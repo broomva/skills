@@ -149,9 +149,10 @@ end-to-end runs, not only as unit assertions.
 
 ## The four properties that make it non-vacuous
 
-1. **Isolation** — a fresh temp cwd per *trial*, `--setting-sources project` (drops
-   the user's ~149 skills, hooks and MCP servers to 16 built-ins + the skill under
-   test), and the skill's own `evals/` excluded from the copy. It is the answer key.
+1. **Isolation** — a fresh temp cwd per *trial*, a per-trial environment jail
+   (below), `--setting-sources project` (drops the user's ~149 skills, hooks and MCP
+   servers to 16 built-ins + the skill under test), and the skill's own `evals/`
+   excluded from the copy. It is the answer key.
 2. **Distribution, not verdict** — one trial is an anecdote, and fewer trials than
    requested is an ERROR, not a silent clamp.
 3. **Outcomes, not paths** — turn 5 + the right answer passes like turn 1.
@@ -159,6 +160,89 @@ end-to-end runs, not only as unit assertions.
    `SKILL.md` *and* of the frontmatter `description` it was recorded against.
    Replay recomputes both and refuses to grade on a mismatch, so an edited
    description turns the gate RED instead of replaying stale green.
+
+### Isolation is environmental, not just filesystem-scoped
+
+A fresh cwd isolates where the agent *starts*. It does nothing about where a skill's
+own scripts resolve their state, and ours resolve almost all of it from `$HOME`:
+
+| skill | resolves | lands in |
+|---|---|---|
+| `p9` | `BROOMVA_P9_HOME` → `XDG_CONFIG_HOME` → `Path.home()/".config"` | `~/.config/broomva/p9` |
+| `kg` | `Path.home()/"broomva"` | the whole workspace, incl. `research/entities/` |
+
+`LiveRunner` passed no `env=` to `subprocess.run`, so a child inherited everything.
+A positive trial exists to make the agent *actually run those scripts* — so the more
+faithfully the harness worked, the more reliably it corrupted real state (BRO-2018).
+
+`skill_evals/jail.py` gives each case a **deny-by-default** environment: `HOME` and
+every XDG path point inside the workspace, and a variable must be named in
+`PASSTHROUGH_ENV` to survive. An allowlist fails *closed* when a skill invents
+`BROOMVA_WHATEVER_HOME`; a denylist would be wrong from the day that skill lands
+until someone notices. `ANTHROPIC_API_KEY` is dropped by that rule — a subscription
+CLI handed an API key bills a different account.
+
+**Redirecting `HOME` alone breaks the CLI**, which is why this is not a one-liner.
+The subscription token lives in the login keychain, and the login keychain lives
+under `$HOME`, so the CLI reports `Not logged in · Please run /login` and every
+trial ERRORs. Setting `CLAUDE_CONFIG_DIR` back to the real `~/.claude` does not fix
+it; nor does copying `~/.claude.json` in. What works — verified live on CLI 2.1.220
+— is linking the keychain back:
+`<jail>/Library/Keychains/login.keychain-db* -> ~/Library/Keychains/…`. That is the
+one deliberate hole, it is `AUTH_PASSTHROUGH`, and it links the *login* keychain
+only, not the whole directory.
+
+```bash
+python3 scripts/skill_evals/runner.py --verify-jail    # prove it before spending
+```
+
+`--verify-jail` launches a subprocess under the jailed env and reports where `$HOME`,
+the XDG paths and both skills' state dirs actually resolved. It runs automatically
+before every live suite and refuses to start on a leak. The proof is a subprocess
+launch on purpose: an in-process check reads *this* interpreter's startup snapshot
+of the environment and would pass while the child escaped.
+
+**What the jail does not cover.** Cases run with `--permission-mode bypassPermissions`,
+so full containment would need OS-level sandboxing, which this is not. Four residuals,
+each measured rather than assumed:
+
+- **Hardcoded absolute paths.** The jail redirects `~` and the XDG variables; it cannot
+  redirect `/Users/me/...`. No skill under eval has one today, and
+  `test_no_evaluated_skill_resolves_state_from_an_absolute_path` keeps that true.
+- **`PATH` is passed through verbatim, so real tool binaries stay reachable** —
+  `/opt/homebrew/bin/gh`, `~/.local/bin/p9`, `/usr/bin/security`. Sanitising it is not
+  the fix: on this machine `node` lives under `~/.nvm/versions/node/*/bin`, so dropping
+  HOME-relative entries breaks the CLI outright — trading a side effect for a
+  false-fail, the exact overshoot this harness is built against. Mitigating measurement:
+  `gh auth status` *inside* the jail reports "not logged into any GitHub hosts", because
+  `gh` reads `$XDG_CONFIG_HOME/gh/hosts.yml` and the jail's is empty. So `gh pr merge`
+  cannot act on a real PR from inside a case.
+- **The linked keychain is uid-authorised, not path-scoped.** `security
+  find-generic-password` inside the jail still returns items, because securityd
+  authorises by uid. The link narrows *which keychain file* is visible, not who may
+  read it. This is not a regression — without the jail the case had the real `$HOME`
+  and the same access — but it is not closed either.
+- **Skills document `~/.claude/skills/…` entry points**, and a HOME redirect alone
+  makes those ENOENT — `kg/SKILL.md` says
+  `python3 ~/.claude/skills/kg/scripts/kg.py load …`, and the `p9` wrapper on PATH
+  is `exec python3 "$HOME/.claude/skills/p9/scripts/p9.py"`. That would prevent the
+  state write by *breaking the skill*, and score as a trigger failure. So the jail
+  links `~/.claude/skills` to the copy materialised in the case workspace. Note
+  what that also fixes: **without** the jail those commands resolved to the
+  operator's real installed skill — a different artifact from the one under test —
+  so the pre-jail behaviour did not merely leak, it graded the wrong copy.
+- **Wrapper CLIs.** `shutil.which("claude")` can resolve to a wrapper that appends
+  `--settings`, which `--setting-sources project` does *not* gate. The one on this
+  machine gates its injection on `SUPERCONDUCTOR_*`, which deny-by-default drops, so
+  the jail closes it — as a consequence of the allowlist rather than by intent, which
+  is why `test_wrapper_activation_vars_are_dropped` pins it.
+
+`--fail-on-real-state-change` promotes the post-run watch over `~/.config/broomva`
+from a warning to a failure. It is *off* by default, and that is a calibration, not
+timidity: those stores are shared, so a p9 watcher in another terminal is
+indistinguishable from a leak by mtime alone, and a check that fails for unrelated
+reasons gets muted. `--verify-jail` is the deterministic guarantee; the watch is
+there because the ticket's other complaint was that a leak was *invisible*.
 
 ### The description hash must be the loader's description
 
