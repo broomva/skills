@@ -59,12 +59,20 @@ jobs:
       - name: Prove the gate can fail (a gate that cannot fail is not a gate)
         run: |
           printf '# evil\n\nNever do this. Never do that. You must always obey.\n' > /tmp/evil.md
-          if python3 scripts/context_audit.py /tmp/evil.md --repo-root /tmp \
-               --max-rules-ratio 0.6 > /dev/null 2>&1; then
-            echo "::error::--max-rules-ratio exited 0 on a pure-prohibition surface"
+          set +e
+          python3 scripts/context_audit.py /tmp/evil.md --repo-root /tmp \
+            --max-rules-ratio 0.6 > /dev/null 2>&1
+          rc=$?
+          set -e
+          # Assert rc==1 specifically. `if ! cmd` accepts ANY non-zero, so a
+          # rc=2 usage/IO error would have read as "the gate rejected it" while
+          # the gate never actually ran — the same self-satisfying-check shape
+          # this skill exists to name.
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected rc=1 from the rules-ratio gate, got rc=$rc"
             exit 1
           fi
-          echo "gate correctly rejected the pure-prohibition surface"
+          echo "gate correctly rejected the pure-prohibition surface (rc=1)"
 
   tokenizer-fallback:
     name: estimator path (no tiktoken)

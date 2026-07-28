@@ -36,6 +36,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import heapq
 import json
 import re
 import sys
@@ -92,7 +94,13 @@ _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 def _scan_fences(lines: list[str]):
-    """Yield (index, line, in_fence) with CommonMark-ish fence nesting."""
+    """Yield (index, line, in_fence, event) with CommonMark-ish fence nesting.
+
+    `event` is "open", "close", or None. Callers that only skip fenced content
+    ignore it; count_examples needs it, because two ADJACENT fenced blocks are
+    one uninterrupted run of in_fence lines and cannot be counted by watching
+    for transitions.
+    """
     open_char: str | None = None
     open_len = 0
     for i, line in enumerate(lines):
@@ -101,13 +109,13 @@ def _scan_fences(lines: list[str]):
             run = m.group(1)
             if open_char is None:
                 open_char, open_len = run[0], len(run)
-                yield i, line, True
+                yield i, line, True, "open"
                 continue
             if run[0] == open_char and len(run) >= open_len:
                 open_char, open_len = None, 0
-                yield i, line, True
+                yield i, line, True, "close"
                 continue
-        yield i, line, open_char is not None
+        yield i, line, open_char is not None, None
 
 
 @dataclass
@@ -140,7 +148,7 @@ def split_sections(text: str, path: str = "<text>") -> list[Section]:
     lines = text.splitlines()
     marks: list[tuple[int, int, str]] = []  # (line_idx, level, heading)
 
-    for i, line, in_fence in _scan_fences(lines):
+    for i, line, in_fence, _ in _scan_fences(lines):
         if in_fence:
             continue
         h = _HEADING.match(line)
@@ -180,8 +188,12 @@ _POLARITY_PATTERNS: list[tuple[str, re.Pattern]] = [
         "prohibition",
         re.compile(
             r"\b("
-            r"never|do not|don't|dont|must not|mustn't|shall not|cannot|can't|"
-            r"should not|shouldn't|avoid|forbidden|prohibited|disallowed|"
+            # Note the will-family negations before the `you will` mandate
+            # alternative below: "You will not push to main" is a prohibition,
+            # and without these it matched `you will` and inverted to mandate.
+            r"never|do not|don[’']?t|must not|mustn[’']?t|shall not|"
+            r"will not|won[’']?t|cannot|can[’']?t|"
+            r"should not|shouldn[’']?t|avoid|forbidden|prohibited|disallowed|"
             r"under no circumstances|no room for|refrain from|"
             r"stop (?:doing|using)|do NOT"
             r")\b",
@@ -242,7 +254,8 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+|\n")
 # quote marks to sit outside a word, which still admits 'quoted rule' and
 # rejects possessives.
 _QUOTED_SPAN = re.compile(
-    r"\"[^\"\n]*\"|“[^”\n]*”|(?<![A-Za-z0-9])'[^'\n]{4,}'(?![A-Za-z0-9])|`[^`\n]*`"
+    r"\"[^\"\n]*\"|“[^”\n]*”|‘[^’\n]*’|"
+    r"(?<![A-Za-z0-9])['’][^'’\n]{4,}['’](?![A-Za-z0-9])|`[^`\n]*`"
 )
 
 # (b) The keyword's subject is a third-person inanimate referent — the sentence
@@ -295,7 +308,7 @@ def sentences(text: str) -> list[str]:
     faithfully; they are stripped inside classify_sentence instead.
     """
     out: list[str] = []
-    for _, line, in_fence in _scan_fences(text.splitlines()):
+    for _, line, in_fence, _ in _scan_fences(text.splitlines()):
         if in_fence:
             continue
         for piece in _SENTENCE_SPLIT.split(line):
@@ -371,11 +384,19 @@ _EXAMPLE_LEAD = re.compile(
 
 
 def count_examples(text: str) -> int:
-    """Fenced blocks, example-flavoured table rows, and example-lead lines."""
-    fences = len(re.findall(r"^\s*(?:```|~~~)", text, re.MULTILINE)) // 2
+    """Fenced blocks, example-flavoured table rows, and example-lead lines.
+
+    Fences are counted through _scan_fences rather than by halving a raw
+    delimiter count, so a nested 4-backtick block counts once instead of twice.
+    """
+    fences = 0
     rows = 0
     leads = 0
-    for line in text.splitlines():
+    for _, line, in_fence, event in _scan_fences(text.splitlines()):
+        if event == "open":
+            fences += 1
+        if in_fence:
+            continue
         stripped = line.lstrip()
         if stripped.startswith("|"):
             if _EXAMPLE_ROW.search(line):
@@ -421,24 +442,33 @@ _MECHANISM_REF = re.compile(
 # Deliberately excludes .md — a rule citing another *document* is prose
 # pointing at prose. Only executable or machine-read surfaces (hooks, scripts,
 # policy, CI config, source) can be the producer of an independent signal.
-_LOOKS_LIKE_PATH = re.compile(r"^[\w./\-]+\.(sh|py|ya?ml|toml|json|rs|ts|js)$")
-_LOOKS_LIKE_CMD = re.compile(r"^(make|npm|bun|cargo|pytest|python3?|gh|git)\s+[\w:.\-]+")
+_LOOKS_LIKE_PATH = re.compile(r"^[~\w./\-]+\.(sh|py|ya?ml|toml|json|rs|ts|js)$")
+_LOOKS_LIKE_CMD = re.compile(
+    r"^(make|npm|bun|cargo|pytest|python3?|gh|git)\s+[~\w:./\-]+"
+)
 
 
-def _within_root(repo_root: Path, ref: str) -> bool:
-    """Exists AND lives inside the audited repo.
+def _resolve_mechanism(repo_root: Path, ref: str) -> tuple[bool, str]:
+    """(exists, scope) for a referenced path.
 
-    An absolute ref (or one escaping via ../) would otherwise mark a section
-    anchored against a file that is not part of the surface being audited —
-    `repo_root / "/abs/x.sh"` silently discards repo_root.
+    Scope matters and one boolean cannot carry it. A repo-relative hook and a
+    user-scope hook at `~/.claude/...` are both genuine mechanisms; an absolute
+    path pointing somewhere else entirely is not part of the audited surface.
+    So `~`-prefixed refs are expanded and reported as scope "user", in-repo refs
+    as "repo", and anything that escapes the root resolves to not-exists rather
+    than silently anchoring — `repo_root / "/abs/x.sh"` discards repo_root.
     """
-    if Path(ref).is_absolute():
-        return False
     try:
+        if ref.startswith("~"):
+            target = Path(ref).expanduser().resolve()
+            return target.exists(), "user"
         target = (repo_root / ref).resolve()
-        return target.is_relative_to(repo_root.resolve()) and target.exists()
-    except (OSError, ValueError):
-        return False
+        root = repo_root.resolve()
+        if not target.is_relative_to(root):
+            return False, "external"
+        return target.exists(), "repo"
+    except (OSError, ValueError, RuntimeError):
+        return False, "external"
 
 
 def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
@@ -458,14 +488,18 @@ def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
             continue
         if _LOOKS_LIKE_PATH.match(ref):
             kind = "path"
-            exists = bool(repo_root and _within_root(repo_root, ref))
+            exists, scope = (
+                _resolve_mechanism(repo_root, ref) if repo_root else (False, "external")
+            )
         elif _LOOKS_LIKE_CMD.match(ref):
             kind = "command"
-            exists = False
+            exists, scope = False, "command"
         else:
             continue
         seen.add(ref)
-        refs.append({"ref": ref, "kind": kind, "exists_on_disk": exists})
+        refs.append(
+            {"ref": ref, "kind": kind, "exists_on_disk": exists, "scope": scope}
+        )
     return refs
 
 
@@ -495,26 +529,97 @@ def jaccard(a: set, b: set) -> float:
     return round(inter / union, 3) if union else 0.0
 
 
+def _normalized_digest(text: str) -> str:
+    return hashlib.sha1(" ".join(normalize_words(text)).encode()).hexdigest()
+
+
 def find_duplicates(
-    sections: list[Section], threshold: float = 0.25, min_tokens: int = 40
+    sections: list[Section],
+    threshold: float = 0.25,
+    min_tokens: int = 40,
+    max_results: int = 50,
+    # Above the 92-skill / 1523-section monorepo corpus, so a realistic run is
+    # never silently clipped; the cap exists only to bound pathological input.
+    max_sections: int = 2500,
 ) -> list[dict]:
+    """Near-duplicate section pairs, with bounded retention.
+
+    The first version scored all n(n-1)/2 pairs AND retained every match as a
+    dict before sorting — 499,500 dicts / 186 MB on a 1000-section surface, to
+    render 15 rows. Three changes bound it:
+
+      1. Exact duplicates are grouped by content digest first, in O(n). This is
+         the pathological case (a surface that repeats a block verbatim) and it
+         is also the most actionable finding, so it is worth its own pass.
+      2. A length-ratio prefilter skips the set intersection entirely when the
+         pair cannot reach the threshold: |A∩B| <= min(|A|,|B|) and
+         |A∪B| >= max(|A|,|B|), so J <= min/max.
+      3. Retention is a bounded heap of max_results, not an unbounded list.
+    """
     candidates = [s for s in sections if s.tokens >= min_tokens]
-    grams = {s.key: shingles(s.text) for s in candidates}
-    pairs: list[dict] = []
-    for i, a in enumerate(candidates):
-        for b in candidates[i + 1 :]:
-            score = jaccard(grams[a.key], grams[b.key])
+
+    # 1. Exact-duplicate grouping.
+    by_digest: dict[str, list[Section]] = {}
+    for s in candidates:
+        by_digest.setdefault(_normalized_digest(s.text), []).append(s)
+
+    heap: list[tuple[float, int, dict]] = []
+    seq = 0
+
+    def offer(a: Section, b: Section, score: float) -> None:
+        nonlocal seq
+        entry = {
+            "a": a.key,
+            "b": b.key,
+            "similarity": score,
+            "tokens_at_risk": min(a.tokens, b.tokens),
+            "exact": score == 1.0,
+        }
+        seq += 1
+        if len(heap) < max_results:
+            heapq.heappush(heap, (score, seq, entry))
+        elif score > heap[0][0]:
+            heapq.heapreplace(heap, (score, seq, entry))
+
+    exact_members: set[str] = set()
+    for group in by_digest.values():
+        if len(group) < 2:
+            continue
+        for s in group[1:]:
+            offer(group[0], s, 1.0)
+        for s in group:
+            exact_members.add(s.key)
+
+    # 2/3. Near-duplicates among the rest, sorted by shingle-set size so the
+    # length bound can BREAK rather than merely skip: once |B| exceeds
+    # |A|/threshold, no later B can reach the threshold either.
+    rest = [s for s in candidates if s.key not in exact_members]
+    truncated = 0
+    if len(rest) > max_sections:
+        rest.sort(key=lambda s: -s.tokens)
+        truncated = len(rest) - max_sections
+        rest = rest[:max_sections]
+
+    grams = {s.key: shingles(s.text) for s in rest}
+    rest.sort(key=lambda s: len(grams[s.key]))
+    for i, a in enumerate(rest):
+        ga = grams[a.key]
+        if not ga:
+            continue
+        limit = len(ga) / threshold
+        for b in rest[i + 1 :]:
+            gb = grams[b.key]
+            if len(gb) > limit:
+                break
+            score = jaccard(ga, gb)
             if score >= threshold:
-                pairs.append(
-                    {
-                        "a": a.key,
-                        "b": b.key,
-                        "similarity": score,
-                        "tokens_at_risk": min(a.tokens, b.tokens),
-                    }
-                )
-    pairs.sort(key=lambda p: -p["similarity"])
-    return pairs
+                offer(a, b, score)
+
+    out = [e for _, _, e in sorted(heap, key=lambda x: (-x[0], x[1]))]
+    if truncated and out:
+        # No silent caps: say what was dropped.
+        out[0] = {**out[0], "sections_not_compared": truncated}
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -862,7 +967,9 @@ def render(report: dict) -> str:
     )
 
     if report.get("sections") and isinstance(report["sections"], list):
-        add("## Sections by weight\n")
+        n_sec = len(report["sections"])
+        more = f" — showing 30 of {n_sec}" if n_sec > 30 else ""
+        add(f"## Sections by weight{more}\n")
         add("| Section | Tok | Form | Rules | Ex | Derivable | Anchored? |")
         add("|---|---:|---|---:|---:|:-:|:-:|")
         for s in report["sections"][:30]:
@@ -887,7 +994,9 @@ def render(report: dict) -> str:
         add("")
 
     if report.get("duplication"):
-        add("## Near-duplicate sections\n")
+        n_dup = len(report["duplication"])
+        more = f" — showing 15 of {n_dup} retained" if n_dup > 15 else ""
+        add(f"## Near-duplicate sections{more}\n")
         add("| A | B | Jaccard | Tok at risk |")
         add("|---|---|---:|---:|")
         for d in report["duplication"][:15]:
@@ -934,7 +1043,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    if args.prompt_text or args.prompt_file:
+    if args.prompt_text is not None or args.prompt_file is not None:
+        # `--fail-over-budget` in prompt mode used to pass silently: the prompt
+        # report has no budget key, so the .get() default returned "within".
+        # That is the round-1 MAJOR-4 shape (a gate that cannot fail) wearing a
+        # different mode, so it is refused outright rather than defaulted.
+        if args.fail_over_budget:
+            print(
+                "error: --fail-over-budget does not apply in prompt mode "
+                "(a prompt has no always-on budget); use --max-rules-ratio",
+                file=sys.stderr,
+            )
+            return 2
         if args.prompt_file:
             try:
                 text = Path(args.prompt_file).expanduser().read_text(
@@ -976,7 +1096,7 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(report, indent=2) if args.json else render(report))
 
     failures: list[str] = []
-    if args.fail_over_budget and not report.get("budget", {}).get("within", True):
+    if args.fail_over_budget and not report["budget"]["within"]:
         b = report["budget"]
         failures.append(f"over budget by {b['over_by']} tokens")
     if args.max_rules_ratio is not None and report["rules_ratio"] > args.max_rules_ratio:

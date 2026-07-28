@@ -189,6 +189,40 @@ def test_fail_over_budget_gate(tmp_path):
     assert "over budget" in over.stderr
 
 
+@pytest.mark.parametrize(
+    "threshold,expected_rc",
+    [("0.75", 0), ("0.749", 1), ("0.8", 0), ("0.7", 1)],
+)
+def test_max_rules_ratio_boundary_is_strict_greater(tmp_path, threshold, expected_rc):
+    # A ratio EQUAL to the threshold must pass; `>` vs `>=` was unpinned.
+    p = tmp_path / "CLAUDE.md"
+    p.write_text(
+        "# s\nNever do A here. Never do B here. You must do C here.\n"
+        "Prefer D over E here.\n"
+    )
+    probe = json.loads(run(str(p), "--repo-root", str(tmp_path), "--json").stdout)
+    assert probe["rules_ratio"] == 0.75, "fixture must sit exactly on the boundary"
+    r = run(str(p), "--repo-root", str(tmp_path), "--max-rules-ratio", threshold)
+    assert r.returncode == expected_rc
+
+
+def test_fail_over_budget_is_refused_in_prompt_mode():
+    """The round-1 MAJOR-4 shape, in the other mode.
+
+    A prompt report has no budget key, so the gate silently defaulted to pass —
+    a CI step wired this way would be green forever. Refused outright instead.
+    """
+    r = run("--prompt-text", "You must never merge red.", "--budget", "1", "--fail-over-budget")
+    assert r.returncode == 2
+    assert "does not apply in prompt mode" in r.stderr
+
+
+def test_empty_prompt_text_is_audited_not_treated_as_missing():
+    r = run("--prompt-text", "")
+    assert r.returncode == 0, r.stderr
+    assert "Prompt audit" in r.stdout
+
+
 def test_own_ci_gate_invocation_passes():
     """The exact command test-unhobble.yml runs. If this fails, CI fails."""
     root = SCRIPT.parents[1]

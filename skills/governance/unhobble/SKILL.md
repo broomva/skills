@@ -152,6 +152,13 @@ heuristics over shape. The rules-ratio counts sentences, so one dense paragraph
 of judgement can outweigh ten terse prohibitions. The numbers are there to
 direct attention, not to substitute for reading.
 
+Two hard limits worth knowing rather than discovering. Near-duplicate detection
+compares section pairs exhaustively, so it is quadratic in section count —
+above 2500 sections the heaviest are compared and the report says how many were
+skipped. And `anchored_candidate` reports whether a referenced file *exists*,
+tagged `repo` / `user` / `command` scope; existence is not enforcement, and a
+hook that exists but is unregistered still reads as a candidate.
+
 ## Scope
 
 Governance surfaces, skills, system prompts, prompts. Not code comments, not
@@ -182,7 +189,7 @@ where this one prunes them.
 | `--max-contradictions N` | cap on emitted candidates (default 20; the report states the true total) |
 | `--repo-root DIR` | root for mechanism-reference existence checks |
 | `--json` | machine-readable report |
-| `--fail-over-budget` | exit 1 when over `--budget` |
+| `--fail-over-budget` | exit 1 when over `--budget` (surface mode only) |
 | `--max-rules-ratio F` | exit 1 when the hard-rule share exceeds F |
 
 The two exit-code flags are opt-in for a reason. By default this is a report,

@@ -1,6 +1,8 @@
 """Unit tests for the unhobble deterministic core."""
 
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,14 @@ def test_four_backtick_fence_is_not_closed_by_an_inner_three():
 
 def test_tilde_and_backtick_fences_do_not_close_each_other():
     text = "# A\n```\n~~~\n# inner?\n~~~\n```\n# B\nreal\n"
+    assert [s.heading for s in split_sections(text, "t.md")] == ["A", "B"]
+
+
+def test_longer_closing_fence_still_closes():
+    # CommonMark: the closing run must be at least as long as the opener, so a
+    # 5-backtick line closes a 3-backtick block. An `== open_len` check would
+    # leave the rest of the document swallowed.
+    text = "# A\n```\n# hidden\n`````\n# B\nreal\n"
     assert [s.heading for s in split_sections(text, "t.md")] == ["A", "B"]
 
 
@@ -168,6 +178,39 @@ def test_possessives_do_not_forge_quoted_spans(sentence, expected):
     assert classify_sentence(sentence) == expected
 
 
+@pytest.mark.parametrize(
+    "sentence,expected",
+    [
+        # Left lookbehind: a PLURAL possessive opens the forged span.
+        ("The users' data must never leak and the agents' keys are secret.", "prohibition"),
+        # Right lookahead: an elision closes it.
+        ("Give 'em never a red build, that's the team's rule.", "prohibition"),
+        # Unicode apostrophes are the common LLM/word-processor form.
+        ("Don’t push to main ever.", "prohibition"),
+        ("You can’t bypass the control gate.", "prohibition"),
+        # Curly single quotes are a citation, like their straight counterpart.
+        ("The doc says ‘never merge red’ plainly.", "descriptive"),
+    ],
+)
+def test_quote_boundary_lookarounds_are_each_load_bearing(sentence, expected):
+    assert classify_sentence(sentence) == expected
+
+
+@pytest.mark.parametrize(
+    "sentence,expected",
+    [
+        # `you will` in the mandate set matched the NEGATED form and inverted it.
+        ("You will not push to main.", "prohibition"),
+        ("You won't push to main.", "prohibition"),
+        ("You won’t bypass the gate.", "prohibition"),
+        # The positive form stays a mandate.
+        ("You will open a pull request for every change.", "mandate"),
+    ],
+)
+def test_will_family_negation_is_not_read_as_mandate(sentence, expected):
+    assert classify_sentence(sentence) == expected
+
+
 def test_url_slug_is_not_a_directive():
     s = "See https://example.com/docs/never-merge-red for the rationale."
     assert classify_sentence(s) == "descriptive"
@@ -267,6 +310,18 @@ def test_count_examples_zero_on_plain_prose():
     assert count_examples("Just some ordinary prose without any samples.") == 0
 
 
+def test_count_examples_nested_four_backtick_block_counts_once():
+    # The same 4-backtick defect fixed in split_sections/sentences survived in
+    # this third call site, because it halved a raw delimiter count.
+    assert count_examples("````\n```\ninner\n```\n````\n") == 1
+
+
+def test_count_examples_adjacent_blocks_count_separately():
+    # Two touching fenced blocks are one uninterrupted run of in-fence lines, so
+    # counting transitions rather than open-events collapses them into one.
+    assert count_examples("```py\na\n```\n```sh\nb\n```\n") == 2
+
+
 def test_count_examples_counts_prose_example_lines():
     # The dominant form in prompts: examples as lines, not table rows.
     text = (
@@ -347,7 +402,52 @@ def test_existing_script_is_an_anchored_candidate(tmp_path):
     (hooks / "gate.sh").write_text("#!/bin/sh\n")
     sec = Section("f.md", "H", 2, 1, 2, "Enforced by `hooks/gate.sh` on every call.")
     refs = mechanism_refs(sec, tmp_path)
-    assert refs == [{"ref": "hooks/gate.sh", "kind": "path", "exists_on_disk": True}]
+    assert refs == [
+        {
+            "ref": "hooks/gate.sh",
+            "kind": "path",
+            "exists_on_disk": True,
+            "scope": "repo",
+        }
+    ]
+
+
+def test_in_repo_absolute_ref_still_anchors():
+    # Round 1 asked for repo confinement; a blanket is_absolute() rejection also
+    # refused legitimate in-repo absolute refs. Containment is the real test.
+    # A short root is required: pytest's tmp_path exceeds the 120-char cap in
+    # _MECHANISM_REF, so the ref would never be extracted in the first place.
+    root = Path(tempfile.mkdtemp(dir="/tmp"))
+    try:
+        (root / "gate.sh").write_text("#!/bin/sh\n")
+        sec = Section("f.md", "H", 2, 1, 2, f"Enforced by `{root / 'gate.sh'}`.")
+        refs = mechanism_refs(sec, root)
+        assert refs and refs[0]["exists_on_disk"] is True
+        assert refs[0]["scope"] == "repo"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_absolute_ref_longer_than_the_cap_is_not_extracted(tmp_path):
+    # Documents the cap rather than leaving it a surprise: _MECHANISM_REF only
+    # looks at backticked spans up to 120 chars, so a very long absolute path
+    # is invisible regardless of scope.
+    long_ref = "/" + "d" * 130 + "/gate.sh"
+    sec = Section("f.md", "H", 2, 1, 2, f"Enforced by `{long_ref}`.")
+    assert mechanism_refs(sec, tmp_path) == []
+
+
+def test_home_scoped_ref_is_visible_and_labelled(tmp_path, monkeypatch):
+    # A user-scope hook at ~/.claude/... is a genuine mechanism for a CLAUDE.md.
+    # Refusing to even parse `~` silently under-reported the anchored column.
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "hook.sh").write_text("#!/bin/sh\n")
+    monkeypatch.setenv("HOME", str(home))
+    sec = Section("f.md", "H", 2, 1, 2, "Fired by `~/.claude/hook.sh` each session.")
+    refs = mechanism_refs(sec, tmp_path)
+    assert refs and refs[0]["exists_on_disk"] is True
+    assert refs[0]["scope"] == "user"
 
 
 def test_missing_script_is_referenced_but_not_anchored(tmp_path):
@@ -428,6 +528,85 @@ def test_find_duplicates_ignores_unrelated_sections():
     assert find_duplicates([a, b], threshold=0.25) == []
 
 
+def _dup_sections(n: int, body: str, prefix: str = "S") -> list:
+    secs = []
+    for i in range(n):
+        s = split_sections(f"## {prefix}{i}\n{body}\n", f"f{i}.md")[0]
+        s.tokens = estimate_tokens(s.text)
+        secs.append(s)
+    return secs
+
+
+def test_exact_duplicates_are_grouped_and_flagged():
+    body = " ".join(f"identical governance clause {i}" for i in range(40))
+    secs = [
+        split_sections(f"## Same\n{body}\n", f"f{i}.md")[0] for i in range(4)
+    ]
+    for s in secs:
+        s.tokens = estimate_tokens(s.text)
+    dups = find_duplicates(secs)
+    assert len(dups) == 3, "n-1 pairs against the group representative"
+    assert all(d["exact"] is True and d["similarity"] == 1.0 for d in dups)
+
+
+def test_duplicate_retention_is_bounded():
+    # The unbounded version retained n(n-1)/2 dicts before sorting: 186 MB on a
+    # 1000-section surface, to render 15 rows.
+    body = " ".join(f"shared clause {i}" for i in range(40))
+    secs = _dup_sections(40, body)
+    for i, s in enumerate(secs):  # perturb so they are near- not exact-duplicates
+        s.text += f" tail token {i} " * 3
+    dups = find_duplicates(secs, max_results=7)
+    assert len(dups) == 7
+
+
+def test_duplicate_section_cap_is_disclosed():
+    body = " ".join(f"shared clause {i}" for i in range(40))
+    secs = _dup_sections(30, body)
+    for i, s in enumerate(secs):
+        s.text += f" tail token {i} " * 3
+    dups = find_duplicates(secs, max_sections=10)
+    assert dups, "expected surviving pairs"
+    assert dups[0]["sections_not_compared"] == 20
+
+
+def test_bounded_retention_keeps_the_STRONGEST_pairs():
+    """Bounding the count is not enough — it must keep the right ones.
+
+    Asserting only `len(dups) == N` passes even when the heap never replaces a
+    weak entry with a stronger one, which would report whichever pairs happened
+    to be scored first.
+    """
+    base = " ".join(f"clause {i}" for i in range(60))
+    secs = []
+    # Progressively diverge: later sections share less with the first.
+    for i in range(12):
+        body = " ".join(base.split()[: 120 - i * 8]) + " " + f"tail{i} " * 20
+        s = split_sections(f"## S{i}\n{body}\n", f"f{i}.md")[0]
+        s.tokens = estimate_tokens(s.text)
+        secs.append(s)
+
+    everything = find_duplicates(secs, threshold=0.05, max_results=999)
+    assert len(everything) > 5, "fixture must produce a spread of similarities"
+    best = sorted((d["similarity"] for d in everything), reverse=True)[:5]
+
+    limited = find_duplicates(secs, threshold=0.05, max_results=5)
+    assert sorted((d["similarity"] for d in limited), reverse=True) == best
+
+
+def test_length_bound_break_does_not_drop_a_real_pair():
+    # The early break relies on J <= min/max; a genuine above-threshold pair of
+    # differing sizes must still be found.
+    small = " ".join(f"policy clause {i}" for i in range(30))
+    big = small + " " + " ".join(f"extra clause {i}" for i in range(10))
+    a = split_sections(f"## A\n{small}\n", "one.md")[0]
+    b = split_sections(f"## B\n{big}\n", "two.md")[0]
+    for s in (a, b):
+        s.tokens = estimate_tokens(s.text)
+    dups = find_duplicates([a, b], threshold=0.25)
+    assert len(dups) == 1 and dups[0]["similarity"] >= 0.25
+
+
 def test_min_tokens_is_what_excludes_the_pair():
     # The pair must be genuinely near-identical, so the ONLY thing separating
     # the two assertions is min_tokens. The earlier version used two 6-token
@@ -479,6 +658,27 @@ def test_contradiction_inside_one_section_still_counts_but_is_flagged():
     hits = find_contradictions(secs)
     assert "documentation" in {c["topic"] for c in hits}
     assert all(c["same_section"] for c in hits)
+
+
+def test_cross_section_pair_is_found_when_hard_zero_shares_soft_zeros_section():
+    """Discriminates both halves of the O(H+S) selection.
+
+    `hard[0]` and `soft[0]` are BOTH in section A, and the only cross-section
+    partner is a later hard entry in B. A naive `(hard[0], soft[0])` reports a
+    local pair, and dropping the second `next()` fallback does the same — the
+    earlier ranking test could not tell, because its fixture already had
+    hard[0] and soft[0] in different sections.
+    """
+    doc = (
+        "## A\nNever use the legacy exporter here. "
+        "Use the legacy exporter as appropriate.\n"
+        "## B\nNever touch the legacy exporter in B too.\n"
+    )
+    hits = {c["topic"]: c for c in find_contradictions(split_sections(doc, "f.md"))}
+    exporter = hits["exporter"]
+    assert exporter["same_section"] is False
+    assert exporter["hard"]["section"] == "f.md#B"
+    assert exporter["soft"]["section"] == "f.md#A"
 
 
 def test_cross_section_collisions_rank_above_local_ones():
