@@ -1,0 +1,58 @@
+{
+  "skill": "harness-selftest",
+  "version": 1,
+  "notes": "Self-test prompt set for the eval harness. 2 positive / 2 negative, 3 trials each. The transcripts under ../cases/ are SYNTHETIC (hand-authored by generate.py, no model produced them) and are marked as such in every meta sidecar, so the runner refuses them unless --allow-synthetic-fixtures is passed. They exercise the harness's grading path — trigger detection, outcome checks, the positive-rate gate, the artifact binding — and say NOTHING about any real skill's trigger behaviour.",
+  "cases": [
+    {
+      "id": "positive-01",
+      "prompt": "here is the artifact I mentioned, https://example.invalid/paper.pdf — see what you make of it",
+      "should_trigger": true,
+      "origin": "golden",
+      "expected_checks": [
+        "skill_triggered",
+        "completed_without_error",
+        "final_answer_non_empty",
+        "ingests_full_artifact_not_metadata",
+        "documents_finding"
+      ],
+      "rationale": "Fires on turn 1 and produces artifact-touching tool inputs (WebFetch of the URL, Write to a .md), so the input-inspecting outcome checks have something real to grade."
+    },
+    {
+      "id": "positive-02",
+      "prompt": "dropping the spec at docs/inbox/example-spec.md, thoughts on how it lands for us",
+      "should_trigger": true,
+      "origin": "golden",
+      "expected_checks": [
+        "skill_triggered",
+        "no_permission_denials",
+        "walks_repo_tree_and_canonical_files",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "Fires on turn 5, not turn 1 — locks 'outcomes, not paths' into the committed set, so a future change that starts grading the route breaks CI."
+    },
+    {
+      "id": "negative-01",
+      "prompt": "fix the null dereference in parser.py, it throws on an empty buffer",
+      "should_trigger": false,
+      "origin": "negative",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back",
+        "no_permission_denials"
+      ],
+      "rationale": "A fully-specified engineering task with no artifact to metabolize. The skill must stay quiet. The three checks are additive assertions about what the run did INSTEAD of firing: an abstention that also refused to answer, or that bounced the ask back, is not the behaviour this case is asserting. Empty expected_checks would leave the case resting on the runner's non-trigger control flow alone, which validate_prompt_set now rejects."
+    },
+    {
+      "id": "negative-02",
+      "prompt": "summarize the attached changelog in exactly three bullets",
+      "should_trigger": false,
+      "origin": "negative",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back",
+        "no_permission_denials"
+      ],
+      "rationale": "An artifact IS present but the ask is fully specified, which is the near-miss shape most likely to over-trigger. Same additive assertions as negative-01: the run must have stayed quiet AND produced the three bullets rather than asking which changelog."
+    }
+  ]
+}

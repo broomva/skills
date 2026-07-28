@@ -1,0 +1,7 @@
+pytest>=7.0
+# The reference YAML implementation. The harness PREFERS it when parsing a skill's
+# frontmatter description — the string whose hash binds a replay fixture to its
+# artifact — and falls back to a hand parser when it is absent. Pinned here so CI
+# actually RUNS the differential test that holds the two byte-identical, instead
+# of skipping it and letting the fallback drift away from the real loader.
+PyYAML>=6.0

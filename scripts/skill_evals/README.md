@@ -1,0 +1,261 @@
+# skill-evals — trigger-eval harness
+
+Does a skill's **description** actually make the model fire it on the prompts it
+should, and stay quiet on the near-misses it should not? (BRO-2005.)
+
+```bash
+# live — the default; shells out to the real agent CLI
+python3 scripts/skill_evals/runner.py --skill checkit --trials 3
+
+# live + record fixtures for CI
+python3 scripts/skill_evals/runner.py --skill checkit --trials 3 --record fixtures/checkit
+
+# replay — free, deterministic, what CI runs
+python3 scripts/skill_evals/runner.py --skill checkit --replay fixtures/checkit --trials 3
+
+python3 scripts/skill_evals/runner.py --list-checks
+python3 scripts/skill_evals/runner.py --skill checkit --validate-only --replay /nonexistent
+```
+
+## Prompt sets
+
+`skills/<bucket>/<name>/evals/prompts.json`, built on Schmid's 5/5/5 shape —
+authored goldens, near-miss negatives, and real production turns lifted verbatim
+from `docs/conversations/`.
+
+The shipped `checkit` pilot is **17 cases: 11 positive / 6 negative**, by origin
+5 golden + 6 real-trace + 6 negative. It grew past 5/5/5 during review: negatives
+that turned out to be verbatim lifts of the skill's own NOT-FOR clause were
+replaced with genuine near-misses, and a positive was added for the
+bare-topic-string branch the taxonomy names but no case covered.
+
+```json
+{ "skill": "checkit", "version": 1, "cases": [
+  { "id": "golden-01", "prompt": "...", "should_trigger": true,
+    "origin": "golden", "expected_checks": ["mentions_source_verification"],
+    "rationale": "why this case earns its slot" } ] }
+```
+
+Keep the literal skill name out of prompts — otherwise you measure name-matching,
+not description-matching. The validator warns when you don't.
+
+A prompt set with **no positive cases is rejected**, not warned about. A
+negatives-only suite scores a perfect sweep for a skill whose description is so
+broken it can never fire, which makes it the cheapest way to green this gate. (No
+negatives is only a warning: a positives-only suite still measures something, it
+just cannot see over-triggering.)
+
+## What it grades
+
+| Outcome | Meaning |
+|---|---|
+| `PASS` | positive: fired (any turn) + every expected check passed. negative: stayed quiet. |
+| `FAIL` | didn't fire when it should, fired when it shouldn't, or fired but the checks failed. |
+| `RECOVERED` | never fired, but read `SKILL.md` off disk and answered anyway — a leak, not a pass. |
+| `INVISIBLE` | the skill wasn't in the run's roster. Vacuous either way — never a pass, and `--allow-errors` cannot forgive it. |
+| `ERROR` | CLI failure, a fixture that failed integrity (missing / empty / stale / unbound), or a changed stream shape. No signal. |
+
+Checks grade **tool inputs, never tool names**. `Bash` is not evidence of anything;
+`Bash {"command": "curl https://…"}` is. And a read of the skill's own `SKILL.md`
+is excluded from every evidence predicate — that read is the `RECOVERED` leak, so
+it must not double as proof the artifact was ingested.
+
+That exclusion is scoped to **the skill under test**, not to the string `SKILL.md`.
+The needle is `<workspace>/.claude/skills/…`, `skills/[<bucket>/]<skill>/…`, or
+`<skill>/…/SKILL.md`. Somebody *else's* `SKILL.md` — fetched from GitHub, read out
+of a downloads folder — is an ordinary artifact and stays eligible as evidence.
+
+### Two checks are implemented but WITHDRAWN from the pilot
+
+`ingests_full_artifact_not_metadata` and `no_clarifying_question_bounced_back`
+remain in `CHECK_REGISTRY` but are wired to **no case**. Both oscillated across
+four adversarial review rounds between false-passing and false-failing, and were
+withdrawn rather than shipped noisy. `prompts.json` carries the evidence under
+`known_gaps.checks_withdrawn_2026_07_28`.
+
+* **`ingests_full_artifact_not_metadata`** was meant to scope tool evidence to the
+  artifact the case names, so that `Read {"file_path": "/etc/hosts"}` is a read but
+  not evidence *this* case's artifact was ingested. It has failed in both
+  directions: an earlier form scoped to the **host**, so fetching a different
+  GitHub repo or a different arXiv paper passed; the current form drops one-slash
+  extensionless references (`gepa-ai/gepa`), emptying the token set — and with no
+  tokens the predicate returns True unconditionally, so it now fails **open**.
+  Correct scoping also has to survive redirect indirection (the pilot's `golden-04`
+  substance sits behind a `t.co` at `x.com/i/article/…`), which token matching
+  does not model.
+* **`no_clarifying_question_bounced_back`** was meant to distinguish *"tell me what
+  you want"* from *"here's the answer — want me to write it up?"*, the second being
+  a correct bounded answer and SKILL.md's own prescribed closing shape. Every
+  implementation approximated that distinction with a surface pattern and
+  false-failed correct answers: a length rule (`endswith("?") and len < 400`), then
+  a bare prefix match with no interrogative requirement (so the declarative
+  *"Which one wins depends on how often you bump the lockfile."* scored as a
+  clarifying question), then a second-person rule that flagged a wh-question the
+  agent answered in its own next clause. It was asserted on 17/17 cases, so its
+  false-fails depressed the whole pilot.
+
+Both encode a **semantic** judgement. A regex is the wrong instrument; they belong
+behind the LLM-judge seam, which this harness marks and does not build.
+
+Withdrawing them does not weaken the negatives: a negative's *primary* assertion is
+structural — the runner fails any negative where the skill triggered — and
+`expected_checks` were always supplementary. v1 grades **triggering**
+deterministically, which is the failure mode the arc measured.
+
+The general rule this produced: a check that rejects correct behaviour is worse
+than no check, because it depresses a correct implementation's pass rate until
+someone lowers the threshold. Every tightened check needs a **bidirectional**
+proof — mutation (can go RED) *and* false-positive (still GREEN on correct input).
+
+`final_answer_non_empty` counts **words, not characters**, for the same reason: a
+34-character reply can be the correct answer to a yes/no question, while `"ok"` is
+an acknowledgement whatever its length.
+
+Reported as a **distribution** over N trials per case (default 3) plus an aggregate;
+a run with fewer trials than that is labelled `ANECDOTE`, not `distribution`.
+
+Exit codes, in the order the gate applies them:
+
+| Code | When |
+|---|---|
+| `3` | **zero graded trials** — no trial produced any signal; or the fixture guard fired (no fixtures, fewer than the requested trials, any fixture-integrity failure). **Outranks `--threshold` and `--allow-errors`** — absent evidence is not a score to be forgiven. |
+| `2` | usage / schema errors (including a prompt set with no positive cases, and `--skill` disagreeing with it). |
+| `1` | any `INVISIBLE` trial; any `ERROR` trial unless `--allow-errors`; zero positive trials; **zero positive passes**; positive pass-rate below the bar; aggregate below `--threshold`. |
+| `0` | aggregate **and** positive arm both at/above `--threshold` (0.80). |
+
+Two invariants sit above every flag, and both are single predicates rather than
+lists of forgivable causes — the list form kept leaving a sibling hole open one
+error class at a time:
+
+1. **A run that graded zero real trials cannot pass.** `graded_trials` counts
+   trials that produced signal (anything not `ERROR`/`INVISIBLE`). Zero of them
+   means the harness measured nothing, whatever the cause — an empty replay set,
+   fixtures bound to another description, or a *live* run whose CLI could not be
+   launched at all, where every trial is `ERROR — could not launch runner`. That
+   last one is why the predicate is not a catalogue of error classes: it was the
+   sibling case that `--allow-errors --threshold 0.0` still greened.
+2. **A positive arm that never once passed cannot pass.** `--threshold` lowers the
+   *rate* the positive arm must clear; it does not lower the floor of one
+   demonstrated firing. A suite where the skill fired 0/33 times is a total trigger
+   failure — the exact regression this harness exists to catch — so `--threshold
+   0.0` must not green it.
+
+The positive arm is gated separately in the first place because an aggregate is
+dominated by whichever arm has more trials: a skill that fires rarely still sweeps
+a negative-heavy suite. Its bar is deliberately not a flag.
+
+Both invariants are anchored in CI (`ZERO-EVIDENCE GUARD`, `POSITIVE FLOOR`) as
+end-to-end runs, not only as unit assertions.
+
+## The four properties that make it non-vacuous
+
+1. **Isolation** — a fresh temp cwd per *trial*, `--setting-sources project` (drops
+   the user's ~149 skills, hooks and MCP servers to 16 built-ins + the skill under
+   test), and the skill's own `evals/` excluded from the copy. It is the answer key.
+2. **Distribution, not verdict** — one trial is an anecdote, and fewer trials than
+   requested is an ERROR, not a silent clamp.
+3. **Outcomes, not paths** — turn 5 + the right answer passes like turn 1.
+4. **Replay is bound to the artifact** — every fixture carries the SHA-256 of the
+   `SKILL.md` *and* of the frontmatter `description` it was recorded against.
+   Replay recomputes both and refuses to grade on a mismatch, so an edited
+   description turns the gate RED instead of replaying stale green.
+
+### The description hash must be the loader's description
+
+That binding is only as good as the parser behind it. **PyYAML is the reference
+implementation** and is used whenever it imports; a hand parser is the fallback for
+environments without it, and a differential test holds the two byte-identical
+across every `SKILL.md` in the repo. PyYAML is in `requirements-dev.txt` so CI runs
+that test rather than skipping it.
+
+Why both, rather than only the hand parser: the earlier one disagreed with YAML on
+27 of 89 real files. 26 were quote retention; `skills/design/arcan-glass/SKILL.md`
+diverged by 159 characters because its description contains `(AI Blue #0066FF)` and
+YAML treats ` #` in a plain scalar as a comment. A parser that disagrees with the
+real loader is not a cosmetic problem here — it both *misses* a real description
+change and *manufactures* a phantom one (edit the comment, every fixture goes
+stale). Why not PyYAML alone: the hash would then depend on whether an optional
+dependency happened to be installed, so a fixture recorded on one machine would
+read as stale on another. Agreement between the two paths is what makes the hash
+environment-independent, and it is asserted, not assumed.
+
+## What replay does and does not guarantee
+
+Being precise about this is load-bearing: an earlier version of this file claimed
+"replay cannot fake green", and an adversarial review disproved it by hand-writing
+45 transcripts and stubbing the description to `xxxx` — 45/45, exit 0.
+
+**Guaranteed.** Replay exits non-zero when fixtures are missing, empty,
+unparseable, fewer than the requested trial count, recorded against a different
+prompt, or recorded against a different `SKILL.md` / description than the one on
+disk. A fixture with no meta sidecar is refused outright, and one written by a
+non-`live-record` path is refused unless `--allow-synthetic-fixtures` is passed.
+The mode, the artifact path and both hashes print on every invocation.
+
+**Not guaranteed — do not read the numbers as if it were.** Replay does *not*
+authenticate a transcript. Anyone with write access to the repo can hand-write a
+`.jsonl` and a matching meta sidecar, including a correct skill hash and
+`"provenance": "live-record"`. The hashes prove a fixture is **current**, not that
+a model produced it. There is no cryptographic answer to this available to a
+harness whose fixtures live in the same repo as the harness; what there is instead
+is (a) staleness detection, (b) a declared provenance field, and (c) the fact that
+the live path is the default and replay must be asked for by name.
+
+Two reported numbers are read straight out of the fixture and are therefore only
+as trustworthy as it is: `cost` and `duration`. In replay they print with an
+explicit "as recorded in fixtures — not re-incurred" tag. They are context, never
+evidence.
+
+## Committed fixtures
+
+`tests/skill_evals/fixtures/harness-selftest/` — 4 cases x 3 trials, replayed and
+graded by CI on every PR, plus a mutation-proof step that rewrites the fixture
+skill's description and asserts the run goes RED.
+
+These transcripts are **synthetic** (hand-authored by `generate.py`, no model
+involved) and every sidecar says so. They are evidence about the *harness*. They
+are not evidence about any skill's real trigger behaviour — only `--record`
+against the live CLI produces that, and **checkit has no committed fixtures yet**.
+Regenerate after editing the fixture skill or its prompt set:
+
+```bash
+python3 tests/skill_evals/fixtures/harness-selftest/generate.py
+```
+
+## Seams left open
+
+* **`--ablate`** (BRO-2006) — `VISIBILITY_REGISTRY` in `runner.py`. Skill visibility is
+  already a parameter of workspace construction and of grading (`expects_visible`);
+  the ablation arm is one registration plus a flag.
+* **LLM judge** — `make_judge_check` / `JUDGE_SCHEMA` in `checks.py`. Deliberately
+  raises rather than stubbing a pass. Keep it a minority of any prompt set: if a
+  skill's verdict hinges on judge calls, the outcome wasn't specified sharply enough.
+
+## Pinning
+
+Stream parsing is verified against agent CLI **2.1.220**. `--output-format json`
+carries no tool data at all, so `stream-json --verbose` is mandatory; a run whose
+`init` event lacks a `skills` array is scored `ERROR`, never a silent non-trigger.
+
+Fixtures record the `model` and `cli_version` they were produced on. Drift from the
+current expectation prints a `fixture drift` warning, and `--strict-fixtures` makes
+it fatal. (Prompt-hash and skill-hash mismatches are *always* fatal — no flag.)
+
+`--allow-errors` forgives `ERROR` trials for diagnostics. It does **not** forgive
+`INVISIBLE`: a run where the skill was never loaded is vacuous by construction, and
+no flag may turn it green. It also cannot forgive *all* the trials — see the
+zero-graded-trials invariant above.
+
+Fixtures recorded against a **different prompt** than the set now carries get their
+own guard line and a `meta.stale_prompt_fixtures` entry in the JSON report; their
+remedy is its own ("the prompt set moved, re-record those cases"), which is why
+they are reported separately from generic integrity failures rather than only
+counted among them.
+
+## Prompt-set data is pinned too
+
+Every case in a shipped prompt set must carry at least one `expected_check`, and
+every negative must assert `final_answer_non_empty`. Without that, a negative
+asserts only "the skill stayed quiet" — which a run that says nothing at all also
+satisfies — and reverting the assertions to `expected_checks: []` would leave CI
+green. `tests/skill_evals/test_runner.py` asserts both.

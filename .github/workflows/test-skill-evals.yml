@@ -1,0 +1,243 @@
+name: test-skill-evals
+
+# Python test gate for the skill trigger-eval harness (scripts/skill_evals/, BRO-2005).
+#
+# WHAT THIS GATE COVERS
+#   * the harness unit + CLI suite (tests/skill_evals/);
+#   * a GRADED replay of a real prompt set — 4 cases x 3 trials of the
+#     harness-selftest fixture skill — so the number of graded trials in CI is 12,
+#     not 0;
+#   * a MUTATION PROOF: the same fixtures are replayed against a copy of the
+#     fixture skill whose description has been rewritten to garbage, and the run
+#     MUST fail. That is the property the whole harness exists for — a description
+#     regression turns the gate RED — asserted on every PR rather than by hand;
+#   * the empty-fixture guard: replay with no fixtures must not exit 0.
+#
+# WHAT THIS GATE DOES NOT COVER
+#   * No model is ever called here. CI is replay-only, so it grades the HARNESS,
+#     not any skill's real trigger behaviour.
+#   * The committed fixtures under tests/skill_evals/fixtures/ are SYNTHETIC
+#     (hand-authored by generate.py) and are marked as such; the runner refuses
+#     them unless --allow-synthetic-fixtures is passed explicitly. They say
+#     nothing about whether checkit — or any real skill — actually fires.
+#   * checkit itself has NO committed fixtures. Producing them needs a live
+#     recording run (`--record`), which costs money and is done by hand:
+#       python3 scripts/skill_evals/runner.py --skill checkit --trials 3 \
+#         --record fixtures/checkit
+#     Until that lands, "checkit passes its evals" is not a claim this CI backs.
+#
+# Path-filtered so it runs when the harness, its tests, ANY prompt set, or ANY
+# skill description changes — a description edit is precisely what must trigger it.
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/skill_evals/**'
+      - 'tests/skill_evals/**'
+      - 'skills/**/evals/**'
+      - 'skills/**/SKILL.md'
+      - '.github/workflows/test-skill-evals.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/skill_evals/**'
+      - 'tests/skill_evals/**'
+      - 'skills/**/evals/**'
+      - 'skills/**/SKILL.md'
+      - '.github/workflows/test-skill-evals.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-skill-evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dev deps
+        run: pip install -r tests/skill_evals/requirements-dev.txt
+
+      - name: Tests
+        run: python -m pytest tests/skill_evals/ -v
+
+      - name: Check registry is dispatchable
+        run: python3 scripts/skill_evals/runner.py --list-checks
+
+      - name: Pilot prompt set validates against CHECK_REGISTRY
+        run: |
+          python3 scripts/skill_evals/runner.py \
+            --skill checkit --replay /nonexistent --validate-only
+
+      - name: Committed fixtures are bound to the fixture skill on disk
+        run: |
+          set -e
+          python3 tests/skill_evals/fixtures/harness-selftest/generate.py
+          # --porcelain, not `git diff`: it catches an UNTRACKED fixture too, so a
+          # newly added case whose fixture was never committed cannot pass silently.
+          if [ -n "$(git status --porcelain -- tests/skill_evals/fixtures/harness-selftest)" ]; then
+            echo "::error::committed fixtures are stale — regenerate them:"
+            echo "::error::  python3 tests/skill_evals/fixtures/harness-selftest/generate.py"
+            git --no-pager diff --stat tests/skill_evals/fixtures/harness-selftest
+            exit 1
+          fi
+          echo "fixtures are current"
+
+      - name: Graded replay (12 trials, 2 positive + 2 negative cases)
+        run: |
+          python3 scripts/skill_evals/runner.py \
+            --skill-dir tests/skill_evals/fixtures/harness-selftest/skill \
+            --prompts tests/skill_evals/fixtures/harness-selftest/evals/prompts.json \
+            --replay tests/skill_evals/fixtures/harness-selftest \
+            --trials 3 --allow-synthetic-fixtures \
+            --report "$RUNNER_TEMP/selftest-report.json"
+          python3 - "$RUNNER_TEMP/selftest-report.json" <<'PY'
+          import json, sys
+          agg = json.load(open(sys.argv[1]))["aggregate"]
+          assert agg["trials"] == 12, f"expected 12 graded trials, got {agg['trials']}"
+          assert agg["positive"]["trials"] == 6, agg["positive"]
+          assert agg["min_trials_per_case"] >= 2, "a per-case anecdote is not a distribution"
+          print(f"graded {agg['trials']} trials, positives {agg['positive']['pass_rate']}")
+          PY
+
+      - name: MUTATION PROOF — a garbage description must turn the gate RED
+        run: |
+          set +e
+          cp -R tests/skill_evals/fixtures/harness-selftest/skill "$RUNNER_TEMP/mutated-skill"
+          printf -- '---\nname: harness-selftest\ndescription: xxxx\n---\n# body\n' \
+            > "$RUNNER_TEMP/mutated-skill/SKILL.md"
+          out=$(python3 scripts/skill_evals/runner.py \
+            --skill-dir "$RUNNER_TEMP/mutated-skill" \
+            --prompts tests/skill_evals/fixtures/harness-selftest/evals/prompts.json \
+            --replay tests/skill_evals/fixtures/harness-selftest \
+            --trials 3 --allow-synthetic-fixtures 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::harness exited 0 against a skill whose description was replaced"
+            echo "::error::with garbage — replay is decoupled from the artifact under test"
+            exit 1
+          fi
+          case "$out" in
+            *"STALE FIXTURE"*) : ;;
+            *) echo "::error::failed, but not for the artifact-binding reason"; exit 1 ;;
+          esac
+          echo "mutation proof held (exit $rc): stale-fixture detection is live"
+
+      - name: Replay guard refuses to green on empty fixtures
+        run: |
+          set +e
+          python3 scripts/skill_evals/runner.py \
+            --skill checkit --replay "$RUNNER_TEMP/no-fixtures" --threshold 0.0
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::harness exited 0 with no recorded fixtures — false green"
+            exit 1
+          fi
+          echo "replay guard held (exit $rc)"
+
+      # D1. The round-2 gate hoisted only FixtureError into the fixtures-unusable
+      # bucket, so a LIVE run whose CLI cannot be launched errored every trial
+      # through the OSError arm, `fixtures_unusable` stayed False, --allow-errors
+      # forgave the errors and --threshold 0.0 forgave the rate. Exit 0 on a run
+      # that graded ZERO trials. Anchored here because the invariant is now a
+      # single predicate (graded_trials) and must stay one.
+      - name: ZERO-EVIDENCE GUARD — a run that graded nothing cannot exit 0
+        run: |
+          set +e
+          out=$(python3 scripts/skill_evals/runner.py \
+            --skill-dir tests/skill_evals/fixtures/harness-selftest/skill \
+            --prompts tests/skill_evals/fixtures/harness-selftest/evals/prompts.json \
+            --cli "$RUNNER_TEMP/no-such-cli" --no-version-check \
+            --trials 2 --allow-errors --threshold 0.0 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::--allow-errors --threshold 0.0 greened a run of 0 graded trials"
+            exit 1
+          fi
+          case "$out" in
+            *"trials produced ANY signal"*) : ;;
+            *) echo "::error::failed, but not for the zero-evidence reason"; exit 1 ;;
+          esac
+          echo "zero-evidence guard held (exit $rc)"
+
+      # D2. --threshold lowers the RATE the positive arm must clear; it must not
+      # lower the floor of one demonstrated firing. Built by stripping the Skill
+      # events out of the recorded positive transcripts — the meta sidecars (and
+      # so the artifact binding) stay valid, only the graded content changes, so
+      # this exercises the SCORING path and not the fixture guard.
+      - name: POSITIVE FLOOR — --threshold 0.0 cannot green a total trigger failure
+        run: |
+          set -e
+          cp -R tests/skill_evals/fixtures/harness-selftest "$RUNNER_TEMP/never-fires"
+          python3 - "$RUNNER_TEMP/never-fires" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1]) / "cases"
+          stripped = 0
+          for jsonl in root.glob("positive-*/trial-*.jsonl"):
+              kept = []
+              for line in jsonl.read_text().splitlines():
+                  if not line.strip():
+                      continue
+                  ev = json.loads(line)
+                  blocks = (ev.get("message") or {}).get("content") or []
+                  blocks = blocks if isinstance(blocks, list) else []
+                  fires = any(isinstance(b, dict) and b.get("name") == "Skill" for b in blocks)
+                  if fires or isinstance(ev.get("tool_use_result"), dict):
+                      stripped += 1
+                      continue
+                  kept.append(line)
+              jsonl.write_text("\n".join(kept) + "\n")
+          assert stripped, "no Skill events were stripped — the mutation did nothing"
+          print(f"stripped {stripped} Skill event(s) from the positive fixtures")
+          PY
+          set +e
+          out=$(python3 scripts/skill_evals/runner.py \
+            --skill-dir "$RUNNER_TEMP/never-fires/skill" \
+            --prompts "$RUNNER_TEMP/never-fires/evals/prompts.json" \
+            --replay "$RUNNER_TEMP/never-fires" \
+            --trials 3 --allow-synthetic-fixtures \
+            --allow-errors --threshold 0.0 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::--threshold 0.0 greened a suite in which the skill never fired"
+            exit 1
+          fi
+          case "$out" in
+            *"ZERO POSITIVE PASSES"*) : ;;
+            *) echo "::error::failed, but not for the positive-floor reason"; exit 1 ;;
+          esac
+          echo "positive floor held (exit $rc)"
+
+      - name: Synthetic fixtures are refused without the explicit opt-in
+        run: |
+          set +e
+          python3 scripts/skill_evals/runner.py \
+            --skill-dir tests/skill_evals/fixtures/harness-selftest/skill \
+            --prompts tests/skill_evals/fixtures/harness-selftest/evals/prompts.json \
+            --replay tests/skill_evals/fixtures/harness-selftest --trials 3
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::hand-authored fixtures graded as if recorded — provenance gate is dead"
+            exit 1
+          fi
+          echo "provenance gate held (exit $rc)"

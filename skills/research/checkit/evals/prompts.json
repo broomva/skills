@@ -1,0 +1,316 @@
+{
+  "skill": "checkit",
+  "version": 1,
+  "notes": "17 cases: 11 positive (should_trigger true) / 6 negative (should_trigger false). By origin: 5 golden (authored), 6 real-trace (byte-verbatim production user turns), 6 negative (authored near-misses). Real-trace provenance, one case per file, all six re-confirmed byte-verbatim on 2026-07-28 (method and the blockquote-prefix gotcha: verification_log.real_trace_verbatim): real-trace-01 docs/conversations/session-2026-06-03-2b8fda15.md; real-trace-02 session-2026-05-24-ac37bb09.md; real-trace-03 session-2026-06-15-156c224e.md; real-trace-04 session-2026-05-22-bbfc293b.md; real-trace-05 session-2026-05-29-ad634bc4.md; real-trace-06 session-2026-05-18-b0e6a559.md. Real-trace prompts are reproduced byte-for-byte INCLUDING curly apostrophes (U+2019 in real-trace-03) and lowercase/typo'd spelling; do not straighten or tidy them. EVERY case is designed to be satisfiable in the runner's clean temp workspace (a fresh mkdtemp cwd containing only .claude/skills/checkit; no git, no branch, no open PRs, no knowledge graph, no repo files) — see each case's workspace_requires. connects_to_active_work survives on exactly one case (golden-01), whose prompt supplies the active-work context inline. EVERY negative carries assertions that can fail; none has an empty expected_checks list. no_clarifying_question_bounced_back is asserted on ALL 11 positives; it is the skill's one rule, so no positive is allowed to pass while handing articulation back to the user. Authored prompts are written in the same register as the production traces (lowercase, comma splices, dropped apostrophes, no em dashes). A polished em-dash-heavy prompt is out-of-distribution for this user's actual turns and would measure routing on a text style the skill never sees in production; none of the six real traces contains an em dash.",
+  "execution_contract": {
+    "advisory": "Documentation only — runner.py does not read this object; it is here so the intended contract is reviewable and so a drift between intent and CLI flags is visible. Values mirror runner.py's module constants at authoring time.",
+    "trials_per_case": 3,
+    "suite_threshold_trial_pass_rate": 0.8,
+    "case_threshold_pass_rate": 0.6,
+    "model": "haiku",
+    "visibility": "present",
+    "timeout_s": 300,
+    "workspace": "clean temp dir per trial; skill installed at .claude/skills/checkit; --setting-sources project; --permission-mode bypassPermissions; --no-session-persistence",
+    "negative_semantics": "runner.grade_trial scores a should_trigger:false trial FAIL the moment transcript.triggered(skill) is true, BEFORE expected_checks are consulted. The checks listed on a negative are therefore additive assertions about what the agent did INSTEAD of firing — they do not replace the non-trigger assertion, they stop the case from resting on it alone."
+  },
+  "verification_log": {
+    "advisory": "Documentation only — runner.py does not read this object. A dated record of the LITERAL statuses observed, so a later reviewer can tell a stale claim from a re-checked one instead of trusting the prose in each case's 'verified' field.",
+    "date": "2026-07-28",
+    "method": "curl -s -o /dev/null -w '%{http_code}' with a browser UA and a 25s cap, plus a separate HEAD for the Location header; JSON payloads parsed with python3, not eyeballed.",
+    "url_status": {
+      "https://www.youtube.com/watch?v=_R83pFpUWyM": "200 (oembed 200, title 'The Engineering of AI Agents: Context, Harnessing, and Autonomy', author InfoQ; control id ZZZZZZZZZZZ oembed 400)",
+      "https://arxiv.org/abs/2602.12670": "200 (citation_title 'SkillsBench: Benchmarking How Well Agent Skills Work Across Diverse Tasks', citation_date 2026/02/13; control 2602.99999 -> 404)",
+      "https://x.com/0xcodez/status/2079165300625330317": "307 -> /0xCodez/status/2079165300625330317 (handle case-fold); api.fxtwitter.com code 200; control status 1111111111111111111 -> code 404",
+      "https://t.co/WVztfCUH4u": "301 -> https://x.com/i/article/2079141496981184512",
+      "https://pbs.twimg.com/media/HNqn3q8XoAAXCdJ.jpg": "200 (sampled article body image)",
+      "https://github.com/anthropics/claude-agent-sdk-typescript": "200 (the stale name /anthropics/claude-agent-sdk still 301s here, which is why the canonical name is cited)",
+      "https://github.com/paperclipai/paperclip": "200",
+      "https://github.com/gepa-ai/gepa": "200 (shared by real-trace-02 and negative-06)",
+      "https://super.engineering/": "200",
+      "https://x.com/gethuxe": "200",
+      "https://www.huxe.com/": "200",
+      "https://www.julianealborna.com": "200",
+      "https://platform.claude.com/docs/en/about-claude/models/overview": "200 (title 'Models overview - Claude Platform Docs')"
+    },
+    "real_trace_verbatim": "All six real-trace prompts re-confirmed byte-verbatim in their cited files, INCLUDING the U+2019 curly apostrophes in real-trace-03 and the straight apostrophe in real-trace-05. Method note for whoever checks next: a naive whole-string grep FAILS on the three multi-line prompts (real-trace-03/-04/-06) and this is not evidence of drift — docs/conversations stores user turns as markdown blockquotes, so each continuation line carries a '> ' prefix. Match against '> ' + prompt.replace(chr(10), chr(10) + '> '). Timestamps also matched the cited ones: 20:15 / 18:42 / 20:28 / 15:20 / 23:12 / 13:01.",
+    "workspace_paths": "Re-scanned every prompt for filesystem paths: zero hits across all 17 cases (golden-02's 'arxiv.org/abs/2602.12670' is a URL fragment, not a path). No case depends on a file existing in the runner's clean temp workspace.",
+    "line_citations": "SKILL.md and lens line cites re-checked against the files. Two stale cites in golden-04 were corrected this round: the thread/image-post branch is SKILL.md:109-116 (was cited as 112-116) and the 'WebFetch 402s on x.com' note is SKILL.md:112 (was cited as 114). Confirmed accurate as written: SKILL.md:50-55 (costly carve-out), 174-175 (in scope), 176 (out of scope); checkit-lens.md:42-43 / 44-45 / 46-48 (the three gate branches), :57 (blog/article/thread row), :61 (bare topic row)."
+  },
+  "open_finding_against_the_skill": {
+    "advisory": "Documentation only. Raised by round-2 review, adjudicated here against both source documents; the fix belongs to the SKILL, not to this eval set.",
+    "finding": "The skill's two documents disagree about whether a fully-specified artifact ask is in scope. references/checkit-lens.md:42-43 states branch 1 as 'Artifact present (URL / repo / paper / file / @-mention / image / pasted doc) -> run the full ingest pipeline using the taxonomy below', with NO under-specification condition, and its branch 3 guard at :46-48 excludes only 'a stray pointer phrase with no artifact and no topic, or an off-topic match'. Read literally, that gate routes ANY present artifact into the pipeline. SKILL.md:176 and the frontmatter description's NOT-FOR clause both explicitly carve the case out ('fully-specified artifact asks (answer directly)'). The lens's own preamble is about under-specified pointers throughout, so the disagreement looks like an omission in the branch-1 wording rather than a deliberate difference, but as written the two documents give opposite verdicts on negative-01, negative-03, and negative-06.",
+    "adjudication": "Those three cases stay should_trigger:false, labelled by the DESCRIPTION, because the frontmatter description is what actually drives triggering — the lens is a reference the skill loads after it has already fired. No eval-side change follows from this finding.",
+    "suggested_skill_fix": "One line in checkit-lens.md:42-43 — make branch 1 read 'Artifact present AND the ask is under-specified -> run the full ingest pipeline', and extend the branch-3 guard at :46-48 to name the fully-specified artifact ask as the other non-checkit shape. That makes the gate agree with SKILL.md:176 and the description."
+  },
+  "known_gaps": {
+    "no_bare_image_case": "The harness passes each prompt as a text argument (LiveRunner.build_argv -> `-p <prompt>`), so there is no seam for attaching image bytes. A genuine bare-image artifact case is therefore not expressible today and is deliberately omitted rather than faked with an image URL, which would test URL fetching, not image ingestion.",
+    "no_production_sourced_negative": "docs/conversations/ was searched for a real user turn that is a single-axis near-miss (artifact present + ask fully specified). None was found: production turns in this workspace that carry an artifact are almost uniformly under-specified, which is why the skill exists. All six negatives are therefore authored. This is stated rather than papered over with a synthesised 'real trace'.",
+    "no_askless_conversational_negative": "The set has no negative in which a trigger phrase is used with NO ask at all — 'check this out, <status update>, felt good.' negative-05 was that case for one revision and was changed away from it deliberately, not by oversight. Reason: the correct response to an ask-less status update is a short conversational acknowledgement, and every additive check this registry offers penalises short correct answers. THE REASON IS STILL TRUE BUT THE MECHANISM STATED HERE IS NOT — corrected 2026-07-28, having been written against two thresholds that no longer exist. It is NOT 'final_answer_non_empty needs >=40 chars' (it counts words, floor 3) and NOT 'no_clarifying_question_bounced_back fails any sub-400-char answer ending in ?' (length was removed as a discriminator entirely; a trailing OFFER now passes, and only a question that hands articulation back fails). What actually still bites, re-measured against the current checks: an acknowledgement leaves almost no ANSWER behind once its trailing question is peeled, so 'Big one. Want me to write that up?' (2 words of body) and 'Nice. Want me to note it?' (1 word) both still fail — the whole-turn arm, not a length rule. Such a case can therefore still only rest on the runner's non-trigger assertion alone, which is exactly what every negative here is required not to do. Reopen this gap when the registry gains an absence-of-over-delivery check (see checks_the_registry_lacks), which would let an ask-less negative assert something real.",
+    "checks_the_registry_lacks": "Three assertions a negative would ideally make have no CHECK_REGISTRY entry and are NOT referenced here (an unknown id is a hard PromptSetError, which would make the whole set unloadable): (1) skill_not_triggered — an explicit positive-form assertion that the skill stayed quiet, so the non-trigger claim appears in expected_checks instead of only in grade_trial's control flow; (2) no_unrequested_documentation — asserts the agent did NOT file notes/entities on a fully-specified ask (the over-delivery failure mode of negative-01/03/06); (3) no_unrequested_next_steps — asserts the agent did NOT append a ranked next-steps list to a bounded answer. Until those exist the negatives assert non-trigger (via the runner) plus answer-quality, not absence-of-over-delivery.",
+    "checks_withdrawn_2026_07_28": {
+      "why": "Withdrawn from every case after four adversarial P20 rounds in which each fix oscillated between false-passing and false-failing. A check that rejects correct behaviour is worse than no check: it depresses a CORRECT agent's measured pass rate, so a real regression hides among the false-fails, and the rational response is to lower the threshold. See research/entities/pattern/anti-vacuity-fixes-overshoot-into-noise.md.",
+      "no_clarifying_question_bounced_back": "Was asserted on 17/17 cases. Round 3: a bare prefix match with no interrogative requirement — 7/7 declarative answers containing zero questions scored as clarifying questions ('Which one wins depends on how often you bump the lockfile.'). Round 4 fixed that and regressed elsewhere: any wh-question containing you/your scored a bounce even when the agent answered it in the next clause, and 'What if I run it with the lock disabled?' — the same speech act as the accepted 'How about I benchmark it?' — scored 'demanding content'. 5 of 18 plausible correct replies to this file's OWN negatives failed, across 5 of 6 negatives. The distinction it encodes (bounce = asks the user to specify the ask; offer = states a result then proposes a declinable step) is a semantic judgement. A regex is the wrong instrument; this belongs behind the LLM-judge seam.",
+      "ingests_full_artifact_not_metadata": "Withdrawn because it now FAILS OPEN. _is_path_shaped drops one-slash extensionless references, so 'gepa-ai/gepa' yields an EMPTY token set and _hits_artifact returns True unconditionally — proven: Read{'/etc/hosts'} PASSES. The round-3 form failed the other way (host-level scoping: fetching a DIFFERENT github repo or arXiv paper PASSED). Correct scoping has to survive redirect indirection (golden-04's substance sits behind a t.co at x.com/i/article/...), which token matching does not model.",
+      "what_still_holds": "Negatives are NOT weakened by this withdrawal: a negative's PRIMARY assertion is structural, not regex — runner.py:1046-1048 fails any negative where the skill triggered ('over-triggered on a near-miss prompt'). expected_checks were always supplementary. v1 therefore grades TRIGGERING deterministically, which is the failure mode the arc measured (Schmid: ~50% of skill failures are trigger failures). Outcome grading beyond the surviving checks needs the LLM-judge seam and is tracked separately.",
+      "note_on_no_permission_denials": "Retained but weak by construction: the runner launches with --permission-mode bypassPermissions, so it cannot fail on agent behaviour, only on a sandbox anomaly. Kept as a run-health sentinel."
+    }
+  },
+  "cases": [
+    {
+      "id": "golden-01",
+      "prompt": "https://www.youtube.com/watch?v=_R83pFpUWyM\n\nsomeone posted this in our channel. we're mid-build on a harness that dispatches agent workers and gates what they emit, so it might land on that. no idea if it's any good.",
+      "should_trigger": true,
+      "origin": "golden",
+      "artifact": "video — InfoQ conference talk 'The Engineering of AI Agents: Context, Harnessing, and Autonomy'",
+      "verified": "YouTube oEmbed 200, title 'The Engineering of AI Agents: Context, Harnessing, and Autonomy', author InfoQ; control bogus id ZZZZZZZZZZZ returns 400. Zero occurrences in this workspace's markdown, so nothing about it can be answered from a prior session's notes.",
+      "workspace_requires": "none — the active work ('a harness that dispatches agent workers and gates what they emit') is stated inline in the prompt, which is what makes connects_to_active_work satisfiable without a repo, branch, or knowledge graph. This is the ONLY case that keeps that check.",
+      "expected_checks": [
+        "connects_to_active_work",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Artifact plus a relevance hint and an explicitly abdicated judgement ('no idea if it's any good') — delegated articulation with no stated deliverable, which is the ingest-and-integrate shape. Carries NO verbatim USE WHEN phrase, so it measures inference from the description rather than string matching. Exercises the video branch of pipeline step 3. connects_to_active_work is a real discriminator here and not a freebie: an agent that returns a neutral book report about the talk, ignoring the harness the user named, fails it."
+    },
+    {
+      "id": "golden-02",
+      "prompt": "someone sent me this paper on skill evals, arxiv.org/abs/2602.12670. worth a look?",
+      "should_trigger": true,
+      "origin": "golden",
+      "artifact": "paper — arXiv 2602.12670",
+      "verified": "REAL. https://arxiv.org/abs/2602.12670 returns 200 with citation_title 'SkillsBench: Benchmarking How Well Agent Skills Work Across Diverse Tasks', citation_date 2026/02/13, ~80 authors incl. Dawn Song; control id 2602.99999 returns 404, so the 200 is not an arXiv catch-all. mentions_source_verification is therefore assertable against a source that genuinely resolves.",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "mentions_source_verification",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Paper artifact with a rhetorical question standing in for the ask; 'worth a look?' is not a request for a yes/no but delegated articulation, which is what the skill exists to infer rather than bounce back. No verbatim USE WHEN phrase. connects_to_active_work is deliberately absent: this prompt supplies no active work and the clean temp workspace has none to find, so asserting it would fail the case for environmental reasons."
+    },
+    {
+      "id": "golden-03",
+      "prompt": "here's the whole thing, tell me what you make of it.\n\n## Expiry-aware lease (draft)\n\nA lease is one row: (key TEXT PRIMARY KEY, holder TEXT, expires_at INTEGER).\n\nacquire(key, holder, ttl) — one statement, no transaction:\n\n    INSERT INTO lease (key, holder, expires_at)\n    VALUES (?, ?, :now + :ttl)\n    ON CONFLICT(key) DO UPDATE\n      SET holder = excluded.holder, expires_at = excluded.expires_at\n      WHERE lease.expires_at <= :now\n    RETURNING holder;\n\nThe caller holds the lease iff the returned holder is its own. A live lease held\nby someone else returns their holder, not an error.\n\nrenew(key, holder, ttl) — same shape with WHERE lease.holder = ?.\nrelease(key, holder) — DELETE WHERE key = ? AND holder = ?.\n\nOpen: clock skew across processes writing :now; whether renew extends from now or\nfrom the old expires_at; what happens to work already in flight when a lease\nlapses mid-run.",
+      "should_trigger": true,
+      "origin": "golden",
+      "artifact": "pasted document — the artifact is carried inline in the prompt (SKILL.md Scope lists 'pasted doc' as in scope)",
+      "verified": "n/a — no external source. Replaces the previous docs/inbox/keel-spec.md, which does not exist anywhere in the repo (find -name keel-spec.md returned nothing) and could never have been read from a clean temp workspace.",
+      "workspace_requires": "none — the artifact IS the prompt. No filesystem path, no network. This is the case that proves an under-specified artifact ask is gradeable with zero environmental dependencies.",
+      "expected_checks": [
+        "traverses_to_primitives",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Pasted-document artifact with an under-specified directive: 'tell me what you make of it' names no output contract, no depth, no format. The spec carries a real mechanism (a conditional-upsert compare-and-swap) and three stated open questions, so traverses_to_primitives and produces_ranked_next_steps are earned by engaging with the design rather than restating it. mentions_source_verification and ingests_full_artifact_not_metadata are deliberately absent: there is no external source to verify and no fetch to perform, so asserting them would grade the environment, not the run. Register note: the user's own line carries no em dash, matching the production traces; the em dashes inside the pasted body are intentional, because a pasted design doc is written in a different register from the chat turn that carries it."
+    },
+    {
+      "id": "golden-04",
+      "prompt": "https://x.com/0xcodez/status/2079165300625330317 thoughts?",
+      "should_trigger": true,
+      "origin": "golden",
+      "artifact": "social post — X status by @0xCodez whose own body is empty; it carries an X Article (long-form, 16 embedded images)",
+      "verified": "REAL, re-verified 2026-07-28. api.fxtwitter.com/0xCodez/status/2079165300625330317 returns code 200 with author screen_name 0xCodez; control status id 1111111111111111111 returns code 404. CORRECTION OF A PRIOR OVER-CLAIM: an earlier revision of THIS field asserted 'the payload is media'. That was an inference, not an observation, and it is false — tweet.media is null and the media key list is empty. What the payload actually contains, read off the response: tweet.text is the EMPTY string; tweet.raw_text.text is the bare link https://t.co/WVztfCUH4u; that t.co returns 301 -> https://x.com/i/article/2079141496981184512, an X ARTICLE (article.id 2079141496981184512, title 'Graph Engineering with Claude: 14-Step roadmap from 0 to graph architect (Full Course)', created 2026-07-20; content.blocks = 151 blocks / ~15.7k chars of prose, of which 40 are atomic blocks; cover_media plus 16 media_entities, every one of __typename ApiImage; sampled body image https://pbs.twimg.com/media/HNqn3q8XoAAXCdJ.jpg returns 200). Separately observed and kept deliberately: the prompt's own URL returns 307 -> /0xCodez/status/2079165300625330317, which is X normalising the handle's case. That is unlike golden-05's redirect, which followed a repo RENAME and could silently retarget the artifact; a case-fold cannot, so the lowercase form a user would actually paste is left in the prompt.",
+      "workspace_requires": "none — network only.",
+      "artifact_aliases": [
+        "https://t.co/WVztfCUH4u",
+        "https://x.com/i/article/2079141496981184512"
+      ],
+      "artifact_aliases_note": "Documentation for the field above; runner.py reads only 'artifact_aliases'. This is the ONE case in the set whose substance sits behind an indirection: the status body is the empty string and its raw_text is the bare t.co link, which 301s to the X Article (both hops recorded in verification_log.url_status). Artifact scoping is token-based, and the article URL shares with the prompt only the host 'x.com' — a token checks._is_distinctive rightly refuses, because scoping on it would pass ANY x.com fetch, including a different user's post. Without these aliases the CORRECT route (follow the redirect, read the article) scores FAIL on ingests_full_artifact_not_metadata while a wrong-artifact fetch of some other x.com status scores PASS, which is the scoping backwards. The field is additive only: it adds the tokens '2079141496981184512' and 'wvztfcuh4u', and cannot make a fetch of a different artifact pass.",
+      "expected_checks": [
+        "mentions_source_verification",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Social-post artifact plus a one-word directive; 'thoughts?' is a paraphrase of wdyt, not a verbatim USE WHEN entry. BRANCH CLAIM CORRECTED to match the payload actually observed above. This is the taxonomy's 'Blog post / article / thread' row (references/checkit-lens.md:57), NOT a media post. It remains the sharpest ingests_full_artifact_not_metadata case in the set, and for a stronger reason than the one previously claimed: the status renders as NOTHING — text is the empty string, raw_text is a bare t.co link — so every word of substance sits behind one indirection into the linked article. An agent that stops at the status has literally zero content to report on, which is precisely the metadata-only failure that check exists to catch. The 'text is only half the artifact, pull the pixels too' clause (SKILL.md:109-116) does apply here, again for the corrected reason: the substance is a 15.7k-char article carrying a cover image plus 16 embedded images, so a text-only extractor drops the pixels. On the mentions_source_verification objection: SKILL.md:112 records that WebFetch 402s on x.com, so a run may legitimately fail to read the post. That does NOT make the check self-contradictory here — checks._VERIFY_RE matches 'could not confirm', 'could not verify', and 'unverified', so an honest report that the source could not be reached SATISFIES the check. What fails it is silence about provenance: an answer that asserts what the post says without ever addressing whether the source was actually reached."
+    },
+    {
+      "id": "golden-05",
+      "prompt": "does this change the build-vs-reuse call on our runner? https://github.com/anthropics/claude-agent-sdk-typescript",
+      "should_trigger": true,
+      "origin": "golden",
+      "artifact": "repo — anthropics/claude-agent-sdk-typescript",
+      "verified": "REAL. The previously cited github.com/anthropics/claude-agent-sdk returns 301 -> github.com/anthropics/claude-agent-sdk-typescript (the repo was renamed); the canonical URL used here returns 200 directly. Citing the stale name would have made the case depend on a redirect.",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "walks_repo_tree_and_canonical_files",
+        "mentions_source_verification",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Repo artifact where the user gestures at a decision without specifying method, depth, or deliverable — the evaluate-against-our-stack default intent. Rephrased away from the previous opener 'found this repo while poking around': 'found this' is a verbatim USE WHEN entry, and leading with it measured string matching. Naming a decision ('build-vs-reuse') does not make the ask fully specified — no output shape, no depth, and no stopping condition is given, which is precisely what separates this from negative-06 on the same axis."
+    },
+    {
+      "id": "real-trace-01",
+      "prompt": "check this out, lets install it and learn from it, the architecture, tech stack and how its defining the orchestration layer for agentic workflows https://github.com/paperclipai/paperclip",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "artifact": "repo — paperclipai/paperclip",
+      "verified": "URL returns 200. Prompt confirmed byte-verbatim in docs/conversations/session-2026-06-03-2b8fda15.md (User 20:15).",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "walks_repo_tree_and_canonical_files",
+        "mentions_source_verification",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Verbatim production turn: trigger phrase + repo + a direction-of-interest ('learn from it') that still leaves method, depth, and deliverable unstated. Exercises the repo depth-floor (walk the tree, read the canonical files). Real traces keep their own phrasing by design — the verbatim-trigger rebalance applies to the authored golden cases, not to production evidence."
+    },
+    {
+      "id": "real-trace-02",
+      "prompt": "Check this out as it relates to the role/x skill https://github.com/gepa-ai/gepa",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "artifact": "repo — gepa-ai/gepa",
+      "verified": "URL returns 200. Prompt confirmed byte-verbatim in docs/conversations/session-2026-05-24-ac37bb09.md (User 18:42).",
+      "workspace_requires": "none — network only. connects_to_active_work was removed: the prompt's referent ('the role/x skill') does not exist in the clean temp workspace, so the check would have failed environmentally.",
+      "expected_checks": [
+        "walks_repo_tree_and_canonical_files",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Verbatim production turn: minimal directive + repo + a pointer to something the user is working on; nothing states what output is wanted. The pointer is to a skill absent from the eval workspace, which makes no_clarifying_question_bounced_back the sharp assertion — the tempting failure is to ask 'what is the role/x skill?' instead of reading the repo and inferring the comparison."
+    },
+    {
+      "id": "real-trace-03",
+      "prompt": "Let’s research this https://super.engineering/\nI read it’s no electron, no tauri, 100% rust. How does that work?",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "artifact": "product site — super.engineering",
+      "verified": "URL returns 200. Prompt confirmed byte-verbatim in docs/conversations/session-2026-06-15-156c224e.md (User 20:28) — including the CURLY apostrophes (U+2019) in 'Let’s' and 'it’s', which a previous revision had straightened while claiming the prompt was verbatim.",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "mentions_source_verification",
+        "traverses_to_primitives",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Verbatim production turn: a trailing curiosity question does NOT make the ask fully specified — no deliverable, no depth, and no format is named, so the inferred-intent + traverse-to-primitives pipeline applies rather than a one-line answer. The 'how does that work?' tail is what makes traverses_to_primitives the load-bearing check."
+    },
+    {
+      "id": "real-trace-04",
+      "prompt": "lets research https://x.com/gethuxe https://www.huxe.com/\nThey are sunsetting, but the app is pretty cool, is there a way to continue using the service? Any OSS, reverse engineer approach or tracing down the founder/creator to find details? Lets do a deep research",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "artifact": "two artifacts — X profile @gethuxe + product site huxe.com",
+      "verified": "Both artifacts resolve: https://www.huxe.com/ returns 200 and https://x.com/gethuxe returns 200 (the earlier revision of this field checked only huxe.com and left the X profile unstated). Prompt confirmed byte-verbatim in docs/conversations/session-2026-05-22-bbfc293b.md (User 15:20).",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "mentions_source_verification",
+        "traverses_to_primitives",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Verbatim production turn: multiple artifacts with an open-ended investigative frame. The explicit 'deep research' ask is the costly-step carve-out case (SKILL.md:50-55 — do the cheap version, surface the expensive fan-out as a ranked next step), not a reason to skip the skill."
+    },
+    {
+      "id": "real-trace-05",
+      "prompt": "lets research about garry tan's gbrain, how does it work and what does it enable?",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "artifact": "none — a bare topic string. This is branch 2 of the artifact-gate (references/checkit-lens.md:44-45: 'No artifact, but a research-topic -> run the same pipeline with the topic as the subject'), which SKILL.md Scope (line 174-175) independently lists as in scope: 'any artifact (URL, repo, paper, file, image, pasted doc, or a bare topic string)'.",
+      "verified": "Prompt confirmed byte-verbatim in docs/conversations/session-2026-05-29-ad634bc4.md (User 23:12), straight apostrophe in \"tan's\" as typed.",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "mentions_source_verification",
+        "documents_finding",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "The branch-2 POSITIVE the suite previously lacked, and it is production-sourced rather than authored. A bare topic with no artifact must still run the pipeline with the topic as the subject; the failure this case catches is an over-narrow artifact-gate that treats 'no URL' as 'not for me'. Its existence is also what disambiguates the negatives: negative-02 and negative-05 are non-triggers because they have no artifact AND no research topic (branch 3), not merely because they have no URL. ingests_full_artifact_not_metadata is deliberately absent — there is no artifact to ingest; the topic IS the subject."
+    },
+    {
+      "id": "real-trace-06",
+      "prompt": "can we extract the knowledge from https://www.julianealborna.com ?\nIs the content available somewhere so that we can consume it and learn",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "artifact": "site — julianealborna.com",
+      "verified": "URL returns 200. Prompt confirmed byte-verbatim in docs/conversations/session-2026-05-18-b0e6a559.md (User 13:01).",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "mentions_source_verification",
+        "produces_ranked_next_steps"
+      ],
+      "rationale": "Production turn containing ZERO phrases from the USE WHEN list — no 'check this out', no 'research this', no 'wdyt', no 'take a look'. It is an artifact plus an under-specified ask expressed entirely in the user's own words, so it measures whether the description's semantics route the prompt, not whether a trigger string matched. The strongest paraphrase-inference case in the set."
+    },
+    {
+      "id": "negative-01",
+      "prompt": "grab the context-window and max-output numbers for each model off https://platform.claude.com/docs/en/about-claude/models/overview and give me a three-column markdown table: model / context / max output. table only please, it's going straight onto a slide.",
+      "should_trigger": false,
+      "origin": "negative",
+      "artifact": "docs page — platform.claude.com models overview",
+      "verified": "URL returns 200, title 'Models overview - Claude Platform Docs'. The previously cited docs.anthropic.com path 301s away, so the canonical URL is used.",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "Near-miss on the fully-specified boundary (SKILL.md Scope, line 176: 'fully-specified artifact asks (answer directly)'). A real artifact, research-adjacent vocabulary, and a genuine fetch-and-extract job — but the columns, the format, and the stopping condition ('table only') are all stated, so there is nothing left to infer. Deliberately NOT the description's own example string: the previous version of this case was 'summarize this PDF in 3 bullets', copied verbatim out of the NOT-FOR clause, which tested whether a model can read an exclusion list pasted into its own context. Firing the skill here would bury a slide-ready table under notes, links, and next steps nobody asked for. The two substantive assertions can both fail: an agent that answers 'which models do you want?' fails no_clarifying_question_bounced_back, and one that produces a stub instead of the table fails final_answer_non_empty."
+    },
+    {
+      "id": "negative-02",
+      "prompt": "wdyt, the gate slice is green on CI and the reviewer signed off, but our adversarial round usually turns up one blocker and that costs a day. ship it friday, or hold it?",
+      "should_trigger": false,
+      "origin": "negative",
+      "artifact": "none — and no research topic either.",
+      "verified": "n/a — no external source.",
+      "workspace_requires": "none. Rewritten from the previous version, which named 'the gate slice' and 'the P20 round' with no context: in a clean temp workspace that prompt was unanswerable, so a clarifying question would have been the CORRECT response and the case would have punished it. Every fact needed to decide is now supplied inline.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "Near-miss on the strongest trigger word. CORRECTED RATIONALE: the previous version claimed the gate 'requires a shared URL/repo/paper/file/image/doc', which contradicts the skill's own spec — references/checkit-lens.md:44-45 defines branch 2, 'No artifact, but a research-topic -> run the same pipeline with the topic as the subject', and SKILL.md:174-175 lists 'a bare topic string' as in scope. The correct reading is branch 3 (checkit-lens.md:46-48): neither an artifact NOR a research topic. There is nothing external to research here; the decision turns entirely on state the user already stated, so it is an ordinary judgement call and the gate says 'answer normally'. real-trace-05 is the paired positive that proves the distinction is about branch 2 versus branch 3, not about the presence of a URL."
+    },
+    {
+      "id": "negative-03",
+      "prompt": "rename `mgr` to `leaseManager` in this and add a one-line docstring, nothing else, don't touch the logic:\n\ndef acquire(mgr, key, ttl):\n    if mgr.held(key):\n        return None\n    return mgr.take(key, ttl)",
+      "should_trigger": false,
+      "origin": "negative",
+      "artifact": "pasted code — carried inline in the prompt.",
+      "verified": "n/a — no external source and no filesystem path. Replaces the previous version, which named scripts/video_ingest.py: that file exists only at ~/broomva/scripts/, i.e. outside the temp workspace, so the case's stated premise evaporated at run time.",
+      "workspace_requires": "none — the code is in the prompt.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "Near-miss that requires judgement rather than list-matching: an artifact IS present and it is even shared in the artifact-sharing idiom ('in this'), but the transformation, its scope, and its exclusions ('nothing else', 'don't touch the logic') are fully specified, so the correct move is to do it and stop. Deliberately NOT the description's own 'fix the bug in this file' instantiation, which the previous version used verbatim. The over-trigger failure mode this catches is real: an artifact plus a terse imperative looks like the trigger shape right up until you read what was actually asked."
+    },
+    {
+      "id": "negative-04",
+      "prompt": "we've done this three times now: pull a repo, read the README and the two or three files that actually matter, write up what it means for us, then rank what to do next. package it as a skill.",
+      "should_trigger": false,
+      "origin": "negative",
+      "artifact": "none — the object is a repeated workflow the user describes, not an external artifact.",
+      "verified": "n/a — no external source.",
+      "workspace_requires": "none. The procedure is stated inline, so the agent does not need session history, a knowledge graph, or prior notes to act on it — the previous version ('this ingest dance') referred to something the clean temp workspace had no way to resolve.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "The hardest negative in the set, and the one that most requires judgement: the procedure the user recites IS this skill's own pipeline, so the surface similarity is maximal. It is still skillify's job, not this skill's — the object is a repeatable procedure to be packaged, not an artifact to be metabolized. It is also distinct from the look-back/discovery task named in the description's NOT-FOR clause: the user SUPPLIES the recurring procedure rather than asking the agent to mine their history for it, so recognising this one cannot be done by pattern-matching the exclusion list."
+    },
+    {
+      "id": "negative-05",
+      "prompt": "check this out, i got CI from 11 minutes down to 90 seconds by moving the lockfile copy above the repo copy, so the dep-install layer stops getting invalidated on every commit. the catch is a lockfile bump now pays the full 11 minutes cold, and we bump it about twice a week. leave it, or split the deps into a base image we rebuild nightly?",
+      "should_trigger": false,
+      "origin": "negative",
+      "artifact": "none — and no research topic either; every number the decision turns on is stated inline.",
+      "verified": "n/a — no external source and no filesystem path. Self-contained by construction.",
+      "workspace_requires": "none — 11 minutes cold, 90 seconds warm, and roughly two lockfile bumps a week are all supplied in the prompt, so no repo, CI config, or history has to exist for the decision to be answerable.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "Near-miss on the strongest trigger phrase in the USE WHEN list. Branch 3 (references/checkit-lens.md:46-48): no artifact and no research topic. Nothing external exists to research — the call is a cache-versus-rebuild trade-off over numbers the user already stated, which is an ordinary engineering judgement, so the gate says answer normally. Same gate reading as negative-02; the two differ in which trigger string they exercise ('check this out' here, 'wdyt' there), which is why both are carried. REVISION 2, and the reasoning is recorded because revision 1 got it wrong. Revision 1 replaced an ambiguous CI-flake prompt with a bare conversational status update ('i got CI from 11 minutes down to 90 seconds just by killing the docker layer rebuild. felt good.') and dropped no_clarifying_question_bounced_back, because checks._BOUNCE_RE's interrogative_stub arm fails any final answer under 400 characters ending in a question mark. That RELOCATED the defect rather than removing it: with the bounce check gone the case rested on final_answer_non_empty, a >=40-character length proxy, and the natural correct reply to a bare status update ('Big one. Want me to write that up?', 34 chars) fails that too. The root cause was the PROMPT, not the checks — a conversational acknowledgement is inherently short, and every additive assertion this registry can offer punishes short correct answers, so no ask-less status update can carry a meaningful additive check here. Revision 2 therefore gives the turn a bounded, inline-answerable decision. Correct behaviour is now a substantive trade-off judgement, which makes no_clarifying_question_bounced_back the LOAD-BEARING assertion and one correct behaviour comfortably passes: it fails only when the agent hands articulation back ('which package manager?', 'how long is the cold build?') with both numbers already on the table. final_answer_non_empty is retained as a stub guard only and is explicitly NOT what this case rests on. MEASURED, not asserted: against the current checks (which now count words rather than characters and peel a trailing offer off before judging a question), 2 of 4 plausible correct replies to the revision-1 ask-less prompt still FAIL no_clarifying_question_bounced_back — 'Big one. Want me to write that up?' leaves 2 words of answer and 'Nice. Want me to note it?' leaves 1, both under the 3-word floor — while 3 of 3 plausible correct replies to this prompt pass every asserted check, including a deliberately terse one and one arguing the opposite side. The check fix narrowed the false-fail zone; it did not remove it, because an acknowledgement genuinely has almost no answer in it. Only the prompt change moves correct behaviour clear of the threshold. Cost of the revision, stated rather than hidden: the set no longer covers a trigger phrase used with no ask at all — see known_gaps.no_askless_conversational_negative."
+    },
+    {
+      "id": "negative-06",
+      "prompt": "before i spec the box, does https://github.com/gepa-ai/gepa need a local GPU for the optimizer loop, or does it just call an API endpoint?",
+      "should_trigger": false,
+      "origin": "negative",
+      "artifact": "repo — gepa-ai/gepa (THE SAME artifact as real-trace-02, on purpose).",
+      "verified": "URL returns 200.",
+      "workspace_requires": "none — network only.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "A matched pair with real-trace-02: identical artifact, opposite label. That isolates the discriminating variable to the ASK rather than the artifact — no run can pass both cases by classifying on 'is there a GitHub URL'. Here the question is bounded to one factual disjunction with an obvious stopping condition, so it is a fully-specified artifact ask and the correct move is to answer it. Requires judgement: the repo is research-flavoured, the answer requires reading the repo, and only the shape of the ask separates it from the positive."
+    }
+  ]
+}
