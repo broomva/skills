@@ -2280,3 +2280,52 @@ def test_pilot_negatives_assert_the_run_still_answered_the_user():
     for c in ps.negatives:
         assert "final_answer_non_empty" in c.expected_checks, (
             f"{c.id} does not assert the run produced an answer at all")
+
+
+# --- the invariant that made `completed_without_error` vacuous ---------------
+
+def test_error_transcripts_never_reach_run_checks(monkeypatch):
+    """WHY `completed_without_error` was deleted from CHECK_REGISTRY.
+
+    It read `ok = not ctx.transcript.is_error`. But grade_trial returns
+    out(ERROR, ...) on `if transcript.is_error:` BEFORE run_checks is reached, so
+    the only condition it tested could never arrive at it — every invocation
+    returned True. A structurally unfailable check, sitting in the registry of a
+    harness built to catch exactly that, asserted on 11 cases across two prompt
+    sets before two independent reviewers found it.
+
+    This pins the ordering. If a refactor ever lets an errored transcript reach
+    run_checks, a check keyed on is_error becomes meaningful again — and this
+    test going RED is the signal to reconsider, rather than someone silently
+    re-adding a predicate that cannot fail.
+    """
+    called: list[list[str]] = []
+    real = checks_mod.run_checks
+    monkeypatch.setattr(checks_mod, "run_checks",
+                        lambda ids, ctx: called.append(list(ids)) or real(ids, ctx))
+
+    stream = ndjson(ev_init(), ev_result("Not logged in", is_error=True))
+    tr = transcript(stream)
+    assert tr.is_error is True, "fixture must actually be an error transcript"
+
+    r = R.grade_trial(case(), tr, "demo")
+    assert r.outcome == R.ERROR, r.outcome
+    assert called == [], "run_checks ran on an errored transcript — the ordering changed"
+
+
+def test_completed_without_error_is_not_resurrectable_silently():
+    """Removed from CHECK_REGISTRY deliberately, not by accident.
+
+    Deletion (rather than leaving a no-op) is what makes a prompt set that still
+    asserts it fail loudly with 'unknown check id' instead of quietly scoring a
+    free pass on every case.
+    """
+    assert "completed_without_error" not in checks_mod.CHECK_REGISTRY
+    pilots = sorted((REPO / "skills").rglob("evals/prompts.json"))
+    assert pilots, "no prompt sets found — the guard below would be vacuous"
+    for p in pilots:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        for case in data.get("cases", []):
+            assert "completed_without_error" not in case.get("expected_checks", []), (
+                f"{p}: case {case.get('id')} still asserts the removed check"
+            )
