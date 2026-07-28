@@ -520,3 +520,99 @@ def test_ref_integrity_yaml_non_script_prefix(tmp_path):  # CodeRabbit: all 4 pr
     (d / "templates" / "loop.yaml").write_text(
         "doc: references/missing_guide.md\n", encoding="utf-8")
     assert _step(_rc(d), "1c")["status"] == "FAIL"
+
+
+# --- step 5: trigger evals (BRO-2005) ----------------------------------------
+# Regression guard for the gate's own vacuity: step 5 used to pass on
+# `(skill_dir / "evals").is_dir()` alone, so an EMPTY evals/ dir scored
+# "present". That is how a stack reports ~10% eval coverage with ZERO trigger
+# assertions. Each test below fails against the old presence-only check.
+
+def _step5(d):
+    return next(r for r in mod.run_checklist(
+        d, roles_dir=None, registry=None, entities_dir=None, strict=False) if r["step"] == 5)
+
+
+def test_step5_empty_evals_dir_is_not_coverage(tmp_path):
+    # THE mutation the old check could not survive: bare dir, no content.
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    s5 = _step5(d)
+    assert s5["status"] == "WARN"
+    assert "none" in s5["detail"]
+
+
+def test_step5_eval_artifact_without_trigger_assertions_warns(tmp_path):
+    # An eval file that asserts nothing about triggering leaves the latent half
+    # ungated — distinct message from "no evals at all".
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "prompts.json").write_text(
+        json.dumps({"skill": "demo", "cases": [{"id": "a", "prompt": "hi"}]}), encoding="utf-8")
+    s5 = _step5(d)
+    assert s5["status"] == "WARN"
+    assert "trigger" in s5["detail"]
+    assert "1 eval artifact" in s5["detail"]
+
+
+def test_step5_real_trigger_eval_passes(tmp_path):
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "prompts.json").write_text(json.dumps({
+        "skill": "demo",
+        "cases": [{"id": "a", "prompt": "hi", "should_trigger": True},
+                  {"id": "b", "prompt": "bye", "should_trigger": False}],
+    }), encoding="utf-8")
+    s5 = _step5(d)
+    assert s5["status"] == "PASS"
+    assert "trigger eval" in s5["detail"]
+
+
+def test_step5_trigger_key_must_be_a_key_not_prose(tmp_path):
+    # A README describing should_trigger is documentation, not an assertion.
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "prompts.json").write_text(
+        json.dumps({"notes": "each case carries should_trigger: true"}), encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+def test_step5_role_x_resolver_eval_schema_counts(tmp_path):
+    # role-x's should_fire/should_not_fire schema is a trigger eval too.
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "cases.yaml").write_text(
+        "cases:\n  - prompt: do a thing\n    should_fire: true\n", encoding="utf-8")
+    assert _step5(d)["status"] == "PASS"
+
+
+def test_step5_unparseable_json_is_not_coverage(tmp_path):
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "prompts.json").write_text("{ not json should_trigger", encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+def test_step5_nested_trigger_key_is_found(tmp_path):
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "p.json").write_text(
+        json.dumps({"suites": [{"group": {"cases": [{"should_trigger": False}]}}]}), encoding="utf-8")
+    assert _step5(d)["status"] == "PASS"
+
+
+def test_step5_empty_file_in_evals_dir_is_not_coverage(tmp_path):
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "prompts.json").write_text("", encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+def test_step5_is_advisory_never_blocks(tmp_path):
+    # Deliberate: step 5 stays required=False. Flipping it to required is a
+    # governance change (BRO-2009), gated on trigger-eval coverage existing first.
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    s5 = _step5(d)
+    assert s5["status"] == "WARN"
+    assert s5.get("required") is not True
