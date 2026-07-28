@@ -1,0 +1,89 @@
+name: test-unhobble
+
+# Python test gate for the `unhobble` skill (skills/governance/unhobble/).
+# Path-filtered so it runs ONLY when that skill changes — the monorepo's
+# tests-optional default (lint-skill-md.yml) stands everywhere else.
+#
+# The dogfood step audits unhobble's own SKILL.md and fails it when the skill
+# drifts into the prohibition style it argues against.
+#
+# It is gated on `--max-rules-ratio`, which is what makes it a gate. The first
+# version of this step ran the auditor with no exit-code flag: the command
+# printed a report, always exited 0, and this comment claimed it enforced
+# something. P20 caught it. That is precisely the anchored-vs-claims-a-mechanism
+# distinction this skill exists to draw, so the failure is recorded rather than
+# quietly fixed.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/governance/unhobble/**'
+      - '.github/workflows/test-unhobble.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/governance/unhobble/**'
+      - '.github/workflows/test-unhobble.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-unhobble-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/governance/unhobble
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Unit + integration tests
+        run: python -m pytest tests/ -v
+      - name: Dogfood — unhobble audits its own SKILL.md (real gate, exits 1 on breach)
+        run: |
+          python3 scripts/context_audit.py SKILL.md --repo-root . \
+            --budget 3000 --fail-over-budget --max-rules-ratio 0.6
+      - name: Prove the gate can fail (a gate that cannot fail is not a gate)
+        run: |
+          printf '# evil\n\nNever do this. Never do that. You must always obey.\n' > /tmp/evil.md
+          set +e
+          python3 scripts/context_audit.py /tmp/evil.md --repo-root /tmp \
+            --max-rules-ratio 0.6 > /dev/null 2>&1
+          rc=$?
+          set -e
+          # Assert rc==1 specifically. `if ! cmd` accepts ANY non-zero, so a
+          # rc=2 usage/IO error would have read as "the gate rejected it" while
+          # the gate never actually ran — the same self-satisfying-check shape
+          # this skill exists to name.
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected rc=1 from the rules-ratio gate, got rc=$rc"
+            exit 1
+          fi
+          echo "gate correctly rejected the pure-prohibition surface (rc=1)"
+
+  tokenizer-fallback:
+    name: estimator path (no tiktoken)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest only (tiktoken deliberately absent)
+        run: pip install pytest
+      - name: Tests must pass on the chars-per-token estimator too
+        working-directory: skills/governance/unhobble
+        run: python -m pytest tests/ -q
