@@ -362,12 +362,23 @@ def check_skill_triggered(ctx: CheckContext) -> CheckResult:
     )
 
 
-def check_completed_without_error(ctx: CheckContext) -> CheckResult:
-    """The CLI reached a successful ``result`` event."""
-    ok = not ctx.transcript.is_error
-    return CheckResult(
-        "completed_without_error", ok, "" if ok else ctx.transcript.error_reason
-    )
+# REMOVED 2026-07-28: `completed_without_error` was STRUCTURALLY UNFAILABLE.
+#
+# It read `ok = not ctx.transcript.is_error` — but `grade_trial` returns
+# `out(ERROR, ...)` on `if transcript.is_error:` (runner.py) BEFORE `run_checks`
+# is ever reached, so the only condition the check tested could never arrive at
+# it. Every invocation returned True. It was a vacuous check sitting in the
+# registry of a harness whose entire purpose is catching vacuous checks, and it
+# was asserted on 11 cases across two prompt sets before two independent
+# reviewers found it.
+#
+# Deleted rather than repaired: there is nothing left for it to test, because
+# the runner already handles the error case at a strictly earlier point. Removing
+# it from CHECK_REGISTRY is deliberate — a prompt set that still asserts it now
+# fails validation with "unknown check id", which is the correct loud failure.
+#
+# The invariant that made it vacuous is pinned by
+# test_error_transcripts_never_reach_run_checks, so this cannot silently return.
 
 
 #: Substance is counted in words, not characters. A correct answer to a yes/no
@@ -706,7 +717,6 @@ def check_traverses_to_primitives(ctx: CheckContext) -> CheckResult:
 CHECK_REGISTRY: dict[str, CheckFn] = {
     # generic
     "skill_triggered": check_skill_triggered,
-    "completed_without_error": check_completed_without_error,
     "final_answer_non_empty": check_final_answer_non_empty,
     "no_permission_denials": check_no_permission_denials,
     # outcome checks (checkit pilot; reusable)

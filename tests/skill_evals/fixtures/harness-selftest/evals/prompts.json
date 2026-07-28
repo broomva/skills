@@ -10,7 +10,6 @@
       "origin": "golden",
       "expected_checks": [
         "skill_triggered",
-        "completed_without_error",
         "final_answer_non_empty",
         "ingests_full_artifact_not_metadata",
         "documents_finding"

@@ -1,0 +1,254 @@
+{
+  "skill": "handoff",
+  "version": 1,
+  "notes": "17 cases: 11 positive (should_trigger true) / 6 negative (should_trigger false). By origin: 7 golden (authored), 4 real-trace (byte-verbatim production user turns), 6 negative (authored single-axis near-misses). PROVENANCE: the four real-trace prompts were lifted from the raw CLI transcripts under ~/.claude/projects/-Users-broomva-broomva/, each from the last genuine user turn preceding a Skill{\"skill\":\"handoff\"} tool_use in the same file (isSidechain false, type user); the exact file, timestamp and grep method are in verification_log.real_trace_verbatim. REGISTER: authored prompts are written in the same voice as those production turns (lowercase, comma splices, dropped apostrophes, no em dashes). Measured, not assumed: not one of the 31 production handoff turns contains an em dash or an en dash, and neither does any prompt here, so a polished em-dash prompt would be out of distribution and would measure routing on a text style the skill never sees. TRIGGER-SURFACE SPLIT (the central design decision, and the honest part): of the 31 user turns that immediately precede a production invocation, 30 name the skill literally, usually as /handoff; the 31st (f185e467-...) is an image-attachment turn whose only text is the CLI's own caption '[Image: original 4180x4472, displayed at 1869x2000. ...]', i.e. no user prose at all, so ZERO production invocations were routed by paraphrase. Method, re-run 2026-07-28: for each of the 31 Skill{handoff} tool_use events, walk back to the nearest type=user, isSidechain=false event that carries typed text - skipping tool_result echoes and harness injections, which is what an earlier walk-back failed to skip. A scan of every user turn in all 1063 UUID transcripts for the description's paraphrase triggers (where we are / left off / resume tomorrow / for the next session / for the next agent / pickup) with the word 'handoff' excluded returned 117 raw hits collapsing to 29 unique turns, and NONE of them asks for a handoff: 28 are harness-injected text (compaction summaries, 'Base directory for this skill:' preambles, task-notification blocks, platform base prompts) and exactly ONE is a turn a human typed - 'Continue from where you left off.', which is a resume instruction, not a request for a doc. RE-MEASURED 2026-07-28: the 117 figure reproduces exactly; the previously recorded '7 unique turns, two injected / one compaction / four status questions' did NOT reproduce and has been replaced by the counts above. So the paraphrase-inference load is carried entirely by the 7 authored goldens, none of which contains the string 'handoff'; the 4 real-trace cases measure the dominant production shape, and each of them will raise the runner's 'prompt contains the literal skill name' warning. That warning is accepted deliberately for production evidence, not overlooked. CLEAN-WORKSPACE DISCIPLINE: every case runs in a fresh temp dir holding only .claude/skills/handoff, with no git repo, no branch, no open PRs, no docs/ and no knowledge graph. Every positive therefore carries the session state it wants written up INLINE in the prompt; no case names a filesystem path or depends on repo state. See each case's workspace_requires.",
+  "execution_contract": {
+    "advisory": "Documentation only - runner.py does not read this object; it is here so the intended contract is reviewable and so drift between intent and CLI flags is visible. Values mirror runner.py's module constants at authoring time.",
+    "trials_per_case": 3,
+    "suite_threshold_trial_pass_rate": 0.8,
+    "case_threshold_pass_rate": 0.6,
+    "model": "haiku",
+    "visibility": "present",
+    "timeout_s": 300,
+    "workspace": "clean temp dir per trial; skill installed at .claude/skills/handoff; --setting-sources project; --permission-mode bypassPermissions; --no-session-persistence",
+    "negative_semantics": "CORRECTED 2026-07-28 - the prior wording said a triggered negative fails 'BEFORE expected_checks are consulted', which misreads the runner. Actually observed at runner.py:1026: run_checks(case.expected_checks, ctx) is called FIRST, on every path, and its results are attached to the TrialResult; the should_trigger branch is only entered afterwards (runner.py:1030-1051). What is true is PRECEDENCE, not ordering: at runner.py:1047 a should_trigger:false trial whose transcript.triggered(skill) is true returns FAIL('over-triggered on a near-miss prompt') regardless of whether its checks passed. So the checks on a negative are additive assertions about what the run did INSTEAD of firing - recorded either way, never able to rescue an over-trigger.",
+    "positive_semantics": "Same correction. A positive that did not trigger returns FAIL('skill did not trigger') at runner.py:1038 - or RECOVERED at runner.py:1032-1037 if transcript.read_skill_content found the run answering by reading SKILL.md off disk - with its check results recorded but not consulted for the verdict. expected_checks on a positive therefore grade the OUTCOME of a run that did fire: for this skill that outcome is a durable file, which is why documents_finding is on all 11 positives (re-counted 2026-07-28: 11/11)."
+  },
+  "verification_log": {
+    "advisory": "Documentation only - runner.py does not read this object (grep confirms it reads only skill/version/cases/id/prompt/should_trigger/expected_checks/origin/artifact_aliases). A dated record of what was LITERALLY observed, so a later reviewer can tell a stale claim from a re-checked one.",
+    "date": "2026-07-28",
+    "re_verified_2026_07_28": "Adversarial round. EVERY claim below and in every rationale was re-executed in one session, not carried forward on trust. What was RUN: the four grep -cF provenance counts and their event metadata; the 31-event / 30-transcript usage census over all 1063 UUID transcripts; the 117-hit paraphrase scan; the em-dash scan over the 31 preceding production turns; _ACTIVE_WORK_RE, _VERIFY_RE, _PRIMITIVE_RE, _REPO_ARTIFACT_RE, _DOCUMENT_RE and _DOC_PATH_RE against constructed pass/fail strings; check_produces_ranked_next_steps and check_documents_finding against two constructed transcripts; cat -n over SKILL.md for every line citation; and runner.py's constants, grade_trial ordering and validate_prompt_set. RESULT: three check-selection claims were DISPROVED and the checks dropped (see known_gaps.checks_excluded_as_vacuous_or_unreachable for connects_to_active_work and produces_ranked_next_steps), four SKILL.md line citations were off, two prose claims about the trigger vocabulary were false, the paraphrase-scan breakdown did not reproduce, and the execution_contract misdescribed the runner's check ordering. Everything else below reproduced exactly.",
+    "execution_contract_matches_runner": "Every value in execution_contract was re-read off runner.py 2026-07-28: DEFAULT_TRIALS=3 (line 78), DEFAULT_THRESHOLD=0.80 (79), DEFAULT_CASE_THRESHOLD=0.60 (80), DEFAULT_MODEL='haiku' (81), DEFAULT_TIMEOUT_S=300 (82), and the CLI argv at 659-663 carrying --setting-sources project / --permission-mode bypassPermissions / --no-session-persistence. No drift.",
+    "url_status": "NONE CITED. No prompt in this set contains a URL - a handoff is written about the session the user is in, not about an external artifact, so there is nothing to fetch and nothing to fabricate. SKILL.md's own queue URL (broomva.tech/maestro/queue) is deliberately NOT quoted into any prompt, and no check asserts anything about the `broomva handoff push` step, because the broomva CLI does not exist in the runner's temp workspace.",
+    "real_trace_verbatim": "Method: each prompt was extracted programmatically from the JSONL (not retyped), then re-confirmed with `grep -cF -- '<prompt>' <file>` run from /Users/broomva/.claude/projects/-Users-broomva-broomva/. Counts observed: real-trace-01 4, real-trace-02 5, real-trace-03 1, real-trace-04 1 (>1 means the turn is echoed by later compaction lines in the same file, not that it drifted). Each cited file also carries exactly one line matching '\"skill\":\"handoff\"'. real-trace-02 keeps its CURLY apostrophe (U+2019 in \"let's\") and its typo (\"cristalizing\"); real-trace-03 keeps \"isntallable\"; do not straighten or tidy them. Timestamps of the cited user events: 2026-07-09T16:24:16Z, 2026-07-15T02:38:45Z, 2026-06-29T12:39:23Z, 2026-07-04T23:11:38Z; all four events carry type=user and isSidechain=false, so none is a subagent artifact.",
+    "measured_usage": "31 Skill{\"skill\":\"handoff\"} tool_use events across 30 distinct UUID transcripts (`grep -l '\\\"skill\\\":\\\"handoff\\\"' ~/.claude/projects/*/[0-9a-f]*-*.jsonl | wc -l` = 30; one file, f185e467-..., invokes it twice). Matches the measured rank-2 usage this set was commissioned against.",
+    "workspace_paths": "Re-scanned every prompt for filesystem paths: zero hits across all 17 cases. Branch names (retry-v2, parse-v2), PR numbers (#41, #77, #101) and a dedupe key (tenant_id + external_id) are context the prompt SUPPLIES, not references the agent must resolve on disk.",
+    "corroboration_for_negative_01": "The plain-status-question shape is not invented. /Users/broomva/.claude/projects/-Users-broomva-keel/f6288da0-8222-4abb-b230-abfba69677ce.jsonl carries the real user turn 'we have until 1:30am, where are we?' (2026-07-25T03:53:23Z, isSidechain false) in a session where handoff never fired (0 lines matching '\"skill\":\"handoff\"'). negative-01 is an instantiation of that observed shape, not a lift of it - it is authored, and labelled origin:negative, not real-trace.",
+    "skill_docs_read": "SKILL.md (261 lines) and references/handoff-template.md (97 lines) were both read in full before any rationale was written. Line citations RE-COUNTED 2026-07-28 with `cat -n`, and four were off by one to three lines - corrected here and in every rationale that used them: the artifact path is SKILL.md:8 (unchanged); the four When-to-invoke bullets are SKILL.md:59-67, not 58-67 (line 57 is the heading, 58 is blank); the four Carve-out bullets are SKILL.md:71-74, not 69-74 (69 is the heading, 70 blank); the five anti-pattern TABLE ROWS are SKILL.md:132-136, not 128-136 (128 is the heading, 130-131 the table header); the mid-arc-snapshot bullet is SKILL.md:61-63, not 62-64. Unchanged and re-confirmed: the persist/Bridge distinction at SKILL.md:11-14, the trigger list at SKILL.md:20-22, the queue URL at SKILL.md:152, the <=5-open-threads rule at SKILL.md:253, and references/handoff-template.md:25 ('Run `git status` / `gh pr list` / `ps aux | grep <daemon>` while writing this section')."
+  },
+  "known_gaps": {
+    "no_paraphrase_sourced_real_trace": "There is no real-trace case in which the user requests a handoff WITHOUT naming it. That is not an oversight and not a shortage of searching: the scan described in notes covered every user turn in all 1063 transcripts (re-counted 2026-07-28; the corpus grows, so this number is a timestamp, not a constant) and found zero such turns. The description advertises triggers on 'where we are', 'leave off', 'for the next session', 'resume tomorrow' and 'pickup', and this workspace has never used any of them to ask for one. The 7 goldens are therefore testing an advertised trigger surface that production has never exercised, which is exactly the surface most likely to be broken and least likely to be noticed.",
+    "excluded_real_trace_minimal_turn": "The production turn 'sorry no, we need to handoff' (~/.claude/projects/-Users-broomva-conductor-workspaces-sri-monterrey/003ec38d-d5ae-4b4c-a9af-b4e001df8f4c.jsonl) was deliberately NOT shipped, and so were 'lets /handoff' and 'good, please /handoff'. CLAIM CORRECTED 2026-07-28: this said 'in production each arrived after 2000+ events of arc context', which does not hold. Measured by counting the events preceding each occurrence in its own transcript: 'sorry no, we need to handoff' arrived 2405 events in (n=1); 'lets /handoff' has 10 occurrences spanning 161 to 5264 preceding events (median 1343); 'good, please /handoff' has 3 spanning 207 to 2517 (median 1685). So the true statement is that they arrive at widely varying depths, typically well into a session but sometimes early. The exclusion stands on the argument, not the number: each of these turns carries no state of its own, so it is only interpretable against whatever arc preceded it. Stripped of that in a clean temp dir there is no session to compress, so asking the user what to hand off is arguably the CORRECT response - and the case would score it FAIL. A case that punishes correct behaviour is a false-fail generator, so the floor-case trigger test is left uncovered rather than faked.",
+    "excluded_real_trace_env_dependent": "'lets pull and make sure git status is clean, then /handoff' and 'please /handoff #3 so that we can work on it on the proper workspace' are both real and both excluded: the first needs a git remote, the second an antecedent list item. Each would fail for environmental reasons unrelated to whether the description routes.",
+    "documents_finding_is_the_load_bearing_outcome_check": "All 11 positives assert documents_finding, and after the 2026-07-28 drops it is the ONLY behavioural check on any of them - the seven positives that carry a second id all carry final_answer_non_empty, which is a stub guard, not coverage, and the remaining four (golden-03, golden-06, golden-07, real-trace-03) assert documents_finding alone. That concentration is deliberate, because the skill has exactly one product: a durable narrative file (SKILL.md:8). Its real failure mode is a run that fires, narrates the state in chat, and leaves nothing on disk for the next context to open. Mechanism re-read and re-run 2026-07-28 (checks.py:587-599): it passes on EITHER a write-tool call whose destination matches _DOC_PATH_RE, OR the textual arm _DOCUMENT_RE, which needs a verb like wrote/saved/created/filed within 80 characters of a .md/.json/.yaml token or a research|docs|notes|entities directory. Verified falsifiable, not vacuous: 'I created the file.' does NOT match, and a write to '/x/unrelated.txt' does not either. Verified limit: a Write to a bare 'handoff.md' at the repo root DOES match, on the .md extension alone, so this check does not assert the file landed under docs/handoffs/ - that is gap (1) below. The residual false-fail risk is a run that renders the doc inline instead of writing it; it is mitigated by prompts that ask for a FILE in the user's own words, never by naming a path.",
+    "checks_excluded_as_vacuous_or_unreachable": {
+      "completed_without_error": "DELETED FROM THE REGISTRY UPSTREAM 2026-07-28 - no longer excludable, because it no longer exists. Confirmed by reading checks.py: CHECK_REGISTRY (checks.py:717-731) has no such key, and a tombstone comment at checks.py:365-381 records the removal. The diagnosis this set recorded before the deletion still holds and is why it went: runner.grade_trial returns ERROR on `if transcript.is_error:` at runner.py:1000-1001, BEFORE run_checks at runner.py:1026, so the only condition the check tested could never reach it and every invocation returned True. This set never asserted it, so nothing here changed - but note that a prompt set which still names it now fails validation outright with 'unknown check id', which is the correct loud failure, not a silent pass.",
+      "skill_triggered": "REDUNDANT - excluded. Triggering is already the structural gate on both labels: a positive that did not fire returns FAIL or RECOVERED, and a negative that fired returns FAIL, in each case irrespective of how the checks scored (runner.py:1030-1051). Wording aligned 2026-07-28 with the correction in execution_contract.negative_semantics - the verdict takes PRECEDENCE over the checks; it does not run before them, since run_checks is called first at runner.py:1026. Either way this check can never change a verdict. On a negative it would also be self-contradictory.",
+      "walks_repo_tree_and_canonical_files": "GUARANTEED PASS - excluded, and this one was RE-RUN rather than reasoned. Its textual arm _REPO_ARTIFACT_RE (checks.py:467-470) carries the bare alternative 'docs/'. Executed 2026-07-28 against the minimal correct answer 'Wrote the handoff to docs/handoffs/2026-07-28-retry-backoff.md. A fresh context can open it and keep going.' -> match 'docs/'. Since every correct handoff answer says where it wrote the file, and the file belongs in docs/handoffs/ (SKILL.md:8), the check passes on the artifact path alone and proves nothing about traversal.",
+      "traverses_to_primitives": "GRADES VOCABULARY, NOT DEPTH - excluded. _PRIMITIVE_RE (checks.py:552-556) matches 'implement(ed|ation|s)' and 'architectur*' among others. CLAIM CORRECTED 2026-07-28: this entry previously said a delivered-work table 'contains one of those by construction'. That is too strong and did not survive testing - 'The lease table and the acquire upsert are implemented and merged.' matches on 'implemented', but 'PRs #101-#104 merged: lease table, single-statement upsert, clock-skew window, renew path.' matches NOTHING. So the check is cheap to satisfy and easy to miss by phrasing, which is a worse property than either being reliably true or reliably discriminating: it would score register, not substance.",
+      "mentions_source_verification": "UNREACHABLE HONESTLY - excluded, but the STATED REASON WAS WRONG and is corrected here. The prior text claimed 'the only way to satisfy _VERIFY_RE there is to say could not verify'. Disproved by running _VERIFY_RE (checks.py:439-443) 2026-07-28: 'nobody has checked whether the backfill is idempotent, so it is unverified' matches on 'unverified', and 'Confirmed via the PR list that #101 through #104 merged.' matches on 'Confirmed via'. Both are natural handoff prose - golden-07's prompt literally hands the agent 'nobody has checked whether it's idempotent' - so the regex is satisfiable without hedging. The real and sufficient reason to exclude it stands: the P15 discipline it would proxy for (SKILL.md:132, always include git status + branch + ahead/behind + open PRs + daemon state; spelled out at references/handoff-template.md:25 as 'Run `git status` / `gh pr list` / `ps aux | grep <daemon>` while writing this section') cannot be exercised in a git-less temp dir with no repo, no PRs and no daemons. A pass would therefore certify verification vocabulary while the run verified nothing, which is precisely the confusion this harness exists to prevent.",
+      "connects_to_active_work": "DROPPED FROM golden-02 ON 2026-07-28 - it was the set's only use, and the rationale defending it was false. The prior rationale asserted 'a generic template with placeholder sections that never names the migration arc, the flag or the staging/prod split fails it'. Executed _ACTIVE_WORK_RE (checks.py:451-456) against four constructed answers. It is not merely a freebie; on this case it is INVERTED. Generic templates PASS: 'It captures the current state, the delivered work and the first action.' -> hit 'current '; 'The file records our progress so far and leaves a placeholder for the next step.' -> hit 'our '. And the CORRECT answer FAILS: 'Wrote docs/handoffs/2026-07-28-migration.md. It records PRs #41, #42 and #43 as merged, the schema applied on staging but not prod, dual_write still on, and the first action: turn dual_write off and watch error rate for an hour.' -> NO MATCH. The regex keys on first-person and deictic vocabulary ('our ', 'current(ly) ', 'existing ', 'already have', 'BRO-\\d+'), which is orthogonal to whether the answer engaged the user's actual arc; a specific third-person handoff carries none of it. Independently corroborated by a reviewer on a different set: 'I am currently unable to find any feature flags in this directory, so I created a fresh project' -> hit 'currently ' -> PASSES, i.e. the restart-from-scratch run the check was claimed to catch. Both a false-pass and a false-fail generator on this case, so it grades nothing golden-02 is about.",
+      "produces_ranked_next_steps": "DROPPED FROM golden-01 AND golden-04 ON 2026-07-28 - it GRADES THE WRONG SURFACE for this skill. Traced in code: check_produces_ranked_next_steps (checks.py:602-612) reads ctx.text, which is CheckContext.text -> Transcript.output_text() (transcript.py:288-299) -> assistant_text() + final_text(), and assistant_text() (transcript.py:253-261) collects ONLY blocks whose type == 'text'. Tool_use INPUTS are never included. Confirmed by running the real check against two constructed transcripts: an agent that writes a numbered, prioritised next-step list INTO the handoff file via Write and then reports 'Wrote the handoff to docs/handoffs/2026-07-28-retry-backoff.md. A fresh context can open it and keep going.' scores documents_finding=True and produces_ranked_next_steps=FALSE (0 enumerated items in ctx.text); only the agent that ALSO restates the list in chat passes. For a skill whose entire product is a durable file (SKILL.md:8), putting the ranking in the file is the correct behaviour, so the check penalised it. Both prompts do ask for priority order, but they ask for it in the artifact - golden-01 says 'leave a file ... put what's left in priority order', golden-04 says 'write it up somewhere i can point a clean session at, and list the open ones in the order you'd tackle them'. This set already refuses to ship cases that punish correct behaviour (see excluded_real_trace_minimal_turn); the same standard applies to a check, so it was dropped rather than kept with a disclosure. The ordering property is now UNASSERTED - see checks_the_registry_lacks item (2).",
+      "no_clarifying_question_bounced_back": "WITHDRAWN UPSTREAM as known-defective after four adversarial rounds (it oscillated between false-passing declarative answers and false-failing legitimate offers). Precise registry state, re-checked 2026-07-28: it is STILL PRESENT and dispatchable in CHECK_REGISTRY (checks.py:729) - 'withdrawn' here means wired to no case, not deleted, and scripts/skill_evals/README.md:68-74 states exactly that for this check and the next. Not referenced by any case here. Its absence is felt: 'what should i put in it?' is a real failure mode for a context-poor handoff request, and nothing in the current registry catches it.",
+      "ingests_full_artifact_not_metadata": "WITHDRAWN UPSTREAM as known-defective; likewise still present in CHECK_REGISTRY (checks.py:724) and wired to no case, per README.md:68-85, which records that when the artifact-token set comes out empty the predicate returns True unconditionally and the check fails OPEN. Independently applicable here anyway: every prompt in this set was re-scanned 2026-07-28 with the harness's own _artifact_tokens() and yields an EMPTY token set, because a handoff has no external artifact to ingest."
+    },
+    "checks_the_registry_lacks": "Five assertions this set would make if they existed, named in prose only because an unknown id in expected_checks is a hard error (appended at runner.py:461) that is raised as PromptSetError at runner.py:514 and makes the whole file unloadable: (1) a destination-shaped check that the durable file landed under a handoffs/ directory with a dated slug, rather than merely at some .md path - documents_finding demonstrably accepts a bare 'handoff.md'; (2) a check that the ranked/prioritised next steps landed IN THE ARTIFACT, which is the gap left by dropping produces_ranked_next_steps and which no registry check can currently express, because every check reads assistant text and none reads write-tool CONTENT; (3) a check that the answer names ONE concrete first action, which is anti-pattern 2 at SKILL.md:133 and the single highest-value property of the artifact; (4) a check that the open-thread list is <=5 items - CITATION CORRECTED 2026-07-28: the <=5 rule is the Validation checklist at SKILL.md:253, NOT anti-pattern 5 at SKILL.md:136, which is 'Aspirational scope' and prescribes listing only the next 1-3 actions; the prior text conflated the two; (5) a negative-side 'no unrequested document was written', which would let negative-02 through negative-06 assert the over-delivery they are really about instead of resting on non-trigger plus answer-quality.",
+    "note_on_no_permission_denials": "PADDING, AND LABELLED AS SUCH. Retained on all six negatives and on no positive. It is near-unfalsifiable by construction: the runner launches with --permission-mode bypassPermissions (runner.py:661-662), and check_no_permission_denials (checks.py:427-432) only reads the result event's permission_denials array, so no agent BEHAVIOUR can fail it - only a sandbox anomaly can. It is a run-health sentinel and must never be read as behavioural coverage. It is not the only check on any case: every negative also carries final_answer_non_empty, which is genuinely falsifiable (checks.py:406-424 fails on empty text, on fewer than 3 words, or on a bare acknowledgement matching _STUB_RE), and that check plus the structural non-trigger assertion is where the whole weight of a negative sits. If it were removed, the negatives would lose no coverage; it stays only because a sandbox anomaly silently converting a run into a non-trigger would otherwise read as a clean abstention."
+  },
+  "cases": [
+    {
+      "id": "golden-01",
+      "prompt": "i'm closing this tab in a few minutes and starting cold in the morning. leave a file that a new context can open and keep going from: the retry-backoff work is on branch retry-v2, 4 commits ahead of main and unpushed; PR #88 is open with one review comment still unaddressed; the nightly job double-fires when two workers claim the same lease. put what's left in priority order so whoever starts knows what to touch first.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - branch name, PR number and the three open facts are all supplied inline, so the file is writable with no repo, no git and no history.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "Instantiates SKILL.md:6-7's 'after a tab close' boundary without using one word from the description's trigger list: verified 2026-07-28 that this prompt contains none of the ten advertised triggers - no 'handoff', no 'fresh session', no 'pickup', no 'where we are'. 'closing this tab', 'starting cold' and 'a new context can open' are the user's own words for the same event, so the case measures whether the description's SEMANTICS route the turn. CHECK CHANGE 2026-07-28: produces_ranked_next_steps was dropped from this case. It was claimed to be 'earned rather than hoped for' because the prompt asks for priority order, but the ordering the prompt asks for goes in the FILE ('leave a file ... put what's left in priority order'), and that check reads only assistant chat text - a run that puts the ranked list in the handoff and reports it tersely scores FAIL, which is the correct behaviour being punished. Full trace and the transcript that demonstrates it: known_gaps.checks_excluded_as_vacuous_or_unreachable.produces_ranked_next_steps. The prioritisation this prompt elicits is therefore NOT asserted by any check; documents_finding carries the case, and final_answer_non_empty is a stub guard for the run that writes the file and then reports nothing back."
+    },
+    {
+      "id": "golden-02",
+      "prompt": "this context is huge and getting slow, i'd rather stop here and continue in a clean one instead of pushing through. write down where our migration arc stands somewhere i can open next time: #41 quota guard, #42 dedupe index and #43 the backfill all merged today; the schema change is applied on staging but not prod; the dual_write flag is still on. the first move next time is turning dual_write off and watching the error rate for an hour.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - the prompt itself supplies the active work inline: a named arc, three merged PRs, an environment split and a live flag.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "SKILL.md:61-63's mid-arc snapshot: context approaching its limit, user wants to break and continue in a clean one. Verified 2026-07-28 to carry no phrase from the trigger list. CHECK CHANGE 2026-07-28: connects_to_active_work was dropped, and the rationale that defended it was FALSE. It claimed 'a generic template with placeholder sections that never names the migration arc, the flag or the staging/prod split fails it'. Running _ACTIVE_WORK_RE shows the opposite on this case: generic template prose passes on 'current ' or 'our ', while the correct specific answer - naming #41/#42/#43, staging-not-prod, dual_write and the first action - matches nothing and FAILS. The regex keys on first-person/deictic vocabulary, not on engagement with the arc. Evidence in full at known_gaps.checks_excluded_as_vacuous_or_unreachable.connects_to_active_work. The case therefore no longer asserts that the doc names the user's actual work; documents_finding asserts the durable artifact, final_answer_non_empty guards the stub reply. This remains the matched pair for negative-01, which supplies the SAME state and flips exactly one variable - whether a fresh context is about to read it - and that pairing is structural, resting on trigger/non-trigger, so dropping the check does not weaken it."
+    },
+    {
+      "id": "golden-03",
+      "prompt": "heading out. i'll resume tomorrow but from a clean context, so leave me a file i can read in thirty seconds and be back up to speed. state: the parser rewrite lives on parse-v2; tokenizer and AST walker are done and merged; the error-recovery path is half written and panics on unterminated strings; nothing covers nested blocks yet. first thing tomorrow is that panic.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - branch, what is merged, what is broken and what is missing are all inline.",
+      "expected_checks": [
+        "documents_finding"
+      ],
+      "rationale": "COUNT CORRECTED 2026-07-28: this was described as 'the one golden that carries a listed trigger phrase', which is false - a scan of all seven goldens against the ten advertised triggers returns exactly two hits, this case ('resume tomorrow') and golden-07 ('for the next session'). It is one of two, and golden-07's own rationale already said so, so the set contradicted itself. What is true and is the point: it carries the phrase MID-TURN inside a substantive state dump rather than leading with it, so a run cannot pass by matching the opener. It is here because 'resume tomorrow' is an advertised trigger that production has never once used (see known_gaps.no_paraphrase_sourced_real_trace) - an untested claim in the description is worth one case. 'read in thirty seconds' is the skill's own stated purpose (SKILL.md:13-14), which makes the compression, not just the existence, of the artifact the thing under test."
+    },
+    {
+      "id": "golden-04",
+      "prompt": "before i log off, this arc ran four PRs today and i don't want whoever takes it next reconstructing it from git log. #101 lease table, #102 acquire as a single-statement upsert, #103 the clock-skew window, #104 the renew path, all merged. still open: renew extends from now instead of from the old expiry, and nothing covers a lease lapsing mid-run. write it up somewhere i can point a clean session at, and list the open ones in the order you'd tackle them.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - four PR numbers with one-line contents and two open threads, all inline.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "SKILL.md:17-18's third use case: compress a multi-PR arc into one resumable document. Verified 2026-07-28 to carry no listed trigger phrase ('log off' is not the listed 'leave off'; 'whoever takes it next' is not 'for the next agent'). The PR table with SHAs is the skill's third anti-pattern (SKILL.md:134, re-counted as the third row of the anti-pattern table), so the delivered-work list is what the doc has to carry. CHECK CHANGE 2026-07-28: produces_ranked_next_steps was dropped here for the same reason as golden-01. The prompt does ask for tackling order, but it asks inside a write-it-up instruction, and the check reads assistant chat text only, so the natural correct route - ordering the open threads inside the handoff file - scores FAIL. Evidence at known_gaps.checks_excluded_as_vacuous_or_unreachable.produces_ranked_next_steps. The tackling-order property is now unasserted; documents_finding carries the case."
+    },
+    {
+      "id": "golden-05",
+      "prompt": "i'm parking this until monday and i'll be in a different session by then. give me one file i can open cold that says what got done, what's half done and what to do first. done: the ingest CLI and its two integration tests. half done: the retry path retries but never caps attempts. not started: the metrics counter. the attempt cap is what has to happen first, everything else can slide.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - the done / half-done / not-started split and the first action are supplied inline.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "A multi-day park rather than an overnight break, phrased with zero trigger vocabulary ('parking this until monday', 'a different session', 'open cold'). The user has already named the first action, so what is under test is not deciding it but preserving it: anti-pattern 2 (SKILL.md:133) is a handoff that loses or blurs the single next step. final_answer_non_empty is a stub guard, not the point - it catches the run that writes the file and then reports nothing back, leaving the user with no idea where it went."
+    },
+    {
+      "id": "golden-06",
+      "prompt": "whoever sits down with this next starts from zero, no memory of today. leave them a file they can read in a page and carry on with: the queue consumer works end to end, the dedupe key is tenant_id + external_id, the dead letter path is stubbed and untested, and the load test never ran.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - four state facts inline; nothing to look up.",
+      "expected_checks": [
+        "documents_finding"
+      ],
+      "rationale": "The purest inference case in the set: it contains not one token from the trigger list and not one word from the USE WHEN list, and it never says doc, notes, summary, session or context. It states only the CONDITION the skill exists for - the next reader has no memory of this session - and leaves the artifact to be inferred. If the description only routes on its own vocabulary, this is the case that exposes it."
+    },
+    {
+      "id": "golden-07",
+      "prompt": "quick one before i go, write up where i left off for the next session and leave it where a fresh one will find it. the sync worker is done and merged as #54; the backfill script runs but takes 40 minutes and nobody has checked whether it's idempotent; the alerting rule is written but not deployed anywhere. the idempotency question is what the next session should answer first.",
+      "should_trigger": true,
+      "origin": "golden",
+      "workspace_requires": "none - one merged PR, one unverified script and one undeployed rule, all inline.",
+      "expected_checks": [
+        "documents_finding"
+      ],
+      "rationale": "Carries one advertised trigger verbatim ('for the next session') plus a morphological variant of a second ('left off' for the listed 'leave off'), and is the deliberate high-water mark of trigger density among the goldens - the control against which golden-06's zero-vocabulary phrasing is read. If golden-07 passes and golden-06 fails, the description routes on strings; if both pass, it routes on meaning. Kept non-trivial by putting the phrases inside a real state dump with a named first question rather than as a bare command."
+    },
+    {
+      "id": "real-trace-01",
+      "prompt": "yeah, lets create the handoff so that we can update our loops to be governed resumable",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "verified": "Byte-verbatim in /Users/broomva/.claude/projects/-Users-broomva-broomva/22a9638f-2d40-48ab-b6d4-d9d3828fe04c.jsonl (user event 2026-07-09T16:24:16.570Z, isSidechain false); `grep -cF` returns 4 (the turn is echoed by later compaction lines in the same file). The same file carries one Skill{\"skill\":\"handoff\"} tool_use, whose args recorded the arc as 'resumable-governed-arcs ... per BRO-1833', i.e. the turn did fire the skill in production.",
+      "workspace_requires": "none - 'our loops' and 'governed resumable' are not referents that must resolve on disk; they are the arc name the doc gets written about.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "The production turn closest to natural language: no slash command, the skill named as a plain noun inside a normal sentence ('lets create the handoff so that we can ...'), with the forward intent stated and the state left implicit. It is a positive because the session boundary is explicit in the purpose clause. Like every real-trace case here it names the skill, so it measures the production path rather than paraphrase inference - that split is stated in notes, and the runner will warn on it. final_answer_non_empty guards the thin end: with no state in the turn, the tempting failure is to write a file and say nothing about it."
+    },
+    {
+      "id": "real-trace-02",
+      "prompt": "Alright, let’s handoff this so that we can work on s1 and s2 towards that goal of cristalizing this into a primitive that sets and evolves the context of the user",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "verified": "Byte-verbatim in /Users/broomva/.claude/projects/-Users-broomva-broomva/852788d6-de8e-4c67-b8be-8b30dd024c37.jsonl (user event 2026-07-15T02:38:45.328Z, isSidechain false); `grep -cF` returns 5. Reproduced INCLUDING the U+2019 curly apostrophe in \"let's\" and the typo \"cristalizing\" - do not straighten either. The file carries one Skill{\"skill\":\"handoff\"} tool_use whose args name the persona-federation S1+S2 arc.",
+      "workspace_requires": "none - 's1 and s2' are stage labels the doc records, not files; the goal clause supplies the subject.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "A stage-boundary request (SKILL.md:65-66), which is the use case with the fewest production examples and the one most likely to be under-served. The turn hands over a goal ('crystallizing this into a primitive that sets and evolves the context of the user') and two stage labels, and nothing else, so the doc has to carry forward intent rather than delivered work. Kept exactly as typed because the eval is worthless if it measures a cleaned-up register the skill never receives."
+    },
+    {
+      "id": "real-trace-03",
+      "prompt": "please /handoff and push it to broomva docs, then lets work on archiving the skill repos (or should we delete them? they will still show up or be isntallable by npx install skills which would be problematic or confusing)",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "verified": "Byte-verbatim in /Users/broomva/.claude/projects/-Users-broomva-broomva/803bbf3f-76a3-4f11-af05-c55f6a1d5692.jsonl (user event 2026-06-29T12:39:23.851Z, isSidechain false); `grep -cF` returns 1. Typo 'isntallable' preserved as typed. The file carries one Skill{\"skill\":\"handoff\"} tool_use whose args name the bstack-installer / skills-monorepo arc.",
+      "workspace_requires": "none - 'push it to broomva docs' names a destination in the user's own words, not a path that must already exist; the agent creates it.",
+      "expected_checks": [
+        "documents_finding"
+      ],
+      "rationale": "A COMPOUND turn: write the doc, then immediately open a different question about archiving versus deleting the skill repos. It is the only case testing that the skill fires on the first clause without swallowing the second, and the failure it can catch is the run that answers the archiving question and never produces the file. The explicit destination clause is also what makes documents_finding safe here without a final_answer_non_empty crutch."
+    },
+    {
+      "id": "real-trace-04",
+      "prompt": "please create a /handoff so that we can continue working on this on a fresh session. First, we need to design this properly, so on the next session we will work on nailing down the details before getting to build",
+      "should_trigger": true,
+      "origin": "real-trace",
+      "verified": "Byte-verbatim in /Users/broomva/.claude/projects/-Users-broomva-broomva/dbdaa58e-1a3d-4737-ac1a-afdd4d453357.jsonl (user event 2026-07-04T23:11:38.804Z, isSidechain false); `grep -cF` returns 1. The file carries one Skill{\"skill\":\"handoff\"} tool_use whose args name the agentic-SMB-platform arc and its design-first first action.",
+      "workspace_requires": "none - the forward instruction (design before build) is stated in the turn itself.",
+      "expected_checks": [
+        "documents_finding",
+        "final_answer_non_empty"
+      ],
+      "rationale": "The production shape that most directly exercises anti-pattern 2 (SKILL.md:133, a vague or missing first action): the user dictates the first action in the second sentence - nail the design down before building - so a doc whose first action is 'continue the work' has dropped the one instruction the turn actually carried. Included because 'continue working on this on a fresh session' is the single most common production phrasing across the 31 invocations, and a set with no instance of it would not represent the traffic."
+    },
+    {
+      "id": "negative-01",
+      "prompt": "quick status check before we keep going: we've merged the quota guard, the dedupe index and the backfill; the schema change is on staging but not prod; dual_write is still on. where are we, in three sentences? i'm staying in this session, we go straight into the prod cutover after.",
+      "should_trigger": false,
+      "origin": "negative",
+      "workspace_requires": "none - every fact the answer needs is inline, so a clarifying question is not the correct response here and the case does not punish one by accident.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "ONE AXIS: no fresh-context boundary. This is the matched pair for golden-02 - same merged work, same staging/prod split, same live flag - with only the boundary flipped, so no run can pass both cases by classifying on 'is there session state in the turn'. CLAIM CORRECTED 2026-07-28: this said the prompt carries an advertised trigger 'verbatim'. It does not. The advertised trigger at SKILL.md:21 is 'where we are'; the prompt says 'where are we' - inverted word order, and a substring test for 'where we are' against this prompt returns False. It is a near-miss on the trigger phrase too, not a verbatim carrier, which makes the case slightly WEAKER than advertised: it does not prove the skill can hold its fire against a literal trigger string. What it does test still holds - the semantic pull of a status question at an end-of-work boundary, which the skill must resist because SKILL.md:73 excludes continuation inside the same context. Measured across all 17 prompts against the ten triggers at SKILL.md:20-22, the only cases carrying a listed PARAPHRASE trigger verbatim are golden-03 ('resume tomorrow'), golden-07 ('for the next session') and negative-06 ('leave off'); the four real-trace cases carry the trigger 'handoff' itself, which is the skill name and is counted separately in notes. The correct behaviour is three sentences in chat and then keep working. Not lifted from any exclusion list; the shape is corroborated by a real production turn (see verification_log.corroboration_for_negative_01)."
+    },
+    {
+      "id": "negative-02",
+      "prompt": "#77 is ready for review, it swaps the polling loop for a webhook receiver and deletes the old poller. write the PR body: what changed, why, and how a reviewer should test it. keep it to what's in this one PR.",
+      "should_trigger": false,
+      "origin": "negative",
+      "workspace_requires": "none - what the PR does is stated inline, so the body is writable with no repo and no diff.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "ONE AXIS: the audience is a reviewer of one self-contained change, not a fresh context resuming an arc. Everything else is held at maximum similarity - it is a summarise-the-work request, at the end of a piece of work, with delivered content and a what-changed / why structure that looks like the handoff's own delivered-work section. SKILL.md:71 rules single-PR self-contained work out, and this case instantiates that condition in a user's words rather than quoting the carve-out. The over-trigger it catches is real: a run that writes docs/handoffs/... here has produced a file nobody asked for and still owes the PR body."
+    },
+    {
+      "id": "negative-03",
+      "prompt": "staged and ready to commit: renamed mgr to leaseManager across three files, no behaviour change, plus a one-line docstring on acquire. give me the commit message, conventional commits, subject line plus a two line body.",
+      "should_trigger": false,
+      "origin": "negative",
+      "workspace_requires": "none - the change is described in the turn; no staged diff has to exist.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "ONE AXIS: the deliverable is git metadata attached to a change that is already finished, not state for a context that has not started. It sits at an end-of-work boundary and asks for a written summary of what was done, which is the shape that most reliably tempts an over-trigger, but the format is fully specified (conventional commits, subject plus two lines) and the correct move is to produce it and stop. Distinct from negative-02 in what the artifact IS, not merely in how big it is."
+    },
+    {
+      "id": "negative-04",
+      "prompt": "friday note for my manager: what shipped this week (the webhook receiver and the dedupe index), what slipped and why (the backfill, it needs an idempotency check), and one line on next week. she doesn't read code, keep it plain.",
+      "should_trigger": false,
+      "origin": "negative",
+      "workspace_requires": "none - shipped, slipped and the reason are all supplied inline.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "ONE AXIS: the reader is a person being informed, not a context being resumed. The overlap is deliberately heavy - it compresses a week of work, it names what is unfinished, and it even looks forward one line - so the discriminator is who picks it up and what they do with it. Nobody executes from this note. A handoff written here would be wrong in register too ('she doesn't read code'), which is the tell: the artifact's shape is governed by its audience, and this audience is not the next agent."
+    },
+    {
+      "id": "negative-05",
+      "prompt": "add a comment above this explaining why it retries twice, so the next person who touches it doesn't strip it out. just the comment, don't change the logic:\n\ndef push(item, token):\n    for attempt in range(2):\n        try:\n            return client.send(item, token)\n        except Transient as e:\n            last = e\n    raise last",
+      "should_trigger": false,
+      "origin": "negative",
+      "workspace_requires": "none - the code is carried in the prompt, so nothing has to exist on disk.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "ONE AXIS: the durable thing being written is documentation ABOUT A FILE, not state about a session. The prompt is deliberately built out of handoff vocabulary - 'the next person who touches it', 'so they don't strip it out' - which is nearly word for word the skill's own 'so the next agent doesn't redo it' framing (SKILL.md:98), and it still is not a handoff, because there is no arc, no session boundary and no state to carry. A careless reader fires on the framing; a correct one notices the deliverable is four lines of comment in a function the user pasted."
+    },
+    {
+      "id": "negative-06",
+      "prompt": "where does this leave off if the token expires mid batch, does it resume from the failed item or restart the page?\n\nfor page in pages:\n    for item in page.items:\n        client.push(item, token=token)   # raises AuthExpired\n    checkpoint(page.id)",
+      "should_trigger": false,
+      "origin": "negative",
+      "workspace_requires": "none - the loop is pasted inline and the question is answerable from it alone.",
+      "expected_checks": [
+        "final_answer_non_empty",
+        "no_permission_denials"
+      ],
+      "rationale": "ONE AXIS: the referent of the trigger words is control flow, not a session. It carries 'leave off' verbatim from the trigger list plus 'resume', and the correct answer is that the batch dies inside the inner loop before checkpoint(page.id) runs, so the page restarts from the top on the next attempt. This is the case that separates matching a string from understanding what the string is about, and it is the cheapest possible over-trigger to ship into production, because the phrase is in the description and nothing else in the turn resembles a session ending."
+    }
+  ]
+}
