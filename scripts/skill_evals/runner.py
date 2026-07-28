@@ -510,6 +510,22 @@ def validate_prompt_set(data: Any, registry: dict[str, Any] | None = None) -> tu
                         "so it scopes nothing"
                     )
 
+        # BRO-2006: in the ablation baseline the trigger-dependent checks are
+        # skipped, so a positive case made ONLY of them has nothing runnable left —
+        # it can never pass the baseline, which biases the lift upward and makes a
+        # load-bearing verdict cheaper to obtain. Zero cases across the seven
+        # committed sets are like this today; this keeps it that way.
+        if (
+            isinstance(expected, list)
+            and expected
+            and raw.get("should_trigger") is True
+            and all(c in checks_mod.TRIGGER_DEPENDENT_CHECKS for c in expected)
+        ):
+            warnings.append(
+                f"{where}: every expected_check is trigger-dependent, so this case "
+                "asserts nothing in the ablation baseline and would bias the lift upward"
+            )
+
         origin = raw.get("origin", "golden")
         if origin not in VALID_ORIGINS:
             warnings.append(f"{where}: unrecognised origin {origin!r} (expected one of {sorted(VALID_ORIGINS)})")

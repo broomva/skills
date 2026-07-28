@@ -252,3 +252,42 @@ def test_the_report_renders_without_a_measurement():
     text = A.format_comparison(cmp)
     assert "NOT MEASURED" in text
     assert "n/a" in text
+
+
+# ---------------------------------------------------------------------------
+# the prompt-set shape that would bias a lift upward
+# ---------------------------------------------------------------------------
+
+
+def test_a_positive_made_only_of_trigger_checks_is_flagged():
+    """In the baseline those checks are skipped, leaving nothing runnable — so the
+    case can never pass the baseline and the lift is inflated toward load-bearing.
+    Zero of the 72 committed positive cases are like this; the warning keeps it so."""
+    doc = {
+        "skill": "demo", "version": 1,
+        "cases": [
+            {"id": "p1", "prompt": "do a thing", "should_trigger": True,
+             "expected_checks": ["skill_triggered"]},
+            {"id": "n1", "prompt": "a near miss", "should_trigger": False,
+             "expected_checks": ["final_answer_non_empty"]},
+        ],
+    }
+    errors, warnings = R.validate_prompt_set(doc)
+    assert not errors, errors
+    assert any("bias the lift upward" in w for w in warnings), warnings
+
+
+def test_a_positive_with_a_real_outcome_check_is_not_flagged():
+    """FALSE-POSITIVE control — mixing a trigger check with an outcome check is the
+    normal shape and must stay quiet."""
+    doc = {
+        "skill": "demo", "version": 1,
+        "cases": [
+            {"id": "p1", "prompt": "do a thing", "should_trigger": True,
+             "expected_checks": ["skill_triggered", "final_answer_non_empty"]},
+            {"id": "n1", "prompt": "a near miss", "should_trigger": False,
+             "expected_checks": ["final_answer_non_empty"]},
+        ],
+    }
+    _errors, warnings = R.validate_prompt_set(doc)
+    assert not any("bias the lift upward" in w for w in warnings), warnings
