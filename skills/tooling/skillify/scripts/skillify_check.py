@@ -39,6 +39,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:  # optional, per the module docstring — YAML evals degrade to a regex scan
+    import yaml  # type: ignore
+except ImportError:  # pragma: no cover - exercised on stdlib-only machines
+    yaml = None  # type: ignore[assignment]
+
 CODE_EXTS = {".py", ".sh", ".mjs", ".js", ".ts"}
 _TEST_CODE_EXTS = ("py", "sh", "mjs", "js", "ts")
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
@@ -286,6 +291,91 @@ def _is_real_test(path: Path) -> bool:
     return bool(_JS_TEST_CONSTRUCT.search(stripped))
 
 
+# --- trigger evals (step 5): grade the LATENT half ---------------------------
+#
+# A skill's deterministic half (scripts) fails loudly; its latent half — whether
+# the description fires on a real request and stays silent on a near-miss —
+# fails silently. An eval artifact that asserts nothing about triggering leaves
+# that half ungated, so step 5 must inspect content, not just presence.
+#
+# Keys are drawn from the two schemas actually in use here: Schmid's prompt-set
+# convention (`should_trigger`) and role-x's resolver evals (`should_fire` /
+# `should_not_fire`, roles/<lens>.eval.yaml).
+TRIGGER_ASSERTION_KEYS = frozenset({
+    "should_trigger", "should_not_trigger", "shouldTrigger",
+    "should_fire", "should_not_fire", "negative_case",
+})
+
+_TRIGGER_ASSERTION_RE = re.compile(
+    r"[\"']?(" + "|".join(sorted(TRIGGER_ASSERTION_KEYS)) + r")[\"']?\s*[:=]",
+)
+
+_EVAL_DATA_EXTS = {".json", ".yaml", ".yml", ".jsonl", ".toml"}
+
+
+def _eval_files(skill_dir: Path) -> list[str]:
+    """Every candidate eval artifact: files named *eval* under scripts//tests/,
+    plus anything inside an evals/ directory. Presence only — see
+    _is_trigger_eval for whether it actually asserts anything."""
+    found = {str(f.relative_to(skill_dir)) for f in _iter_files(skill_dir, ("tests", "scripts"))
+             if "eval" in f.name.lower()}
+    evals_dir = skill_dir / "evals"
+    if evals_dir.is_dir():
+        found |= {
+            str(f.relative_to(skill_dir))
+            for f in evals_dir.rglob("*")
+            if f.is_file() and "__pycache__" not in f.parts
+        }
+    return sorted(found)
+
+
+def _is_trigger_eval(path: Path) -> bool:
+    """True only if the artifact actually asserts trigger behaviour.
+
+    An EMPTY evals/ dir, a README, or a prompt set with no should_trigger key all
+    return False — the whole point of the check. For structured data we parse and
+    walk, so the key must be a real key rather than a word in some prose blob; for
+    code/markdown we fall back to a regex over comment/string-stripped source,
+    matching how _is_real_test treats non-Python languages.
+    """
+    try:
+        txt = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if not txt.strip():
+        return False
+
+    if path.suffix == ".json":
+        try:
+            return _walk_for_trigger_keys(json.loads(txt))
+        except (json.JSONDecodeError, RecursionError):
+            return False
+    if path.suffix in {".yaml", ".yml"}:
+        if yaml is not None:
+            try:
+                return _walk_for_trigger_keys(yaml.safe_load(txt))
+            except Exception:
+                return False
+        # No PyYAML: fall through to the regex rather than silently reporting
+        # "no trigger eval" for a file we simply could not parse.
+    if path.suffix in _EVAL_DATA_EXTS - {".json", ".yaml", ".yml"}:
+        return bool(_TRIGGER_ASSERTION_RE.search(txt))
+    return bool(_TRIGGER_ASSERTION_RE.search(_strip_code_noise(txt)))
+
+
+def _walk_for_trigger_keys(node: object, depth: int = 0) -> bool:
+    """A trigger key must appear as an actual mapping KEY, at any nesting depth."""
+    if depth > 40:
+        return False
+    if isinstance(node, dict):
+        if TRIGGER_ASSERTION_KEYS & set(map(str, node.keys())):
+            return True
+        return any(_walk_for_trigger_keys(v, depth + 1) for v in node.values())
+    if isinstance(node, list):
+        return any(_walk_for_trigger_keys(v, depth + 1) for v in node)
+    return False
+
+
 def _script_syntax_error(path: Path) -> str | None:
     """Return an error string if the script has a syntax error, else None.
     .mjs/.js/.ts checked only when `node` is present; otherwise not blocked."""
@@ -496,10 +586,26 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     add(4, "Integration tests", PASS if integ else WARN,
         f"{len(integ)} file(s)" if integ else "none (recommended for live-endpoint skills)", required=False)
 
-    # 5 — LLM evals (recommended)
-    has_evals = bool(_test_files(skill_dir, "eval")) or (skill_dir / "evals").is_dir()
-    add(5, "LLM evals", PASS if has_evals else WARN,
-        "present" if has_evals else "none (recommended for judgment-output skills)", required=False)
+    # 5 — LLM evals (recommended). Presence is NOT correctness: this check used to
+    # pass on `(skill_dir / "evals").is_dir()` alone, so an EMPTY evals/ dir scored
+    # "present". That is the same trap step 3 already avoids via _is_real_test, and
+    # it is why a stack can report ~10% "eval coverage" while containing ZERO
+    # trigger assertions (BRO-2005 audit: 38/376 skills with an eval artifact, 0
+    # with a single should_trigger case). A skill's LATENT half — does the
+    # description fire, does it stay silent on a near-miss — is exactly the half
+    # a presence check cannot see, so grade the CONTENT.
+    eval_files = _eval_files(skill_dir)
+    trigger_evals = [f for f in eval_files if _is_trigger_eval(skill_dir / f)]
+    if trigger_evals:
+        add(5, "LLM evals", PASS,
+            f"{len(trigger_evals)} trigger eval(s): {', '.join(trigger_evals[:3])}", required=False)
+    elif eval_files:
+        add(5, "LLM evals", WARN,
+            f"{len(eval_files)} eval artifact(s) but none assert trigger behaviour "
+            f"({'/'.join(sorted(TRIGGER_ASSERTION_KEYS)[:3])}…) — latent half still ungated",
+            required=False)
+    else:
+        add(5, "LLM evals", WARN, "none (recommended for judgment-output skills)", required=False)
 
     # 6 — Resolver trigger (workspace-aware; under --strict the missing path is
     # itself a FAIL — strict must not pass while skipping the checks it exists for)
