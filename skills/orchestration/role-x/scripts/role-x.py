@@ -121,6 +121,15 @@ TASK_ENTITY_STOPWORDS = frozenset({
 # tokens above 15% are `knowledge-graph` (23.6%), `control-theory` (18.1%) and
 # `agent` (17.9%) — genuine ambient vocabulary here — while `bstack` (14.6%) and
 # every project/tool name stay below it and keep qualifying.
+#
+# MEASURED CONTRIBUTION (ablation, BRO-2020): this gate alone changes 1 of 14 dev
+# prompts and 0 of 16 held-out prompts drawn from real session transcripts —
+# TASK_ENTITY_AMBIENT_TOKENS below does essentially all of the observed work. It
+# is kept because its measured collateral across those 30 prompts is ZERO, it is
+# the only half that needs no human maintenance, and it covers the one shape the
+# curated list cannot: a prompt built entirely of ambient + very-high-frequency
+# vocabulary ("what's the state of the agent data pattern here"), where `agent`
+# must be gated for the block to come back empty. Do not describe it as the fix.
 TASK_ENTITY_DF_MAX_SHARE = 0.15
 # ...plus an absolute floor, because a share is meaningless on a small catalog
 # (15% of 4 entities is 0.6 — every token would look generic and the block would
@@ -128,20 +137,50 @@ TASK_ENTITY_DF_MAX_SHARE = 0.15
 # flood the result set on its own, so it is never treated as generic no matter
 # how small the catalog is.
 TASK_ENTITY_DF_MIN_DOCS = TASK_ENTITY_TOP_N + 1
-# Document frequency is a *corpus* statistic, and it provably cannot see generic
-# *English/workspace* vocabulary that happens to be rare in this catalog: the
-# observed noise hits came from `session` (DF 6 of 602) and `data` (DF 13) — and
-# `session` is RARER than `vercel` (DF 8), a token we must keep. No DF threshold
-# separates them, so the ambient class is curated, not inferred. These describe
-# the interaction ("show the raw data", "this session", "fix what's broken"), not
-# a topic; like high-DF tokens they corroborate but never qualify.
+# Document frequency is a *corpus* statistic and it provably cannot see generic
+# English vocabulary that happens to be rare in this catalog: `session` matches 6
+# of 602 scored entities — FEWER than `vercel` at 8, a token we must keep. No DF
+# threshold separates them, so this class is curated rather than inferred.
+#
+# CURATED HEURISTIC — NOT PRINCIPLED. This list is a maintained artifact with a
+# real rot mode; see the membership rule and the maintenance note below.
+#
+# Membership rule (applied uniformly, independent of any particular prompt). A
+# token is ambient iff ALL THREE hold:
+#   (A) it is ordinary English vocabulary for *doing or discussing work* — an
+#       operation verb (`remove`), a status word, or a generic container/medium
+#       noun (`data`, `state`, `file`) — rather than naming a domain, product,
+#       place, person, or named concept;
+#   (B) the entities it currently qualifies do NOT form one recognisable topic
+#       (a grab-bag, not a subject). A token qualifying ≤1 entity is untestable
+#       under (B) and admitted on (A) alone;
+#   (C) it qualifies at least one entity in the catalog TODAY. A token that
+#       qualifies nothing cannot change an outcome, so listing it is unfalsifiable
+#       surface area.
+#
+# (C) is what keeps this list at six entries instead of forty. It is also the rot
+# mode: membership is a function of the catalog, so the list goes stale as the
+# graph grows. Two failure directions, both silent:
+#   - a listed token stops being a grab-bag (a coherent cluster forms around it)
+#     ⇒ it should be REMOVED or real hits stay suppressed;
+#   - a new generic token starts qualifying entities ⇒ it should be ADDED.
+# You know it needs updating when a "Task-relevant knowledge" block shows an
+# entity unrelated to the prompt (add), or when `/kg load <slug>` finds an entity
+# the injected block should plausibly have surfaced and did not (remove).
+# Re-derive by listing, for each candidate, the entities it qualifies and asking
+# (A)/(B)/(C) again — evidence for the current membership is in the BRO-2020 PR.
+#
+# Applying the rule dropped `raw` (its matches — raw-extract,
+# sentinel-research-raw-extract — are one coherent topic, so (B) fails) and
+# `code` (all matches are `claude-code*`, a product name), even though both
+# appeared in the audit prompts. See the PR for the cost of that choice.
 TASK_ENTITY_AMBIENT_TOKENS = frozenset({
-    "data", "session", "sessions", "state", "states", "context", "info", "raw",
-    "show", "shows", "relevant", "identify", "returned", "running", "doing",
-    "issue", "issues", "broken", "unnecessary", "remove", "fixing", "thing",
-    "things", "stuff", "item", "items", "job", "jobs", "wired", "output",
-    "input", "result", "results", "file", "files", "code", "line", "lines",
-    "name", "names", "pattern", "patterns",
+    "data",     # agents-as-data · colombia fuel · construction ops · rice weights
+    "session",  # higgsfield oauth · shared-state locking
+    "state",    # async fusion · attested inference · carrier failure · event sourcing
+    "file",     # image dirs · atomic lock · repo format · soul-file
+    "pattern",  # 29 entities across banking/construction/energy/fin-services
+    "remove",   # operation verb; qualifies 1 entity, untestable under (B)
 })
 
 
