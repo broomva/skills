@@ -1,0 +1,5 @@
+pytest>=8.0
+# Optional: exact token counts. The script falls back to a chars-per-token
+# estimate when this is absent, and the tokenizer-fallback CI job proves the
+# suite passes on that path too.
+tiktoken>=0.7

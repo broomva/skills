@@ -1,0 +1,166 @@
+---
+name: unhobble
+category: governance
+description: >
+  Audit and rightsize a context surface — CLAUDE.md, AGENTS.md, a SKILL.md, a
+  system prompt, or a single prompt — against the Claude-5 context-engineering
+  reversals. Measures the surface (token budget, how much of it is phrased as
+  hard rules vs judgment, near-duplicate sections, contradiction candidates,
+  filesystem-derivable content, progressive-disclosure gaps), then adjudicates
+  each section keep / relocate / delete using a grounding-aware predicate:
+  prose backed by an independent mechanism is decorative and free to cut, prose
+  that is the only carrier of a behavior is a real bet. Also rewrites prompts
+  and skills from prohibition-form into judgment-form. Anthropic deleted >80%
+  of Claude Code's system prompt for Claude 5 with no eval loss; this is the
+  repeatable version of that cut. Use when: (1) a CLAUDE.md or AGENTS.md has
+  grown and you want to know what is safe to remove, (2) an agent is ignoring
+  or colliding with its own instructions, (3) a prompt is long and
+  over-constrained and underperforming, (4) auditing a skill for
+  over-constraint before publishing, (5) onboarding a repo whose agent context
+  was written for an older model. Triggers on unhobble, rightsize, trim my
+  CLAUDE.md, audit my CLAUDE.md, is my CLAUDE.md too long, context
+  engineering, prune governance, over-constrained, improve this prompt, my
+  agent ignores instructions, conflicting instructions, prompt too long.
+---
+
+# unhobble
+
+Constraints written to protect against a weaker model's failure modes go
+net-negative once the model's judgement exceeds the rule. They collide with
+each other and with the user's actual request, and the model spends its
+reasoning resolving the collision instead of doing the work. The correction is
+deletion, not refinement.
+
+Anthropic's Claude Code team removed **over 80% of Claude Code's system
+prompt** for Claude 5 models with no measurable loss on their coding evals. The
+diagnostic that started it: reading their own transcripts, they found
+*"leave documentation as appropriate"* fighting *"DO NOT add comments"* inside
+a single request.
+
+This skill is that cut, made repeatable — and made safe, because the naive
+version of the rule deletes load-bearing prose.
+
+## The measure-then-adjudicate split
+
+The script measures. It never says "delete."
+
+Whether a rule can go depends on whether something *other than the prose*
+enforces it — a hook, a CI job, a test, a runtime check. That is a grounding
+question, and a regex answering it would be guessing in a confident voice. So:
+
+```bash
+python3 scripts/context_audit.py <path> [<path>...] --repo-root <repo> --budget 5000
+python3 scripts/context_audit.py --prompt-file draft.md      # prompt mode
+python3 scripts/context_audit.py <path> --json               # machine-readable
+```
+
+You get per-section tokens, directive form, a **rules-ratio** (share of
+directives phrased as hard rules), near-duplicate clusters, contradiction
+candidates, derivable-content flags, and anchored-candidate marks. Then you
+adjudicate.
+
+The rules-ratio counts *uses*, not *mentions*: a quoted rule and a description
+of what a script does are not directives. Without that distinction the surfaces
+worth auditing score as pure prohibition merely for quoting the rules they
+propose to delete.
+
+## Adjudication
+
+Classify every section against the mechanism that enforces it, not against how
+important it sounds. Detail and worked examples in
+[`references/adjudication.md`](references/adjudication.md).
+
+| The prose is… | Action |
+|---|---|
+| **anchored** — a hook, CI job, or runtime produces the signal regardless | **delete the prose, keep the mechanism.** Free. Zero behavior change. |
+| **not a check** — descriptive, or derivable from the filesystem | **relocate** behind progressive disclosure. Free. |
+| **only carrier, high value** | **keep** — and label it a heuristic, not an invariant. Or spend the effort to anchor it. |
+| **only carrier, redundant or unused** | **delete.** |
+
+The first two tiers are usually most of the volume and cost nothing to cut.
+Deleting the third tier is a real behavioral bet — the article does not license
+it, and neither does this skill.
+
+The trap worth naming: a rule that *cites* a mechanism is not thereby anchored.
+`AGENTS.md` existing does not enforce anything. Only executable surfaces count,
+which is why the script ignores markdown references when marking anchored
+candidates.
+
+## The six reversals
+
+Applied when rewriting whatever survives. Each with a before/after in
+[`references/reversals.md`](references/reversals.md).
+
+| Then | Now |
+|---|---|
+| Give rules | Let the model use judgement |
+| Give examples | Design interfaces — an expressive parameter hints its own usage |
+| Put it all upfront | Progressive disclosure — skills, deferred tool loading |
+| Repeat yourself | One description, on the tool |
+| Memory in CLAUDE.md | Auto-memory |
+| Simple specs | Rich references — HTML artifacts, test suites, rubrics, real code |
+
+The canonical rewrite, from the article: *"Default to writing no comments.
+Never write multi-paragraph docstrings…"* became *"Write code that reads like
+the surrounding code: match its comment density, naming, and idiom."* A
+judgement frame, not a prohibition.
+
+## Working shape
+
+1. **Measure** — run the script over every always-on surface at once, so
+   cross-file duplication and contradictions are visible. A surface audited
+   alone hides its collisions with its neighbours.
+2. **Adjudicate** — walk the section table, assign each row a tier. For
+   anchored candidates, confirm the mechanism genuinely produces a signal the
+   agent cannot write to; `keel` answers this properly if the call is close.
+3. **Cut and rewrite** — delete tiers 1–2, rewrite survivors into judgement
+   form, move detail behind references.
+4. **Verify** — re-run the script. Budget down, rules-ratio down, contradiction
+   count down. Then confirm behavior held: the deleted rules were either
+   enforced elsewhere or genuinely unwanted.
+
+Step 4 is where this earns its keep. A cut that lowers the token count while
+silently dropping a behavior nothing else enforces is a regression wearing a
+green number — so state, per deleted section, which mechanism now carries it.
+
+## Prompt mode
+
+Same reversals, one prompt. `--prompt-file` or `--prompt-text` reports length,
+directive mix, examples, and internal contradictions; the rewrite is yours.
+Prompts fail the same way governance files do — a stack of prohibitions
+accumulated from past failures, several of which now fight each other and none
+of which the model still needs.
+
+## Scope
+
+Governance surfaces, skills, system prompts, prompts. Not code comments, not
+user-facing copy, not README prose for humans.
+
+Related: `keel` measures whether verification is anchored (this composes it for
+the tier-1 call); `/doctor` is the vendor's rightsizing pass and knows nothing
+about your mechanisms; `harness-engineering-playbook` builds harness surfaces
+where this one prunes them.
+
+## Anti-rationalization
+
+| Excuse | Reality |
+|---|---|
+| "The rule is important, so keep it." | Importance is not the predicate — enforcement is. An important rule that a hook already enforces is still decorative *prose*. Delete the prose, keep the hook. |
+| "Token count went down, done." | A lower number with a silently dropped behavior is a regression. Name the carrier for every deletion. |
+| "It's only 400 tokens." | It is 400 tokens on *every* request, competing with the user's actual ask, and colliding with its neighbours. |
+| "I'll just tighten the wording." | The finding was that refinement is the wrong move. If judgement now exceeds the rule, the rule goes. |
+| "The script didn't flag it, so it's fine." | The script flags *shape*, not correctness. Zero contradictions means none were lexically detectable. |
+
+## Validation
+
+`tests/test_context_audit.py` covers segmentation, polarity classification,
+shingle duplication, contradiction pairing, and the anchored-candidate rule
+(including that `.md` references never anchor).
+
+Dogfood: run it on this skill's own `SKILL.md`.
+
+## References
+
+- [`references/reversals.md`](references/reversals.md) — the six reversals with before/after.
+- [`references/adjudication.md`](references/adjudication.md) — the tier table, worked, with the keel receipt.
+- `research/entities/concept/unhobbling-over-constraining.md` — the concept and its provenance.
