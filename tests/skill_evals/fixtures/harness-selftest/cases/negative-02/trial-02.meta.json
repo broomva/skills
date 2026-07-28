@@ -1,0 +1,17 @@
+{
+  "meta_version": 2,
+  "provenance": "synthetic",
+  "skill": "harness-selftest",
+  "case_id": "negative-02",
+  "trial": 2,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 11200,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "7f61b867afe153a859140293c31b7ec32630834d69598430226c1efe1b6944da",
+  "skill_md_sha256": "2ef627dbe77a4997efbd7ca41001146fc0f5be7aca3b002d32c28097798d9248",
+  "description_sha256": "26174672201c6e87599dbe01d152334ea063dbdb1ac9d6010b746bea0379cee5",
+  "recorded_at": "2026-07-28T00:00:00Z",
+  "note": "SYNTHETIC \u2014 hand-authored by generate.py; no model produced this."
+}
