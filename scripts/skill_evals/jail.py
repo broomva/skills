@@ -165,6 +165,23 @@ def link_auth_material(
     return created
 
 
+def auth_material_missing(
+    *, real_home: Path | None = None, platform: str | None = None
+) -> bool:
+    """True when this platform needs credential material and none was found.
+
+    Worth its own predicate because the failure is otherwise silent and expensive:
+    the jail builds fine, then every trial in the suite ERRORs with
+    ``Not logged in`` and the run looks like a total trigger failure rather than a
+    setup problem.
+    """
+    globs = _auth_globs(platform)
+    if not globs:
+        return False
+    src_root = Path(real_home) if real_home is not None else Path(os.path.expanduser("~"))
+    return not any(any(src_root.glob(p)) for p in globs)
+
+
 def prepare_jail(
     workspace: Path, *, link_auth: bool = True, real_home: Path | None = None
 ) -> Path:

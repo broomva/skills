@@ -202,11 +202,31 @@ before every live suite and refuses to start on a leak. The proof is a subproces
 launch on purpose: an in-process check reads *this* interpreter's startup snapshot
 of the environment and would pass while the child escaped.
 
-**What the jail does not cover.** It redirects `~` and the XDG variables; it cannot
-redirect a hardcoded `/Users/me/...`. No skill under eval has one today, and
-`test_no_evaluated_skill_resolves_state_from_an_absolute_path` is what keeps that
-true. Beyond that, cases run with `--permission-mode bypassPermissions`, so full
-containment would need OS-level sandboxing, which this is not.
+**What the jail does not cover.** Cases run with `--permission-mode bypassPermissions`,
+so full containment would need OS-level sandboxing, which this is not. Four residuals,
+each measured rather than assumed:
+
+- **Hardcoded absolute paths.** The jail redirects `~` and the XDG variables; it cannot
+  redirect `/Users/me/...`. No skill under eval has one today, and
+  `test_no_evaluated_skill_resolves_state_from_an_absolute_path` keeps that true.
+- **`PATH` is passed through verbatim, so real tool binaries stay reachable** —
+  `/opt/homebrew/bin/gh`, `~/.local/bin/p9`, `/usr/bin/security`. Sanitising it is not
+  the fix: on this machine `node` lives under `~/.nvm/versions/node/*/bin`, so dropping
+  HOME-relative entries breaks the CLI outright — trading a side effect for a
+  false-fail, the exact overshoot this harness is built against. Mitigating measurement:
+  `gh auth status` *inside* the jail reports "not logged into any GitHub hosts", because
+  `gh` reads `$XDG_CONFIG_HOME/gh/hosts.yml` and the jail's is empty. So `gh pr merge`
+  cannot act on a real PR from inside a case.
+- **The linked keychain is uid-authorised, not path-scoped.** `security
+  find-generic-password` inside the jail still returns items, because securityd
+  authorises by uid. The link narrows *which keychain file* is visible, not who may
+  read it. This is not a regression — without the jail the case had the real `$HOME`
+  and the same access — but it is not closed either.
+- **Wrapper CLIs.** `shutil.which("claude")` can resolve to a wrapper that appends
+  `--settings`, which `--setting-sources project` does *not* gate. The one on this
+  machine gates its injection on `SUPERCONDUCTOR_*`, which deny-by-default drops, so
+  the jail closes it — as a consequence of the allowlist rather than by intent, which
+  is why `test_wrapper_activation_vars_are_dropped` pins it.
 
 `--fail-on-real-state-change` promotes the post-run watch over `~/.config/broomva`
 from a warning to a failure. It is *off* by default, and that is a calibration, not

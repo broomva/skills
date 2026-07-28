@@ -293,6 +293,71 @@ def test_missing_auth_source_is_skipped_not_fatal(tmp_path):
     assert J.link_auth_material(home, real_home=real, platform="darwin") == []
 
 
+def test_wrapper_activation_vars_are_dropped(tmp_path):
+    """A CLI on PATH may be a WRAPPER that injects settings and hooks.
+
+    ``shutil.which("claude")`` resolves to ``~/.superconductor/bin/claude`` on this
+    machine, and that wrapper appends
+    ``--settings ~/.superconductor/hooks/claude-settings.json`` — SessionStart,
+    PreToolUse, Stop hooks — into the run. ``--setting-sources project`` does not
+    gate ``--settings``, so those hooks would fire inside every eval trial and the
+    "16 built-ins only" isolation claim would be false.
+
+    The wrapper gates that injection on ``SUPERCONDUCTOR_TERMINAL_ID`` being set AND
+    ``SUPERCONDUCTOR_MANAGED_AGENT=1``; with either absent it execs the real binary
+    with a scrubbed environment. Deny-by-default drops both, so the jail already
+    closes this. Pinned here because it is a *consequence* of the allowlist rather
+    than an intention of it — someone widening PASSTHROUGH_ENV would reopen it
+    without ever touching this file.
+    """
+    ws = tmp_path / "ws"
+    parent = {
+        "PATH": "/usr/bin",
+        "SUPERCONDUCTOR_TERMINAL_ID": "2d596d6c-dead-beef",
+        "SUPERCONDUCTOR_MANAGED_AGENT": "1",
+    }
+    env = J.build_case_env(ws, parent)
+    assert "SUPERCONDUCTOR_TERMINAL_ID" not in env
+    assert "SUPERCONDUCTOR_MANAGED_AGENT" not in env
+
+
+def test_auth_material_missing_is_detected(tmp_path):
+    """Silent absence turns into a whole suite of 'Not logged in' ERRORs."""
+    empty = tmp_path / "empty-home"
+    empty.mkdir()
+    assert J.auth_material_missing(real_home=empty, platform="darwin") is True
+
+    stocked = tmp_path / "stocked-home"
+    (stocked / "Library" / "Keychains").mkdir(parents=True)
+    (stocked / "Library" / "Keychains" / "login.keychain-db").write_text("x")
+    assert J.auth_material_missing(real_home=stocked, platform="darwin") is False
+
+
+def test_rmtree_cannot_delete_the_real_credential_through_the_link(tmp_path):
+    """The workspace is rmtree'd after every trial and holds a link to the REAL
+    keychain. If rmtree followed it, the harness would delete the user's login
+    keychain — catastrophic, and worth an explicit test rather than a reasoned
+    assurance about shutil semantics."""
+    import shutil as _shutil
+
+    real = tmp_path / "real-home"
+    (real / "Library" / "Keychains").mkdir(parents=True)
+    kc = real / "Library" / "Keychains" / "login.keychain-db"
+    kc.write_text("PRECIOUS")
+
+    root = tmp_path / "case"
+    ws = root / "ws"
+    J.prepare_jail(ws, link_auth=False)
+    # linked explicitly for darwin, so the assertion holds on Linux CI too
+    J.link_auth_material(J.jail_home(ws), real_home=real, platform="darwin")
+    assert (J.jail_home(ws) / "Library" / "Keychains" / "login.keychain-db").is_symlink()
+
+    _shutil.rmtree(root, ignore_errors=True)
+
+    assert not ws.exists()
+    assert kc.exists() and kc.read_text() == "PRECIOUS"
+
+
 def test_prepare_jail_creates_the_xdg_tree(tmp_path):
     home = J.prepare_jail(tmp_path / "ws", link_auth=False)
     for sub in (".config", ".cache", ".local/share", ".local/state", "tmp"):

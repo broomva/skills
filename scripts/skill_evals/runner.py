@@ -1787,6 +1787,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_USAGE
         print(f"[skill-evals] jail check OK  {jail_mod.describe_jail(Path('<case-ws>'))}",
               file=sys.stderr)
+        # The jail moves HOME, and on macOS the CLI's credential lives under HOME.
+        # If there is nothing to link back, every trial is about to ERROR with
+        # "Not logged in" and read as a total trigger failure. Say so now.
+        if jail_mod.auth_material_missing():
+            print(
+                "[skill-evals] WARNING  no credential material found to link into the "
+                "jail. The jail moves HOME, and the CLI's login lives under it, so "
+                "trials may all fail with 'Not logged in' — that would be a setup "
+                "problem, not a result about the skill.",
+                file=sys.stderr,
+            )
     elif is_live:
         print(
             "[skill-evals] WARNING  --no-env-jail: case runs inherit the real "
@@ -1812,6 +1823,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for line in real_state_changes[:8]:
             print(f"[skill-evals]   - {line}", file=sys.stderr)
+
+    # A suite that ERRORs on "Not logged in" is a jail-setup failure wearing the
+    # costume of a total trigger failure. Name it, or the next reader concludes the
+    # skill's description is broken.
+    if is_live and any(
+        "not logged in" in t.detail.lower()
+        for c in case_results for t in c.trials if t.outcome == ERROR
+    ):
+        print(
+            "[skill-evals] HINT  trials failed with 'Not logged in'. The jail moves "
+            "HOME, and on macOS the CLI's token is in the login keychain UNDER $HOME. "
+            "Check that the keychain linked into the jail "
+            f"({', '.join(jail_mod.AUTH_PASSTHROUGH.get(sys.platform, ('n/a',)))}) exists. "
+            "This is a setup failure, not a result about the skill.",
+            file=sys.stderr,
+        )
 
     if isinstance(runner, ReplayRunner):
         for msg in runner.provenance_notes:
