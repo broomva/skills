@@ -43,9 +43,12 @@ mechanism references and marks only `.sh` / `.py` / `.yaml` / `.toml` / source
 files as anchored candidates.
 
 **Existence is not enforcement.** The script checks that a referenced file
-exists, nothing more. A hook file that exists but is unregistered, or a `make`
-target that only checks another file exists, is not an anchor. Two real
-examples found in this workspace's own audit:
+exists, nothing more — which is why existence buys a section the *unprobed*
+tier, and only a probe ([`mechanism-probe.md`](mechanism-probe.md)) promotes it
+to the free one. A hook file that exists but is unregistered, a hook that is
+registered but skips its own checks, or a `make` target that only checks another
+file exists, is not an anchor. Two real examples found in this workspace's own
+audit:
 
 - `make control-audit` — a file-existence test. It passes because `CLAUDE.md`
   exists. It asserts nothing about the contents.

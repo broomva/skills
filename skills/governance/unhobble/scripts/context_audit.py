@@ -24,11 +24,15 @@ Signals, each mapped to the reversal it serves:
   derivable     sections that restate the filesystem    ("avoid the obvious")
   mechanism     path/command references in a section
                 that actually exist on disk             (anchored-vs-self-referential input)
+  anchor state  whether a probe has DEMONSTRATED that
+                mechanism firing — unresolved until
+                one has (see references/mechanism-probe.md)
   contradiction topics carrying both a prohibition and
                 a permission/judgment, across sections  (the article's own diagnostic)
 
 Usage:
     context_audit.py <path> [<path> ...] [--budget N] [--json] [--repo-root DIR]
+    context_audit.py <path> --probe-receipts probes.json
     context_audit.py --prompt-text "..." [--json]
     context_audit.py --prompt-file prompt.md [--json]
 """
@@ -471,14 +475,23 @@ def _resolve_mechanism(repo_root: Path, ref: str) -> tuple[bool, str]:
         return False, "external"
 
 
-def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
+def mechanism_refs(
+    section: Section,
+    repo_root: Path | None,
+    receipts: dict[str, dict] | None = None,
+) -> list[dict]:
     """Backtick-quoted executable paths/commands in a section, with existence.
 
     A section referencing an *executable* file that exists is an *anchored
-    candidate*: some mechanism outside the prose may already enforce it.
-    Existence is the only thing checked here — whether that mechanism actually
-    produces a signal the agent cannot write to is keel's question, not this
-    script's. Markdown references never qualify (see _LOOKS_LIKE_PATH).
+    candidate*: some mechanism outside the prose *may* already enforce it.
+    Existence is the only thing this function can check. Two further questions
+    it deliberately does not guess at:
+
+      efficacy      does the mechanism fire at all? -> `probe`, resolved only
+                    from a receipt produced by references/mechanism-probe.md
+      independence  is the signal outside the governed actor's reach? -> keel
+
+    Markdown references never qualify (see _LOOKS_LIKE_PATH).
     """
     refs: list[dict] = []
     seen: set[str] = set()
@@ -498,9 +511,92 @@ def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
             continue
         seen.add(ref)
         refs.append(
-            {"ref": ref, "kind": kind, "exists_on_disk": exists, "scope": scope}
+            {
+                "ref": ref,
+                "kind": kind,
+                "exists_on_disk": exists,
+                "scope": scope,
+                "probe": probe_state(ref, receipts),
+            }
         )
     return refs
+
+
+# --------------------------------------------------------------------------
+# Probe receipts (efficacy: does the mechanism actually fire?)
+# --------------------------------------------------------------------------
+
+# The three legs of a probe. Each is load-bearing, and the third most of all:
+# without neutering the mechanism and watching the check go red, a green result
+# cannot distinguish "the gate works" from "my test passes regardless".
+_PROBE_LEGS = ("fires_on_trigger", "silent_on_non_trigger", "neutered_check_went_red")
+
+
+class BadProbeReceipts(Exception):
+    """The receipt file exists but is not a receipt file.
+
+    Raised rather than defaulted to empty: a typo in the path would otherwise
+    silently downgrade every anchor to "unresolved" while the run looked normal.
+    """
+
+
+def load_probe_receipts(path: Path) -> dict[str, dict]:
+    """Read `{"probes": {"<ref>": {<leg>: bool, ...}}}` from disk.
+
+    Probing is a runtime act, so its result reaches a static analyser only as a
+    recorded receipt. Nothing here infers a probe outcome from the filesystem —
+    a regex claiming a hook fires would be guessing in a confident voice, which
+    is the failure mode this whole column exists to correct.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise BadProbeReceipts(str(e)) from e
+    if not isinstance(raw, dict) or not isinstance(raw.get("probes"), dict):
+        raise BadProbeReceipts(f"{path}: expected a top-level 'probes' object")
+    return {k: v for k, v in raw["probes"].items() if isinstance(v, dict)}
+
+
+def probe_state(ref: str, receipts: dict[str, dict] | None) -> str:
+    """Per-reference efficacy verdict.
+
+    unresolved  no probe receipt — the default, and the honest one
+    fires       all three legs demonstrated
+    dead        the probe was run and the mechanism did not fire
+    incomplete  a receipt exists but does not carry all three legs; notably a
+                probe with no neutered-control leg proves nothing, so it must
+                NOT read as `fires`
+    """
+    rec = (receipts or {}).get(ref)
+    if rec is None:
+        return "unresolved"
+    if rec.get("fires_on_trigger") is False:
+        return "dead"
+    if all(rec.get(leg) is True for leg in _PROBE_LEGS):
+        return "fires"
+    return "incomplete"
+
+
+def anchor_state(refs: list[dict]) -> str:
+    """Section-level tier, keyed on demonstrated firing rather than existence.
+
+    none       nothing executable that exists on disk is referenced
+    fires      at least one existing mechanism was probed and fired
+    dead       every existing mechanism was probed and none fired
+    unproven   a mechanism exists, nothing has shown it firing — UNRESOLVED
+
+    `unproven` is not a softer `fires`. Three hooks in the workspace this rule
+    was derived from were registered, scheduled, independent, and produced no
+    signal whatsoever; all three would read as anchored candidates.
+    """
+    live = [r for r in refs if r["exists_on_disk"]]
+    if not live:
+        return "none"
+    if any(r["probe"] == "fires" for r in live):
+        return "fires"
+    if all(r["probe"] == "dead" for r in live):
+        return "dead"
+    return "unproven"
 
 
 # --------------------------------------------------------------------------
@@ -830,6 +926,7 @@ def audit(
     repo_root: Path | None = None,
     dup_threshold: float = 0.25,
     max_contradictions: int = 20,
+    probe_receipts: dict[str, dict] | None = None,
 ) -> dict:
     paths = collect_paths(inputs)
     if not paths:
@@ -845,7 +942,7 @@ def audit(
             s.polarity, s.dominant = polarity_profile(s.text)
             s.examples = count_examples(s.text)
             s.derivable = is_derivable(s)
-            s.mechanism_refs = mechanism_refs(s, repo_root)
+            s.mechanism_refs = mechanism_refs(s, repo_root, probe_receipts)
         file_tokens = estimate_tokens(text)
         per_file.append(
             {
@@ -873,6 +970,31 @@ def audit(
         for k, v in s.polarity.items():
             combined[k] += v
 
+    section_rows = [
+        {
+            "key": s.key,
+            "heading": s.heading,
+            "level": s.level,
+            "lines": f"{s.start_line}-{s.end_line}",
+            "tokens": s.tokens,
+            "dominant": s.dominant,
+            "rules_ratio": rules_ratio(s.polarity),
+            "polarity": s.polarity,
+            "examples": s.examples,
+            "derivable": s.derivable,
+            "mechanism_refs": s.mechanism_refs,
+            # Existence. Retained verbatim — it is still the input to the
+            # question, it is just no longer the answer to it.
+            "anchored_candidate": any(
+                r["exists_on_disk"] for r in s.mechanism_refs
+            ),
+            # Firing. Separate field because a mechanism can exist, be
+            # registered, run on schedule, and still emit nothing.
+            "anchor_state": anchor_state(s.mechanism_refs),
+        }
+        for s in sorted(all_sections, key=lambda x: -x.tokens)
+    ]
+
     return {
         "tokenizer": tokenizer_name(),
         "budget": {
@@ -884,25 +1006,12 @@ def audit(
         "files": per_file,
         "polarity_total": combined,
         "rules_ratio": rules_ratio(combined),
-        "sections": [
-            {
-                "key": s.key,
-                "heading": s.heading,
-                "level": s.level,
-                "lines": f"{s.start_line}-{s.end_line}",
-                "tokens": s.tokens,
-                "dominant": s.dominant,
-                "rules_ratio": rules_ratio(s.polarity),
-                "polarity": s.polarity,
-                "examples": s.examples,
-                "derivable": s.derivable,
-                "mechanism_refs": s.mechanism_refs,
-                "anchored_candidate": any(
-                    r["exists_on_disk"] for r in s.mechanism_refs
-                ),
-            }
-            for s in sorted(all_sections, key=lambda x: -x.tokens)
-        ],
+        "anchors": {
+            state: sum(1 for r in section_rows if r["anchor_state"] == state)
+            for state in ("fires", "unproven", "dead", "none")
+        },
+        "probe_receipts_loaded": len(probe_receipts or {}),
+        "sections": section_rows,
         "duplication": find_duplicates(all_sections, dup_threshold),
         "contradictions": contradictions[:max_contradictions],
         "contradictions_total": len(contradictions),
@@ -935,6 +1044,12 @@ def audit_prompt(text: str, max_contradictions: int = 20) -> dict:
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
+
+
+# "?" is the point of the column: an unprobed mechanism is an open question,
+# not a quiet pass. Rendering it blank would restore the exact conflation the
+# separate field exists to break.
+_FIRES_CELL = {"fires": "yes", "unproven": "?", "dead": "DEAD", "none": ""}
 
 
 def render(report: dict) -> str:
@@ -970,16 +1085,27 @@ def render(report: dict) -> str:
         n_sec = len(report["sections"])
         more = f" — showing 30 of {n_sec}" if n_sec > 30 else ""
         add(f"## Sections by weight{more}\n")
-        add("| Section | Tok | Form | Rules | Ex | Derivable | Anchored? |")
-        add("|---|---:|---|---:|---:|:-:|:-:|")
+        add("| Section | Tok | Form | Rules | Ex | Derivable | Anchored? | Fires? |")
+        add("|---|---:|---|---:|---:|:-:|:-:|:-:|")
         for s in report["sections"][:30]:
             add(
                 f"| {s['heading'][:44]} | {s['tokens']} | {s['dominant']} | "
                 f"{s['rules_ratio']} | {s['examples']} | "
                 f"{'yes' if s['derivable'] else ''} | "
-                f"{'cand' if s['anchored_candidate'] else ''} |"
+                f"{'cand' if s['anchored_candidate'] else ''} | "
+                f"{_FIRES_CELL[s.get('anchor_state', 'none')]} |"
             )
         add("")
+        a = report.get("anchors") or {}
+        if a.get("unproven") or a.get("dead"):
+            add(
+                f"**Anchors** — {a.get('fires', 0)} probed firing · "
+                f"**{a.get('unproven', 0)} UNRESOLVED** · {a.get('dead', 0)} probed dead. "
+                "An UNRESOLVED anchor is a mechanism that exists; nothing here shows "
+                "it produces a signal. Probe it before deleting the prose it "
+                "supposedly makes free — `references/mechanism-probe.md`, then "
+                "`--probe-receipts`.\n"
+            )
 
     if report.get("contradictions"):
         shown = min(10, len(report["contradictions"]))
@@ -1011,8 +1137,10 @@ def render(report: dict) -> str:
 
     add(
         "> Evidence only. Keep / relocate / delete requires knowing whether an "
-        "independent mechanism already enforces each rule — run `keel` or read "
-        "the SKILL.md adjudication table."
+        "independent mechanism already enforces each rule — two questions this "
+        "script answers neither of: does it fire (probe it), and is the signal "
+        "outside the governed actor's reach (`keel`). Read the SKILL.md "
+        "adjudication table."
     )
     return "\n".join(L)
 
@@ -1027,6 +1155,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dup-threshold", type=float, default=0.25)
     ap.add_argument("--max-contradictions", type=int, default=20)
     ap.add_argument("--repo-root", help="root for mechanism-reference existence checks")
+    ap.add_argument(
+        "--probe-receipts",
+        help=(
+            "JSON receipts from references/mechanism-probe.md; without it every "
+            "anchor stays UNRESOLVED, which is the honest default"
+        ),
+    )
     ap.add_argument("--json", action="store_true")
     # Exit-code gates. Without one of these the tool always exits 0 — it is a
     # report, not a judge. Opting in is what lets CI actually enforce something,
@@ -1055,6 +1190,15 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        # Same shape: prompt mode never resolves mechanism references, so
+        # accepting receipts here would take a file and do nothing with it.
+        if args.probe_receipts:
+            print(
+                "error: --probe-receipts does not apply in prompt mode "
+                "(a prompt references no mechanisms to probe)",
+                file=sys.stderr,
+            )
+            return 2
         if args.prompt_file:
             try:
                 text = Path(args.prompt_file).expanduser().read_text(
@@ -1071,6 +1215,15 @@ def main(argv: list[str] | None = None) -> int:
         if root is None:
             first = Path(args.paths[0]).expanduser()
             root = first if first.is_dir() else first.parent
+        receipts: dict[str, dict] | None = None
+        if args.probe_receipts:
+            try:
+                receipts = load_probe_receipts(
+                    Path(args.probe_receipts).expanduser()
+                )
+            except BadProbeReceipts as e:
+                print(f"error: cannot read probe receipts: {e}", file=sys.stderr)
+                return 2
         try:
             report = audit(
                 args.paths,
@@ -1079,6 +1232,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_root=root,
                 dup_threshold=args.dup_threshold,
                 max_contradictions=args.max_contradictions,
+                probe_receipts=receipts,
             )
         except FileNotFoundError as e:
             print(f"error: no such path: {e}", file=sys.stderr)

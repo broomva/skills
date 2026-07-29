@@ -108,6 +108,104 @@ def test_cli_marks_the_hook_backed_section_anchored(repo):
     assert rules["rules_ratio"] == 1.0
 
 
+def test_cli_marks_the_hook_backed_section_UNPROVEN_not_free(repo):
+    """The fix, at the CLI boundary.
+
+    `hooks/gate.sh` exists, so the section is an anchored candidate — and that is
+    all existence buys. Routing it to "delete the prose, free" was the defect:
+    three hooks in the workspace this was derived from existed, were registered,
+    ran on schedule, and emitted nothing.
+    """
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--json")
+    rules = next(
+        s for s in json.loads(r.stdout)["sections"] if s["heading"] == "Rules"
+    )
+    assert rules["anchored_candidate"] is True
+    assert rules["anchor_state"] == "unproven"
+    assert rules["mechanism_refs"][0]["probe"] == "unresolved"
+
+
+def test_cli_renders_the_fires_column_as_an_open_question(repo):
+    # Rendering an unprobed anchor as blank would restore the conflation.
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo))
+    header = next(ln for ln in r.stdout.splitlines() if ln.startswith("| Section |"))
+    assert "Fires?" in header
+    rules_row = next(ln for ln in r.stdout.splitlines() if ln.startswith("| Rules "))
+    assert rules_row.rstrip().endswith("| cand | ? |")
+    assert "UNRESOLVED" in r.stdout
+
+
+def _probes(tmp_path, **legs):
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"hooks/gate.sh": legs}}))
+    return str(p)
+
+
+def test_cli_a_complete_probe_receipt_promotes_the_section(repo, tmp_path):
+    receipts = _probes(
+        tmp_path,
+        fires_on_trigger=True,
+        silent_on_non_trigger=True,
+        neutered_check_went_red=True,
+    )
+    r = run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+        "--probe-receipts", receipts, "--json",
+    )
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    rules = next(s for s in data["sections"] if s["heading"] == "Rules")
+    assert rules["anchor_state"] == "fires"
+    assert data["anchors"]["fires"] == 1
+
+
+def test_cli_receipt_without_the_neuter_leg_does_not_promote(repo, tmp_path):
+    """A probe with no negative control proves nothing, and must not read green."""
+    receipts = _probes(tmp_path, fires_on_trigger=True, silent_on_non_trigger=True)
+    r = run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+        "--probe-receipts", receipts, "--json",
+    )
+    rules = next(
+        s for s in json.loads(r.stdout)["sections"] if s["heading"] == "Rules"
+    )
+    assert rules["anchor_state"] == "unproven"
+    assert rules["mechanism_refs"][0]["probe"] == "incomplete"
+
+
+def test_cli_a_dead_mechanism_is_reported_as_dead(repo, tmp_path):
+    receipts = _probes(tmp_path, fires_on_trigger=False)
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
+    assert "DEAD" in r.stdout
+
+
+def test_cli_bad_probe_receipts_is_a_clean_error(repo, tmp_path):
+    bad = tmp_path / "probes.json"
+    bad.write_text("{}")
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(bad))
+    assert r.returncode == 2
+    assert "cannot read probe receipts" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_cli_missing_probe_receipts_file_is_a_clean_error(repo):
+    r = run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+        "--probe-receipts", "/nonexistent/probes.json",
+    )
+    assert r.returncode == 2
+    assert "cannot read probe receipts" in r.stderr
+
+
+def test_cli_probe_receipts_refused_in_prompt_mode(tmp_path):
+    # Same shape as --fail-over-budget: a flag that takes a file and silently
+    # does nothing reads as a capability the run does not have.
+    receipts = _probes(tmp_path, fires_on_trigger=True)
+    r = run("--prompt-text", "Never merge red.", "--probe-receipts", receipts)
+    assert r.returncode == 2
+    assert "does not apply in prompt mode" in r.stderr
+
+
 def test_cli_flags_the_derivable_layout_section(repo):
     r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--json")
     layout = next(

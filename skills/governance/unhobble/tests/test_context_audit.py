@@ -10,10 +10,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from context_audit import (  # noqa: E402
+    BadProbeReceipts,
     Section,
+    anchor_state,
     audit,
     audit_prompt,
     classify_sentence,
+    load_probe_receipts,
+    probe_state,
     count_examples,
     count_outbound_links,
     disclosure_check,
@@ -408,6 +412,8 @@ def test_existing_script_is_an_anchored_candidate(tmp_path):
             "kind": "path",
             "exists_on_disk": True,
             "scope": "repo",
+            # Existence alone never resolves the firing question.
+            "probe": "unresolved",
         }
     ]
 
@@ -494,6 +500,172 @@ def test_parent_traversal_never_anchors(tmp_path):
     sec = Section("f.md", "H", 2, 1, 2, "Anchored by `../escape.sh`.")
     refs = mechanism_refs(sec, root)
     assert all(r["exists_on_disk"] is False for r in refs)
+
+
+# -------------------------------------------------- probe / anchor state (efficacy)
+#
+# The defect these pin: `anchored_candidate` means a referenced file EXISTS, and
+# the adjudication table used to route existence straight to "delete the prose,
+# free". Three hooks in ~/broomva were registered, scheduled, independent of the
+# agent, and produced no signal at all — every one of them an anchored candidate.
+# Existence and firing are now separate states, and firing is UNRESOLVED until a
+# probe receipt says otherwise.
+
+_FULL_PROBE = {
+    "fires_on_trigger": True,
+    "silent_on_non_trigger": True,
+    "neutered_check_went_red": True,
+}
+
+
+def _live_ref(ref="hooks/gate.sh", probe="unresolved", exists=True):
+    return {
+        "ref": ref,
+        "kind": "path",
+        "exists_on_disk": exists,
+        "scope": "repo",
+        "probe": probe,
+    }
+
+
+def test_probe_state_without_a_receipt_is_unresolved():
+    assert probe_state("hooks/gate.sh", None) == "unresolved"
+    assert probe_state("hooks/gate.sh", {"other.sh": _FULL_PROBE}) == "unresolved"
+
+
+def test_probe_state_fires_only_with_all_three_legs():
+    assert probe_state("g.sh", {"g.sh": dict(_FULL_PROBE)}) == "fires"
+
+
+@pytest.mark.parametrize("missing", sorted(_FULL_PROBE))
+def test_every_leg_is_load_bearing(missing):
+    """Dropping ANY leg must stop the promotion, not just the third.
+
+    Parametrised rather than asserted once, because a check that only pinned the
+    neuter leg would pass while the positive and negative legs quietly went
+    optional.
+    """
+    partial = {k: v for k, v in _FULL_PROBE.items() if k != missing}
+    assert probe_state("g.sh", {"g.sh": partial}) == "incomplete"
+
+
+def test_probe_without_a_negative_control_is_incomplete_not_fires():
+    # The named case: (a) and (b) green, (c) never run. A probe that never
+    # neutered the mechanism cannot tell "the gate works" from "my test passes",
+    # so it must not read as demonstrated.
+    receipt = {"fires_on_trigger": True, "silent_on_non_trigger": True}
+    assert probe_state("g.sh", {"g.sh": receipt}) == "incomplete"
+
+
+def test_probe_that_did_not_fire_is_dead():
+    assert probe_state("g.sh", {"g.sh": {"fires_on_trigger": False}}) == "dead"
+
+
+def test_anchor_state_none_when_no_mechanism_exists():
+    assert anchor_state([]) == "none"
+    assert anchor_state([_live_ref(exists=False)]) == "none"
+
+
+def test_anchor_state_of_an_existing_but_unprobed_mechanism_is_unproven():
+    """THE regression. Existence used to mean free-to-delete; now it means ask."""
+    assert anchor_state([_live_ref()]) == "unproven"
+
+
+def test_anchor_state_fires_when_a_probe_demonstrated_it():
+    assert anchor_state([_live_ref(probe="fires")]) == "fires"
+
+
+def test_anchor_state_dead_when_every_live_mechanism_probed_dead():
+    assert anchor_state([_live_ref(probe="dead"), _live_ref("b.sh", "dead")]) == "dead"
+
+
+def test_one_firing_mechanism_carries_the_section():
+    refs = [_live_ref("a.sh", "dead"), _live_ref("b.sh", "fires")]
+    assert anchor_state(refs) == "fires"
+
+
+def test_incomplete_probe_does_not_reach_fires_at_section_level():
+    assert anchor_state([_live_ref(probe="incomplete")]) == "unproven"
+
+
+def test_a_dead_mechanism_never_anchors_even_beside_an_unprobed_one():
+    # Mixed evidence is not evidence of firing.
+    assert anchor_state([_live_ref("a.sh", "dead"), _live_ref("b.sh")]) == "unproven"
+
+
+def test_mechanism_refs_resolve_the_probe_from_receipts(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    sec = Section("f.md", "H", 2, 1, 2, "Enforced by `hooks/gate.sh` on every call.")
+    refs = mechanism_refs(sec, tmp_path, {"hooks/gate.sh": dict(_FULL_PROBE)})
+    assert refs[0]["probe"] == "fires"
+    assert anchor_state(refs) == "fires"
+
+
+def test_a_receipt_cannot_anchor_a_file_that_does_not_exist(tmp_path):
+    # Otherwise a receipt for a mechanism deleted since the probe would keep
+    # certifying prose as free to cut.
+    sec = Section("f.md", "H", 2, 1, 2, "Enforced by `hooks/ghost.sh` somewhere.")
+    refs = mechanism_refs(sec, tmp_path, {"hooks/ghost.sh": dict(_FULL_PROBE)})
+    assert refs[0]["exists_on_disk"] is False
+    assert anchor_state(refs) == "none"
+
+
+def test_load_probe_receipts_roundtrip(tmp_path):
+    p = tmp_path / "probes.json"
+    p.write_text('{"probes": {"a.sh": {"fires_on_trigger": true}}}')
+    assert load_probe_receipts(p) == {"a.sh": {"fires_on_trigger": True}}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not json at all",
+        '{"no_probes_key": {}}',
+        '{"probes": ["a.sh"]}',
+        "[]",
+    ],
+)
+def test_load_probe_receipts_refuses_junk_rather_than_defaulting_empty(tmp_path, body):
+    # Defaulting to {} would silently downgrade every anchor to unresolved while
+    # the run looked normal — a typo in the path becoming a quiet policy change.
+    p = tmp_path / "probes.json"
+    p.write_text(body)
+    with pytest.raises(BadProbeReceipts):
+        load_probe_receipts(p)
+
+
+def test_load_probe_receipts_missing_file_raises():
+    with pytest.raises(BadProbeReceipts):
+        load_probe_receipts(Path("/nonexistent/probes.json"))
+
+
+def test_audit_separates_existence_from_firing(tmp_path):
+    """End-to-end: the two columns disagree, which is the whole point."""
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Repo\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` on every write.\n"
+        "## Style\nPrefer bun over npm for new projects.\n"
+    )
+    report = audit([str(tmp_path)], repo_root=tmp_path)
+    rules = next(s for s in report["sections"] if s["heading"] == "Rules")
+    assert rules["anchored_candidate"] is True
+    assert rules["anchor_state"] == "unproven"
+    # Three sections (Repo / Rules / Style); only Rules names a mechanism.
+    assert report["anchors"] == {"fires": 0, "unproven": 1, "dead": 0, "none": 2}
+    assert report["probe_receipts_loaded"] == 0
+
+    probed = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        probe_receipts={"hooks/gate.sh": dict(_FULL_PROBE)},
+    )
+    rules = next(s for s in probed["sections"] if s["heading"] == "Rules")
+    assert rules["anchor_state"] == "fires"
+    assert probed["anchors"]["unproven"] == 0
+    assert probed["probe_receipts_loaded"] == 1
 
 
 # ----------------------------------------------------------------- duplication
