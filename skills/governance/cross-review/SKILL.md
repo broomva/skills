@@ -81,6 +81,14 @@ not green before           → INCONCLUSIVE. Nothing can be proven about a
                              test that does not pass to begin with.
 ```
 
+Three further shapes resolve to INCONCLUSIVE rather than a verdict, because in each the experiment did not happen:
+
+- **The mutation changed nothing.** `--ref HEAD~1` when the file last changed earlier leaves it byte-identical, and the suite never ran without the code. Reported with the ref named.
+- **The mutated run emitted fewer checks than the baseline while exiting 0.** It did not pass; it did not run.
+- **The runner aborted before reaching a verdict.** Setup failures exit 2, never 1 — borrowing the UNPROVEN code would report "your test is decoration" when the truth is "the runner fell over".
+
+A **symlinked target is refused outright**: `cat >` follows a link, so mutating one writes through it into the real file, which may sit outside `--root` and would not be restored. Point `--target` at the real file.
+
 ```bash
 # neuter a script and see whether the suite notices
 mutation-proof run \
@@ -96,7 +104,7 @@ mutation-proof run \
 
 | Strategy | Mutation | Use for |
 |---|---|---|
-| `stub` (default) | Replaces the target with a trivially-succeeding no-op for its type — `exit 0` for shell, a `main()` returning 0 for python, `process.exit(0)` for node. Type from extension, then shebang; an unrecognised type is an error, not a guess. | "Does this suite test this file at all?" |
+| `stub` (default) | Replaces the target with a trivially-succeeding no-op for its type — for shell, `return 0 2>/dev/null \|\| true; exit 0`, which is inert when the file is *sourced* and exits 0 when executed; a `main()` returning 0 for python; `process.exit(0)` for node. Type from extension, then shebang; an unrecognised type is an error, not a guess. | "Does this suite test this file at all?" |
 | `revert` | `git show <ref>:<path>` restores the pre-fix content. A file absent at that ref is deleted, because absence *is* the pre-fix state. | "Does this test prove *this fix*?" |
 
 Exit codes: `0` PROVEN · `1` UNPROVEN · `2` usage/setup error · `3` INCONCLUSIVE. Each mutation also emits one parseable line: `mutation-proof: verdict=… target=… rc_before=… rc_after=… flipped=…`.
@@ -131,6 +139,10 @@ mutation-proof run --target scripts/gate.sh --test 'bash tests/gate.test.sh' \
 ```
 
 **It writes one leg and only one leg.** The other two describe trigger behaviour this runner never exercises, so they are left *absent* and unhobble reads the receipt as `incomplete`. Defaulting them to `true` for a tidier verdict would forge two untested legs — the identical defect one level up. An honest `incomplete` is the correct output.
+
+**Evidence is leg-scoped, and that is not cosmetic.** unhobble's `shows_evidence` is per-*record*: `bool(str(rec.get("evidence") or "").strip())`. A top-level `evidence` key would star the whole record as evidenced, silently upgrading a hand-written bare `yes*` to `yes` — this runner's honest observation acting as cover for two unevidenced claims. Verified by execution against BRO-2035: the top-level shape yields `yes`, the leg-scoped shape preserves `yes*`. When merging onto legs asserted `true` with nothing behind them, the runner says so on stderr.
+
+**What the receipt cannot do yet.** With one leg of three, `probe_state` returns `incomplete` whether the verdict was PROVEN, UNPROVEN, or absent — so `--emit-receipt` cannot presently move a consumer verdict in either direction. What it guarantees today is that it never *falsely* moves one. Per-leg consumption is BRO-2035's side of the contract.
 
 Three distinctions the emitter keeps:
 

@@ -16,9 +16,18 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MP="$REPO/scripts/mutation-proof.sh"
 
+# Every check must be accounted for. `MUTATION_PROOF_ACTIVE=1` used to make this
+# suite print "24 passed, 0 failed, all green ✓" and exit 0 with the ONLY test
+# proving the other 24 are not decoration silently gone — a green that means
+# less than it looks, shipped by the tool built to detect exactly that. A skip
+# is now counted, named, and reconciled against EXPECTED_CHECKS.
+EXPECTED_CHECKS=36
+
 PASS=0
 FAIL=0
+SKIP=0
 FAILED=()
+SKIPPED=()
 
 ok() {
     PASS=$((PASS + 1))
@@ -29,6 +38,11 @@ fail() {
     FAILED+=("$1")
     echo "  [FAIL] $1"
     [ -n "${2:-}" ] && echo "         $2"
+}
+skip() {
+    SKIP=$((SKIP + 1))
+    SKIPPED+=("$1${2:+ — $2}")
+    echo "  [skip] $1${2:+ — $2}"
 }
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/mutproof-tests.XXXXXX")
@@ -294,7 +308,8 @@ fi
 # the inner invocation of this file knows to skip this test instead of recursing.
 echo "T15. self-referential: stubbing the runner turns this suite red"
 if [ "${MUTATION_PROOF_ACTIVE:-0}" = "1" ]; then
-    echo "  [skip] T15: inner run under mutation-proof (recursion guard)"
+    skip "T15: this suite discriminates on its own runner" \
+        "inner run under mutation-proof (recursion guard)"
 else
     run_mp run --root "$REPO" --target scripts/mutation-proof.sh \
         --test 'bash tests/mutation-proof.test.sh'
@@ -402,17 +417,21 @@ run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh'
 R21=$(python3 - "$RCPT/pos.json" <<'PY'
 import json, sys
 rec = json.load(open(sys.argv[1]))["probes"]["src/gate.sh"]
-print("leg=%r absent=%s rcb=%s rca=%s" % (
+ev = rec["evidence_by_leg"]["neutered_check_went_red"]
+print("leg=%r absent=%s toplevel_ev=%s scoped=%s rcb=%s rca=%s" % (
     rec.get("neutered_check_went_red"),
     "fires_on_trigger" not in rec and "silent_on_non_trigger" not in rec,
-    rec["evidence"]["exit_code_baseline"], rec["evidence"]["exit_code_mutated"]))
+    "evidence" in rec,
+    list(rec["evidence_by_leg"]),
+    ev["exit_code_baseline"], ev["exit_code_mutated"]))
 PY
 )
-if [ "$MP_RC" = "0" ] && [ "$R21" = "leg=True absent=True rcb=0 rca=1" ] \
+if [ "$MP_RC" = "0" ] \
+    && [ "$R21" = "leg=True absent=True toplevel_ev=False scoped=['neutered_check_went_red'] rcb=0 rca=1" ] \
     && [ "$(probe_state_of "$RCPT/pos.json" src/gate.sh)" = "incomplete" ]; then
-    ok "T21: one observed leg, two honestly absent, reads as incomplete"
+    ok "T21: one observed leg, two honestly absent, evidence leg-scoped"
 else
-    fail "T21: one observed leg, two honestly absent, reads as incomplete" \
+    fail "T21: one observed leg, two honestly absent, evidence leg-scoped" \
         "rc=$MP_RC parsed=[$R21] state=$(probe_state_of "$RCPT/pos.json" src/gate.sh)"
 fi
 
@@ -449,6 +468,7 @@ cat >"$RCPT/merge.json" <<'FIX'
 FIX
 run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
     --emit-receipt "$RCPT/merge.json"
+MERGE_OUT="$MP_OUT"
 R24=$(python3 - "$RCPT/merge.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))["probes"]
@@ -471,6 +491,44 @@ else
         "parsed=[$R24] bad_rc=$BAD_RC"
 fi
 
+# T24 above is only half the story, and the half that reads as reassuring.
+# Merging into a record that already asserts the two legs this runner disclaims
+# reaches `fires` — which is the consumer's business. What is THIS runner's
+# business is that its evidence must not vouch for those legs. The consumer's
+# `shows_evidence` is per-RECORD (`bool(str(rec.get("evidence") or "").strip())`),
+# so a top-level `evidence` key would star the whole record as evidenced and
+# silently upgrade a bare `yes*` to `yes`. Replicated here, not imported.
+shows_evidence_of() {
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+rec = json.load(open(sys.argv[1]))["probes"].get(sys.argv[2]) or {}
+print(bool(str(rec.get("evidence") or "").strip()))
+PY
+}
+echo "T26. evidence never vouches for legs this runner did not observe"
+LAUNDER_BEFORE=$(shows_evidence_of "$RCPT/merge.json" src/gate.sh)
+R26=$(python3 - "$RCPT/merge.json" <<'PY'
+import json, sys
+rec = json.load(open(sys.argv[1]))["probes"]["src/gate.sh"]
+print("toplevel=%s scoped_legs=%s" % ("evidence" in rec, sorted(rec.get("evidence_by_leg", {}))))
+PY
+)
+if [ "$LAUNDER_BEFORE" = "False" ] \
+    && [ "$R26" = "toplevel=False scoped_legs=['neutered_check_went_red']" ]; then
+    ok "T26: no record-level evidence — the bare-receipt star survives"
+else
+    fail "T26: no record-level evidence — the bare-receipt star survives" \
+        "shows_evidence=$LAUNDER_BEFORE parsed=[$R26]"
+fi
+
+echo "T27. merging onto unevidenced true legs warns"
+if echo "$MERGE_OUT" | grep -q "WARNING — receipt entry" \
+    && echo "$MERGE_OUT" | grep -q "remain unproven claims"; then
+    ok "T27: unevidenced pre-existing legs are called out"
+else
+    fail "T27: unevidenced pre-existing legs are called out" "out=$MERGE_OUT"
+fi
+
 echo "T25. --receipt-key overrides the key and refuses to stand for several targets"
 # Deliberately unexpanded: unhobble keys a user-scope mechanism by the literal
 # `~/...` reference as it is written in the prose, not by its resolved path.
@@ -489,13 +547,208 @@ else
         "keys=[$KEYED] rc=$MP_RC"
 fi
 
+# ── T28-T33: regressions found by P20 round 1 ─────────────────────────────
+
+echo "T28. a symlinked target is refused, and the file it points at is untouched"
+SYM="$WORK/sym"
+mkdir -p "$SYM/precious" "$SYM/root/src"
+printf '#!/usr/bin/env bash\necho REAL\n' >"$SYM/precious/impl.sh"
+ln -s "$SYM/precious/impl.sh" "$SYM/root/src/gate.sh"
+PRECIOUS_BEFORE=$(cat "$SYM/precious/impl.sh")
+run_mp run --root "$SYM/root" --target src/gate.sh --test 'true'
+# Exit 2, never 1: a setup refusal must not borrow the UNPROVEN code, or
+# pre-push reports "your test is decoration" when the runner ate a source file.
+if [ "$MP_RC" = "2" ] \
+    && echo "$MP_OUT" | grep -q "is a symlink" \
+    && [ "$(cat "$SYM/precious/impl.sh")" = "$PRECIOUS_BEFORE" ]; then
+    ok "T28: symlink refused with exit 2, link target intact"
+else
+    fail "T28: symlink refused with exit 2, link target intact" \
+        "rc=$MP_RC content_changed=$([ "$(cat "$SYM/precious/impl.sh")" = "$PRECIOUS_BEFORE" ] && echo no || echo YES)"
+fi
+
+echo "T29. a SOURCED library is neutered without forging a pass"
+SRC="$WORK/sourced"
+mkdir -p "$SRC/lib" "$SRC/t"
+cat >"$SRC/lib/util.sh" <<'FIX'
+#!/usr/bin/env bash
+slugify() { printf '%s' "$1" | tr 'A-Z ' 'a-z-'; }
+FIX
+cat >"$SRC/t/run.sh" <<'FIX'
+#!/usr/bin/env bash
+. lib/util.sh
+F=0
+c() { if [ "$2" = "$3" ]; then echo "  [ok] $1"; else echo "  [FAIL] $1"; F=$((F + 1)); fi; }
+c "slugify lowercases" "$(slugify 'Hello World')" "hello-world"
+c "slugify hyphenates" "$(slugify 'A B')" "a-b"
+[ "$F" -gt 0 ] && exit 1
+exit 0
+FIX
+run_mp run --root "$SRC" --target lib/util.sh --test 'bash t/run.sh'
+# A bare `exit 0` stub ends the SOURCING shell before any assertion runs: the
+# suite exits 0 having tested nothing, and a working test gets called
+# decoration. The stub must be inert when sourced.
+if [ "$MP_RC" = "0" ] && echo "$MP_OUT" | grep -q "verdict=PROVEN .*flipped=2"; then
+    ok "T29: sourced library proven, not falsely UNPROVEN"
+else
+    fail "T29: sourced library proven, not falsely UNPROVEN" "rc=$MP_RC out=$MP_OUT"
+fi
+
+echo "T30. a green mutated run with FEWER checks is INCONCLUSIVE, not UNPROVEN"
+# The independent guard for the same failure class. Even with an inert stub, a
+# suite can exit 0 having run nothing; "exited 0 with fewer checks than the
+# baseline" means it did not RUN, not that it passed. The runner already
+# computed the disproof (BASE_PARSED=1, MUT_PARSED=0) and consulted it only on
+# the PROVEN branch, which is the branch where it does not matter.
+COL="$WORK/collapse"
+mkdir -p "$COL/lib" "$COL/t"
+printf 'MARKER=real\n' >"$COL/lib/conf.sh"
+cat >"$COL/t/run.sh" <<'FIX'
+#!/usr/bin/env bash
+# shellcheck disable=SC1091
+. lib/conf.sh 2>/dev/null || true
+if [ "${MARKER:-}" != "real" ]; then
+    exit 0          # emits no checks at all, and exits GREEN
+fi
+echo "  [ok] one"
+echo "  [ok] two"
+echo "  [ok] three"
+exit 0
+FIX
+run_mp run --root "$COL" --target lib/conf.sh --test 'bash t/run.sh'
+if [ "$MP_RC" = "3" ] \
+    && echo "$MP_OUT" | grep -q "verdict=INCONCLUSIVE" \
+    && echo "$MP_OUT" | grep -q "emitted fewer checks than the baseline" \
+    && echo "$MP_OUT" | grep -q "The suite did not pass; it did not RUN\."; then
+    ok "T30: collapse outranks the exit code"
+else
+    fail "T30: collapse outranks the exit code" "rc=$MP_RC out=$MP_OUT"
+fi
+
+echo "T31. a mutation that changes nothing is INCONCLUSIVE, never UNPROVEN"
+IDENT="$WORK/ident"
+mkdir -p "$IDENT"
+(
+    cd "$IDENT" || exit 1
+    git init -q . && git config user.email t@example.com && git config user.name t
+    mkdir -p src t
+    printf '#!/usr/bin/env bash\necho REAL\n' >src/gate.sh
+    cat >t/run.sh <<'FIX'
+#!/usr/bin/env bash
+if [ "$(bash src/gate.sh)" = "REAL" ]; then echo "  [ok] real"; else echo "  [FAIL] real"; exit 1; fi
+FIX
+    git add -A && git commit -qm "the fix"
+    printf 'unrelated\n' >README.md
+    git add -A && git commit -qm "a later, unrelated commit"
+) >/dev/null 2>&1
+run_mp run --root "$IDENT" --target src/gate.sh --test 'bash t/run.sh' \
+    --strategy revert --ref HEAD~1
+# The likeliest off-by-one: the file did not change in the last commit, so
+# reverting to HEAD~1 is a no-op and the suite never ran without the code.
+if [ "$MP_RC" = "3" ] \
+    && echo "$MP_OUT" | grep -q "verdict=INCONCLUSIVE" \
+    && echo "$MP_OUT" | grep -q "byte-identical at HEAD~1"; then
+    ok "T31: no-op mutation reported INCONCLUSIVE with the ref named"
+else
+    fail "T31: no-op mutation reported INCONCLUSIVE with the ref named" "rc=$MP_RC out=$MP_OUT"
+fi
+
+echo "T32. a no-op mutation writes no receipt leg"
+run_mp run --root "$IDENT" --target src/gate.sh --test 'bash t/run.sh' \
+    --strategy revert --ref HEAD~1 --emit-receipt "$RCPT/noop.json"
+if [ "$MP_RC" = "3" ] && [ ! -e "$RCPT/noop.json" ]; then
+    ok "T32: no observation, no durable false leg"
+else
+    fail "T32: no observation, no durable false leg" \
+        "rc=$MP_RC exists=$([ -e "$RCPT/noop.json" ] && echo yes || echo no)"
+fi
+
+echo "T33. the runner's own logs are not visible to the test command"
+# BASE_OUT/MUT_OUT used to live inside the copied tree, so the baseline saw one
+# harness file and the mutated run saw two. A test merely counting files --
+# never referencing the target -- was reported PROVEN with "1 check flipped".
+# A false PROVEN is the worse polarity: it manufactures the evidence for
+# "every fix mutation-proven".
+LIT="$WORK/litter"
+mkdir -p "$LIT/src"
+printf '#!/usr/bin/env bash\necho hi\n' >"$LIT/src/gate.sh"
+cat >"$LIT/check.sh" <<'FIX'
+#!/usr/bin/env bash
+N=$(find . -maxdepth 1 -type f | wc -l | tr -d ' ')
+if [ "$N" = "1" ]; then echo "  [ok] root file count stable"; else echo "  [FAIL] saw $N files at root"; exit 1; fi
+FIX
+run_mp run --root "$LIT" --target src/gate.sh --test 'bash check.sh'
+if [ "$MP_RC" = "1" ] && echo "$MP_OUT" | grep -q "verdict=UNPROVEN"; then
+    ok "T33: a test that ignores the target is UNPROVEN, not falsely PROVEN"
+else
+    fail "T33: a test that ignores the target is UNPROVEN, not falsely PROVEN" \
+        "rc=$MP_RC out=$MP_OUT"
+fi
+
+echo "T34. pre-push with an unmeasurable diff base fires the gate, never skips"
+# The guard added for the exit-128 crash reported 0 files / 0 insertions, which
+# fed the substantive threshold and printed "[skip] Trivial PR — gate not
+# required": P20 silently skipping on an unmeasured change. Fail-loud had become
+# fail-silent-pass, which is worse than the crash it replaced.
+NOBASE="$WORK/nobase"
+mkdir -p "$NOBASE"
+(
+    cd "$NOBASE" || exit 1
+    git init -q . && git config user.email t@example.com && git config user.name t
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf 'x\n' >"f$i.txt"; done
+    git add -A && git commit -qm init
+) >/dev/null 2>&1
+NB_OUT=$(cd "$NOBASE" && bash "$REPO/scripts/cross-review.sh" pre-push --strata=C 2>&1)
+NB_RC=$?
+if [ "$NB_RC" = "0" ] \
+    && ! echo "$NB_OUT" | grep -q "\[skip\] Trivial PR" \
+    && echo "$NB_OUT" | grep -q "diff scope UNKNOWN" \
+    && echo "$NB_OUT" | grep -q "Treating the change as SUBSTANTIVE" \
+    && echo "$NB_OUT" | grep -q "Strata C: composed existing skills"; then
+    ok "T34: unmeasurable scope fires the gate and prints the briefs"
+else
+    fail "T34: unmeasurable scope fires the gate and prints the briefs" \
+        "rc=$NB_RC skip=$(echo "$NB_OUT" | grep -c 'Trivial PR')"
+fi
+
+echo "T35. pre-push names the MISSING mutation flag, not the wrong one"
+HALF_OUT=$(cd "$NOBASE" && bash "$REPO/scripts/cross-review.sh" pre-push --strata=C \
+    --mutation-target=src/gate.sh 2>&1)
+if echo "$HALF_OUT" | grep -q "\--mutation-target given but --mutation-test missing"; then
+    ok "T35: half a flag pair is diagnosed as a typo, not a decision"
+else
+    fail "T35: half a flag pair is diagnosed as a typo, not a decision" "$HALF_OUT"
+fi
+
+echo "T36. a binary target is rejected without a null-byte warning first"
+printf '\000\001\002binary\000data\n' >"$FIX1/blob.bin"
+run_mp run --root "$FIX1" --target blob.bin --test 'true'
+if [ "$MP_RC" = "2" ] \
+    && echo "$MP_OUT" | grep -q "cannot infer a no-op stub" \
+    && ! echo "$MP_OUT" | grep -qi "null byte"; then
+    ok "T36: clean rejection, no null-byte noise"
+else
+    fail "T36: clean rejection, no null-byte noise" "rc=$MP_RC out=$MP_OUT"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────
 echo ""
 echo "── results ────────────────────────────────────────────────────"
-echo "  $PASS passed, $FAIL failed"
+echo "  $PASS passed, $FAIL failed, $SKIP skipped"
+if [ "$SKIP" -gt 0 ]; then
+    echo "  Skipped:"
+    for t in "${SKIPPED[@]}"; do echo "    - $t"; done
+fi
 if [ "$FAIL" -gt 0 ]; then
     echo "  Failed:"
     for t in "${FAILED[@]}"; do echo "    - $t"; done
     exit 1
 fi
-echo "  all green ✓"
+# A green run must also be a COMPLETE run. Without this, dropping a check --
+# by an env var, an early return, an editing slip -- reads as success.
+if [ $((PASS + SKIP)) -ne "$EXPECTED_CHECKS" ]; then
+    echo "  [FAIL] accounting: $((PASS + SKIP)) checks ran, expected $EXPECTED_CHECKS."
+    echo "         Checks went missing, or EXPECTED_CHECKS is stale after an edit."
+    exit 1
+fi
+echo "  all green ✓ ($PASS passed, $SKIP skipped, $EXPECTED_CHECKS accounted for)"

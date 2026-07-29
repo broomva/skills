@@ -44,5 +44,15 @@ jobs:
       # Includes the self-referential case: T15 stubs mutation-proof.sh and
       # requires this same suite to go red. If the suite passed against a
       # stubbed runner, the runner would be committing the defect it detects.
+      #
+      # `env -u MUTATION_PROOF_ACTIVE` is load-bearing. That variable makes T15
+      # skip (its recursion guard), and with it set the suite still prints a
+      # green summary — CI would then be enforcing 35 checks while believing it
+      # enforced 36. Unsetting it, and asserting the full count in the summary
+      # line, means the green here cannot quietly shrink.
       - name: Tests — mutation-proof runner
-        run: bash tests/mutation-proof.test.sh
+        run: |
+          set -euo pipefail
+          env -u MUTATION_PROOF_ACTIVE bash tests/mutation-proof.test.sh | tee /tmp/mp.out
+          grep -q '36 passed, 0 failed, 0 skipped' /tmp/mp.out
+          grep -q '36 accounted for' /tmp/mp.out

@@ -94,6 +94,13 @@ RECEIPT=""
 RECEIPT_KEY=""
 
 SCRATCH=""
+# Test output lives OUTSIDE the copied tree. Writing it inside made the runner's
+# own litter part of the fixture: a test merely counting files at the root saw
+# one harness file in the baseline and two in the mutated run, and was reported
+# PROVEN without ever referencing the target. A false PROVEN is the worse
+# polarity for a proof tool — it manufactures the evidence for "mutation-proven".
+LOGDIR=""
+VERDICT_REACHED=0
 
 die_usage() {
     echo "mutation-proof: $1" >&2
@@ -106,15 +113,32 @@ die_usage() {
 # as uncalled (SC2329); CI and dev machines disagree on which, so disable both.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
-    if [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
+    for d in "$SCRATCH" "$LOGDIR"; do
+        [ -n "$d" ] && [ -d "$d" ] || continue
         if [ "$KEEP_SCRATCH" = "1" ]; then
-            echo "  [keep] scratch retained: $SCRATCH"
+            echo "  [keep] retained: $d"
         else
-            rm -rf -- "$SCRATCH"
+            rm -rf -- "$d"
         fi
-    fi
+    done
 }
 trap cleanup EXIT
+
+# Any failure before a verdict is a SETUP failure, and must not borrow exit 1 —
+# that is the documented UNPROVEN code. Reporting "your test is decoration" when
+# the truth is "the runner fell over" is the worst lie this tool can tell, and it
+# is what a symlinked target used to produce.
+# shellcheck disable=SC2317,SC2329
+on_err() {
+    err_rc=$?
+    if [ "$VERDICT_REACHED" = "0" ]; then
+        echo "mutation-proof: aborted before a verdict (status $err_rc)." >&2
+        echo "  No claim is made about the test. This is a setup failure, not UNPROVEN." >&2
+        exit 2
+    fi
+    exit "$err_rc"
+}
+trap on_err ERR
 
 # ─── Arg parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
@@ -257,6 +281,20 @@ while IFS= read -r t; do
             ;;
     esac
     [ -e "$t" ] || die_usage "target '$t' does not exist (looked in . and $ROOT_ABS)"
+    # A symlinked FINAL component defeats containment: abs_path resolves the
+    # directory but appends the basename verbatim, tar preserves the link into
+    # scratch, and `cat >` follows it — writing the stub through the link into a
+    # real file outside the root. This workspace is full of such links (the
+    # Obsidian vault, skills/bookkeeping, ~/.claude). Refuse, and name the real
+    # file so the caller can target it directly.
+    if [ -L "$t" ]; then
+        link_dest=$(readlink "$t" 2>/dev/null || echo "?")
+        echo "mutation-proof: target '$t' is a symlink -> $link_dest" >&2
+        echo "  Refusing: mutating it would write THROUGH the link into the real" >&2
+        echo "  file, which may live outside --root and would not be restored." >&2
+        echo "  Point --target at the real file, and --root at a tree containing it." >&2
+        exit 2
+    fi
     [ -f "$t" ] || die_usage "target '$t' is not a regular file"
     tabs=$(abs_path "$t") || die_usage "cannot resolve target '$t'"
     case "$tabs" in
@@ -339,7 +377,10 @@ detect_kind() {
         *.py)              echo python; return ;;
         *.js|*.mjs|*.cjs|*.ts) echo node; return ;;
     esac
-    first=$(head -1 "$f" 2>/dev/null || true)
+    # Strip NULs before the command substitution sees them: on a binary target
+    # bash otherwise prints "ignored null byte in input" to stderr, and the user
+    # gets a warning ahead of the correct, clear rejection.
+    first=$(head -c 512 "$f" 2>/dev/null | tr -d '\000' | head -1 || true)
     case "$first" in
         '#!'*bash*|'#!'*/sh*|'#!'*zsh*|'#!'*' sh'*) echo shell; return ;;
         '#!'*python*)                               echo python; return ;;
@@ -350,11 +391,25 @@ detect_kind() {
 
 write_stub() {
     # $1 = file in the scratch copy, $2 = kind
+    #
+    # Every branch unlinks first. Never write through a path that might be a
+    # link: `cat >` follows one and lands in the real file, outside the scratch
+    # copy and outside --root. The -L guard on the target is the primary
+    # defence; this is the one that holds when a link arrives some other way.
+    rm -f -- "$1"
     case "$2" in
         shell)
+            # A plain `exit 0` is not a no-op when the target is SOURCED: it
+            # terminates the SOURCING shell with status 0 before any assertion
+            # runs, so a genuinely discriminating test on a sourced library
+            # reports UNPROVEN. That is not a failure to neuter — it forges a
+            # pass. `return` is valid only in a sourced file, so this is inert
+            # when sourced (functions simply never get defined) and still exits
+            # 0 when executed. POSIX-safe: works under bash and dash, both ways.
             cat >"$1" <<'STUB'
 #!/usr/bin/env bash
 # mutation-proof stub — the real implementation was removed for this run.
+return 0 2>/dev/null || true
 exit 0
 STUB
             ;;
@@ -415,20 +470,25 @@ apply_mutation() {
     gitrel="${ROOT_ABS#"$top"/}"
     if [ "$gitrel" = "$ROOT_ABS" ]; then gitrel=""; else gitrel="$gitrel/"; fi
     if git -C "$ROOT_ABS" cat-file -e "$REF:$gitrel$rel" 2>/dev/null; then
+        rm -f -- "$dst"   # never redirect through a possible link
         git -C "$ROOT_ABS" show "$REF:$gitrel$rel" >"$dst"
         chmod +x "$dst" 2>/dev/null || true
         echo "revert to $REF"
     else
         # Absent at that ref: the pre-fix state IS absence. Deleting is the
-        # faithful mutation, not an error.
+        # faithful mutation, not an error — but it is a DIFFERENT experiment
+        # from reverting content, and the verdict says so, because "the suite
+        # noticed a missing file" is much weaker than "the suite noticed the fix
+        # was undone". A renamed path lands here silently otherwise.
         rm -f -- "$dst"
-        echo "revert to $REF (absent → deleted)"
+        echo "revert to $REF (absent at that ref → DELETED, not reverted)"
     fi
 }
 
 restore_target() {
     local rel="$1"
     mkdir -p "$(dirname "$SCRATCH/$rel")"
+    rm -f -- "$SCRATCH/$rel"
     cp -p "$ROOT_ABS/$rel" "$SCRATCH/$rel"
 }
 
@@ -440,10 +500,30 @@ run_test() {
     set +e
     if [ -n "$TIMEOUT_BIN" ]; then
         ( cd "$SCRATCH" && MUTATION_PROOF_ACTIVE=1 "$TIMEOUT_BIN" "$TIMEOUT_SECS" bash -c "$TEST_CMD" ) >"$out" 2>&1
+        RC=$?
     else
-        ( cd "$SCRATCH" && MUTATION_PROOF_ACTIVE=1 bash -c "$TEST_CMD" ) >"$out" 2>&1
+        # Stock macOS has neither timeout nor gtimeout, and this runner is fired
+        # from a pre-push hook: an infinite-loop test would wedge the hook
+        # forever on the primary dev platform. Watchdog in plain bash rather
+        # than silently dropping the bound the caller asked for.
+        ( cd "$SCRATCH" && MUTATION_PROOF_ACTIVE=1 bash -c "$TEST_CMD" ) >"$out" 2>&1 &
+        local pid=$! waited=0
+        while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$TIMEOUT_SECS" ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null
+            sleep 1
+            kill -KILL "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            RC=124   # match GNU timeout's convention
+            echo "[mutation-proof] test command exceeded ${TIMEOUT_SECS}s and was killed" >>"$out"
+        else
+            wait "$pid"
+            RC=$?
+        fi
     fi
-    RC=$?
     set -e
 }
 
@@ -521,12 +601,20 @@ if not isinstance(entry, dict):
 
 # The observed leg, and only the observed leg.
 entry[LEG] = went_red == "true"
-entry["evidence"] = {
+
+# Evidence is LEG-SCOPED, never a bare top-level `evidence` key. The consumer's
+# `shows_evidence` is per-RECORD: it reads `rec["evidence"]` and stars the whole
+# record as evidenced. Writing this block at the top level would therefore make
+# it vouch for fires_on_trigger and silent_on_non_trigger — the two legs this
+# runner explicitly disclaims — turning a hand-written `yes*` into `yes`.
+# Verified against BRO-2035 by execution: that upgrade happens.
+evidence = entry.get("evidence_by_leg")
+if not isinstance(evidence, dict):
+    evidence = {}
+evidence[LEG] = {
     "producer": "mutation-proof v0.0.1 (broomva/skills cross-review)",
     "recorded_at": datetime.datetime.now(datetime.timezone.utc)
                    .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-    "legs_observed": [LEG],
-    "legs_not_observed": ["fires_on_trigger", "silent_on_non_trigger"],
     "strategy": strategy + (f" (ref {ref})" if ref else ""),
     "mutation": mutation,
     "test_command": test_cmd,
@@ -534,7 +622,22 @@ entry["evidence"] = {
     "exit_code_mutated": int(rc_after),
     "checks_flipped": None if flipped == "n/a" else int(flipped),
 }
+entry["evidence_by_leg"] = evidence
 doc["probes"][key] = entry
+
+# A record carrying `true` legs that nothing has evidenced is the exact shape
+# the probe receipt was introduced to expose, and merging into it silently would
+# leave this runner's honest leg as cover for two unevidenced ones.
+UNOBSERVED = ("fires_on_trigger", "silent_on_non_trigger")
+bare = [leg for leg in UNOBSERVED
+        if entry.get(leg) is True and leg not in evidence]
+if bare:
+    print("mutation-proof: WARNING — receipt entry %r already asserts %s as true "
+          "with no evidence recorded for %s." % (key, ", ".join(bare),
+                                                 "it" if len(bare) == 1 else "them"),
+          file=sys.stderr)
+    print("  This run evidenced only %s. Those legs remain unproven claims; "
+          "nothing here vouches for them." % LEG, file=sys.stderr)
 
 # Atomic: a half-written receipt read by an auditor is worse than none.
 d = os.path.dirname(os.path.abspath(path)) or "."
@@ -577,18 +680,20 @@ echo "  Strategy:    $STRATEGY${REF:+ (ref $REF)}"
 echo "  Test:        $TEST_CMD"
 [ -n "$PATHS" ] && echo "  Paths:       $PATHS"
 if [ -z "$TIMEOUT_BIN" ]; then
-    echo "  Timeout:     none — no timeout/gtimeout on PATH, runs unbounded"
+    echo "  Timeout:     ${TIMEOUT_SECS}s (bash watchdog — no timeout/gtimeout on PATH)"
 else
     echo "  Timeout:     ${TIMEOUT_SECS}s ($TIMEOUT_BIN)"
 fi
 echo ""
 
 copy_tree
+LOGDIR=$(mktemp -d "${TMPDIR:-/tmp}/mutproof-logs.XXXXXX")
 echo "  Scratch:     $SCRATCH"
+echo "  Logs:        $LOGDIR  (outside the tree under test)"
 echo ""
 
 # ─── Baseline ─────────────────────────────────────────────────────────────
-BASE_OUT="$SCRATCH/.mutation-proof-baseline.log"
+BASE_OUT="$LOGDIR/baseline.log"
 echo "  ─── baseline (unmutated) ────────────────────────────────────"
 run_test "$BASE_OUT"
 RC_BEFORE=$RC
@@ -623,18 +728,41 @@ fi
 
 # ─── Per-target mutations ─────────────────────────────────────────────────
 ANY_UNPROVEN=0
+ANY_INCONCLUSIVE=0
+TARGET_N=0
 while IFS= read -r rel; do
     [ -n "$rel" ] || continue
+    TARGET_N=$((TARGET_N + 1))
+    VERDICT_REACHED=0
 
     LABEL=$(apply_mutation "$rel")
-    MUT_OUT="$SCRATCH/.mutation-proof-mutated.log"
-    run_test "$MUT_OUT"
-    RC_AFTER=$RC
-    count_marks "$MUT_OUT"
-    MUT_PARSED=$COUNT_PARSED
-    MUT_OK=$COUNT_OK
-    MUT_FAIL=$COUNT_FAIL
+
+    # Did the mutation actually change anything? Nothing else checks. `--ref
+    # HEAD~1` when the file last changed in an earlier commit — the likeliest
+    # off-by-one there is — leaves the target byte-identical, and the run then
+    # reports UNPROVEN having never once executed the suite without the code.
+    # With --emit-receipt that files a durable, false `went_red: false`.
+    IDENTICAL=0
+    if [ -e "$SCRATCH/$rel" ] && cmp -s "$SCRATCH/$rel" "$ROOT_ABS/$rel"; then
+        IDENTICAL=1
+    fi
+
+    MUT_OUT="$LOGDIR/mutated-${TARGET_N}.log"
+    if [ "$IDENTICAL" = "1" ]; then
+        RC_AFTER="$RC_BEFORE"
+        MUT_PARSED=0; MUT_OK=0; MUT_FAIL=0
+    else
+        run_test "$MUT_OUT"
+        RC_AFTER=$RC
+        count_marks "$MUT_OUT"
+        MUT_PARSED=$COUNT_PARSED
+        MUT_OK=$COUNT_OK
+        MUT_FAIL=$COUNT_FAIL
+    fi
     restore_target "$rel"
+
+    BASE_TOTAL=$((BASE_OK + BASE_FAIL))
+    MUT_TOTAL=$((MUT_OK + MUT_FAIL))
 
     # Flip count: only claimed when both runs parsed AND the suite ran the same
     # number of checks. A suite that aborted early has a different shape, and
@@ -642,8 +770,6 @@ while IFS= read -r rel; do
     FLIPPED="n/a"
     FLIP_NOTE=""
     if [ "$BASE_PARSED" = "1" ] && [ "$MUT_PARSED" = "1" ]; then
-        BASE_TOTAL=$((BASE_OK + BASE_FAIL))
-        MUT_TOTAL=$((MUT_OK + MUT_FAIL))
         if [ "$BASE_TOTAL" = "$MUT_TOTAL" ]; then
             FLIPPED=$((MUT_FAIL - BASE_FAIL))
         else
@@ -653,12 +779,40 @@ while IFS= read -r rel; do
         FLIP_NOTE="output is not parseable as per-check results — exit codes only"
     fi
 
+    # A green mutated run that emitted FEWER checks than the baseline did not
+    # pass — it did not RUN. The classic producer is a sourced library: any stub
+    # that terminates the sourcing shell early exits it 0 with the assertions
+    # never reached. Reporting that as UNPROVEN accuses a working test of being
+    # decoration, so the collapse outranks the exit code.
+    COLLAPSED=0
+    if [ "$BASE_PARSED" = "1" ] && [ "$RC_AFTER" = "0" ]; then
+        if [ "$MUT_PARSED" = "0" ] || [ "$MUT_TOTAL" -lt "$BASE_TOTAL" ]; then
+            COLLAPSED=1
+        fi
+    fi
+
     echo "  ─── mutated: $rel ───"
     echo "  Mutation:    $LABEL"
-    echo "  exit $RC_AFTER  ·  $(fmt_counts "$MUT_PARSED" "$MUT_OK" "$MUT_FAIL")"
+    if [ "$IDENTICAL" = "1" ]; then
+        echo "  (no test run — the mutation changed nothing)"
+    else
+        echo "  exit $RC_AFTER  ·  $(fmt_counts "$MUT_PARSED" "$MUT_OK" "$MUT_FAIL")"
+    fi
     echo ""
 
-    if [ "$RC_AFTER" != "0" ]; then
+    VERDICT="UNPROVEN"
+    if [ "$IDENTICAL" = "1" ]; then
+        VERDICT="INCONCLUSIVE"
+        echo "  INCONCLUSIVE — the mutation was a no-op."
+        if [ "$STRATEGY" = "revert" ]; then
+            echo "    $rel is byte-identical at $REF, so the suite never ran without"
+            echo "    the code under proof. Pick a ref where the file actually differs"
+            echo "    (git log --oneline -- $rel)."
+        else
+            echo "    The stub is byte-identical to the target, so nothing was neutered."
+        fi
+    elif [ "$RC_AFTER" != "0" ]; then
+        VERDICT="PROVEN"
         echo "  PROVEN — the test discriminates."
         echo "    exit $RC_BEFORE → $RC_AFTER with $rel neutered."
         if [ "$FLIPPED" != "n/a" ]; then
@@ -666,8 +820,21 @@ while IFS= read -r rel; do
         else
             echo "    $FLIP_NOTE"
         fi
+        case "$LABEL" in
+            *DELETED*)
+                echo "    CAVEAT: the mutation DELETED the file rather than reverting its"
+                echo "    contents. This proves the suite notices the file missing, which"
+                echo "    is weaker than proving it notices the fix undone. A renamed path"
+                echo "    lands here — check the ref if you expected a content revert." ;;
+        esac
+    elif [ "$COLLAPSED" = "1" ]; then
+        VERDICT="INCONCLUSIVE"
+        echo "  INCONCLUSIVE — the mutated run emitted fewer checks than the baseline."
+        echo "    ${BASE_TOTAL} check(s) before, $([ "$MUT_PARSED" = "1" ] && echo "$MUT_TOTAL" || echo 0) after, exit 0."
+        echo "    The suite did not pass; it did not RUN."
+        echo "    A stub that ends the sourcing shell produces exactly this shape."
+        echo "    Nothing is claimed about whether the test discriminates."
     else
-        ANY_UNPROVEN=1
         echo "  UNPROVEN — the test passed WITH and WITHOUT $rel."
         echo "    exit $RC_BEFORE → $RC_AFTER. This test does not discriminate on that"
         echo "    target: it is decoration with respect to it. Either the test exercises"
@@ -679,22 +846,37 @@ while IFS= read -r rel; do
         fi
     fi
 
+    case "$VERDICT" in
+        UNPROVEN)     ANY_UNPROVEN=1 ;;
+        INCONCLUSIVE) ANY_INCONCLUSIVE=1 ;;
+    esac
+
     if [ -n "$RECEIPT" ]; then
         echo ""
-        WENT_RED=false
-        if [ "$RC_AFTER" != "0" ]; then WENT_RED=true; fi
-        KEY="$rel"
-        if [ -n "$RECEIPT_KEY" ]; then KEY="$RECEIPT_KEY"; fi
-        emit_receipt "$KEY" "$WENT_RED" "$LABEL" "$RC_BEFORE" "$RC_AFTER" "$FLIPPED"
+        if [ "$VERDICT" = "INCONCLUSIVE" ]; then
+            # No observation, so no leg. This is the case the receipt would
+            # otherwise poison with a durable false `false`.
+            echo "  [receipt] nothing written — the neuter leg was not observed."
+        else
+            WENT_RED=false
+            if [ "$VERDICT" = "PROVEN" ]; then WENT_RED=true; fi
+            KEY="$rel"
+            if [ -n "$RECEIPT_KEY" ]; then KEY="$RECEIPT_KEY"; fi
+            emit_receipt "$KEY" "$WENT_RED" "$LABEL" "$RC_BEFORE" "$RC_AFTER" "$FLIPPED"
+        fi
     fi
     echo ""
-    echo "mutation-proof: verdict=$([ "$RC_AFTER" != "0" ] && echo PROVEN || echo UNPROVEN) target=$rel strategy=$STRATEGY rc_before=$RC_BEFORE rc_after=$RC_AFTER flipped=$FLIPPED"
+    echo "mutation-proof: verdict=$VERDICT target=$rel strategy=$STRATEGY rc_before=$RC_BEFORE rc_after=$RC_AFTER flipped=$FLIPPED"
     echo ""
+    VERDICT_REACHED=1
 done <<EOF
 $RELS
 EOF
 
 if [ "$ANY_UNPROVEN" = "1" ]; then
     exit 1
+fi
+if [ "$ANY_INCONCLUSIVE" = "1" ]; then
+    exit 3
 fi
 exit 0
