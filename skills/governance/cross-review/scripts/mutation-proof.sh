@@ -114,7 +114,9 @@ die_usage() {
 # shellcheck disable=SC2317,SC2329
 cleanup() {
     for d in "$SCRATCH" "$LOGDIR"; do
-        [ -n "$d" ] && [ -d "$d" ] || continue
+        if [ -z "$d" ] || [ ! -d "$d" ]; then
+            continue
+        fi
         if [ "$KEEP_SCRATCH" = "1" ]; then
             echo "  [keep] retained: $d"
         else
