@@ -1,0 +1,88 @@
+# Merge Gate — the single required check for this repo (BRO-2031).
+#
+# WHY THIS EXISTS. Before it, `gh api repos/broomva/skills/branches/main/protection`
+# returned 404 and `rulesets` returned []. Every one of this repo's 21 other
+# workflows is ADVISORY: nothing server-side prevented a merge over red CI, so a PR
+# body claiming "CI gates this" was false here. Green CI was signal, not enforcement.
+#
+# WHY NOT JUST REQUIRE THE EXISTING CHECKS. They are all PATH-FILTERED, and most are
+# scoped to a single skill directory (`test-kg.yml` on `skills/knowledge/kg/**`,
+# `test-p9.yml` on `skills/orchestration/p9/**`, and so on). A PR that touches none
+# of a workflow's paths never triggers it, so requiring that check leaves it
+# "Expected" forever and the PR can never merge — GitHub's skipped-but-required
+# footgun. This repo is the worst case for it: 21 filtered workflows, and several
+# publish the same check name from different files.
+#
+# So this job runs on EVERY pull request with NO path filter, and passes iff no OTHER
+# check on the head SHA concluded with a blocking status. Skipped and never-triggered
+# checks do not block; a PR where nothing ran at all passes after a short grace,
+# because there is genuinely nothing to gate. It is the one check the ruleset
+# requires.
+#
+# Native `gh api` only — no third-party actions on the merge-critical path
+# (supply-chain hygiene). Mirrors broomva/workspace's merge-gate.yml (BRO-1833).
+
+name: merge-gate
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+
+jobs:
+  gate:
+    name: Merge Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require all other checks green (or skipped)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Conclusions that BLOCK a merge (a check that actually failed).
+          # success / skipped / neutral do NOT block.
+          BLOCKING='failure|cancelled|timed_out|action_required|startup_failure|stale'
+          for i in $(seq 1 60); do   # up to ~30 min
+            # All check-runs on this head SHA except this gate itself.
+            runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
+                     --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
+                   || echo "")
+            # Legacy commit statuses (belt-and-suspenders; most checks are check-runs).
+            st_state=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.state' 2>/dev/null || echo "unknown")
+
+            failed=$(printf '%s\n' "$runs" | awk -F'\t' -v b="$BLOCKING" 'NF>=3 && $3 ~ ("^(" b ")$"){print $1}')
+            if [ -n "$failed" ] || [ "$st_state" = "failure" ] || [ "$st_state" = "error" ]; then
+              echo "::error::Merge Gate FAILED — blocking checks:"
+              [ -n "$failed" ] && printf '  - %s\n' $failed
+              [ "$st_state" = "failure" ] || [ "$st_state" = "error" ] && echo "  - (legacy commit status: $st_state)"
+              exit 1
+            fi
+
+            n=$(printf '%s\n' "$runs" | grep -c . || true)
+            incomplete=$(printf '%s\n' "$runs" | awk -F'\t' 'NF>=2 && $2 != "completed"{c++} END{print c+0}')
+
+            if [ "$n" -gt 0 ] && [ "$incomplete" -eq 0 ] && { [ "$st_state" = "success" ] || [ "$st_state" = "pending" ]; }; then
+              echo "Merge Gate PASS — $n check(s) completed, none failed (commit status: $st_state)."
+              exit 0
+            fi
+            # No other checks after a short grace = path-filtered PR (no CI ran) → nothing to gate.
+            if [ "$n" -eq 0 ] && [ "$i" -ge 5 ]; then
+              echo "Merge Gate PASS — no other checks on this PR after grace (all repo CI path-filtered out)."
+              exit 0
+            fi
+            echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/60)…"
+            sleep 30
+          done
+          echo "::error::Merge Gate timed out waiting for checks to conclude."
+          exit 1
