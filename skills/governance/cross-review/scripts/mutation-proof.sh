@@ -37,6 +37,13 @@
 #                      whole tree. Use on large repos.
 #   --include-git      Also copy .git (excluded by default). Needed when the
 #                      test command itself depends on repo history.
+#   --emit-receipt P   Write (merge into) a probe-receipt JSON at P, in the
+#                      unhobble `--probe-receipts` schema. ONLY the leg this
+#                      runner actually observes is written:
+#                      `neutered_check_went_red`. See "Receipts" below.
+#   --receipt-key K    Receipt key for the target, when the reference as written
+#                      in the audited prose differs from its path under --root.
+#                      Single-target runs only.
 #   --timeout SECS     Per test run (default 300). Needs timeout/gtimeout on
 #                      PATH; without one, runs unbounded and says so.
 #   --max-mb N         Refuse to copy more than N MB (default 512).
@@ -51,6 +58,23 @@
 # Environment set for the test command:
 #   MUTATION_PROOF_ACTIVE=1   — lets a suite skip its own self-referential case
 #                               instead of recursing forever.
+#
+# Receipts (--emit-receipt):
+#   unhobble's probe has three legs — fires_on_trigger, silent_on_non_trigger,
+#   neutered_check_went_red — and reads a receipt as `fires` only when all three
+#   are true. This runner owns exactly one of them: it neuters the target and
+#   observes whether the check went red. It writes that leg, with its evidence,
+#   and DELIBERATELY LEAVES THE OTHER TWO ABSENT, so unhobble reads `incomplete`.
+#   Defaulting them to true for convenience would forge two untested legs and
+#   hand back a free-to-delete verdict on no evidence — the same defect the
+#   receipt exists to close, one level up. An honest `incomplete` is correct.
+#
+#   `neutered_check_went_red: false` is a RESULT, not a gap: it means the probe
+#   ran and the check did not go red. It is written. Nothing is written when the
+#   baseline was not green, because then nothing was observed.
+#
+#   Requires python3 (JSON, atomically). Merging preserves legs recorded by
+#   other producers; only this runner's leg and its evidence block are replaced.
 
 set -euo pipefail
 
@@ -66,6 +90,8 @@ INCLUDE_GIT=0
 TIMEOUT_SECS=300
 MAX_MB=512
 KEEP_SCRATCH=0
+RECEIPT=""
+RECEIPT_KEY=""
 
 SCRATCH=""
 
@@ -150,6 +176,10 @@ while [ $# -gt 0 ]; do
         --timeout)      shift; need_value --timeout $#; TIMEOUT_SECS="$1" ;;
         --max-mb=*)     MAX_MB="${1#*=}" ;;
         --max-mb)       shift; need_value --max-mb $#; MAX_MB="$1" ;;
+        --emit-receipt=*) RECEIPT="${1#*=}" ;;
+        --emit-receipt)   shift; need_value --emit-receipt $#; RECEIPT="$1" ;;
+        --receipt-key=*)  RECEIPT_KEY="${1#*=}" ;;
+        --receipt-key)    shift; need_value --receipt-key $#; RECEIPT_KEY="$1" ;;
         --include-git)  INCLUDE_GIT=1 ;;
         --keep-scratch) KEEP_SCRATCH=1 ;;
         *) die_usage "unknown flag '$1'" ;;
@@ -170,6 +200,17 @@ esac
 
 case "$TIMEOUT_SECS" in ''|*[!0-9]*) die_usage "--timeout must be a whole number of seconds" ;; esac
 case "$MAX_MB"       in ''|*[!0-9]*) die_usage "--max-mb must be a whole number" ;; esac
+
+if [ -n "$RECEIPT" ]; then
+    command -v python3 >/dev/null 2>&1 || die_usage "--emit-receipt needs python3 on PATH"
+fi
+if [ -n "$RECEIPT_KEY" ]; then
+    [ -n "$RECEIPT" ] || die_usage "--receipt-key has no effect without --emit-receipt"
+    # One key cannot stand for several targets, and silently applying it to the
+    # first would file a real observation under the wrong mechanism.
+    N_TARGETS=$(printf '%s' "$TARGETS" | grep -c . || true)
+    [ "$N_TARGETS" = "1" ] || die_usage "--receipt-key requires exactly one --target (got $N_TARGETS)"
+fi
 
 # ─── Path resolution ──────────────────────────────────────────────────────
 abs_path() {
@@ -434,6 +475,86 @@ count_marks() {
     COUNT_PARSED=0
 }
 
+# ─── Probe receipt emission ───────────────────────────────────────────────
+# Writes ONE leg: neutered_check_went_red. The other two legs of unhobble's
+# probe describe trigger behaviour this runner never exercises, so they are
+# left absent and unhobble reads `incomplete`. See the header comment.
+emit_receipt() {
+    # $1 key  $2 went_red (true|false)  $3 mutation label
+    # $4 rc_before  $5 rc_after  $6 flipped
+    if ! python3 - "$RECEIPT" "$1" "$2" "$3" "$4" "$5" "$6" "$STRATEGY" "$REF" "$TEST_CMD" <<'PY'
+import datetime
+import json
+import os
+import sys
+import tempfile
+
+(path, key, went_red, mutation, rc_before, rc_after,
+ flipped, strategy, ref, test_cmd) = sys.argv[1:11]
+
+LEG = "neutered_check_went_red"
+
+# Merge, never clobber: another producer may own the legs this runner does not.
+doc = {"probes": {}}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            existing = json.load(fh)
+        if isinstance(existing, dict) and isinstance(existing.get("probes"), dict):
+            doc = existing
+        else:
+            print(f"mutation-proof: {path} is not a probe-receipt file "
+                  "(no top-level 'probes' object); refusing to overwrite it",
+                  file=sys.stderr)
+            raise SystemExit(1)
+    except json.JSONDecodeError as e:
+        print(f"mutation-proof: {path} is not valid JSON ({e}); refusing to overwrite it",
+              file=sys.stderr)
+        raise SystemExit(1) from e
+
+entry = doc["probes"].get(key)
+if not isinstance(entry, dict):
+    entry = {}
+
+# The observed leg, and only the observed leg.
+entry[LEG] = went_red == "true"
+entry["evidence"] = {
+    "producer": "mutation-proof v0.0.1 (broomva/skills cross-review)",
+    "recorded_at": datetime.datetime.now(datetime.timezone.utc)
+                   .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "legs_observed": [LEG],
+    "legs_not_observed": ["fires_on_trigger", "silent_on_non_trigger"],
+    "strategy": strategy + (f" (ref {ref})" if ref else ""),
+    "mutation": mutation,
+    "test_command": test_cmd,
+    "exit_code_baseline": int(rc_before),
+    "exit_code_mutated": int(rc_after),
+    "checks_flipped": None if flipped == "n/a" else int(flipped),
+}
+doc["probes"][key] = entry
+
+# Atomic: a half-written receipt read by an auditor is worse than none.
+d = os.path.dirname(os.path.abspath(path)) or "."
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".mutation-proof-receipt.")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+except BaseException:
+    os.unlink(tmp)
+    raise
+PY
+    then
+        echo "mutation-proof: could not write the receipt at $RECEIPT" >&2
+        exit 2
+    fi
+    echo "  [receipt] $RECEIPT — ${1}.neutered_check_went_red = $2"
+    echo "            fires_on_trigger and silent_on_non_trigger left ABSENT:"
+    echo "            not observed here, so unhobble must read this as incomplete."
+}
+
 fmt_counts() {
     # $1 parsed flag, $2 ok, $3 fail
     if [ "$1" = "1" ]; then
@@ -485,6 +606,11 @@ if [ "$RC_BEFORE" != "0" ]; then
         echo "    Re-run with --include-git if the test needs repo history."
     fi
     echo ""
+    if [ -n "$RECEIPT" ]; then
+        echo "    [receipt] nothing written. The neuter leg was never observed, and a"
+        echo "              receipt asserting a leg that was not observed is a forgery."
+        echo ""
+    fi
     echo "  ─── baseline output (last 20 lines) ─────────────────────────"
     tail -20 "$BASE_OUT" | sed 's/^/  | /'
     echo ""
@@ -548,6 +674,15 @@ while IFS= read -r rel; do
             echo "    (note: $FLIPPED check(s) did flip, but the suite still exited 0 —"
             echo "     the runner is swallowing its own failures.)"
         fi
+    fi
+
+    if [ -n "$RECEIPT" ]; then
+        echo ""
+        WENT_RED=false
+        if [ "$RC_AFTER" != "0" ]; then WENT_RED=true; fi
+        KEY="$rel"
+        if [ -n "$RECEIPT_KEY" ]; then KEY="$RECEIPT_KEY"; fi
+        emit_receipt "$KEY" "$WENT_RED" "$LABEL" "$RC_BEFORE" "$RC_AFTER" "$FLIPPED"
     fi
     echo ""
     echo "mutation-proof: verdict=$([ "$RC_AFTER" != "0" ] && echo PROVEN || echo UNPROVEN) target=$rel strategy=$STRATEGY rc_before=$RC_BEFORE rc_after=$RC_AFTER flipped=$FLIPPED"

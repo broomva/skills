@@ -365,6 +365,130 @@ else
     fail "T20: SKILL.md documents the signal"
 fi
 
+# ── T21-T25: probe receipts (unhobble --probe-receipts schema) ────────────
+#
+# The receipt exists because unhobble's `anchor_state` cannot verify one: it
+# does `all(rec.get(leg) is True ...)`, so hand-written `true`s buy a
+# free-to-delete verdict. This runner emits the ONE leg it actually observes.
+# The tests below pin that it emits no more than that — the temptation to
+# default the other two legs to `true` for a tidier verdict is the identical
+# defect in a new costume.
+#
+# `probe_state_of` replicates the predicate DOCUMENTED in BRO-2035, it does not
+# import unhobble's code: that lands on a different branch, and copying it here
+# would test our copy rather than the contract.
+probe_state_of() {
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+legs = ("fires_on_trigger", "silent_on_non_trigger", "neutered_check_went_red")
+rec = json.load(open(sys.argv[1]))["probes"].get(sys.argv[2])
+if rec is None:
+    print("unresolved")
+elif rec.get("fires_on_trigger") is False:
+    print("dead")
+elif all(rec.get(leg) is True for leg in legs):
+    print("fires")
+else:
+    print("incomplete")
+PY
+}
+
+RCPT="$WORK/receipts"
+mkdir -p "$RCPT"
+
+echo "T21. discriminating run emits neutered_check_went_red=true, other legs ABSENT"
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
+    --emit-receipt "$RCPT/pos.json"
+R21=$(python3 - "$RCPT/pos.json" <<'PY'
+import json, sys
+rec = json.load(open(sys.argv[1]))["probes"]["src/gate.sh"]
+print("leg=%r absent=%s rcb=%s rca=%s" % (
+    rec.get("neutered_check_went_red"),
+    "fires_on_trigger" not in rec and "silent_on_non_trigger" not in rec,
+    rec["evidence"]["exit_code_baseline"], rec["evidence"]["exit_code_mutated"]))
+PY
+)
+if [ "$MP_RC" = "0" ] && [ "$R21" = "leg=True absent=True rcb=0 rca=1" ] \
+    && [ "$(probe_state_of "$RCPT/pos.json" src/gate.sh)" = "incomplete" ]; then
+    ok "T21: one observed leg, two honestly absent, reads as incomplete"
+else
+    fail "T21: one observed leg, two honestly absent, reads as incomplete" \
+        "rc=$MP_RC parsed=[$R21] state=$(probe_state_of "$RCPT/pos.json" src/gate.sh)"
+fi
+
+echo "T22. non-discriminating run emits the leg as FALSE, not omitted"
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/decoration.sh' \
+    --emit-receipt "$RCPT/neg.json"
+R22=$(python3 - "$RCPT/neg.json" <<'PY'
+import json, sys
+rec = json.load(open(sys.argv[1]))["probes"]["src/gate.sh"]
+print("present=%s value=%r" % ("neutered_check_went_red" in rec,
+                               rec.get("neutered_check_went_red")))
+PY
+)
+# "I ran it and it did not go red" must be distinguishable from "I did not run it".
+if [ "$MP_RC" = "1" ] && [ "$R22" = "present=True value=False" ]; then
+    ok "T22: a negative observation is recorded, not omitted"
+else
+    fail "T22: a negative observation is recorded, not omitted" "rc=$MP_RC parsed=[$R22]"
+fi
+
+echo "T23. INCONCLUSIVE writes no receipt at all"
+run_mp run --root "$FIX1" --target src/gate.sh --test 'exit 7' --emit-receipt "$RCPT/none.json"
+if [ "$MP_RC" = "3" ] && [ ! -e "$RCPT/none.json" ] \
+    && echo "$MP_OUT" | grep -q "\[receipt\] nothing written"; then
+    ok "T23: nothing observed, nothing claimed"
+else
+    fail "T23: nothing observed, nothing claimed" "rc=$MP_RC, file exists=$([ -e "$RCPT/none.json" ] && echo yes || echo no)"
+fi
+
+echo "T24. merging preserves another producer's legs; a non-receipt file is refused"
+cat >"$RCPT/merge.json" <<'FIX'
+{"probes": {"src/gate.sh": {"fires_on_trigger": true, "silent_on_non_trigger": true},
+            "other/thing.sh": {"fires_on_trigger": true}}}
+FIX
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
+    --emit-receipt "$RCPT/merge.json"
+R24=$(python3 - "$RCPT/merge.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))["probes"]
+print("kept=%s other=%s legs=%s" % (
+    d["src/gate.sh"].get("fires_on_trigger"),
+    "other/thing.sh" in d,
+    d["src/gate.sh"].get("neutered_check_went_red")))
+PY
+)
+printf 'not a receipt\n' >"$RCPT/bad.json"
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
+    --emit-receipt "$RCPT/bad.json"
+BAD_RC=$MP_RC
+if [ "$R24" = "kept=True other=True legs=True" ] \
+    && [ "$(probe_state_of "$RCPT/merge.json" src/gate.sh)" = "fires" ] \
+    && [ "$BAD_RC" = "2" ] && [ "$(cat "$RCPT/bad.json")" = "not a receipt" ]; then
+    ok "T24: merge preserves foreign legs; malformed file refused, not clobbered"
+else
+    fail "T24: merge preserves foreign legs; malformed file refused, not clobbered" \
+        "parsed=[$R24] bad_rc=$BAD_RC"
+fi
+
+echo "T25. --receipt-key overrides the key and refuses to stand for several targets"
+# Deliberately unexpanded: unhobble keys a user-scope mechanism by the literal
+# `~/...` reference as it is written in the prose, not by its resolved path.
+# shellcheck disable=SC2088
+USER_SCOPE_KEY='~/broomva/src/gate.sh'
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
+    --emit-receipt "$RCPT/keyed.json" --receipt-key "$USER_SCOPE_KEY"
+KEYED=$(python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1]))["probes"])))' "$RCPT/keyed.json" 2>/dev/null)
+run_mp run --root "$FIX1" --target src/gate.sh,t/discriminating.sh --test 'true' \
+    --emit-receipt "$RCPT/multi.json" --receipt-key 'x'
+if [ "$KEYED" = "$USER_SCOPE_KEY" ] && [ "$MP_RC" = "2" ] \
+    && echo "$MP_OUT" | grep -q "requires exactly one --target"; then
+    ok "T25: key override honoured, one key never stands for many targets"
+else
+    fail "T25: key override honoured, one key never stands for many targets" \
+        "keys=[$KEYED] rc=$MP_RC"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────
 echo ""
 echo "── results ────────────────────────────────────────────────────"

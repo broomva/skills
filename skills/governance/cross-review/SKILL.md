@@ -103,6 +103,45 @@ Exit codes: `0` PROVEN · `1` UNPROVEN · `2` usage/setup error · `3` INCONCLUS
 
 **On the flip count.** When both runs emit per-check markers *and* the suite ran the same number of checks, the report names how many flipped ok→FAIL. When the output is not parseable, or the suite aborted early so the shapes differ, it says so and reports exit codes only. An invented count would be exactly the decorative signal this tool exists to catch.
 
+### Emitting a probe receipt for unhobble
+
+`unhobble --probe-receipts` answers "has this mechanism been demonstrated to fire?" from a recorded receipt with three legs — `fires_on_trigger`, `silent_on_non_trigger`, `neutered_check_went_red` — and reads `fires` only when all three are `true`. It cannot verify a receipt: it does `all(rec.get(leg) is True …)`, so hand-written `true`s buy a free-to-delete verdict. That is a gate whose producer can trivially satisfy it.
+
+This runner performs the third leg for real, so it can record it from an observation instead of an assertion:
+
+```bash
+mutation-proof run --target scripts/gate.sh --test 'bash tests/gate.test.sh' \
+  --emit-receipt probes.json
+```
+
+```json
+{
+  "probes": {
+    "scripts/gate.sh": {
+      "neutered_check_went_red": true,
+      "evidence": {
+        "producer": "mutation-proof v0.0.1 (broomva/skills cross-review)",
+        "legs_observed": ["neutered_check_went_red"],
+        "legs_not_observed": ["fires_on_trigger", "silent_on_non_trigger"],
+        "exit_code_baseline": 0, "exit_code_mutated": 1, "checks_flipped": 3
+      }
+    }
+  }
+}
+```
+
+**It writes one leg and only one leg.** The other two describe trigger behaviour this runner never exercises, so they are left *absent* and unhobble reads the receipt as `incomplete`. Defaulting them to `true` for a tidier verdict would forge two untested legs — the identical defect one level up. An honest `incomplete` is the correct output.
+
+Three distinctions the emitter keeps:
+
+- `neutered_check_went_red: false` is **written**, not omitted. "I ran it and the check did not go red" is a finding; "I did not run it" is a gap. They must not look alike.
+- An INCONCLUSIVE run writes **nothing**. Nothing was observed, so there is nothing to claim.
+- Merging preserves legs recorded by other producers, and a file that is not a receipt is refused rather than overwritten.
+
+Keying: unhobble keys a probe by the backticked reference *as written in the audited prose*, resolved against its `--repo-root`. The default key here is the target's path under `--root`, which is that same string whenever the two roots agree. When the prose refers to a mechanism differently — a user-scope `~/.claude/...` ref, say — pass `--receipt-key` rather than letting the runner guess at a normalisation.
+
+This is a reporting flag, not a dependency: nothing here imports unhobble or reads its schema back. The receipt is still a file an agent could hand-write; what changes is that an honest path now exists, and a receipt that shows its exit codes can be audited by a reader instead of taken on faith.
+
 ### Why this exists
 
 "Every fix mutation-proven" was a P20 discipline that lived only in prose and memory. Per the workspace invariant, *a phrase that recurs as a discipline must map to a concrete machine-checkable behavior, or it is not discipline.*
