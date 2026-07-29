@@ -22,6 +22,13 @@
 #   cross-review plan --spec PATH         # plan-stage gate
 #   cross-review audit --target PATH      # audit-on-demand
 #   cross-review --help
+#
+# Mutation-proof (REPORTED SIGNAL on pre-push, never a blocker):
+#   cross-review pre-push \
+#     --mutation-target=scripts/foo.sh \
+#     --mutation-test='bash tests/foo.test.sh'
+#   Optional: --mutation-strategy=stub|revert --mutation-ref=REF
+#             --mutation-root=DIR --mutation-paths=a,b
 
 set -euo pipefail
 
@@ -38,6 +45,12 @@ CONCERNS=""
 MAX_ROUNDS=3
 RUBRIC="anti-slop"
 OUTPUT_FORMAT="pr-comment"
+MUT_TARGET=""
+MUT_TEST=""
+MUT_STRATEGY="stub"
+MUT_REF=""
+MUT_ROOT=""
+MUT_PATHS=""
 
 # ─── Arg parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
@@ -71,6 +84,12 @@ for arg in "$@"; do
         --max-rounds=*) MAX_ROUNDS="${arg#*=}" ;;
         --rubric=*) RUBRIC="${arg#*=}" ;;
         --output=*) OUTPUT_FORMAT="${arg#*=}" ;;
+        --mutation-target=*) MUT_TARGET="${arg#*=}" ;;
+        --mutation-test=*) MUT_TEST="${arg#*=}" ;;
+        --mutation-strategy=*) MUT_STRATEGY="${arg#*=}" ;;
+        --mutation-ref=*) MUT_REF="${arg#*=}" ;;
+        --mutation-root=*) MUT_ROOT="${arg#*=}" ;;
+        --mutation-paths=*) MUT_PATHS="${arg#*=}" ;;
         *) echo "cross-review: unknown flag '$arg'" >&2; exit 2 ;;
     esac
 done
@@ -105,6 +124,8 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Diff base:        $DIFF_BASE"
     echo "  Rubric:           $RUBRIC"
     echo "  Max fix rounds:   $MAX_ROUNDS"
+    echo "  Rubric file:      $RUBRIC_FILE"
+    echo "  Verdict format:   $OUTPUT_FORMAT"
     echo ""
 
     # Compute changed files + size to enforce substantive-threshold rule
@@ -113,17 +134,44 @@ if [ "$COMMAND" = "pre-push" ]; then
         exit 2
     fi
 
-    CHANGED_FILES=$(git diff --name-only "$DIFF_BASE"...HEAD 2>/dev/null | wc -l | tr -d ' ')
-    ADDITIONS=$(git diff --shortstat "$DIFF_BASE"...HEAD 2>/dev/null | grep -oE '[0-9]+ insertion' | head -1 | grep -oE '[0-9]+' || echo "0")
+    # An unresolvable diff base is common and must not be fatal: a fork, a
+    # non-`main` default branch, or a shallow CI checkout all leave
+    # `origin/main` absent. `git diff` then exits 128, and with `pipefail` that
+    # aborted the whole run with exit 128.
+    #
+    # But an unmeasured diff must NEVER render as a small one. Reporting 0
+    # files / 0 insertions fed the substantive threshold and produced
+    # "[skip] Trivial PR — gate not required", exit 0: P20, the merge gate for
+    # the whole stack, silently skipping on a 12-file 1200-line change. That is
+    # a worse failure than the crash it replaced — fail-loud became
+    # fail-silent-pass. Unknown scope is therefore treated as SUBSTANTIVE.
+    SCOPE_UNKNOWN=0
+    if git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null 2>&1; then
+        CHANGED_FILES=$(git diff --name-only "$DIFF_BASE"...HEAD 2>/dev/null | wc -l | tr -d ' ')
+        ADDITIONS=$(git diff --shortstat "$DIFF_BASE"...HEAD 2>/dev/null | grep -oE '[0-9]+ insertion' | head -1 | grep -oE '[0-9]+' || echo "0")
+    else
+        SCOPE_UNKNOWN=1
+        CHANGED_FILES=0
+        ADDITIONS=0
+        echo "  [warn] diff base '$DIFF_BASE' does not resolve here — diff scope UNKNOWN."
+        echo "         Treating the change as SUBSTANTIVE: the gate fires. Pass"
+        echo "         --diff-base=<ref> to measure it instead of assuming the worst."
+    fi
     [ -z "$ADDITIONS" ] && ADDITIONS=0
 
-    echo "  Diff scope:       $CHANGED_FILES file(s), $ADDITIONS insertion(s)"
+    if [ "$SCOPE_UNKNOWN" = "1" ]; then
+        echo "  Diff scope:       UNKNOWN (unmeasurable against '$DIFF_BASE')"
+    else
+        echo "  Diff scope:       $CHANGED_FILES file(s), $ADDITIONS insertion(s)"
+    fi
     echo ""
 
     # Substantive-threshold test (the agent's reflexive trigger)
     SUBSTANTIVE=0
     [ "$ADDITIONS" -gt 200 ] && SUBSTANTIVE=1
     [ "$CHANGED_FILES" -gt 3 ] && SUBSTANTIVE=1
+    # "I could not measure it" is not "it is small".
+    [ "$SCOPE_UNKNOWN" = "1" ] && SUBSTANTIVE=1
     # (public API + governance-class detection delegated to the agent's
     #  judgment; this script enforces the easy thresholds)
 
@@ -189,6 +237,65 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Aggregate findings from all skills. Each contributes to the rubric"
     echo "  dimensions. Final score is the consensus minimum (failures count)."
     echo ""
+
+    # ─── Mutation-proof — REPORTED SIGNAL, not a gate ────────────────────
+    # Rubric dimension 5 ("tests cover the change") is the one dimension a
+    # machine can check directly: neuter the code, and see whether the tests
+    # notice. It is REPORTED here, never blocking. Until the false-positive
+    # rate on real repos is known, an UNPROVEN verdict must surface in the
+    # review, not stop the push. Promotion to a gate is a later, evidenced
+    # decision — see SKILL.md §"Mutation-proof".
+    echo "  ─── Mutation-proof: do the tests discriminate? ──────────────"
+    echo ""
+    if [ -n "$MUT_TARGET" ] && [ -n "$MUT_TEST" ]; then
+        MUT_SH="$REPO/scripts/mutation-proof.sh"
+        if [ ! -f "$MUT_SH" ]; then
+            echo "  [warn] $MUT_SH not found — signal skipped."
+        else
+            MUT_ARGS=(run --target "$MUT_TARGET" --test "$MUT_TEST" --strategy "$MUT_STRATEGY")
+            if [ -n "$MUT_REF" ];   then MUT_ARGS+=(--ref "$MUT_REF"); fi
+            if [ -n "$MUT_ROOT" ];  then MUT_ARGS+=(--root "$MUT_ROOT"); fi
+            if [ -n "$MUT_PATHS" ]; then MUT_ARGS+=(--paths "$MUT_PATHS"); fi
+
+            set +e
+            bash "$MUT_SH" "${MUT_ARGS[@]}" 2>&1 | sed 's/^/  /'
+            MUT_RC=${PIPESTATUS[0]}
+            set -e
+
+            echo ""
+            case "$MUT_RC" in
+                0) echo "  [signal] PROVEN — the tests go red when the target is neutered." ;;
+                1) echo "  [signal] UNPROVEN — a test passed with AND without the target."
+                   echo "           Rubric dim 5 is at risk. This is REPORTED, not blocking:"
+                   echo "           fix the test, or say in the PR why the coverage is elsewhere." ;;
+                # Exit 3 has three causes now — a red baseline, a mutation that
+                # changed nothing, and a mutated run that emitted fewer checks.
+                # Naming one of them here contradicted the runner's own verdict
+                # two lines above.
+                3) echo "  [signal] INCONCLUSIVE — nothing was proven; see the verdict above." ;;
+                *) echo "  [signal] mutation-proof setup error (exit $MUT_RC) — see output above." ;;
+            esac
+            echo "           (non-blocking: pre-push exit code is unaffected)"
+        fi
+    elif [ -n "$MUT_TARGET" ] || [ -n "$MUT_TEST" ]; then
+        # Half the pair is a typo, not a decision. Saying "no target given" when
+        # the target is present and the TEST flag is misspelled sends the reader
+        # to the wrong flag.
+        if [ -z "$MUT_TEST" ]; then
+            echo "  [incomplete] --mutation-target given but --mutation-test missing."
+        else
+            echo "  [incomplete] --mutation-test given but --mutation-target missing."
+        fi
+        echo "  Both are required. The signal did NOT run."
+    else
+        echo "  [not run] no mutation target given. To include the signal:"
+        echo "    cross-review pre-push --mutation-target=PATH --mutation-test='CMD'"
+        echo "  Without it, 'tests cover the change' rests on the reviewer's reading"
+        echo "  of the diff alone — a test that passes with the code deleted looks"
+        echo "  identical to one that does not."
+    fi
+    echo ""
+
     echo "  ─── Verdict ─────────────────────────────────────────────────"
     echo ""
     echo "  Format the verdict as a PR comment with:"
