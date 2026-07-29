@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "dogfood",
+  "case_id": "real-trace-05",
+  "trial": 2,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 47469,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "4dace4d348b80f96edc4f74b3cf767272f02ed54db920e5190a5297ef45aa66a",
+  "skill_md_sha256": "a6e5ce1d9492b5d73b377b388081c39f62ead2ffa35203b86f807cf6ed3407f9",
+  "description_sha256": "1fd000d88556becaeb3035ae4a2f87e5205a89e36d553769b49d01ca12494072",
+  "recorded_at": "2026-07-29T05:12:57Z"
+}

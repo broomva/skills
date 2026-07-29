@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "checkit",
+  "case_id": "real-trace-01",
+  "trial": 3,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 293824,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "adcf9f5ed6e8eade4ffc11d6ab3cc0be0bf33a7e1ce3ba660f9707b33710872a",
+  "skill_md_sha256": "bc9ad3a5bba9dd55bb6988395dc39de7e87a6e1cccc7c6d1786b9629a919f2cd",
+  "description_sha256": "868b77925b4b1be24fbb85564c8c2232edd52eea6201b16ed022fd06fd0bb8cf",
+  "recorded_at": "2026-07-29T01:29:32Z"
+}

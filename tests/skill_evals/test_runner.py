@@ -2392,3 +2392,53 @@ def test_completed_without_error_is_not_resurrectable_silently():
             assert "completed_without_error" not in case.get("expected_checks", []), (
                 f"{p}: case {case.get('id')} still asserts the removed check"
             )
+
+
+# ===========================================================================
+# record -> replay must be FAITHFUL, including for runs that FAILED (BRO-2030)
+# ===========================================================================
+
+
+def _live_meta(tmp_path, case_id, trial, prompt, exit_code, stderr):
+    import hashlib
+    d = tmp_path / "cases" / case_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"trial-{trial:02d}.jsonl").write_text("", encoding="utf-8")
+    (d / f"trial-{trial:02d}.meta.json").write_text(json.dumps({
+        "meta_version": R.FIXTURE_META_VERSION, "provenance": R.PROVENANCE_LIVE,
+        "skill": "demo", "case_id": case_id, "trial": trial,
+        "exit_code": exit_code, "stderr": stderr, "wall_ms": 1,
+        "model": "haiku", "cli_version": R.EXPECTED_CLI_VERSION,
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "skill_md_sha256": "aa", "description_sha256": "bb",
+        "recorded_at": "2026-07-29T00:00:00Z",
+    }, indent=2), encoding="utf-8")
+
+
+def test_a_recorded_TIMEOUT_replays_as_an_error_not_a_broken_fixture(tmp_path):
+    """The first live run produced three of these: the CLI timed out at 300s, so
+    stdout was empty and the trial scored ERROR. Replaying it then reported a
+    "fixture integrity failure" — a different claim about a different thing, and one
+    that made the whole run exit 3 (fixtures unusable) instead of 1 (below
+    threshold). Live fixtures could not enter CI at all while a recorded timeout
+    replayed as a broken recording."""
+    _live_meta(tmp_path, "c1", 1, "p", exit_code=124, stderr="TIMEOUT after 300s")
+    runner = R.ReplayRunner(root=tmp_path, fingerprint={
+        "skill_md_sha256": "aa", "description_sha256": "bb"})
+    t = runner.run("p", tmp_path, case_id="c1", trial=1)
+    assert t.exit_code == 124
+    assert "TIMEOUT" in t.stderr
+    assert runner.integrity_failures == [], "a recorded failure is not an integrity failure"
+    r = R.grade_trial(case(), t, "demo")
+    assert r.outcome == R.ERROR, "it still scores ERROR — the outcome is preserved"
+
+
+def test_an_empty_fixture_recording_a_CLEAN_run_is_still_broken(tmp_path):
+    """FALSE-POSITIVE control. The carve-out keys on what the META says: empty plus a
+    clean exit is a broken recording and must still be refused, or the guard against
+    fabricated/truncated fixtures is gone."""
+    _live_meta(tmp_path, "c1", 1, "p", exit_code=0, stderr="")
+    runner = R.ReplayRunner(root=tmp_path, fingerprint={
+        "skill_md_sha256": "aa", "description_sha256": "bb"})
+    with pytest.raises(R.FixtureError, match="CLEAN run"):
+        runner.run("p", tmp_path, case_id="c1", trial=1)

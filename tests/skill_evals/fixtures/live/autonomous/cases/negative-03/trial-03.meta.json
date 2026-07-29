@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "autonomous",
+  "case_id": "negative-03",
+  "trial": 3,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 18601,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "96ab4f5612eaf0ccc41b8c9b6ed00e684c83680c67c86aefff14de0950f62db1",
+  "skill_md_sha256": "8d3a0757d3f1a045eb07819be106496787bc116d4cccdfde063f882225852f85",
+  "description_sha256": "ee4ae94ad132a2166198dc4c97d2bd9677b06b4403324228de542bb92feffa8c",
+  "recorded_at": "2026-07-29T04:46:04Z"
+}

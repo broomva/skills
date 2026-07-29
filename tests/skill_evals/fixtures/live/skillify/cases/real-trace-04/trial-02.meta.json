@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "skillify",
+  "case_id": "real-trace-04",
+  "trial": 2,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 8208,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "ae21088ed771e1d372251af2617ff30a9681690c705f485b60518a56a7016469",
+  "skill_md_sha256": "32d2f89d2a8cfe69e711e584e299193bea42a60666e846de9b47818aac9df636",
+  "description_sha256": "b6d3389485aef03a9014f9b9ff365f3461e797b4c9e3ea6e592f9f3deba1f3ca",
+  "recorded_at": "2026-07-29T04:58:20Z"
+}
