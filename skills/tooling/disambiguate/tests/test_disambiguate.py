@@ -807,3 +807,140 @@ def test_leading_imperative_is_not_a_vague_predicate():
     reading is the defect, and the verb reading was being flagged."""
     assert "C3-vague-predicate" not in codes(check("Clean the surface with a soap-and-water solution."))
     assert "C3-vague-predicate" in codes(check("The module must have clean interfaces.", mode="descriptive"))
+
+
+# --------------------------------------------------------------------------
+# Round-2 adversarial review (P20)
+#
+# Round 1's fixes were fitted to the example sentences the reviewer named
+# rather than to the classes behind them, so each generalized one step and
+# broke. These tests assert the CLASS. Every one was mutation-proven: the
+# mechanism it covers was reverted and the test observed to fail.
+# --------------------------------------------------------------------------
+
+
+def test_unbalanced_fence_strips_nothing_and_says_so():
+    """BLOCKER, twice. A running toggle blanked the tail. Greedy pairing then
+    paired the stray opener with the NEXT REAL BLOCK's opener, blanking the
+    prose and checking the code — the same silent skip, one shape further out.
+    A heuristic feeding a CI gate must fail open: strip nothing, and report."""
+    variants = {
+        "stray then a real block": "Intro.\n\n```\n\nClose the valves; tag them.\n\n```\nprint('x')\n```\n",
+        "stray only": "Intro.\n\n```\n\nClose the valves; tag them.\n",
+        "two strays": "```\nClose the valves; tag them.\n```\n```\nmore prose; here\n",
+        "fence after frontmatter": "---\ntitle: x\n---\n```\nClose the valves; tag them.\n",
+    }
+    for name, doc in variants.items():
+        found = codes(check_document(doc, "procedural", ()))
+        assert "D3-semicolon" in found, f"{name}: prose was silently skipped"
+        assert "D0-unbalanced-fence" in found, f"{name}: imbalance not reported"
+
+
+def test_balanced_fence_is_still_stripped_and_reports_nothing():
+    doc = "Intro.\n\n```\nClose the valves; tag them.\n```\n\nThe end.\n"
+    found = codes(check_document(doc, "procedural", ()))
+    assert "D3-semicolon" not in found
+    assert "D0-unbalanced-fence" not in found
+
+
+OPS_STACKS = [
+    "Remove the engine mount attachment bolts.",
+    "Check the primary database backup retention policy.",
+    "Replace the hydraulic pump seal pin retainer.",
+    "Audit the production database snapshot restore procedure.",
+    "Update the user session token refresh interval value.",
+    "Rotate the primary cluster access key material.",
+    "Tune the message queue consumer batch size.",
+    "Verify the disk volume mount point permission.",
+]
+
+
+def test_noun_homograph_verbs_do_not_blind_the_stack_detector():
+    """MAJOR. Adding ops verbs to IMPERATIVE_HINT fed them into VERB_FORMS,
+    which terminates a stack run, so every stack containing 'mount', 'backup',
+    'snapshot', 'pin', 'access', 'queue' went silent. Detection fell 8/12 to
+    1/12 on an ops corpus while all 131 tests stayed green. The two roles are
+    now separate sets."""
+    detected = sum("A2-noun-stack" in codes(check(s)) for s in OPS_STACKS)
+    assert detected >= 7, f"only {detected}/8 stacks detected — homographs are blinding it again"
+
+
+DESCRIPTIVE_NOUN_INITIAL = [
+    "Migration to the new schema takes five minutes.",
+    "Replication from the primary is asynchronous.",
+    "Encryption at rest is enabled.",
+    "Deployment to production needs approval.",
+    "Integration with the vendor is complete.",
+    "Growth in the index size is linear.",
+    "Visibility into the queue depth is limited.",
+    "Compliance with the policy is audited.",
+    "Access to the API requires a token.",
+    "Support for TLS 1.2 ends in June.",
+    "Traffic in the region is mirrored.",
+    "Permission for the operation is denied.",
+]
+
+
+def test_noun_plus_preposition_is_not_a_command():
+    """MAJOR. The fallback's preposition branch read a third of ordinary
+    descriptive prose as commands, flipping whole documents to the procedural
+    20-word ceiling and switching on B2. Genuine commands take a DETERMINER as
+    word two; noun-initial statements take a preposition. The blocklist that
+    had been fitted to five specific counterexamples went away with the branch.
+    """
+    from disambiguate import is_imperative
+    misread = [s for s in DESCRIPTIVE_NOUN_INITIAL if is_imperative(s)]
+    assert not misread, f"read as commands: {misread}"
+    assert detect_mode("\n".join(DESCRIPTIVE_NOUN_INITIAL)) == "descriptive"
+
+
+def test_structural_fallback_recognizes_verbs_outside_the_list():
+    """The fallback must still earn its place: these verbs are NOT in
+    IMPERATIVE_HINT, so only the determiner branch can catch them."""
+    from disambiguate import is_imperative, IMPERATIVE_HINT
+    for cmd, verb in [("Quiesce the writer before the snapshot.", "quiesce"),
+                      ("Marshal the payload into the queue.", "marshal"),
+                      ("Reconcile the ledger after the batch ends.", "reconcile")]:
+        assert verb not in IMPERATIVE_HINT, f"{verb} is in the list; this no longer tests the fallback"
+        assert is_imperative(cmd), cmd
+
+
+def test_previously_blocklisted_verbs_work_as_commands():
+    """MINOR. The blocklist held five words that were not in IMPERATIVE_HINT,
+    so each was a silent false negative when used as a real command."""
+    from disambiguate import is_imperative
+    for cmd in ["Access the console when the alarm fires.",
+                "Cache the response for the session when traffic spikes.",
+                "Support the legacy client until the migration ends.",
+                "Default the value to zero when the field is empty.",
+                "Progress the ticket to done after the review ends."]:
+        assert is_imperative(cmd), cmd
+    assert "E3-condition-after-action" in codes(check("Access the console when the alarm fires."))
+
+
+def test_glossary_term_beside_a_hyphenated_compound():
+    """MAJOR. \\b treats '-' as a boundary, so a term abutting a hyphenated
+    compound still split it and inflated the count."""
+    for sent, term in [("Clean the surface with a soap-and-water solution.", "soap"),
+                       ("Use the trial-and-error method.", "trial")]:
+        assert count_ste_words(sent, [term])[0] == count_ste_words(sent)[0], sent
+
+
+def test_drift_requires_the_shared_word_to_head_a_variant():
+    """MINOR. Clustering on any shared word reported three distinct things as
+    one thing under three names. Drift is several names for ONE item, and the
+    shared word heads at least one of them."""
+    distinct = "The test suite runs.\nThe test runner starts.\nThe test fixture loads.\n"
+    assert "A4-synonym-drift" not in codes(check_document(distinct, "descriptive", ()))
+    real = ("Put the housing on the main body.\nInstall the bolts in the body.\n"
+            "Attach the transducer to the body assembly.\n")
+    assert "A4-synonym-drift" in codes(check_document(real, "procedural", ()))
+
+
+def test_comparative_guard_is_load_bearing():
+    """MINOR. The guard had no test — the narrowed pattern alone satisfied the
+    existing ones."""
+    assert "C2-unquantified-delta" not in codes(
+        check("The tool provides a better experience for the operator.", mode="descriptive"))
+    assert "C2-unquantified-delta" in codes(
+        check("This release makes the export better.", mode="descriptive"))

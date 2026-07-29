@@ -99,7 +99,8 @@ guessing. Silent approximation would read as coverage.
 ## Tests
 
 ```bash
-python3 -m pytest tests/ -q     # 131 tests
+python3 -m pytest tests/ -q     # 140 tests
+python3 tests/mutation_proof.py # revert each fix, assert its test fails
 ```
 
 The word-count cases are the worked examples published in the standard's

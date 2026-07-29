@@ -497,6 +497,28 @@ and a limit that is written down reads as a boundary.
 | The imperative vocabulary is a list plus a structural fallback | No closed verb list is complete. The fallback reads "verb + determiner or preposition" as a command | Add domain verbs to `IMPERATIVE_HINT` if a whole class is missed |
 | Word-sense ambiguity (A5) and false friends (E8) are not detected | Both need a vocabulary this skill deliberately does not ship, and E8 depends on the reader's first language | Judgment, informed by this catalog |
 | Attachment ambiguity (A3) is not detected | See A3 above | Judgment |
+| An unbalanced code fence disables fence stripping for the whole document | Guessing where the block ends risks skipping prose in silence, and a missed finding is invisible in a way a noisy one is not | `D0-unbalanced-fence` reports it; close the fence |
 
 The general rule the checker holds itself to: **where it cannot decide, it says
 so.** Silent approximation would read as coverage.
+
+
+---
+
+## How the checker fails
+
+A checker feeding a CI gate has two ways to be wrong, and they are not
+symmetric. A **false positive** is visible: somebody reads it, disagrees, and
+the rule gets tightened. A **false negative is invisible** — the run is green
+and nobody learns anything. So where the parser is uncertain, it keeps checking
+and reports the uncertainty, rather than skipping quietly.
+
+Two versions of the fence handling got this backwards. The first blanked every
+line after an unpaired marker. The second paired that marker with the next real
+block's opener, blanking the prose between them and checking the code instead.
+Both produced the same symptom: `No mechanical ambiguity found`, exit 0, on a
+document containing a block-severity defect. `--strict` in CI was defeated by
+one backtick line, twice.
+
+The rule that came out of it: **when the structure cannot be resolved, widen
+what gets checked and say so.** Noise is recoverable. Silence is not.

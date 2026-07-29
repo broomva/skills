@@ -196,20 +196,6 @@ THAT_TAKING = r"(make sure|makes sure|ensure|ensures|verify|verifies|check|check
               r"show|shows|showed|recommend|recommends|mean|means|note|assume|assumes|" \
               r"confirm|confirms|indicate|indicates|require|requires)"
 
-# Sentence-initial words that are nouns far more often than commands, so the
-# structural fallback must not read them as imperatives.
-VERB_BLOCKLIST = {
-    "access", "account", "api", "auth", "authentication", "authorization",
-    "cache", "call", "change", "changes", "client", "config", "connection",
-    "content", "context", "data", "default", "documentation", "error",
-    "errors", "failure", "feature", "field", "file", "input", "latency",
-    "log", "logs", "message", "metadata", "output", "permission", "policy",
-    "progress", "queue", "rate", "record", "request", "response", "result",
-    "retry", "schema", "server", "service", "session", "state", "status",
-    "support", "system", "table", "test", "timeout", "traffic", "user",
-    "users", "value", "version", "work",
-}
-
 DETERMINERS = {
     "the", "a", "an", "this", "these", "that", "those", "its", "their",
     "your", "our", "his", "her", "each", "every", "any", "some", "no",
@@ -278,32 +264,39 @@ IMPERATIVE_HINT = {
 # Inflected forms of the action verbs. A noun stack ends at a verb; without
 # these, "the new caching layer makes …" reads as a five-word stack whose head
 # noun is "makes".
+# Inflected verb forms only. A noun phrase is anchored on a determiner, so a
+# bare stem inside it is a noun — "the pump seal pin retainer", "the volume
+# mount point permission". An inflected form is a finite verb and ends the
+# phrase — "the new caching layer MAKES the login flow faster".
+#
+# The first attempt at this used the whole verb vocabulary, which cut stack
+# detection to 1/12 on an ops corpus once ops verbs were added. The second
+# attempt hand-listed twenty noun-homographs, which is the same curve-fitting
+# one level down: "seal", "restore" and "point" were not on the list and their
+# stacks stayed silent. Inflection is the property that actually separates them.
 VERB_FORMS: set[str] = set()
-for _v in IMPERATIVE_HINT:
-    VERB_FORMS.update({_v, _v + "s", _v + "es", _v + "ed", _v + "ing", _v + "d"})
-    if _v.endswith("y"):
-        # "retry" -> "retries"/"retried". Without this, a webhook that "retries"
-        # was absorbed into a noun stack.
-        VERB_FORMS.update({_v[:-1] + "ies", _v[:-1] + "ied"})
-    if _v.endswith("e"):
-        VERB_FORMS.add(_v[:-1] + "ing")
-VERB_FORMS.update({
+_IRREGULAR_FINITE = {
     "makes", "made", "making", "does", "did", "doing", "has", "have", "had",
     "gets", "got", "goes", "went", "comes", "came", "takes", "took", "gives",
     "gave", "needs", "needed", "wants", "uses", "used", "using", "allows",
     "causes", "means", "requires", "returns", "provides", "supports",
     "contains", "includes", "occurs", "happens", "exists", "remains",
-    "leave", "leaves", "left", "carry", "carries", "carried", "sit", "sits",
-    "match", "matches", "end", "ends", "name", "names", "named", "point",
-    "points", "mean", "meant", "admit", "admits", "permit", "permits",
-    "produce", "produces", "cost", "costs", "beat", "beats", "fire", "fires",
-    "stay", "stays", "span", "spans", "break", "breaks", "apply", "applies",
-    "follow", "follows", "belong", "belongs", "work", "works", "help",
-    "helps", "keep", "keeps", "become", "becomes", "seem", "seems", "appear",
-    "appears", "tell", "tells", "ask", "asks", "say", "says", "see", "sees",
-    "know", "knows", "think", "thinks", "want", "wants", "hide", "hides",
-    "reads", "writes", "holds", "describe", "describes", "resolve", "resolves",
-})
+    "leaves", "left", "carries", "sits", "matches", "ends", "names",
+    "points", "admits", "permits", "produces", "costs", "beats", "fires",
+    "stays", "spans", "breaks", "applies", "follows", "belongs", "works",
+    "helps", "keeps", "becomes", "seems", "appears", "tells", "asks",
+    "says", "sees", "knows", "thinks", "hides", "reads", "writes", "holds",
+    "describes", "resolves", "is", "are", "was", "were", "be", "been",
+}
+for _v in IMPERATIVE_HINT:
+    VERB_FORMS.update({_v + "s", _v + "es", _v + "ed", _v + "ing"})
+    if _v.endswith("y") and len(_v) > 2 and _v[-2] not in "aeiou":
+        VERB_FORMS.update({_v[:-1] + "ies", _v[:-1] + "ied"})
+    if _v.endswith("e"):
+        VERB_FORMS.update({_v + "d", _v[:-1] + "ing"})
+VERB_FORMS |= _IRREGULAR_FINITE
+# A bare stem is never a phrase boundary.
+VERB_FORMS -= IMPERATIVE_HINT
 
 STATE_ASSERTION_PAT = re.compile(
     r"\b(?:no\s+\w+\s+(?:is|are)\s+(?:permitted|allowed|acceptable)"
@@ -372,13 +365,10 @@ _NUMBER = re.compile(r"^[+-]?\$?\d[\d,]*(?:\.\d+)?[%]?$")
 _HYPHEN_RANGE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?-\d[\d,]*(?:\.\d+)?$")
 
 
-_RANGE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?\s*(?:-|--|–|—|to|thru|through)\s*\d[\d,]*(?:\.\d+)?$")
-
-
 def _is_number(tok: str) -> bool:
     t = tok.strip(".,;:")
-    return (bool(_NUMBER.match(t)) or bool(_RANGE.match(t))
-            or bool(_HYPHEN_RANGE.match(t)) or t.lower() in NUMBER_WORDS)
+    return (bool(_NUMBER.match(t)) or bool(_HYPHEN_RANGE.match(t))
+            or t.lower() in NUMBER_WORDS)
 
 
 def _is_wordlike(tok: str) -> bool:
@@ -426,7 +416,7 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
         # Word-bounded. An unbounded substring match let a two-letter term
         # ("IT", "Go") split ordinary words and INCREASE the count, which is
         # the opposite of what the flag documents.
-        text = re.sub(r"(?<!\w)" + re.escape(term) + r"(?!\w)", " \x04 ", text, flags=re.I)
+        text = re.sub(r"(?<![\w-])" + re.escape(term) + r"(?![\w-])", " \x04 ", text, flags=re.I)
 
     # A predominantly-uppercase sentence is a formatting convention (a safety
     # instruction, a heading). Case then carries no quoting signal, so fold it.
@@ -527,37 +517,44 @@ def split_sentences(block: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
-def _fence_spans(lines: list[str]) -> set[int]:
-    """Line indices inside a *closed* fenced block.
+def _fence_spans(lines: list[str]) -> tuple[set[int], bool]:
+    """Line indices inside a closed fenced block, and whether markers balance.
 
-    Fences are paired by a pre-scan rather than by a running toggle. A single
-    stray fence marker used to open a block that never closed, blanking every
-    remaining line — so the checker reported "no ambiguity found" and exit 0 on
-    a document it had stopped reading. An unpaired marker is now treated as
-    ordinary text, which fails safe: content stays checked.
+    Returns (spans, balanced). When the fence markers do not balance, `spans`
+    is EMPTY: an unbalanced document gets no fence stripping at all.
 
-    A closer must use the same character and be at least as long as its opener,
-    so a three-backtick line inside a four-backtick block does not close it.
+    Two earlier versions of this were wrong in the same direction. A running
+    toggle let one stray marker blank the rest of the file. Greedy pairing then
+    paired the stray opener with the *next real block's* opener, blanking the
+    prose between them and checking the code instead — the same silent-skip
+    symptom, one document shape further out. Both failed CLOSED on a check that
+    gates CI, which is the wrong polarity: a missed finding is invisible, a
+    spurious one is not. So when the count is odd, nothing is stripped and the
+    caller reports the imbalance.
+
+    A closer must match its opener's character and be at least as long, so a
+    three-backtick line inside a four-backtick block does not close it.
     """
+    marks: list[tuple[int, str, int]] = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^(`{3,}|~{3,})", line.strip())
+        if m:
+            marks.append((i, m.group(1)[0], len(m.group(1))))
+
     spans: set[int] = set()
     open_at: int | None = None
-    open_ch = ""
-    open_len = 0
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        m = re.match(r"^(`{3,}|~{3,})", stripped)
-        if not m:
-            continue
-        mark = m.group(1)
-        ch, length = mark[0], len(mark)
+    open_ch, open_len = "", 0
+    for i, ch, length in marks:
         if open_at is None:
             open_at, open_ch, open_len = i, ch, length
         elif ch == open_ch and length >= open_len:
             spans.update(range(open_at, i + 1))
-            open_at, open_ch, open_len = None, "", 0
-    # An unclosed opener is left as content on purpose.
-    return spans
+            open_at = None
+
+    if open_at is not None:
+        # An opener with no closer. Strip nothing rather than guess.
+        return set(), False
+    return spans, True
 
 
 def strip_noncontent(text: str) -> list[str]:
@@ -569,7 +566,7 @@ def strip_noncontent(text: str) -> list[str]:
     noise. A checker that is noisy on its own documentation will be turned off.
     """
     lines = text.splitlines()
-    fenced = _fence_spans(lines)
+    fenced, _balanced = _fence_spans(lines)
     out: list[str] = []
 
     # Frontmatter: the first non-blank line is a --- fence. Tolerates a BOM and
@@ -659,21 +656,24 @@ def is_imperative(sent: str) -> bool:
     if w in IMPERATIVE_HINT:
         return True
 
-    # Structural fallback: a closed verb list can never be complete, and every
-    # word missing from it silently switched off the command-only detectors.
-    # A sentence that opens with a non-function word and is immediately
-    # followed by a determiner or an object-taking preposition is a command
-    # ("Notify the team", "Escalate to the on-call"). A statement fails this
-    # because its second word is a verb or a modal ("Sessions are validated",
-    # "Latency should stay low").
+    # Structural fallback, determiner branch ONLY.
+    #
+    # A closed verb list can never be complete, so a sentence that opens with a
+    # non-function word directly followed by a determiner is read as a command
+    # ("Notify the team", "Cache the response").
+    #
+    # The first version also accepted an object-taking preposition, which read
+    # a third of ordinary descriptive prose as commands — "Migration to the new
+    # schema takes five minutes", "Encryption at rest is enabled" — and flipped
+    # whole documents to the procedural 20-word ceiling. The two cases separate
+    # cleanly: genuine commands take a determiner as word two, noun-initial
+    # statements take a preposition. So the preposition branch is gone, and the
+    # blocklist that had been fitted to five specific counterexamples went with
+    # it.
     tokens = re.split(r"[\s,]+", body.strip())
     if len(tokens) >= 2 and w not in FUNCTION_WORDS and w.isalpha():
-        nxt = tokens[1].strip(".,:;").lower()
-        if nxt in DETERMINERS or nxt in {"to", "from", "into", "onto", "with",
-                                         "for", "on", "at", "in", "up", "down",
-                                         "out", "off", "over", "back", "all"}:
-            if nxt not in BE_FORMS and w not in VERB_BLOCKLIST:
-                return True
+        if tokens[1].strip(".,:;").lower() in DETERMINERS:
+            return True
 
     if w in CONDITION_STARTERS and "," in body:
         nxt = re.split(r"\s+", body.split(",", 1)[1].strip().lower())[:1]
@@ -1015,24 +1015,22 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
 
     # E3 condition placed after the action.
     if commanding:
-        first = lwords[0] if lwords else ""
-        if first in IMPERATIVE_HINT:
-            tail = re.search(r",?\s+\b(if|when|while|after|before|once|unless|until)\b", body_nostep, re.I)
-            # Count words before the marker rather than characters: a short
-            # command with a trailing condition ("Set the flag to true when …")
-            # sat just under a percentage threshold. Requiring three words also
-            # spares the case where the marker is the verb's own complement
-            # ("Record when the alarm fires").
-            before = len(re.findall(r"[A-Za-z][A-Za-z'-]*", body_nostep[: tail.start()])) if tail else 0
-            if tail and before >= 3:
-                _add(f, code="E3-condition-after-action", family="E", severity="warn",
-                     line=lineno, excerpt=short,
-                     why="The reader meets the command first and the condition second. Under "
-                         "load they act, then discover the step did not apply. The condition "
-                         "is the applicability test and has to arrive first.",
-                     fix=f'Lead with the condition and separate it with a comma: '
-                         f'"{tail.group(1).capitalize()} …, <command>."',
-                     ste="5.4, 7.2")
+        tail = re.search(r",?\s+\b(if|when|while|after|before|once|unless|until)\b", body_nostep, re.I)
+        # Count words before the marker rather than characters: a short
+        # command with a trailing condition ("Set the flag to true when …")
+        # sat just under a percentage threshold. Requiring three words also
+        # spares the case where the marker is the verb's own complement
+        # ("Record when the alarm fires").
+        before = len(re.findall(r"[A-Za-z][A-Za-z'-]*", body_nostep[: tail.start()])) if tail else 0
+        if tail and before >= 3:
+            _add(f, code="E3-condition-after-action", family="E", severity="warn",
+                 line=lineno, excerpt=short,
+                 why="The reader meets the command first and the condition second. Under "
+                     "load they act, then discover the step did not apply. The condition "
+                     "is the applicability test and has to arrive first.",
+                 fix=f'Lead with the condition and separate it with a comma: '
+                     f'"{tail.group(1).capitalize()} …, <command>."',
+                 ste="5.4, 7.2")
 
     if CONTRACTION_PAT.search(sent):
         _add(f, code="E4-contraction", family="E", severity="info",
@@ -1084,6 +1082,17 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
 def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Finding]:
     findings: list[Finding] = []
 
+    if not _fence_spans(text.splitlines())[1]:
+        _add(findings, code="D0-unbalanced-fence", family="D", severity="warn",
+             line=1, excerpt="a fenced code block is opened and never closed",
+             why="The fence markers do not balance, so no code block could be identified. "
+                 "Every line is being checked as prose, which will produce findings inside "
+                 "code. The alternative — guessing where the block ends — risks skipping "
+                 "prose silently, and a missed finding is invisible in a way a noisy one "
+                 "is not.",
+             fix="Close the fence, or delete the stray marker.",
+             ste="")
+
     for lineno, sent in iter_units(text):
         findings.extend(check_sentence(lineno, sent, mode, glossary))
 
@@ -1110,7 +1119,12 @@ def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Findin
                     phrases.setdefault(w, set()).add(phrase)
 
     for word, variants in sorted(phrases.items()):
-        if len(variants) >= 3:
+        # The shared word must be the HEAD of at least one variant. Drift is
+        # several names for one thing ("main body", "body", "body assembly" —
+        # "body" heads two of them). Three things that merely share a modifier
+        # are three things.
+        heads_one = any(v.split()[-1] == word for v in variants)
+        if len(variants) >= 3 and heads_one:
             shown = ", ".join(f'"{v}"' for v in sorted(variants)[:4])
             _add(findings, code="A4-synonym-drift", family="A", severity="warn",
                  line=1,
