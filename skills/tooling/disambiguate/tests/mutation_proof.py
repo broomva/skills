@@ -18,6 +18,7 @@ mechanism they claimed to cover deleted. This harness reverts each fix on a
 COPY and asserts the corresponding test fails. A survivor is a fake test.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,50 +38,50 @@ MUTATIONS = [
      ""),
     ("glossary boundary fix reverted",
      "test_glossary_term_beside_a_hyphenated_compound",
-     r'r"(?<![\w-])(?<!\d )(?<!\d)" + re.escape(term) + r"(?![\w-])"',
-     r'r"(?<!\w)" + re.escape(term) + r"(?!\w)"'),
+     'r"(?<![\\w-])" + guard + re.escape(term) + r"(?![\\w-])"',
+     'r"(?<!\\w)" + guard + re.escape(term) + r"(?!\\w)"'),
     # --- round 2 ---
     ("unbalanced fence strips anyway",
      "test_unbalanced_fence_strips_nothing_and_says_so",
-     "        return set(), False",
-     "        pass"),
-    ("preposition branch restored",
-     "test_noun_plus_preposition_is_not_a_command",
-     'if tokens[1].strip(".,:;").lower() in DETERMINERS:',
-     'if tokens[1].strip(".,:;").lower() in DETERMINERS | {"to", "from", "into", "with", "for", "on", "at", "in"}:'),
-    ("structural fallback deleted",
-     "test_structural_fallback_recognizes_verbs_outside_the_list",
-     '    if len(tokens) >= 2 and w not in FUNCTION_WORDS and re.fullmatch(r"[a-z][a-z-]*", w):',
-     "    if False:"),
+     "        return set(), open_at",
+     "        return set(), None"),
+    ("structural fallback reintroduced",
+     "test_there_is_no_structural_fallback",
+     "    if w in CONDITION_STARTERS and \",\" in body:",
+     "    if len(re.split(r'[\\s,]+', body.strip())) >= 2 and w not in FUNCTION_WORDS and re.split(r'[\\s,]+', body.strip())[1].strip('.,:;').lower() in DETERMINERS:\n        return True\n    if w in CONDITION_STARTERS and \",\" in body:"),
+    ("hyphen-prefix verb rule removed",
+     "test_hyphenated_verb_is_a_command",
+     '    if "-" in w and w.rsplit("-", 1)[-1] in IMPERATIVE_HINT:\n        return True',
+     "    if False:\n        return True"),
     ("drift bare-form check removed",
      "test_drift_requires_the_bare_head_to_appear_alone",
      "if len(variants) >= 3 and bare_form:",
      "if len(variants) >= 3:"),
     # --- round 3 ---
-    ("descriptive stack terminators widened to bare stems",
-     "test_descriptive_stack_survives_a_homograph_modifier",
-     "        stack_terminators = VERB_FORMS\n\n    stack_tokens",
-     "        stack_terminators = VERB_FORMS | IMPERATIVE_HINT\n\n    stack_tokens"),
+    ("noun-stack scoping widened to declaratives",
+     "test_noun_stack_is_scoped_to_commands",
+     "    if commanding:\n        stack_terminators = {v for v in VERB_FORMS",
+     "    if True:\n        stack_terminators = {v for v in VERB_FORMS"),
     ("bare stems terminate behind a command",
      "test_plural_noun_inside_a_commanded_stack",
-     "        stack_terminators = {v for v in VERB_FORMS\n                             if v.endswith((\"ed\", \"ing\", \"ies\", \"ied\"))}",
-     "        stack_terminators = VERB_FORMS | IMPERATIVE_HINT"),
-    ("declarative -s terminator removed",
-     "test_declarative_finite_verb_ends_a_noun_run",
-     '        finite_s = (not commanding and lw.endswith("s") and not lw.endswith("ss")\n                    and len(lw) > 3)',
-     "        finite_s = False"),
-    ("plural-subject gate removed",
-     "test_reduced_relative_clause_is_not_a_command",
-     '            if w.endswith("s") and not w.endswith("ss") and w not in IMPERATIVE_HINT:\n                return False',
-     "            if False:\n                return False"),
-    ("hyphenated verbs blocked again",
-     "test_hyphenated_verb_is_a_command",
-     'and re.fullmatch(r"[a-z][a-z-]*", w):',
-     "and w.isalpha():"),
+     '            if v.endswith(("ed", "ing", "ies", "ied"))}',
+     "            }"),
+    ("verb inflection generator naive again",
+     "test_doubled_consonant_inflections_are_correct",
+     '    out = {v + "s", v + "es"}',
+     '    return {v + "s", v + "es", v + "ed", v + "ing"}\n    out = {v + "s", v + "es"}'),
+    ("noun-marking preposition guard removed",
+     "test_noun_plus_preposition_is_not_a_command",
+     "        if any(t in VERB_FORMS or t in BE_FORMS for t in main_clause):\n            return False",
+     "        if False:\n            return False"),
+    ("E3 clause test removed",
+     "test_e3_ignores_sequencing_that_is_not_a_condition",
+     "        if tail and before >= 2 and has_clause:",
+     "        if tail and before >= 2:"),
     ("E3 word gate back to three",
      "test_e3_fires_on_a_one_word_object",
-     "        if tail and before >= 2:",
-     "        if tail and before >= 3:"),
+     "        if tail and before >= 2 and has_clause:",
+     "        if tail and before >= 3 and has_clause:"),
     ("E3 takes the first marker regardless",
      "test_e3_skips_a_marker_that_is_too_early",
      "            if len(re.findall(r\"[A-Za-z][A-Za-z'-]*\", body_nostep[: m.start()])) >= 2:\n                tail = m\n                break",
@@ -109,6 +110,10 @@ def run(test: str) -> str:
         return "ERROR"
     if r.returncode >= 2:
         return "ERROR"
+    # A skipped target exits 0 and would read as a pass, so every mutation
+    # against it would report a kill it never earned.
+    if re.search(r"\b\d+ skipped", r.stdout) and " passed" not in r.stdout.split("skipped")[0]:
+        return "SKIP"
     return "PASS" if r.returncode == 0 else "FAIL"
 
 
@@ -124,6 +129,16 @@ def main() -> int:
     print()
 
     problems = []
+
+    # Selectors are substrings, so an overlap would silently run more than the
+    # intended test.
+    selectors = [m[1] for m in MUTATIONS]
+    for a in selectors:
+        clashes = [b for b in selectors if b != a and a in b]
+        if clashes:
+            print(f"  SELECTOR-COLLISION   {a!r} is a substring of {clashes}")
+            problems.append(a)
+
     for name, test, old, new in MUTATIONS:
         SCRIPT.write_text(PRISTINE)
 
@@ -138,6 +153,17 @@ def main() -> int:
             continue
 
         body = SCRIPT.read_text()
+
+        # An anchor that lives only in a comment or a docstring mutates nothing,
+        # so the target test passes and the entry reads as a fake test rather
+        # than as a broken mutation.
+        code_only = "\n".join(
+            ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+        if old not in code_only and old in body:
+            print(f"  ANCHOR-IN-COMMENT    {name}  (anchor is not executable code)")
+            problems.append(name)
+            continue
+
         occurrences = body.count(old)
         if occurrences == 0:
             print(f"  ANCHOR-MISSING       {name}  (mutation could not be applied)")

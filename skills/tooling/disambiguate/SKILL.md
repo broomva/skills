@@ -238,9 +238,10 @@ opaque phrasal verbs, slash conjunctions, and synonym drift across a document.
 Attachment ambiguity around "with" (A3) is **not** detected. It needs a parse,
 and the surface rule fired on every imperative containing the word. Word-sense
 ambiguity and false friends are not detected either — both need vocabulary this
-skill does not ship. A command with a bare-noun object (`Freeze deploys until
-midnight`) is missed 60% of the time, because it is the same surface shape as
-`Session tokens expire after 24 hours`. `references/ambiguity-catalog.md` lists
+skill does not ship. Noun stacks are detected **only in command form** — in a declarative the
+detector cannot tell the finite verb from a modifier, and four attempts at a
+surface proxy each broke something. A command whose verb is outside the
+vocabulary is not recognized at all. `references/ambiguity-catalog.md` lists
 every limit with its measured cost.
 
 The rule underneath all of these: **the parser fails open, the detectors fail
@@ -264,7 +265,7 @@ boundary.
 ## Validation
 
 ```bash
-python3 -m pytest tests/ -q            # 149 tests
+python3 -m pytest tests/ -q            # 153 tests
 python3 tests/mutation_proof.py        # each fix is proven load-bearing
 python3 scripts/disambiguate.py --count "Remove the safety pin (10)."   # → 5
 python3 scripts/disambiguate.py REQUIREMENTS.md --strict                # CI gate

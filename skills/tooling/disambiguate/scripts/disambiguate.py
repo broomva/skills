@@ -196,6 +196,25 @@ THAT_TAKING = r"(make sure|makes sure|ensure|ensures|verify|verifies|check|check
               r"show|shows|showed|recommend|recommends|mean|means|note|assume|assumes|" \
               r"confirm|confirms|indicate|indicates|require|requires)"
 
+# Prepositions that, directly after a noun-or-verb word, settle it as a noun.
+# Deliberately excludes particles (up, out, off, down, back, on) — "Move on",
+# "Look up" and "Back up" are commands.
+# Words that genuinely open a subordinate clause. CONDITION_STARTERS is a
+# different set for a different job and contains prepositions ("to", "for",
+# "in"), so scanning a main clause with it stopped at the first preposition and
+# found no verb.
+SUBORDINATORS = {
+    "if", "when", "while", "before", "after", "once", "unless", "until",
+    "whenever", "though", "although", "because", "since", "where", "whose",
+    "which", "that", "whether", "as", "so",
+}
+
+NOUN_MARKING_PREPOSITIONS = {
+    "to", "from", "into", "onto", "of", "for", "with", "without", "in", "at",
+    "by", "over", "under", "through", "during", "across", "against", "upon",
+    "between", "among", "per", "via", "about", "toward", "towards",
+}
+
 DETERMINERS = {
     "the", "a", "an", "this", "these", "that", "those", "its", "their",
     "your", "our", "his", "her", "each", "every", "any", "some", "no",
@@ -259,6 +278,34 @@ IMPERATIVE_HINT = {
     "roll", "rollback", "rotate", "route", "scale", "seed", "silence",
     "snapshot", "stash", "swap", "taint", "terminate", "throttle", "toggle",
     "unmount", "unpin", "unset", "vacuum", "warm", "watch", "whitelist",
+    # With the structural fallback withdrawn this list is the whole gate, so it
+    # carries weight it did not before. A vocabulary is declarative data with no
+    # interaction effects — unlike the branching heuristics it replaced, adding
+    # to it cannot break an unrelated sentence.
+    "access", "acquire", "activate", "aggregate", "allocate", "amend",
+    "analyze", "announce", "append", "archive", "assert", "audit",
+    "authenticate", "backfill", "benchmark", "bind", "bootstrap", "bounce",
+    "buffer", "cache", "calibrate", "capture", "chain", "chown", "clone",
+    "collapse", "commit", "compact", "compile", "compose", "compute",
+    "confirm", "consume", "convert", "copy", "correlate", "crawl", "curl",
+    "decode", "decrypt", "dedupe", "default", "defer", "delegate", "demote",
+    "deregister", "describe", "detect", "diff", "disconnect", "dispatch",
+    "downgrade", "downscale", "drain", "dump", "duplicate", "emit", "encode",
+    "encrypt", "enqueue", "enrich", "escalate", "evaluate", "expire",
+    "explain", "extract", "filter", "flatten", "format", "forward", "freeze",
+    "gather", "group", "hash", "hydrate", "ignore", "inject", "inspect",
+    "instrument", "invalidate", "join", "lint", "map", "marshal", "measure",
+    "mock", "normalize", "notify", "nuke", "observe", "override", "package",
+    "paginate", "parse", "partition", "ping", "pipe", "populate", "predict",
+    "preload", "profile", "propagate", "provision", "quiesce", "quote",
+    "raise", "rank", "reconcile", "redact", "reduce", "refresh", "register",
+    "reindex", "reissue", "reject", "render", "repave", "replay", "requeue",
+    "rerun", "resize", "resolve", "restrict", "resume", "retire", "reverse",
+    "revoke", "rewrite", "rollback", "sanitize", "serialize", "shard",
+    "simulate", "sniff", "snapshot", "splice", "squash", "stub", "subscribe",
+    "summarize", "suspend", "symlink", "tail", "throttle", "trace", "trim",
+    "truncate", "unblock", "unregister", "unsubscribe", "untaint", "upsert",
+    "validate", "warn", "wipe", "wrap", "review", "support", "progress",
 }
 
 # Inflected forms of the action verbs. A noun stack ends at a verb; without
@@ -288,8 +335,32 @@ _IRREGULAR_FINITE = {
     "says", "sees", "knows", "thinks", "hides", "reads", "writes", "holds",
     "describes", "resolves", "is", "are", "was", "were", "be", "been",
 }
+_VOWELS = "aeiou"
+
+
+def _inflect(v: str) -> set[str]:
+    """Inflections of one verb stem.
+
+    Naive suffixation generated "droped", "taged", "stoped", "runing" and
+    omitted every real doubled form, so a whole class of finite verbs was
+    missing from the set that is supposed to contain them.
+    """
+    out = {v + "s", v + "es"}
+    if v.endswith("e"):
+        out |= {v + "d", v[:-1] + "ing"}
+    elif v.endswith("y") and len(v) > 2 and v[-2] not in _VOWELS:
+        out |= {v[:-1] + "ies", v[:-1] + "ied", v + "ing"}
+    elif (len(v) >= 3 and v[-1] not in _VOWELS + "wxy"
+          and v[-2] in _VOWELS and v[-3] not in _VOWELS):
+        # Consonant-vowel-consonant doubles: drop -> dropped, tag -> tagged.
+        out |= {v + v[-1] + "ed", v + v[-1] + "ing"}
+    else:
+        out |= {v + "ed", v + "ing"}
+    return out
+
+
 for _v in IMPERATIVE_HINT:
-    VERB_FORMS.update({_v + "s", _v + "es", _v + "ed", _v + "ing"})
+    VERB_FORMS.update(_inflect(_v))
     if _v.endswith("y") and len(_v) > 2 and _v[-2] not in "aeiou":
         VERB_FORMS.update({_v[:-1] + "ies", _v[:-1] + "ied"})
     if _v.endswith("e"):
@@ -416,7 +487,11 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
         # Word-bounded. An unbounded substring match let a two-letter term
         # ("IT", "Go") split ordinary words and INCREASE the count, which is
         # the opposite of what the flag documents.
-        text = re.sub(r"(?<![\w-])(?<!\d )(?<!\d)" + re.escape(term) + r"(?![\w-])",
+        # A short alphabetic term can be a unit bound to a number ("5 bar"),
+        # which must not be split off. A longer or multi-word term cannot, and
+        # blocking it broke "the 2 Control Kernel nodes".
+        guard = r"(?<!\d )(?<!\d)" if (len(term) <= 3 and term.isalpha()) else ""
+        text = re.sub(r"(?<![\w-])" + guard + re.escape(term) + r"(?![\w-])",
                       " \x04 ", text, flags=re.I)
 
     # A predominantly-uppercase sentence is a formatting convention (a safety
@@ -553,9 +628,10 @@ def _fence_spans(lines: list[str]) -> tuple[set[int], bool]:
             open_at = None
 
     if open_at is not None:
-        # An opener with no closer. Strip nothing rather than guess.
-        return set(), False
-    return spans, True
+        # An opener with no closer. Strip nothing rather than guess, and report
+        # WHERE the doubt starts so the caller can scope its response to it.
+        return set(), open_at
+    return spans, None
 
 
 def strip_noncontent(text: str) -> list[str]:
@@ -567,7 +643,7 @@ def strip_noncontent(text: str) -> list[str]:
     noise. A checker that is noisy on its own documentation will be turned off.
     """
     lines = text.splitlines()
-    fenced, _balanced = _fence_spans(lines)
+    fenced, _unmatched = _fence_spans(lines)
     out: list[str] = []
 
     # Frontmatter: the first non-blank line is a --- fence. Tolerates a BOM and
@@ -654,54 +730,55 @@ def is_imperative(sent: str) -> bool:
     if not first or not first[0]:
         return False
     w = first[0].strip(".,:;")
+
+    # Many command verbs are equally nouns ("access", "support", "cache",
+    # "progress", "default"). A preposition directly after one means the noun
+    # reading: "Access TO the API requires a token" against "Access THE
+    # console". Particles are excluded, because "Move on" and "Look up" are
+    # commands.
+    second = ""
+    _rest = re.split(r"[\s,]+", body.strip())
+    if len(_rest) >= 2:
+        second = _rest[1].strip(".,:;").lower()
+    if second in NOUN_MARKING_PREPOSITIONS:
+        # ...but only when the sentence supplies another finite verb, which is
+        # what makes the first word a subject. "Access to the API REQUIRES a
+        # token" has one. "Escalate to the on-call when the alert fires" does
+        # not — its main clause is just the command.
+        main_clause: list[str] = []
+        for t in _rest[1:]:
+            bare = t.strip(".,:;").lower()
+            if bare in SUBORDINATORS:
+                break
+            main_clause.append(bare)
+        if any(t in VERB_FORMS or t in BE_FORMS for t in main_clause):
+            return False
+
     if w in IMPERATIVE_HINT:
         return True
+    # A hyphen-prefixed verb is the same verb: "re-run", "auto-scale",
+    # "force-push", "hot-swap", "cross-check".
+    if "-" in w and w.rsplit("-", 1)[-1] in IMPERATIVE_HINT:
+        return True
 
-    # Structural fallback, determiner branch ONLY.
+    # There is no structural fallback.
     #
-    # A closed verb list can never be complete, so a sentence that opens with a
-    # non-function word directly followed by a determiner is read as a command
-    # ("Notify the team", "Cache the response").
+    # One existed for two rounds and was withdrawn. Its job was to catch
+    # commands whose verb is not in the list, by reading "non-function word +
+    # determiner" as a command. Every version needed a guard against the
+    # declaratives that share that shape, and each guard was a new proxy for the
+    # same undecidable question — which token is the finite verb.
     #
-    # The first version also accepted an object-taking preposition, which read
-    # a third of ordinary descriptive prose as commands — "Migration to the new
-    # schema takes five minutes", "Encryption at rest is enabled" — and flipped
-    # whole documents to the procedural 20-word ceiling. The two cases separate
-    # cleanly: genuine commands take a determiner as word two, noun-initial
-    # statements take a preposition. So the preposition branch is gone, and the
-    # blocklist that had been fitted to five specific counterexamples went with
-    # it.
-    tokens = re.split(r"[\s,]+", body.strip())
-    # MAJOR 4: a hyphenated verb is still a verb. `.isalpha()` was blocking
-    # "Re-run the failed jobs", "Force-push the branch", "Auto-scale the cluster".
-    if len(tokens) >= 2 and w not in FUNCTION_WORDS and re.fullmatch(r"[a-z][a-z-]*", w):
-        if tokens[1].strip(".,:;").lower() in DETERMINERS:
-            # A command spends its verb at word one, so the main clause holds no
-            # other finite verb. A reduced relative clause does — "Everything the
-            # client SENDS IS validated", "Records the migration TOUCHES ARE
-            # backed up". Both open noun + determiner, so the determiner alone
-            # cannot tell them apart.
-            #
-            # Only INFLECTED forms and be-forms count as evidence. A bare stem
-            # after "and" is another imperative ("Notify the team and page the
-            # on-call"), not a second finite verb.
-            main = []
-            for t in tokens[1:]:
-                bare = t.strip(".,:;").lower()
-                if bare in CONDITION_STARTERS:
-                    break
-                main.append(bare)
-            if w.endswith("s") and not w.endswith("ss") and w not in IMPERATIVE_HINT:
-                return False
-            inflected = sum(1 for t in main
-                            if t in VERB_FORMS
-                            or (t.endswith("s") and not t.endswith("ss") and len(t) > 3))
-            if any(t in BE_FORMS for t in main) or inflected >= 2:
-                return False
-            # A single inflected token is more often a plural noun inside the
-            # object ("Audit the nightly reports delivery schedule") than a
-            # second finite verb, so one alone does not disqualify the command.
-            return True
+    # Measured at withdrawal: the gate blocked 10 of 16 genuine commands
+    # ("Cache the response where the header is present", "Audit the reports logs
+    # retention") while still admitting 11 of 12 reduced relative clauses whose
+    # inner verb was past tense ("Everything the client sent broke"). A net-zero
+    # trade bought with two branches and three sub-conditions.
+    #
+    # So the vocabulary is the vocabulary. A verb outside IMPERATIVE_HINT is not
+    # recognized as a command, D2 and E3 do not run on that line, and that is a
+    # documented false negative with a measured cost — not a silent one. Add
+    # domain verbs to IMPERATIVE_HINT to close it for your corpus.
 
     if w in CONDITION_STARTERS and "," in body:
         nxt = re.split(r"\s+", body.split(",", 1)[1].strip().lower())[:1]
@@ -824,53 +901,52 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
     # it made 26 of 30 plural-subject declaratives into noun stacks, and it put
     # real plural nouns ("logs", "reports", "checks") into the terminator set,
     # silencing genuine stacks behind a command.
+    # Command form only.
+    #
+    # A2 needs to know which token is the finite verb. Behind a command the
+    # question does not arise: the verb is spent at word one, so everything
+    # after the determiner is one noun phrase. In a declarative the verb is
+    # somewhere in the middle, and three successive surface proxies each failed
+    # in a different direction — the whole verb vocabulary blinded real stacks
+    # 8/12 to 1/12, inflection made 26 of 30 ordinary declaratives into stacks,
+    # and a "-s" rule suppressed 37% of detectable stacks while firing on
+    # possessives. The property is not recoverable without a part-of-speech tag,
+    # so the detector is scoped to where it is decidable rather than
+    # approximated where it is not. Descriptive stacks are a documented limit.
     if commanding:
-        # Verb already spent. Only unambiguous non-noun inflections stop the run
-        # — "-ed", "-ing", "-ies" — never a bare stem and never a "-s" form,
-        # which is equally a plural noun.
         stack_terminators = {v for v in VERB_FORMS
                              if v.endswith(("ed", "ing", "ies", "ied"))}
-    else:
-        # Verb still ahead. The "-s" rule below finds it, since a singular
-        # subject takes an "-s" verb and a plural subject is itself an "-s"
-        # noun — one of the two always lands first. Adding the bare-stem
-        # vocabulary here is redundant AND costs real descriptive stacks:
-        # "The engine mount attachment bolt fails" would break at "mount".
-        stack_terminators = VERB_FORMS
 
-    stack_tokens = re.findall(r"[A-Za-z][A-Za-z'-]*|,", body_nostep)
-    run: list[str] = []
-    armed = False
+        stack_tokens = re.findall(r"[A-Za-z][A-Za-z'-]*|,", body_nostep)
+        run: list[str] = []
+        armed = False
 
-    def _flush(acc: list[str]) -> None:
-        if len(acc) >= 4:
-            stack = " ".join(acc)
-            _add(f, code="A2-noun-stack", family="A", severity="warn",
-                 line=lineno, excerpt=stack,
-                 why=f'"{stack}" stacks {len(acc)} modifiers before its head noun '
-                     f'"{acc[-1]}". A noun stack is a relation graph with the edges '
-                     f"deleted: the reader has to reconstruct which word modifies which.",
-                 fix="Put the edges back with prepositions. "
-                     f'"{acc[-1]} of the {" ".join(acc[:-1])}" — then keep each '
-                     "resulting group to three words or fewer.",
-                 ste="2.1")
+        def _flush(acc: list[str]) -> None:
+            if len(acc) >= 4:
+                stack = " ".join(acc)
+                _add(f, code="A2-noun-stack", family="A", severity="warn",
+                     line=lineno, excerpt=stack,
+                     why=f'"{stack}" stacks {len(acc)} modifiers before its head noun '
+                         f'"{acc[-1]}". A noun stack is a relation graph with the edges '
+                         f"deleted: the reader has to reconstruct which word modifies which.",
+                     fix="Put the edges back with prepositions. "
+                         f'"{acc[-1]} of the {" ".join(acc[:-1])}" — then keep each '
+                         "resulting group to three words or fewer.",
+                     ste="2.1")
 
-    for tok in stack_tokens + [","]:
-        lw = tok.lower()
-        if lw in DETERMINERS:
-            _flush(run)
-            run, armed = [], True
-            continue
-        finite_s = (not commanding and lw.endswith("s") and not lw.endswith("ss")
-                    and len(lw) > 3)
-        if (lw == "," or lw in FUNCTION_WORDS or lw in stack_terminators
-                or finite_s or tok == "CODE"):
-            _flush(run)
-            run, armed = [], False
-            continue
-        if armed:
-            run.append(tok)
-
+        for tok in stack_tokens + [","]:
+            lw = tok.lower()
+            if lw in DETERMINERS:
+                _flush(run)
+                run, armed = [], True
+                continue
+            if (lw == "," or lw in FUNCTION_WORDS or lw in stack_terminators
+                    or tok == "CODE"):
+                _flush(run)
+                run, armed = [], False
+                continue
+            if armed:
+                run.append(tok)
     # A3 (attachment ambiguity around "with") is NOT detected here. Deciding
     # between the instrument, the accompaniment, and a property of the object
     # needs a parse, and the surface rule fired on every imperative containing
@@ -1090,7 +1166,29 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
         # alarm fires" (one word before the marker) and also silenced "Restart
         # nginx when the queue drains", which is the commonest runbook shape.
         before = len(re.findall(r"[A-Za-z][A-Za-z'-]*", body_nostep[: tail.start()])) if tail else 0
-        if tail and before >= 2:
+        # A condition is a CLAUSE. "when the queue drains" and "before you
+        # enqueue it" have a subject and a verb. "before the release" and
+        # "after the download" are noun phrases stating an ORDER, not a
+        # precondition, and flagging them was a whole false-positive class that
+        # adjusting the word threshold could never reach.
+        #
+        # Evidence of a clause: an inflected verb or a be-form (a bare stem is
+        # ambiguous with a noun), or a subject pronoun. This condition only ever
+        # SUPPRESSES a finding, so it cannot introduce a new false positive —
+        # the safe direction for a change made while the defect count diverges.
+        rest_tokens = re.findall(r"[a-z][a-z'-]*", body_nostep[tail.end():].lower()) if tail else []
+        has_clause = any(
+            t in VERB_FORMS
+            or t in BE_FORMS
+            or t in {"you", "it", "they", "we", "he", "she"}
+            # A trailing "-s" is weak evidence of a finite verb and strong
+            # enough here. Used as POSITIVE clause evidence inside a suppression
+            # rule it can only reduce suppression, never create a finding — the
+            # opposite polarity to the noun-stack rule where the same signal
+            # was withdrawn for suppressing 37% of real stacks.
+            or (t.endswith("s") and not t.endswith("ss") and len(t) > 3)
+            for t in rest_tokens)
+        if tail and before >= 2 and has_clause:
             _add(f, code="E3-condition-after-action", family="E", severity="warn",
                  line=lineno, excerpt=short,
                  why="The reader meets the command first and the condition second. Under "
@@ -1150,8 +1248,8 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
 def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Finding]:
     findings: list[Finding] = []
 
-    unbalanced = not _fence_spans(text.splitlines())[1]
-    if unbalanced:
+    unmatched_at = _fence_spans(text.splitlines())[1]
+    if unmatched_at is not None:
         _add(findings, code="D0-unbalanced-fence", family="D", severity="warn",
              line=1, excerpt="a fenced code block is opened and never closed",
              why="The fence markers do not balance, so no code block could be identified. "
@@ -1176,16 +1274,20 @@ def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Findin
                  fix="Split at the topic change. One paragraph carries one topic.",
                  ste="6.5, 6.6")
 
-    if unbalanced:
-        # Every line is being checked as prose, including code. The findings are
-        # worth showing but must not fail a build, so nothing derived from an
-        # unresolvable document is allowed to block.
+    if unmatched_at is not None:
+        # Only what the stray opener could plausibly cover. Downgrading the
+        # WHOLE document meant one stray marker anywhere silenced every block
+        # and returned exit 0 — re-inverting the polarity this fence logic was
+        # rewritten to establish, one layer up at severity instead of at span.
+        # Prose before the marker is not in doubt and keeps its severity.
         for finding in findings:
-            if finding.severity == "block" and finding.code != "D0-unbalanced-fence":
+            if (finding.severity == "block"
+                    and finding.code != "D0-unbalanced-fence"
+                    and finding.line > unmatched_at):
                 finding.severity = "warn"
-                finding.why += (" Reported as a warning rather than a block: the "
-                                "document's code fences do not balance, so this may "
-                                "be inside a code block.")
+                finding.why += (" Reported as a warning rather than a block: it falls "
+                                "after an unclosed code fence, so it may be inside a "
+                                "code block.")
 
     # A4 synonym drift: several names for what is probably one thing.
     # Clustering on the last word misses the real case ("main body", "body",

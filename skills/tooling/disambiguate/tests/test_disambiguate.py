@@ -894,20 +894,28 @@ def test_noun_plus_preposition_is_not_a_command():
     assert detect_mode("\n".join(DESCRIPTIVE_NOUN_INITIAL)) == "descriptive"
 
 
-def test_structural_fallback_recognizes_verbs_outside_the_list():
-    """The fallback must still earn its place: these verbs are NOT in
-    IMPERATIVE_HINT, so only the determiner branch can catch them."""
+def test_there_is_no_structural_fallback():
+    """Round 4: the fallback was withdrawn.
+
+    It read "non-function word + determiner" as a command, and every version
+    needed a guard against the declaratives that share that shape. Measured at
+    withdrawal: the guard blocked 10 of 16 genuine commands while still
+    admitting 11 of 12 reduced relatives whose inner verb was past tense. A
+    net-zero trade bought with two branches and three sub-conditions.
+
+    A verb outside the vocabulary is now simply not a command. That is a
+    documented false negative, and this test exists so the fallback is not
+    quietly reintroduced."""
     from disambiguate import is_imperative, IMPERATIVE_HINT
-    for cmd, verb in [("Quiesce the writer before the snapshot.", "quiesce"),
-                      ("Marshal the payload into the queue.", "marshal"),
-                      ("Reconcile the ledger after the batch ends.", "reconcile")]:
-        assert verb not in IMPERATIVE_HINT, f"{verb} is in the list; this no longer tests the fallback"
-        assert is_imperative(cmd), cmd
+    for verb, sentence in [("frobnicate", "Frobnicate the widget before the release."),
+                           ("bedazzle", "Bedazzle the report when the quarter ends.")]:
+        assert verb not in IMPERATIVE_HINT
+        assert not is_imperative(sentence), sentence
 
 
 def test_previously_blocklisted_verbs_work_as_commands():
-    """MINOR. The blocklist held five words that were not in IMPERATIVE_HINT,
-    so each was a silent false negative when used as a real command."""
+    """The five words a round-1 blocklist suppressed are real command verbs and
+    are now carried in the vocabulary itself."""
     from disambiguate import is_imperative
     for cmd in ["Access the console when the alarm fires.",
                 "Cache the response for the session when traffic spikes.",
@@ -1000,16 +1008,6 @@ def test_plural_noun_inside_a_commanded_stack():
         assert "A2-noun-stack" in codes(check(s)), s
 
 
-def test_declarative_finite_verb_ends_a_noun_run():
-    """No verb vocabulary is ever complete — 'abort', 'skip', 'reach' are not in
-    ours. In a declarative the finite verb is almost always the '-s' form, which
-    is a property rather than a list."""
-    assert "A2-noun-stack" not in codes(
-        check("The first bad token aborts the run.", mode="descriptive"))
-    assert "A2-noun-stack" not in codes(
-        check("The nightly reconciler flags mismatched ledger entries.", mode="descriptive"))
-
-
 REDUCED_RELATIVES = [
     "Everything the client sends is validated server side.",
     "Anything the importer skips appears in the error report.",
@@ -1035,27 +1033,39 @@ def test_reduced_relative_clause_is_not_a_command():
     assert detect_mode("\n".join(REDUCED_RELATIVES)) == "descriptive"
 
 
-def test_commands_survive_the_relative_clause_gate():
-    """The gate must not cost real commands, including ones whose object holds a
-    plural noun that looks like a verb inflection."""
+def test_commands_with_plural_objects_are_commands():
+    """The withdrawn gate blocked these: two ordinary plural nouns in one object
+    tripped its "two inflected tokens" condition, which is the norm in the ops
+    register the vocabulary was extended for."""
     from disambiguate import is_imperative
     for cmd in ["Notify the team and page the on-call.",
                 "Audit the nightly reports delivery schedule.",
                 "Review the primary cluster updates rollout window.",
                 "Progress the ticket to done after the review ends.",
-                "Cache the response for the session when traffic spikes."]:
+                "Cache the response for the session when traffic spikes.",
+                "Audit the reports logs retention.",
+                "Backfill the metrics counters table.",
+                "Normalize the vendors payments ledger.",
+                "Archive the rows whose status is expired.",
+                "Cache the response where the header is present."]:
         assert is_imperative(cmd), cmd
 
 
 def test_hyphenated_verb_is_a_command():
-    """MAJOR. `.isalpha()` blocked the determiner branch for every hyphenated
-    verb, even though word two was a determiner."""
+    """A hyphen-prefixed verb is the same verb. This is morphology, not another
+    proxy for which token is finite."""
     from disambiguate import is_imperative
     for cmd in ["Re-run the failed jobs when the queue clears.",
                 "Auto-scale the cluster when CPU exceeds eighty percent.",
                 "Force-push the branch after the rebase completes.",
                 "Hot-swap the certificate before the expiry date."]:
         assert is_imperative(cmd), cmd
+    # The first three carry a real condition clause. The fourth ends in a noun
+    # phrase, so it states an order rather than a precondition and is correctly
+    # silent — see test_e3_ignores_sequencing_that_is_not_a_condition.
+    for cmd in ["Re-run the failed jobs when the queue clears.",
+                "Auto-scale the cluster when CPU exceeds eighty percent.",
+                "Force-push the branch after the rebase completes."]:
         assert "E3-condition-after-action" in codes(check(cmd)), cmd
 
 
@@ -1078,11 +1088,96 @@ def test_e3_skips_a_marker_that_is_too_early():
     assert "E3-condition-after-action" in codes(check("Retry once if the upstream returns 503."))
 
 
-def test_descriptive_stack_survives_a_homograph_modifier():
-    """The bare-stem vocabulary must not terminate a run in descriptive text.
-    A mutation proof showed it was redundant there — the '-s' rule always lands
-    first — and it costs real stacks whose modifiers are verb homographs."""
-    assert "A2-noun-stack" in codes(
-        check("The engine mount attachment bolt fails.", mode="descriptive"))
-    assert "A2-noun-stack" in codes(
-        check("The database backup retention policy applies.", mode="descriptive"))
+def test_noun_stack_is_scoped_to_commands():
+    """Round 4: A2 is deliberately NOT run on declarative text.
+
+    The detector needs to know which token is the finite verb. Behind a command
+    the question does not arise — the verb is spent at word one. In a
+    declarative it is somewhere in the middle, and three successive surface
+    proxies each failed in a different direction: the whole verb vocabulary
+    blinded real stacks 8/12 to 1/12; inflection made 26 of 30 ordinary
+    declaratives into stacks; a "-s" rule suppressed 37% of detectable stacks
+    and fired on possessives ("user's", "commission's").
+
+    The property is not recoverable without a part-of-speech tag, so the
+    detector is scoped to where it is decidable instead of approximated where
+    it is not. This is a deliberate false-negative, recorded in the catalog's
+    Known Limits, and this test exists so the scoping cannot be silently
+    widened again."""
+    stack = "the engine mount attachment bolt"
+    assert "A2-noun-stack" in codes(check(f"Replace {stack}.")), "commands must still fire"
+    assert "A2-noun-stack" not in codes(
+        check(f"The engine mount attachment bolt fails.", mode="descriptive"))
+    # The shapes that made the descriptive branch untenable stay silent.
+    for declarative in [
+        "The worker pods mount shared volume claims.",
+        "The disk usage alert dropped.",
+        "The kubernetes ingress controller config is stale.",
+        "The commission's report delivery schedule changed.",
+    ]:
+        assert "A2-noun-stack" not in codes(check(declarative, mode="descriptive")), declarative
+
+
+def test_doubled_consonant_inflections_are_correct():
+    """Naive suffixation produced ~18 non-words and omitted the ~18 real forms,
+    which mattered once VERB_FORMS became load-bearing for phrase boundaries."""
+    from disambiguate import VERB_FORMS
+    for real in ["stopped", "tagged", "logged", "dropped", "dropping", "running",
+                 "submitted", "splitting"]:
+        assert real in VERB_FORMS, f"{real} missing"
+    for nonword in ["stoped", "taged", "loged", "droped", "droping", "runing"]:
+        assert nonword not in VERB_FORMS, f"{nonword} should not be generated"
+    # -e and -y stems keep their own rules.
+    assert "released" in VERB_FORMS and "releasing" in VERB_FORMS
+    assert "retries" in VERB_FORMS and "retried" in VERB_FORMS
+
+
+def test_reduced_relative_clause_is_not_a_command():
+    """With the fallback withdrawn these are statements because their verbs are
+    not in the vocabulary, not because a guard caught them."""
+    from disambiguate import is_imperative
+    misread = [s for s in REDUCED_RELATIVES if is_imperative(s)]
+    assert not misread, f"read as commands: {misread}"
+    assert detect_mode("\n".join(REDUCED_RELATIVES)) == "descriptive"
+
+
+def test_past_tense_reduced_relative_is_not_a_command():
+    """Round 4: the withdrawn gate was tense-sensitive — it caught 'Everything
+    the client sends is validated' and admitted 'Everything the client sent
+    broke', one tense away from its own fixture."""
+    from disambiguate import is_imperative
+    for s in ["Everything the client sent broke.",
+              "Data the pipeline emitted went missing.",
+              "Whatever the scheduler dropped came back later."]:
+        assert not is_imperative(s), s
+
+
+def test_glossary_multiword_term_after_a_digit():
+    """The digit lookbehind that protects a unit ("5 bar") must not block a
+    multi-word product name ("the 2 Control Kernel nodes")."""
+    plain = count_ste_words("Restart the 2 Control Kernel nodes.")[0]
+    assert count_ste_words("Restart the 2 Control Kernel nodes.", ["Control Kernel"])[0] < plain
+    assert count_ste_words("Set the pressure to 5 bar.", ["bar"])[0] == \
+        count_ste_words("Set the pressure to 5 bar.")[0]
+
+
+def test_e3_ignores_sequencing_that_is_not_a_condition():
+    """Round 4: adjusting the word threshold could never reach this class. A
+    condition is a CLAUSE ("when the queue drains", "before you enqueue it").
+    A noun phrase after the marker states an ORDER, not a precondition."""
+    for sequencing in ["Roll back before the release.",
+                       "Verify the checksum after the download.",
+                       "Merge the branch after the review.",
+                       "Set aside time after standup.",
+                       "Move on once complete.",
+                       "Reissue certificates after the rotation."]:
+        assert "E3-condition-after-action" not in codes(check(sequencing)), sequencing
+
+
+def test_e3_still_fires_on_a_real_condition():
+    for condition in ["Restart nginx when the queue drains.",
+                      "Page on-call if latency exceeds one second.",
+                      "Encrypt the payload before you enqueue it.",
+                      "Scale replicas once CPU exceeds seventy percent.",
+                      "Set the switch to NORMAL when the light comes on."]:
+        assert "E3-condition-after-action" in codes(check(condition)), condition

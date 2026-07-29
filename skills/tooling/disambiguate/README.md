@@ -84,7 +84,7 @@ B — Who must, and must they?  (2)
 ## Design
 
 **Deterministic** (`scripts/disambiguate.py`, stdlib only, no network, no model
-calls): the word-count algorithm plus 24 conservative detectors. A parenthetical,
+calls): the word-count algorithm plus 23 conservative detectors. A parenthetical,
 a quoted span, an uppercase run, a number with its unit, and a hyphenated
 compound each count as **one word** — the counting rules are not naive splitting.
 
@@ -99,7 +99,7 @@ guessing. Silent approximation would read as coverage.
 ## Tests
 
 ```bash
-python3 -m pytest tests/ -q     # 149 tests
+python3 -m pytest tests/ -q     # 153 tests
 python3 tests/mutation_proof.py # revert each fix, assert its test fails
 ```
 
