@@ -369,6 +369,69 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 baseline gets its own exit code (`4`), because nothing is wrong with the skill — the
 *measurement* is void, and reporting that as a threshold failure would send a reader
 to fix the wrong thing. `--fail-on-retire-candidate` is opt-in.
+## Does the description even reach the model? (`listing.py`)
+
+The arc's premise was that the description we author is the description the model
+sees. **It usually is not.** Claude Code injects the roster as a `skill_listing`
+attachment whose rendered `content` is capped; when the roster overflows, skills
+render as a bare `- name` line with no trigger text at all.
+
+```bash
+python3 scripts/skill_evals/listing.py            # classify the latest real listing
+python3 scripts/skill_evals/listing.py --budget   # mass vs cap, heaviest skills
+python3 scripts/skill_evals/listing.py --calibrate # re-derive the caps from disk
+```
+
+Measured here (1,199 listings across 1,039 session transcripts): largest listing
+ever delivered **39,013 chars**; the trigger surface of the 124 roster skills found
+on disk is **94,800 chars**, a 2.4× overshoot. In the session that produced the
+module: 146 skills → **34 full, 2 truncated, 110 BARE (75.3%)**.
+
+That mass is a **floor**. 22 of the 146 listed names are CLI built-ins that exist
+nowhere on disk, so their descriptions cannot be measured — yet 13 of them arrived
+FULL and consumed 6,404 of the 30,087 rendered chars. The real overshoot is worse
+than 2.4×, and the affordable mean is the cap divided by the **roster** (146), not by
+the measurable subset (124) — 267 chars, not 315. An author trimming to the larger
+number still overflows.
+
+The budget is scoped to the **roster** — the names the harness actually lists. An
+earlier version counted every `SKILL.md` it could reach and reported 369 skills
+against a 146-name roster, 60% of that mass from skills that have never been listed,
+while *missing* 84 that had: `Path.rglob` does not follow symlinks, and a skill
+install root is almost entirely symlinks (125 of 129 entries here — rglob found 3
+`SKILL.md` files, `iterdir` finds 128). The tell was a single run reporting `kg` and
+`dogfood` TRUNCATED from the transcript while `over_per_skill_cap` came back empty.
+
+The bstack primitives are among the worst hit — `role-x` (P17), `persist` (P12),
+`cross-review` (P20), `orchestration` (P19) and `bookkeeping` (P6) all arrived
+**BARE**; `kg` and `dogfood` arrived truncated mid-sentence. Which skills win is not
+stable between sessions, so this is not a fixed set to design around.
+
+Two consequences worth stating plainly:
+
+- **A trigger eval on a bare skill measures nothing about its description**, because
+  the model never received one. Coverage numbers should be read against delivery.
+- **Trimming descriptions cannot fix it.** The affordable mean per ROSTER entry is
+  ~267 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
+  the model-invocable skill **count** (`disable-model-invocation` on the long tail),
+  which is a governance decision, not this module's job.
+
+Known blind spot, stated because it is easier to trust a tool that names its own
+edges: R0 catches a TOTAL parse failure, not a partial one. If most lines become
+unreadable but one still parses, the report says "N of M BARE" with confidence — and
+if the unreadable lines follow a good one they are absorbed into its description
+rather than counted, so the unparsed count cannot see them either. Detecting that
+needs per-line attribution the parser does not produce today.
+
+`BUDGET_CHARS` and `PER_SKILL_CHARS` are **observations, not assertions**, and
+`--calibrate` re-derives them and exits non-zero when one is stale. That is not
+decoration: its first real run rejected this module's own initial `BUDGET_CHARS`
+(30,000, from a smaller sample) against an observed 39,013.
+
+Deliberately **not** a CI gate. Its input is one machine's `~/.claude/projects`,
+which does not exist on a runner — a CI check over it would be green by
+construction, the exact vacuity this harness exists to hunt. It belongs in
+`bstack doctor` as an advisory section, next to P7 freshness.
 
 ## What replay does and does not guarantee
 
