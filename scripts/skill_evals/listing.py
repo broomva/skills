@@ -537,9 +537,7 @@ def red_conditions(
     """What a reader should act on. Ordered by how directly each blocks triggering."""
     out: list[str] = []
     # R0 first, because everything below it is only meaningful if the listing was
-    # actually read. A listing that parses to zero entries reported "0 BARE (0.0%)"
-    # with no red condition at all — for a 199-skill attachment where every line was
-    # unreadable. Absence of parsed entries is not absence of bare skills; it is
+    # actually read. Absence of parsed entries is not absence of bare skills; it is
     # absence of a measurement, and it has to say so.
     # Keyed on PARSED entries, not on len(states): classify() defaults every name in
     # the attachment to BARE, so states is non-empty whenever the roster is. The
@@ -555,6 +553,14 @@ def red_conditions(
         )
     # `>=`, not `>`: the canonical total-failure shape is exactly one unreadable line
     # per skill, so equality is the NORM for that failure, not an edge of it.
+    #
+    # KNOWN BLIND SPOT, stated rather than implied: a PARTIAL parse failure escapes
+    # both branches. 145 of 146 lines unreadable leaves parsed_entries at 1 and
+    # unparsed at 145, and the report confidently says "145 of 146 BARE". Worse, when
+    # the unreadable lines come AFTER a good one, parse_entries appends them to the
+    # current entry's buffer, so `unparsed` is 0 and this branch cannot see them at
+    # all. Detecting that needs a per-line attribution the parser does not currently
+    # produce; it is a pre-existing limit, not something the R0 fix introduced.
     elif cls.states and len(cls.unparsed) >= len(cls.states):
         out.append(
             f"R0 {len(cls.unparsed)} unreadable lines against only {len(cls.states)} parsed "
@@ -646,10 +652,17 @@ def main(argv: list[str] | None = None) -> int:
               f"({budget['overshoot']}x)")
         # Printed, not just in the JSON: a reader who cannot see that N listed skills
         # were dropped from the measurable set reads the total as complete.
-        if budget.get("in_roster_not_on_disk_count"):
-            names = ", ".join(budget["in_roster_not_on_disk"][:6])
-            print(f"\n{budget['in_roster_not_on_disk_count']} listed skill(s) are NOT on "
-                  f"disk (CLI built-ins) and consume budget we cannot measure: {names}…")
+        missing_n = budget.get("in_roster_not_on_disk_count", 0)
+        if missing_n:
+            shown = budget["in_roster_not_on_disk"][:6]
+            # No ellipsis when the list is complete, and no claim about WHY they are
+            # missing: a mistyped --skill-root or a moved install root lands here too,
+            # and labelling that "CLI built-ins" reports a misconfiguration as
+            # expected-and-unmeasurable.
+            more = "…" if missing_n > len(shown) else ""
+            print(f"\n{missing_n} listed skill(s) are NOT on disk under the given "
+                  f"--skill-root(s), so their budget cannot be measured (usually CLI "
+                  f"built-ins; also a wrong --skill-root): {', '.join(shown)}{more}")
         print(f"\naffordable mean per ROSTER entry ({budget['roster_size']}): "
               f"{budget['affordable_mean_chars']} chars")
         print("Trimming the heaviest few cannot reach the cap — the lever is the skill "

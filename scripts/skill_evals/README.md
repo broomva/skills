@@ -416,6 +416,13 @@ Two consequences worth stating plainly:
   the model-invocable skill **count** (`disable-model-invocation` on the long tail),
   which is a governance decision, not this module's job.
 
+Known blind spot, stated because it is easier to trust a tool that names its own
+edges: R0 catches a TOTAL parse failure, not a partial one. If most lines become
+unreadable but one still parses, the report says "N of M BARE" with confidence — and
+if the unreadable lines follow a good one they are absorbed into its description
+rather than counted, so the unparsed count cannot see them either. Detecting that
+needs per-line attribution the parser does not produce today.
+
 `BUDGET_CHARS` and `PER_SKILL_CHARS` are **observations, not assertions**, and
 `--calibrate` re-derives them and exits non-zero when one is stale. That is not
 decoration: its first real run rejected this module's own initial `BUDGET_CHARS`

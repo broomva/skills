@@ -509,3 +509,54 @@ def test_a_fully_measurable_roster_is_not_flagged_as_a_floor(tmp_path):
     assert rep["effective_mass_is_a_floor"] is False
     assert rep["in_roster_not_on_disk_count"] == 0
     assert rep["affordable_mean_chars"] == round(L.BUDGET_CHARS / 2)
+
+
+def test_the_budget_output_names_the_excluded_skills(tmp_path, capsys):
+    """FIX 3 of round 2 shipped with no test, which round-3 review flagged as the one
+    hardest to notice regressing: deleting the naming block left the suite green.
+
+    Also pins the two ways the line misled: a trailing ellipsis when the list was
+    already complete, and asserting "(CLI built-ins)" as the cause when a mistyped
+    --skill-root produces the identical state.
+    """
+    root = tmp_path / "install"
+    root.mkdir()
+    d = root / "present"
+    d.mkdir()
+    (d / "SKILL.md").write_text("---\nname: present\ndescription: x\n---\n")
+
+    tr = tmp_path / "tr"
+    tr.mkdir()
+    _write_transcript(
+        tr / "88888888-8888-8888-8888-888888888888.jsonl",
+        ["present", "builtin-one", "builtin-two"],
+        "- present: described.\n- builtin-one: also described.\n- builtin-two\n",
+    )
+
+    rc = L.main(["--transcripts", str(tr), "--skill-root", str(root), "--budget"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "2 listed skill(s) are NOT on disk" in out
+    assert "builtin-one" in out and "builtin-two" in out
+    assert "builtin-two…" not in out, "no ellipsis when the whole list is shown"
+    assert "(CLI built-ins)" not in out, "the cause must not be asserted as fact"
+    assert "a FLOOR" in out, "the mass must be labelled a floor when skills are missing"
+
+
+def test_a_complete_roster_reports_no_missing_line(tmp_path, capsys):
+    """FALSE-POSITIVE control — the caveat must be absent when nothing is missing."""
+    root = tmp_path / "install"
+    root.mkdir()
+    for n in ("a", "b"):
+        d = root / n
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: {n}\ndescription: x\n---\n")
+    tr = tmp_path / "tr"
+    tr.mkdir()
+    _write_transcript(tr / "99999999-9999-9999-9999-999999999999.jsonl",
+                      ["a", "b"], "- a: x\n- b: y\n")
+
+    L.main(["--transcripts", str(tr), "--skill-root", str(root), "--budget"])
+    out = capsys.readouterr().out
+    assert "NOT on disk" not in out
+    assert "a FLOOR" not in out
