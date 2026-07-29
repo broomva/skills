@@ -2525,3 +2525,24 @@ def test_baseline_cases_absent_drops_negatives_but_bare_keeps_them():
     ]))
     assert [c.id for c in R._baseline_cases(ps, "absent")] == ["pos"]
     assert sorted(c.id for c in R._baseline_cases(ps, "bare")) == ["neg", "pos"]
+
+
+def test_strip_description_raises_if_the_parser_still_sees_a_description(monkeypatch):
+    """The postcondition guard, exercised.
+
+    Found by mutation: deleting the ``residue`` check in
+    ``strip_frontmatter_description`` broke NO test, because on every input the
+    line arithmetic happens to be correct, so the guard never fires. An unfired
+    guard is an untested one — precisely the "a guard written against a remembered
+    list certifies itself" failure this arc keeps hitting.
+
+    The guard's contract is not "some pathological YAML exists" (none does today);
+    it is "if the grading parser can still see a description, refuse". So drive it
+    through that seam directly: the postcondition must hold against whatever
+    ``parse_frontmatter_description`` reports, including when a future change to
+    either the stripper or the parser makes them disagree.
+    """
+    monkeypatch.setattr(R, "parse_frontmatter_description",
+                        lambda text: "a description the stripper missed")
+    with pytest.raises(R.SkillArtifactError, match="survived stripping"):
+        R.strip_frontmatter_description("---\nname: demo\ndescription: x\n---\n# body\n")
