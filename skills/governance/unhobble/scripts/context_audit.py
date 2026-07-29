@@ -24,11 +24,15 @@ Signals, each mapped to the reversal it serves:
   derivable     sections that restate the filesystem    ("avoid the obvious")
   mechanism     path/command references in a section
                 that actually exist on disk             (anchored-vs-self-referential input)
+  anchor state  whether a probe has DEMONSTRATED that
+                mechanism firing — unresolved until
+                one has (see references/mechanism-probe.md)
   contradiction topics carrying both a prohibition and
                 a permission/judgment, across sections  (the article's own diagnostic)
 
 Usage:
     context_audit.py <path> [<path> ...] [--budget N] [--json] [--repo-root DIR]
+    context_audit.py <path> --probe-receipts probes.json
     context_audit.py --prompt-text "..." [--json]
     context_audit.py --prompt-file prompt.md [--json]
 """
@@ -36,6 +40,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import heapq
 import json
@@ -471,14 +476,24 @@ def _resolve_mechanism(repo_root: Path, ref: str) -> tuple[bool, str]:
         return False, "external"
 
 
-def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
+def mechanism_refs(
+    section: Section,
+    repo_root: Path | None,
+    receipts: dict[str, dict] | None = None,
+    ambiguous_covers: "Iterable[str]" = (),
+) -> list[dict]:
     """Backtick-quoted executable paths/commands in a section, with existence.
 
     A section referencing an *executable* file that exists is an *anchored
-    candidate*: some mechanism outside the prose may already enforce it.
-    Existence is the only thing checked here — whether that mechanism actually
-    produces a signal the agent cannot write to is keel's question, not this
-    script's. Markdown references never qualify (see _LOOKS_LIKE_PATH).
+    candidate*: some mechanism outside the prose *may* already enforce it.
+    Existence is the only thing this function can check. Two further questions
+    it deliberately does not guess at:
+
+      efficacy      does the mechanism fire at all? -> `probe`, resolved only
+                    from a receipt produced by references/mechanism-probe.md
+      independence  is the signal outside the governed actor's reach? -> keel
+
+    Markdown references never qualify (see _LOOKS_LIKE_PATH).
     """
     refs: list[dict] = []
     seen: set[str] = set()
@@ -498,9 +513,384 @@ def mechanism_refs(section: Section, repo_root: Path | None) -> list[dict]:
             continue
         seen.add(ref)
         refs.append(
-            {"ref": ref, "kind": kind, "exists_on_disk": exists, "scope": scope}
+            {
+                "ref": ref,
+                "kind": kind,
+                "exists_on_disk": exists,
+                "scope": scope,
+                "probe": probe_state(ref, receipts, section, ambiguous_covers),
+                "shows_evidence": shows_evidence(ref, receipts),
+            }
         )
     return refs
+
+
+# --------------------------------------------------------------------------
+# Probe receipts (efficacy: does the mechanism actually fire?)
+# --------------------------------------------------------------------------
+
+# A receipt is an ATTESTATION. Nothing here observes the probe, re-runs it, or
+# checks the booleans against anything — the script's only options are to
+# believe the file or ignore it. That is a real limit and it is disclosed rather
+# than papered over: an agent that wants a section deleted can type three
+# `true`s and take the free tier, which makes the producer of the signal the
+# actor being governed. `shows_evidence` is the visible tell; the durable fix is
+# a runner that emits receipts from an observed run (BRO-2036, forward
+# reference — no code here depends on it). See references/mechanism-probe.md.
+
+# The three legs of a probe. Each is load-bearing, and the third most of all:
+# without neutering the mechanism and watching the check go red, a green result
+# cannot distinguish "the gate works" from "my test passes regardless".
+_PROBE_LEGS = ("fires_on_trigger", "silent_on_non_trigger", "neutered_check_went_red")
+
+
+class BadProbeReceipts(Exception):
+    """The receipt file exists but is not a receipt file.
+
+    Raised rather than defaulted to empty: a typo in the path would otherwise
+    silently downgrade every anchor to "unresolved" while the run looked normal.
+    """
+
+
+def load_probe_receipts(path: Path) -> dict[str, dict]:
+    """Read `{"probes": {"<ref>": {<leg>: bool, ...}}}` from disk.
+
+    Probing is a runtime act, so its result reaches a static analyser only as a
+    recorded receipt. Nothing here infers a probe outcome from the filesystem —
+    a regex claiming a hook fires would be guessing in a confident voice, which
+    is the failure mode this whole column exists to correct.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise BadProbeReceipts(str(e)) from e
+    if not isinstance(raw, dict) or not isinstance(raw.get("probes"), dict):
+        raise BadProbeReceipts(f"{path}: expected a top-level 'probes' object")
+    # A non-dict VALUE is refused by name rather than filtered out. Dropping it
+    # silently reproduced the defect the unmatched-key warning exists to close,
+    # arriving through the value-type door instead of the key door: the receipt
+    # vanishes and the report reads like a clean run.
+    bad = sorted(k for k, v in raw["probes"].items() if not isinstance(v, dict))
+    if bad:
+        raise BadProbeReceipts(
+            f"{path}: receipt value must be an object; got a bare literal for "
+            + ", ".join(f"'{k}'" for k in bad[:5])
+            + (f" (+{len(bad) - 5} more)" if len(bad) > 5 else "")
+        )
+    return dict(raw["probes"])
+
+
+def receipt_covers(rec: dict) -> list[str]:
+    """The rules a receipt claims to cover — section headings or `path#heading`."""
+    c = rec.get("covers")
+    if isinstance(c, str):
+        c = [c]
+    if not isinstance(c, list):
+        return []
+    return [str(x).strip() for x in c if str(x).strip()]
+
+
+def section_ids(section: "Section") -> set[str]:
+    """Both handles a receipt may name a section by."""
+    return {section.heading.strip(), section.key.strip()}
+
+
+def _path_suffix_match(claimed: str, actual: str) -> bool:
+    """Do two spellings of a file path denote the same file?
+
+    `Section.path` is whatever argv said, so the SAME section is `CLAUDE.md`,
+    `/abs/path/CLAUDE.md`, or `sub/CLAUDE.md` depending on how the tool was
+    invoked — including the directory-glob mode SKILL.md recommends. A qualified
+    `covers` written against one spelling matched none of the others, so the
+    documented remedy for ambiguity did not work in the recommended workflow.
+
+    Compared component-wise in either direction, so `a/CLAUDE.md` and
+    `b/CLAUDE.md` still do NOT match: only a true path suffix counts.
+    """
+    a = [p for p in actual.replace("\\", "/").split("/") if p not in ("", ".")]
+    c = [p for p in claimed.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not a or not c:
+        return False
+    n = min(len(a), len(c))
+    return a[-n:] == c[-n:]
+
+
+def cover_matches(cover: str, section: "Section") -> bool:
+    """Does one `covers` entry name this section?
+
+    Bare heading, or `path#heading` where the path is any suffix spelling of the
+    section's file.
+    """
+    cover = cover.strip()
+    path, sep, heading = cover.rpartition("#")
+    if not sep:
+        path, heading = "", cover
+    if heading.strip() != section.heading.strip():
+        return False
+    return not path.strip() or _path_suffix_match(path.strip(), section.path)
+
+
+def cover_hits(
+    receipts: dict[str, dict] | None, sections: "Iterable[Section]"
+) -> dict[str, int]:
+    """How many sections each distinct `covers` entry names.
+
+    0 = stale (a heading renamed since the probe). >1 = AMBIGUOUS, and refused
+    rather than guessed: `Conventions` appears in both CLAUDE.md and AGENTS.md,
+    and SKILL.md step 1 tells you to audit them together. Promoting both on a
+    receipt that probed one is a BAD DELETION, not a fail-safe one. It is the
+    same rule `nearest_ref` follows for receipt keys, one level over.
+    """
+    sections = list(sections)
+    hits: dict[str, int] = {}
+    for rec in (receipts or {}).values():
+        for c in receipt_covers(rec):
+            if c not in hits:
+                hits[c] = sum(1 for s in sections if cover_matches(c, s))
+    return hits
+
+
+def probe_state(
+    ref: str,
+    receipts: dict[str, dict] | None,
+    section: "Section | None" = None,
+    ambiguous: "Iterable[str]" = (),
+) -> str:
+    """Per-reference, PER-SECTION efficacy verdict.
+
+    unresolved  no receipt, or a receipt whose `covers` does not name this rule
+    fires       all three legs attested AND this rule is in `covers` (attested,
+                not verified — see the note above `_PROBE_LEGS`)
+    dead        the receipt says the probe was run and the mechanism did not fire
+    incomplete  a receipt exists but does not carry all three legs; notably a
+                probe with no neutered-control leg proves nothing
+    unscoped    a receipt with no `covers` at all — it names no rule, so it
+                promotes nothing
+
+    Scope is the point. A probe exercises one branch of one mechanism; the
+    deletion verdict is per RULE. Without `covers`, one receipt for a gate
+    promotes every section in every audited file that happens to cite it — so
+    "probed the rm -rf branch" would license deleting "secrets must never be
+    committed". That is the citation trap this skill names, relocated from `.md`
+    refs to `.sh` refs, and it is why an unscoped receipt fails CLOSED.
+
+    A NEGATIVE finding is exempt from the scope gate on purpose: `dead` never
+    promotes anything, and discarding it for a paperwork reason would repeat the
+    error of throwing away the honest answer.
+    """
+    rec = (receipts or {}).get(ref)
+    if rec is None:
+        return "unresolved"
+    # `is False` and `is True` throughout: a JSON-stringified "true" or a 1 must
+    # not reach `fires`. This strictness is the trust boundary of the feature.
+    if rec.get("fires_on_trigger") is False:
+        return "dead"
+    covers = receipt_covers(rec)
+    if not covers:
+        return "unscoped"
+    if section is not None:
+        applicable = [c for c in covers if cover_matches(c, section)]
+        if not applicable:
+            return "unresolved"
+        # Every entry that reaches this section names more than one section, so
+        # which one was probed is unknown. Refuse; do not pick.
+        if all(c in set(ambiguous) for c in applicable):
+            return "ambiguous"
+    if all(rec.get(leg) is True for leg in _PROBE_LEGS):
+        return "fires"
+    return "incomplete"
+
+
+def shows_evidence(ref: str, receipts: dict[str, dict] | None) -> bool:
+    """Does the receipt show its work, or does it only assert booleans?
+
+    Not a verification — the script cannot check an `evidence` string either.
+    It is the difference between a record someone can be held to and a bare
+    claim, and it is worth rendering because the two are otherwise identical in
+    the report while being very different things to bet a deletion on.
+
+    Type-checked rather than coerced. `str(True)` is `"True"`, so a stringifying
+    test cleared the star for `"evidence": true` — a bare boolean is by
+    definition a claim showing no work, and it is the natural thing to type for
+    someone already typing three booleans. A dict is accepted because a runner
+    emits an evidence OBJECT, not a sentence.
+    """
+    rec = (receipts or {}).get(ref)
+    if not rec:
+        return False
+    ev = rec.get("evidence")
+    if isinstance(ev, str):
+        return bool(ev.strip())
+    if isinstance(ev, dict):
+        return bool(ev)
+    return False
+
+
+def nearest_ref(key: str, refs: Iterable[str]) -> str | None:
+    """Best guess at the reference a receipt key was reaching for.
+
+    The dominant error is the right mechanism under the wrong path form — a
+    receipt keyed by the path you know the hook by rather than the literal
+    backticked string in the surface. So basename equality is tried first and
+    beats lexical similarity, which would rank a same-directory sibling above
+    the same file at a different depth.
+
+    AMBIGUITY YIELDS NOTHING. Two refs sharing a basename (`.claude/hooks/gate.sh`
+    and `scripts/gate.sh`) make a confident suggestion actively harmful: the user
+    probed one, is told they meant the other, takes it, and the wrong section is
+    promoted with the report calling it success. A named unmatched key with no
+    hint is strictly better than a hint that induces the wrong fix.
+    """
+    refs = sorted(set(refs))
+    if not refs:
+        return None
+    base = key.rsplit("/", 1)[-1]
+    same_base = [r for r in refs if r.rsplit("/", 1)[-1] == base]
+    if same_base:
+        return same_base[0] if len(same_base) == 1 else None
+    close = difflib.get_close_matches(key, refs, n=2, cutoff=0.6)
+    if not close:
+        return None
+    if len(close) > 1:
+        ratio = difflib.SequenceMatcher(None, key, close[0]).ratio()
+        if ratio == difflib.SequenceMatcher(None, key, close[1]).ratio():
+            return None
+    return close[0]
+
+
+def is_negative_receipt(rec: dict) -> bool:
+    """A receipt recording that the mechanism did NOT fire.
+
+    Tracked separately everywhere because it is the one kind that applies
+    without `covers` — it never promotes, so scope cannot make it dangerous,
+    and discarding it would throw away the most valuable receipt in the file.
+    Saying such a receipt "promoted nothing past UNRESOLVED" is false: it moves
+    sections to DEAD.
+    """
+    return rec.get("fires_on_trigger") is False
+
+
+def match_receipts(
+    receipts: dict[str, dict] | None,
+    refs: Iterable[str],
+    live_refs: Iterable[str] = (),
+    hits: dict[str, int] | None = None,
+    max_unmatched: int = 10,
+) -> dict:
+    """What the supplied receipts actually did.
+
+    A receipt keyed to nothing leaves its section UNRESOLVED, which is the
+    fail-safe polarity and stays. The hazard is silence: without this, a file
+    of carefully probed receipts keyed one path-form off produces a report
+    BYTE-IDENTICAL to supplying no receipts at all, and reads as a clean run.
+
+    Three further ways a receipt can accomplish nothing while looking applied,
+    each reported rather than inferred: it names a reference the surface does
+    not contain, it names one that is not a live mechanism, or its `covers`
+    names a section that does not exist.
+    """
+    empty = {
+        "loaded": 0, "matched": 0, "unmatched": [], "unmatched_total": 0,
+        "unscoped": 0, "unscoped_negative": 0, "unscoped_promoted_nothing": 0,
+        "inert": [], "unmatched_covers": [], "unmatched_covers_total": 0,
+        "ambiguous_covers": [], "ambiguous_covers_total": 0,
+    }
+    if not receipts:
+        return empty
+    present, live = set(refs), set(live_refs)
+    hits = hits or {}
+    missing = sorted(k for k in receipts if k not in present)
+    stale = sorted(c for c, n in hits.items() if n == 0)
+    ambiguous = sorted(c for c, n in hits.items() if n > 1)
+    unscoped = [r for r in receipts.values() if not receipt_covers(r)]
+    # An unscoped NEGATIVE receipt still applies. Counting it with the rest is
+    # what made the report print "promoted nothing" about a run that moved four
+    # sections to DEAD.
+    unscoped_negative = sum(1 for r in unscoped if is_negative_receipt(r))
+    return {
+        "loaded": len(receipts),
+        "matched": len(receipts) - len(missing),
+        "unmatched": [
+            {"key": k, "nearest": nearest_ref(k, present)}
+            for k in missing[:max_unmatched]
+        ],
+        "unmatched_total": len(missing),
+        "unscoped": len(unscoped),
+        "unscoped_negative": unscoped_negative,
+        "unscoped_promoted_nothing": len(unscoped) - unscoped_negative,
+        # Matched the surface but is not a live mechanism anywhere in it, so it
+        # changed no state. "Matched" and "applied" are not the same word.
+        "inert": sorted(k for k in receipts if k in present and k not in live),
+        "unmatched_covers": stale[:max_unmatched],
+        "unmatched_covers_total": len(stale),
+        "ambiguous_covers": ambiguous[:max_unmatched],
+        "ambiguous_covers_total": len(ambiguous),
+    }
+
+
+def is_live_mechanism(ref: dict) -> bool:
+    """Can this reference carry a section at all?
+
+    A path must exist. A COMMAND's existence was never checkable — `_LOOKS_LIKE_CMD`
+    refs are hardcoded `exists_on_disk: False` — so under an existence test a
+    fully-evidenced receipt for `make janitor` changed nothing while the report
+    called it applied. But a probe receipt IS the evidence a command produces a
+    signal; it is the only evidence obtainable. So a PROBED command counts, and
+    an unprobed one still does not.
+    """
+    if ref["exists_on_disk"]:
+        return True
+    return ref["kind"] == "command" and ref["probe"] != "unresolved"
+
+
+def anchor_state(refs: list[dict]) -> str:
+    """Section-level tier, keyed on demonstrated firing rather than existence.
+
+    none       no live mechanism is referenced
+    dead       at least one live mechanism was probed and did NOT fire
+    fires      every live mechanism was probed and fired
+    unproven   a mechanism is present, nothing has shown all of them firing
+
+    Order matters and `dead` dominating is the whole safety property. Under
+    `any(fires)`, a section citing a working gate beside a probed-DEAD one read
+    `fires` — so a user who did the honest thing and filed a negative receipt
+    saying a path is unprotected had that finding discarded, and was told the
+    prose now solely carrying the behavior was free to delete. A known-dead
+    mechanism cannot be more proven than an unknown one.
+
+    `unproven` is not a softer `fires`. Three hooks in the workspace this rule
+    was derived from were registered, scheduled, independent, and produced no
+    signal whatsoever; all three would read as anchored candidates.
+    """
+    live = [r for r in refs if is_live_mechanism(r)]
+    if not live:
+        return "none"
+    if any(r["probe"] == "dead" for r in live):
+        return "dead"
+    if all(r["probe"] == "fires" for r in live):
+        return "fires"
+    return "unproven"
+
+
+# "?" is the point of the column: an unprobed mechanism is an open question,
+# not a quiet pass. Rendering it blank would restore the exact conflation the
+# separate field exists to break.
+_FIRES_CELL = {"fires": "yes", "unproven": "?", "dead": "DEAD", "none": ""}
+
+
+def fires_cell(row: dict) -> str:
+    """The firing cell for a section row — `yes*` when the receipt is bare.
+
+    A three-boolean receipt with nothing behind it and a receipt quoting exit
+    codes and commands both resolve to `fires`, because the script can verify
+    neither. They should not LOOK the same, so the one that shows no work is
+    starred.
+    """
+    state = row.get("anchor_state", "none")
+    if state != "fires":
+        return _FIRES_CELL[state]
+    firing = [r for r in row.get("mechanism_refs", []) if r.get("probe") == "fires"]
+    return "yes" if all(r.get("shows_evidence") for r in firing) else "yes*"
 
 
 # --------------------------------------------------------------------------
@@ -830,6 +1220,7 @@ def audit(
     repo_root: Path | None = None,
     dup_threshold: float = 0.25,
     max_contradictions: int = 20,
+    probe_receipts: dict[str, dict] | None = None,
 ) -> dict:
     paths = collect_paths(inputs)
     if not paths:
@@ -845,7 +1236,6 @@ def audit(
             s.polarity, s.dominant = polarity_profile(s.text)
             s.examples = count_examples(s.text)
             s.derivable = is_derivable(s)
-            s.mechanism_refs = mechanism_refs(s, repo_root)
         file_tokens = estimate_tokens(text)
         per_file.append(
             {
@@ -860,6 +1250,14 @@ def audit(
             disclosure.append(d)
         all_sections.extend(secs)
 
+    # Mechanism refs resolve in a SECOND pass: whether a `covers` entry is
+    # ambiguous is a property of the whole audited set, not of one file, and a
+    # per-file loop cannot see that `Conventions` exists in two of them.
+    hits = cover_hits(probe_receipts, all_sections)
+    ambiguous = {c for c, n in hits.items() if n > 1}
+    for s in all_sections:
+        s.mechanism_refs = mechanism_refs(s, repo_root, probe_receipts, ambiguous)
+
     contradictions = find_contradictions(all_sections, max_results=None)
     total = sum(f["tokens"] for f in per_file)
     combined = {
@@ -873,6 +1271,31 @@ def audit(
         for k, v in s.polarity.items():
             combined[k] += v
 
+    section_rows = [
+        {
+            "key": s.key,
+            "heading": s.heading,
+            "level": s.level,
+            "lines": f"{s.start_line}-{s.end_line}",
+            "tokens": s.tokens,
+            "dominant": s.dominant,
+            "rules_ratio": rules_ratio(s.polarity),
+            "polarity": s.polarity,
+            "examples": s.examples,
+            "derivable": s.derivable,
+            "mechanism_refs": s.mechanism_refs,
+            # Existence. Retained verbatim — it is still the input to the
+            # question, it is just no longer the answer to it.
+            "anchored_candidate": any(
+                r["exists_on_disk"] for r in s.mechanism_refs
+            ),
+            # Firing. Separate field because a mechanism can exist, be
+            # registered, run on schedule, and still emit nothing.
+            "anchor_state": anchor_state(s.mechanism_refs),
+        }
+        for s in sorted(all_sections, key=lambda x: -x.tokens)
+    ]
+
     return {
         "tokenizer": tokenizer_name(),
         "budget": {
@@ -884,25 +1307,32 @@ def audit(
         "files": per_file,
         "polarity_total": combined,
         "rules_ratio": rules_ratio(combined),
-        "sections": [
-            {
-                "key": s.key,
-                "heading": s.heading,
-                "level": s.level,
-                "lines": f"{s.start_line}-{s.end_line}",
-                "tokens": s.tokens,
-                "dominant": s.dominant,
-                "rules_ratio": rules_ratio(s.polarity),
-                "polarity": s.polarity,
-                "examples": s.examples,
-                "derivable": s.derivable,
-                "mechanism_refs": s.mechanism_refs,
-                "anchored_candidate": any(
-                    r["exists_on_disk"] for r in s.mechanism_refs
-                ),
-            }
-            for s in sorted(all_sections, key=lambda x: -x.tokens)
-        ],
+        "anchors": {
+            state: sum(1 for r in section_rows if r["anchor_state"] == state)
+            for state in ("fires", "unproven", "dead", "none")
+        },
+        # Loaded / applied / keyed-to-nothing. One block rather than a bare
+        # count, because "how many receipts did you read" is the least useful
+        # of the three: a receipt that matched no reference did nothing.
+        "probe_receipts": match_receipts(
+            probe_receipts,
+            [r["ref"] for s in all_sections for r in s.mechanism_refs],
+            [
+                r["ref"]
+                for s in all_sections
+                for r in s.mechanism_refs
+                if is_live_mechanism(r)
+            ],
+            hits,
+        ),
+        # Sections promoted to `fires` on a receipt that asserts booleans and
+        # shows nothing. Counted separately from `anchors` so the state map
+        # stays a clean state->count, and surfaced because a bare attestation
+        # is the weakest thing a deletion can rest on.
+        "attestations_without_evidence": sum(
+            1 for r in section_rows if fires_cell(r) == "yes*"
+        ),
+        "sections": section_rows,
         "duplication": find_duplicates(all_sections, dup_threshold),
         "contradictions": contradictions[:max_contradictions],
         "contradictions_total": len(contradictions),
@@ -935,6 +1365,95 @@ def audit_prompt(text: str, max_contradictions: int = 20) -> dict:
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
+
+
+def _render_receipts(rc: dict) -> list[str]:
+    """The receipts line — always shown once receipts were supplied.
+
+    Stated as "N of M applied" rather than left to inference: the count of
+    receipts READ tells a reader nothing, and a file that applied to nothing at
+    all otherwise renders exactly like no file.
+    """
+    if not rc.get("loaded"):
+        return []
+    # "matched", not "applied" — a key can match a reference in the surface and
+    # still change nothing.
+    out = [f"**Probe receipts** — {rc['matched']} of {rc['loaded']} matched a "
+           f"reference in the audited surface(s)."]
+    total = rc.get("unmatched_total", 0)
+    if total:
+        shown = rc.get("unmatched") or []
+        more = f" (showing {len(shown)})" if total > len(shown) else ""
+        out[0] += (
+            f" **{total} key(s) matched nothing and did nothing**{more}:"
+        )
+        for u in shown:
+            hint = (
+                f" — did you mean `{u['nearest']}`?"
+                if u["nearest"]
+                else " — no unambiguous near match"
+            )
+            out.append(f"- `{u['key']}`{hint}")
+        out.append(
+            "\nA receipt key is the literal backticked reference as it appears in "
+            "the surface (`.control/policy.yaml`, `make janitor`), not the path "
+            "you know the mechanism by."
+        )
+    if rc.get("inert"):
+        out.append(
+            f"\n**{len(rc['inert'])} matched key(s) are inert** — referenced, but "
+            "not a live mechanism anywhere in the surface, so no section changed "
+            "state: " + ", ".join(f"`{k}`" for k in rc["inert"][:10]) + "."
+        )
+    # Split, because these two say opposite things about what the run did. The
+    # blanket version printed "promoted nothing past UNRESOLVED" about a run
+    # that moved four sections to DEAD.
+    if rc.get("unscoped_promoted_nothing"):
+        out.append(
+            f"\n**{rc['unscoped_promoted_nothing']} receipt(s) carry no `covers`** "
+            "and therefore promoted nothing past UNRESOLVED. A probe exercises one "
+            "branch of one mechanism; the deletion verdict is per rule, so a receipt "
+            "has to name the rules it covers — `references/mechanism-probe.md`."
+        )
+    if rc.get("unscoped_negative"):
+        out.append(
+            f"\n**{rc['unscoped_negative']} receipt(s) record a NEGATIVE finding "
+            "with no `covers`** — and those DID apply. A mechanism that does not "
+            "fire promotes nothing, so scope cannot make it dangerous: every "
+            "section citing it reads DEAD."
+        )
+    ambig = rc.get("ambiguous_covers_total", 0)
+    if ambig:
+        listed = ", ".join(f"`{c}`" for c in (rc.get("ambiguous_covers") or []))
+        out.append(
+            f"\n**{ambig} `covers` entry(ies) name MORE THAN ONE section** — "
+            f"{listed}. Which one was probed is unknown, so none is promoted. "
+            "Qualify as `path#heading`; if two sections in one file share a "
+            "heading, no `covers` form can separate them — split the heading."
+        )
+    stale = rc.get("unmatched_covers_total", 0)
+    if stale:
+        listed = ", ".join(f"`{c}`" for c in (rc.get("unmatched_covers") or []))
+        out.append(
+            f"\n**{stale} `covers` entry(ies) name no section** in the audited "
+            f"surface(s) — {listed}. A heading that has since been renamed stops "
+            "promoting, which is the safe direction, but silently."
+        )
+    if (
+        total
+        or rc.get("inert")
+        or rc.get("unscoped_promoted_nothing")
+        or ambig
+        or stale
+    ):
+        out.append(
+            "\nThe receipts reported above applied nothing — they leave their "
+            "sections UNRESOLVED rather than promoting them, which is the safe "
+            "direction.\n"
+        )
+    else:
+        out.append("")
+    return out
 
 
 def render(report: dict) -> str:
@@ -970,16 +1489,41 @@ def render(report: dict) -> str:
         n_sec = len(report["sections"])
         more = f" — showing 30 of {n_sec}" if n_sec > 30 else ""
         add(f"## Sections by weight{more}\n")
-        add("| Section | Tok | Form | Rules | Ex | Derivable | Anchored? |")
-        add("|---|---:|---|---:|---:|:-:|:-:|")
+        add("| Section | Tok | Form | Rules | Ex | Derivable | Anchored? | Fires? |")
+        add("|---|---:|---|---:|---:|:-:|:-:|:-:|")
         for s in report["sections"][:30]:
             add(
                 f"| {s['heading'][:44]} | {s['tokens']} | {s['dominant']} | "
                 f"{s['rules_ratio']} | {s['examples']} | "
                 f"{'yes' if s['derivable'] else ''} | "
-                f"{'cand' if s['anchored_candidate'] else ''} |"
+                # Keyed on anchor_state, not `anchored_candidate`: a probed
+                # command is a live mechanism whose file existence was never
+                # checkable, and rendering it as no candidate at all while the
+                # firing column said `yes` was incoherent.
+                f"{'cand' if s.get('anchor_state', 'none') != 'none' else ''} | "
+                f"{fires_cell(s)} |"
             )
         add("")
+        a = report.get("anchors") or {}
+        if a.get("unproven") or a.get("dead"):
+            add(
+                f"**Anchors** — {a.get('fires', 0)} probed firing · "
+                f"**{a.get('unproven', 0)} UNRESOLVED** · {a.get('dead', 0)} probed dead. "
+                "An UNRESOLVED anchor is a mechanism that exists; nothing here shows "
+                "it produces a signal. Probe it before deleting the prose it "
+                "supposedly makes free — `references/mechanism-probe.md`, then "
+                "`--probe-receipts`.\n"
+            )
+        bare = report.get("attestations_without_evidence", 0)
+        if bare:
+            add(
+                f"`*` — {bare} section(s) rest on a receipt that asserts three "
+                "booleans and shows no work. A receipt is an attestation this "
+                "script cannot verify; if the actor that wants the deletion also "
+                "wrote the receipt, this column is decorative. Have a runner emit "
+                "it — `references/mechanism-probe.md`.\n"
+            )
+        L.extend(_render_receipts(report.get("probe_receipts") or {}))
 
     if report.get("contradictions"):
         shown = min(10, len(report["contradictions"]))
@@ -1011,8 +1555,10 @@ def render(report: dict) -> str:
 
     add(
         "> Evidence only. Keep / relocate / delete requires knowing whether an "
-        "independent mechanism already enforces each rule — run `keel` or read "
-        "the SKILL.md adjudication table."
+        "independent mechanism already enforces each rule — two questions this "
+        "script answers neither of: does it fire (probe it), and is the signal "
+        "outside the governed actor's reach (`keel`). Read the SKILL.md "
+        "adjudication table."
     )
     return "\n".join(L)
 
@@ -1027,6 +1573,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dup-threshold", type=float, default=0.25)
     ap.add_argument("--max-contradictions", type=int, default=20)
     ap.add_argument("--repo-root", help="root for mechanism-reference existence checks")
+    ap.add_argument(
+        "--probe-receipts",
+        help=(
+            "JSON receipts from references/mechanism-probe.md; without it every "
+            "anchor stays UNRESOLVED, which is the honest default"
+        ),
+    )
     ap.add_argument("--json", action="store_true")
     # Exit-code gates. Without one of these the tool always exits 0 — it is a
     # report, not a judge. Opting in is what lets CI actually enforce something,
@@ -1041,6 +1594,14 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         help="exit 1 when the hard-rule share of directives exceeds this",
     )
+    ap.add_argument(
+        "--fail-on-unmatched-receipts",
+        action="store_true",
+        help=(
+            "exit 1 when a supplied receipt key, or a `covers` entry, names "
+            "nothing in the audited surface(s)"
+        ),
+    )
     args = ap.parse_args(argv)
 
     if args.prompt_text is not None or args.prompt_file is not None:
@@ -1052,6 +1613,16 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "error: --fail-over-budget does not apply in prompt mode "
                 "(a prompt has no always-on budget); use --max-rules-ratio",
+                file=sys.stderr,
+            )
+            return 2
+        # Same shape: prompt mode never resolves mechanism references, so
+        # accepting receipts here would take a file and do nothing with it —
+        # and the receipts gate would be a check that cannot fail.
+        if args.probe_receipts or args.fail_on_unmatched_receipts:
+            print(
+                "error: --probe-receipts/--fail-on-unmatched-receipts do not "
+                "apply in prompt mode (a prompt references no mechanisms to probe)",
                 file=sys.stderr,
             )
             return 2
@@ -1071,6 +1642,15 @@ def main(argv: list[str] | None = None) -> int:
         if root is None:
             first = Path(args.paths[0]).expanduser()
             root = first if first.is_dir() else first.parent
+        receipts: dict[str, dict] | None = None
+        if args.probe_receipts:
+            try:
+                receipts = load_probe_receipts(
+                    Path(args.probe_receipts).expanduser()
+                )
+            except BadProbeReceipts as e:
+                print(f"error: cannot read probe receipts: {e}", file=sys.stderr)
+                return 2
         try:
             report = audit(
                 args.paths,
@@ -1079,6 +1659,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_root=root,
                 dup_threshold=args.dup_threshold,
                 max_contradictions=args.max_contradictions,
+                probe_receipts=receipts,
             )
         except FileNotFoundError as e:
             print(f"error: no such path: {e}", file=sys.stderr)
@@ -1103,6 +1684,11 @@ def main(argv: list[str] | None = None) -> int:
         failures.append(
             f"rules-ratio {report['rules_ratio']} exceeds {args.max_rules_ratio}"
         )
+    if args.fail_on_unmatched_receipts:
+        rc_ = report.get("probe_receipts") or {}
+        n = rc_.get("unmatched_total", 0) + rc_.get("unmatched_covers_total", 0)
+        if n:
+            failures.append(f"{n} receipt key(s)/covers entry(ies) named nothing")
     if failures:
         print("\nFAIL: " + "; ".join(failures), file=sys.stderr)
         return 1

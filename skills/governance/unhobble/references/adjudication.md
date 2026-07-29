@@ -26,15 +26,24 @@ The predicate had it exactly backwards.
 
 | Class | Test | Prose is… | Action |
 |---|---|---|---|
-| **anchored** | a hook / CI job / runtime produces the signal, and the actor being governed cannot write to that producer | decorative — it fires regardless | **delete the prose, keep the mechanism.** Free, zero behavior change |
+| **anchored, probed** | a hook / CI job / runtime produces the signal, a probe demonstrated it firing **for this rule**, and the actor being governed cannot write to that producer | decorative — it fires regardless | **delete the prose, keep the mechanism.** Free, zero behavior change |
+| **anchored candidate, unprobed** | a mechanism is cited and exists, but nothing has shown it firing for this rule | possibly the sole carrier — unknown | **confirm before cutting** — [`mechanism-probe.md`](mechanism-probe.md) |
 | **not_a_check** | descriptive, filesystem-derivable, or self-assessment | reference material | **relocate** behind progressive disclosure. Free |
 | **self_referential, high value** | the document is the only carrier, and the behavior matters | the sole carrier | **keep** — relabel "heuristic", not "invariant". Or spend the effort to anchor it |
 | **self_referential, redundant** | duplicated elsewhere, or unused in practice | noise | **delete** |
 
-Tiers 1 and 2 are typically most of the volume and cost nothing. Tier 3 is a
-real behavioral bet — neither the article nor this skill licenses cutting it.
+The probed-anchored and not_a_check classes are typically most of the volume and
+cost nothing. Cutting a sole-carrier section is a real behavioral bet — neither
+the article nor this skill licenses it.
 
-## Two ways to get tier 1 wrong
+Two things the top row is carrying that are easy to read past. **"For this
+rule"**: a probe exercises one branch of one mechanism, so a receipt scoped to
+the destructive-bash rule says nothing about the secrets rule that cites the
+same gate. And **"demonstrated"** means *attested* — the audit reads a receipt
+it cannot verify, so a receipt written by the same actor that wants the deletion
+proves nothing. Both are the same failure as the row below it, one level up.
+
+## Ways to get the top class wrong
 
 **A citation is not an anchor.** A section that mentions `AGENTS.md` is prose
 pointing at prose. Only executable or machine-read surfaces can produce an
@@ -43,9 +52,12 @@ mechanism references and marks only `.sh` / `.py` / `.yaml` / `.toml` / source
 files as anchored candidates.
 
 **Existence is not enforcement.** The script checks that a referenced file
-exists, nothing more. A hook file that exists but is unregistered, or a `make`
-target that only checks another file exists, is not an anchor. Two real
-examples found in this workspace's own audit:
+exists, nothing more — which is why existence buys a section the *unprobed*
+tier, and only a probe ([`mechanism-probe.md`](mechanism-probe.md)) promotes it
+to the free one. A hook file that exists but is unregistered, a hook that is
+registered but skips its own checks, or a `make` target that only checks another
+file exists, is not an anchor. Two real examples found in this workspace's own
+audit:
 
 - `make control-audit` — a file-existence test. It passes because `CLAUDE.md`
   exists. It asserts nothing about the contents.
