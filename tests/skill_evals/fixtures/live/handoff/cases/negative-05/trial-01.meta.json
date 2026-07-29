@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "handoff",
+  "case_id": "negative-05",
+  "trial": 1,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 11901,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "578cce0f081dd4ea6f67b4bcea31a0eee7be5cb145f0a0250a3f9db9fb4de998",
+  "skill_md_sha256": "8a1d0a7ff3d3038dba5c259a05fb71a2539fcc5805c20f41b6d57f2533dabe80",
+  "description_sha256": "4704dcf0fa9e9a1a043829b850c17364af1b4cbbc4deb7d5a402c94b22ac2a72",
+  "recorded_at": "2026-07-29T04:40:26Z"
+}

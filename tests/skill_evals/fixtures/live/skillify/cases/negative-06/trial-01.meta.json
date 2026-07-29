@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "skillify",
+  "case_id": "negative-06",
+  "trial": 1,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 11209,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "33f236ac29f49d8b84add25b76d00ebb126501e5718d1edccc16f1263e87acc4",
+  "skill_md_sha256": "32d2f89d2a8cfe69e711e584e299193bea42a60666e846de9b47818aac9df636",
+  "description_sha256": "b6d3389485aef03a9014f9b9ff365f3461e797b4c9e3ea6e592f9f3deba1f3ca",
+  "recorded_at": "2026-07-29T05:05:08Z"
+}
