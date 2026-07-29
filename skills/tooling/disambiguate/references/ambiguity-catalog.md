@@ -497,7 +497,7 @@ and a limit that is written down reads as a boundary.
 | The imperative vocabulary is a list plus a structural fallback | No closed verb list is complete. The fallback reads "verb + determiner or preposition" as a command | Add domain verbs to `IMPERATIVE_HINT` if a whole class is missed |
 | Word-sense ambiguity (A5) and false friends (E8) are not detected | Both need a vocabulary this skill deliberately does not ship, and E8 depends on the reader's first language | Judgment, informed by this catalog |
 | Attachment ambiguity (A3) is not detected | See A3 above | Judgment |
-| An unbalanced code fence disables fence stripping for the whole document | Guessing where the block ends risks skipping prose in silence, and a missed finding is invisible in a way a noisy one is not | `D0-unbalanced-fence` reports it; close the fence |
+| An unbalanced code fence disables fence stripping for the whole document | Guessing where the block ends risks skipping prose in silence, and a missed finding is invisible in a way a noisy one is not | `D0-unbalanced-fence` reports it, and closing the fence clears it |
 
 The general rule the checker holds itself to: **where it cannot decide, it says
 so.** Silent approximation would read as coverage.
