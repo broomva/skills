@@ -560,3 +560,95 @@ def test_a_complete_roster_reports_no_missing_line(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "NOT on disk" not in out
     assert "a FLOOR" not in out
+
+
+# ---------------------------------------------------------------------------
+# the trim proposal (BRO-2034) — the only lever that reaches the cap
+# ---------------------------------------------------------------------------
+
+
+def _proposal_fixture(tmp_path):
+    """A roster with one of each verdict class."""
+    owned = tmp_path / "repo" / "skills" / "cat"
+    owned.mkdir(parents=True)
+    for name, desc in (("used", "x" * 200), ("unused", "y" * 900)):
+        d = owned / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {desc}\n---\n")
+    install = tmp_path / "install"
+    install.mkdir()
+    for name in ("used", "unused", "vendored-one"):
+        d = install / name
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {'z' * 300}\n---\n")
+    return owned.parent.parent, install
+
+
+def test_proposal_separates_the_four_verdict_classes(tmp_path, monkeypatch):
+    repo, install = _proposal_fixture(tmp_path)
+    lst = L.Listing(
+        names=("used", "unused", "vendored-one", "cli-builtin"),
+        content="- used: described.\n- unused\n- vendored-one\n- cli-builtin: described.\n",
+        source="t.jsonl", is_initial=True,
+    )
+    monkeypatch.setattr(L, "scan", lambda _root: ({"used": 7}, {"used": {"s1"}}, 100))
+
+    prop = L.trim_proposal(lst, roots=[install], skills_root=repo / "skills",
+                           transcripts=tmp_path)
+    by = {r["skill"]: r for r in prop["rows"]}
+    assert by["used"]["verdict"] == L.KEEP, "invoked -> keep"
+    assert by["unused"]["verdict"] == L.DISABLE, "ours and never invoked -> disable"
+    assert by["vendored-one"]["verdict"] == L.VENDORED, "not ours -> not our call"
+    assert by["cli-builtin"]["verdict"] == L.UNMEASURABLE, "not on disk -> unmeasurable"
+    assert prop["disable_count"] == 1
+
+
+def test_a_vendored_skill_is_never_proposed_for_disabling(tmp_path, monkeypatch):
+    """Editing it here is reverted by `npx skills update`, so recommending its
+    retirement is advice nobody in this repo can act on."""
+    repo, install = _proposal_fixture(tmp_path)
+    lst = L.Listing(names=("vendored-one",), content="- vendored-one\n", source="t.jsonl")
+    monkeypatch.setattr(L, "scan", lambda _root: ({}, {}, 100))
+    prop = L.trim_proposal(lst, roots=[install], skills_root=repo / "skills",
+                           transcripts=tmp_path)
+    assert prop["disable_count"] == 0
+    assert prop["rows"][0]["verdict"] == L.VENDORED
+
+
+def test_the_proposal_states_its_own_circularity(tmp_path, monkeypatch):
+    """In the OUTPUT, not only the docs. A reader who ranks by 'never invoked'
+    without it draws a conclusion the data cannot support."""
+    repo, install = _proposal_fixture(tmp_path)
+    lst = L.Listing(names=("unused",), content="- unused\n", source="t.jsonl")
+    monkeypatch.setattr(L, "scan", lambda _root: ({}, {}, 100))
+    prop = L.trim_proposal(lst, roots=[install], skills_root=repo / "skills",
+                           transcripts=tmp_path)
+    assert "self-fulfilling" in prop["circularity"]
+    assert prop["circularity"] in L.format_proposal(prop)
+
+
+def test_the_proposal_ranks_heaviest_first_among_disables(tmp_path, monkeypatch):
+    """Acting pays in that order, so that is the order it is offered in."""
+    install = tmp_path / "install"
+    install.mkdir()
+    repo = tmp_path / "repo" / "skills"
+    (repo / "cat").mkdir(parents=True)
+    for name, n in (("light", 100), ("heavy", 1200)):
+        for root in (install, repo / "cat"):
+            d = root / name
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {'x'*n}\n---\n")
+    lst = L.Listing(names=("light", "heavy"), content="- light\n- heavy\n", source="t.jsonl")
+    monkeypatch.setattr(L, "scan", lambda _root: ({}, {}, 100))
+    prop = L.trim_proposal(lst, roots=[install], skills_root=repo, transcripts=tmp_path)
+    assert [r["skill"] for r in prop["rows"]] == ["heavy", "light"]
+
+
+def test_the_proposal_changes_nothing_on_disk(tmp_path, monkeypatch):
+    """It PROPOSES. The whole point of the mode."""
+    repo, install = _proposal_fixture(tmp_path)
+    before = {p: p.read_text() for p in install.rglob("SKILL.md")}
+    lst = L.Listing(names=("unused",), content="- unused\n", source="t.jsonl")
+    monkeypatch.setattr(L, "scan", lambda _root: ({}, {}, 100))
+    L.trim_proposal(lst, roots=[install], skills_root=repo / "skills", transcripts=tmp_path)
+    assert {p: p.read_text() for p in install.rglob("SKILL.md")} == before
