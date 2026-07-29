@@ -379,6 +379,7 @@ render as a bare `- name` line with no trigger text at all.
 ```bash
 python3 scripts/skill_evals/listing.py            # classify the latest real listing
 python3 scripts/skill_evals/listing.py --budget   # mass vs cap, heaviest skills
+python3 scripts/skill_evals/listing.py --propose  # ranked retirement list, with evidence
 python3 scripts/skill_evals/listing.py --calibrate # re-derive the caps from disk
 ```
 
@@ -413,8 +414,31 @@ Two consequences worth stating plainly:
   the model never received one. Coverage numbers should be read against delivery.
 - **Trimming descriptions cannot fix it.** The affordable mean per ROSTER entry is
   ~267 chars, and the fifteen heaviest are a small fraction of the mass. The lever is
-  the model-invocable skill **count** (`disable-model-invocation` on the long tail),
-  which is a governance decision, not this module's job.
+  the model-invocable skill **count** — which `--propose` ranks, and deliberately does
+  not apply.
+
+### `--propose` — the ranked retirement list
+
+Measured on 1,081 transcripts: of 146 roster entries, **78 are ours** (editable here),
+68 are vendored/plugin/CLI built-ins, and **66 of ours have zero invocations**,
+carrying 55,512 chars. Disabling that tail takes the roster **146 → 80** and the
+affordable mean **267 → 488** chars/entry.
+
+Each row carries its evidence — mass, invocations, sessions, delivery state,
+ownership — and one of four verdicts:
+
+| verdict | meaning |
+|---|---|
+| `keep` | ours, and actually invoked |
+| `disable` | ours, never invoked in the whole corpus |
+| `vendored` | not ours — `npx skills update` reverts an edit here, so it is not our call |
+| `unmeasurable` | in the roster but not on disk (a CLI built-in): consumes budget we cannot measure |
+
+**It proposes and changes nothing**, and the output says why in its own body rather
+than in a footnote: a BARE skill never had its description delivered, so it never had
+a chance to be model-invoked, and retiring it for never triggering is partly
+self-fulfilling. The honest framing is not "these are useless" — it is that we are
+choosing which skills get to compete for a budget that cannot fit them all.
 
 Known blind spot, stated because it is easier to trust a tool that names its own
 edges: R0 catches a TOTAL parse failure, not a partial one. If most lines become
