@@ -251,25 +251,10 @@ def decide_verdict(
             f"(present={present.graded_positive_trials}, absent={absent.graded_positive_trials}); "
             "raise --trials or add positive cases",
         )
-    # A retirement verdict needs the graded checks to have DEMONSTRATED that they can
-    # fail. If none ever did — in either arm — then lift is 0.0 by construction and
-    # says nothing about absorption; it says the checks do not discriminate.
-    #
-    # This is the shape kg's committed prompt set actually has: once the trigger check
-    # is (correctly) excluded from both arms, its remaining assertions are "a non-empty
-    # final answer" and "no permission denials", which an uninstalled baseline satisfies
-    # trivially. Lift is then exactly 0.0 regardless of how well the skill works, and
-    # the interval narrows below the margin as soon as n/arm >= 36 — at --trials 4,
-    # while the README recommends ~30 per arm. So the RECOMMENDED operating point was
-    # the false-retire regime.
-    if not (present.check_failures or absent.check_failures):
-        return undecided(
-            VERDICT_WEAK_CHECKS,
-            "no graded check failed in either arm, so the lift is 0.0 by construction "
-            "— these checks cannot tell the two arms apart. Strengthen the prompt set's "
-            "expected_checks before reading this as absorption",
-        )
-
+    # Order matters: a skill that never FIRES is diagnosed as a trigger problem, not
+    # as a check problem, because the remedies are opposite. This gate used to sit
+    # above the trigger one and told an operator with a dead description to go
+    # strengthen their checks.
     trig = present.trigger_rate
     if trig is None or trig < 0.5:
         return undecided(
@@ -277,6 +262,41 @@ def decide_verdict(
             f"the skill fired in only {trig:.0%} of present-arm trials — an ablation "
             "cannot separate absorption from a trigger failure. Fix the description first."
             if trig is not None else "no present-arm trials",
+        )
+
+    # A retirement verdict needs the graded checks to DISCRIMINATE, and the test for
+    # that is that they are NOT CONSTANT: at least one pass AND at least one failure
+    # somewhere in the measurement.
+    #
+    # The first version asked only "did any check fail", which closes one polarity and
+    # leaves its mirror wide open. A check that fails in EVERY trial of BOTH arms is
+    # exactly as non-discriminating as one that always passes — and it satisfies a
+    # failure-count gate, so lift comes out 0.0 with a narrow interval and the verdict
+    # is retire-candidate on a run where the present arm passed NOTHING. That is
+    # reachable without any exotic input: `run_checks` records `passed=False` for a
+    # check that RAISES, so a single buggy predicate in CHECK_REGISTRY turns a whole
+    # sweep into "retire everything"; and an environment-invariant failure (the env
+    # jail denying a tool the skill needs, failing `no_permission_denials` in both
+    # arms) produces the same shape with nothing broken at all.
+    #
+    # The main report path already carries this floor — runner.py's "ZERO POSITIVE
+    # PASSES ... no --threshold lowers this floor". The verdict that recommends
+    # DELETING a skill had no equivalent, which is the wrong way round.
+    total_passes = present.outcome_passes + absent.outcome_passes
+    total_failures = present.check_failures + absent.check_failures
+    if not total_failures:
+        return undecided(
+            VERDICT_WEAK_CHECKS,
+            "no graded check failed in either arm, so the lift is 0.0 by construction "
+            "— these checks cannot tell the two arms apart. Strengthen the prompt set's "
+            "expected_checks before reading this as absorption",
+        )
+    if not total_passes:
+        return undecided(
+            VERDICT_WEAK_CHECKS,
+            "no graded check passed in either arm — the lift is 0.0 by construction for "
+            "the mirror reason. Suspect a check that always fails (one that RAISES is "
+            "recorded as failed) or an environment-invariant failure, not absorption",
         )
 
     lift = (present.outcome_pass_rate or 0.0) - (absent.outcome_pass_rate or 0.0)

@@ -465,3 +465,55 @@ def test_check_failures_are_counted_from_the_graded_checks_only():
     ])])
     st = A.arm_stats(rep, NON_PASS)
     assert st.check_failures == 1, "only the real outcome-check failure counts"
+
+
+# ---------------------------------------------------------------------------
+# round-3: the guard closed one polarity and left its mirror open
+# ---------------------------------------------------------------------------
+
+
+def test_checks_that_ALWAYS_fail_cannot_support_a_retirement():
+    """The mirror of the round-2 finding, and it was still open.
+
+    A check failing in EVERY trial of BOTH arms is exactly as non-discriminating as
+    one that always passes — but it satisfies a failure-count gate, so lift came out
+    0.0 with a narrow interval and the verdict was `retire-candidate` on a run where
+    the present arm passed NOTHING. The rendered report said "the base model does
+    about as well without it".
+
+    Reachable without exotic input: `run_checks` records `passed=False` for a check
+    that RAISES, so one buggy predicate in CHECK_REGISTRY turns a sweep into "retire
+    everything"; and an environment-invariant failure (the jail denying a tool the
+    skill needs) produces the same shape with nothing broken.
+    """
+    v = A.decide_verdict(A.ArmStats(36, 0, 36, check_failures=36),
+                         A.ArmStats(36, 0, 0, check_failures=36), min_trials=10)
+    assert v["verdict"] == A.VERDICT_WEAK_CHECKS
+    assert v["skill_lift"] is None
+    assert "always fails" in v["why"]
+
+
+def test_a_skill_that_never_fires_is_a_trigger_problem_not_a_check_problem():
+    """Gate ORDER. The weak-checks gate used to sit above the trigger gate, so an
+    operator whose description was dead got told to strengthen their checks — the
+    opposite remedy."""
+    v = A.decide_verdict(A.ArmStats(36, 36, 0, check_failures=4),
+                         A.ArmStats(36, 30, 0, check_failures=6), min_trials=10)
+    assert v["verdict"] == A.VERDICT_NO_TRIGGER
+
+
+def test_retirement_survives_both_polarity_guards():
+    """THE control. Two guards that between them make retirement impossible would be
+    as wrong as none. A skill whose checks demonstrably both pass and fail, with the
+    arms level, is still a retire-candidate."""
+    v = A.decide_verdict(A.ArmStats(90, 80, 90, check_failures=10),
+                         A.ArmStats(90, 80, 0, check_failures=10), min_trials=10)
+    assert v["verdict"] == A.VERDICT_RETIRE
+    assert v["skill_lift"] == 0.0
+
+
+def test_load_bearing_survives_both_polarity_guards():
+    v = A.decide_verdict(A.ArmStats(90, 88, 90, check_failures=4),
+                         A.ArmStats(90, 5, 0, check_failures=85), min_trials=10)
+    assert v["verdict"] == A.VERDICT_LOAD_BEARING
+    assert v["skill_lift"] > 0.9

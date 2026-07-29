@@ -342,7 +342,7 @@ which is in `NON_PASS_ERRORS` and so drops out of `graded_trials` for free.
 | `indeterminate` | the interval straddles the margin — more trials needed |
 | `inconclusive-underpowered` | fewer than 10 graded positive trials in an arm |
 | `inconclusive-no-trigger` | present-arm trigger rate < 0.5 — cannot separate absorption from a trigger failure |
-| `inconclusive-weak-checks` | no graded check failed in *either* arm — lift is 0.0 by construction, so the checks cannot tell the arms apart |
+| `inconclusive-weak-checks` | the graded checks are CONSTANT — none failed in either arm, or none passed. Lift is 0.0 by construction either way, so the checks cannot tell the arms apart. (A check that *raises* is recorded as failed, so one buggy predicate would otherwise read as 'retire everything'.) |
 | `inconclusive-name-collision` | the name is a CLI built-in, so there is no absent arm |
 
 Every inconclusive verdict serialises `"skill_lift": null` — **never `0.0`**, because a
