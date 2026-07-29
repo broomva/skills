@@ -47,12 +47,12 @@ jobs:
       #
       # `env -u MUTATION_PROOF_ACTIVE` is load-bearing. That variable makes T15
       # skip (its recursion guard), and with it set the suite still prints a
-      # green summary — CI would then be enforcing 35 checks while believing it
-      # enforced 36. Unsetting it, and asserting the full count in the summary
+      # green summary — CI would then be enforcing 40 checks while believing it
+      # enforced 41. Unsetting it, and asserting the full count in the summary
       # line, means the green here cannot quietly shrink.
       - name: Tests — mutation-proof runner
         run: |
           set -euo pipefail
           env -u MUTATION_PROOF_ACTIVE bash tests/mutation-proof.test.sh | tee /tmp/mp.out
-          grep -q '36 passed, 0 failed, 0 skipped' /tmp/mp.out
-          grep -q '36 accounted for' /tmp/mp.out
+          grep -q "41 passed, 0 failed, 0 skipped" /tmp/mp.out
+          grep -q "41 accounted for" /tmp/mp.out

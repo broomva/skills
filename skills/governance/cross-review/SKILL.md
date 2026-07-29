@@ -89,6 +89,8 @@ Three further shapes resolve to INCONCLUSIVE rather than a verdict, because in e
 
 A **symlinked target is refused outright**: `cat >` follows a link, so mutating one writes through it into the real file, which may sit outside `--root` and would not be restored. Point `--target` at the real file.
 
+Two further containment properties, because a leaf check taken before the test command runs is not enough. **The tree is re-copied before every target**, so one target's test cannot leave the tree — or a swapped-in symlink — behind for the next; and **containment is re-asserted at the moment of every write**, resolving the parent chain physically rather than trusting the snapshot taken at argument-resolution time.
+
 ```bash
 # neuter a script and see whether the suite notices
 mutation-proof run \
@@ -149,6 +151,8 @@ Three distinctions the emitter keeps:
 - `neutered_check_went_red: false` is **written**, not omitted. "I ran it and the check did not go red" is a finding; "I did not run it" is a gap. They must not look alike.
 - An INCONCLUSIVE run writes **nothing**. Nothing was observed, so there is nothing to claim.
 - Merging preserves legs recorded by other producers, and a file that is not a receipt is refused rather than overwritten.
+
+**Scope is mandatory for the receipt to name anything.** unhobble's verdict is per *rule*, and a receipt with no `covers` reads as `unscoped`: it names no rule and promotes nothing, deliberately — probing one branch of one mechanism must not license deleting every rule that happens to cite that mechanism. Pass `--covers 'Section Heading'` (repeatable, comma-separated accepted) to scope it; without it the runner says so on stdout rather than claiming otherwise. Scoping makes the receipt *addressable*, not promoting: one leg of three still cannot reach `fires`.
 
 Keying: unhobble keys a probe by the backticked reference *as written in the audited prose*, resolved against its `--repo-root`. The default key here is the target's path under `--root`, which is that same string whenever the two roots agree. When the prose refers to a mechanism differently — a user-scope `~/.claude/...` ref, say — pass `--receipt-key` rather than letting the runner guess at a normalisation.
 

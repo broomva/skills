@@ -44,6 +44,12 @@
 #   --receipt-key K    Receipt key for the target, when the reference as written
 #                      in the audited prose differs from its path under --root.
 #                      Single-target runs only.
+#   --covers RULE      A rule (section heading, or `path#heading`) this probe
+#                      speaks for. Repeatable; also accepts a comma-separated
+#                      list. WITHOUT it, unhobble reads the receipt as
+#                      `unscoped` and it promotes nothing — a probe of one
+#                      branch of one mechanism must not license deleting every
+#                      rule that happens to cite that mechanism.
 #   --timeout SECS     Per test run (default 300). Needs timeout/gtimeout on
 #                      PATH; without one, runs unbounded and says so.
 #   --max-mb N         Refuse to copy more than N MB (default 512).
@@ -73,6 +79,13 @@
 #   ran and the check did not go red. It is written. Nothing is written when the
 #   baseline was not green, because then nothing was observed.
 #
+#   SCOPE. unhobble's verdict is per RULE, and a receipt with no `covers` reads
+#   as `unscoped` — it names no rule and promotes nothing, by design: a probe of
+#   one branch of one mechanism must not license deleting every rule that cites
+#   that mechanism. Pass --covers to scope it. Even scoped, one leg of three
+#   still cannot reach `fires`; --covers makes the receipt addressable, not
+#   promoting.
+#
 #   Requires python3 (JSON, atomically). Merging preserves legs recorded by
 #   other producers; only this runner's leg and its evidence block are replaced.
 
@@ -92,6 +105,7 @@ MAX_MB=512
 KEEP_SCRATCH=0
 RECEIPT=""
 RECEIPT_KEY=""
+COVERS=""
 
 SCRATCH=""
 # Test output lives OUTSIDE the copied tree. Writing it inside made the runner's
@@ -182,6 +196,17 @@ add_targets() {
     done
 }
 
+add_covers() {
+    # Newline-separated accumulator; a comma-separated value is split.
+    local raw="$1" item
+    local IFS=','
+    for item in $raw; do
+        [ -n "$item" ] || continue
+        COVERS="${COVERS}${item}
+"
+    done
+}
+
 need_value() {
     # $1 flag name, $2 remaining arg count
     [ "$2" -gt 0 ] || die_usage "$1 requires a value"
@@ -209,6 +234,8 @@ while [ $# -gt 0 ]; do
         --emit-receipt)   shift; need_value --emit-receipt $#; RECEIPT="$1" ;;
         --receipt-key=*)  RECEIPT_KEY="${1#*=}" ;;
         --receipt-key)    shift; need_value --receipt-key $#; RECEIPT_KEY="$1" ;;
+        --covers=*)       add_covers "${1#*=}" ;;
+        --covers)         shift; need_value --covers $#; add_covers "$1" ;;
         --include-git)  INCLUDE_GIT=1 ;;
         --keep-scratch) KEEP_SCRATCH=1 ;;
         *) die_usage "unknown flag '$1'" ;;
@@ -232,6 +259,9 @@ case "$MAX_MB"       in ''|*[!0-9]*) die_usage "--max-mb must be a whole number"
 
 if [ -n "$RECEIPT" ]; then
     command -v python3 >/dev/null 2>&1 || die_usage "--emit-receipt needs python3 on PATH"
+fi
+if [ -n "$COVERS" ] && [ -z "$RECEIPT" ]; then
+    die_usage "--covers has no effect without --emit-receipt"
 fi
 if [ -n "$RECEIPT_KEY" ]; then
     [ -n "$RECEIPT" ] || die_usage "--receipt-key has no effect without --emit-receipt"
@@ -336,10 +366,32 @@ elif command -v gtimeout >/dev/null 2>&1; then
 fi
 
 # ─── Scratch copy ─────────────────────────────────────────────────────────
+SIZE_CHECKED=0
 copy_tree() {
+    # Called once for the baseline and again before EVERY target, so each
+    # mutation really does start from a pristine copy. It did not before: one
+    # copy was shared across all targets with only the target file restored
+    # between them, so anything a test wrote to the tree — __pycache__,
+    # .pytest_cache, coverage data, .next/ — accumulated. A test merely counting
+    # its own invocations then reported UNPROVEN for the first target and PROVEN
+    # for the second purely from that drift. The header comment claimed
+    # "pristine copy" while the code did the opposite.
+    if [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
+        if [ "$KEEP_SCRATCH" = "1" ]; then
+            echo "  [keep] retained: $SCRATCH"
+        else
+            rm -rf -- "$SCRATCH"
+        fi
+    fi
     SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/mutproof.XXXXXX")
+    # Resolve to the physical path: on macOS mktemp hands back /var/... while
+    # `pwd -P` inside it reports /private/var/..., and the containment check
+    # below compares physical paths.
+    SCRATCH=$(cd "$SCRATCH" && pwd -P)
     local kb=0 used
-    if [ -n "$PATHS" ]; then
+    if [ "$SIZE_CHECKED" = "1" ]; then
+        kb=0
+    elif [ -n "$PATHS" ]; then
         local old_ifs="$IFS"; IFS=','
         for p in $PATHS; do
             [ -e "$ROOT_ABS/$p" ] || { IFS="$old_ifs"; die_usage "--paths entry '$p' not found under $ROOT_ABS"; }
@@ -356,6 +408,7 @@ copy_tree() {
         echo "  narrow the copy with --paths, or raise --max-mb." >&2
         exit 2
     fi
+    SIZE_CHECKED=1
 
     if [ -n "$PATHS" ]; then
         local old_ifs="$IFS"; IFS=','
@@ -391,13 +444,39 @@ detect_kind() {
     echo unknown
 }
 
+# Containment, re-checked at the moment of every write.
+#
+# The `-L` guard on the target runs once, at argument resolution, and only sees
+# the LEAF. It does not survive the test command: a test that swaps a scratch
+# directory for a symlink — the "reuse a shared build dir" shape — redirects the
+# next write out of the tree, and `rm -f -- "$dst"` unlinks the leaf while still
+# traversing the parent chain. Confirmed: files outside --root were overwritten
+# on a two-target run. Resolving the parent directory physically at write time
+# closes the leaf and parent cases together, and it re-checks after every test
+# command rather than trusting a snapshot taken before any of them ran.
+assert_in_scratch() {
+    local d
+    d=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || {
+        echo "mutation-proof: cannot resolve the directory of '$1' — refusing to write" >&2
+        exit 2
+    }
+    case "$d/" in
+        "$SCRATCH"/*|"$SCRATCH"/) return 0 ;;
+    esac
+    echo "mutation-proof: '$1' resolves outside the scratch copy — refusing to write." >&2
+    echo "  It lands in $d, not $SCRATCH. The test command replaced a directory in" >&2
+    echo "  the copy with a symlink; writing there would modify a file the runner" >&2
+    echo "  does not own and cannot restore." >&2
+    exit 2
+}
+
 write_stub() {
     # $1 = file in the scratch copy, $2 = kind
     #
     # Every branch unlinks first. Never write through a path that might be a
     # link: `cat >` follows one and lands in the real file, outside the scratch
-    # copy and outside --root. The -L guard on the target is the primary
-    # defence; this is the one that holds when a link arrives some other way.
+    # copy and outside --root.
+    assert_in_scratch "$1"
     rm -f -- "$1"
     case "$2" in
         shell)
@@ -472,6 +551,7 @@ apply_mutation() {
     gitrel="${ROOT_ABS#"$top"/}"
     if [ "$gitrel" = "$ROOT_ABS" ]; then gitrel=""; else gitrel="$gitrel/"; fi
     if git -C "$ROOT_ABS" cat-file -e "$REF:$gitrel$rel" 2>/dev/null; then
+        assert_in_scratch "$dst"
         rm -f -- "$dst"   # never redirect through a possible link
         git -C "$ROOT_ABS" show "$REF:$gitrel$rel" >"$dst"
         chmod +x "$dst" 2>/dev/null || true
@@ -482,16 +562,10 @@ apply_mutation() {
         # from reverting content, and the verdict says so, because "the suite
         # noticed a missing file" is much weaker than "the suite noticed the fix
         # was undone". A renamed path lands here silently otherwise.
+        assert_in_scratch "$dst"
         rm -f -- "$dst"
         echo "revert to $REF (absent at that ref → DELETED, not reverted)"
     fi
-}
-
-restore_target() {
-    local rel="$1"
-    mkdir -p "$(dirname "$SCRATCH/$rel")"
-    rm -f -- "$SCRATCH/$rel"
-    cp -p "$ROOT_ABS/$rel" "$SCRATCH/$rel"
 }
 
 # ─── Test execution ───────────────────────────────────────────────────────
@@ -567,7 +641,7 @@ count_marks() {
 emit_receipt() {
     # $1 key  $2 went_red (true|false)  $3 mutation label
     # $4 rc_before  $5 rc_after  $6 flipped
-    if ! python3 - "$RECEIPT" "$1" "$2" "$3" "$4" "$5" "$6" "$STRATEGY" "$REF" "$TEST_CMD" <<'PY'
+    if ! python3 - "$RECEIPT" "$1" "$2" "$3" "$4" "$5" "$6" "$STRATEGY" "$REF" "$TEST_CMD" "$COVERS" <<'PY'
 import datetime
 import json
 import os
@@ -575,7 +649,8 @@ import sys
 import tempfile
 
 (path, key, went_red, mutation, rc_before, rc_after,
- flipped, strategy, ref, test_cmd) = sys.argv[1:11]
+ flipped, strategy, ref, test_cmd, covers_raw) = sys.argv[1:12]
+covers = [c for c in (covers_raw or "").split("\n") if c.strip()]
 
 LEG = "neutered_check_went_red"
 
@@ -603,6 +678,13 @@ if not isinstance(entry, dict):
 
 # The observed leg, and only the observed leg.
 entry[LEG] = went_red == "true"
+
+# Scope. Merged with anything already there rather than replaced: another
+# producer may have scoped this same mechanism to other rules.
+if covers:
+    prior = entry.get("covers")
+    prior = [prior] if isinstance(prior, str) else (prior if isinstance(prior, list) else [])
+    entry["covers"] = sorted({str(c).strip() for c in prior + covers if str(c).strip()})
 
 # Evidence is LEG-SCOPED, never a bare top-level `evidence` key. The consumer's
 # `shows_evidence` is per-RECORD: it reads `rec["evidence"]` and stars the whole
@@ -659,8 +741,14 @@ PY
         exit 2
     fi
     echo "  [receipt] $RECEIPT — ${1}.neutered_check_went_red = $2"
-    echo "            fires_on_trigger and silent_on_non_trigger left ABSENT:"
-    echo "            not observed here, so unhobble must read this as incomplete."
+    echo "            fires_on_trigger and silent_on_non_trigger left ABSENT — not"
+    echo "            observed here, so this receipt cannot reach 'fires' either way."
+    if [ -n "$COVERS" ]; then
+        echo "            covers: $(printf '%s' "$COVERS" | tr '\n' ',' | sed 's/,$//')"
+    else
+        echo "            no 'covers' emitted — unhobble will read this as unscoped"
+        echo "            and promote nothing. Pass --covers 'Section Heading'."
+    fi
 }
 
 fmt_counts() {
@@ -737,6 +825,11 @@ while IFS= read -r rel; do
     TARGET_N=$((TARGET_N + 1))
     VERDICT_REACHED=0
 
+    # Fresh copy per target. The baseline ran on an identical pristine tree, so
+    # the two runs being compared differ only by the mutation — which is the
+    # whole experiment, and was not true when one copy was shared.
+    copy_tree
+
     LABEL=$(apply_mutation "$rel")
 
     # Did the mutation actually change anything? Nothing else checks. `--ref
@@ -761,7 +854,6 @@ while IFS= read -r rel; do
         MUT_OK=$COUNT_OK
         MUT_FAIL=$COUNT_FAIL
     fi
-    restore_target "$rel"
 
     BASE_TOTAL=$((BASE_OK + BASE_FAIL))
     MUT_TOTAL=$((MUT_OK + MUT_FAIL))

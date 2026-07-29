@@ -268,7 +268,11 @@ if [ "$COMMAND" = "pre-push" ]; then
                 1) echo "  [signal] UNPROVEN — a test passed with AND without the target."
                    echo "           Rubric dim 5 is at risk. This is REPORTED, not blocking:"
                    echo "           fix the test, or say in the PR why the coverage is elsewhere." ;;
-                3) echo "  [signal] INCONCLUSIVE — the baseline was not green; nothing proven." ;;
+                # Exit 3 has three causes now — a red baseline, a mutation that
+                # changed nothing, and a mutated run that emitted fewer checks.
+                # Naming one of them here contradicted the runner's own verdict
+                # two lines above.
+                3) echo "  [signal] INCONCLUSIVE — nothing was proven; see the verdict above." ;;
                 *) echo "  [signal] mutation-proof setup error (exit $MUT_RC) — see output above." ;;
             esac
             echo "           (non-blocking: pre-push exit code is unaffected)"

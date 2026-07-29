@@ -21,7 +21,7 @@ MP="$REPO/scripts/mutation-proof.sh"
 # proving the other 24 are not decoration silently gone — a green that means
 # less than it looks, shipped by the tool built to detect exactly that. A skip
 # is now counted, named, and reconciled against EXPECTED_CHECKS.
-EXPECTED_CHECKS=36
+EXPECTED_CHECKS=41
 
 PASS=0
 FAIL=0
@@ -729,6 +729,113 @@ if [ "$MP_RC" = "2" ] \
     ok "T36: clean rejection, no null-byte noise"
 else
     fail "T36: clean rejection, no null-byte noise" "rc=$MP_RC out=$MP_OUT"
+fi
+
+# ── T37-T41: regressions found by P20 round 2 ─────────────────────────────
+
+echo "T37. a test that swaps a directory for a symlink cannot redirect a write"
+# The `-L` guard runs once, at argument resolution, and sees only the LEAF. A
+# test that replaces a scratch directory with a symlink -- the "reuse a shared
+# build dir" shape -- redirected the NEXT target's write out of the tree, and
+# `rm -f` unlinked the leaf while still traversing the parent chain. Files
+# outside --root were overwritten. Two fixes close it independently: the tree is
+# re-copied per target, and containment is re-asserted at every write.
+ESC="$WORK/escape"
+mkdir -p "$ESC/outside" "$ESC/root/src"
+printf 'PRECIOUS-1\n' >"$ESC/outside/gate1.sh"
+printf 'PRECIOUS-2\n' >"$ESC/outside/gate2.sh"
+printf 'scratch-1\n' >"$ESC/root/src/gate1.sh"
+printf 'scratch-2\n' >"$ESC/root/src/gate2.sh"
+cat >"$ESC/root/t.sh" <<FIX
+#!/usr/bin/env bash
+if [ ! -L src ]; then rm -rf src && ln -s "$ESC/outside" src; fi
+echo "  [ok] one"
+exit 0
+FIX
+run_mp run --root "$ESC/root" --target src/gate1.sh,src/gate2.sh --test 'bash t.sh'
+# "The outside files are intact" is TRUE OF A RUNNER THAT DOES NOTHING — the
+# same vacuity T15 caught in T9 last round. Both targets must reach a real
+# verdict for the intactness to mean the writes were contained rather than
+# never attempted.
+if [ "$(cat "$ESC/outside/gate1.sh")" = "PRECIOUS-1" ] \
+    && [ "$(cat "$ESC/outside/gate2.sh")" = "PRECIOUS-2" ] \
+    && [ "$(echo "$MP_OUT" | grep -c 'verdict=UNPROVEN')" = "2" ] \
+    && ! echo "$MP_OUT" | grep -q "verdict=PROVEN"; then
+    ok "T37: no write escapes through a swapped directory"
+else
+    fail "T37: no write escapes through a swapped directory" \
+        "g1=$(cat "$ESC/outside/gate1.sh") g2=$(cat "$ESC/outside/gate2.sh") rc=$MP_RC"
+fi
+
+echo "T38. each target really does start from a pristine copy"
+# One copy was shared across all targets, with only the target file restored
+# between them, so anything a test wrote to the tree accumulated. A test merely
+# counting its own invocations gave UNPROVEN for the first target and PROVEN for
+# the second purely from that drift -- a false PROVEN from a second source,
+# while the header comment claimed "pristine copy".
+DRIFT="$WORK/drift"
+mkdir -p "$DRIFT/src"
+printf '#!/usr/bin/env bash\necho A\n' >"$DRIFT/src/a.sh"
+printf '#!/usr/bin/env bash\necho B\n' >"$DRIFT/src/b.sh"
+cat >"$DRIFT/t.sh" <<'FIX'
+#!/usr/bin/env bash
+N=$(cat .invocations 2>/dev/null || echo 0); N=$((N + 1)); echo "$N" >.invocations
+if [ "$N" -le 2 ]; then echo "  [ok] invocation $N"; exit 0; fi
+echo "  [FAIL] invocation $N"; exit 1
+FIX
+run_mp run --root "$DRIFT" --target src/a.sh,src/b.sh --test 'bash t.sh'
+# Neither target is referenced by the test, so BOTH must be UNPROVEN.
+if [ "$MP_RC" = "1" ] \
+    && [ "$(echo "$MP_OUT" | grep -c 'verdict=UNPROVEN')" = "2" ] \
+    && ! echo "$MP_OUT" | grep -q "verdict=PROVEN"; then
+    ok "T38: tree drift cannot manufacture a PROVEN"
+else
+    fail "T38: tree drift cannot manufacture a PROVEN" \
+        "rc=$MP_RC verdicts=$(echo "$MP_OUT" | grep -o 'verdict=[A-Z]*' | tr '\n' ' ')"
+fi
+
+echo "T39. --covers scopes the receipt, and merges rather than replaces"
+printf '{"probes": {"src/gate.sh": {"covers": ["Pre-existing Rule"]}}}\n' >"$RCPT/scoped.json"
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
+    --emit-receipt "$RCPT/scoped.json" --covers 'Control Gates,Destructive Ops'
+R39=$(python3 - "$RCPT/scoped.json" <<'PY'
+import json, sys
+rec = json.load(open(sys.argv[1]))["probes"]["src/gate.sh"]
+print(",".join(rec["covers"]))
+PY
+)
+if [ "$MP_RC" = "0" ] && [ "$R39" = "Control Gates,Destructive Ops,Pre-existing Rule" ] \
+    && echo "$MP_OUT" | grep -q "covers: Control Gates,Destructive Ops"; then
+    ok "T39: covers emitted and merged with a prior producer's scope"
+else
+    fail "T39: covers emitted and merged with a prior producer's scope" \
+        "rc=$MP_RC covers=[$R39]"
+fi
+
+echo "T40. without --covers the runner says 'unscoped', not 'incomplete'"
+# The stdout used to assert a consumer state that no longer exists: without
+# `covers` the consumer reads `unscoped` and promotes nothing, not `incomplete`.
+run_mp run --root "$FIX1" --target src/gate.sh --test 'bash t/discriminating.sh' \
+    --emit-receipt "$RCPT/unscoped.json"
+if echo "$MP_OUT" | grep -q "no 'covers' emitted" \
+    && echo "$MP_OUT" | grep -q "read this as unscoped" \
+    && ! echo "$MP_OUT" | grep -q "must read this as incomplete"; then
+    ok "T40: the unscoped consequence is stated truthfully"
+else
+    fail "T40: the unscoped consequence is stated truthfully" "$MP_OUT"
+fi
+
+echo "T41. pre-push does not name one cause for a three-cause exit 3"
+E3_OUT=$(cd "$GF" && FORCE_GATE=1 bash "$REPO/scripts/cross-review.sh" pre-push --strata=C \
+    --mutation-root="$IDENT" --mutation-target=src/gate.sh \
+    --mutation-test='bash t/run.sh' --mutation-strategy=revert --mutation-ref=HEAD~1 2>&1)
+E3_RC=$?
+if [ "$E3_RC" = "0" ] \
+    && echo "$E3_OUT" | grep -q "\[signal\] INCONCLUSIVE — nothing was proven; see the verdict above" \
+    && ! echo "$E3_OUT" | grep -q "\[signal\] INCONCLUSIVE — the baseline was not green"; then
+    ok "T41: the wrapper defers to the runner's verdict"
+else
+    fail "T41: the wrapper defers to the runner's verdict" "rc=$E3_RC"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────
