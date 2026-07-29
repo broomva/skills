@@ -752,6 +752,43 @@ CHECK_REGISTRY: dict[str, CheckFn] = {
 }
 
 
+#: Checks that assert something about the skill FIRING. In the ablation baseline the
+#: skill is not installed, so these cannot hold and asserting them would measure the
+#: ablation rather than the skill (BRO-2006).
+#:
+#: Declared next to the checks rather than at the runner's call site, because
+#: trigger-dependence is a property of the check — a new check that consults
+#: ``transcript.triggered`` has to be added here, and the guard below is what makes
+#: forgetting it visible.
+TRIGGER_DEPENDENT_CHECKS = frozenset({"skill_triggered"})
+
+
+def partition_for_arm(check_ids: list[str], *, skill_present: bool) -> tuple[list[str], list[str]]:
+    """``(runnable, skipped)`` for one arm of an ablation.
+
+    In the present arm everything runs, byte for byte as before. In the absent arm
+    the trigger-dependent checks are SKIPPED — recorded, never counted as passed and
+    never as failed. Counting them passed inflates the baseline (lift too low, so a
+    load-bearing skill reads as absorbed); counting them failed zeroes the baseline
+    (lift too high, which is the original vacuity this ticket was filed against).
+    """
+    if skill_present:
+        return (list(check_ids), [])
+    runnable = [c for c in check_ids if c not in TRIGGER_DEPENDENT_CHECKS]
+    skipped = [c for c in check_ids if c in TRIGGER_DEPENDENT_CHECKS]
+    return (runnable, skipped)
+
+
+def skipped_result(check_id: str) -> dict[str, Any]:
+    """A check that was not applicable to this arm. ``passed`` is None, not False."""
+    return {
+        "check_id": check_id,
+        "passed": None,
+        "skipped": True,
+        "detail": "not applicable in the skill-absent arm",
+    }
+
+
 def unknown_checks(check_ids: list[str]) -> list[str]:
     """Check ids referenced by a prompt set that this registry cannot dispatch."""
     return [c for c in check_ids if c not in CHECK_REGISTRY]

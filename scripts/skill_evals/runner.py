@@ -73,6 +73,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE.parent) not in sys.path:  # allow direct execution AND package import
     sys.path.insert(0, str(_HERE.parent))
 
+from skill_evals import ablation as ablation_mod  # noqa: E402
 from skill_evals import checks as checks_mod  # noqa: E402
 from skill_evals import jail as jail_mod  # noqa: E402
 from skill_evals.transcript import Transcript, normalize_skill_name  # noqa: E402
@@ -115,12 +116,35 @@ FAIL = "FAIL"
 RECOVERED = "RECOVERED"  # answered by reading SKILL.md off disk, never triggering
 INVISIBLE = "INVISIBLE"  # skill absent from the run's roster -> result is vacuous
 ERROR = "ERROR"  # CLI/fixture/harness failure -> no signal at all
-NON_PASS_ERRORS = {INVISIBLE, ERROR}
+#: The skill was present (or fired) in an arm that requires it ABSENT. The ablation
+#: baseline is contaminated, which is a different thing from a zero-lift result and
+#: must never be read as one — a contaminated baseline scores like the skill added
+#: nothing, which is the exact recommendation-to-delete this measurement must not
+#: manufacture (BRO-2006).
+LEAKED = "LEAKED"
+#: A negative case in the skill-absent arm. An uninstalled skill cannot over-trigger,
+#: so the case asserts nothing at all — not a pass, not a failure.
+NOT_COMPARABLE = "NOT_COMPARABLE"
+NON_PASS_ERRORS = {INVISIBLE, ERROR, LEAKED, NOT_COMPARABLE}
 
 EXIT_OK = 0
 EXIT_BELOW_THRESHOLD = 1
 EXIT_USAGE = 2
 EXIT_FIXTURES = 3
+#: The ablation baseline produced no usable evidence (BRO-2006). Distinct from a
+#: threshold failure: nothing is wrong with the SKILL, the MEASUREMENT is void.
+EXIT_ABLATION_UNUSABLE = 4
+
+#: Skills the CLI ships built in. They are present in EVERY run, including the
+#: ablation baseline, so a skill of ours that shares one of these names has no
+#: definable absent arm — the "uninstalled" run still has a skill by that name. The
+#: ablation refuses rather than reporting a lift of roughly zero, which would read
+#: as absorption and recommend deleting ours.
+BUILTIN_SKILL_NAMES = frozenset({
+    "deep-research", "code-review", "simplify", "debug", "verify", "run", "loop",
+    "review", "security-review", "init", "schedule", "artifact-design",
+    "update-config", "keybindings-help", "fewer-permission-prompts", "dataviz",
+})
 
 #: Never copied into a case workspace: the answer key, the skill's own tests, VCS.
 SKILL_COPY_EXCLUDE = (
@@ -486,6 +510,22 @@ def validate_prompt_set(data: Any, registry: dict[str, Any] | None = None) -> tu
                         "so it scopes nothing"
                     )
 
+        # BRO-2006: in the ablation baseline the trigger-dependent checks are
+        # skipped, so a positive case made ONLY of them has nothing runnable left —
+        # it can never pass the baseline, which biases the lift upward and makes a
+        # load-bearing verdict cheaper to obtain. Zero cases across the seven
+        # committed sets are like this today; this keeps it that way.
+        if (
+            isinstance(expected, list)
+            and expected
+            and raw.get("should_trigger") is True
+            and all(c in checks_mod.TRIGGER_DEPENDENT_CHECKS for c in expected)
+        ):
+            warnings.append(
+                f"{where}: every expected_check is trigger-dependent, so this case "
+                "asserts nothing in the ablation baseline and would bias the lift upward"
+            )
+
         origin = raw.get("origin", "golden")
         if origin not in VALID_ORIGINS:
             warnings.append(f"{where}: unrecognised origin {origin!r} (expected one of {sorted(VALID_ORIGINS)})")
@@ -606,8 +646,18 @@ class Visibility:
 #: ``Visibility("absent", False, lambda *_: None)`` here and expose it as a flag.
 #: The runner already threads visibility through workspace construction and
 #: grading, so the ablation arm needs no structural change.
+def _materialize_absent(workspace: Path, skill_dir: Path, skill_name: str) -> None:
+    """Install nothing. The ablation baseline (BRO-2006).
+
+    Note what this does NOT remove: the base model's built-in skills are present in
+    every run regardless, so a lift measured here is the skill's MARGINAL value over
+    a model that still has those — not its value over a bare model.
+    """
+
+
 VISIBILITY_REGISTRY: dict[str, Visibility] = {
     "present": Visibility("present", True, _materialize_present),
+    "absent": Visibility("absent", False, _materialize_absent),
 }
 
 
@@ -1022,16 +1072,28 @@ def grade_trial(
     if transcript.is_error:
         return out(ERROR, f"cli reported failure: {transcript.error_reason[:200]}")
 
-    # Anti-vacuity: a case scored while the skill was not even loaded proves
-    # nothing — not a trigger failure (positive), not a clean abstention (negative).
-    if expect_visible:
-        norm = {normalize_skill_name(s) for s in roster}
-        if normalize_skill_name(skill) not in norm:
-            return out(
-                INVISIBLE,
-                f"{skill!r} absent from the run's {len(roster)}-skill roster — "
-                "visibility bug, not a description result",
-            )
+    # Anti-vacuity, in BOTH directions (BRO-2006). ``expect_visible`` used to be a
+    # skip switch: when False, nothing was asserted about visibility at all, so a
+    # skill that leaked into the ablation baseline scored as an ordinary result and
+    # the lift came out at zero — indistinguishable from "the model absorbed it",
+    # which is a recommendation to delete a load-bearing skill.
+    #
+    # The asymmetry is deliberate. INVISIBLE stays roster-only (conservative for the
+    # present arm); LEAKED is roster OR triggered (conservative for the absent arm).
+    # Both err toward refusing to score rather than toward scoring wrongly.
+    available = normalize_skill_name(skill) in {normalize_skill_name(s) for s in roster}
+    if expect_visible and not available:
+        return out(
+            INVISIBLE,
+            f"{skill!r} absent from the run's {len(roster)}-skill roster — "
+            "visibility bug, not a description result",
+        )
+    if not expect_visible and (available or transcript.triggered(skill)):
+        return out(
+            LEAKED,
+            f"{skill!r} was in the roster (or fired) in an arm that requires it "
+            "ABSENT — the baseline is contaminated, not a zero-lift result",
+        )
 
     triggered = transcript.triggered(skill)
     ctx = checks_mod.CheckContext(
@@ -1045,9 +1107,37 @@ def grade_trial(
         transcript=transcript,
         workspace=workspace,
     )
-    check_results = checks_mod.run_checks(case.expected_checks, ctx)
+    runnable, skipped = checks_mod.partition_for_arm(
+        case.expected_checks, skill_present=expect_visible
+    )
+    check_results = checks_mod.run_checks(runnable, ctx)
     check_dicts = [c.to_dict() for c in check_results]
+    check_dicts += [checks_mod.skipped_result(c) for c in skipped]
     failed = [c.check_id for c in check_results if not c.passed]
+
+    # -- the ablation baseline (BRO-2006) ------------------------------------
+    # The skill is not installed, so "did it fire" is not a question this arm can
+    # ask. Grade the OUTCOME only, and say so in the detail rather than letting a
+    # reader assume the two arms were scored the same way.
+    if not expect_visible:
+        if not case.should_trigger:
+            return out(
+                NOT_COMPARABLE,
+                "negative case in the skill-absent arm: an uninstalled skill cannot "
+                "over-trigger, so this case asserts nothing",
+                checks=check_dicts,
+            )
+        if failed:
+            return out(
+                FAIL,
+                f"baseline (skill absent): outcome-only grading, checks failed: "
+                f"{', '.join(failed)}",
+                checks=check_dicts,
+            )
+        return out(
+            PASS, "baseline (skill absent): outcome-only grading, all runnable checks passed",
+            checks=check_dicts,
+        )
 
     if case.should_trigger:
         if not triggered:
@@ -1426,6 +1516,14 @@ def format_report(
         f"  threshold   {threshold:.2f} -> {verdict} (exit {exit_code})   "
         f"[mode={mode.upper()} skill={skill}]"
     )
+    # Name the actual cause. Reading "threshold -> FAIL" on an exit that the
+    # threshold did not produce sends the reader to fix the wrong thing — the
+    # numbers above are the PRESENT arm and are unaffected.
+    if exit_code == EXIT_ABLATION_UNUSABLE:
+        lines.append(
+            "              ^ exit 4 is the ABLATION BASELINE, not this arm: the "
+            "measurement is void, the numbers above stand"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -1546,6 +1644,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "never loaded is vacuous and no flag forgives it.")
     p.add_argument("--expect-cli-version", default=EXPECTED_CLI_VERSION)
     p.add_argument("--no-version-check", action="store_true")
+    p.add_argument("--ablate", action="store_true",
+                   help="BRO-2006: also run the prompt set with the skill UNINSTALLED and "
+                        "report the lift. Doubles the trial count and therefore the spend.")
+    p.add_argument("--ablation-min-trials", type=int, default=ablation_mod.ABLATION_MIN_TRIALS,
+                   help="below this many graded positive trials per arm the verdict is "
+                        "'underpowered' rather than a number a reader would act on")
+    p.add_argument("--ablation-margin", type=float, default=ablation_mod.ABLATION_MARGIN,
+                   help="a lift interval entirely below this marks a retirement candidate")
+    p.add_argument("--fail-on-retire-candidate", action="store_true",
+                   help="exit non-zero when the ablation verdict is retire-candidate "
+                        "(opt-in; --ablate is report-only by default)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the plan and the trial count, then exit without spending")
     p.add_argument("--validate-only", action="store_true", help="validate the prompt set and exit")
     p.add_argument("--list-checks", action="store_true", help="print CHECK_REGISTRY ids and exit")
     return p
@@ -1713,6 +1824,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.validate_only:
         print(f"[skill-evals] prompt set OK: {len(prompt_set.cases)} cases "
               f"({len(prompt_set.positives)} positive / {len(prompt_set.negatives)} negative)")
+        return EXIT_OK
+
+    # --ablate runs the POSITIVE cases a second time with the skill uninstalled;
+    # negatives are not re-run, because an uninstalled skill cannot over-trigger and
+    # spending on a case that asserts nothing is just spending.
+    ablate_trials = len(prompt_set.positives) * args.trials if args.ablate else 0
+    planned = len(prompt_set.cases) * args.trials + ablate_trials
+    if args.ablate:
+        if args.visibility != "present":
+            print("error: --ablate owns both arms; do not also pass --visibility",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        # Both refusals are for the same missing piece: fixtures are stored per CASE,
+        # not per ARM, so the two arms of an ablation cannot coexist in one directory.
+        if args.record:
+            print(
+                "error: --ablate with --record would write the ABSENT arm's transcripts "
+                "over the PRESENT arm's, destroying the live evidence you just paid for "
+                "— every positive case would replay as INVISIBLE. Record the arms "
+                "separately (--visibility present / absent into different --record dirs) "
+                "until fixtures are arm-namespaced.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        if args.replay:
+            print(
+                "error: --ablate with --replay cannot produce a measurement: both arms "
+                "would replay the SAME fixtures, so the baseline is 100% LEAKED by "
+                "construction. Ablation needs live runs.",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        print(
+            f"[skill-evals] ABLATION: {len(prompt_set.cases)}x{args.trials} present + "
+            f"{len(prompt_set.positives)}x{args.trials} absent = {planned} trials "
+            f"({'replay' if args.replay else 'LIVE — this costs money'})",
+            file=sys.stderr,
+        )
+    if args.dry_run:
+        print(f"[skill-evals] DRY RUN: would run {planned} trial(s); nothing was spent")
         return EXIT_OK
 
     # -- replay fixture guard ------------------------------------------------
@@ -1886,6 +2037,47 @@ def main(argv: Sequence[str] | None = None) -> int:
         prompt_set, case_results, agg,
         mode=runner.mode, threshold=args.threshold, exit_code=exit_code, meta=meta,
     )
+
+    # -- the ablation baseline (BRO-2006) ------------------------------------
+    if args.ablate:
+        baseline_set = PromptSet(
+            skill=prompt_set.skill, version=prompt_set.version,
+            cases=list(prompt_set.positives), notes=prompt_set.notes, path=prompt_set.path,
+        )
+        absent_cfg = RunConfig(
+            skill=skill, skill_dir=skill_dir, trials=args.trials,
+            visibility=VISIBILITY_REGISTRY["absent"], jobs=max(1, args.jobs),
+            keep_workspaces=args.keep_workspaces,
+        )
+        print("[skill-evals] running the ABSENT arm (skill uninstalled)", file=sys.stderr)
+        absent_results = run_suite(runner, baseline_set, absent_cfg)
+        absent_agg = aggregate(absent_results, case_threshold=args.case_threshold)
+        absent_report = build_report(
+            baseline_set, absent_results, absent_agg,
+            mode=runner.mode, threshold=args.threshold, exit_code=0, meta={"arm": "absent"},
+        )
+        comparison = ablation_mod.compare(
+            report, absent_report,
+            non_pass=sorted(NON_PASS_ERRORS),
+            builtin_names=BUILTIN_SKILL_NAMES,
+            min_trials=args.ablation_min_trials,
+            margin=args.ablation_margin,
+        )
+        report["ablation"] = comparison
+        report["ablation_absent_arm"] = absent_report
+        if not args.json:
+            print(ablation_mod.format_comparison(comparison))
+
+        # An unusable baseline is its own exit code: nothing is wrong with the
+        # SKILL, the MEASUREMENT is void, and reporting that as a threshold failure
+        # would send a reader to fix the wrong thing.
+        if comparison["leaked_baseline_trials"] or not comparison["absent"]["graded_positive_trials"]:
+            print("[skill-evals] ABLATION UNUSABLE: the baseline produced no clean evidence",
+                  file=sys.stderr)
+            exit_code = exit_code or EXIT_ABLATION_UNUSABLE
+        elif args.fail_on_retire_candidate and comparison["verdict"] == ablation_mod.VERDICT_RETIRE:
+            exit_code = exit_code or EXIT_BELOW_THRESHOLD
+        report["exit_code"] = exit_code
 
     if args.json:
         print(json.dumps(report, indent=2))

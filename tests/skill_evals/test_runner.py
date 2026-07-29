@@ -704,11 +704,63 @@ def test_grade_invisible_also_guards_negative_cases():
     assert r.outcome == R.INVISIBLE
 
 
-def test_grade_skips_roster_guard_when_visibility_does_not_expect_it():
-    """Seam check for BRO-2006: an absent-by-design arm must not score INVISIBLE."""
+def test_an_absent_by_design_arm_does_not_score_invisible():
+    """An absent-by-design arm must not be scored as a visibility bug.
+
+    UPDATED BY BRO-2006. This used to assert PASS on a NEGATIVE case, which was the
+    seam behaving as a skip switch — and a negative in the absent arm asserts
+    nothing at all, since an uninstalled skill cannot over-trigger. It is now
+    NOT_COMPARABLE, which is excluded from the graded count rather than counted as
+    a structural sweep.
+    """
     stream = ndjson(ev_init(skills=("other",)), ev_result("answered without the skill"))
     r = R.grade_trial(case(should_trigger=False), transcript(stream), "demo", expect_visible=False)
+    assert r.outcome == R.NOT_COMPARABLE
+    assert r.outcome in R.NON_PASS_ERRORS
+
+
+def test_a_positive_in_the_absent_arm_is_graded_on_outcome_only():
+    stream = ndjson(ev_init(skills=("other",)),
+                    ev_text("Here is a complete answer."),
+                    ev_result("Here is a complete answer."))
+    r = R.grade_trial(
+        case(should_trigger=True, checks=["final_answer_non_empty"]),
+        transcript(stream), "demo", expect_visible=False,
+    )
     assert r.outcome == R.PASS
+    assert "outcome-only" in r.detail
+
+
+def test_a_trigger_dependent_check_is_skipped_not_failed_in_the_absent_arm():
+    """Counting it failed zeroes the baseline (lift too high — the original
+    vacuity); counting it passed inflates it (lift too low, so a load-bearing skill
+    reads as absorbed). It is recorded with passed=None."""
+    answer = "The parser returns None on an empty buffer; guard it and add a test."
+    stream = ndjson(ev_init(skills=("other",)), ev_text(answer), ev_result(answer))
+    r = R.grade_trial(
+        case(should_trigger=True, checks=["skill_triggered", "final_answer_non_empty"]),
+        transcript(stream), "demo", expect_visible=False,
+    )
+    assert r.outcome == R.PASS
+    by_id = {c["check_id"]: c for c in r.checks}
+    assert by_id["skill_triggered"]["passed"] is None
+    assert by_id["skill_triggered"]["skipped"] is True
+    assert by_id["final_answer_non_empty"]["passed"] is True
+
+
+def test_a_skill_that_leaks_into_the_baseline_is_not_a_zero_lift_result():
+    """THE contamination guard. Before BRO-2006 expect_visible=False asserted
+    NOTHING about visibility, so a leaked skill scored as an ordinary baseline
+    result and the lift came out at zero — indistinguishable from absorption, i.e.
+    a recommendation to delete a load-bearing skill."""
+    stream = ndjson(ev_init(skills=("demo",)), ev_result("answered"))
+    r = R.grade_trial(case(should_trigger=True), transcript(stream), "demo", expect_visible=False)
+    assert r.outcome == R.LEAKED
+    assert r.outcome in R.NON_PASS_ERRORS
+
+    fired = R.grade_trial(
+        case(should_trigger=True), transcript(triggering_stream()), "demo", expect_visible=False)
+    assert fired.outcome == R.LEAKED
 
 
 def test_grade_negative_fails_on_over_trigger():
@@ -958,9 +1010,20 @@ def test_visibility_is_a_parameter_not_hardcoded(tmp_path):
     assert custom.expects_visible is False
 
 
-def test_default_visibility_registry_only_ships_present():
-    assert list(R.VISIBILITY_REGISTRY) == ["present"]
+def test_visibility_registry_ships_both_ablation_arms():
+    """UPDATED BY BRO-2006 — the registry was the declared seam, and this is it
+    being used. The invariant that matters is not the count but that each arm
+    declares the right visibility expectation, since that is what drives the
+    INVISIBLE/LEAKED guards."""
+    assert sorted(R.VISIBILITY_REGISTRY) == ["absent", "present"]
     assert R.VISIBILITY_REGISTRY["present"].expects_visible is True
+    assert R.VISIBILITY_REGISTRY["absent"].expects_visible is False
+
+
+def test_the_absent_arm_installs_nothing(tmp_path):
+    ws = R.build_workspace(
+        tmp_path / "ws", make_skill(tmp_path), "demo", R.VISIBILITY_REGISTRY["absent"])
+    assert not (ws / ".claude" / "skills" / "demo").exists()
 
 
 # ===========================================================================
