@@ -17,6 +17,8 @@ from context_audit import (  # noqa: E402
     is_live_mechanism,
     audit_prompt,
     classify_sentence,
+    cover_hits,
+    cover_matches,
     fires_cell,
     load_probe_receipts,
     match_receipts,
@@ -687,6 +689,11 @@ def test_an_unscoped_receipt_promotes_nothing_anywhere(tmp_path):
     refs = mechanism_refs(sec, tmp_path, {"gate.sh": dict(_LEGS)})
     assert refs[0]["probe"] == "unscoped"
     assert anchor_state(refs) == "unproven"
+    # Second assertion: the same receipt WITH covers does promote, so the test
+    # discriminates the scope gate rather than merely observing a refusal.
+    scoped = mechanism_refs(sec, tmp_path, {"gate.sh": dict(_LEGS, covers=["Anything"])})
+    assert scoped[0]["probe"] == "fires"
+    assert anchor_state(scoped) == "fires"
 
 
 def test_covers_accepts_a_fully_qualified_section_key(tmp_path):
@@ -697,6 +704,102 @@ def test_covers_accepts_a_fully_qualified_section_key(tmp_path):
     assert mechanism_refs(sec, tmp_path, receipts)[0]["probe"] == "fires"
     other_file = Section("b.md", "Rules", 2, 1, 2, "Gated by `gate.sh`.")
     assert mechanism_refs(other_file, tmp_path, receipts)[0]["probe"] == "unresolved"
+
+
+# --- the documented remedy has to work in every invocation form -------------
+
+
+@pytest.mark.parametrize(
+    "argv_path",
+    [
+        "CLAUDE.md",                      # context_audit.py CLAUDE.md
+        "/abs/repo/CLAUDE.md",            # an absolute path
+        "sub/dir/CLAUDE.md",              # what directory-glob mode produces
+    ],
+)
+def test_a_qualified_cover_matches_however_the_file_was_spelled_on_argv(argv_path):
+    """`Section.path` is verbatim from argv, so the SAME section is spelled three
+    ways depending on invocation. A qualified `covers` that only matched one
+    spelling made the documented remedy for ambiguity unusable in exactly the
+    mode SKILL.md recommends (audit every surface at once, by directory).
+    """
+    sec = Section(argv_path, "Testing", 2, 1, 2, "body")
+    assert cover_matches("CLAUDE.md#Testing", sec) is True
+
+
+def test_a_qualified_cover_does_not_match_a_different_file_with_the_same_name():
+    # Suffix matching is component-wise in both directions, so these stay apart.
+    assert cover_matches("a/CLAUDE.md#Testing",
+                         Section("b/CLAUDE.md", "Testing", 2, 1, 2, "x")) is False
+
+
+def test_a_qualified_cover_still_requires_the_heading_to_match():
+    assert cover_matches("CLAUDE.md#Testing",
+                         Section("CLAUDE.md", "Other", 2, 1, 2, "x")) is False
+
+
+def test_cover_hits_counts_a_bare_heading_across_every_audited_file():
+    secs = [
+        Section("CLAUDE.md", "Conventions", 2, 1, 2, "x"),
+        Section("AGENTS.md", "Conventions", 2, 1, 2, "x"),
+        Section("CLAUDE.md", "Scope", 2, 3, 4, "x"),
+    ]
+    hits = cover_hits({"g.sh": dict(_LEGS, covers=["Conventions", "Scope"])}, secs)
+    assert hits == {"Conventions": 2, "Scope": 1}
+
+
+def test_an_ambiguous_bare_cover_promotes_NEITHER_section(tmp_path):
+    """MAJOR-2's harm: a BAD deletion, not a fail-safe one.
+
+    `Conventions` exists in both CLAUDE.md and AGENTS.md — and SKILL.md step 1
+    tells you to audit them together. A receipt that probed the ESLint branch in
+    one would otherwise free the "never push to main" rule in the other.
+    """
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("AGENTS.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["Conventions"])}
+    ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+    assert ambiguous == {"Conventions"}
+    for sec in (a, b):
+        refs = mechanism_refs(sec, tmp_path, receipts, ambiguous)
+        assert refs[0]["probe"] == "ambiguous"
+        assert anchor_state(refs) == "unproven"
+
+
+def test_qualifying_the_cover_resolves_the_ambiguity(tmp_path):
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("AGENTS.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["CLAUDE.md#Conventions"])}
+    ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+    assert ambiguous == set()
+    assert mechanism_refs(a, tmp_path, receipts, ambiguous)[0]["probe"] == "fires"
+    assert mechanism_refs(b, tmp_path, receipts, ambiguous)[0]["probe"] == "unresolved"
+
+
+def test_two_identical_headings_in_ONE_file_cannot_be_separated_so_neither_promotes(tmp_path):
+    # They share a `key` too, so no `covers` form distinguishes them. Refuse.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Rules", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("CLAUDE.md", "Rules", 2, 5, 6, "Gated by `gate.sh`.")
+    for cover in ("Rules", "CLAUDE.md#Rules"):
+        receipts = {"gate.sh": dict(_LEGS, covers=[cover])}
+        ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+        assert ambiguous == {cover}, cover
+        assert mechanism_refs(a, tmp_path, receipts, ambiguous)[0]["probe"] == "ambiguous"
+
+
+def test_an_ambiguous_cover_alongside_a_precise_one_still_promotes(tmp_path):
+    # Refusal is per-section: if ANY applicable entry names this section alone,
+    # the probe was scoped to it and stands.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("AGENTS.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["Conventions", "CLAUDE.md#Conventions"])}
+    ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+    assert mechanism_refs(a, tmp_path, receipts, ambiguous)[0]["probe"] == "fires"
+    assert mechanism_refs(b, tmp_path, receipts, ambiguous)[0]["probe"] == "ambiguous"
 
 
 def test_a_negative_finding_is_never_discarded_for_scope(tmp_path):
@@ -859,9 +962,28 @@ def test_match_receipts_counts_unscoped_receipts():
         {"a.sh": dict(_LEGS), "b.sh": dict(_LEGS, covers=["H"])},
         ["a.sh", "b.sh"],
         live_refs=["a.sh", "b.sh"],
-        known_sections=["H"],
+        hits={"H": 1},
     )
     assert rc["unscoped"] == 1
+    assert rc["unscoped_promoted_nothing"] == 1
+    assert rc["unscoped_negative"] == 0
+
+
+def test_match_receipts_separates_an_unscoped_NEGATIVE_from_one_that_did_nothing():
+    """The false-sentence defect.
+
+    An unscoped negative receipt APPLIES — it moves every citing section to
+    DEAD. Counting it with the unscoped positives made the report print
+    "promoted nothing past UNRESOLVED" about a run that changed four verdicts.
+    """
+    rc = match_receipts(
+        {"a.sh": {"fires_on_trigger": False}, "b.sh": dict(_LEGS)},
+        ["a.sh", "b.sh"],
+        live_refs=["a.sh", "b.sh"],
+    )
+    assert rc["unscoped"] == 2
+    assert rc["unscoped_negative"] == 1
+    assert rc["unscoped_promoted_nothing"] == 1
 
 
 def test_match_receipts_flags_a_matched_but_inert_key():
@@ -877,10 +999,21 @@ def test_match_receipts_flags_a_covers_entry_naming_no_section():
         {"a.sh": dict(_LEGS, covers=["Old Heading"])},
         ["a.sh"],
         live_refs=["a.sh"],
-        known_sections=["New Heading"],
+        hits={"Old Heading": 0},
     )
     assert rc["unmatched_covers"] == ["Old Heading"]
     assert rc["unmatched_covers_total"] == 1
+
+
+def test_match_receipts_flags_a_covers_entry_naming_more_than_one_section():
+    rc = match_receipts(
+        {"a.sh": dict(_LEGS, covers=["Conventions"])},
+        ["a.sh"],
+        live_refs=["a.sh"],
+        hits={"Conventions": 2},
+    )
+    assert rc["ambiguous_covers"] == ["Conventions"]
+    assert rc["ambiguous_covers_total"] == 1
 
 
 def test_match_receipts_is_empty_without_receipts():
@@ -1026,9 +1159,13 @@ def test_audit_separates_existence_from_firing(tmp_path):
         "unmatched": [],
         "unmatched_total": 0,
         "unscoped": 0,
+        "unscoped_negative": 0,
+        "unscoped_promoted_nothing": 0,
         "inert": [],
         "unmatched_covers": [],
         "unmatched_covers_total": 0,
+        "ambiguous_covers": [],
+        "ambiguous_covers_total": 0,
     }
 
 

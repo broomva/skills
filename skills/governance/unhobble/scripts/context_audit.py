@@ -480,6 +480,7 @@ def mechanism_refs(
     section: Section,
     repo_root: Path | None,
     receipts: dict[str, dict] | None = None,
+    ambiguous_covers: "Iterable[str]" = (),
 ) -> list[dict]:
     """Backtick-quoted executable paths/commands in a section, with existence.
 
@@ -517,7 +518,7 @@ def mechanism_refs(
                 "kind": kind,
                 "exists_on_disk": exists,
                 "scope": scope,
-                "probe": probe_state(ref, receipts, section),
+                "probe": probe_state(ref, receipts, section, ambiguous_covers),
                 "shows_evidence": shows_evidence(ref, receipts),
             }
         )
@@ -594,8 +595,66 @@ def section_ids(section: "Section") -> set[str]:
     return {section.heading.strip(), section.key.strip()}
 
 
+def _path_suffix_match(claimed: str, actual: str) -> bool:
+    """Do two spellings of a file path denote the same file?
+
+    `Section.path` is whatever argv said, so the SAME section is `CLAUDE.md`,
+    `/abs/path/CLAUDE.md`, or `sub/CLAUDE.md` depending on how the tool was
+    invoked — including the directory-glob mode SKILL.md recommends. A qualified
+    `covers` written against one spelling matched none of the others, so the
+    documented remedy for ambiguity did not work in the recommended workflow.
+
+    Compared component-wise in either direction, so `a/CLAUDE.md` and
+    `b/CLAUDE.md` still do NOT match: only a true path suffix counts.
+    """
+    a = [p for p in actual.replace("\\", "/").split("/") if p not in ("", ".")]
+    c = [p for p in claimed.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not a or not c:
+        return False
+    n = min(len(a), len(c))
+    return a[-n:] == c[-n:]
+
+
+def cover_matches(cover: str, section: "Section") -> bool:
+    """Does one `covers` entry name this section?
+
+    Bare heading, or `path#heading` where the path is any suffix spelling of the
+    section's file.
+    """
+    cover = cover.strip()
+    path, sep, heading = cover.rpartition("#")
+    if not sep:
+        path, heading = "", cover
+    if heading.strip() != section.heading.strip():
+        return False
+    return not path.strip() or _path_suffix_match(path.strip(), section.path)
+
+
+def cover_hits(
+    receipts: dict[str, dict] | None, sections: "Iterable[Section]"
+) -> dict[str, int]:
+    """How many sections each distinct `covers` entry names.
+
+    0 = stale (a heading renamed since the probe). >1 = AMBIGUOUS, and refused
+    rather than guessed: `Conventions` appears in both CLAUDE.md and AGENTS.md,
+    and SKILL.md step 1 tells you to audit them together. Promoting both on a
+    receipt that probed one is a BAD DELETION, not a fail-safe one. It is the
+    same rule `nearest_ref` follows for receipt keys, one level over.
+    """
+    sections = list(sections)
+    hits: dict[str, int] = {}
+    for rec in (receipts or {}).values():
+        for c in receipt_covers(rec):
+            if c not in hits:
+                hits[c] = sum(1 for s in sections if cover_matches(c, s))
+    return hits
+
+
 def probe_state(
-    ref: str, receipts: dict[str, dict] | None, section: "Section | None" = None
+    ref: str,
+    receipts: dict[str, dict] | None,
+    section: "Section | None" = None,
+    ambiguous: "Iterable[str]" = (),
 ) -> str:
     """Per-reference, PER-SECTION efficacy verdict.
 
@@ -629,8 +688,14 @@ def probe_state(
     covers = receipt_covers(rec)
     if not covers:
         return "unscoped"
-    if section is not None and not (section_ids(section) & set(covers)):
-        return "unresolved"
+    if section is not None:
+        applicable = [c for c in covers if cover_matches(c, section)]
+        if not applicable:
+            return "unresolved"
+        # Every entry that reaches this section names more than one section, so
+        # which one was probed is unknown. Refuse; do not pick.
+        if all(c in set(ambiguous) for c in applicable):
+            return "ambiguous"
     if all(rec.get(leg) is True for leg in _PROBE_LEGS):
         return "fires"
     return "incomplete"
@@ -693,11 +758,23 @@ def nearest_ref(key: str, refs: Iterable[str]) -> str | None:
     return close[0]
 
 
+def is_negative_receipt(rec: dict) -> bool:
+    """A receipt recording that the mechanism did NOT fire.
+
+    Tracked separately everywhere because it is the one kind that applies
+    without `covers` — it never promotes, so scope cannot make it dangerous,
+    and discarding it would throw away the most valuable receipt in the file.
+    Saying such a receipt "promoted nothing past UNRESOLVED" is false: it moves
+    sections to DEAD.
+    """
+    return rec.get("fires_on_trigger") is False
+
+
 def match_receipts(
     receipts: dict[str, dict] | None,
     refs: Iterable[str],
     live_refs: Iterable[str] = (),
-    known_sections: Iterable[str] = (),
+    hits: dict[str, int] | None = None,
     max_unmatched: int = 10,
 ) -> dict:
     """What the supplied receipts actually did.
@@ -714,21 +791,22 @@ def match_receipts(
     """
     empty = {
         "loaded": 0, "matched": 0, "unmatched": [], "unmatched_total": 0,
-        "unscoped": 0, "inert": [], "unmatched_covers": [],
-        "unmatched_covers_total": 0,
+        "unscoped": 0, "unscoped_negative": 0, "unscoped_promoted_nothing": 0,
+        "inert": [], "unmatched_covers": [], "unmatched_covers_total": 0,
+        "ambiguous_covers": [], "ambiguous_covers_total": 0,
     }
     if not receipts:
         return empty
-    present, live, sections = set(refs), set(live_refs), set(known_sections)
+    present, live = set(refs), set(live_refs)
+    hits = hits or {}
     missing = sorted(k for k in receipts if k not in present)
-    stale = sorted(
-        {
-            c
-            for rec in receipts.values()
-            for c in receipt_covers(rec)
-            if c not in sections
-        }
-    )
+    stale = sorted(c for c, n in hits.items() if n == 0)
+    ambiguous = sorted(c for c, n in hits.items() if n > 1)
+    unscoped = [r for r in receipts.values() if not receipt_covers(r)]
+    # An unscoped NEGATIVE receipt still applies. Counting it with the rest is
+    # what made the report print "promoted nothing" about a run that moved four
+    # sections to DEAD.
+    unscoped_negative = sum(1 for r in unscoped if is_negative_receipt(r))
     return {
         "loaded": len(receipts),
         "matched": len(receipts) - len(missing),
@@ -737,13 +815,16 @@ def match_receipts(
             for k in missing[:max_unmatched]
         ],
         "unmatched_total": len(missing),
-        # A receipt with no `covers` names no rule and promotes nothing.
-        "unscoped": sum(1 for r in receipts.values() if not receipt_covers(r)),
+        "unscoped": len(unscoped),
+        "unscoped_negative": unscoped_negative,
+        "unscoped_promoted_nothing": len(unscoped) - unscoped_negative,
         # Matched the surface but is not a live mechanism anywhere in it, so it
         # changed no state. "Matched" and "applied" are not the same word.
         "inert": sorted(k for k in receipts if k in present and k not in live),
         "unmatched_covers": stale[:max_unmatched],
         "unmatched_covers_total": len(stale),
+        "ambiguous_covers": ambiguous[:max_unmatched],
+        "ambiguous_covers_total": len(ambiguous),
     }
 
 
@@ -1155,7 +1236,6 @@ def audit(
             s.polarity, s.dominant = polarity_profile(s.text)
             s.examples = count_examples(s.text)
             s.derivable = is_derivable(s)
-            s.mechanism_refs = mechanism_refs(s, repo_root, probe_receipts)
         file_tokens = estimate_tokens(text)
         per_file.append(
             {
@@ -1169,6 +1249,14 @@ def audit(
         if d:
             disclosure.append(d)
         all_sections.extend(secs)
+
+    # Mechanism refs resolve in a SECOND pass: whether a `covers` entry is
+    # ambiguous is a property of the whole audited set, not of one file, and a
+    # per-file loop cannot see that `Conventions` exists in two of them.
+    hits = cover_hits(probe_receipts, all_sections)
+    ambiguous = {c for c, n in hits.items() if n > 1}
+    for s in all_sections:
+        s.mechanism_refs = mechanism_refs(s, repo_root, probe_receipts, ambiguous)
 
     contradictions = find_contradictions(all_sections, max_results=None)
     total = sum(f["tokens"] for f in per_file)
@@ -1235,7 +1323,7 @@ def audit(
                 for r in s.mechanism_refs
                 if is_live_mechanism(r)
             ],
-            [i for s in all_sections for i in section_ids(s)],
+            hits,
         ),
         # Sections promoted to `fires` on a receipt that asserts booleans and
         # shows nothing. Counted separately from `anchors` so the state map
@@ -1317,12 +1405,31 @@ def _render_receipts(rc: dict) -> list[str]:
             "not a live mechanism anywhere in the surface, so no section changed "
             "state: " + ", ".join(f"`{k}`" for k in rc["inert"][:10]) + "."
         )
-    if rc.get("unscoped"):
+    # Split, because these two say opposite things about what the run did. The
+    # blanket version printed "promoted nothing past UNRESOLVED" about a run
+    # that moved four sections to DEAD.
+    if rc.get("unscoped_promoted_nothing"):
         out.append(
-            f"\n**{rc['unscoped']} receipt(s) carry no `covers`** and therefore "
-            "promoted nothing past UNRESOLVED. A probe exercises one branch of one "
-            "mechanism; the deletion verdict is per rule, so a receipt has to name "
-            "the rules it covers — `references/mechanism-probe.md`."
+            f"\n**{rc['unscoped_promoted_nothing']} receipt(s) carry no `covers`** "
+            "and therefore promoted nothing past UNRESOLVED. A probe exercises one "
+            "branch of one mechanism; the deletion verdict is per rule, so a receipt "
+            "has to name the rules it covers — `references/mechanism-probe.md`."
+        )
+    if rc.get("unscoped_negative"):
+        out.append(
+            f"\n**{rc['unscoped_negative']} receipt(s) record a NEGATIVE finding "
+            "with no `covers`** — and those DID apply. A mechanism that does not "
+            "fire promotes nothing, so scope cannot make it dangerous: every "
+            "section citing it reads DEAD."
+        )
+    ambig = rc.get("ambiguous_covers_total", 0)
+    if ambig:
+        listed = ", ".join(f"`{c}`" for c in (rc.get("ambiguous_covers") or []))
+        out.append(
+            f"\n**{ambig} `covers` entry(ies) name MORE THAN ONE section** — "
+            f"{listed}. Which one was probed is unknown, so none is promoted. "
+            "Qualify as `path#heading`; if two sections in one file share a "
+            "heading, no `covers` form can separate them — split the heading."
         )
     stale = rc.get("unmatched_covers_total", 0)
     if stale:
@@ -1332,13 +1439,20 @@ def _render_receipts(rc: dict) -> list[str]:
             f"surface(s) — {listed}. A heading that has since been renamed stops "
             "promoting, which is the safe direction, but silently."
         )
-    out.append(
-        "\nUnmatched, inert, unscoped and stale-`covers` receipts all leave their "
-        "sections UNRESOLVED rather than promoting them — the safe direction, but "
-        "nothing was applied.\n"
-        if (total or rc.get("inert") or rc.get("unscoped") or stale)
-        else ""
-    )
+    if (
+        total
+        or rc.get("inert")
+        or rc.get("unscoped_promoted_nothing")
+        or ambig
+        or stale
+    ):
+        out.append(
+            "\nThe receipts reported above applied nothing — they leave their "
+            "sections UNRESOLVED rather than promoting them, which is the safe "
+            "direction.\n"
+        )
+    else:
+        out.append("")
     return out
 
 

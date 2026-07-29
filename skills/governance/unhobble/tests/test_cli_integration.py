@@ -244,6 +244,26 @@ def test_cli_reports_the_matched_count_even_when_everything_matched(repo, tmp_pa
     assert "matched nothing and did nothing" not in r.stdout
 
 
+def test_cli_an_unscoped_NEGATIVE_receipt_is_described_truthfully(repo, tmp_path):
+    """The printed-falsehood defect, end to end.
+
+    A 64-byte unscoped negative receipt moved four sections UNRESOLVED -> DEAD
+    on the live surface, while the report printed "promoted nothing past
+    UNRESOLVED" and "nothing was applied". A tool whose thesis is do-not-
+    overclaim cannot ship a false sentence about the run that printed it.
+    """
+    p = tmp_path / "probes.json"
+    p.write_text('{"probes": {"hooks/gate.sh": {"fires_on_trigger": false}}}')
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
+
+    assert "| cand | DEAD |" in r.stdout, "the run really did change a verdict"
+    assert "record a NEGATIVE finding" in r.stdout
+    assert "DID apply" in r.stdout
+    # Neither false sentence may appear.
+    assert "promoted nothing past UNRESOLVED" not in r.stdout
+    assert "applied nothing" not in r.stdout
+
+
 def test_cli_an_unscoped_receipt_is_refused_and_explained(repo, tmp_path):
     """A receipt naming no rule must not promote, and must say why.
 
@@ -258,6 +278,15 @@ def test_cli_an_unscoped_receipt_is_refused_and_explained(repo, tmp_path):
     r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
     assert "| cand | ? |" in r.stdout, "an unscoped receipt promotes nothing"
     assert "1 receipt(s) carry no `covers`" in r.stdout
+    # And the state is `unscoped` specifically, not merely `unresolved` — the
+    # writer has to be able to tell "you named no rule" from "wrong key".
+    data = json.loads(
+        run(str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+            "--probe-receipts", receipts, "--json").stdout
+    )
+    rules = next(s for s in data["sections"] if s["heading"] == "Rules")
+    assert rules["mechanism_refs"][0]["probe"] == "unscoped"
+    assert "applied nothing" in r.stdout, "a positive unscoped receipt DID apply nothing"
 
 
 def test_cli_a_receipt_covering_one_rule_does_not_free_the_others(repo, tmp_path):
@@ -307,6 +336,95 @@ def test_cli_a_dead_sibling_is_never_laundered_into_the_free_tier(repo, tmp_path
     # The warning block must PRINT — under `any(fires)` both unproven and dead
     # rolled up to zero and the whole block vanished.
     assert "DEAD" in out.stdout and "probed dead" in out.stdout
+
+
+def test_cli_a_bare_cover_does_not_leak_across_two_audited_files(tmp_path):
+    """MAJOR-2 end-to-end, in the mode SKILL.md step 1 recommends.
+
+    Auditing every always-on surface at once is the documented workflow, and
+    CLAUDE.md/AGENTS.md collide on `Conventions`, `Commands`, `Scope`, `Testing`
+    and `Hooks`. A receipt that probed the ESLint branch in one must not free
+    "never push to main" in the other.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "live-gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# C\n\n## Conventions\nNever use ESLint. Enforced by `scripts/live-gate.sh`.\n"
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "# A\n\n## Conventions\nNever push to main. Enforced by `scripts/live-gate.sh`.\n"
+    )
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"scripts/live-gate.sh": {
+        "fires_on_trigger": True, "silent_on_non_trigger": True,
+        "neutered_check_went_red": True, "covers": ["Conventions"],
+        "evidence": "probed the ESLint branch only",
+    }}}))
+    r = run(str(tmp_path), "--repo-root", str(tmp_path), "--probe-receipts", str(p))
+    data = json.loads(
+        run(str(tmp_path), "--repo-root", str(tmp_path),
+            "--probe-receipts", str(p), "--json").stdout
+    )
+    conventions = [s for s in data["sections"] if s["heading"] == "Conventions"]
+    assert len(conventions) == 2
+    assert {s["anchor_state"] for s in conventions} == {"unproven"}
+    assert "name MORE THAN ONE section" in r.stdout
+    assert "`Conventions`" in r.stdout
+
+
+def test_cli_a_qualified_cover_resolves_it_in_directory_glob_mode(tmp_path):
+    """The documented remedy has to work where the collision actually happens.
+
+    Directory mode yields `Section.path` values like `<tmp>/CLAUDE.md`, so a
+    `covers` of `CLAUDE.md#Conventions` only matches if paths are compared
+    suffix-wise rather than by string equality.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "live-gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# C\n\n## Conventions\nNever use ESLint. Enforced by `scripts/live-gate.sh`.\n"
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "# A\n\n## Conventions\nNever push to main. Enforced by `scripts/live-gate.sh`.\n"
+    )
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"scripts/live-gate.sh": {
+        "fires_on_trigger": True, "silent_on_non_trigger": True,
+        "neutered_check_went_red": True, "covers": ["CLAUDE.md#Conventions"],
+    }}}))
+    data = json.loads(
+        run(str(tmp_path), "--repo-root", str(tmp_path),
+            "--probe-receipts", str(p), "--json").stdout
+    )
+    by_file = {
+        (s["key"].rsplit("/", 1)[-1]): s
+        for s in data["sections"] if s["heading"] == "Conventions"
+    }
+    assert by_file["CLAUDE.md#Conventions"]["anchor_state"] == "fires"
+    assert by_file["AGENTS.md#Conventions"]["anchor_state"] == "unproven"
+    # And it is not reported as stale, which is what a string-equality match did.
+    assert data["probe_receipts"]["unmatched_covers_total"] == 0
+
+
+def test_cli_one_firing_mechanism_beside_an_unprobed_one_is_not_free(repo, tmp_path):
+    """Second assertion for the `all(fires)` -> `any(fires)` mutation.
+
+    Distinct from the dead-sibling case: here the sibling is merely UNKNOWN, and
+    an unknown mechanism cannot be carried by a known one.
+    """
+    (repo / "other-gate.sh").write_text("#!/bin/sh\n")
+    (repo / "CLAUDE.md").write_text(
+        "# R\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` and `other-gate.sh`.\n"
+    )
+    receipts = _probes(
+        tmp_path, fires_on_trigger=True, silent_on_non_trigger=True,
+        neutered_check_went_red=True,
+    )
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
+    rules = next(ln for ln in r.stdout.splitlines() if ln.startswith("| Rules "))
+    assert rules.rstrip().endswith("| cand | ? |"), rules
+    assert "UNRESOLVED" in r.stdout
 
 
 def test_cli_an_evidenced_command_receipt_is_a_live_mechanism(repo, tmp_path):

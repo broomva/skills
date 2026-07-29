@@ -134,7 +134,18 @@ per mechanism, keyed by the exact backticked reference as it appears in the pros
 
 **A receipt with no `covers` promotes nothing.** It names the rules the probe
 actually covers — section headings, or `path#heading` when two audited files
-share one.
+share one. The path may be written any way that ends the real one:
+`CLAUDE.md#Conventions` matches whether the tool was pointed at `CLAUDE.md`, an
+absolute path, or the directory containing it.
+
+A **bare heading that names more than one section promotes neither.** Auditing
+every always-on surface at once is the recommended workflow, and CLAUDE.md and
+AGENTS.md routinely collide on `Conventions`, `Commands`, `Scope`, `Testing`
+and `Hooks` — so a receipt that probed one file's rule would otherwise free the
+other file's. Which one was probed is unknown, and unlike a stale key this
+guesses in the *unsafe* direction, toward a deletion. Qualify it. If two
+sections in one file share a heading, no `covers` form can separate them —
+split the heading.
 
 The probe is per *mechanism*; the deletion verdict is per *rule*. One gate is
 cited by a destructive-bash rule, a secrets rule, and a PII rule; a probe of the
@@ -176,11 +187,15 @@ otherwise render exactly like no receipt file:
 ```
 
 Read that line every run, and read it as *matched*, not *applied* — a key can
-match a reference and still change nothing. Four ways a receipt accomplishes
+match a reference and still change nothing. Five ways a receipt accomplishes
 nothing while looking fine, each reported rather than left to inference: the key
 names no reference, the reference is not a live mechanism, the receipt carries
-no `covers`, or its `covers` names no section. `--fail-on-unmatched-receipts`
-turns the first and last into an exit code when you want CI to hold the line.
+no `covers`, its `covers` names no section, or its `covers` names several.
+`--fail-on-unmatched-receipts` turns the key and stale-`covers` cases into an
+exit code when you want CI to hold the line.
+
+One receipt is exempt and the report says so separately: an unscoped **negative**
+finding does apply, and moves every section citing that mechanism to `DEAD`.
 
 The near-match hint stays silent when two references share a basename. A
 confident wrong suggestion is worse than none: take it, and the section you did
