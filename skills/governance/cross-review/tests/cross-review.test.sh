@@ -48,7 +48,7 @@ fi
 # ── T3: unknown command exits 2 ───────────────────────────────────────────
 echo "T3. unknown command exits 2"
 EXIT=0
-bash "$CROSS_REVIEW_SH" bogus-command 2>&1 >/dev/null || EXIT=$?
+bash "$CROSS_REVIEW_SH" bogus-command >/dev/null 2>&1 || EXIT=$?
 if [ "$EXIT" = "2" ]; then
     ok "T3: exit 2 on unknown"
 else
@@ -58,7 +58,7 @@ fi
 # ── T4: missing --spec on plan exits 2 ────────────────────────────────────
 echo "T4. plan without --spec exits 2"
 EXIT=0
-bash "$CROSS_REVIEW_SH" plan 2>&1 >/dev/null || EXIT=$?
+bash "$CROSS_REVIEW_SH" plan >/dev/null 2>&1 || EXIT=$?
 if [ "$EXIT" = "2" ]; then
     ok "T4: plan requires --spec"
 else
@@ -68,7 +68,7 @@ fi
 # ── T5: missing --target on audit exits 2 ─────────────────────────────────
 echo "T5. audit without --target exits 2"
 EXIT=0
-bash "$CROSS_REVIEW_SH" audit 2>&1 >/dev/null || EXIT=$?
+bash "$CROSS_REVIEW_SH" audit >/dev/null 2>&1 || EXIT=$?
 if [ "$EXIT" = "2" ]; then
     ok "T5: audit requires --target"
 else

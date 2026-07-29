@@ -22,6 +22,13 @@
 #   cross-review plan --spec PATH         # plan-stage gate
 #   cross-review audit --target PATH      # audit-on-demand
 #   cross-review --help
+#
+# Mutation-proof (REPORTED SIGNAL on pre-push, never a blocker):
+#   cross-review pre-push \
+#     --mutation-target=scripts/foo.sh \
+#     --mutation-test='bash tests/foo.test.sh'
+#   Optional: --mutation-strategy=stub|revert --mutation-ref=REF
+#             --mutation-root=DIR --mutation-paths=a,b
 
 set -euo pipefail
 
@@ -38,6 +45,12 @@ CONCERNS=""
 MAX_ROUNDS=3
 RUBRIC="anti-slop"
 OUTPUT_FORMAT="pr-comment"
+MUT_TARGET=""
+MUT_TEST=""
+MUT_STRATEGY="stub"
+MUT_REF=""
+MUT_ROOT=""
+MUT_PATHS=""
 
 # ─── Arg parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
@@ -71,6 +84,12 @@ for arg in "$@"; do
         --max-rounds=*) MAX_ROUNDS="${arg#*=}" ;;
         --rubric=*) RUBRIC="${arg#*=}" ;;
         --output=*) OUTPUT_FORMAT="${arg#*=}" ;;
+        --mutation-target=*) MUT_TARGET="${arg#*=}" ;;
+        --mutation-test=*) MUT_TEST="${arg#*=}" ;;
+        --mutation-strategy=*) MUT_STRATEGY="${arg#*=}" ;;
+        --mutation-ref=*) MUT_REF="${arg#*=}" ;;
+        --mutation-root=*) MUT_ROOT="${arg#*=}" ;;
+        --mutation-paths=*) MUT_PATHS="${arg#*=}" ;;
         *) echo "cross-review: unknown flag '$arg'" >&2; exit 2 ;;
     esac
 done
@@ -105,6 +124,8 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Diff base:        $DIFF_BASE"
     echo "  Rubric:           $RUBRIC"
     echo "  Max fix rounds:   $MAX_ROUNDS"
+    echo "  Rubric file:      $RUBRIC_FILE"
+    echo "  Verdict format:   $OUTPUT_FORMAT"
     echo ""
 
     # Compute changed files + size to enforce substantive-threshold rule
@@ -113,8 +134,20 @@ if [ "$COMMAND" = "pre-push" ]; then
         exit 2
     fi
 
-    CHANGED_FILES=$(git diff --name-only "$DIFF_BASE"...HEAD 2>/dev/null | wc -l | tr -d ' ')
-    ADDITIONS=$(git diff --shortstat "$DIFF_BASE"...HEAD 2>/dev/null | grep -oE '[0-9]+ insertion' | head -1 | grep -oE '[0-9]+' || echo "0")
+    # An unresolvable diff base is common and must not be fatal: a fork, a
+    # non-`main` default branch, or a shallow CI checkout all leave
+    # `origin/main` absent. `git diff` then exits 128, and with `pipefail` that
+    # aborted the whole run with exit 128 before this guard existed — surfaced
+    # by tests/mutation-proof.test.sh T19 running pre-push in a fixture repo.
+    if git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null 2>&1; then
+        CHANGED_FILES=$(git diff --name-only "$DIFF_BASE"...HEAD 2>/dev/null | wc -l | tr -d ' ')
+        ADDITIONS=$(git diff --shortstat "$DIFF_BASE"...HEAD 2>/dev/null | grep -oE '[0-9]+ insertion' | head -1 | grep -oE '[0-9]+' || echo "0")
+    else
+        echo "  [warn] diff base '$DIFF_BASE' does not resolve here — diff scope unknown."
+        echo "         Pass --diff-base=<ref>. The strata briefs below still apply."
+        CHANGED_FILES=0
+        ADDITIONS=0
+    fi
     [ -z "$ADDITIONS" ] && ADDITIONS=0
 
     echo "  Diff scope:       $CHANGED_FILES file(s), $ADDITIONS insertion(s)"
@@ -189,6 +222,51 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Aggregate findings from all skills. Each contributes to the rubric"
     echo "  dimensions. Final score is the consensus minimum (failures count)."
     echo ""
+
+    # ─── Mutation-proof — REPORTED SIGNAL, not a gate ────────────────────
+    # Rubric dimension 5 ("tests cover the change") is the one dimension a
+    # machine can check directly: neuter the code, and see whether the tests
+    # notice. It is REPORTED here, never blocking. Until the false-positive
+    # rate on real repos is known, an UNPROVEN verdict must surface in the
+    # review, not stop the push. Promotion to a gate is a later, evidenced
+    # decision — see SKILL.md §"Mutation-proof".
+    echo "  ─── Mutation-proof: do the tests discriminate? ──────────────"
+    echo ""
+    if [ -n "$MUT_TARGET" ] && [ -n "$MUT_TEST" ]; then
+        MUT_SH="$REPO/scripts/mutation-proof.sh"
+        if [ ! -f "$MUT_SH" ]; then
+            echo "  [warn] $MUT_SH not found — signal skipped."
+        else
+            MUT_ARGS=(run --target "$MUT_TARGET" --test "$MUT_TEST" --strategy "$MUT_STRATEGY")
+            if [ -n "$MUT_REF" ];   then MUT_ARGS+=(--ref "$MUT_REF"); fi
+            if [ -n "$MUT_ROOT" ];  then MUT_ARGS+=(--root "$MUT_ROOT"); fi
+            if [ -n "$MUT_PATHS" ]; then MUT_ARGS+=(--paths "$MUT_PATHS"); fi
+
+            set +e
+            bash "$MUT_SH" "${MUT_ARGS[@]}" 2>&1 | sed 's/^/  /'
+            MUT_RC=${PIPESTATUS[0]}
+            set -e
+
+            echo ""
+            case "$MUT_RC" in
+                0) echo "  [signal] PROVEN — the tests go red when the target is neutered." ;;
+                1) echo "  [signal] UNPROVEN — a test passed with AND without the target."
+                   echo "           Rubric dim 5 is at risk. This is REPORTED, not blocking:"
+                   echo "           fix the test, or say in the PR why the coverage is elsewhere." ;;
+                3) echo "  [signal] INCONCLUSIVE — the baseline was not green; nothing proven." ;;
+                *) echo "  [signal] mutation-proof setup error (exit $MUT_RC) — see output above." ;;
+            esac
+            echo "           (non-blocking: pre-push exit code is unaffected)"
+        fi
+    else
+        echo "  [not run] no mutation target given. To include the signal:"
+        echo "    cross-review pre-push --mutation-target=PATH --mutation-test='CMD'"
+        echo "  Without it, 'tests cover the change' rests on the reviewer's reading"
+        echo "  of the diff alone — a test that passes with the code deleted looks"
+        echo "  identical to one that does not."
+    fi
+    echo ""
+
     echo "  ─── Verdict ─────────────────────────────────────────────────"
     echo ""
     echo "  Format the verdict as a PR comment with:"

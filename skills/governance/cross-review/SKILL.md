@@ -65,6 +65,67 @@ ESCALATE: round 3 still <7 → surface to user
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
+## Mutation-proof — the one rubric dimension a machine can check
+
+Four of the five rubric dimensions are judgement calls. The fifth — *tests cover the change* — is not. It has an operational definition:
+
+> **A test covers a change iff neutering the change turns the test red.**
+
+`scripts/mutation-proof.sh` runs that experiment. It copies the tree to a scratch dir under `mktemp`, neuters the target **in the copy**, and re-runs the test command with `cwd` set to the copy. The working tree is never touched.
+
+```
+green before + RED after   → PROVEN. The test discriminates.
+green before + GREEN after → UNPROVEN. The test is decoration with respect
+                             to that target. That is the finding.
+not green before           → INCONCLUSIVE. Nothing can be proven about a
+                             test that does not pass to begin with.
+```
+
+```bash
+# neuter a script and see whether the suite notices
+mutation-proof run \
+  --target scripts/control-gate-hook.sh \
+  --test 'python3 scripts/test_hook_gates.py'
+
+# prove a fix against its own pre-fix state
+mutation-proof run \
+  --target src/gate.sh \
+  --test 'bash t/run.sh' \
+  --strategy revert --ref HEAD~1
+```
+
+| Strategy | Mutation | Use for |
+|---|---|---|
+| `stub` (default) | Replaces the target with a trivially-succeeding no-op for its type — `exit 0` for shell, a `main()` returning 0 for python, `process.exit(0)` for node. Type from extension, then shebang; an unrecognised type is an error, not a guess. | "Does this suite test this file at all?" |
+| `revert` | `git show <ref>:<path>` restores the pre-fix content. A file absent at that ref is deleted, because absence *is* the pre-fix state. | "Does this test prove *this fix*?" |
+
+Exit codes: `0` PROVEN · `1` UNPROVEN · `2` usage/setup error · `3` INCONCLUSIVE. Each mutation also emits one parseable line: `mutation-proof: verdict=… target=… rc_before=… rc_after=… flipped=…`.
+
+**On the flip count.** When both runs emit per-check markers *and* the suite ran the same number of checks, the report names how many flipped ok→FAIL. When the output is not parseable, or the suite aborted early so the shapes differ, it says so and reports exit codes only. An invented count would be exactly the decorative signal this tool exists to catch.
+
+### Why this exists
+
+"Every fix mutation-proven" was a P20 discipline that lived only in prose and memory. Per the workspace invariant, *a phrase that recurs as a discipline must map to a concrete machine-checkable behavior, or it is not discipline.*
+
+In the BRO-2019 hook-gate audit the step caught two things nothing else did:
+
+1. **Five path-shape tests that passed identically with and without the fix.** They exercised the branch where `Path.resolve()` normalises for free, not the branch that carried the defect. Green, and testing nothing.
+2. **Three control-gate checks that passed against an `exit 0` stub** — because "empty stdout + rc 0" is indistinguishable from a dead script.
+
+It also produced the positive evidence for every fix in that work: reverting the casefold failed 4 checks, the suffix match 3, the advisory-continue 1, the G3 pattern 7, `replace_all` 1, `surrogateescape` 1.
+
+### On pre-push it is a REPORTED SIGNAL, not a gate
+
+```bash
+cross-review pre-push \
+  --mutation-target=scripts/foo.sh \
+  --mutation-test='bash tests/foo.test.sh'
+```
+
+`pre-push` prints the verdict and **does not change its own exit code**, whatever the verdict is. That is deliberate on first landing: the false-positive rate on real repositories is not yet known, and a gate that blocks pushes on an unmeasured signal trains people to bypass gates. An UNPROVEN verdict is information the reviewer must answer — fix the test, or state in the PR why the coverage lives elsewhere — not an automatic stop.
+
+Promoting it to a blocking gate is a later decision, and it needs evidence: a measured false-positive rate across real repos, gathered from the reported signal. When no `--mutation-target` is given, `pre-push` says so explicitly rather than staying silent, because "the signal did not run" and "the signal passed" must never look alike.
+
 ## Invocation patterns
 
 ### Pattern 1: pre-push gate (the canonical use)
@@ -123,6 +184,7 @@ Used outside the PR flow — e.g., when investigating a class of issues across a
 P20 (this skill) is a reflex, not a request. Agents must apply the following without being prompted:
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
+1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
 2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore. Max 3 rounds.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).
@@ -142,6 +204,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
 | "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, max 3 rounds. Don't push override. |
+| "The tests are green, so dimension 5 is satisfied" | Green proves the suite ran, not that it watches the code you changed. Delete the code and re-run: if it stays green, the test is decoration. `mutation-proof run --target … --test …`. |
 
 ## Red flags — STOP if you catch yourself
 
@@ -154,7 +217,11 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 `scripts/cross-review.sh` — the entry point. Auto-detects Codex availability (Strata A), falls back to subagent dispatch (Strata B), always runs composed adversarial skills (Strata C).
 
-See [`scripts/cross-review.sh`](./scripts/cross-review.sh) for the implementation + [`references/rubric.md`](./references/rubric.md) for the full rubric definition + [`tests/`](./tests/) for the verification battery.
+`scripts/mutation-proof.sh` — the mutation-proof runner. The only part of the rubric this repo executes rather than describes.
+
+See [`scripts/cross-review.sh`](./scripts/cross-review.sh) and [`scripts/mutation-proof.sh`](./scripts/mutation-proof.sh) for the implementations + [`references/rubric.md`](./references/rubric.md) for the full rubric definition + [`tests/`](./tests/) for the verification battery.
+
+`tests/mutation-proof.test.sh` includes the self-referential case: it stubs `mutation-proof.sh` and requires its own suite to go red. A mutation-proof runner whose tests pass against a stubbed runner would be the exact defect it exists to detect.
 
 ## Related
 
