@@ -238,7 +238,16 @@ opaque phrasal verbs, slash conjunctions, and synonym drift across a document.
 Attachment ambiguity around "with" (A3) is **not** detected. It needs a parse,
 and the surface rule fired on every imperative containing the word. Word-sense
 ambiguity and false friends are not detected either — both need vocabulary this
-skill does not ship. `references/ambiguity-catalog.md` lists every limit.
+skill does not ship. A command with a bare-noun object (`Freeze deploys until
+midnight`) is missed 60% of the time, because it is the same surface shape as
+`Session tokens expire after 24 hours`. `references/ambiguity-catalog.md` lists
+every limit with its measured cost.
+
+The rule underneath all of these: **the parser fails open, the detectors fail
+quiet.** Where the document structure cannot be resolved, more text gets
+checked and the uncertainty is reported, because a missed finding is invisible.
+Where a *detector* cannot decide, it stays silent, because a false positive
+teaches the reader to ignore it.
 
 **You** — which preposition restores the right relation in a noun stack,
 whether two actions are genuinely simultaneous, whether a word is ambiguous
@@ -255,7 +264,7 @@ boundary.
 ## Validation
 
 ```bash
-python3 -m pytest tests/ -q            # 140 tests
+python3 -m pytest tests/ -q            # 149 tests
 python3 tests/mutation_proof.py        # each fix is proven load-bearing
 python3 scripts/disambiguate.py --count "Remove the safety pin (10)."   # → 5
 python3 scripts/disambiguate.py REQUIREMENTS.md --strict                # CI gate

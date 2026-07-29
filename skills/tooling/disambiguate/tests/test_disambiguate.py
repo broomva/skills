@@ -926,12 +926,18 @@ def test_glossary_term_beside_a_hyphenated_compound():
         assert count_ste_words(sent, [term])[0] == count_ste_words(sent)[0], sent
 
 
-def test_drift_requires_the_shared_word_to_head_a_variant():
-    """MINOR. Clustering on any shared word reported three distinct things as
-    one thing under three names. Drift is several names for ONE item, and the
-    shared word heads at least one of them."""
-    distinct = "The test suite runs.\nThe test runner starts.\nThe test fixture loads.\n"
-    assert "A4-synonym-drift" not in codes(check_document(distinct, "descriptive", ()))
+def test_drift_requires_the_bare_head_to_appear_alone():
+    """MINOR, twice. Clustering on any shared word reported three distinct
+    things as one thing under three names. Requiring the word to HEAD a variant
+    fixed the shared-modifier case and left its mirror: three adjective-modified
+    descriptions of one noun ("bearer token", "expired token", "first bad
+    token"). Drift is one thing named inconsistently, and the tell is that the
+    bare noun also appears on its own."""
+    shared_modifier = "The test suite runs.\nThe test runner starts.\nThe test fixture loads.\n"
+    assert "A4-synonym-drift" not in codes(check_document(shared_modifier, "descriptive", ()))
+    adjective_variants = ("The bearer token is required.\nThe expired token is rejected.\n"
+                          "The first bad token aborts the run.\n")
+    assert "A4-synonym-drift" not in codes(check_document(adjective_variants, "descriptive", ()))
     real = ("Put the housing on the main body.\nInstall the bolts in the body.\n"
             "Attach the transducer to the body assembly.\n")
     assert "A4-synonym-drift" in codes(check_document(real, "procedural", ()))
@@ -944,3 +950,139 @@ def test_comparative_guard_is_load_bearing():
         check("The tool provides a better experience for the operator.", mode="descriptive"))
     assert "C2-unquantified-delta" in codes(
         check("This release makes the export better.", mode="descriptive"))
+
+
+# --------------------------------------------------------------------------
+# Round-3 adversarial review (P20)
+#
+# Round 3 found that round 2's fixes had the same disease one grammatical step
+# out: the fixtures were the round-2 reviewer's own example shapes, so each fix
+# held exactly there. These assert the shapes NO reviewer supplied.
+# --------------------------------------------------------------------------
+
+
+PLURAL_SUBJECT_DECLARATIVES = [
+    "The worker pods mount shared volume claims.",
+    "The auth middlewares reject expired bearer tokens.",
+    "The cron jobs prune stale session rows.",
+    "The metrics collectors export histogram bucket counts.",
+    "The api gateways route external client traffic.",
+    "The billing services report monthly totals.",
+    "The retry handlers drop malformed payload records.",
+    "The edge nodes block suspicious client requests.",
+    "The reconciler flags mismatched ledger entries.",
+    "The importer skips duplicate customer rows.",
+]
+
+
+def test_plural_subject_declarative_is_not_a_noun_stack():
+    """BLOCKER. Judging a phrase boundary by inflection alone made the single
+    most common English declarative shape a noun stack: 26 of 30 fired, with
+    advice like 'claims of the worker pods mount shared volume'.
+
+    The real discriminator is whether the sentence has already spent its finite
+    verb. A command has ("Remove | the pump seal pin retainer"), so bare stems
+    after the determiner are nouns. A declarative has not ("The worker pods |
+    mount | shared volume claims"), so the first stem IS the verb."""
+    fired = [s for s in PLURAL_SUBJECT_DECLARATIVES
+             if "A2-noun-stack" in codes(check(s, mode="descriptive"))]
+    assert not fired, f"clauses read as noun stacks: {fired}"
+
+
+def test_plural_noun_inside_a_commanded_stack():
+    """MAJOR. Building the terminator set from inflections put real plural nouns
+    ('logs', 'reports', 'updates', 'checks') into it, so genuine stacks behind a
+    command went silent. Round 2's defect, relocated from singular to plural."""
+    for s in ["Check the user access logs retention policy.",
+              "Review the primary cluster updates rollout window.",
+              "Audit the nightly reports delivery schedule.",
+              "Tune the readiness checks failure threshold."]:
+        assert "A2-noun-stack" in codes(check(s)), s
+
+
+def test_declarative_finite_verb_ends_a_noun_run():
+    """No verb vocabulary is ever complete — 'abort', 'skip', 'reach' are not in
+    ours. In a declarative the finite verb is almost always the '-s' form, which
+    is a property rather than a list."""
+    assert "A2-noun-stack" not in codes(
+        check("The first bad token aborts the run.", mode="descriptive"))
+    assert "A2-noun-stack" not in codes(
+        check("The nightly reconciler flags mismatched ledger entries.", mode="descriptive"))
+
+
+REDUCED_RELATIVES = [
+    "Everything the client sends is validated server side.",
+    "Anything the importer skips appears in the error report.",
+    "Records the migration touches are backed up first.",
+    "Requests the gateway rejects are logged with a reason code.",
+    "Rows the reconciler cannot match stay in the staging table.",
+    "Traffic the WAF blocks never reaches the origin.",
+    "Fields the schema marks optional default to null.",
+    "Users the admin suspends lose their refresh tokens.",
+    "Errors the retry budget absorbs are not paged on.",
+    "Metrics the collector drops are counted separately.",
+]
+
+
+def test_reduced_relative_clause_is_not_a_command():
+    """MAJOR. Round 2's fixtures were all noun + PREPOSITION, the exact shape
+    that reviewer named. Noun + DETERMINER was the hole, and a reduced relative
+    clause lives there: 10/10 read as commands, flipping the document to the
+    procedural ceiling."""
+    from disambiguate import is_imperative
+    misread = [s for s in REDUCED_RELATIVES if is_imperative(s)]
+    assert not misread, f"read as commands: {misread}"
+    assert detect_mode("\n".join(REDUCED_RELATIVES)) == "descriptive"
+
+
+def test_commands_survive_the_relative_clause_gate():
+    """The gate must not cost real commands, including ones whose object holds a
+    plural noun that looks like a verb inflection."""
+    from disambiguate import is_imperative
+    for cmd in ["Notify the team and page the on-call.",
+                "Audit the nightly reports delivery schedule.",
+                "Review the primary cluster updates rollout window.",
+                "Progress the ticket to done after the review ends.",
+                "Cache the response for the session when traffic spikes."]:
+        assert is_imperative(cmd), cmd
+
+
+def test_hyphenated_verb_is_a_command():
+    """MAJOR. `.isalpha()` blocked the determiner branch for every hyphenated
+    verb, even though word two was a determiner."""
+    from disambiguate import is_imperative
+    for cmd in ["Re-run the failed jobs when the queue clears.",
+                "Auto-scale the cluster when CPU exceeds eighty percent.",
+                "Force-push the branch after the rebase completes.",
+                "Hot-swap the certificate before the expiry date."]:
+        assert is_imperative(cmd), cmd
+        assert "E3-condition-after-action" in codes(check(cmd)), cmd
+
+
+def test_e3_fires_on_a_one_word_object():
+    """MAJOR. A three-word gate was fitted to 'Record when the alarm fires' and
+    also silenced the commonest runbook shape, VERB + one-word object."""
+    for cmd in ["Restart nginx when the queue drains.",
+                "Page on-call if latency exceeds one second.",
+                "Drain node-4 before you patch the kernel.",
+                "Revoke tokens after a user is suspended."]:
+        assert "E3-condition-after-action" in codes(check(cmd)), cmd
+    for complement in ["Record when the alarm fires.", "Check when the light comes on."]:
+        assert "E3-condition-after-action" not in codes(check(complement)), complement
+
+
+def test_e3_skips_a_marker_that_is_too_early():
+    """The FIRST condition marker is not always the operative one. 'Retry once
+    if the upstream returns 503' matches 'once' at word two, below the
+    threshold, and the real 'if' clause behind it was never reached."""
+    assert "E3-condition-after-action" in codes(check("Retry once if the upstream returns 503."))
+
+
+def test_descriptive_stack_survives_a_homograph_modifier():
+    """The bare-stem vocabulary must not terminate a run in descriptive text.
+    A mutation proof showed it was redundant there — the '-s' rule always lands
+    first — and it costs real stacks whose modifiers are verb homographs."""
+    assert "A2-noun-stack" in codes(
+        check("The engine mount attachment bolt fails.", mode="descriptive"))
+    assert "A2-noun-stack" in codes(
+        check("The database backup retention policy applies.", mode="descriptive"))

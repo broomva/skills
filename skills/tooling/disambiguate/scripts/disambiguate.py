@@ -416,7 +416,8 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
         # Word-bounded. An unbounded substring match let a two-letter term
         # ("IT", "Go") split ordinary words and INCREASE the count, which is
         # the opposite of what the flag documents.
-        text = re.sub(r"(?<![\w-])" + re.escape(term) + r"(?![\w-])", " \x04 ", text, flags=re.I)
+        text = re.sub(r"(?<![\w-])(?<!\d )(?<!\d)" + re.escape(term) + r"(?![\w-])",
+                      " \x04 ", text, flags=re.I)
 
     # A predominantly-uppercase sentence is a formatting convention (a safety
     # instruction, a heading). Case then carries no quoting signal, so fold it.
@@ -671,8 +672,35 @@ def is_imperative(sent: str) -> bool:
     # blocklist that had been fitted to five specific counterexamples went with
     # it.
     tokens = re.split(r"[\s,]+", body.strip())
-    if len(tokens) >= 2 and w not in FUNCTION_WORDS and w.isalpha():
+    # MAJOR 4: a hyphenated verb is still a verb. `.isalpha()` was blocking
+    # "Re-run the failed jobs", "Force-push the branch", "Auto-scale the cluster".
+    if len(tokens) >= 2 and w not in FUNCTION_WORDS and re.fullmatch(r"[a-z][a-z-]*", w):
         if tokens[1].strip(".,:;").lower() in DETERMINERS:
+            # A command spends its verb at word one, so the main clause holds no
+            # other finite verb. A reduced relative clause does — "Everything the
+            # client SENDS IS validated", "Records the migration TOUCHES ARE
+            # backed up". Both open noun + determiner, so the determiner alone
+            # cannot tell them apart.
+            #
+            # Only INFLECTED forms and be-forms count as evidence. A bare stem
+            # after "and" is another imperative ("Notify the team and page the
+            # on-call"), not a second finite verb.
+            main = []
+            for t in tokens[1:]:
+                bare = t.strip(".,:;").lower()
+                if bare in CONDITION_STARTERS:
+                    break
+                main.append(bare)
+            if w.endswith("s") and not w.endswith("ss") and w not in IMPERATIVE_HINT:
+                return False
+            inflected = sum(1 for t in main
+                            if t in VERB_FORMS
+                            or (t.endswith("s") and not t.endswith("ss") and len(t) > 3))
+            if any(t in BE_FORMS for t in main) or inflected >= 2:
+                return False
+            # A single inflected token is more often a plural noun inside the
+            # object ("Audit the nightly reports delivery schedule") than a
+            # second finite verb, so one alone does not disqualify the command.
             return True
 
     if w in CONDITION_STARTERS and "," in body:
@@ -710,6 +738,7 @@ def noun_phrases(text: str) -> list[str]:
     seats" yields ["pins", "seats"] rather than one run spanning the
     preposition.
     """
+    text = _DQUOTE.sub(" , ", text)
     toks = re.findall(r"[a-z][a-z-]*|,", text.lower())
     out: list[str] = []
     i = 0
@@ -782,6 +811,33 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
     # "a", "this", and so on. Without that anchor the run-of-content-words
     # heuristic matches ordinary clauses. Commas, function words, verb forms,
     # and inline-code placeholders all end a run.
+    # Which tokens end a noun run depends on whether the sentence has already
+    # used its finite verb.
+    #
+    # A command has: "Remove | the pump seal pin retainer." The verb is spent at
+    # word one, so every bare stem after the determiner is a noun and the run
+    # may cross it. A declarative has: "The worker pods | mount | shared volume
+    # claims." The verb is still ahead, so the first stem IS the verb and the
+    # run must stop there.
+    #
+    # Judging by inflection alone got this exactly backwards in both directions:
+    # it made 26 of 30 plural-subject declaratives into noun stacks, and it put
+    # real plural nouns ("logs", "reports", "checks") into the terminator set,
+    # silencing genuine stacks behind a command.
+    if commanding:
+        # Verb already spent. Only unambiguous non-noun inflections stop the run
+        # — "-ed", "-ing", "-ies" — never a bare stem and never a "-s" form,
+        # which is equally a plural noun.
+        stack_terminators = {v for v in VERB_FORMS
+                             if v.endswith(("ed", "ing", "ies", "ied"))}
+    else:
+        # Verb still ahead. The "-s" rule below finds it, since a singular
+        # subject takes an "-s" verb and a plural subject is itself an "-s"
+        # noun — one of the two always lands first. Adding the bare-stem
+        # vocabulary here is redundant AND costs real descriptive stacks:
+        # "The engine mount attachment bolt fails" would break at "mount".
+        stack_terminators = VERB_FORMS
+
     stack_tokens = re.findall(r"[A-Za-z][A-Za-z'-]*|,", body_nostep)
     run: list[str] = []
     armed = False
@@ -805,7 +861,10 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
             _flush(run)
             run, armed = [], True
             continue
-        if lw == "," or lw in FUNCTION_WORDS or lw in VERB_FORMS or tok == "CODE":
+        finite_s = (not commanding and lw.endswith("s") and not lw.endswith("ss")
+                    and len(lw) > 3)
+        if (lw == "," or lw in FUNCTION_WORDS or lw in stack_terminators
+                or finite_s or tok == "CODE"):
             _flush(run)
             run, armed = [], False
             continue
@@ -1015,14 +1074,23 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
 
     # E3 condition placed after the action.
     if commanding:
-        tail = re.search(r",?\s+\b(if|when|while|after|before|once|unless|until)\b", body_nostep, re.I)
-        # Count words before the marker rather than characters: a short
-        # command with a trailing condition ("Set the flag to true when …")
-        # sat just under a percentage threshold. Requiring three words also
-        # spares the case where the marker is the verb's own complement
-        # ("Record when the alarm fires").
+        # Take the first marker that has enough words in front of it, not simply
+        # the first marker. "Retry once if the upstream returns 503" matches
+        # "once" at word two, which is below the threshold, and the operative
+        # "if" clause behind it was never reached.
+        tail = None
+        for m in re.finditer(r",?\s+\b(if|when|while|after|before|once|unless|until)\b",
+                             body_nostep, re.I):
+            if len(re.findall(r"[A-Za-z][A-Za-z'-]*", body_nostep[: m.start()])) >= 2:
+                tail = m
+                break
+        # Count words before the marker rather than characters: a short command
+        # with a trailing condition sat just under an earlier percentage
+        # threshold. TWO words, not three — three was fitted to "Record when the
+        # alarm fires" (one word before the marker) and also silenced "Restart
+        # nginx when the queue drains", which is the commonest runbook shape.
         before = len(re.findall(r"[A-Za-z][A-Za-z'-]*", body_nostep[: tail.start()])) if tail else 0
-        if tail and before >= 3:
+        if tail and before >= 2:
             _add(f, code="E3-condition-after-action", family="E", severity="warn",
                  line=lineno, excerpt=short,
                  why="The reader meets the command first and the condition second. Under "
@@ -1082,7 +1150,8 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
 def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Finding]:
     findings: list[Finding] = []
 
-    if not _fence_spans(text.splitlines())[1]:
+    unbalanced = not _fence_spans(text.splitlines())[1]
+    if unbalanced:
         _add(findings, code="D0-unbalanced-fence", family="D", severity="warn",
              line=1, excerpt="a fenced code block is opened and never closed",
              why="The fence markers do not balance, so no code block could be identified. "
@@ -1107,6 +1176,17 @@ def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Findin
                  fix="Split at the topic change. One paragraph carries one topic.",
                  ste="6.5, 6.6")
 
+    if unbalanced:
+        # Every line is being checked as prose, including code. The findings are
+        # worth showing but must not fail a build, so nothing derived from an
+        # unresolvable document is allowed to block.
+        for finding in findings:
+            if finding.severity == "block" and finding.code != "D0-unbalanced-fence":
+                finding.severity = "warn"
+                finding.why += (" Reported as a warning rather than a block: the "
+                                "document's code fences do not balance, so this may "
+                                "be inside a code block.")
+
     # A4 synonym drift: several names for what is probably one thing.
     # Clustering on the last word misses the real case ("main body", "body",
     # "body assembly" do not share a head), so cluster on any shared content
@@ -1123,8 +1203,13 @@ def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Findin
         # several names for one thing ("main body", "body", "body assembly" —
         # "body" heads two of them). Three things that merely share a modifier
         # are three things.
-        heads_one = any(v.split()[-1] == word for v in variants)
-        if len(variants) >= 3 and heads_one:
+        # Drift is one thing named inconsistently, and the tell is that the
+        # bare noun appears somewhere on its own ("the main body", "the body",
+        # "the body assembly"). Three adjective-modified variants of a common
+        # noun ("bearer token", "expired token", "first bad token") are three
+        # descriptions of different states, not three names for one thing.
+        bare_form = word in variants
+        if len(variants) >= 3 and bare_form:
             shown = ", ".join(f'"{v}"' for v in sorted(variants)[:4])
             _add(findings, code="A4-synonym-drift", family="A", severity="warn",
                  line=1,
