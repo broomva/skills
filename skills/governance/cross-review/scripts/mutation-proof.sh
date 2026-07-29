@@ -101,7 +101,10 @@ die_usage() {
     exit 2
 }
 
-# shellcheck disable=SC2329  # invoked by the EXIT trap below
+# Invoked by the EXIT trap below, which shellcheck does not follow. Older
+# versions flag the body as unreachable (SC2317), newer ones flag the function
+# as uncalled (SC2329); CI and dev machines disagree on which, so disable both.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
     if [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ]; then
         if [ "$KEEP_SCRATCH" = "1" ]; then
