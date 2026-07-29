@@ -1,0 +1,16 @@
+{
+  "meta_version": 2,
+  "provenance": "live-record",
+  "skill": "checkit",
+  "case_id": "golden-03",
+  "trial": 1,
+  "exit_code": 0,
+  "stderr": "",
+  "wall_ms": 23429,
+  "model": "haiku",
+  "cli_version": "2.1.220",
+  "prompt_sha256": "683a12795cbbfb2cc5c4c4b841d6c6c8b8f5c7e2f388707ff6548e5ba302a2b7",
+  "skill_md_sha256": "bc9ad3a5bba9dd55bb6988395dc39de7e87a6e1cccc7c6d1786b9629a919f2cd",
+  "description_sha256": "868b77925b4b1be24fbb85564c8c2232edd52eea6201b16ed022fd06fd0bb8cf",
+  "recorded_at": "2026-07-29T01:13:50Z"
+}
