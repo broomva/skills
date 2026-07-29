@@ -58,7 +58,7 @@ Shortening it does not help. Restoring the edges does.
 Note the second one recovers a *verb* that the stack had nominalized away. Noun
 stacks hide actions as much as relations.
 
-### A3 · Attachment ambiguity ✓ (advisory)
+### A3 · Attachment ambiguity
 *Rule GR-2*
 
 > Install the panel **with** the green fasteners.
@@ -71,6 +71,12 @@ Context usually resolves it. "Usually" is the problem. The standard's own
 example of the failure mode is a joke when it fails:
 
 > Lift the aircraft at the maximum takeoff weight **with passengers**.
+
+**Not auto-detected, deliberately.** Choosing between the three readings needs a
+parse. A surface rule keyed on "with" fired on every imperative containing the
+word, including `Clean the surface with a soap-and-water solution` — which is
+clean. Under "conservative over complete", the miss beats the noise, so this one
+is yours to judge.
 
 **Rewrite:** if it is the instrument, keep the primary action verb and make the
 instrument explicit (`Seal the opening with tool TS9867`, *not* `Use tool
@@ -475,3 +481,22 @@ the right to constrain a writer, and it is the standard to hold your own
 conventions to: *what went wrong that this prevents?* A rule with no failure
 behind it is decoration, and it will be ignored the first time it is
 inconvenient.
+
+
+---
+
+## Known limits of the checker
+
+Stated rather than discovered, because a limit you find yourself reads as a bug
+and a limit that is written down reads as a boundary.
+
+| Limit | Why | Remedy |
+|---|---|---|
+| Multi-word proper nouns and document titles are counted word by word | Deciding that "United States of America" is one name needs domain knowledge, and a capitalized-run heuristic would break "Business Class", which counts as two | An advisory names the gap on every affected sentence, and `--glossary terms.json` closes it exactly |
+| Non-space-delimited scripts (Chinese, Japanese, Thai) count as one word | The counter is whitespace-tokenized, so the length ceiling can never fire | Out of scope. STE is a controlled form of English |
+| The imperative vocabulary is a list plus a structural fallback | No closed verb list is complete. The fallback reads "verb + determiner or preposition" as a command | Add domain verbs to `IMPERATIVE_HINT` if a whole class is missed |
+| Word-sense ambiguity (A5) and false friends (E8) are not detected | Both need a vocabulary this skill deliberately does not ship, and E8 depends on the reader's first language | Judgment, informed by this catalog |
+| Attachment ambiguity (A3) is not detected | See A3 above | Judgment |
+
+The general rule the checker holds itself to: **where it cannot decide, it says
+so.** Silent approximation would read as coverage.

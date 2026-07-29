@@ -228,12 +228,17 @@ know what the system does.
 
 **Script** — the word-count algorithm (parenthetical, quoted span, uppercase
 run, number with unit, hyphenated compound, and identifier each count as one),
-plus detectors for agentless passive, noun stacks, bare demonstratives, weak
-modals, dropped subjects, state-assertions, unquantified deltas, vague
-predicates, missing consequences, over-length, compound obligations,
-semicolons, paragraph overrun, mode mixing, `-ing` forms, dropped `that`,
-condition-after-action, contractions, Latin abbreviations, opaque phrasal
-verbs, slash conjunctions, and synonym drift across a document.
+plus detectors for agentless passive, noun stacks, bare demonstratives,
+ambiguous pronoun antecedents, weak modals, dropped subjects, state-assertions,
+unquantified deltas, vague predicates, missing consequences, over-length,
+compound obligations, semicolons, paragraph overrun, mode mixing, `-ing` forms,
+dropped `that`, condition-after-action, contractions, Latin abbreviations,
+opaque phrasal verbs, slash conjunctions, and synonym drift across a document.
+
+Attachment ambiguity around "with" (A3) is **not** detected. It needs a parse,
+and the surface rule fired on every imperative containing the word. Word-sense
+ambiguity and false friends are not detected either — both need vocabulary this
+skill does not ship. `references/ambiguity-catalog.md` lists every limit.
 
 **You** — which preposition restores the right relation in a noun stack,
 whether two actions are genuinely simultaneous, whether a word is ambiguous
@@ -242,12 +247,15 @@ level is, and whether the requirement is worth having at all.
 
 Where the algorithm cannot decide — a multi-word proper noun or a document
 title needs domain knowledge — it reports an advisory naming the gap and the
-remedy rather than guessing. Silent approximation would read as coverage.
+remedy rather than guessing. Silent approximation would read as coverage. The
+catalog's "Known limits" table states every boundary up front, because a limit
+you discover reads as a bug and a limit that is written down reads as a
+boundary.
 
 ## Validation
 
 ```bash
-python3 -m pytest tests/ -q            # 100 tests
+python3 -m pytest tests/ -q            # 131 tests
 python3 scripts/disambiguate.py --count "Remove the safety pin (10)."   # → 5
 python3 scripts/disambiguate.py REQUIREMENTS.md --strict                # CI gate
 ```

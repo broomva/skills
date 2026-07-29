@@ -134,16 +134,25 @@ VAGUE_PHRASES = [
     "where possible", "when possible", "if possible", "as applicable",
     "best practices", "best practice", "industry standard",
     "state of the art", "and so on", "among others", "or similar",
-    "to be determined", "tbd", "etc",
+    "to be determined", "tbd",
 ]
 
 # Comparatives that imply a delta but name no baseline.
+# Comparatives that assert a delta with no baseline. Deliberately excludes
+# "higher"/"lower"/"larger"/"smaller" and bare "more"/"less": those are far more
+# often ordinary modifiers ("the lower bound", "one or more errors") than
+# unquantified claims, and a warn on them is worse than the miss.
 COMPARATIVE_PAT = re.compile(
-    r"\b(faster|slower|better|worse|cheaper|larger|smaller|higher|lower|"
-    r"stronger|weaker|safer|simpler|easier|harder|more\s+\w+|less\s+\w+|"
-    r"improved?|increases?d?|reduces?d?|decreases?d?|optimiz\w+|enhanc\w+)\b",
+    r"\b(faster|slower|better|worse|cheaper|safer|simpler|easier|harder|"
+    r"stronger|weaker|quicker|leaner|"
+    r"improves?|improved|optimizes?|optimized|enhances?|enhanced|"
+    r"speeds?\s+up|scales?\s+better)\b",
     re.I,
 )
+
+# A determiner or possessive in front means the word is modifying a noun, not
+# asserting a change.
+COMPARATIVE_GUARD = re.compile(r"\b(the|a|an|its|their|our|your|his|her|no|any)\s+$", re.I)
 
 WEAK_MODALS = {"should", "may", "might", "could", "would", "ought"}
 
@@ -186,6 +195,20 @@ OPAQUE_PHRASAL = {
 THAT_TAKING = r"(make sure|makes sure|ensure|ensures|verify|verifies|check|checks|" \
               r"show|shows|showed|recommend|recommends|mean|means|note|assume|assumes|" \
               r"confirm|confirms|indicate|indicates|require|requires)"
+
+# Sentence-initial words that are nouns far more often than commands, so the
+# structural fallback must not read them as imperatives.
+VERB_BLOCKLIST = {
+    "access", "account", "api", "auth", "authentication", "authorization",
+    "cache", "call", "change", "changes", "client", "config", "connection",
+    "content", "context", "data", "default", "documentation", "error",
+    "errors", "failure", "feature", "field", "file", "input", "latency",
+    "log", "logs", "message", "metadata", "output", "permission", "policy",
+    "progress", "queue", "rate", "record", "request", "response", "result",
+    "retry", "schema", "server", "service", "session", "state", "status",
+    "support", "system", "table", "test", "timeout", "traffic", "user",
+    "users", "value", "version", "work",
+}
 
 DETERMINERS = {
     "the", "a", "an", "this", "these", "that", "those", "its", "their",
@@ -238,6 +261,18 @@ IMPERATIVE_HINT = {
     "throw", "tighten", "torque", "touch", "track", "transmit", "trigger",
     "truncate", "tune", "turn", "unlock", "update", "upgrade", "upload",
     "use", "validate", "verify", "wait", "write",
+    # Ops and runbook vocabulary. Their absence silently disabled the
+    # command-only detectors (D2, E3) on exactly the sentences that need them.
+    "acknowledge", "ack", "alert", "allow", "annotate", "assign", "authorize",
+    "backup", "block", "bump", "compact", "cordon", "deny", "deprecate",
+    "deprovision", "detach", "diff", "disable", "downgrade", "drain", "drop",
+    "escalate", "evict", "export", "failover", "flag", "fork", "grant",
+    "import", "label", "mirror", "mount", "mute", "notify", "page", "patch",
+    "pin", "promote", "provision", "prune", "purge", "quarantine", "rebase",
+    "redeploy", "redirect", "reindex", "reprocess", "requeue", "revert",
+    "roll", "rollback", "rotate", "route", "scale", "seed", "silence",
+    "snapshot", "stash", "swap", "taint", "terminate", "throttle", "toggle",
+    "unmount", "unpin", "unset", "vacuum", "warm", "watch", "whitelist",
 }
 
 # Inflected forms of the action verbs. A noun stack ends at a verb; without
@@ -246,6 +281,12 @@ IMPERATIVE_HINT = {
 VERB_FORMS: set[str] = set()
 for _v in IMPERATIVE_HINT:
     VERB_FORMS.update({_v, _v + "s", _v + "es", _v + "ed", _v + "ing", _v + "d"})
+    if _v.endswith("y"):
+        # "retry" -> "retries"/"retried". Without this, a webhook that "retries"
+        # was absorbed into a noun stack.
+        VERB_FORMS.update({_v[:-1] + "ies", _v[:-1] + "ied"})
+    if _v.endswith("e"):
+        VERB_FORMS.add(_v[:-1] + "ing")
 VERB_FORMS.update({
     "makes", "made", "making", "does", "did", "doing", "has", "have", "had",
     "gets", "got", "goes", "went", "comes", "came", "takes", "took", "gives",
@@ -271,7 +312,13 @@ STATE_ASSERTION_PAT = re.compile(
     re.I,
 )
 
+# Stripped from the word count, because a label is not part of the sentence.
 SAFETY_LABEL_PAT = re.compile(r"^\s*(WARNING|CAUTION|DANGER|NOTICE|ATTENTION|NOTE)\s*:\s*", re.I)
+
+# Only these carry a risk, so only these owe the reader a consequence. A note is
+# informational by definition (rule 5.5), and demanding an outcome from one was
+# a false positive on every noted line.
+RISK_LABEL_PAT = re.compile(r"^\s*(WARNING|CAUTION|DANGER)\s*:\s*", re.I)
 
 CONSEQUENCE_PAT = re.compile(
     r"\b(can cause|will cause|causes|can result|will result|results in|"
@@ -322,11 +369,23 @@ _STEP_MARKER = re.compile(r"^\s*(?:\(?\d+[.)]|\(?[A-Za-z][.)])\s+")
 _PAREN = re.compile(r"\([^()]*\)")
 _DQUOTE = re.compile(r"[“”\"][^“”\"]*[“”\"]")
 _NUMBER = re.compile(r"^[+-]?\$?\d[\d,]*(?:\.\d+)?[%]?$")
+_HYPHEN_RANGE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?-\d[\d,]*(?:\.\d+)?$")
+
+
+_RANGE = re.compile(r"^[+-]?\d[\d,]*(?:\.\d+)?\s*(?:-|--|–|—|to|thru|through)\s*\d[\d,]*(?:\.\d+)?$")
 
 
 def _is_number(tok: str) -> bool:
     t = tok.strip(".,;:")
-    return bool(_NUMBER.match(t)) or t.lower() in NUMBER_WORDS
+    return (bool(_NUMBER.match(t)) or bool(_RANGE.match(t))
+            or bool(_HYPHEN_RANGE.match(t)) or t.lower() in NUMBER_WORDS)
+
+
+def _is_wordlike(tok: str) -> bool:
+    """A token carries a word only if it has a letter, a digit, or is a
+    sentinel. Em dashes, lone quotation marks, bullets, and emoji are
+    punctuation and were being counted against the sentence ceiling."""
+    return tok in SENTINELS or any(c.isalnum() for c in tok)
 
 
 def _is_unit(tok: str) -> bool:
@@ -362,8 +421,12 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
 
     # Glossary terms collapse first, longest first so that a longer term wins.
     for term in sorted(glossary, key=len, reverse=True):
-        if term and term.lower() in text.lower():
-            text = re.sub(re.escape(term), " \x04 ", text, flags=re.I)
+        if not term or len(term) < 2:
+            continue
+        # Word-bounded. An unbounded substring match let a two-letter term
+        # ("IT", "Go") split ordinary words and INCREASE the count, which is
+        # the opposite of what the flag documents.
+        text = re.sub(r"(?<!\w)" + re.escape(term) + r"(?!\w)", " \x04 ", text, flags=re.I)
 
     # A predominantly-uppercase sentence is a formatting convention (a safety
     # instruction, a heading). Case then carries no quoting signal, so fold it.
@@ -374,7 +437,13 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
     # An identifier such as "No. 1" or "#4" names one item and counts once.
     text = re.sub(r"\b(?:No|Nos|Ref|Fig|Item|Step)\.?\s*#?\s*\d+\b", " \x05 ", text, flags=re.I)
     text = re.sub(r"#\s*\d+\b", " \x05 ", text)
-    text = _PAREN.sub(" \x01 ", text)
+    # Innermost-out until stable, so a nested group collapses to one token
+    # rather than leaving its outer halves behind as words.
+    for _ in range(8):
+        collapsed = _PAREN.sub(" \x01 ", text)
+        if collapsed == text:
+            break
+        text = collapsed
     text = _DQUOTE.sub(" \x02 ", text)
 
     if caps_is_quoting:
@@ -393,7 +462,7 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
     cap_run: list[str] = []
     while i < len(raw):
         tok = raw[i].strip(",.;:!?")
-        if not tok:
+        if not tok or not _is_wordlike(tok):
             i += 1
             continue
 
@@ -458,6 +527,39 @@ def split_sentences(block: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
+def _fence_spans(lines: list[str]) -> set[int]:
+    """Line indices inside a *closed* fenced block.
+
+    Fences are paired by a pre-scan rather than by a running toggle. A single
+    stray fence marker used to open a block that never closed, blanking every
+    remaining line — so the checker reported "no ambiguity found" and exit 0 on
+    a document it had stopped reading. An unpaired marker is now treated as
+    ordinary text, which fails safe: content stays checked.
+
+    A closer must use the same character and be at least as long as its opener,
+    so a three-backtick line inside a four-backtick block does not close it.
+    """
+    spans: set[int] = set()
+    open_at: int | None = None
+    open_ch = ""
+    open_len = 0
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        m = re.match(r"^(`{3,}|~{3,})", stripped)
+        if not m:
+            continue
+        mark = m.group(1)
+        ch, length = mark[0], len(mark)
+        if open_at is None:
+            open_at, open_ch, open_len = i, ch, length
+        elif ch == open_ch and length >= open_len:
+            spans.update(range(open_at, i + 1))
+            open_at, open_ch, open_len = None, "", 0
+    # An unclosed opener is left as content on purpose.
+    return spans
+
+
 def strip_noncontent(text: str) -> list[str]:
     """Blank the lines that are not prose, keeping line numbers intact.
 
@@ -467,48 +569,40 @@ def strip_noncontent(text: str) -> list[str]:
     noise. A checker that is noisy on its own documentation will be turned off.
     """
     lines = text.splitlines()
+    fenced = _fence_spans(lines)
     out: list[str] = []
-    in_fence = False
-    fence_mark = ""
-    in_frontmatter = False
+
+    # Frontmatter: the first non-blank line is a --- fence. Tolerates a BOM and
+    # leading blank lines, neither of which used to be handled.
+    fm_end = -1
+    first_content = next((i for i, ln in enumerate(lines)
+                          if ln.strip().lstrip("\ufeff")), None)
+    if first_content is not None and lines[first_content].strip().lstrip("\ufeff") == "---":
+        for j in range(first_content + 1, len(lines)):
+            if lines[j].strip() in {"---", "..."}:
+                fm_end = j
+                break
 
     for i, line in enumerate(lines):
         stripped = line.strip()
 
-        # YAML frontmatter: a --- fence on the very first line.
-        if i == 0 and stripped == "---":
-            in_frontmatter = True
-            out.append("")
-            continue
-        if in_frontmatter:
-            if stripped in {"---", "..."}:
-                in_frontmatter = False
+        if i in fenced or (first_content is not None and first_content <= i <= fm_end):
             out.append("")
             continue
 
-        # Fenced code, ``` or ~~~, closed only by the same marker.
-        if not in_fence and (stripped.startswith("```") or stripped.startswith("~~~")):
-            in_fence = True
-            fence_mark = stripped[:3]
-            out.append("")
-            continue
-        if in_fence:
-            if stripped.startswith(fence_mark):
-                in_fence = False
-            out.append("")
-            continue
-
-        # Headings, tables, rules, and indented code blocks.
+        # Headings, block quotes, horizontal rules, HTML blocks, and tables.
+        # A table row is detected by two or more pipes anywhere on the line, not
+        # only by a leading pipe.
         if (not stripped
-                or stripped.startswith(("#", "|", ">"))
+                or stripped.startswith(("#", "|", ">", "<"))
+                or stripped.count("|") >= 2
                 or re.match(r"^(-{3,}|={3,}|\*{3,})$", stripped)
-                or line.startswith("    ") and not re.match(r"^\s*(?:[-*+]|\(?[a-zA-Z0-9][.)])\s", line)):
+                or (line.startswith("    ")
+                    and not re.match(r"^\s*(?:[-*+]|\(?[a-zA-Z0-9][.)])\s", line))):
             out.append("")
             continue
 
-        # A list marker is structure, not a word.
         body = re.sub(r"^\s*(?:[-*+])\s+", "", line)
-        # Inline code and links carry no prose to check.
         body = re.sub(r"`[^`]*`", " CODE ", body)
         body = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", body)
         out.append(body)
@@ -564,6 +658,23 @@ def is_imperative(sent: str) -> bool:
     w = first[0].strip(".,:;")
     if w in IMPERATIVE_HINT:
         return True
+
+    # Structural fallback: a closed verb list can never be complete, and every
+    # word missing from it silently switched off the command-only detectors.
+    # A sentence that opens with a non-function word and is immediately
+    # followed by a determiner or an object-taking preposition is a command
+    # ("Notify the team", "Escalate to the on-call"). A statement fails this
+    # because its second word is a verb or a modal ("Sessions are validated",
+    # "Latency should stay low").
+    tokens = re.split(r"[\s,]+", body.strip())
+    if len(tokens) >= 2 and w not in FUNCTION_WORDS and w.isalpha():
+        nxt = tokens[1].strip(".,:;").lower()
+        if nxt in DETERMINERS or nxt in {"to", "from", "into", "onto", "with",
+                                         "for", "on", "at", "in", "up", "down",
+                                         "out", "off", "over", "back", "all"}:
+            if nxt not in BE_FORMS and w not in VERB_BLOCKLIST:
+                return True
+
     if w in CONDITION_STARTERS and "," in body:
         nxt = re.split(r"\s+", body.split(",", 1)[1].strip().lower())[:1]
         return bool(nxt and nxt[0].strip(".,:;") in IMPERATIVE_HINT)
@@ -590,6 +701,37 @@ def detect_mode(text: str) -> str:
 # --------------------------------------------------------------------------
 # Detectors
 # --------------------------------------------------------------------------
+
+
+def noun_phrases(text: str) -> list[str]:
+    """Noun phrases introduced by a determiner, up to three words.
+
+    Stops at function words, verb forms, and commas, so "the pins with the
+    seats" yields ["pins", "seats"] rather than one run spanning the
+    preposition.
+    """
+    toks = re.findall(r"[a-z][a-z-]*|,", text.lower())
+    out: list[str] = []
+    i = 0
+    while i < len(toks):
+        if toks[i] in {"the", "a", "an"}:
+            phrase: list[str] = []
+            for offset, nxt in enumerate(toks[i + 1: i + 4]):
+                if nxt == "," or nxt in FUNCTION_WORDS:
+                    break
+                # A determiner guarantees a noun phrase, so the word directly
+                # after it is a noun even when it is spelled like a verb we
+                # know ("the pins", "the patch", "the route"). Only later words
+                # are verb-filtered.
+                if offset > 0 and nxt in VERB_FORMS:
+                    break
+                phrase.append(nxt)
+            if phrase:
+                out.append(" ".join(phrase))
+            i += 1 + len(phrase)
+            continue
+        i += 1
+    return out
 
 
 def _add(findings: list[Finding], **kw) -> None:
@@ -625,8 +767,7 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
 
     # A1b bare it/they with more than one candidate antecedent.
     if re.search(r"\b(it|they|them)\b", low):
-        candidates = re.findall(r"\b(?:the|a|an)\s+([a-z][a-z-]+(?:\s+[a-z][a-z-]+){0,2})", low)
-        uniq = list(dict.fromkeys(candidates))
+        uniq = list(dict.fromkeys(noun_phrases(low)))
         if len(uniq) >= 2:
             _add(f, code="A1-pronoun-antecedent", family="A", severity="info",
                  line=lineno, excerpt=short,
@@ -671,16 +812,12 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
         if armed:
             run.append(tok)
 
-    # A3 attachment-ambiguous "with".
-    if re.search(r"\bwith\b", low) and commanding:
-        _add(f, code="A3-with-attachment", family="A", severity="info",
-             line=lineno, excerpt=short,
-             why='"with" can mean the instrument, the accompaniment, or a property of the '
-                 'object. "Install the panel with the green fasteners" has three readings.',
-             fix="If it names the instrument, keep the primary action verb and make the "
-                 "instrument explicit. If it names a condition, move it to a leading "
-                 '"When …," clause.',
-             ste="GR-2")
+    # A3 (attachment ambiguity around "with") is NOT detected here. Deciding
+    # between the instrument, the accompaniment, and a property of the object
+    # needs a parse, and the surface rule fired on every imperative containing
+    # "with" — including "Clean the surface with a soap-and-water solution",
+    # which this suite uses as a clean fixture. It stays in the catalog as a
+    # judgment item. See references/ambiguity-catalog.md.
 
     # ---------------- B — Who must, and must they? ----------------
 
@@ -754,7 +891,8 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
              ste="4.1")
 
     comp = COMPARATIVE_PAT.search(low)
-    if comp and not re.search(r"\d", body_nostep):
+    quantified = bool(re.search(r"\d", body_nostep)) or any(w in NUMBER_WORDS for w in lwords)
+    if comp and not quantified and not COMPARATIVE_GUARD.search(low[: comp.start()]):
         _add(f, code="C2-unquantified-delta", family="C", severity="warn",
              line=lineno, excerpt=short,
              why=f'"{comp.group(0)}" names a direction of change with no baseline and no target. '
@@ -764,7 +902,11 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
                  '"reduce p95 latency from 800 ms to 200 ms or less".',
              ste="4.1")
 
-    for w in lwords:
+    for idx, w in enumerate(lwords):
+        # A leading imperative is the action, not a hedge. "Clean the surface"
+        # is precise; "clean code" is not, and only the second is the defect.
+        if idx == 0 and commanding:
+            continue
         if w in VAGUE_PREDICATES:
             _add(f, code="C3-vague-predicate", family="C", severity="warn",
                  line=lineno, excerpt=short,
@@ -786,7 +928,7 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
                 break
 
     # C4 a risk with no stated result.
-    if SAFETY_LABEL_PAT.match(sent) and not CONSEQUENCE_PAT.search(low):
+    if RISK_LABEL_PAT.match(sent) and not CONSEQUENCE_PAT.search(low):
         _add(f, code="C4-missing-consequence", family="C", severity="warn",
              line=lineno, excerpt=short,
              why="A warning without its consequence gives the reader no reason to weigh it. "
@@ -820,6 +962,20 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
              ste="8.1")
 
     if commanding:
+        # A comma-chained list of commands is the most common runbook form and
+        # was missed entirely, because the rule required a literal and/or.
+        chained = [seg.strip() for seg in re.split(r",\s*", body_nostep) if seg.strip()]
+        chain_verbs = [seg for seg in chained[1:]
+                       if re.split(r"\s+", seg.lower())[0].strip(".,:;") in IMPERATIVE_HINT]
+        if len(chained) >= 3 and len(chain_verbs) >= 2:
+            _add(f, code="D2-compound-obligation", family="D", severity="warn",
+                 line=lineno, excerpt=short,
+                 why=f"{len(chain_verbs) + 1} commands in one sentence, separated by commas. "
+                     f"The reader can do the first and stop, and the record will still say "
+                     f"the step was done.",
+                 fix="Split into numbered steps, one command each.",
+                 ste="5.2")
+
         verbs = [w for w in lwords if w in IMPERATIVE_HINT]
         if re.search(r"\b(and|or)\s+(?:then\s+)?(" + "|".join(sorted(IMPERATIVE_HINT)) + r")\b", low) and len(verbs) >= 2:
             _add(f, code="D2-compound-obligation", family="D", severity="warn",
@@ -907,10 +1063,17 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
                  ste="9.3")
             break
 
-    if re.search(r"\w+/\w+", body_nostep) and not re.search(r"https?://|[\w.]+/[\w.]+\.(py|ts|md|js|rs)", body_nostep):
+    # A curated list rather than a general slash rule. "GET /v1/users",
+    # "application/json", and "s3://builds" are not ambiguous conjunctions, and
+    # a general rule flagged every one of them.
+    slash = re.search(
+        r"\b(and/or|he/she|she/he|his/her|her/his|s/he|yes/no|true/false|"
+        r"on/off|pass/fail|success/failure|start/stop|enable/disable|"
+        r"accept/reject|allow/deny)\b", low)
+    if slash:
         _add(f, code="E7-slash-conjunction", family="E", severity="info",
              line=lineno, excerpt=short,
-             why="A slash does not say whether it means and, or, or both.",
+             why=f'"{slash.group(0)}" does not say whether it means and, or, or both.',
              fix='Write the conjunction you mean. If you mean both, say "A and B". If '
                  'either satisfies it, say "A or B".',
              ste="8.1")
@@ -941,21 +1104,10 @@ def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Findin
     # word instead.
     phrases: dict[str, set[str]] = {}
     for _, sent in iter_units(text):
-        toks = re.findall(r"[a-z][a-z-]*", sent.lower())
-        for idx, t in enumerate(toks):
-            if t not in {"the", "a", "an"}:
-                continue
-            phrase: list[str] = []
-            for nxt in toks[idx + 1: idx + 4]:
-                if nxt in FUNCTION_WORDS or nxt in IMPERATIVE_HINT:
-                    break
-                phrase.append(nxt)
-            if not phrase:
-                continue
-            text_phrase = " ".join(phrase)
-            for w in phrase:
+        for phrase in noun_phrases(sent):
+            for w in phrase.split():
                 if len(w) >= 4 and w not in FUNCTION_WORDS:
-                    phrases.setdefault(w, set()).add(text_phrase)
+                    phrases.setdefault(w, set()).add(phrase)
 
     for word, variants in sorted(phrases.items()):
         if len(variants) >= 3:

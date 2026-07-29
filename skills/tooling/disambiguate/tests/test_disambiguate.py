@@ -5,10 +5,12 @@ section 8, where the standard states the expected count for each sentence.
 Using them as fixtures means the algorithm is checked against the authority
 rather than against my reading of it.
 
-Every detector test asserts both polarities: the pattern fires on the defect
-and stays silent on the clean rewrite. A suite that only proves firing is
+Every detector asserts both polarities: the pattern fires on the defect and
+stays silent on the clean rewrite. A suite that only proves firing is
 self-certifying — it passes just as happily when the detector matches
-everything.
+everything. An adversarial review found this claim was false for three
+detectors (A1-pronoun-antecedent, A3, D3-semicolon); A3 was deleted and the
+other two are covered below.
 """
 
 from __future__ import annotations
@@ -123,7 +125,7 @@ def test_proper_noun_limit_is_surfaced_not_guessed():
     n, advisories = count_ste_words(
         "The first president of the United States of America was George Washington."
     )
-    assert n > 8
+    assert n == 12, "pin the mechanical count; 'greater than 8' passes for 900"
     assert advisories, "the shortfall must be surfaced as an advisory"
     assert any("glossary" in a.lower() for a in advisories)
 
@@ -470,7 +472,9 @@ def test_every_finding_carries_a_fix():
 
 
 def test_every_finding_declares_a_family_and_severity():
-    for f in check_document(SAMPLE, "procedural", ()):
+    findings = check_document(SAMPLE, "procedural", ())
+    assert findings, "guard: without this the loop below passes on an empty list"
+    for f in findings:
         assert f.family in {"A", "B", "C", "D", "E"}
         assert f.severity in {"block", "warn", "info"}
 
@@ -595,3 +599,211 @@ def test_comma_ends_a_noun_stack():
     """Two short noun phrases separated by a comma are not one long stack."""
     f = check("Remove the cover, the seal, the gasket, and the bolt.")
     assert "A2-noun-stack" not in codes(f)
+
+
+# --------------------------------------------------------------------------
+# Regressions from the adversarial review (P20)
+#
+# Each of these reproduces a defect the review found by running the checker on
+# input I had not thought of. Ordered by the severity it was reported at.
+# --------------------------------------------------------------------------
+
+
+def test_unclosed_fence_does_not_blank_the_rest_of_the_document():
+    """BLOCKER. A running in_fence toggle let one stray ``` line swallow every
+    following line, so the checker reported 'no ambiguity found' and exit 0 on
+    text it had stopped reading. A linter that reports clean on unchecked input
+    is worse than no linter."""
+    doc = (
+        "Intro line.\n\nExample of a fence marker:\n\n```\n\n"
+        "Close the isolating valves; tag the valves.\n"
+    )
+    findings = check_document(doc, "procedural", ())
+    assert "D3-semicolon" in codes(findings), "content after an unpaired fence must stay checked"
+
+
+def test_closed_fence_is_still_skipped():
+    doc = "Intro line.\n\n```\nClose the valves; tag them.\n```\n\nThe end.\n"
+    assert "D3-semicolon" not in codes(check_document(doc, "procedural", ()))
+
+
+def test_longer_fence_is_not_closed_by_a_shorter_one():
+    """A three-backtick line inside a four-backtick block does not close it."""
+    doc = "````\nsome text\n```\nClose the valves; tag them.\n````\n"
+    assert "D3-semicolon" not in codes(check_document(doc, "procedural", ()))
+
+
+def test_glossary_term_does_not_split_ordinary_words():
+    """BLOCKER. An unbounded substring match made --glossary INCREASE the count,
+    the opposite of what it documents. 'IT' shattered 'critical' and 'item'."""
+    plain = count_ste_words("The unit is a critical item.")[0]
+    assert count_ste_words("The unit is a critical item.", glossary=["IT"])[0] == plain
+    assert count_ste_words("The category of logs is growing.", glossary=["Go"])[0] == \
+        count_ste_words("The category of logs is growing.")[0]
+
+
+def test_nested_parentheses_collapse_to_one_word():
+    assert count_ste_words("Install the screw (see the note (a) below) in the flange.")[0] == 7
+
+
+def test_punctuation_only_tokens_are_not_words():
+    assert count_ste_words("The service retries — three times — before it fails.")[0] == 8
+    assert count_ste_words("The build passed ✅ and the deploy finished 🚀.")[0] == 7
+
+
+def test_numeric_range_binds_its_unit():
+    assert count_ste_words("The latency is 10-20 ms.")[0] == 4
+
+
+def test_comparative_does_not_fire_on_ordinary_nouns():
+    """MAJOR. 'optimizer', 'the lower bound', and 'one or more errors' were all
+    reported as unquantified deltas."""
+    for clean in [
+        "The query optimizer chooses an index for each join.",
+        "The lower bound of the range is inclusive.",
+        "Set the log level to a higher verbosity in the staging environment.",
+        "The build fails when the linter reports one or more errors.",
+        "The release includes a performance enhancement for the search page.",
+    ]:
+        assert "C2-unquantified-delta" not in codes(check(clean, mode="descriptive")), clean
+
+
+def test_comparative_still_fires_on_a_real_unquantified_claim():
+    for defect in [
+        "The new caching layer makes the login flow faster.",
+        "This change improves throughput.",
+    ]:
+        assert "C2-unquantified-delta" in codes(check(defect, mode="descriptive")), defect
+
+
+def test_spelled_out_quantity_counts_as_quantification():
+    assert "C2-unquantified-delta" not in codes(
+        check("The index makes the query three times faster.", mode="descriptive"))
+
+
+def test_attachment_ambiguity_is_not_auto_detected():
+    """MAJOR. The surface rule fired on every imperative containing 'with',
+    including a sentence this suite uses as a clean fixture. Deciding between
+    the instrument, the accompaniment, and a property needs a parse, so it moved
+    to the catalog as a judgment item."""
+    for clean in [
+        "Clean the surface with a soap-and-water solution.",
+        "Sign the request with the HMAC key.",
+        "Start the server with the --verbose flag.",
+    ]:
+        assert not any(c.startswith("A3") for c in codes(check(clean))), clean
+
+
+def test_etc_path_segment_is_not_a_vague_predicate():
+    """MAJOR. '\\betc\\b' matched the /etc/ path segment."""
+    assert "C3-vague-predicate" not in codes(check("The config file lives at /etc/app/config.yaml."))
+    assert "C3-vague-predicate" not in codes(check("Edit /etc/hosts."))
+
+
+def test_latin_etc_still_fires_with_its_period():
+    assert "E5-latin-abbreviation" in codes(check("Discard the washers, bolts, etc."))
+
+
+def test_slash_does_not_fire_on_routes_mime_types_or_uris():
+    """MAJOR. A general \\w+/\\w+ rule flagged every path, route and MIME type."""
+    for clean in [
+        "GET /v1/users returns a JSON array of user objects.",
+        "Call POST /api/v2/sessions with the refresh token.",
+        "The response Content-Type is application/json.",
+        "Store the artifact in s3://builds/nightly.",
+        "The config file lives at /etc/app/config.yaml.",
+    ]:
+        assert "E7-slash-conjunction" not in codes(check(clean, mode="descriptive")), clean
+
+
+def test_slash_still_fires_on_a_real_ambiguous_conjunction():
+    assert "E7-slash-conjunction" in codes(check("Update the config and/or restart the service."))
+
+
+def test_note_label_does_not_demand_a_consequence():
+    """MINOR. Only a warning or a caution carries risk. A note is
+    informational by definition (rule 5.5)."""
+    assert "C4-missing-consequence" not in codes(check("Note: the migration takes about five minutes."))
+
+
+def test_warning_label_still_demands_a_consequence():
+    assert "C4-missing-consequence" in codes(check("WARNING: DO NOT SWALLOW THE SOLVENT."))
+
+
+def test_y_verb_inflection_ends_a_noun_stack():
+    """MAJOR. VERB_FORMS was built by appending s/es/ed/ing, which never
+    generates y->ies, so 'retries' was absorbed into a stack."""
+    assert "A2-noun-stack" not in codes(
+        check("The webhook retries three times with exponential backoff.", mode="descriptive"))
+
+
+def test_out_of_vocabulary_imperatives_are_recognized():
+    """MAJOR. A closed verb list gated three detectors, so every verb missing
+    from it silently switched them off."""
+    from disambiguate import is_imperative
+    for cmd in [
+        "Notify the team and page the on-call.",
+        "Provision the cluster with terraform.",
+        "Escalate to the on-call when the alert fires.",
+    ]:
+        assert is_imperative(cmd), cmd
+    assert "E3-condition-after-action" in codes(check("Escalate to the on-call when the alert fires."))
+
+
+def test_statements_are_not_read_as_commands():
+    from disambiguate import is_imperative
+    for stmt in [
+        "Sessions are validated on each request.",
+        "Latency should stay under 200 ms.",
+        "Configuration changes require approval.",
+        "The system retries the request.",
+        "Users must authenticate before they read a record.",
+    ]:
+        assert not is_imperative(stmt), stmt
+
+
+def test_comma_chained_commands_are_a_compound_obligation():
+    assert "D2-compound-obligation" in codes(
+        check("Remove the cover, install the seal, torque the bolts."))
+
+
+def test_single_command_with_a_comma_is_not_compound():
+    assert "D2-compound-obligation" not in codes(
+        check("When the light comes on, set the switch to NORMAL."))
+
+
+def test_html_block_is_not_prose():
+    """MINOR. A CSS declaration became a block-severity semicolon finding."""
+    doc = 'Intro.\n\n<div style="color: red; padding: 4px">\n'
+    assert "D3-semicolon" not in codes(check_document(doc, "descriptive", ()))
+
+
+def test_frontmatter_after_a_blank_line_is_still_stripped():
+    doc = '\n---\ntitle: the thing; the other thing\n---\n\nThe valve controls flow.\n'
+    assert "D3-semicolon" not in codes(check_document(doc, "descriptive", ()))
+
+
+def test_table_row_without_a_leading_pipe_is_not_prose():
+    doc = "status | should be set appropriately | yes\n"
+    assert not codes(check_document(doc, "descriptive", ()))
+
+
+def test_pronoun_antecedent_asserts_both_polarities():
+    """The review found this detector had no test at all, in either direction."""
+    assert "A1-pronoun-antecedent" in codes(
+        check("If you engage the pins with the seats, they can become damaged.",
+              mode="descriptive"))
+    assert "A1-pronoun-antecedent" not in codes(
+        check("Remove the cover.", mode="procedural"))
+
+
+def test_semicolon_asserts_both_polarities():
+    assert "D3-semicolon" in codes(check("Close the valves; tag them."))
+    assert "D3-semicolon" not in codes(check("Close the valves. Tag them."))
+
+
+def test_leading_imperative_is_not_a_vague_predicate():
+    """'Clean the surface' is precise. 'clean code' is not. Only the adjective
+    reading is the defect, and the verb reading was being flagged."""
+    assert "C3-vague-predicate" not in codes(check("Clean the surface with a soap-and-water solution."))
+    assert "C3-vague-predicate" in codes(check("The module must have clean interfaces.", mode="descriptive"))
