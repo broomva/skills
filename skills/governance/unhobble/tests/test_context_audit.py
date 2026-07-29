@@ -18,6 +18,8 @@ from context_audit import (  # noqa: E402
     classify_sentence,
     fires_cell,
     load_probe_receipts,
+    match_receipts,
+    nearest_ref,
     probe_state,
     shows_evidence,
     count_examples,
@@ -690,6 +692,77 @@ def test_audit_counts_and_marks_bare_attestations(tmp_path):
     assert shown["attestations_without_evidence"] == 0
 
 
+# --- a receipt keyed to nothing must not look like a clean run --------------
+#
+# Found by dogfooding: a receipt keyed `scripts/control-gate-hook.sh` when the
+# surface says `control-gate-hook.sh` matched nothing, and the report came back
+# BYTE-IDENTICAL to supplying no receipts at all. Leaving those sections
+# UNRESOLVED is the right polarity and stays; the silence is the defect.
+
+
+def test_match_receipts_separates_applied_from_keyed_to_nothing():
+    rc = match_receipts(
+        {"hooks/gate.sh": {}, "scripts/ghost.sh": {}},
+        ["hooks/gate.sh", "make janitor"],
+    )
+    assert rc["loaded"] == 2
+    assert rc["matched"] == 1
+    assert rc["unmatched_total"] == 1
+    assert rc["unmatched"][0]["key"] == "scripts/ghost.sh"
+
+
+def test_match_receipts_is_empty_without_receipts():
+    assert match_receipts(None, ["a.sh"])["loaded"] == 0
+    assert match_receipts({}, ["a.sh"])["unmatched"] == []
+
+
+def test_match_receipts_truncation_reports_the_true_total():
+    rc = match_receipts(
+        {f"ghost{i}.sh": {} for i in range(25)}, ["real.sh"], max_unmatched=4
+    )
+    assert len(rc["unmatched"]) == 4
+    assert rc["unmatched_total"] == 25
+
+
+def test_nearest_ref_prefers_a_basename_hit_over_lexical_similarity():
+    # The dominant error: right mechanism, wrong path form. A same-directory
+    # sibling scores higher lexically and must NOT win.
+    assert (
+        nearest_ref("scripts/control-gate-hook.sh",
+                    ["control-gate-hook.sh", "scripts/control-gate-lint.sh"])
+        == "control-gate-hook.sh"
+    )
+
+
+def test_nearest_ref_falls_back_to_lexical_similarity():
+    assert nearest_ref("hooks/gate.sh", ["hooks/gates.sh"]) == "hooks/gates.sh"
+
+
+def test_nearest_ref_offers_nothing_rather_than_a_bad_guess():
+    assert nearest_ref("scripts/knowledge-catalog.sh", [".control/policy.yaml"]) is None
+    assert nearest_ref("anything.sh", []) is None
+
+
+def test_audit_flags_a_receipt_file_that_applied_to_nothing(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Repo\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` on every write.\n"
+    )
+    report = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        # The near-miss: right mechanism, wrong path form.
+        probe_receipts={"scripts/gate.sh": dict(_FULL_PROBE)},
+    )
+    # Polarity unchanged — an unmatched key never promotes.
+    assert report["anchors"]["unproven"] == 1
+    rc = report["probe_receipts"]
+    assert (rc["loaded"], rc["matched"], rc["unmatched_total"]) == (1, 0, 1)
+    assert rc["unmatched"] == [{"key": "scripts/gate.sh", "nearest": "hooks/gate.sh"}]
+
+
 def test_load_probe_receipts_roundtrip(tmp_path):
     p = tmp_path / "probes.json"
     p.write_text('{"probes": {"a.sh": {"fires_on_trigger": true}}}')
@@ -734,7 +807,7 @@ def test_audit_separates_existence_from_firing(tmp_path):
     assert rules["anchor_state"] == "unproven"
     # Three sections (Repo / Rules / Style); only Rules names a mechanism.
     assert report["anchors"] == {"fires": 0, "unproven": 1, "dead": 0, "none": 2}
-    assert report["probe_receipts_loaded"] == 0
+    assert report["probe_receipts"]["loaded"] == 0
 
     probed = audit(
         [str(tmp_path)],
@@ -744,7 +817,12 @@ def test_audit_separates_existence_from_firing(tmp_path):
     rules = next(s for s in probed["sections"] if s["heading"] == "Rules")
     assert rules["anchor_state"] == "fires"
     assert probed["anchors"]["unproven"] == 0
-    assert probed["probe_receipts_loaded"] == 1
+    assert probed["probe_receipts"] == {
+        "loaded": 1,
+        "matched": 1,
+        "unmatched": [],
+        "unmatched_total": 0,
+    }
 
 
 # ----------------------------------------------------------------- duplication

@@ -208,6 +208,33 @@ def test_cli_a_dead_mechanism_is_reported_as_dead(repo, tmp_path):
     assert "DEAD" in r.stdout
 
 
+def test_cli_a_useless_receipt_file_is_not_a_clean_run(repo, tmp_path):
+    """The dogfooding defect: a receipt keyed to nothing rendered identically to
+    no receipt file at all, so a carefully probed file could be silently ignored."""
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"scripts/gate.sh": {
+        "fires_on_trigger": True,
+        "silent_on_non_trigger": True,
+        "neutered_check_went_red": True,
+    }}}))
+    without = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo))
+    with_ = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
+
+    assert with_.stdout != without.stdout, "a receipt file that did nothing must say so"
+    assert "**Probe receipts** — 0 of 1 applied." in with_.stdout
+    assert "matched no mechanism reference" in with_.stdout
+    assert "`scripts/gate.sh` — did you mean `hooks/gate.sh`?" in with_.stdout
+    # Polarity is unchanged: an unmatched key never promotes a section.
+    assert "| cand | ? |" in with_.stdout
+
+
+def test_cli_reports_the_applied_count_even_when_everything_matched(repo, tmp_path):
+    receipts = _probes(tmp_path, fires_on_trigger=True, silent_on_non_trigger=True)
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
+    assert "**Probe receipts** — 1 of 1 applied." in r.stdout
+    assert "matched no mechanism reference" not in r.stdout
+
+
 def test_cli_bad_probe_receipts_is_a_clean_error(repo, tmp_path):
     bad = tmp_path / "probes.json"
     bad.write_text("{}")

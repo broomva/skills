@@ -133,6 +133,23 @@ per mechanism, keyed by the exact backticked reference as it appears in the pros
 python3 scripts/context_audit.py CLAUDE.md --repo-root . --probe-receipts probes.json
 ```
 
+**The key is the literal backticked string in the surface**, not the path you
+know the mechanism by. `control-gate-hook.sh` and `scripts/control-gate-hook.sh`
+are different keys, and only the one the prose actually contains matches. A key
+that matches nothing leaves its section UNRESOLVED — the safe direction — and
+the report says so, because a receipt file that applied to nothing would
+otherwise render exactly like no receipt file:
+
+```
+**Probe receipts** — 1 of 3 applied. **2 key(s) matched no mechanism reference
+in the audited surface(s) and did nothing**:
+- `scripts/control-gate-hook.sh` — did you mean `control-gate-hook.sh`?
+- `scripts/knowledge-catalog-refresh-hook.sh` — no near match
+```
+
+Read that line every run. "3 of 3 applied" is the only version that means your
+probing reached the report.
+
 The `Fires?` column resolves to `yes` only when all three legs are `true`. A
 receipt missing `neutered_check_went_red` reads `incomplete`, not `yes` — a probe
 without a negative control has not demonstrated anything. `fires_on_trigger:

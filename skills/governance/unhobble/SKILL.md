@@ -194,7 +194,7 @@ where this one prunes them.
 | `--dup-threshold F` | Jaccard floor for near-duplicate pairs (default 0.25) |
 | `--max-contradictions N` | cap on emitted candidates (default 20; the report states the true total) |
 | `--repo-root DIR` | root for mechanism-reference existence checks |
-| `--probe-receipts F` | JSON probe results; without it every anchor stays UNRESOLVED |
+| `--probe-receipts F` | JSON probe results, keyed by the literal backticked ref; without it every anchor stays UNRESOLVED |
 | `--json` | machine-readable report |
 | `--fail-over-budget` | exit 1 when over `--budget` (surface mode only) |
 | `--max-rules-ratio F` | exit 1 when the hard-rule share exceeds F |

@@ -40,6 +40,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import heapq
 import json
@@ -602,6 +603,51 @@ def shows_evidence(ref: str, receipts: dict[str, dict] | None) -> bool:
     return bool(str(rec.get("evidence") or "").strip())
 
 
+def nearest_ref(key: str, refs: Iterable[str]) -> str | None:
+    """Best guess at the reference a receipt key was reaching for.
+
+    The dominant error is the right mechanism under the wrong path form — a
+    receipt keyed by the path you know the hook by rather than the literal
+    backticked string in the surface. So basename equality is tried first and
+    beats lexical similarity, which would rank a same-directory sibling above
+    the same file at a different depth.
+    """
+    refs = sorted(set(refs))
+    if not refs:
+        return None
+    base = key.rsplit("/", 1)[-1]
+    same_base = [r for r in refs if r.rsplit("/", 1)[-1] == base]
+    if same_base:
+        return same_base[0]
+    close = difflib.get_close_matches(key, refs, n=1, cutoff=0.6)
+    return close[0] if close else None
+
+
+def match_receipts(
+    receipts: dict[str, dict] | None, refs: Iterable[str], max_unmatched: int = 10
+) -> dict:
+    """Which receipt keys landed on a reference the surface actually contains.
+
+    A receipt keyed to nothing leaves its section UNRESOLVED, which is the
+    fail-safe polarity and stays. The hazard is silence: without this, a file
+    of carefully probed receipts keyed one path-form off produces a report
+    BYTE-IDENTICAL to supplying no receipts at all, and reads as a clean run.
+    """
+    if not receipts:
+        return {"loaded": 0, "matched": 0, "unmatched": [], "unmatched_total": 0}
+    present = set(refs)
+    missing = sorted(k for k in receipts if k not in present)
+    return {
+        "loaded": len(receipts),
+        "matched": len(receipts) - len(missing),
+        "unmatched": [
+            {"key": k, "nearest": nearest_ref(k, present)}
+            for k in missing[:max_unmatched]
+        ],
+        "unmatched_total": len(missing),
+    }
+
+
 def anchor_state(refs: list[dict]) -> str:
     """Section-level tier, keyed on demonstrated firing rather than existence.
 
@@ -1056,7 +1102,13 @@ def audit(
             state: sum(1 for r in section_rows if r["anchor_state"] == state)
             for state in ("fires", "unproven", "dead", "none")
         },
-        "probe_receipts_loaded": len(probe_receipts or {}),
+        # Loaded / applied / keyed-to-nothing. One block rather than a bare
+        # count, because "how many receipts did you read" is the least useful
+        # of the three: a receipt that matched no reference did nothing.
+        "probe_receipts": match_receipts(
+            probe_receipts,
+            (r["ref"] for s in all_sections for r in s.mechanism_refs),
+        ),
         # Sections promoted to `fires` on a receipt that asserts booleans and
         # shows nothing. Counted separately from `anchors` so the state map
         # stays a clean state->count, and surfaced because a bare attestation
@@ -1097,6 +1149,39 @@ def audit_prompt(text: str, max_contradictions: int = 20) -> dict:
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
+
+
+def _render_receipts(rc: dict) -> list[str]:
+    """The receipts line — always shown once receipts were supplied.
+
+    Stated as "N of M applied" rather than left to inference: the count of
+    receipts READ tells a reader nothing, and a file that applied to nothing at
+    all otherwise renders exactly like no file.
+    """
+    if not rc.get("loaded"):
+        return []
+    out = [f"**Probe receipts** — {rc['matched']} of {rc['loaded']} applied."]
+    total = rc.get("unmatched_total", 0)
+    if not total:
+        out.append("")
+        return out
+    shown = rc.get("unmatched") or []
+    more = f" (showing {len(shown)})" if total > len(shown) else ""
+    out[0] += (
+        f" **{total} key(s) matched no mechanism reference in the audited "
+        f"surface(s) and did nothing**{more}:"
+    )
+    for u in shown:
+        hint = f" — did you mean `{u['nearest']}`?" if u["nearest"] else " — no near match"
+        out.append(f"- `{u['key']}`{hint}")
+    out.append(
+        "\nA receipt key is the literal backticked reference as it appears in the "
+        "surface (`.control/policy.yaml`, `make janitor`), not the path you know "
+        "the mechanism by. Unmatched keys leave their sections UNRESOLVED rather "
+        "than promoting them, which is the safe direction — but nothing was "
+        "applied.\n"
+    )
+    return out
 
 
 def render(report: dict) -> str:
@@ -1162,6 +1247,7 @@ def render(report: dict) -> str:
                 "wrote the receipt, this column is decorative. Have a runner emit "
                 "it — `references/mechanism-probe.md`.\n"
             )
+        L.extend(_render_receipts(report.get("probe_receipts") or {}))
 
     if report.get("contradictions"):
         shown = min(10, len(report["contradictions"]))
