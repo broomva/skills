@@ -99,7 +99,7 @@ guessing. Silent approximation would read as coverage.
 ## Tests
 
 ```bash
-python3 -m pytest tests/ -q     # 153 tests
+python3 -m pytest tests/ -q     # 154 tests
 python3 tests/mutation_proof.py # revert each fix, assert its test fails
 ```
 

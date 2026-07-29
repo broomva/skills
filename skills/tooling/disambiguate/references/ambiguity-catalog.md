@@ -495,7 +495,10 @@ and a limit that is written down reads as a boundary.
 | Multi-word proper nouns and document titles are counted word by word | Deciding that "United States of America" is one name needs domain knowledge, and a capitalized-run heuristic would break "Business Class", which counts as two | An advisory names the gap on every affected sentence, and `--glossary terms.json` closes it exactly |
 | Non-space-delimited scripts (Chinese, Japanese, Thai) count as one word | The counter is whitespace-tokenized, so the length ceiling can never fire | Out of scope. STE is a controlled form of English |
 | The imperative vocabulary is a list plus a structural fallback | No closed verb list is complete. The fallback reads "verb + determiner or preposition" as a command | Add domain verbs to `IMPERATIVE_HINT` if a whole class is missed |
-| `E3` still fires on ordering whose object is a plural noun (`Run the unit tests before the integration tests`) | The clause test reads the trailing `-s` as a verb. One residual case of a class that is otherwise closed | Reword to `Before the integration tests, run the unit tests` |
+| `E3` still fires on ordering whose object is a two-word plural noun phrase (`Run the unit tests before the integration tests`) | 1 of 12 measured. The clause test reads the trailing `-s` as a verb when it does not directly follow a determiner | Reword to `Before the integration tests, run the unit tests` |
+| A reduced relative clause reads as a command when BOTH its inner verb and its main verb are bare stem + `-s` (`Traffic the WAF blocks never reaches the origin`) | 1 of 10 measured. Nothing distinguishes those tokens from plural nouns without a part-of-speech tag | Rare in requirement text |
+| A past-tense reduced relative reads as a command (`Everything the client sent broke`) | 1 of 3 measured. The finite-verb guard sees present tense and be-forms, and an irregular past tense slips through | Rare in requirement text |
+| A noun-homograph verb opening a sentence with a possessive-style `of` phrase (`Cache of the manifest lives in redis`) | 1 of 5 measured | Rare |
 | Word-sense ambiguity (A5) and false friends (E8) are not detected | Both need a vocabulary this skill deliberately does not ship, and E8 depends on the reader's first language | Judgment, informed by this catalog |
 | Attachment ambiguity (A3) is not detected | See A3 above | Judgment |
 | **A2 does not run on declarative text at all** | The detector must know which token is the finite verb. Behind a command the question does not arise. In a declarative three successive surface proxies each failed in a different direction: the whole verb vocabulary blinded real stacks 8/12 to 1/12, inflection made 26 of 30 ordinary declaratives into stacks, and a `-s` rule suppressed 37% of detectable stacks while firing on possessives. Not recoverable without a part-of-speech tag | Write the requirement as an instruction, which is better anyway. Corpus effect of the scoping: 1249 findings down to 110 |
@@ -525,3 +528,41 @@ one backtick line, twice.
 
 The rule that came out of it: **when the structure cannot be resolved, widen
 what gets checked and say so.** Noise is recoverable. Silence is not.
+
+
+---
+
+## Where the heuristic layer stops
+
+Five rounds of cross-model adversarial review, each on the previous round's
+fixes. Defects found per round: **13, 10, 8, 8, 8.** Defects *introduced* by
+each round's fixes: **5, 2, 8, 8.**
+
+That last series is the useful one, and it stopped falling. The reason is
+specific rather than general incompetence: nearly every remaining defect in
+every round reduced to one question — **is this token a finite verb here** —
+and English does not answer it from the surface. `logs`, `checks`, `reports`,
+`updates`, `drains` and `blocks` are each a plural noun and a verb inflection,
+and which one they are depends on the sentence. Four successive proxies were
+tried and each broke in a different direction:
+
+| Proxy | How it failed |
+|---|---|
+| The whole verb vocabulary | Blinded real noun stacks 8/12 → 1/12 |
+| A hand-listed set of noun-homographs | Missed `seal`, `restore`, `point` |
+| Inflection (`-ed`/`-ing`/`-s`) | Made 26 of 30 ordinary declaratives into noun stacks |
+| A trailing `-s` | Suppressed 37% of real stacks, and fired on possessives |
+
+What finally worked was not a better proxy. It was **scoping each detector to
+where the question does not arise** — noun stacks only behind a command, where
+the finite verb is spent at word one — and **splitting the two vocabularies**
+that had been conflated: `VERB_FORMS` answers "could this be an inflection of a
+verb we know" and contains every `stem + "s"`, so it is partly a list of plural
+nouns. `FINITE_MARKERS` answers "is this necessarily a finite verb" and holds
+only the forms that cannot also be a plural noun.
+
+The clean-text floor was stable across all five rounds: **0 false positives on
+every fresh sweep of well-written spec prose.** Everything above is the residue
+at the hard edges, it is enumerated in this table with measured counts, and
+closing it needs a part-of-speech tagger — a dependency this skill deliberately
+does not take. That is a decision with a stated cost, not an omission.

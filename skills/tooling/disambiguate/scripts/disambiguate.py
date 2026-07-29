@@ -215,8 +215,11 @@ NOUN_MARKING_PREPOSITIONS = {
     "between", "among", "per", "via", "about", "toward", "towards",
 }
 
+# "that" is deliberately absent: as a relativizer it armed a noun run starting
+# at the relative clause's finite verb ("the jobs THAT scan container image
+# layers"), which is exactly the boundary the run is supposed to respect.
 DETERMINERS = {
-    "the", "a", "an", "this", "these", "that", "those", "its", "their",
+    "the", "a", "an", "this", "these", "those", "its", "their",
     "your", "our", "his", "her", "each", "every", "any", "some", "no",
 }
 
@@ -352,8 +355,13 @@ def _inflect(v: str) -> set[str]:
         out |= {v[:-1] + "ies", v[:-1] + "ied", v + "ing"}
     elif (len(v) >= 3 and v[-1] not in _VOWELS + "wxy"
           and v[-2] in _VOWELS and v[-3] not in _VOWELS):
-        # Consonant-vowel-consonant doubles: drop -> dropped, tag -> tagged.
-        out |= {v + v[-1] + "ed", v + v[-1] + "ing"}
+        # Consonant-vowel-consonant MAY double: drop -> dropped, tag -> tagged.
+        # Whether it does depends on stress, which is not recoverable from
+        # spelling: "commit" doubles, "visit" does not. Emit both. A junk form
+        # in this set is inert — nothing looks it up — whereas a missing form
+        # stops terminating a noun run, which is how "rendered output template
+        # values" became a noun stack.
+        out |= {v + v[-1] + "ed", v + v[-1] + "ing", v + "ed", v + "ing"}
     else:
         out |= {v + "ed", v + "ing"}
     return out
@@ -366,6 +374,16 @@ for _v in IMPERATIVE_HINT:
     if _v.endswith("e"):
         VERB_FORMS.update({_v + "d", _v[:-1] + "ing"})
 VERB_FORMS |= _IRREGULAR_FINITE
+
+# Forms that cannot also be a plural noun. VERB_FORMS answers "could this be an
+# inflection of a verb we know", which is a different and much weaker question:
+# it contains stem+"s" for every stem, so "logs", "checks", "backups" and
+# "retries" are all in it. Using it to ask "is there a finite verb here"
+# rejected commands whose object happened to contain a plural noun.
+_UNAMBIGUOUS_INFLECTIONS = {v for v in VERB_FORMS
+                            if v.endswith(("ed", "ing", "ies", "ied"))}
+FINITE_MARKERS: set[str] = set(_UNAMBIGUOUS_INFLECTIONS)
+FINITE_MARKERS |= _IRREGULAR_FINITE | BE_FORMS
 # A bare stem is never a phrase boundary.
 VERB_FORMS -= IMPERATIVE_HINT
 
@@ -490,7 +508,9 @@ def count_ste_words(sentence: str, glossary: Sequence[str] = ()) -> tuple[int, l
         # A short alphabetic term can be a unit bound to a number ("5 bar"),
         # which must not be split off. A longer or multi-word term cannot, and
         # blocking it broke "the 2 Control Kernel nodes".
-        guard = r"(?<!\d )(?<!\d)" if (len(term) <= 3 and term.isalpha()) else ""
+        # A single word can be a unit bound to a number ("5 bar", "5 Torr").
+        # A multi-word term cannot, and guarding it broke "the 2 Control Kernel nodes".
+        guard = r"(?<!\d )(?<!\d)" if " " not in term.strip() else ""
         text = re.sub(r"(?<![\w-])" + guard + re.escape(term) + r"(?![\w-])",
                       " \x04 ", text, flags=re.I)
 
@@ -593,11 +613,13 @@ def split_sentences(block: str) -> list[str]:
     return [p for p in parts if p.strip()]
 
 
-def _fence_spans(lines: list[str]) -> tuple[set[int], bool]:
-    """Line indices inside a closed fenced block, and whether markers balance.
+def _fence_spans(lines: list[str]) -> tuple[set[int], int | None]:
+    """Line indices inside a closed fenced block, and the unmatched opener.
 
-    Returns (spans, balanced). When the fence markers do not balance, `spans`
-    is EMPTY: an unbalanced document gets no fence stripping at all.
+    Returns (spans, unmatched_line) where `unmatched_line` is None when the
+    markers balance and the 0-based index of the opener when they do not. When
+    they do not balance, `spans` is EMPTY: an unbalanced document gets no fence
+    stripping at all.
 
     Two earlier versions of this were wrong in the same direction. A running
     toggle let one stray marker blank the rest of the file. Greedy pairing then
@@ -740,6 +762,12 @@ def is_imperative(sent: str) -> bool:
     _rest = re.split(r"[\s,]+", body.strip())
     if len(_rest) >= 2:
         second = _rest[1].strip(".,:;").lower()
+    # A particle followed by a determiner is a preposition, not a particle:
+    # "Progress ON THE migration slowed" against "Move on once complete".
+    third = _rest[2].strip(".,:;").lower() if len(_rest) >= 3 else ""
+    if second in {"on", "up", "out", "off", "down", "back", "over"} and third in DETERMINERS:
+        second = "of"
+
     if second in NOUN_MARKING_PREPOSITIONS:
         # ...but only when the sentence supplies another finite verb, which is
         # what makes the first word a subject. "Access to the API REQUIRES a
@@ -751,7 +779,7 @@ def is_imperative(sent: str) -> bool:
             if bare in SUBORDINATORS:
                 break
             main_clause.append(bare)
-        if any(t in VERB_FORMS or t in BE_FORMS for t in main_clause):
+        if any(t in FINITE_MARKERS for t in main_clause):
             return False
 
     if w in IMPERATIVE_HINT:
@@ -761,7 +789,42 @@ def is_imperative(sent: str) -> bool:
     if "-" in w and w.rsplit("-", 1)[-1] in IMPERATIVE_HINT:
         return True
 
-    # There is no structural fallback.
+    # Structural fallback: verb + determiner.
+    #
+    # Withdrawn once and restored. Withdrawing it recognized 1 of 25 genuine
+    # commands whose verb is outside the vocabulary (against 24 of 25 with it),
+    # flipped pure-command runbooks to descriptive, and turned C3's
+    # leading-imperative exemption off on real commands. The vocabulary alone is
+    # not enough for the runbook shape, which is the primary use case.
+    #
+    # It keeps ONE guard, the cheap high-precision half: a plural word does not
+    # open a command. That catches the reduced relative clauses ("Rows the
+    # reconciler cannot match stay ...", "Users the admin suspends lose ...").
+    # The be-form and inflected-count conditions it used to carry are gone —
+    # they blocked 10 of 16 genuine commands to save 6 statements.
+    tokens = re.split(r"[\s,]+", body.strip())
+    if (len(tokens) >= 2
+            and w not in FUNCTION_WORDS
+            and re.fullmatch(r"[a-z][a-z-]*", w)
+            and not (w.endswith("s") and not w.endswith("ss"))
+            and tokens[1].strip(".,:;").lower() in DETERMINERS):
+        # ...unless the main clause supplies its own finite verb, which makes
+        # word one a subject rather than a command: "Everything the client SENDS
+        # IS validated". Tested against FINITE_MARKERS, not VERB_FORMS — the
+        # earlier version used the latter, whose stem+"s" entries are plural
+        # nouns, and so blocked 10 of 16 genuine commands whose object happened
+        # to contain one ("Audit the reports logs retention").
+        main_clause = []
+        for t in tokens[1:]:
+            bare = t.strip(".,:;").lower()
+            if bare in SUBORDINATORS:
+                break
+            main_clause.append(bare)
+        if any(t in FINITE_MARKERS for t in main_clause):
+            return False
+        return True
+
+    # Notes on what is deliberately absent.
     #
     # One existed for two rounds and was withdrawn. Its job was to catch
     # commands whose verb is not in the list, by reading "non-function word +
@@ -914,8 +977,7 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
     # so the detector is scoped to where it is decidable rather than
     # approximated where it is not. Descriptive stacks are a documented limit.
     if commanding:
-        stack_terminators = {v for v in VERB_FORMS
-                             if v.endswith(("ed", "ing", "ies", "ied"))}
+        stack_terminators = set(_UNAMBIGUOUS_INFLECTIONS)
 
         stack_tokens = re.findall(r"[A-Za-z][A-Za-z'-]*|,", body_nostep)
         run: list[str] = []
@@ -1177,17 +1239,28 @@ def check_sentence(lineno: int, sent: str, mode: str, glossary: Sequence[str]) -
         # SUPPRESSES a finding, so it cannot introduce a new false positive —
         # the safe direction for a change made while the defect count diverges.
         rest_tokens = re.findall(r"[a-z][a-z'-]*", body_nostep[tail.end():].lower()) if tail else []
+        # FINITE_MARKERS, not VERB_FORMS. The latter contains stem+"s" for every
+        # stem, so "after the checks" read as a clause because "checks" is
+        # "check" + "s". That is the same plural-noun blindness this file has
+        # now hit in three separate places.
         has_clause = any(
-            t in VERB_FORMS
-            or t in BE_FORMS
+            t in FINITE_MARKERS
             or t in {"you", "it", "they", "we", "he", "she"}
             # A trailing "-s" is weak evidence of a finite verb and strong
             # enough here. Used as POSITIVE clause evidence inside a suppression
             # rule it can only reduce suppression, never create a finding — the
             # opposite polarity to the noun-stack rule where the same signal
             # was withdrawn for suppressing 37% of real stacks.
-            or (t.endswith("s") and not t.endswith("ss") and len(t) > 3)
             for t in rest_tokens)
+        if not has_clause:
+            # A trailing "-s" is weak evidence of a finite verb, and worthless
+            # directly after a determiner: "after the checks" is a noun phrase,
+            # "when the queue drains" is a clause.
+            for idx, t in enumerate(rest_tokens):
+                if (t.endswith("s") and not t.endswith("ss") and len(t) > 3
+                        and idx > 0 and rest_tokens[idx - 1] not in DETERMINERS):
+                    has_clause = True
+                    break
         if tail and before >= 2 and has_clause:
             _add(f, code="E3-condition-after-action", family="E", severity="warn",
                  line=lineno, excerpt=short,
@@ -1336,7 +1409,7 @@ def check_document(text: str, mode: str, glossary: Sequence[str]) -> list[Findin
             w = re.split(r"\s+", body.strip().lower())[:1]
             if not w or not w[0]:
                 continue
-            (imper if w[0].strip(".,:;") in IMPERATIVE_HINT else descr).append(i)
+            (imper if is_imperative(body) else descr).append(i)
         if imper and descr and len(imper) + len(descr) >= 3:
             _add(findings, code="D5-mode-mixing", family="D", severity="info",
                  line=list_items[0][0],

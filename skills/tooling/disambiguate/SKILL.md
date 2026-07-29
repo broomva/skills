@@ -265,7 +265,7 @@ boundary.
 ## Validation
 
 ```bash
-python3 -m pytest tests/ -q            # 153 tests
+python3 -m pytest tests/ -q            # 154 tests
 python3 tests/mutation_proof.py        # each fix is proven load-bearing
 python3 scripts/disambiguate.py --count "Remove the safety pin (10)."   # → 5
 python3 scripts/disambiguate.py REQUIREMENTS.md --strict                # CI gate

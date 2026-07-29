@@ -45,10 +45,10 @@ MUTATIONS = [
      "test_unbalanced_fence_strips_nothing_and_says_so",
      "        return set(), open_at",
      "        return set(), None"),
-    ("structural fallback reintroduced",
-     "test_there_is_no_structural_fallback",
-     "    if w in CONDITION_STARTERS and \",\" in body:",
-     "    if len(re.split(r'[\\s,]+', body.strip())) >= 2 and w not in FUNCTION_WORDS and re.split(r'[\\s,]+', body.strip())[1].strip('.,:;').lower() in DETERMINERS:\n        return True\n    if w in CONDITION_STARTERS and \",\" in body:"),
+    ("structural fallback removed",
+     "test_structural_fallback_recognizes_verbs_outside_the_vocabulary",
+     "            and tokens[1].strip(\".,:;\").lower() in DETERMINERS):",
+     "            and False):"),
     ("hyphen-prefix verb rule removed",
      "test_hyphenated_verb_is_a_command",
      '    if "-" in w and w.rsplit("-", 1)[-1] in IMPERATIVE_HINT:\n        return True',
@@ -60,20 +60,20 @@ MUTATIONS = [
     # --- round 3 ---
     ("noun-stack scoping widened to declaratives",
      "test_noun_stack_is_scoped_to_commands",
-     "    if commanding:\n        stack_terminators = {v for v in VERB_FORMS",
-     "    if True:\n        stack_terminators = {v for v in VERB_FORMS"),
+     "    if commanding:\n        stack_terminators = set(_UNAMBIGUOUS_INFLECTIONS)",
+     "    if True:\n        stack_terminators = set(_UNAMBIGUOUS_INFLECTIONS)"),
     ("bare stems terminate behind a command",
      "test_plural_noun_inside_a_commanded_stack",
-     '            if v.endswith(("ed", "ing", "ies", "ied"))}',
-     "            }"),
+     "        stack_terminators = set(_UNAMBIGUOUS_INFLECTIONS)",
+     "        stack_terminators = set(VERB_FORMS)"),
     ("verb inflection generator naive again",
      "test_doubled_consonant_inflections_are_correct",
      '    out = {v + "s", v + "es"}',
      '    return {v + "s", v + "es", v + "ed", v + "ing"}\n    out = {v + "s", v + "es"}'),
     ("noun-marking preposition guard removed",
      "test_noun_plus_preposition_is_not_a_command",
-     "        if any(t in VERB_FORMS or t in BE_FORMS for t in main_clause):\n            return False",
-     "        if False:\n            return False"),
+     "    if second in NOUN_MARKING_PREPOSITIONS:\n        # ...but only when the sentence supplies another finite verb, which is",
+     "    if False:\n        # ...but only when the sentence supplies another finite verb, which is"),
     ("E3 clause test removed",
      "test_e3_ignores_sequencing_that_is_not_a_condition",
      "        if tail and before >= 2 and has_clause:",
@@ -154,12 +154,12 @@ def main() -> int:
 
         body = SCRIPT.read_text()
 
-        # An anchor that lives only in a comment or a docstring mutates nothing,
-        # so the target test passes and the entry reads as a fake test rather
-        # than as a broken mutation.
-        code_only = "\n".join(
-            ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
-        if old not in code_only and old in body:
+        # An anchor that lives ONLY in a comment mutates nothing, so the target
+        # test passes and the entry reads as a fake test rather than a broken
+        # mutation. A multi-line anchor may legitimately span code and comment,
+        # so the test is whether ANY line of it is executable.
+        anchor_lines = [ln for ln in old.splitlines() if ln.strip()]
+        if anchor_lines and all(ln.lstrip().startswith("#") for ln in anchor_lines):
             print(f"  ANCHOR-IN-COMMENT    {name}  (anchor is not executable code)")
             problems.append(name)
             continue
@@ -178,7 +178,8 @@ def main() -> int:
         SCRIPT.write_text(body.replace(old, new, 1))
         outcome = run(test)
         label = {"FAIL": "killed", "PASS": "SURVIVED (fake test)",
-                 "ERROR": "ERROR (not a kill)"}[outcome]
+                 "ERROR": "ERROR (not a kill)",
+                 "SKIP": "SKIPPED (not a kill)"}.get(outcome, f"UNKNOWN ({outcome})")
         print(f"  {label:<20}  {name}")
         if outcome != "FAIL":
             problems.append(name)
