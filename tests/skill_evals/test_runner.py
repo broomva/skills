@@ -2546,3 +2546,20 @@ def test_strip_description_raises_if_the_parser_still_sees_a_description(monkeyp
                         lambda text: "a description the stripper missed")
     with pytest.raises(R.SkillArtifactError, match="survived stripping"):
         R.strip_frontmatter_description("---\nname: demo\ndescription: x\n---\n# body\n")
+
+
+def test_run_case_scores_an_artifact_failure_as_ERROR_not_a_traceback(tmp_path):
+    """The backstop: an unexpected materialize fault degrades to a scored ERROR
+    rather than discarding the trials already paid for."""
+    skill_dir = make_skill(tmp_path, name="demo")
+
+    def boom(*_args, **_kwargs):
+        raise R.SkillArtifactError("synthetic artifact fault")
+
+    cfg = R.RunConfig(
+        skill="demo", skill_dir=skill_dir, trials=2,
+        visibility=R.Visibility("bare", True, boom),
+    )
+    res = R.run_case(R.LiveRunner(cli="/bin/true"), case(should_trigger=True), cfg)
+    assert [t.outcome for t in res.trials] == [R.ERROR, R.ERROR]
+    assert "could not materialize the 'bare' arm" in res.trials[0].detail

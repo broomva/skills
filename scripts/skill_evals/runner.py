@@ -1511,6 +1511,21 @@ def run_case(runner: Runner, case: Case, cfg: RunConfig) -> CaseResult:
                 TrialResult(case_id=case.id, trial=trial, outcome=ERROR, detail=str(exc))
             )
             continue
+        except SkillArtifactError as exc:
+            # Backstop only. A visibility strategy that cannot materialise the
+            # artifact (BRO-2028's bare arm on a description-less skill) is
+            # RUN-invariant: it depends on the skill's SKILL.md, which does not
+            # change between trials, so it would fire identically on every one.
+            # The preflight in main() is what catches that before any spend; this
+            # keeps an unexpected artifact fault degrading to a scored ERROR
+            # instead of a traceback that discards the trials already paid for.
+            result.trials.append(
+                TrialResult(
+                    case_id=case.id, trial=trial, outcome=ERROR,
+                    detail=f"could not materialize the {cfg.visibility.id!r} arm: {exc}",
+                )
+            )
+            continue
         except OSError as exc:
             result.trials.append(
                 TrialResult(
@@ -1962,6 +1977,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.ablate else 0
     )
     planned = len(prompt_set.cases) * args.trials + ablate_trials
+
     if args.ablate:
         if args.visibility != "present":
             print("error: --ablate owns both arms; do not also pass --visibility",
