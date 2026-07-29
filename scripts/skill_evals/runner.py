@@ -348,6 +348,71 @@ def parse_frontmatter_description(text: str) -> str:
     return _parse_frontmatter_description_fallback(text)
 
 
+def strip_frontmatter_description(text: str) -> str:
+    """Return *text* with the top-level ``description`` key removed (BRO-2028).
+
+    The body is left byte-identical; only the frontmatter changes. Key detection
+    mirrors ``_parse_frontmatter_description_fallback`` exactly — top-level (not
+    indented) ``description:`` — and the scalar's continuation lines (blank, or
+    indented under the key) go with it.
+
+    Raises ``SkillArtifactError`` when there is no frontmatter, no description to
+    remove, or when the result *still* parses a non-empty description.
+
+    That last check is the load-bearing one, and it is why this function verifies
+    itself rather than trusting its own line arithmetic. The ``bare`` arm exists
+    to answer "does a skill still trigger on its name alone?". A strip that
+    silently no-ops makes the bare arm byte-identical to the present arm, both
+    arms score the same, and the experiment reports **"the name alone is
+    sufficient"** having never removed a description — the exact false conclusion
+    it was built to rule out. Per this arc's own lesson, the proof uses the SAME
+    predicate the harness grades with (``parse_frontmatter_description``), not a
+    second opinion that could agree for the wrong reason.
+    """
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise SkillArtifactError(
+            "no YAML frontmatter — cannot build a bare arm from this SKILL.md"
+        )
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if end is None:
+        raise SkillArtifactError("unterminated frontmatter — refusing to guess its extent")
+
+    kept: list[str] = []
+    i, dropped = 1, False
+    while i < end:
+        line = lines[i]
+        indent = line[: len(line) - len(line.lstrip())]
+        if indent or not line.strip().lower().startswith("description:"):
+            kept.append(line)
+            i += 1
+            continue
+        dropped = True
+        i += 1
+        # The scalar runs until a line dedents back to a sibling key. Blank lines
+        # inside that run belong to it (block scalars may contain them).
+        while i < end:
+            cont = lines[i]
+            if cont.strip() and not cont[:1].isspace():
+                break
+            i += 1
+
+    if not dropped:
+        raise SkillArtifactError(
+            "no top-level 'description:' in frontmatter — a bare arm would be "
+            "identical to the present arm, which measures nothing"
+        )
+
+    result = lines[0] + "".join(kept) + "".join(lines[end:])
+    residue = parse_frontmatter_description(result)
+    if residue.strip():
+        raise SkillArtifactError(
+            f"description survived stripping ({residue[:60]!r}…) — the bare arm "
+            "would silently equal the present arm"
+        )
+    return result
+
+
 def _sha256(data: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
@@ -655,10 +720,67 @@ def _materialize_absent(workspace: Path, skill_dir: Path, skill_name: str) -> No
     """
 
 
+def _materialize_bare(workspace: Path, skill_dir: Path, skill_name: str) -> None:
+    """Install the skill, then strip the description from the INSTALLED copy (BRO-2028).
+
+    Reproduces the rationed-roster condition BRO-2014 measured in the wild: ~75%
+    of skills reach the model as a bare name because the listing is capped. The
+    skill IS in the roster; its description is not.
+
+    Two properties make this arm faithful rather than merely different:
+
+    * **The body stays byte-identical on disk.** Rationing truncates the *listing*,
+      not the file. Deleting the body would collapse RECOVERED — "answered by
+      reading SKILL.md without ever triggering" — into FAIL, and that distinction
+      is the whole reason this experiment can attribute a result to a mechanism.
+    * **The SOURCE skill is never touched.** ``skill_fingerprint`` reads
+      ``skill_dir``, so replay binding still holds and this arm does not trip the
+      "description moved" staleness guard.
+
+    ``expects_visible=True`` in the registry entry is deliberate: a bare skill is
+    still ON the roster, so the anti-vacuity precheck keeps applying. If the CLI
+    turns out to drop description-less skills from the roster entirely, every
+    trial scores INVISIBLE rather than FAIL — which is a finding about the loader,
+    not a zero-lift result, and must not be read as one.
+    """
+    _materialize_present(workspace, skill_dir, skill_name)
+    dest = Path(workspace) / ".claude" / "skills" / skill_name
+    path = find_skill_md(dest)
+    if path is None:  # pragma: no cover - _materialize_present just wrote it
+        raise SkillArtifactError(f"no SKILL.md at {dest} after materializing the bare arm")
+    path.write_text(
+        strip_frontmatter_description(path.read_text(encoding="utf-8")), encoding="utf-8"
+    )
+
+
 VISIBILITY_REGISTRY: dict[str, Visibility] = {
     "present": Visibility("present", True, _materialize_present),
     "absent": Visibility("absent", False, _materialize_absent),
+    "bare": Visibility("bare", True, _materialize_bare),
 }
+
+#: Arms usable as an ablation baseline. ``absent`` measures the skill's marginal
+#: value over a model without it; ``bare`` measures the *description's* marginal
+#: value over the name alone. They answer different questions and the verdict text
+#: must not imply otherwise.
+ABLATION_BASELINES = ("absent", "bare")
+
+
+def _baseline_cases(prompt_set: "PromptSet", baseline: str) -> list["Case"]:
+    """Which cases the baseline arm re-runs, and why the two baselines differ.
+
+    ``absent`` runs POSITIVES ONLY: an uninstalled skill cannot over-trigger, so a
+    negative case there asserts nothing and re-running it is pure spend (BRO-2006).
+
+    ``bare`` runs EVERYTHING. That optimisation does not transfer, and assuming it
+    did would silently gut the experiment: a bare skill IS installed, so it can
+    absolutely over-trigger on its name alone — ``blog-post`` firing on "summarise
+    this CSV" is exactly the failure a name-only roster invites. Dropping the
+    negatives would leave the arc unable to distinguish "the name is a sufficient
+    trigger" from "the name is an indiscriminate one", which are opposite verdicts
+    on the same measurement (BRO-2028).
+    """
+    return list(prompt_set.cases if baseline == "bare" else prompt_set.positives)
 
 
 def build_workspace(root: Path, skill_dir: Path, skill_name: str, visibility: Visibility) -> Path:
@@ -1647,6 +1769,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ablate", action="store_true",
                    help="BRO-2006: also run the prompt set with the skill UNINSTALLED and "
                         "report the lift. Doubles the trial count and therefore the spend.")
+    p.add_argument("--ablate-baseline", default="absent", choices=ABLATION_BASELINES,
+                   help="BRO-2028: which arm --ablate compares against. 'absent' (default) "
+                        "uninstalls the skill and measures ITS marginal value. 'bare' installs "
+                        "it with the description stripped and measures the DESCRIPTION's "
+                        "marginal value over the name alone — the rationed-roster condition "
+                        "~75%% of skills are actually delivered in.")
     p.add_argument("--ablation-min-trials", type=int, default=ablation_mod.ABLATION_MIN_TRIALS,
                    help="below this many graded positive trials per arm the verdict is "
                         "'underpowered' rather than a number a reader would act on")
@@ -1829,7 +1957,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # --ablate runs the POSITIVE cases a second time with the skill uninstalled;
     # negatives are not re-run, because an uninstalled skill cannot over-trigger and
     # spending on a case that asserts nothing is just spending.
-    ablate_trials = len(prompt_set.positives) * args.trials if args.ablate else 0
+    ablate_trials = (
+        len(_baseline_cases(prompt_set, args.ablate_baseline)) * args.trials
+        if args.ablate else 0
+    )
     planned = len(prompt_set.cases) * args.trials + ablate_trials
     if args.ablate:
         if args.visibility != "present":
@@ -1856,10 +1987,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return EXIT_USAGE
+        measures = (
+            "the SKILL's marginal value over a model without it"
+            if args.ablate_baseline == "absent"
+            else "the DESCRIPTION's marginal value over the name alone (BRO-2028)"
+        )
         print(
             f"[skill-evals] ABLATION: {len(prompt_set.cases)}x{args.trials} present + "
-            f"{len(prompt_set.positives)}x{args.trials} absent = {planned} trials "
-            f"({'replay' if args.replay else 'LIVE — this costs money'})",
+            f"{len(_baseline_cases(prompt_set, args.ablate_baseline))}x{args.trials} "
+            f"{args.ablate_baseline} = {planned} "
+            f"trials ({'replay' if args.replay else 'LIVE — this costs money'})\n"
+            f"[skill-evals] baseline={args.ablate_baseline} — measuring {measures}",
             file=sys.stderr,
         )
     if args.dry_run:
@@ -2042,19 +2180,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.ablate:
         baseline_set = PromptSet(
             skill=prompt_set.skill, version=prompt_set.version,
-            cases=list(prompt_set.positives), notes=prompt_set.notes, path=prompt_set.path,
+            cases=list(_baseline_cases(prompt_set, args.ablate_baseline)),
+            notes=prompt_set.notes, path=prompt_set.path,
         )
         absent_cfg = RunConfig(
             skill=skill, skill_dir=skill_dir, trials=args.trials,
-            visibility=VISIBILITY_REGISTRY["absent"], jobs=max(1, args.jobs),
+            visibility=VISIBILITY_REGISTRY[args.ablate_baseline], jobs=max(1, args.jobs),
             keep_workspaces=args.keep_workspaces,
         )
-        print("[skill-evals] running the ABSENT arm (skill uninstalled)", file=sys.stderr)
+        print(
+            f"[skill-evals] running the {args.ablate_baseline.upper()} arm "
+            f"({'skill uninstalled' if args.ablate_baseline == 'absent' else 'installed, description stripped'})",
+            file=sys.stderr,
+        )
         absent_results = run_suite(runner, baseline_set, absent_cfg)
         absent_agg = aggregate(absent_results, case_threshold=args.case_threshold)
         absent_report = build_report(
             baseline_set, absent_results, absent_agg,
-            mode=runner.mode, threshold=args.threshold, exit_code=0, meta={"arm": "absent"},
+            mode=runner.mode, threshold=args.threshold, exit_code=0,
+            meta={"arm": args.ablate_baseline},
         )
         comparison = ablation_mod.compare(
             report, absent_report,
