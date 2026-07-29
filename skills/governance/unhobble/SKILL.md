@@ -73,7 +73,7 @@ important it sounds. Detail and worked examples in
 
 | The prose is… | Action |
 |---|---|
-| **anchored, probed** — a mechanism produces the signal, and a probe receipt attests it fires | **delete the prose, keep the mechanism.** Free. Zero behavior change. |
+| **anchored, probed** — a mechanism produces the signal, and a probe receipt attests it fires *for this rule* | **delete the prose, keep the mechanism.** Free. Zero behavior change. |
 | **anchored candidate, unprobed** — the mechanism exists; nothing shows it fires | **confirm before cutting** — [`references/mechanism-probe.md`](references/mechanism-probe.md). Free only once it comes back green. |
 | **not a check** — descriptive, or derivable from the filesystem | **relocate** behind progressive disclosure. Free. |
 | **only carrier, high value** | **keep** — and label it a heuristic, not an invariant. Or spend the effort to anchor it. |
@@ -194,7 +194,8 @@ where this one prunes them.
 | `--dup-threshold F` | Jaccard floor for near-duplicate pairs (default 0.25) |
 | `--max-contradictions N` | cap on emitted candidates (default 20; the report states the true total) |
 | `--repo-root DIR` | root for mechanism-reference existence checks |
-| `--probe-receipts F` | JSON probe results, keyed by the literal backticked ref; without it every anchor stays UNRESOLVED |
+| `--probe-receipts F` | JSON probe results, keyed by the literal backticked ref and scoped with `covers`; without it every anchor stays UNRESOLVED |
+| `--fail-on-unmatched-receipts` | exit 1 when a receipt key or `covers` entry names nothing |
 | `--json` | machine-readable report |
 | `--fail-over-budget` | exit 1 when over `--budget` (surface mode only) |
 | `--max-rules-ratio F` | exit 1 when the hard-rule share exceeds F |

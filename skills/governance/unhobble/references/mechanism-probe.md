@@ -118,7 +118,8 @@ per mechanism, keyed by the exact backticked reference as it appears in the pros
 ```json
 {
   "probes": {
-    "scripts/control-gate-hook.sh": {
+    "control-gate-hook.sh": {
+      "covers": ["Control gate blocks destructive bash"],
       "fires_on_trigger": true,
       "silent_on_non_trigger": true,
       "neutered_check_went_red": true,
@@ -128,6 +129,33 @@ per mechanism, keyed by the exact backticked reference as it appears in the pros
   }
 }
 ```
+
+### `covers` is not optional
+
+**A receipt with no `covers` promotes nothing.** It names the rules the probe
+actually covers — section headings, or `path#heading` when two audited files
+share one.
+
+The probe is per *mechanism*; the deletion verdict is per *rule*. One gate is
+cited by a destructive-bash rule, a secrets rule, and a PII rule; a probe of the
+`rm -rf` branch is evidence about the first and silence about the other two.
+Without scoping, that one receipt promotes all three to "delete the prose,
+keep the mechanism. Free" — and the two you never tested lose the only thing
+carrying them.
+
+That is this skill's own citation trap, relocated. SKILL.md says a rule that
+*cites* a mechanism is not thereby anchored; true for `.md` refs, and it would
+become false for `.sh` refs the moment citing were enough to reach `yes`. So an
+unscoped receipt fails **closed** — `unscoped`, never `fires`. The report says
+how many, so the omission is never silent.
+
+The one exception: a **negative** finding (`fires_on_trigger: false`) applies
+without `covers`. It never promotes anything, and discarding an honest "this
+does not fire" over paperwork would throw away the most valuable receipt in the
+file.
+
+A `covers` entry naming no section — a heading renamed since the probe — stops
+promoting, which is safe, and is reported so it is not silent either.
 
 ```bash
 python3 scripts/context_audit.py CLAUDE.md --repo-root . --probe-receipts probes.json
@@ -141,14 +169,22 @@ the report says so, because a receipt file that applied to nothing would
 otherwise render exactly like no receipt file:
 
 ```
-**Probe receipts** — 1 of 3 applied. **2 key(s) matched no mechanism reference
-in the audited surface(s) and did nothing**:
+**Probe receipts** — 1 of 3 matched a reference in the audited surface(s).
+**2 key(s) matched nothing and did nothing**:
 - `scripts/control-gate-hook.sh` — did you mean `control-gate-hook.sh`?
-- `scripts/knowledge-catalog-refresh-hook.sh` — no near match
+- `scripts/knowledge-catalog-refresh-hook.sh` — no unambiguous near match
 ```
 
-Read that line every run. "3 of 3 applied" is the only version that means your
-probing reached the report.
+Read that line every run, and read it as *matched*, not *applied* — a key can
+match a reference and still change nothing. Four ways a receipt accomplishes
+nothing while looking fine, each reported rather than left to inference: the key
+names no reference, the reference is not a live mechanism, the receipt carries
+no `covers`, or its `covers` names no section. `--fail-on-unmatched-receipts`
+turns the first and last into an exit code when you want CI to hold the line.
+
+The near-match hint stays silent when two references share a basename. A
+confident wrong suggestion is worse than none: take it, and the section you did
+*not* probe is the one that gets freed.
 
 The `Fires?` column resolves to `yes` only when all three legs are `true`. A
 receipt missing `neutered_check_went_red` reads `incomplete`, not `yes` — a probe
@@ -192,10 +228,17 @@ recording a probe you genuinely ran and can point at, worthless as evidence to
 anyone who was not standing behind you. Two habits keep it honest:
 
 - **Fill `evidence`.** Exit codes, the exact commands, what the consumer did,
-  when. A receipt with no `evidence` renders `yes*` instead of `yes`, and the
-  report says why. The script cannot verify an evidence string either — the star
-  marks the difference between a record someone can be held to and a bare claim,
-  which is the most an unverified channel can offer.
+  when — as a string, or as the object a runner emits. A receipt with no
+  `evidence` renders `yes*` instead of `yes`, and the report says why. A bare
+  `"evidence": true` counts as no evidence, because asserting that evidence
+  exists is not showing it. The script cannot verify an evidence string either —
+  the star marks the difference between a record someone can be held to and a
+  bare claim, which is the most an unverified channel can offer.
+
+  The star is **per receipt, not per leg**. Two legs typed by hand alongside one
+  a runner observed produce a single unstarred `yes`, and the typed pair
+  inherits the runner's credibility. Per-leg attribution is the refinement, and
+  it belongs with the runner that knows which legs it actually ran.
 - **Separate the hands.** Do not write the receipt for a mechanism whose prose
   you are cutting in the same pass. Different agent, different session, or wait
   for the runner.

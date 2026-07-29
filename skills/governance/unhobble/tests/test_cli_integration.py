@@ -135,8 +135,15 @@ def test_cli_renders_the_fires_column_as_an_open_question(repo):
     assert "UNRESOLVED" in r.stdout
 
 
-def _probes(tmp_path, **legs):
+def _probes(tmp_path, covers=("Rules",), **legs):
+    """A receipt for the fixture's hook, scoped to the rule it was probed for.
+
+    `covers` is not optional in practice: a receipt naming no rule promotes
+    nothing, because the probe is per-mechanism and the verdict is per rule.
+    """
     p = tmp_path / "probes.json"
+    if covers is not None:
+        legs = dict(legs, covers=list(covers))
     p.write_text(json.dumps({"probes": {"hooks/gate.sh": legs}}))
     return str(p)
 
@@ -194,6 +201,7 @@ def test_cli_a_receipt_that_shows_its_work_is_not_starred(repo, tmp_path):
         "fires_on_trigger": True,
         "silent_on_non_trigger": True,
         "neutered_check_went_red": True,
+        "covers": ["Rules"],
         "evidence": "rc=1 on the trigger; renamed gate.sh and rc went 0",
     }}}))
     r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
@@ -216,23 +224,151 @@ def test_cli_a_useless_receipt_file_is_not_a_clean_run(repo, tmp_path):
         "fires_on_trigger": True,
         "silent_on_non_trigger": True,
         "neutered_check_went_red": True,
+        "covers": ["Rules"],
     }}}))
     without = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo))
     with_ = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
 
     assert with_.stdout != without.stdout, "a receipt file that did nothing must say so"
-    assert "**Probe receipts** — 0 of 1 applied." in with_.stdout
-    assert "matched no mechanism reference" in with_.stdout
+    assert "**Probe receipts** — 0 of 1 matched" in with_.stdout
+    assert "matched nothing and did nothing" in with_.stdout
     assert "`scripts/gate.sh` — did you mean `hooks/gate.sh`?" in with_.stdout
     # Polarity is unchanged: an unmatched key never promotes a section.
     assert "| cand | ? |" in with_.stdout
 
 
-def test_cli_reports_the_applied_count_even_when_everything_matched(repo, tmp_path):
+def test_cli_reports_the_matched_count_even_when_everything_matched(repo, tmp_path):
     receipts = _probes(tmp_path, fires_on_trigger=True, silent_on_non_trigger=True)
     r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
-    assert "**Probe receipts** — 1 of 1 applied." in r.stdout
-    assert "matched no mechanism reference" not in r.stdout
+    assert "**Probe receipts** — 1 of 1 matched" in r.stdout
+    assert "matched nothing and did nothing" not in r.stdout
+
+
+def test_cli_an_unscoped_receipt_is_refused_and_explained(repo, tmp_path):
+    """A receipt naming no rule must not promote, and must say why.
+
+    Silently declining to promote would be indistinguishable from a wrong key,
+    and the writer would have no idea what to add.
+    """
+    receipts = _probes(
+        tmp_path, covers=None,
+        fires_on_trigger=True, silent_on_non_trigger=True,
+        neutered_check_went_red=True,
+    )
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
+    assert "| cand | ? |" in r.stdout, "an unscoped receipt promotes nothing"
+    assert "1 receipt(s) carry no `covers`" in r.stdout
+
+
+def test_cli_a_receipt_covering_one_rule_does_not_free_the_others(repo, tmp_path):
+    """BLOCKER-2 at the CLI boundary: citing a gate is not being enforced by it."""
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"hooks/gate.sh": {
+        "fires_on_trigger": True, "silent_on_non_trigger": True,
+        "neutered_check_went_red": True, "covers": ["Rules"],
+        "evidence": "probed the rm -rf branch only",
+    }}}))
+    (repo / "CLAUDE.md").write_text(
+        GOVERNANCE_FIXTURE + "\n## Secrets\nSecrets must never be committed.\n"
+        "Enforced by `hooks/gate.sh` too.\n"
+    )
+    data = json.loads(
+        run(str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+            "--probe-receipts", str(p), "--json").stdout
+    )
+    by = {s["heading"]: s for s in data["sections"]}
+    assert by["Rules"]["anchor_state"] == "fires"
+    assert by["Secrets"]["anchor_state"] == "unproven"
+
+
+def test_cli_a_dead_sibling_is_never_laundered_into_the_free_tier(repo, tmp_path):
+    """BLOCKER-1 at the CLI boundary, including the roll-up that hid it."""
+    (repo / "dead-gate.sh").write_text("#!/bin/sh\n")
+    (repo / "CLAUDE.md").write_text(
+        "# R\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` and `dead-gate.sh`.\n"
+    )
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {
+        "hooks/gate.sh": {
+            "fires_on_trigger": True, "silent_on_non_trigger": True,
+            "neutered_check_went_red": True, "covers": ["Rules"],
+        },
+        "dead-gate.sh": {"fires_on_trigger": False, "covers": ["Rules"]},
+    }}))
+    out = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
+    data = json.loads(
+        run(str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+            "--probe-receipts", str(p), "--json").stdout
+    )
+    rules = next(s for s in data["sections"] if s["heading"] == "Rules")
+    assert rules["anchor_state"] == "dead"
+    assert data["anchors"] == {"fires": 0, "unproven": 0, "dead": 1, "none": 1}
+    # The warning block must PRINT — under `any(fires)` both unproven and dead
+    # rolled up to zero and the whole block vanished.
+    assert "DEAD" in out.stdout and "probed dead" in out.stdout
+
+
+def test_cli_an_evidenced_command_receipt_is_a_live_mechanism(repo, tmp_path):
+    """MAJOR-1: `make janitor` cannot be existence-checked; a receipt is its evidence."""
+    (repo / "CLAUDE.md").write_text(
+        "# R\n\n## Janitor\nAlways run `make janitor` after every merge.\n"
+    )
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"make janitor": {
+        "fires_on_trigger": True, "silent_on_non_trigger": True,
+        "neutered_check_went_red": True, "covers": ["Janitor"],
+        "evidence": "rc=0 with stale branches pruned; unset the target and rc went 2",
+    }}}))
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
+    janitor = next(ln for ln in r.stdout.splitlines() if ln.startswith("| Janitor "))
+    assert janitor.rstrip().endswith("| cand | yes |"), janitor
+    assert "inert" not in r.stdout
+
+
+def test_cli_fail_on_unmatched_receipts_gate(repo, tmp_path):
+    good = _probes(tmp_path, fires_on_trigger=True, silent_on_non_trigger=True)
+    assert run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+        "--probe-receipts", good, "--fail-on-unmatched-receipts",
+    ).returncode == 0
+
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"probes": {"scripts/nope.sh": {"covers": ["Rules"]}}}))
+    r = run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+        "--probe-receipts", str(bad), "--fail-on-unmatched-receipts",
+    )
+    assert r.returncode == 1
+    assert "named nothing" in r.stderr
+
+    # And without the flag the same file is a report, not a judge.
+    assert run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(bad)
+    ).returncode == 0
+
+
+def test_cli_fail_on_unmatched_receipts_catches_a_stale_covers_entry(repo, tmp_path):
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"hooks/gate.sh": {
+        "fires_on_trigger": True, "silent_on_non_trigger": True,
+        "neutered_check_went_red": True, "covers": ["Renamed Since The Probe"],
+    }}}))
+    r = run(
+        str(repo / "CLAUDE.md"), "--repo-root", str(repo),
+        "--probe-receipts", str(p), "--fail-on-unmatched-receipts",
+    )
+    assert r.returncode == 1
+    assert "`Renamed Since The Probe`" in r.stdout
+
+
+def test_cli_a_non_dict_receipt_value_is_a_clean_error(repo, tmp_path):
+    p = tmp_path / "probes.json"
+    p.write_text('{"probes": {"hooks/gate.sh": true}}')
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
+    assert r.returncode == 2
+    assert "hooks/gate.sh" in r.stderr
+    assert "Traceback" not in r.stderr
 
 
 def test_cli_bad_probe_receipts_is_a_clean_error(repo, tmp_path):
@@ -259,7 +395,12 @@ def test_cli_probe_receipts_refused_in_prompt_mode(tmp_path):
     receipts = _probes(tmp_path, fires_on_trigger=True)
     r = run("--prompt-text", "Never merge red.", "--probe-receipts", receipts)
     assert r.returncode == 2
-    assert "does not apply in prompt mode" in r.stderr
+    assert "do not apply in prompt mode" in r.stderr
+    # The gate alone must be refused too — a prompt report has no receipts
+    # block, so it would be a check that cannot fail.
+    bare = run("--prompt-text", "Never merge red.", "--fail-on-unmatched-receipts")
+    assert bare.returncode == 2
+    assert "do not apply in prompt mode" in bare.stderr
 
 
 def test_cli_flags_the_derivable_layout_section(repo):
