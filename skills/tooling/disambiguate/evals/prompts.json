@@ -1,0 +1,104 @@
+{
+  "skill": "disambiguate",
+  "version": 1,
+  "notes": "10 cases: 6 positive / 4 negative. PROVENANCE IS UNIFORM AND WEAK BY CONSTRUCTION: every case here is an authored golden. The skill shipped 2026-07-29 (BRO-2044) and has zero production invocations, so there are no real-trace cases and none are claimed. That is the single largest known gap in this file and it is recorded as such rather than papered over; the set should be re-cut against real transcripts once the skill has been used, and the positives replaced with verbatim user turns at that point. Trigger-surface design: 4 of the 6 positives deliberately avoid the literal string 'disambiguate', so they measure paraphrase inference rather than name matching. Two positives (golden-01, golden-05) do carry the verb, because the explicit invocation path is itself a claim worth testing. The negatives are the load-bearing half: this lens sits next to make-spec (formatting a doc), checkit (ingesting an artifact), and ordinary implementation work that merely mentions a requirement, and over-firing into any of those is the realistic failure mode. negative-02 is the sharpest — it contains the skill's own name inside a filename, which is exactly the shape that made the resolver-eval fixture fail on first run. Register: no em dash appears in any prompt in this file.",
+  "execution_contract": {
+    "advisory": "Documentation only — runner.py does not read this object. Values mirror the runner's module defaults at authoring time; they are recorded so drift between intent and CLI flags stays visible.",
+    "trials_per_case": 3,
+    "suite_threshold_trial_pass_rate": 0.8,
+    "case_threshold_pass_rate": 0.6,
+    "model": "haiku",
+    "visibility": "present",
+    "timeout_s": 300,
+    "workspace": "clean temp dir per trial; skill installed at .claude/skills/disambiguate. SKILL_COPY_EXCLUDE removes evals/ (the answer key) and tests/, so scripts/disambiguate.py IS present and the agent can genuinely run the checker rather than simulate it.",
+    "positive_semantics": "A positive trial that never fires returns RECOVERED when the agent answered by reading SKILL.md off disk, and FAIL otherwise. RECOVERED is not a pass.",
+    "negative_semantics": "On a should_trigger:false trial the runner returns FAIL as soon as the skill fires, without consulting check outcomes. The checks listed on a negative are additive assertions about what the agent did instead, so the case does not rest on non-firing alone."
+  },
+  "known_gaps": {
+    "no_production_sourced_case": "All 10 cases are authored. The skill has never run in production, so no real-trace positive or negative exists yet. Every claim in this file about how a user phrases the ask is therefore a prediction, not an observation.",
+    "no_rewrite_quality_check": "The runner's check vocabulary can assert that an answer was produced and that the ask was not bounced back, but it has no check for the substantive claim this skill makes: that the output contains a REWRITE and not merely a critique. The 'never flag without substituting' invariant is enforced deterministically inside the checker (test_every_finding_carries_a_fix) and NOT enforced here for the latent path. A dedicated check would be the highest-value addition to this file.",
+    "no_ambiguity_ground_truth": "There is no case that pins an expected rewrite against a reference answer. Grading whether a rewrite genuinely closed an ambiguity needs a judge, which this harness does not provide."
+  },
+  "cases": [
+    {
+      "id": "golden-01",
+      "source": "authored",
+      "prompt": "disambiguate this acceptance criterion: the service should handle upstream failures gracefully and retry as needed",
+      "should_trigger": true,
+      "expected_checks": ["skill_triggered", "final_answer_non_empty", "no_clarifying_question_bounced_back"],
+      "rationale": "The canonical explicit invocation, on a requirement carrying four separate defects (weak modal, no actor, two vague predicates, compound obligation). The no-bounce check matters: the tempting response is to ask what 'gracefully' means, and the skill's contract is to name the missing fact and who holds it rather than hand articulation back."
+    },
+    {
+      "id": "golden-02",
+      "source": "authored",
+      "prompt": "two engineers read this ticket and built different things. can you tighten it so that cannot happen again",
+      "should_trigger": true,
+      "expected_checks": ["skill_triggered", "final_answer_non_empty"],
+      "rationale": "The symptom as it actually surfaces, with no trigger word present. Measures paraphrase inference: 'two people read it differently' is the lived form of the ask and never uses the verb."
+    },
+    {
+      "id": "golden-03",
+      "source": "authored",
+      "prompt": "review the acceptance criteria on this story before I hand it to a contractor who cannot ask me questions",
+      "should_trigger": true,
+      "expected_checks": ["skill_triggered", "final_answer_non_empty"],
+      "rationale": "States the skill's own design condition (a reader who cannot ask a follow-up) without naming the skill. If the trigger surface is doing real work rather than string matching, this is the case that shows it."
+    },
+    {
+      "id": "golden-04",
+      "source": "authored",
+      "prompt": "this runbook step is ambiguous: set the failover flag to true when the primary region is unreachable",
+      "should_trigger": true,
+      "expected_checks": ["skill_triggered", "final_answer_non_empty"],
+      "rationale": "A single sentence whose only defect is condition-after-action, which is the least intuitive item in the catalog and the one most likely to be missed by generic prose editing. A correct response reorders the condition to the front; a generic 'improve this writing' response leaves the order alone."
+    },
+    {
+      "id": "golden-05",
+      "source": "authored",
+      "prompt": "run the ambiguity check over REQUIREMENTS.md and tell me which findings actually matter",
+      "should_trigger": true,
+      "expected_checks": ["skill_triggered", "final_answer_non_empty", "no_permission_denials"],
+      "rationale": "Exercises the deterministic path: the agent should invoke scripts/disambiguate.py rather than eyeball the file. The permission check is here because a blocked tool call would make a trigger failure ambiguous. 'which findings actually matter' additionally tests that the agent triages by severity instead of reciting the whole report."
+    },
+    {
+      "id": "golden-06",
+      "source": "authored",
+      "prompt": "apply simplified technical english to the error messages in this module",
+      "should_trigger": true,
+      "expected_checks": ["skill_triggered", "final_answer_non_empty"],
+      "rationale": "Names the source standard directly, on a surface (error messages) that is not a requirement document. Error strings are read by someone who cannot ask what they meant, so the skill should apply; a response that declines because the target is not a spec would be wrong."
+    },
+    {
+      "id": "negative-01",
+      "source": "authored",
+      "prompt": "write this spec up as html using the dark theme",
+      "should_trigger": false,
+      "expected_checks": ["final_answer_non_empty"],
+      "rationale": "Belongs to make-spec. The word 'spec' is present and the ask is purely about presentation, so firing here would mean the lens is keying on the noun rather than on the intent."
+    },
+    {
+      "id": "negative-02",
+      "source": "authored",
+      "prompt": "fix the failing test in disambiguate.py, the word count is off by one",
+      "should_trigger": false,
+      "expected_checks": ["final_answer_non_empty"],
+      "rationale": "The strongest negative in the set. It contains the skill's literal name inside a filename while asking for an ordinary code fix. This is precisely the shape that made the resolver-eval fixture fail on its first run, which is why it is pinned here as well."
+    },
+    {
+      "id": "negative-03",
+      "source": "authored",
+      "prompt": "implement the requirement in auth.ts and open a PR",
+      "should_trigger": false,
+      "expected_checks": ["final_answer_non_empty"],
+      "rationale": "Mentions a requirement and asks for the opposite action: build it, do not reword it. Over-firing here would insert a review step the user did not ask for and did not want."
+    },
+    {
+      "id": "negative-04",
+      "source": "authored",
+      "prompt": "check this out https://www.asd-ste100.org",
+      "should_trigger": false,
+      "expected_checks": ["final_answer_non_empty"],
+      "rationale": "Belongs to checkit. The URL is the source standard this skill was distilled from, so the token overlap is total and the intent is ingestion rather than requirement-sharpening. If any single case reveals a lens keying on vocabulary instead of on the shape of the ask, it is this one."
+    }
+  ]
+}
