@@ -16,8 +16,10 @@ from context_audit import (  # noqa: E402
     audit,
     audit_prompt,
     classify_sentence,
+    fires_cell,
     load_probe_receipts,
     probe_state,
+    shows_evidence,
     count_examples,
     count_outbound_links,
     disclosure_check,
@@ -414,6 +416,7 @@ def test_existing_script_is_an_anchored_candidate(tmp_path):
             "scope": "repo",
             # Existence alone never resolves the firing question.
             "probe": "unresolved",
+            "shows_evidence": False,
         }
     ]
 
@@ -609,6 +612,82 @@ def test_a_receipt_cannot_anchor_a_file_that_does_not_exist(tmp_path):
     refs = mechanism_refs(sec, tmp_path, {"hooks/ghost.sh": dict(_FULL_PROBE)})
     assert refs[0]["exists_on_disk"] is False
     assert anchor_state(refs) == "none"
+
+
+# --- a receipt is an attestation the script cannot verify -------------------
+#
+# `probe_state` trusts the booleans. An agent that wants a section deleted can
+# hand-write three `true`s and take the free tier, which makes the producer of
+# the signal the actor being governed. Unverifiable either way, so the report
+# does the one thing it honestly can: distinguish a receipt that shows its work
+# from one that only asserts.
+
+
+def test_bare_boolean_receipt_still_fires_but_shows_no_evidence():
+    assert probe_state("g.sh", {"g.sh": dict(_FULL_PROBE)}) == "fires"
+    assert shows_evidence("g.sh", {"g.sh": dict(_FULL_PROBE)}) is False
+
+
+@pytest.mark.parametrize(
+    "evidence,expected",
+    [
+        ("rc=1 on the padded command; renamed the hook, rc went 0", True),
+        ("", False),
+        ("   ", False),  # whitespace is not work shown
+        (None, False),
+    ],
+)
+def test_shows_evidence_reads_the_evidence_field(evidence, expected):
+    rec = dict(_FULL_PROBE, evidence=evidence)
+    assert shows_evidence("g.sh", {"g.sh": rec}) is expected
+
+
+def test_shows_evidence_is_false_without_a_receipt():
+    assert shows_evidence("g.sh", None) is False
+    assert shows_evidence("g.sh", {"other.sh": dict(_FULL_PROBE, evidence="x")}) is False
+
+
+def test_fires_cell_stars_a_bare_attestation():
+    bare = {"anchor_state": "fires", "mechanism_refs": [_live_ref(probe="fires")]}
+    shown = {
+        "anchor_state": "fires",
+        "mechanism_refs": [{**_live_ref(probe="fires"), "shows_evidence": True}],
+    }
+    assert fires_cell(bare) == "yes*"
+    assert fires_cell(shown) == "yes"
+
+
+@pytest.mark.parametrize(
+    "state,cell", [("unproven", "?"), ("dead", "DEAD"), ("none", "")]
+)
+def test_fires_cell_passes_non_firing_states_through(state, cell):
+    assert fires_cell({"anchor_state": state, "mechanism_refs": []}) == cell
+
+
+def test_audit_counts_and_marks_bare_attestations(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Repo\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` on every write.\n"
+    )
+    bare = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        probe_receipts={"hooks/gate.sh": dict(_FULL_PROBE)},
+    )
+    assert bare["anchors"]["fires"] == 1
+    assert bare["attestations_without_evidence"] == 1
+
+    shown = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        probe_receipts={
+            "hooks/gate.sh": dict(_FULL_PROBE, evidence="rc=1 padded; neutered -> rc=0")
+        },
+    )
+    assert shown["anchors"]["fires"] == 1
+    assert shown["attestations_without_evidence"] == 0
 
 
 def test_load_probe_receipts_roundtrip(tmp_path):

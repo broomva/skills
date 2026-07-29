@@ -173,6 +173,35 @@ def test_cli_receipt_without_the_neuter_leg_does_not_promote(repo, tmp_path):
     assert rules["mechanism_refs"][0]["probe"] == "incomplete"
 
 
+def test_cli_a_bare_attestation_is_starred_and_disclosed(repo, tmp_path):
+    """The script cannot verify a receipt, so it says so instead of implying rigour."""
+    receipts = _probes(
+        tmp_path,
+        fires_on_trigger=True,
+        silent_on_non_trigger=True,
+        neutered_check_went_red=True,
+    )
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)
+    rules_row = next(ln for ln in r.stdout.splitlines() if ln.startswith("| Rules "))
+    assert rules_row.rstrip().endswith("| cand | yes* |")
+    assert "attestation this script cannot verify" in r.stdout
+    assert "if the actor that wants the deletion also wrote the receipt" in r.stdout
+
+
+def test_cli_a_receipt_that_shows_its_work_is_not_starred(repo, tmp_path):
+    p = tmp_path / "probes.json"
+    p.write_text(json.dumps({"probes": {"hooks/gate.sh": {
+        "fires_on_trigger": True,
+        "silent_on_non_trigger": True,
+        "neutered_check_went_red": True,
+        "evidence": "rc=1 on the trigger; renamed gate.sh and rc went 0",
+    }}}))
+    r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", str(p))
+    rules_row = next(ln for ln in r.stdout.splitlines() if ln.startswith("| Rules "))
+    assert rules_row.rstrip().endswith("| cand | yes |")
+    assert "attestation this script cannot verify" not in r.stdout
+
+
 def test_cli_a_dead_mechanism_is_reported_as_dead(repo, tmp_path):
     receipts = _probes(tmp_path, fires_on_trigger=False)
     r = run(str(repo / "CLAUDE.md"), "--repo-root", str(repo), "--probe-receipts", receipts)

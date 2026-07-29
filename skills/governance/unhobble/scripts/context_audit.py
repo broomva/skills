@@ -517,6 +517,7 @@ def mechanism_refs(
                 "exists_on_disk": exists,
                 "scope": scope,
                 "probe": probe_state(ref, receipts),
+                "shows_evidence": shows_evidence(ref, receipts),
             }
         )
     return refs
@@ -525,6 +526,15 @@ def mechanism_refs(
 # --------------------------------------------------------------------------
 # Probe receipts (efficacy: does the mechanism actually fire?)
 # --------------------------------------------------------------------------
+
+# A receipt is an ATTESTATION. Nothing here observes the probe, re-runs it, or
+# checks the booleans against anything — the script's only options are to
+# believe the file or ignore it. That is a real limit and it is disclosed rather
+# than papered over: an agent that wants a section deleted can type three
+# `true`s and take the free tier, which makes the producer of the signal the
+# actor being governed. `shows_evidence` is the visible tell; the durable fix is
+# a runner that emits receipts from an observed run (BRO-2036, forward
+# reference — no code here depends on it). See references/mechanism-probe.md.
 
 # The three legs of a probe. Each is load-bearing, and the third most of all:
 # without neutering the mechanism and watching the check go red, a green result
@@ -561,8 +571,9 @@ def probe_state(ref: str, receipts: dict[str, dict] | None) -> str:
     """Per-reference efficacy verdict.
 
     unresolved  no probe receipt — the default, and the honest one
-    fires       all three legs demonstrated
-    dead        the probe was run and the mechanism did not fire
+    fires       all three legs attested (attested, not verified — see the note
+                above `_PROBE_LEGS`)
+    dead        the receipt says the probe was run and the mechanism did not fire
     incomplete  a receipt exists but does not carry all three legs; notably a
                 probe with no neutered-control leg proves nothing, so it must
                 NOT read as `fires`
@@ -575,6 +586,20 @@ def probe_state(ref: str, receipts: dict[str, dict] | None) -> str:
     if all(rec.get(leg) is True for leg in _PROBE_LEGS):
         return "fires"
     return "incomplete"
+
+
+def shows_evidence(ref: str, receipts: dict[str, dict] | None) -> bool:
+    """Does the receipt show its work, or does it only assert booleans?
+
+    Not a verification — the script cannot check an `evidence` string either.
+    It is the difference between a record someone can be held to and a bare
+    claim, and it is worth rendering because the two are otherwise identical in
+    the report while being very different things to bet a deletion on.
+    """
+    rec = (receipts or {}).get(ref)
+    if not rec:
+        return False
+    return bool(str(rec.get("evidence") or "").strip())
 
 
 def anchor_state(refs: list[dict]) -> str:
@@ -597,6 +622,27 @@ def anchor_state(refs: list[dict]) -> str:
     if all(r["probe"] == "dead" for r in live):
         return "dead"
     return "unproven"
+
+
+# "?" is the point of the column: an unprobed mechanism is an open question,
+# not a quiet pass. Rendering it blank would restore the exact conflation the
+# separate field exists to break.
+_FIRES_CELL = {"fires": "yes", "unproven": "?", "dead": "DEAD", "none": ""}
+
+
+def fires_cell(row: dict) -> str:
+    """The firing cell for a section row — `yes*` when the receipt is bare.
+
+    A three-boolean receipt with nothing behind it and a receipt quoting exit
+    codes and commands both resolve to `fires`, because the script can verify
+    neither. They should not LOOK the same, so the one that shows no work is
+    starred.
+    """
+    state = row.get("anchor_state", "none")
+    if state != "fires":
+        return _FIRES_CELL[state]
+    firing = [r for r in row.get("mechanism_refs", []) if r.get("probe") == "fires"]
+    return "yes" if all(r.get("shows_evidence") for r in firing) else "yes*"
 
 
 # --------------------------------------------------------------------------
@@ -1011,6 +1057,13 @@ def audit(
             for state in ("fires", "unproven", "dead", "none")
         },
         "probe_receipts_loaded": len(probe_receipts or {}),
+        # Sections promoted to `fires` on a receipt that asserts booleans and
+        # shows nothing. Counted separately from `anchors` so the state map
+        # stays a clean state->count, and surfaced because a bare attestation
+        # is the weakest thing a deletion can rest on.
+        "attestations_without_evidence": sum(
+            1 for r in section_rows if fires_cell(r) == "yes*"
+        ),
         "sections": section_rows,
         "duplication": find_duplicates(all_sections, dup_threshold),
         "contradictions": contradictions[:max_contradictions],
@@ -1044,12 +1097,6 @@ def audit_prompt(text: str, max_contradictions: int = 20) -> dict:
 # --------------------------------------------------------------------------
 # Rendering
 # --------------------------------------------------------------------------
-
-
-# "?" is the point of the column: an unprobed mechanism is an open question,
-# not a quiet pass. Rendering it blank would restore the exact conflation the
-# separate field exists to break.
-_FIRES_CELL = {"fires": "yes", "unproven": "?", "dead": "DEAD", "none": ""}
 
 
 def render(report: dict) -> str:
@@ -1093,7 +1140,7 @@ def render(report: dict) -> str:
                 f"{s['rules_ratio']} | {s['examples']} | "
                 f"{'yes' if s['derivable'] else ''} | "
                 f"{'cand' if s['anchored_candidate'] else ''} | "
-                f"{_FIRES_CELL[s.get('anchor_state', 'none')]} |"
+                f"{fires_cell(s)} |"
             )
         add("")
         a = report.get("anchors") or {}
@@ -1105,6 +1152,15 @@ def render(report: dict) -> str:
                 "it produces a signal. Probe it before deleting the prose it "
                 "supposedly makes free — `references/mechanism-probe.md`, then "
                 "`--probe-receipts`.\n"
+            )
+        bare = report.get("attestations_without_evidence", 0)
+        if bare:
+            add(
+                f"`*` — {bare} section(s) rest on a receipt that asserts three "
+                "booleans and shows no work. A receipt is an attestation this "
+                "script cannot verify; if the actor that wants the deletion also "
+                "wrote the receipt, this column is decorative. Have a runner emit "
+                "it — `references/mechanism-probe.md`.\n"
             )
 
     if report.get("contradictions"):

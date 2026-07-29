@@ -142,8 +142,52 @@ supposed to make redundant is the only thing carrying that behavior.
 Nothing infers these values. Without a receipt the answer stays UNRESOLVED, which
 is the honest state.
 
+## A receipt is an attestation, not a verification
+
+Read that last paragraph again, because it stops one step short. `context_audit.py`
+reads the booleans; it cannot check them. Nothing in the script observes the
+probe, re-runs it, or compares the claim against anything. Its only options are
+to believe the file or ignore it.
+
+Which matters entirely because of who is usually holding the pen. The rule
+governing this column is that a regex inferring firing would be *guessing in a
+confident voice* — and a hand-written receipt is the same guess with better
+manners. An agent that wants a section deleted can type three `true`s, collect
+`fires`, and take the free-to-delete tier without ever tripping the mechanism.
+The producer of the signal is then the actor being governed, the column is
+satisfiable by construction, and the audit reads *more* rigorous than the
+existence predicate it replaced while carrying the same risk. That shape has a
+name and a tool: it is exactly the independence question `keel` asks, arriving
+one level up, about the receipt instead of the mechanism.
+
+So the rule is: **a receipt should be emitted by a runner, from a real run.**
+Not typed.
+
+The intended producer is **BRO-2036** — a mutation-proof runner landing in
+`skills/governance/cross-review/`, which performs the neuter leg and emits
+`neutered_check_went_red` from the result it actually observed. Legs it did not
+exercise are left **absent** rather than defaulted, so a partial run reads
+`incomplete` and promotes nothing. (Forward reference only; nothing in
+`context_audit.py` depends on it, and receipts stay readable without it.)
+
+Until it lands, a hand-written receipt is a placeholder — reasonable for
+recording a probe you genuinely ran and can point at, worthless as evidence to
+anyone who was not standing behind you. Two habits keep it honest:
+
+- **Fill `evidence`.** Exit codes, the exact commands, what the consumer did,
+  when. A receipt with no `evidence` renders `yes*` instead of `yes`, and the
+  report says why. The script cannot verify an evidence string either — the star
+  marks the difference between a record someone can be held to and a bare claim,
+  which is the most an unverified channel can offer.
+- **Separate the hands.** Do not write the receipt for a mechanism whose prose
+  you are cutting in the same pass. Different agent, different session, or wait
+  for the runner.
+
 ## What a passing probe still does not buy you
 
+- **A verified claim.** `yes` means *attested*, not proven — the section above.
+  The audit trusts the receipt; the receipt's worth is whatever its producer's
+  is.
 - **Independence.** A mechanism can fire reliably and still be one the governed
   actor can edit, disable, or feed. That is `keel`'s question; run it when the
   actor has write access anywhere near the producer.

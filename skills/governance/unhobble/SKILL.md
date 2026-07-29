@@ -73,7 +73,7 @@ important it sounds. Detail and worked examples in
 
 | The prose is… | Action |
 |---|---|
-| **anchored, probed** — a mechanism produces the signal, and a probe showed it firing | **delete the prose, keep the mechanism.** Free. Zero behavior change. |
+| **anchored, probed** — a mechanism produces the signal, and a probe receipt attests it fires | **delete the prose, keep the mechanism.** Free. Zero behavior change. |
 | **anchored candidate, unprobed** — the mechanism exists; nothing shows it fires | **confirm before cutting** — [`references/mechanism-probe.md`](references/mechanism-probe.md). Free only once it comes back green. |
 | **not a check** — descriptive, or derivable from the filesystem | **relocate** behind progressive disclosure. Free. |
 | **only carrier, high value** | **keep** — and label it a heuristic, not an invariant. Or spend the effort to anchor it. |
@@ -87,7 +87,9 @@ Two ways to claim the top tier wrongly. A rule that *cites* a mechanism is not
 thereby anchored: `AGENTS.md` existing enforces nothing, which is why the script
 ignores markdown references. And a mechanism that *exists* is not thereby
 firing — three hooks in the workspace this predicate came from were registered,
-scheduled, independent of the agent, and emitting nothing.
+scheduled, independent of the agent, and emitting nothing. A third: a probe
+receipt is an *attestation* the script cannot verify, so an actor that writes
+its own receipt has proved nothing. Have a runner emit it.
 
 ## The six reversals
 
