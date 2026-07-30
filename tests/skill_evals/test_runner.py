@@ -1011,13 +1011,18 @@ def test_visibility_is_a_parameter_not_hardcoded(tmp_path):
 
 
 def test_visibility_registry_ships_both_ablation_arms():
-    """UPDATED BY BRO-2006 — the registry was the declared seam, and this is it
-    being used. The invariant that matters is not the count but that each arm
-    declares the right visibility expectation, since that is what drives the
-    INVISIBLE/LEAKED guards."""
-    assert sorted(R.VISIBILITY_REGISTRY) == ["absent", "present"]
+    """UPDATED BY BRO-2006, extended by BRO-2028 (the `bare` arm). The invariant
+    that matters is not the count but that each arm declares the right visibility
+    expectation, since that is what drives the INVISIBLE/LEAKED guards.
+
+    `bare` is visible ON PURPOSE: the skill is installed and on the roster, only
+    its description is gone. Declaring it invisible would disable the INVISIBLE
+    check and let a loader that drops description-less skills read as a zero-lift
+    result instead of a visibility bug."""
+    assert sorted(R.VISIBILITY_REGISTRY) == ["absent", "bare", "present"]
     assert R.VISIBILITY_REGISTRY["present"].expects_visible is True
     assert R.VISIBILITY_REGISTRY["absent"].expects_visible is False
+    assert R.VISIBILITY_REGISTRY["bare"].expects_visible is True
 
 
 def test_the_absent_arm_installs_nothing(tmp_path):
@@ -2392,3 +2397,169 @@ def test_completed_without_error_is_not_resurrectable_silently():
             assert "completed_without_error" not in case.get("expected_checks", []), (
                 f"{p}: case {case.get('id')} still asserts the removed check"
             )
+
+
+# ---------------------------------------------------------------------------
+# BRO-2028: the `bare` visibility arm — does a skill trigger on its NAME alone?
+# ---------------------------------------------------------------------------
+
+
+def test_strip_description_removes_the_key_and_keeps_the_body_byte_identical():
+    src = "---\nname: demo\ndescription: fires on X\nother: keep\n---\n# body\n\ntext\n"
+    out = R.strip_frontmatter_description(src)
+    assert R.parse_frontmatter_description(out) == ""
+    assert "name: demo" in out and "other: keep" in out
+    # the body is the contract: rationing truncates the LISTING, not the file
+    assert out.split("---\n", 2)[2] == src.split("---\n", 2)[2]
+
+
+@pytest.mark.parametrize("desc", [
+    "description: >\n  folded line one\n  folded line two\n",
+    "description: |\n  literal line one\n  literal line two\n",
+    'description: "quoted with: a colon"\n',
+    "description: plain that wraps\n  onto a second line\n",
+])
+def test_strip_description_consumes_every_scalar_shape(desc):
+    """Each shape spans a different number of lines; a stripper that only removes
+    the `description:` line leaves the continuation behind as stray YAML."""
+    src = f"---\nname: demo\n{desc}trailing: kept\n---\n# body\n"
+    out = R.strip_frontmatter_description(src)
+    assert R.parse_frontmatter_description(out) == ""
+    assert "trailing: kept" in out
+    assert "folded" not in out and "literal" not in out and "wraps" not in out
+
+
+def test_strip_description_refuses_when_there_is_nothing_to_strip():
+    """The load-bearing guard: a silent no-op makes the bare arm identical to the
+    present arm, and the experiment reports 'the name alone is sufficient' having
+    never removed a description."""
+    with pytest.raises(R.SkillArtifactError, match="no top-level 'description:'"):
+        R.strip_frontmatter_description("---\nname: demo\n---\n# body\n")
+
+
+def test_strip_description_refuses_without_frontmatter():
+    with pytest.raises(R.SkillArtifactError, match="no YAML frontmatter"):
+        R.strip_frontmatter_description("# just a body\n")
+
+
+def test_strip_description_postcondition_holds_on_every_real_skill_md():
+    """Property, not enumeration (this arc's lesson 6): assert the postcondition
+    with the SAME parser the harness grades with, over the real corpus, rather
+    than over the shapes the author happened to think of."""
+    checked = 0
+    for path in ALL_SKILL_MDS:
+        text = path.read_text(encoding="utf-8")
+        if not R.parse_frontmatter_description(text).strip():
+            continue  # no description to strip; not this function's case
+        out = R.strip_frontmatter_description(text)
+        assert R.parse_frontmatter_description(out) == "", f"description survived in {path}"
+        assert out.split("---\n", 2)[2:] == text.split("---\n", 2)[2:], f"body moved in {path}"
+        checked += 1
+    assert checked > 20, f"corpus too small to be meaningful ({checked})"
+
+
+def test_materialize_bare_strips_the_copy_and_never_the_source(tmp_path):
+    skill_dir = make_skill(tmp_path, name="demo")
+    before = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    R._materialize_bare(ws, skill_dir, "demo")
+
+    installed = ws / ".claude" / "skills" / "demo" / "SKILL.md"
+    assert R.parse_frontmatter_description(installed.read_text(encoding="utf-8")) == ""
+    # SOURCE untouched -> skill_fingerprint(skill_dir) is stable -> replay binding holds
+    assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == before
+    assert R.skill_fingerprint(skill_dir)["description_sha256"] == \
+        R.skill_fingerprint(skill_dir)["description_sha256"]
+
+
+def test_materialize_bare_keeps_the_body_so_RECOVERED_stays_distinguishable(tmp_path):
+    """If the bare arm deleted the body, 'read SKILL.md without triggering' would
+    collapse into FAIL and the experiment could not attribute a result to a
+    mechanism."""
+    skill_dir = make_skill(tmp_path, name="demo")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    R._materialize_bare(ws, skill_dir, "demo")
+    assert "# body" in (ws / ".claude" / "skills" / "demo" / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_bare_is_registered_as_visible_so_anti_vacuity_still_applies():
+    v = R.VISIBILITY_REGISTRY["bare"]
+    # A bare skill IS on the roster. expects_visible=False would disable the
+    # INVISIBLE check and let a loader that drops description-less skills read as
+    # a zero-lift result instead of a visibility bug.
+    assert v.expects_visible is True
+    assert "bare" in R.ABLATION_BASELINES
+
+
+def test_bare_arm_is_graded_on_triggering_not_outcome_only():
+    """The absent arm grades outcome-only because 'did it fire' is unanswerable
+    there. For bare it is THE question, so it must take the trigger-aware path."""
+    stream = ndjson(ev_init(skills=("demo",)), ev_result("answered without the skill"))
+    r = R.grade_trial(case(should_trigger=True), transcript(stream), "demo",
+                      expect_visible=R.VISIBILITY_REGISTRY["bare"].expects_visible)
+    assert r.outcome == R.FAIL
+    assert "did not trigger" in r.detail
+    assert "outcome-only" not in r.detail
+
+
+def test_bare_arm_scores_invisible_if_the_loader_drops_descriptionless_skills():
+    """A finding about the loader, not a zero-lift result — and it must not be
+    readable as one."""
+    stream = ndjson(ev_init(skills=("other",)), ev_result("nope"))
+    r = R.grade_trial(case(should_trigger=True), transcript(stream), "demo",
+                      expect_visible=R.VISIBILITY_REGISTRY["bare"].expects_visible)
+    assert r.outcome == R.INVISIBLE
+
+
+def test_baseline_cases_absent_drops_negatives_but_bare_keeps_them():
+    """An uninstalled skill cannot over-trigger; a BARE one can — it is installed.
+    Dropping its negatives would leave 'the name is a sufficient trigger' and 'the
+    name is an indiscriminate one' indistinguishable."""
+    ps = R.parse_prompt_set(prompt_set_doc("demo", cases=[
+        {"id": "pos", "prompt": "p", "should_trigger": True, "origin": "golden",
+         "expected_checks": ["final_answer_non_empty"]},
+        {"id": "neg", "prompt": "n", "should_trigger": False, "origin": "negative",
+         "expected_checks": ["final_answer_non_empty"]},
+    ]))
+    assert [c.id for c in R._baseline_cases(ps, "absent")] == ["pos"]
+    assert sorted(c.id for c in R._baseline_cases(ps, "bare")) == ["neg", "pos"]
+
+
+def test_strip_description_raises_if_the_parser_still_sees_a_description(monkeypatch):
+    """The postcondition guard, exercised.
+
+    Found by mutation: deleting the ``residue`` check in
+    ``strip_frontmatter_description`` broke NO test, because on every input the
+    line arithmetic happens to be correct, so the guard never fires. An unfired
+    guard is an untested one — precisely the "a guard written against a remembered
+    list certifies itself" failure this arc keeps hitting.
+
+    The guard's contract is not "some pathological YAML exists" (none does today);
+    it is "if the grading parser can still see a description, refuse". So drive it
+    through that seam directly: the postcondition must hold against whatever
+    ``parse_frontmatter_description`` reports, including when a future change to
+    either the stripper or the parser makes them disagree.
+    """
+    monkeypatch.setattr(R, "parse_frontmatter_description",
+                        lambda text: "a description the stripper missed")
+    with pytest.raises(R.SkillArtifactError, match="survived stripping"):
+        R.strip_frontmatter_description("---\nname: demo\ndescription: x\n---\n# body\n")
+
+
+def test_run_case_scores_an_artifact_failure_as_ERROR_not_a_traceback(tmp_path):
+    """The backstop: an unexpected materialize fault degrades to a scored ERROR
+    rather than discarding the trials already paid for."""
+    skill_dir = make_skill(tmp_path, name="demo")
+
+    def boom(*_args, **_kwargs):
+        raise R.SkillArtifactError("synthetic artifact fault")
+
+    cfg = R.RunConfig(
+        skill="demo", skill_dir=skill_dir, trials=2,
+        visibility=R.Visibility("bare", True, boom),
+    )
+    res = R.run_case(R.LiveRunner(cli="/bin/true"), case(should_trigger=True), cfg)
+    assert [t.outcome for t in res.trials] == [R.ERROR, R.ERROR]
+    assert "could not materialize the 'bare' arm" in res.trials[0].detail
