@@ -3,25 +3,28 @@ name: p9
 primitive: P9
 category: orchestration
 description: |
-  P9 — Broomva productive-wait primitive (the wait optimizer). Convert any
-  blocking external operation — PR CI checks, push-triggered deploys, builds,
-  long-running index ops — into work on the next priority. The reference
-  implementation is a PR CI watcher: drains a context-scoped deferred-work
-  queue while `gh pr checks --watch` runs in the background, classifies
-  failures, and self-heals known categories. Non-PR waits get the same
-  lifecycle via `p9 wait-for` (deploy readiness, long extractions — poll a
-  predicate command with heartbeats and re-arm). Every watcher and wait
-  upholds the termination invariant (BRO-1701): on success, failure, OR
-  kill it reports state + next action and pushes through the configured
-  notify channels — killed watchers never die silently; `p9 stuck-scan`
-  catches live-but-wedged ones. Merge authorization stays with the
-  existing control metalayer (.control/policy.yaml).
+  Something is running and you are stuck waiting on it — CI checks on a PR you
+  just pushed, a deploy going out, a container image build, a slow migration or
+  a long reindex. This skill puts a watcher on the wait and spends the wait on
+  the next piece of work, instead of watching a spinner or calling `sleep`. Also
+  use it for a wait already in flight: "is the watcher running?", "did it
+  notify?", "if I close my laptop does the wait just evaporate?", "I want my
+  phone to buzz when it finishes or when it dies".
+  Invoke it on the wait alone. You do NOT need the PR number, the URL, the
+  branch, or the polling command first — locating the target is the skill's own
+  first step, not a precondition for loading it. Asking the user which PR /
+  which command / which watcher instead of invoking is the known failure mode
+  here, and it is never the right move.
+  Not for a wait nobody is waiting on any more — checks already landed, run
+  already finished, PR already merged, a red result handed to you cold to
+  debug. A failure your own watcher reported is NOT that; it is still this
+  skill. And not for general advice about waiting — answer that directly.
 when_to_use: |
-  Automatically after every `git push` that opens or updates a PR. After a
-  push that triggers a non-PR deploy or any long-running external operation:
-  `p9 wait-for <name> --cmd '<predicate>'` instead of polling by hand.
-  Hard rule: the agent MUST apply productive-wait discipline before `sleep`
-  is ever an option.
+  Triggers on "watch the checks", "watch the deploy", "waiting on CI", "while
+  that runs", "let me know when it finishes", "notify me when", "buzz my
+  phone", "is the watcher running", "did it notify", "don't make me watch a
+  spinner", "productive wait", "p9" — and automatically after any `git push`
+  that opens or updates a PR.
 ---
 
 # P9 — Productive Wait (Wait-Optimizer Skill)
