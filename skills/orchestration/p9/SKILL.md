@@ -15,9 +15,10 @@ description: |
   first step, not a precondition for loading it. Asking the user which PR /
   which command / which watcher instead of invoking is the known failure mode
   here, and it is never the right move.
-  Not for a wait that is already over (checks landed, run finished, PR merged,
-  red result already in hand), and not for general advice about waiting —
-  answer those directly without this skill.
+  Not for a wait nobody is waiting on any more — checks already landed, run
+  already finished, PR already merged, a red result handed to you cold to
+  debug. A failure your own watcher reported is NOT that; it is still this
+  skill. And not for general advice about waiting — answer that directly.
 when_to_use: |
   Triggers on "watch the checks", "watch the deploy", "waiting on CI", "while
   that runs", "let me know when it finishes", "notify me when", "buzz my
