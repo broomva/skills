@@ -1070,8 +1070,6 @@ class ReplayRunner:
         if not path.is_file():
             raise FixtureError(f"missing replay fixture: {path}")
         text = path.read_text(encoding="utf-8")
-        if not text.strip():
-            raise FixtureError(f"empty replay fixture: {path}")
 
         meta_path = path.with_suffix(".meta.json")
         if not meta_path.is_file():
@@ -1089,6 +1087,29 @@ class ReplayRunner:
 
         self._check_binding(meta, case_id, trial, path)
         self._note_drift(meta, case_id, trial)
+
+        # An EMPTY fixture whose meta records a FAILED run is a faithful recording,
+        # not a broken one. The first live run produced three: the CLI timed out at
+        # 300s, so stdout was empty and the trial scored ERROR — and replaying it
+        # then reported "fixture integrity failure", which is a different claim about
+        # a different thing. Live fixtures could not enter CI at all while a recorded
+        # timeout replayed as an unusable fixture.
+        #
+        # The distinction is what the META says: empty + a non-zero exit or a stderr
+        # is the run failing; empty + a clean exit is the FIXTURE failing, and that
+        # still raises.
+        if not text.strip():
+            recorded_exit = int(meta.get("exit_code", 0) or 0)
+            recorded_stderr = str(meta.get("stderr", ""))
+            if recorded_exit != 0 or recorded_stderr.strip():
+                return Transcript.from_ndjson(
+                    "", exit_code=recorded_exit, stderr=recorded_stderr,
+                    source=str(path), wall_ms=meta.get("wall_ms"),
+                )
+            raise FixtureError(
+                f"empty replay fixture whose meta records a CLEAN run: {path} — "
+                "that is a broken recording, not a recorded failure"
+            )
 
         recorded_hash = str(meta.get("prompt_sha256", ""))
         current_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
