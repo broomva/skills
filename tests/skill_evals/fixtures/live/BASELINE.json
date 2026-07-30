@@ -1,0 +1,96 @@
+{
+  "graded_trials_total": 295,
+  "recorded_at_sweep": "2026-07-29",
+  "skills": {
+    "autonomous": {
+      "errors": 0,
+      "graded_trials": 48,
+      "invisible": 0,
+      "negative": {
+        "passes": 18,
+        "trials": 18
+      },
+      "passes": 21,
+      "positive": {
+        "passes": 3,
+        "trials": 30
+      },
+      "trials": 48
+    },
+    "checkit": {
+      "errors": 5,
+      "graded_trials": 46,
+      "invisible": 0,
+      "negative": {
+        "passes": 16,
+        "trials": 18
+      },
+      "passes": 17,
+      "positive": {
+        "passes": 1,
+        "trials": 33
+      },
+      "trials": 51
+    },
+    "dogfood": {
+      "errors": 2,
+      "graded_trials": 49,
+      "invisible": 0,
+      "negative": {
+        "passes": 18,
+        "trials": 18
+      },
+      "passes": 23,
+      "positive": {
+        "passes": 5,
+        "trials": 33
+      },
+      "trials": 51
+    },
+    "handoff": {
+      "errors": 0,
+      "graded_trials": 51,
+      "invisible": 0,
+      "negative": {
+        "passes": 18,
+        "trials": 18
+      },
+      "passes": 39,
+      "positive": {
+        "passes": 21,
+        "trials": 33
+      },
+      "trials": 51
+    },
+    "kg": {
+      "errors": 0,
+      "graded_trials": 48,
+      "invisible": 0,
+      "negative": {
+        "passes": 21,
+        "trials": 21
+      },
+      "passes": 30,
+      "positive": {
+        "passes": 9,
+        "trials": 27
+      },
+      "trials": 48
+    },
+    "skillify": {
+      "errors": 1,
+      "graded_trials": 53,
+      "invisible": 0,
+      "negative": {
+        "passes": 24,
+        "trials": 24
+      },
+      "passes": 25,
+      "positive": {
+        "passes": 1,
+        "trials": 30
+      },
+      "trials": 54
+    }
+  }
+}
