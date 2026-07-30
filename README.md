@@ -62,7 +62,7 @@ npx skills add broomva/skills --skill '*'
 | [`eve-forge`](skills/orchestration/eve-forge/) | Forge a personalized eve agent for a business end-to-end — absorb the business's artifacts, author the `agent/` dir, validate, and deploy |
 | [`governed-autonomy-loop`](skills/orchestration/governed-autonomy-loop/) | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
 | [`handoff`](skills/orchestration/handoff/) | Fresh-session handoff doc drafting |
-| [`p9`](skills/orchestration/p9/) | P9 — Broomva productive-wait primitive (the wait optimizer) |
+| [`p9`](skills/orchestration/p9/) | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | [`persist`](skills/orchestration/persist/) | bstack P12 — Persistent Loop Discipline |
 | [`role-x`](skills/orchestration/role-x/) | bstack P17 — Lens-Routed Request Articulation |
 
