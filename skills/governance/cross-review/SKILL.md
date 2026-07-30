@@ -65,6 +65,122 @@ ESCALATE: round 3 still <7 → surface to user
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
+## Mutation-proof — the one rubric dimension a machine can check
+
+Four of the five rubric dimensions are judgement calls. The fifth — *tests cover the change* — is not. It has an operational definition:
+
+> **A test covers a change iff neutering the change turns the test red.**
+
+`scripts/mutation-proof.sh` runs that experiment. It copies the tree to a scratch dir under `mktemp`, neuters the target **in the copy**, and re-runs the test command with `cwd` set to the copy. The working tree is never touched.
+
+```
+green before + RED after   → PROVEN. The test discriminates.
+green before + GREEN after → UNPROVEN. The test is decoration with respect
+                             to that target. That is the finding.
+not green before           → INCONCLUSIVE. Nothing can be proven about a
+                             test that does not pass to begin with.
+```
+
+Three further shapes resolve to INCONCLUSIVE rather than a verdict, because in each the experiment did not happen:
+
+- **The mutation changed nothing.** `--ref HEAD~1` when the file last changed earlier leaves it byte-identical, and the suite never ran without the code. Reported with the ref named.
+- **The mutated run emitted fewer checks than the baseline while exiting 0.** It did not pass; it did not run.
+- **The runner aborted before reaching a verdict.** Setup failures exit 2, never 1 — borrowing the UNPROVEN code would report "your test is decoration" when the truth is "the runner fell over".
+
+A **symlinked target is refused outright**: `cat >` follows a link, so mutating one writes through it into the real file, which may sit outside `--root` and would not be restored. Point `--target` at the real file.
+
+Two further containment properties, because a leaf check taken before the test command runs is not enough. **The tree is re-copied before every target**, so one target's test cannot leave the tree — or a swapped-in symlink — behind for the next; and **containment is re-asserted at the moment of every write**, resolving the parent chain physically rather than trusting the snapshot taken at argument-resolution time.
+
+```bash
+# neuter a script and see whether the suite notices
+mutation-proof run \
+  --target scripts/control-gate-hook.sh \
+  --test 'python3 scripts/test_hook_gates.py'
+
+# prove a fix against its own pre-fix state
+mutation-proof run \
+  --target src/gate.sh \
+  --test 'bash t/run.sh' \
+  --strategy revert --ref HEAD~1
+```
+
+| Strategy | Mutation | Use for |
+|---|---|---|
+| `stub` (default) | Replaces the target with a trivially-succeeding no-op for its type — for shell, `return 0 2>/dev/null \|\| true; exit 0`, which is inert when the file is *sourced* and exits 0 when executed; a `main()` returning 0 for python; `process.exit(0)` for node. Type from extension, then shebang; an unrecognised type is an error, not a guess. | "Does this suite test this file at all?" |
+| `revert` | `git show <ref>:<path>` restores the pre-fix content. A file absent at that ref is deleted, because absence *is* the pre-fix state. | "Does this test prove *this fix*?" |
+
+Exit codes: `0` PROVEN · `1` UNPROVEN · `2` usage/setup error · `3` INCONCLUSIVE. Each mutation also emits one parseable line: `mutation-proof: verdict=… target=… rc_before=… rc_after=… flipped=…`.
+
+**On the flip count.** When both runs emit per-check markers *and* the suite ran the same number of checks, the report names how many flipped ok→FAIL. When the output is not parseable, or the suite aborted early so the shapes differ, it says so and reports exit codes only. An invented count would be exactly the decorative signal this tool exists to catch.
+
+### Emitting a probe receipt for unhobble
+
+`unhobble --probe-receipts` answers "has this mechanism been demonstrated to fire?" from a recorded receipt with three legs — `fires_on_trigger`, `silent_on_non_trigger`, `neutered_check_went_red` — and reads `fires` only when all three are `true`. It cannot verify a receipt: it does `all(rec.get(leg) is True …)`, so hand-written `true`s buy a free-to-delete verdict. That is a gate whose producer can trivially satisfy it.
+
+This runner performs the third leg for real, so it can record it from an observation instead of an assertion:
+
+```bash
+mutation-proof run --target scripts/gate.sh --test 'bash tests/gate.test.sh' \
+  --emit-receipt probes.json
+```
+
+```json
+{
+  "probes": {
+    "scripts/gate.sh": {
+      "neutered_check_went_red": true,
+      "evidence": {
+        "producer": "mutation-proof v0.0.1 (broomva/skills cross-review)",
+        "legs_observed": ["neutered_check_went_red"],
+        "legs_not_observed": ["fires_on_trigger", "silent_on_non_trigger"],
+        "exit_code_baseline": 0, "exit_code_mutated": 1, "checks_flipped": 3
+      }
+    }
+  }
+}
+```
+
+**It writes one leg and only one leg.** The other two describe trigger behaviour this runner never exercises, so they are left *absent* and unhobble reads the receipt as `incomplete`. Defaulting them to `true` for a tidier verdict would forge two untested legs — the identical defect one level up. An honest `incomplete` is the correct output.
+
+**Evidence is leg-scoped, and that is not cosmetic.** unhobble's `shows_evidence` is per-*record*: `bool(str(rec.get("evidence") or "").strip())`. A top-level `evidence` key would star the whole record as evidenced, silently upgrading a hand-written bare `yes*` to `yes` — this runner's honest observation acting as cover for two unevidenced claims. Verified by execution against BRO-2035: the top-level shape yields `yes`, the leg-scoped shape preserves `yes*`. When merging onto legs asserted `true` with nothing behind them, the runner says so on stderr.
+
+**What the receipt cannot do yet.** With one leg of three, `probe_state` returns `incomplete` whether the verdict was PROVEN, UNPROVEN, or absent — so `--emit-receipt` cannot presently move a consumer verdict in either direction. What it guarantees today is that it never *falsely* moves one. Per-leg consumption is BRO-2035's side of the contract.
+
+Three distinctions the emitter keeps:
+
+- `neutered_check_went_red: false` is **written**, not omitted. "I ran it and the check did not go red" is a finding; "I did not run it" is a gap. They must not look alike.
+- An INCONCLUSIVE run writes **nothing**. Nothing was observed, so there is nothing to claim.
+- Merging preserves legs recorded by other producers, and a file that is not a receipt is refused rather than overwritten.
+
+**Scope is mandatory for the receipt to name anything.** unhobble's verdict is per *rule*, and a receipt with no `covers` reads as `unscoped`: it names no rule and promotes nothing, deliberately — probing one branch of one mechanism must not license deleting every rule that happens to cite that mechanism. Pass `--covers 'Section Heading'` (repeatable, comma-separated accepted) to scope it; without it the runner says so on stdout rather than claiming otherwise. Scoping makes the receipt *addressable*, not promoting: one leg of three still cannot reach `fires`.
+
+Keying: unhobble keys a probe by the backticked reference *as written in the audited prose*, resolved against its `--repo-root`. The default key here is the target's path under `--root`, which is that same string whenever the two roots agree. When the prose refers to a mechanism differently — a user-scope `~/.claude/...` ref, say — pass `--receipt-key` rather than letting the runner guess at a normalisation.
+
+This is a reporting flag, not a dependency: nothing here imports unhobble or reads its schema back. The receipt is still a file an agent could hand-write; what changes is that an honest path now exists, and a receipt that shows its exit codes can be audited by a reader instead of taken on faith.
+
+### Why this exists
+
+"Every fix mutation-proven" was a P20 discipline that lived only in prose and memory. Per the workspace invariant, *a phrase that recurs as a discipline must map to a concrete machine-checkable behavior, or it is not discipline.*
+
+In the BRO-2019 hook-gate audit the step caught two things nothing else did:
+
+1. **Five path-shape tests that passed identically with and without the fix.** They exercised the branch where `Path.resolve()` normalises for free, not the branch that carried the defect. Green, and testing nothing.
+2. **Three control-gate checks that passed against an `exit 0` stub** — because "empty stdout + rc 0" is indistinguishable from a dead script.
+
+It also produced the positive evidence for every fix in that work: reverting the casefold failed 4 checks, the suffix match 3, the advisory-continue 1, the G3 pattern 7, `replace_all` 1, `surrogateescape` 1.
+
+### On pre-push it is a REPORTED SIGNAL, not a gate
+
+```bash
+cross-review pre-push \
+  --mutation-target=scripts/foo.sh \
+  --mutation-test='bash tests/foo.test.sh'
+```
+
+`pre-push` prints the verdict and **does not change its own exit code**, whatever the verdict is. That is deliberate on first landing: the false-positive rate on real repositories is not yet known, and a gate that blocks pushes on an unmeasured signal trains people to bypass gates. An UNPROVEN verdict is information the reviewer must answer — fix the test, or state in the PR why the coverage lives elsewhere — not an automatic stop.
+
+Promoting it to a blocking gate is a later decision, and it needs evidence: a measured false-positive rate across real repos, gathered from the reported signal. When no `--mutation-target` is given, `pre-push` says so explicitly rather than staying silent, because "the signal did not run" and "the signal passed" must never look alike.
+
 ## Invocation patterns
 
 ### Pattern 1: pre-push gate (the canonical use)
@@ -123,6 +239,7 @@ Used outside the PR flow — e.g., when investigating a class of issues across a
 P20 (this skill) is a reflex, not a request. Agents must apply the following without being prompted:
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
+1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
 2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore. Max 3 rounds.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).
@@ -142,6 +259,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
 | "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, max 3 rounds. Don't push override. |
+| "The tests are green, so dimension 5 is satisfied" | Green proves the suite ran, not that it watches the code you changed. Delete the code and re-run: if it stays green, the test is decoration. `mutation-proof run --target … --test …`. |
 
 ## Red flags — STOP if you catch yourself
 
@@ -154,7 +272,11 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 `scripts/cross-review.sh` — the entry point. Auto-detects Codex availability (Strata A), falls back to subagent dispatch (Strata B), always runs composed adversarial skills (Strata C).
 
-See [`scripts/cross-review.sh`](./scripts/cross-review.sh) for the implementation + [`references/rubric.md`](./references/rubric.md) for the full rubric definition + [`tests/`](./tests/) for the verification battery.
+`scripts/mutation-proof.sh` — the mutation-proof runner. The only part of the rubric this repo executes rather than describes.
+
+See [`scripts/cross-review.sh`](./scripts/cross-review.sh) and [`scripts/mutation-proof.sh`](./scripts/mutation-proof.sh) for the implementations + [`references/rubric.md`](./references/rubric.md) for the full rubric definition + [`tests/`](./tests/) for the verification battery.
+
+`tests/mutation-proof.test.sh` includes the self-referential case: it stubs `mutation-proof.sh` and requires its own suite to go red. A mutation-proof runner whose tests pass against a stubbed runner would be the exact defect it exists to detect.
 
 ## Related
 

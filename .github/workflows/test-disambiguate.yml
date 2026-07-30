@@ -1,0 +1,44 @@
+name: test-disambiguate
+
+# Pytest gate for the `disambiguate` skill (skills/tooling/disambiguate/).
+# Path-filtered: runs ONLY when skills/tooling/disambiguate/** changes.
+#
+# The word-count cases are the worked examples published in ASD-STE100 Issue 9
+# section 8, so this job checks the algorithm against the authority rather than
+# against the author's reading of it.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/disambiguate/**'
+      - '.github/workflows/test-disambiguate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/disambiguate/**'
+      - '.github/workflows/test-disambiguate.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-disambiguate-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/tooling/disambiguate
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test deps
+        run: pip install pytest
+      - name: Tests
+        run: python -m pytest tests/ -q
+      - name: Self-check (the skill must survive its own checker)
+        run: python scripts/disambiguate.py SKILL.md --json > /dev/null

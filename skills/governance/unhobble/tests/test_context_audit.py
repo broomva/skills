@@ -10,10 +10,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from context_audit import (  # noqa: E402
+    BadProbeReceipts,
     Section,
+    anchor_state,
     audit,
+    is_live_mechanism,
     audit_prompt,
     classify_sentence,
+    cover_hits,
+    cover_matches,
+    fires_cell,
+    load_probe_receipts,
+    match_receipts,
+    nearest_ref,
+    probe_state,
+    shows_evidence,
     count_examples,
     count_outbound_links,
     disclosure_check,
@@ -408,6 +419,9 @@ def test_existing_script_is_an_anchored_candidate(tmp_path):
             "kind": "path",
             "exists_on_disk": True,
             "scope": "repo",
+            # Existence alone never resolves the firing question.
+            "probe": "unresolved",
+            "shows_evidence": False,
         }
     ]
 
@@ -494,6 +508,665 @@ def test_parent_traversal_never_anchors(tmp_path):
     sec = Section("f.md", "H", 2, 1, 2, "Anchored by `../escape.sh`.")
     refs = mechanism_refs(sec, root)
     assert all(r["exists_on_disk"] is False for r in refs)
+
+
+# -------------------------------------------------- probe / anchor state (efficacy)
+#
+# The defect these pin: `anchored_candidate` means a referenced file EXISTS, and
+# the adjudication table used to route existence straight to "delete the prose,
+# free". Three hooks in ~/broomva were registered, scheduled, independent of the
+# agent, and produced no signal at all — every one of them an anchored candidate.
+# Existence and firing are now separate states, and firing is UNRESOLVED until a
+# probe receipt says otherwise.
+
+_LEGS = {
+    "fires_on_trigger": True,
+    "silent_on_non_trigger": True,
+    "neutered_check_went_red": True,
+}
+# A receipt must also name the rules it covers, or it promotes nothing: the
+# probe is per-mechanism, the deletion verdict is per RULE.
+_FULL_PROBE = dict(_LEGS, covers=["H", "Rules"])
+
+
+def _live_ref(ref="hooks/gate.sh", probe="unresolved", exists=True, kind="path"):
+    return {
+        "ref": ref,
+        "kind": kind,
+        "exists_on_disk": exists,
+        "scope": "repo",
+        "probe": probe,
+        "shows_evidence": False,
+    }
+
+
+def test_probe_state_without_a_receipt_is_unresolved():
+    assert probe_state("hooks/gate.sh", None) == "unresolved"
+    assert probe_state("hooks/gate.sh", {"other.sh": _FULL_PROBE}) == "unresolved"
+
+
+def test_probe_state_fires_only_with_all_three_legs():
+    assert probe_state("g.sh", {"g.sh": dict(_FULL_PROBE)}) == "fires"
+
+
+@pytest.mark.parametrize("missing", sorted(_LEGS))
+def test_every_leg_is_load_bearing(missing):
+    """Dropping ANY leg must stop the promotion, not just the third.
+
+    Parametrised rather than asserted once, because a check that only pinned the
+    neuter leg would pass while the positive and negative legs quietly went
+    optional.
+    """
+    partial = {k: v for k, v in _FULL_PROBE.items() if k != missing}
+    assert probe_state("g.sh", {"g.sh": partial}) == "incomplete"
+
+
+def test_probe_without_a_negative_control_is_incomplete_not_fires():
+    # The named case: (a) and (b) green, (c) never run. A probe that never
+    # neutered the mechanism cannot tell "the gate works" from "my test passes",
+    # so it must not read as demonstrated.
+    receipt = {
+        "fires_on_trigger": True, "silent_on_non_trigger": True, "covers": ["H"]
+    }
+    assert probe_state("g.sh", {"g.sh": receipt}) == "incomplete"
+
+
+@pytest.mark.parametrize("truthy", ["true", "True", 1, 1.0, "yes", [1]])
+def test_a_leg_must_be_literally_True_not_merely_truthy(truthy):
+    """The trust boundary of the whole feature.
+
+    `all(rec.get(leg) is True ...)` is what stops a JSON-stringified "true", or
+    a 1 from a spreadsheet export, or a non-empty list, from reaching `fires`.
+    Relaxing `is True` to `bool(...)` is a one-character refactor that silently
+    lowers the bar for deleting prose, and it survived the suite unpinned.
+    """
+    rec = dict(_LEGS, neutered_check_went_red=truthy, covers=["H"])
+    assert probe_state("g.sh", {"g.sh": rec}) == "incomplete"
+
+
+@pytest.mark.parametrize("falsey", [0, "", "false", None])
+def test_only_a_literal_False_reads_as_dead(falsey):
+    # Symmetric strictness: an absent or falsey-but-not-False leg is missing
+    # evidence (incomplete), not a positive finding that the mechanism is dead.
+    rec = dict(_LEGS, fires_on_trigger=falsey, covers=["H"])
+    assert probe_state("g.sh", {"g.sh": rec}) == "incomplete"
+    assert probe_state("g.sh", {"g.sh": dict(_LEGS, fires_on_trigger=False)}) == "dead"
+
+
+def test_probe_that_did_not_fire_is_dead():
+    assert probe_state("g.sh", {"g.sh": {"fires_on_trigger": False}}) == "dead"
+
+
+def test_anchor_state_none_when_no_mechanism_exists():
+    assert anchor_state([]) == "none"
+    assert anchor_state([_live_ref(exists=False)]) == "none"
+
+
+def test_anchor_state_of_an_existing_but_unprobed_mechanism_is_unproven():
+    """THE regression. Existence used to mean free-to-delete; now it means ask."""
+    assert anchor_state([_live_ref()]) == "unproven"
+
+
+def test_anchor_state_fires_when_a_probe_demonstrated_it():
+    assert anchor_state([_live_ref(probe="fires")]) == "fires"
+
+
+def test_anchor_state_dead_when_every_live_mechanism_probed_dead():
+    assert anchor_state([_live_ref(probe="dead"), _live_ref("b.sh", "dead")]) == "dead"
+
+
+def test_a_DEAD_sibling_dominates_a_firing_one():
+    """The inversion this replaces.
+
+    `any(probe == "fires")` read a section citing a working gate beside a
+    probed-DEAD one as `fires`, so a user who filed the honest negative receipt
+    — this path is unprotected — had the finding discarded and was told the
+    prose now solely carrying the behavior was free to delete. A known-dead
+    mechanism cannot be more proven than an unknown one.
+    """
+    assert anchor_state([_live_ref("a.sh", "dead"), _live_ref("b.sh", "fires")]) == "dead"
+    # And the roll-up must not hide it: `dead` is a state a reader has to see.
+    assert anchor_state([_live_ref("b.sh", "fires"), _live_ref("a.sh", "dead")]) == "dead"
+
+
+def test_fires_requires_EVERY_live_mechanism_to_have_fired():
+    assert anchor_state([_live_ref("a.sh", "fires"), _live_ref("b.sh", "fires")]) == "fires"
+    assert anchor_state([_live_ref("a.sh", "fires"), _live_ref("b.sh")]) == "unproven"
+    assert (
+        anchor_state([_live_ref("a.sh", "fires"), _live_ref("b.sh", "incomplete")])
+        == "unproven"
+    )
+
+
+def test_incomplete_probe_does_not_reach_fires_at_section_level():
+    assert anchor_state([_live_ref(probe="incomplete")]) == "unproven"
+
+
+def test_an_unscoped_receipt_does_not_promote():
+    # A receipt naming no rule promotes nothing past UNRESOLVED.
+    assert anchor_state([_live_ref(probe="unscoped")]) == "unproven"
+
+
+def test_a_dead_mechanism_dominates_an_unprobed_one_too():
+    # Mixed evidence is not evidence of firing, and a negative finding leads.
+    assert anchor_state([_live_ref("a.sh", "dead"), _live_ref("b.sh")]) == "dead"
+
+
+def test_mechanism_refs_resolve_the_probe_from_receipts(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    sec = Section("f.md", "H", 2, 1, 2, "Enforced by `hooks/gate.sh` on every call.")
+    refs = mechanism_refs(sec, tmp_path, {"hooks/gate.sh": dict(_FULL_PROBE)})
+    assert refs[0]["probe"] == "fires"
+    assert anchor_state(refs) == "fires"
+
+
+# --- scope: the probe is per-mechanism, the deletion verdict is per RULE -----
+
+
+def test_a_receipt_only_promotes_the_rules_it_covers(tmp_path):
+    """One receipt for one gate must not free every rule that cites it.
+
+    The reviewed case: a receipt evidenced "probed the rm -rf branch only"
+    promoted three sections across two files, including "Secrets must never be
+    committed". Citing a mechanism is not being enforced by it — the trap this
+    skill names for `.md` refs, relocated to `.sh` refs.
+    """
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    receipts = {"gate.sh": dict(_LEGS, covers=["Destructive bash"])}
+    covered = Section("f.md", "Destructive bash", 2, 1, 2, "Gated by `gate.sh`.")
+    other = Section("f.md", "Secrets", 2, 3, 4, "Gated by `gate.sh`.")
+
+    assert anchor_state(mechanism_refs(covered, tmp_path, receipts)) == "fires"
+    assert anchor_state(mechanism_refs(other, tmp_path, receipts)) == "unproven"
+    assert mechanism_refs(other, tmp_path, receipts)[0]["probe"] == "unresolved"
+
+
+def test_an_unscoped_receipt_promotes_nothing_anywhere(tmp_path):
+    # Fails CLOSED: this gate feeds an irreversible decision.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    sec = Section("f.md", "Anything", 2, 1, 2, "Gated by `gate.sh`.")
+    refs = mechanism_refs(sec, tmp_path, {"gate.sh": dict(_LEGS)})
+    assert refs[0]["probe"] == "unscoped"
+    assert anchor_state(refs) == "unproven"
+    # Second assertion: the same receipt WITH covers does promote, so the test
+    # discriminates the scope gate rather than merely observing a refusal.
+    scoped = mechanism_refs(sec, tmp_path, {"gate.sh": dict(_LEGS, covers=["Anything"])})
+    assert scoped[0]["probe"] == "fires"
+    assert anchor_state(scoped) == "fires"
+
+
+def test_covers_accepts_a_fully_qualified_section_key(tmp_path):
+    # `path#heading` disambiguates the same heading in two audited files.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    sec = Section("a.md", "Rules", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["a.md#Rules"])}
+    assert mechanism_refs(sec, tmp_path, receipts)[0]["probe"] == "fires"
+    other_file = Section("b.md", "Rules", 2, 1, 2, "Gated by `gate.sh`.")
+    assert mechanism_refs(other_file, tmp_path, receipts)[0]["probe"] == "unresolved"
+
+
+# --- the documented remedy has to work in every invocation form -------------
+
+
+@pytest.mark.parametrize(
+    "argv_path",
+    [
+        "CLAUDE.md",                      # context_audit.py CLAUDE.md
+        "/abs/repo/CLAUDE.md",            # an absolute path
+        "sub/dir/CLAUDE.md",              # what directory-glob mode produces
+    ],
+)
+def test_a_qualified_cover_matches_however_the_file_was_spelled_on_argv(argv_path):
+    """`Section.path` is verbatim from argv, so the SAME section is spelled three
+    ways depending on invocation. A qualified `covers` that only matched one
+    spelling made the documented remedy for ambiguity unusable in exactly the
+    mode SKILL.md recommends (audit every surface at once, by directory).
+    """
+    sec = Section(argv_path, "Testing", 2, 1, 2, "body")
+    assert cover_matches("CLAUDE.md#Testing", sec) is True
+
+
+def test_a_qualified_cover_does_not_match_a_different_file_with_the_same_name():
+    # Suffix matching is component-wise in both directions, so these stay apart.
+    assert cover_matches("a/CLAUDE.md#Testing",
+                         Section("b/CLAUDE.md", "Testing", 2, 1, 2, "x")) is False
+
+
+def test_a_qualified_cover_still_requires_the_heading_to_match():
+    assert cover_matches("CLAUDE.md#Testing",
+                         Section("CLAUDE.md", "Other", 2, 1, 2, "x")) is False
+
+
+def test_cover_hits_counts_a_bare_heading_across_every_audited_file():
+    secs = [
+        Section("CLAUDE.md", "Conventions", 2, 1, 2, "x"),
+        Section("AGENTS.md", "Conventions", 2, 1, 2, "x"),
+        Section("CLAUDE.md", "Scope", 2, 3, 4, "x"),
+    ]
+    hits = cover_hits({"g.sh": dict(_LEGS, covers=["Conventions", "Scope"])}, secs)
+    assert hits == {"Conventions": 2, "Scope": 1}
+
+
+def test_an_ambiguous_bare_cover_promotes_NEITHER_section(tmp_path):
+    """MAJOR-2's harm: a BAD deletion, not a fail-safe one.
+
+    `Conventions` exists in both CLAUDE.md and AGENTS.md — and SKILL.md step 1
+    tells you to audit them together. A receipt that probed the ESLint branch in
+    one would otherwise free the "never push to main" rule in the other.
+    """
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("AGENTS.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["Conventions"])}
+    ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+    assert ambiguous == {"Conventions"}
+    for sec in (a, b):
+        refs = mechanism_refs(sec, tmp_path, receipts, ambiguous)
+        assert refs[0]["probe"] == "ambiguous"
+        assert anchor_state(refs) == "unproven"
+
+
+def test_qualifying_the_cover_resolves_the_ambiguity(tmp_path):
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("AGENTS.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["CLAUDE.md#Conventions"])}
+    ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+    assert ambiguous == set()
+    assert mechanism_refs(a, tmp_path, receipts, ambiguous)[0]["probe"] == "fires"
+    assert mechanism_refs(b, tmp_path, receipts, ambiguous)[0]["probe"] == "unresolved"
+
+
+def test_two_identical_headings_in_ONE_file_cannot_be_separated_so_neither_promotes(tmp_path):
+    # They share a `key` too, so no `covers` form distinguishes them. Refuse.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Rules", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("CLAUDE.md", "Rules", 2, 5, 6, "Gated by `gate.sh`.")
+    for cover in ("Rules", "CLAUDE.md#Rules"):
+        receipts = {"gate.sh": dict(_LEGS, covers=[cover])}
+        ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+        assert ambiguous == {cover}, cover
+        assert mechanism_refs(a, tmp_path, receipts, ambiguous)[0]["probe"] == "ambiguous"
+
+
+def test_an_ambiguous_cover_alongside_a_precise_one_still_promotes(tmp_path):
+    # Refusal is per-section: if ANY applicable entry names this section alone,
+    # the probe was scoped to it and stands.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    a = Section("CLAUDE.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    b = Section("AGENTS.md", "Conventions", 2, 1, 2, "Gated by `gate.sh`.")
+    receipts = {"gate.sh": dict(_LEGS, covers=["Conventions", "CLAUDE.md#Conventions"])}
+    ambiguous = {c for c, n in cover_hits(receipts, [a, b]).items() if n > 1}
+    assert mechanism_refs(a, tmp_path, receipts, ambiguous)[0]["probe"] == "fires"
+    assert mechanism_refs(b, tmp_path, receipts, ambiguous)[0]["probe"] == "ambiguous"
+
+
+def test_a_negative_finding_is_never_discarded_for_scope(tmp_path):
+    # `dead` never promotes, so gating it on paperwork would only throw away the
+    # honest answer — the same error as BLOCKER-1, one level down.
+    (tmp_path / "gate.sh").write_text("#!/bin/sh\n")
+    sec = Section("f.md", "Anywhere", 2, 1, 2, "Gated by `gate.sh`.")
+    refs = mechanism_refs(sec, tmp_path, {"gate.sh": {"fires_on_trigger": False}})
+    assert refs[0]["probe"] == "dead"
+    assert anchor_state(refs) == "dead"
+
+
+# --- commands are mechanisms too (existence was never checkable for them) ----
+
+
+def test_a_probed_command_is_a_live_mechanism(tmp_path):
+    """`make janitor` cannot be existence-checked, so a receipt is its only evidence.
+
+    Under an existence filter a fully-evidenced command receipt changed nothing
+    while the report called it applied — and `make janitor` / `make control-audit`
+    are the canonical mechanism form in this workspace.
+    """
+    sec = Section("f.md", "Janitor", 2, 1, 2, "Run `make janitor` after every merge.")
+    refs = mechanism_refs(sec, tmp_path, {"make janitor": dict(_LEGS, covers=["Janitor"])})
+    assert refs[0]["kind"] == "command" and refs[0]["exists_on_disk"] is False
+    assert is_live_mechanism(refs[0]) is True
+    assert anchor_state(refs) == "fires"
+
+
+def test_an_unprobed_command_stays_out_of_the_anchor_question(tmp_path):
+    sec = Section("f.md", "Janitor", 2, 1, 2, "Run `make janitor` after every merge.")
+    refs = mechanism_refs(sec, tmp_path, None)
+    assert is_live_mechanism(refs[0]) is False
+    assert anchor_state(refs) == "none"
+
+
+def test_a_probed_dead_command_carries_the_section(tmp_path):
+    sec = Section("f.md", "Janitor", 2, 1, 2, "Run `make janitor` after every merge.")
+    refs = mechanism_refs(sec, tmp_path, {"make janitor": {"fires_on_trigger": False}})
+    assert anchor_state(refs) == "dead"
+
+
+def test_a_receipt_cannot_anchor_a_file_that_does_not_exist(tmp_path):
+    # Otherwise a receipt for a mechanism deleted since the probe would keep
+    # certifying prose as free to cut.
+    sec = Section("f.md", "H", 2, 1, 2, "Enforced by `hooks/ghost.sh` somewhere.")
+    refs = mechanism_refs(sec, tmp_path, {"hooks/ghost.sh": dict(_FULL_PROBE)})
+    assert refs[0]["exists_on_disk"] is False
+    assert anchor_state(refs) == "none"
+
+
+# --- a receipt is an attestation the script cannot verify -------------------
+#
+# `probe_state` trusts the booleans. An agent that wants a section deleted can
+# hand-write three `true`s and take the free tier, which makes the producer of
+# the signal the actor being governed. Unverifiable either way, so the report
+# does the one thing it honestly can: distinguish a receipt that shows its work
+# from one that only asserts.
+
+
+def test_bare_boolean_receipt_still_fires_but_shows_no_evidence():
+    assert probe_state("g.sh", {"g.sh": dict(_FULL_PROBE)}) == "fires"
+    assert shows_evidence("g.sh", {"g.sh": dict(_FULL_PROBE)}) is False
+
+
+@pytest.mark.parametrize(
+    "evidence,expected",
+    [
+        ("rc=1 on the padded command; renamed the hook, rc went 0", True),
+        ("", False),
+        ("   ", False),  # whitespace is not work shown
+        (None, False),
+        # A BARE BOOLEAN is definitionally a claim showing no work, and it is
+        # the natural thing to type for someone already typing three booleans.
+        # `str(True)` is "True", so a stringifying test cleared the star.
+        (True, False),
+        (False, False),
+        (1, False),
+        # A runner emits an evidence OBJECT, not a sentence — load-bearing for
+        # the receipt-runner in the sibling PR. Empty dict is still no work.
+        ({"exit_code": 1, "cmd": "git reset --hard"}, True),
+        ({}, False),
+    ],
+)
+def test_shows_evidence_reads_the_evidence_field(evidence, expected):
+    rec = dict(_FULL_PROBE, evidence=evidence)
+    assert shows_evidence("g.sh", {"g.sh": rec}) is expected
+
+
+def test_shows_evidence_is_false_without_a_receipt():
+    assert shows_evidence("g.sh", None) is False
+    assert shows_evidence("g.sh", {"other.sh": dict(_FULL_PROBE, evidence="x")}) is False
+
+
+def test_fires_cell_stars_a_bare_attestation():
+    bare = {"anchor_state": "fires", "mechanism_refs": [_live_ref(probe="fires")]}
+    shown = {
+        "anchor_state": "fires",
+        "mechanism_refs": [{**_live_ref(probe="fires"), "shows_evidence": True}],
+    }
+    assert fires_cell(bare) == "yes*"
+    assert fires_cell(shown) == "yes"
+
+
+@pytest.mark.parametrize(
+    "state,cell", [("unproven", "?"), ("dead", "DEAD"), ("none", "")]
+)
+def test_fires_cell_passes_non_firing_states_through(state, cell):
+    assert fires_cell({"anchor_state": state, "mechanism_refs": []}) == cell
+
+
+def test_audit_counts_and_marks_bare_attestations(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Repo\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` on every write.\n"
+    )
+    bare = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        probe_receipts={"hooks/gate.sh": dict(_FULL_PROBE)},
+    )
+    assert bare["anchors"]["fires"] == 1
+    assert bare["attestations_without_evidence"] == 1
+
+    shown = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        probe_receipts={
+            "hooks/gate.sh": dict(_FULL_PROBE, evidence="rc=1 padded; neutered -> rc=0")
+        },
+    )
+    assert shown["anchors"]["fires"] == 1
+    assert shown["attestations_without_evidence"] == 0
+
+
+# --- a receipt keyed to nothing must not look like a clean run --------------
+#
+# Found by dogfooding: a receipt keyed `scripts/control-gate-hook.sh` when the
+# surface says `control-gate-hook.sh` matched nothing, and the report came back
+# BYTE-IDENTICAL to supplying no receipts at all. Leaving those sections
+# UNRESOLVED is the right polarity and stays; the silence is the defect.
+
+
+def test_match_receipts_separates_applied_from_keyed_to_nothing():
+    rc = match_receipts(
+        {"hooks/gate.sh": {}, "scripts/ghost.sh": {}},
+        ["hooks/gate.sh", "make janitor"],
+        live_refs=["hooks/gate.sh"],
+    )
+    assert rc["loaded"] == 2
+    assert rc["matched"] == 1
+    assert rc["unmatched_total"] == 1
+    assert rc["unmatched"][0]["key"] == "scripts/ghost.sh"
+
+
+def test_match_receipts_counts_unscoped_receipts():
+    rc = match_receipts(
+        {"a.sh": dict(_LEGS), "b.sh": dict(_LEGS, covers=["H"])},
+        ["a.sh", "b.sh"],
+        live_refs=["a.sh", "b.sh"],
+        hits={"H": 1},
+    )
+    assert rc["unscoped"] == 1
+    assert rc["unscoped_promoted_nothing"] == 1
+    assert rc["unscoped_negative"] == 0
+
+
+def test_match_receipts_separates_an_unscoped_NEGATIVE_from_one_that_did_nothing():
+    """The false-sentence defect.
+
+    An unscoped negative receipt APPLIES — it moves every citing section to
+    DEAD. Counting it with the unscoped positives made the report print
+    "promoted nothing past UNRESOLVED" about a run that changed four verdicts.
+    """
+    rc = match_receipts(
+        {"a.sh": {"fires_on_trigger": False}, "b.sh": dict(_LEGS)},
+        ["a.sh", "b.sh"],
+        live_refs=["a.sh", "b.sh"],
+    )
+    assert rc["unscoped"] == 2
+    assert rc["unscoped_negative"] == 1
+    assert rc["unscoped_promoted_nothing"] == 1
+
+
+def test_match_receipts_flags_a_matched_but_inert_key():
+    # Matched a reference in the surface, but that reference is not a live
+    # mechanism, so no section changed state. "Matched" is not "applied".
+    rc = match_receipts({"ghost.sh": {}}, ["ghost.sh"], live_refs=[])
+    assert rc["matched"] == 1 and rc["inert"] == ["ghost.sh"]
+
+
+def test_match_receipts_flags_a_covers_entry_naming_no_section():
+    # A heading renamed since the probe stops promoting — safe, but silent.
+    rc = match_receipts(
+        {"a.sh": dict(_LEGS, covers=["Old Heading"])},
+        ["a.sh"],
+        live_refs=["a.sh"],
+        hits={"Old Heading": 0},
+    )
+    assert rc["unmatched_covers"] == ["Old Heading"]
+    assert rc["unmatched_covers_total"] == 1
+
+
+def test_match_receipts_flags_a_covers_entry_naming_more_than_one_section():
+    rc = match_receipts(
+        {"a.sh": dict(_LEGS, covers=["Conventions"])},
+        ["a.sh"],
+        live_refs=["a.sh"],
+        hits={"Conventions": 2},
+    )
+    assert rc["ambiguous_covers"] == ["Conventions"]
+    assert rc["ambiguous_covers_total"] == 1
+
+
+def test_match_receipts_is_empty_without_receipts():
+    assert match_receipts(None, ["a.sh"])["loaded"] == 0
+    assert match_receipts({}, ["a.sh"])["unmatched"] == []
+
+
+def test_match_receipts_truncation_reports_the_true_total():
+    rc = match_receipts(
+        {f"ghost{i}.sh": {} for i in range(25)}, ["real.sh"], max_unmatched=4
+    )
+    assert len(rc["unmatched"]) == 4
+    assert rc["unmatched_total"] == 25
+
+
+def test_nearest_ref_prefers_a_basename_hit_over_lexical_similarity():
+    # The dominant error: right mechanism, wrong path form. A same-directory
+    # sibling scores higher lexically and must NOT win.
+    assert (
+        nearest_ref("scripts/control-gate-hook.sh",
+                    ["control-gate-hook.sh", "scripts/control-gate-lint.sh"])
+        == "control-gate-hook.sh"
+    )
+
+
+def test_nearest_ref_refuses_to_guess_between_two_same_basename_refs():
+    """An ambiguous hint induces the WRONG fix, and the wrong fix promotes the
+    wrong section.
+
+    Surface has a destructive-ops gate and a lint gate both named `gate.sh`.
+    The user probed the lint gate, keys it `gate.sh`, is confidently told they
+    meant the security one, takes the suggestion — and security prose becomes
+    free-to-delete on the strength of a lint-gate probe, reported as success.
+    A named key with no hint is strictly better.
+    """
+    assert nearest_ref("gate.sh", [".claude/hooks/gate.sh", "scripts/gate.sh"]) is None
+
+
+def test_nearest_ref_refuses_a_lexical_tie():
+    assert nearest_ref("hooks/gate.sh", ["hooks/gatea.sh", "hooks/gateb.sh"]) is None
+
+
+def test_nearest_ref_falls_back_to_lexical_similarity():
+    assert nearest_ref("hooks/gate.sh", ["hooks/gates.sh"]) == "hooks/gates.sh"
+
+
+def test_nearest_ref_offers_nothing_rather_than_a_bad_guess():
+    assert nearest_ref("scripts/knowledge-catalog.sh", [".control/policy.yaml"]) is None
+    assert nearest_ref("anything.sh", []) is None
+
+
+def test_audit_flags_a_receipt_file_that_applied_to_nothing(tmp_path):
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Repo\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` on every write.\n"
+    )
+    report = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        # The near-miss: right mechanism, wrong path form.
+        probe_receipts={"scripts/gate.sh": dict(_FULL_PROBE)},
+    )
+    # Polarity unchanged — an unmatched key never promotes.
+    assert report["anchors"]["unproven"] == 1
+    rc = report["probe_receipts"]
+    assert (rc["loaded"], rc["matched"], rc["unmatched_total"]) == (1, 0, 1)
+    assert rc["unmatched"] == [{"key": "scripts/gate.sh", "nearest": "hooks/gate.sh"}]
+
+
+def test_load_probe_receipts_roundtrip(tmp_path):
+    p = tmp_path / "probes.json"
+    p.write_text('{"probes": {"a.sh": {"fires_on_trigger": true}}}')
+    assert load_probe_receipts(p) == {"a.sh": {"fires_on_trigger": True}}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not json at all",
+        '{"no_probes_key": {}}',
+        '{"probes": ["a.sh"]}',
+        "[]",
+    ],
+)
+def test_load_probe_receipts_refuses_junk_rather_than_defaulting_empty(tmp_path, body):
+    # Defaulting to {} would silently downgrade every anchor to unresolved while
+    # the run looked normal — a typo in the path becoming a quiet policy change.
+    p = tmp_path / "probes.json"
+    p.write_text(body)
+    with pytest.raises(BadProbeReceipts):
+        load_probe_receipts(p)
+
+
+def test_load_probe_receipts_missing_file_raises():
+    with pytest.raises(BadProbeReceipts):
+        load_probe_receipts(Path("/nonexistent/probes.json"))
+
+
+@pytest.mark.parametrize("value", ["true", "[]", "1", "null", '"a string"'])
+def test_a_non_dict_receipt_VALUE_is_named_not_silently_dropped(tmp_path, value):
+    """The same defect as an unmatched key, through the value-type door.
+
+    `{"probes": {"scripts/gate.sh": true}}` was filtered out by an isinstance
+    guard, leaving loaded=0 and a report byte-identical to no receipts at all.
+    """
+    p = tmp_path / "probes.json"
+    p.write_text('{"probes": {"scripts/gate.sh": %s}}' % value)
+    with pytest.raises(BadProbeReceipts) as e:
+        load_probe_receipts(p)
+    assert "scripts/gate.sh" in str(e.value)
+
+
+def test_audit_separates_existence_from_firing(tmp_path):
+    """End-to-end: the two columns disagree, which is the whole point."""
+    (tmp_path / "hooks").mkdir()
+    (tmp_path / "hooks" / "gate.sh").write_text("#!/bin/sh\n")
+    (tmp_path / "CLAUDE.md").write_text(
+        "# Repo\n\n## Rules\nNever commit to main.\n"
+        "Enforced by `hooks/gate.sh` on every write.\n"
+        "## Style\nPrefer bun over npm for new projects.\n"
+    )
+    report = audit([str(tmp_path)], repo_root=tmp_path)
+    rules = next(s for s in report["sections"] if s["heading"] == "Rules")
+    assert rules["anchored_candidate"] is True
+    assert rules["anchor_state"] == "unproven"
+    # Three sections (Repo / Rules / Style); only Rules names a mechanism.
+    assert report["anchors"] == {"fires": 0, "unproven": 1, "dead": 0, "none": 2}
+    assert report["probe_receipts"]["loaded"] == 0
+
+    probed = audit(
+        [str(tmp_path)],
+        repo_root=tmp_path,
+        probe_receipts={"hooks/gate.sh": dict(_LEGS, covers=["Rules"])},
+    )
+    rules = next(s for s in probed["sections"] if s["heading"] == "Rules")
+    assert rules["anchor_state"] == "fires"
+    assert probed["anchors"]["unproven"] == 0
+    assert probed["probe_receipts"] == {
+        "loaded": 1,
+        "matched": 1,
+        "unmatched": [],
+        "unmatched_total": 0,
+        "unscoped": 0,
+        "unscoped_negative": 0,
+        "unscoped_promoted_nothing": 0,
+        "inert": [],
+        "unmatched_covers": [],
+        "unmatched_covers_total": 0,
+        "ambiguous_covers": [],
+        "ambiguous_covers_total": 0,
+    }
 
 
 # ----------------------------------------------------------------- duplication

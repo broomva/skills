@@ -58,7 +58,7 @@ if str(_HERE.parent) not in sys.path:
     sys.path.insert(0, str(_HERE.parent))
 
 from skill_evals.runner import parse_frontmatter_description  # noqa: E402
-from skill_evals.usage import is_session_transcript  # noqa: E402
+from skill_evals.usage import DEFAULT_SKILLS_ROOT, is_session_transcript, owned_skills, scan  # noqa: E402
 
 DEFAULT_TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
 DEFAULT_SKILL_ROOTS = (
@@ -486,6 +486,121 @@ def budget_report(
 
 
 # ---------------------------------------------------------------------------
+# the trim proposal — the only lever that can actually reach the cap
+# ---------------------------------------------------------------------------
+
+#: What the proposal recommends for one roster entry.
+KEEP = "keep"
+DISABLE = "disable"
+VENDORED = "vendored"
+UNMEASURABLE = "unmeasurable"
+
+
+def trim_proposal(
+    listing: Listing,
+    roots: Iterable[Path] = DEFAULT_SKILL_ROOTS,
+    skills_root: Path = DEFAULT_SKILLS_ROOT,
+    transcripts: Path = DEFAULT_TRANSCRIPT_ROOT,
+) -> dict[str, Any]:
+    """Rank the roster for retirement, with the evidence behind each row.
+
+    PROPOSES. Changes nothing. Applying it is a separate decision, and it is left
+    that way on purpose — see ``circularity`` in the returned dict, which is part of
+    the output rather than a footnote in the docs, because a reader who acts on the
+    ranking without it will draw the wrong conclusion.
+
+    Ownership is load-bearing: a vendored or plugin skill is not editable here at all
+    (``npx skills update`` reverts it), so recommending its retirement would be
+    advice nobody in this repo can take.
+    """
+    cls = classify(listing)
+    masses = {m.name: m for m in skill_masses(roots)}
+    owned = set(owned_skills(Path(skills_root)))
+    counts, sessions, scanned = scan(Path(transcripts))
+
+    rows: list[dict[str, Any]] = []
+    for name in listing.names:
+        mass = masses[name].effective if name in masses else None
+        invocations = counts.get(name, 0)
+        delivered = cls.states.get(name, BARE)
+        if mass is None:
+            verdict = UNMEASURABLE          # a CLI built-in: consumes budget, not ours
+        elif name not in owned:
+            verdict = VENDORED              # editing it here would be reverted
+        elif invocations == 0:
+            verdict = DISABLE
+        else:
+            verdict = KEEP
+        rows.append({
+            "skill": name, "chars": mass, "invocations": invocations,
+            "sessions": len(sessions.get(name, ())), "delivered": delivered,
+            "owned": name in owned, "verdict": verdict,
+        })
+
+    # Heaviest first within the disable set: that is the order in which acting pays.
+    rows.sort(key=lambda r: (r["verdict"] != DISABLE, -(r["chars"] or 0)))
+    disable = [r for r in rows if r["verdict"] == DISABLE]
+    freed = sum(r["chars"] or 0 for r in disable)
+    after = len(listing.names) - len(disable)
+
+    return {
+        "transcripts_scanned": scanned,
+        "roster": len(listing.names),
+        "rows": rows,
+        "disable_count": len(disable),
+        "freed_chars": freed,
+        "roster_after": after,
+        "affordable_mean_before": round(BUDGET_CHARS / len(listing.names)) if listing.names else 0,
+        "affordable_mean_after": round(BUDGET_CHARS / after) if after else 0,
+        # Stated in the OUTPUT, not just the docs. A reader who ranks by "never
+        # invoked" without this draws a conclusion the data cannot support.
+        "circularity": (
+            "A BARE skill never had its description delivered, so it never had a "
+            "chance to be model-invoked. Retiring it for never triggering is partly "
+            "self-fulfilling. The honest framing is not 'these are useless' but 'we "
+            "are choosing which skills get to compete for a budget that cannot fit "
+            "them all'."
+        ),
+    }
+
+
+def format_proposal(prop: dict[str, Any], top: int = 25) -> str:
+    lines = [
+        "",
+        f"TRIM PROPOSAL — {prop['roster']} roster entries, "
+        f"{prop['transcripts_scanned']} transcripts scanned",
+        "-" * 74,
+        f"  {'skill':32}{'chars':>7}{'inv':>5}  {'delivered':11}{'verdict'}",
+    ]
+    for r in prop["rows"][:top]:
+        chars = "  n/a" if r["chars"] is None else f"{r['chars']:>5}"
+        lines.append(
+            f"  {r['skill'][:31]:32}{chars:>7}{r['invocations']:>5}  "
+            f"{r['delivered']:11}{r['verdict']}"
+        )
+    shown = min(top, len(prop["rows"]))
+    if len(prop["rows"]) > shown:
+        lines.append(f"  … and {len(prop['rows']) - shown} more")
+    lines += [
+        "-" * 74,
+        f"  disable {prop['disable_count']} owned, never-invoked skill(s) "
+        f"-> frees {prop['freed_chars']:,} chars",
+        f"  roster {prop['roster']} -> {prop['roster_after']}   "
+        f"affordable mean {prop['affordable_mean_before']} -> "
+        f"{prop['affordable_mean_after']} chars/entry",
+        "",
+        "  READ THIS BEFORE ACTING:",
+        f"  {prop['circularity']}",
+        "",
+        "  This command PROPOSES. It changes nothing. Applying means adding",
+        "  `disable-model-invocation: true` to each skill's frontmatter, which is",
+        "  reversible and leaves them invocable by name.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # calibration — the constants are measurements, and must stay measurements
 # ---------------------------------------------------------------------------
 
@@ -597,6 +712,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skill-root", type=Path, action="append", dest="skill_roots")
     ap.add_argument("--budget", action="store_true", help="mass vs cap, and the heaviest skills")
     ap.add_argument("--calibrate", action="store_true", help="re-derive the caps from the corpus")
+    ap.add_argument("--propose", action="store_true",
+                    help="rank the roster for retirement with the evidence behind each "
+                         "row. PROPOSES ONLY — changes nothing.")
     ap.add_argument("--json", action="store_true", dest="as_json")
     ap.add_argument("--top", type=int, default=20)
     args = ap.parse_args(argv)
@@ -610,6 +728,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if (cal["budget_constant_is_stale"] or cal["per_skill_constant_is_stale"]) else 0
 
     listing = latest_listing(args.transcripts)
+
+    if args.propose:
+        if listing is None:
+            print("[listing] no listing found; cannot propose without a roster",
+                  file=sys.stderr)
+            return 2
+        prop = trim_proposal(listing, roots, transcripts=args.transcripts)
+        print(json.dumps(prop, indent=2) if args.as_json else format_proposal(prop, args.top))
+        return 0
+
     budget = budget_report(roots, roster=listing.names if listing else None)
 
     if listing is None:
