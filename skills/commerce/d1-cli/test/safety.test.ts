@@ -36,6 +36,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { checkoutUrl } from "../src/cart.ts";
+import { ALLOWED_ENDPOINT_SHAPES } from "../src/endpoints.ts";
 import { saveSession } from "../src/session.ts";
 
 const SRC = join(import.meta.dir, "..", "src");
@@ -72,47 +73,33 @@ function sourceFiles(dir = SRC, seen = new Set<string>()): Array<{ name: string;
 }
 
 /**
- * The complete set of D1 endpoints this skill is allowed to reach, with
- * interpolations collapsed to `{}`. Every one is a public (`/pub/`) storefront
- * read or cart mutation. None of them moves money.
+ * The approved set, imported from `src/endpoints.ts` rather than restated here.
+ *
+ * Two copies would drift, and the drift direction that matters is silent: a
+ * literal approved statically but refused at runtime breaks the CLI, while one
+ * approved at runtime but absent here is an unreviewed endpoint. The runtime
+ * module owns the list; this file consumes it, and
+ * `test/endpoints.test.ts` asserts every shape is admitted by a pattern.
  */
-const ALLOWED_ENDPOINTS = new Set([
-  // catalogue
-  "/api/io/_v/api/intelligent-search/product_search/{}",
-  "/api/io/_v/api/intelligent-search/facets/trade-policy/{}",
-  "/api/io/_v/api/intelligent-search/autocomplete_suggestions",
-  "/api/io/_v/api/intelligent-search/top_searches",
-  "/api/catalog_system/pub/category/tree/{}",
-  // location
-  "/api/checkout/pub/regions",
-  // cart — builds and prices a basket; none of these settle it
-  "/api/checkout/pub/orderForm",
-  "/api/checkout/pub/orderForm/{}/items",
-  "/api/checkout/pub/orderForm/{}/items/update",
-  "/api/checkout/pub/orderForm/{}/items/removeAll",
-  "/api/checkout/pub/orderForm/{}/attachments/shippingData",
-  "/api/checkout/pub/orderForms/simulation",
-  // identity
-  "/api/vtexid/pub/authentication/start",
-  "/api/vtexid/pub/authentication/accesskey/send",
-  "/api/vtexid/pub/authentication/accesskey/validate",
-  "/api/vtexid/pub/authenticated/user",
-  // orders (read-only)
-  "/api/oms/user/orders",
-  "/api/oms/user/orders/{}",
-]);
+const ALLOWED_ENDPOINTS = new Set(ALLOWED_ENDPOINT_SHAPES);
 
 /**
  * Drop whole-line comments so prose mentioning an endpoint is not mistaken for
  * code reaching one.
  *
- * Deliberately LINE-BASED. An earlier version also ran
- * `.replace(/\/\*[\s\S]*?\*\//g, "")` to strip block comments, which is a
- * silent hole: a source line containing the string `"/*"` opens a match that
- * swallows every line until the next `*​/`, so a payment literal placed
- * between them disappears from the extractor entirely. Verified — it hid
- * `/api/evil/payment`. Deleting only lines that are *themselves* comments
- * cannot span lines, so nothing can be hidden behind it.
+ * Two blinding vectors had to be closed TOGETHER, and the first two attempts
+ * each closed one while opening the other:
+ *
+ *   - A multi-line `replace(/\/\*[\s\S]*?\*\//g, "")` lets a source line
+ *     containing the STRING `"/*"` swallow everything to the next `*​/`,
+ *     hiding a payment literal between them.
+ *   - A purely whole-line rule deletes any line starting with `/*`, so
+ *     `/**​/ const PAY = "/api/...paymentData"` vanishes with its live code.
+ *
+ * So: strip block comments that open AND close within a line (keeping the code
+ * on either side), then drop lines that are only a comment. Neither vector
+ * survives, and `stripComments — both blinding vectors, as a pair` asserts both
+ * at once so fixing one cannot silently reopen the other.
  *
  * A trailing `// ...` after code is left alone, because cutting from `//`
  * would also cut the `//` inside a URL literal. That direction fails LOUDLY
@@ -122,9 +109,19 @@ const ALLOWED_ENDPOINTS = new Set([
 function stripComments(body: string): string {
   return body
     .split("\n")
-    .filter((l) => {
-      const t = l.trimStart();
-      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    .map((l) => {
+      // Remove block comments that OPEN AND CLOSE within the line, keeping
+      // whatever code sits on either side. Doing this before the whole-line
+      // test is what stops `/**/ const PAY = "/api/...paymentData"` from
+      // vanishing: the line begins with `/*`, so a whole-line rule deletes it
+      // along with the live code it carries.
+      const withoutInline = l.replace(/\/\*.*?\*\//g, "");
+      const t = withoutInline.trimStart();
+      // Now drop lines that are only a comment: `//`, a JSDoc continuation
+      // `*`, or an UNTERMINATED `/*` opener (which carries no code).
+      if (t === "" && l.trim() !== "") return withoutInline;
+      if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return "";
+      return withoutInline;
     })
     .join("\n");
 }
@@ -273,5 +270,48 @@ describe("the extractor cannot be blinded", () => {
     }
     expect(SOURCE_EXTENSIONS).toContain(".mts");
     expect(SOURCE_EXTENSIONS).toContain(".tsx");
+  });
+});
+
+describe("stripComments — both blinding vectors, as a pair", () => {
+  const PAY = "/api/checkout/pub/orderForm/x/attachments/paymentData";
+
+  test("a `/**/`-prefixed line does not hide its code", () => {
+    // The regression the round-1 fix introduced: the line BEGINS with `/*`, so
+    // a whole-line rule deleted it along with the live code it carried. This
+    // exact fixture executed and reached the endpoint, 128/128 green.
+    expect(apiLiterals(`/**/ const PAY = "${PAY}";`)).toContain(PAY);
+  });
+
+  test("a string containing `/*` does not blind the rest of the file", () => {
+    // The hole the round-1 fix CLOSED. Both fixtures must pass together —
+    // neither previous version handled both, and fixing one reopened the other.
+    const evil = ['const marker = "/*";', `const p = "${PAY}";`, 'const end = "*/";'].join("\n");
+    expect(apiLiterals(evil)).toContain(PAY);
+  });
+
+  test("genuine prose is still ignored (no false positives)", () => {
+    expect(apiLiterals(" * see /api/checkout/pub/orderForm for details")).toEqual([]);
+    expect(apiLiterals("/** the /api/evil/payment endpoint */")).toEqual([]);
+    expect(apiLiterals("// /api/evil/payment")).toEqual([]);
+  });
+});
+
+describe("the session file's mode is enforced on a pre-existing loose file", () => {
+  test("a 0644 file left by anything else is tightened to 0600", () => {
+    // The scenario the explicit chmod actually protects, and which the earlier
+    // test did not cover: deleting chmodSync stayed green, because the FIRST
+    // write creates the file at 0600 and the second inherits it. Only a
+    // pre-existing loose file exposes the difference.
+    const dir = join(process.env.TMPDIR ?? "/tmp", `d1-mode-${process.pid}`);
+    const f = join(dir, "d1-cli", "session.json");
+    require("node:fs").mkdirSync(join(dir, "d1-cli"), { recursive: true });
+    require("node:fs").writeFileSync(f, "{}", { mode: 0o644 });
+    require("node:fs").chmodSync(f, 0o644);
+    expect(statSync(f).mode & 0o777).toBe(0o644);
+
+    saveSession({ token: "t", savedAt: "2026-01-01" }, f);
+    expect(statSync(f).mode & 0o777).toBe(0o600);
+    require("node:fs").rmSync(dir, { recursive: true, force: true });
   });
 });

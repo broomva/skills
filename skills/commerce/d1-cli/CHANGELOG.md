@@ -49,9 +49,26 @@ each proven by mutation while all 89 tests stayed green:
    actually uses to place an order — because it was written from memory.
 3. `["card" + "Number"]` as a computed key slips past a substring match.
 
-It is now a **positive allowlist**: every `/api/` literal anywhere under `src/`
-must appear in an approved set of 18 endpoints. Adding any endpoint fails until
-it is listed. The docs no longer claim more than that test proves.
+It is now enforced in two places from one list (`src/endpoints.ts`): at runtime
+in `D1Client.request` against the resolved `URL.pathname`, and statically over
+every `/api/` literal under `src/`.
+
+The runtime half was added in round 2, after review showed a static scan is not
+sufficient. Every literal in the source was approved and
+`d1 search --facets '../../../../../../api/checkout/pub/orderForm/X/transaction'`
+still resolved onto the endpoint VTEX uses to **settle an order**:
+`encodeURIComponent` does not escape `.`, so `..` survived and `new URL()`
+normalized it. Checking the resolved pathname closes that class and the
+fragment-assembly limit a static scan can never cover.
+
+Inverting to an allowlist fixed the enumeration problem, not the coverage
+problem. Four further holes were found by attacking the fix: a walk filtering
+`.ts` and missing `.mts`/`.tsx`; a comment stripper a `"/*"` string could blind;
+and — a regression introduced by the fix for that one — a whole-line rule that
+deleted `/**/ const PAY = "..."` along with its live code. Both stripper vectors
+are now asserted **together**, because closing either alone reopened the other.
+
+The docs no longer claim more than the tests prove.
 
 Likewise, the `0600` session-file guarantee was a grep for the literal `0o600`
 and passed while real saves produced mode `666` — `writeFileSync` ignores its
@@ -71,6 +88,18 @@ enforces it. It now saves twice and `statSync`s the result.
   unexplained gap between subtotal and total.
 - A test named for the `--lng -74.06` hazard asserted only the `--lng=-74.06`
   form and never exercised the branch it described.
+- `main()` was invoked by no test at all, so the `cart add` verdict and the
+  exit-code split were correct but unproven — the original bugs could be
+  restored verbatim and the suite stayed green. Integration tests now spawn the
+  real CLI, and immediately caught `d1 --help` exiting 2 instead of 0.
+- `cart add` matched by SKU alone, so a same-SKU line under a different seller
+  satisfied a request that upstream had rejected. Now scoped by seller.
+- `cart set 0 1.5` and `cart set -1 3` reached cart.ts's guard and exited 1,
+  reporting the caller's own malformed input as an upstream refusal.
+- The `0600` test did not prove the explicit `chmod` was necessary: deleting it
+  stayed green, because the first write creates the file at `0600` and the
+  second inherits it. The case it actually protects — a pre-existing loose-mode
+  file — is now covered.
 
 ### Known gap
 

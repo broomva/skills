@@ -41,7 +41,8 @@ any endpoint not on it.
 | `POST /api/checkout/pub/orderForm/{id}/attachments/shippingData` | none | `cart deliver-to` |
 | `POST /api/checkout/pub/orderForms/simulation` | none | `quote` |
 | `GET /api/vtexid/pub/authentication/start` | none | `login` |
-| `POST /api/vtexid/pub/authentication/accesskey/{send,validate}` | none | `login` |
+| `POST /api/vtexid/pub/authentication/accesskey/send` | none | `login` |
+| `POST /api/vtexid/pub/authentication/accesskey/validate` | none | `login` |
 | `GET /api/vtexid/pub/authenticated/user` | session | `whoami` |
 | `GET /api/oms/user/orders` | session | `orders` |
 | `GET /api/oms/user/orders/{orderId}` | session | `order <id>` |
@@ -144,22 +145,51 @@ existing line reported success.
 `d1` assembles and prices baskets. It does not pay. `d1 cart checkout` prints the
 URL where a human reviews the total and pays.
 
-`test/safety.test.ts` enforces this as a **positive allowlist**: it extracts
-every `/api/` path literal from the whole `src/` tree, at any depth, and fails
-unless each appears in the approved set above.
+It is enforced in **two places, from one list** (`src/endpoints.ts`):
 
-The first version of that test was a blocklist — five banned strings, greped
-over a non-recursive `readdirSync`. It was defeated three ways, each proven by
-mutation while the suite stayed green: a payment module in `src/pay/` was never
-read at all; the banned list omitted `orderForm/{id}/transaction`, which is the
-endpoint VTEX actually uses to place an order; and `["card" + "Number"]` as a
-computed key slips past a substring match. A blocklist encodes only the attacks
-its author imagined, and fails silently. The allowlist has no such gap.
+- **At runtime**, `D1Client.request` checks the RESOLVED `URL.pathname` against
+  the approved patterns and refuses anything else *before the request leaves the
+  process*. This is the load-bearing check.
+- **Statically**, `test/safety.test.ts` extracts every `/api/` literal from the
+  whole `src/` tree, at any depth, and fails unless each is approved.
 
-What it proves: no *literal* unapproved endpoint is reachable from `src/`. What
-it does not: a path assembled from fragments that are individually not `/api/`
-strings would evade it. The claim is "the obvious and accidental routes are
-closed", not "payment is impossible".
+The runtime check exists because a static scan of source literals is not
+sufficient, and the way that was discovered is worth recording: every literal in
+the source was approved, and
+
+```
+d1 search --facets '../../../../../../api/checkout/pub/orderForm/OF1/transaction'
+```
+
+still resolved to `/api/checkout/pub/orderForm/OF1/transaction` — the endpoint
+VTEX uses to **settle an order**. `encodeURIComponent` does not escape `.`, so
+`..` survived into the path and `new URL()` normalized it. Checking the resolved
+pathname closes that class, along with the fragment-assembly limit a static scan
+can never cover, because it inspects what will actually be sent rather than what
+was written.
+
+### How this got here, because the history is the argument
+
+The first version was a **blocklist** — five banned strings, greped over a
+non-recursive `readdirSync`. Cross-model review defeated it three ways, each
+proven by executing the mutation while all 89 tests stayed green: a payment
+module in `src/pay/` was never read at all; the banned list omitted
+`orderForm/{id}/transaction`; and `["card" + "Number"]` slips past a substring
+match. A blocklist encodes only the attacks its author imagined and fails
+silently.
+
+Inverting to an allowlist fixed the enumeration problem but not the coverage
+problem, and the next two rounds found four more holes — a walk filtering
+`.ts` and missing `.mts`; a comment stripper a `"/*"` string could blind; a
+whole-line rule that deleted `/**/ const PAY = "..."` along with its live code;
+and the runtime traversal above. Each is now a mutation/control pair in the
+suite, and the two stripper vectors are asserted **together**, because fixing
+either one alone reopened the other.
+
+What this proves: no unapproved endpoint is reached at runtime, and no literal
+unapproved endpoint sits in the source. What it still cannot do: stop a
+determined committer with write access from rewriting the allowlist itself. No
+in-repo test can.
 
 The only stored credential is a storefront session token (what a signed-in
 browser holds, scoped to its owner's own data), written to
@@ -182,7 +212,7 @@ Override the config location with `D1_CONFIG_DIR`.
 ## Tests
 
 ```bash
-bun test           # 89 tests
+bun test           # 151 tests
 bun run lint
 bun run typecheck
 ```

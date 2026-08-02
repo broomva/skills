@@ -8,6 +8,7 @@
  * config file at "can see my own orders".
  */
 
+import { assertAllowedPath } from "./endpoints.ts";
 import { ACCOUNT, D1Error, ORIGIN } from "./types.ts";
 
 /** Presented to upstream so D1 can identify (and if it wishes, throttle) us. */
@@ -72,6 +73,16 @@ export class D1Client {
     init: RequestInit & { query?: Record<string, string | number | undefined> } = {},
   ): Promise<T> {
     const url = new URL(path, ORIGIN);
+
+    // Enforce the endpoint allowlist HERE, on the resolved pathname, because
+    // this is the last point before the request leaves and the only place that
+    // sees what will actually be sent. `new URL()` has already collapsed any
+    // `..`, so a facet or channel argument crafted to climb out of its
+    // endpoint — which really did reach the order-settlement endpoint from
+    // `d1 search --facets ../../../..` — is caught here even though every
+    // string literal in the source was approved.
+    assertAllowedPath(url.pathname, path);
+
     for (const [k, v] of Object.entries(init.query ?? {})) {
       if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
     }

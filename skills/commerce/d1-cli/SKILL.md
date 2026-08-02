@@ -77,17 +77,20 @@ search-sourced price renders identically to a checkout-sourced one.
 `d1` builds and prices baskets. It does not pay. `d1 cart checkout` prints the
 URL where a human reviews the total and completes payment.
 
-That boundary is checked, not merely intended: `test/safety.test.ts` extracts
-every `/api/` path literal from the whole `src/` tree and fails unless each one
-appears in an explicit allowlist of 18 approved storefront endpoints. Adding any
-endpoint — payment or otherwise — fails until it is listed, so the decision has
-to be made rather than defaulted into.
+That boundary is checked in two places from one list (`src/endpoints.ts`):
+**at runtime**, `D1Client.request` refuses any resolved `URL.pathname` outside
+18 approved endpoints before the request leaves the process; **statically**,
+`test/safety.test.ts` fails if any `/api/` literal anywhere under `src/` is
+unapproved. Adding an endpoint — payment or otherwise — fails until it is
+listed, so the decision gets made rather than defaulted into.
 
-Stated precisely, because an earlier version of this file overclaimed: the test
-proves no *literal* unapproved endpoint reaches the tree. It cannot stop a path
-assembled from fragments that are individually not `/api/` strings. The honest
-claim is that the obvious and the accidental routes are closed, not that payment
-is impossible for a determined committer.
+The runtime half is load-bearing and was added after review showed a static scan
+is not enough: `--facets '../../../..'` resolved out of the search endpoint onto
+order settlement while every source literal remained approved.
+
+Stated precisely, because earlier versions of this file overclaimed: nothing
+here stops a committer with write access from editing the allowlist. No in-repo
+test can.
 
 The only credential it stores is a storefront session token — the same thing a
 signed-in browser holds, scoped to its owner's own orders and cart — written to
@@ -111,7 +114,7 @@ is deliberately not implemented.
 ## Tests
 
 ```bash
-bun test        # 124 tests: money units, the semicolon gotcha, quantity-in-quote,
+bun test        # 151 tests: money units, the semicolon gotcha, quantity-in-quote,
                 # unknown-SKU vacuity, cart normalization, order redaction, and
                 # the endpoint allowlist that bounds the payment surface
 bun run lint && bun run typecheck

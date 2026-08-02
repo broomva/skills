@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseArgs, parseSpec, quantityFlag } from "../src/cli.ts";
+import { addOutcome, parseArgs, parseSpec, quantityFlag } from "../src/cli.ts";
 import {
   bestOffer,
   humanEstimate,
@@ -301,5 +301,46 @@ describe("usage errors are distinguishable from upstream failures", () => {
   test("parseSpec and quantityFlag both raise UsageError", () => {
     expect(() => parseSpec("262:abc")).toThrow(UsageError);
     expect(() => quantityFlag("abc")).toThrow(UsageError);
+  });
+});
+
+describe("addOutcome — did the add actually land", () => {
+  const line = (skuId: string, sellerId: string, quantity: number) => ({
+    skuId,
+    sellerId,
+    quantity,
+  });
+
+  test("success when the line reached the requested quantity", () => {
+    expect(addOutcome([line("262", "s1", 3)], "262", "s1", 3)).toEqual({ ok: true, got: 3 });
+  });
+
+  test("a repeat is not a failure (VTEX SETS the line, it does not add)", () => {
+    // `add --qty 2` twice leaves the cart at 2. A delta-based check would call
+    // the second one a failure.
+    expect(addOutcome([line("262", "s1", 2)], "262", "s1", 2).ok).toBe(true);
+  });
+
+  test("short fill is a failure and reports what was actually set", () => {
+    expect(addOutcome([line("262", "s1", 1)], "262", "s1", 5)).toEqual({ ok: false, got: 1 });
+  });
+
+  test("an absent line is a failure, not a vacuous success", () => {
+    expect(addOutcome([], "262", "s1", 1)).toEqual({ ok: false, got: 0 });
+  });
+
+  test("the ORIGINAL round-1 bug: present-but-unchanged must not read as success", () => {
+    // The old predicate was `items.some(i => i.skuId === sku)` — true here,
+    // so asking for 5 more on an existing line of 1 reported success.
+    expect(addOutcome([line("262", "s1", 1)], "262", "s1", 5).ok).toBe(false);
+  });
+
+  test("a same-SKU line under a DIFFERENT seller must not satisfy the request", () => {
+    // Reachable after a region change or an explicit --seller: sellerA holds
+    // 10, sellerB was rejected outright. A SKU-only lookup answers "10 >= 3,
+    // success" — the exact false success this check exists to prevent.
+    const cart = [line("262", "sellerA", 10), line("262", "sellerB", 0)];
+    expect(addOutcome(cart, "262", "sellerB", 3)).toEqual({ ok: false, got: 0 });
+    expect(addOutcome(cart, "262", "sellerA", 3).ok).toBe(true);
   });
 });

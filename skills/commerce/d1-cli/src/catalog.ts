@@ -25,6 +25,7 @@ import type { D1Client } from "./client.ts";
 import { toHundredths } from "./money.ts";
 import {
   type Category,
+  D1Error,
   DEFAULT_SALES_CHANNEL,
   type Facet,
   type Offer,
@@ -183,7 +184,19 @@ export async function search(client: D1Client, opts: SearchOptions = {}): Promis
  * literal facet name.
  */
 export function encodeFacetPath(facets: string): string {
-  return facets.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const segments = facets.split("/").filter(Boolean);
+  // Reject traversal here as well as at the transport. `encodeURIComponent`
+  // does NOT escape ".", so ".." survives into the path and `new URL()` then
+  // resolves it — a facet argument really could climb out of the search
+  // endpoint and land on order settlement. `client.ts` refuses that on the
+  // resolved pathname; rejecting it here too means the user hears about the
+  // argument they typed rather than about a URL they never saw.
+  for (const seg of segments) {
+    if (seg === "." || seg === "..") {
+      throw new D1Error(`Facet path may not contain "${seg}" segments: ${facets}`);
+    }
+  }
+  return segments.map(encodeURIComponent).join("/");
 }
 
 export async function facets(client: D1Client, opts: SearchOptions = {}): Promise<Facet[]> {

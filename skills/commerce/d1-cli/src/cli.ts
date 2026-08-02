@@ -122,6 +122,28 @@ export function quantityFlag(v: string | boolean | undefined): number {
   return n;
 }
 
+/**
+ * Did a `cart add` actually land?
+ *
+ * Scoped by SELLER as well as SKU. The same SKU can occupy two lines under two
+ * sellers — after a region change, or with an explicit `--seller` — and a
+ * SKU-only lookup reads the wrong line: a cart holding 262@sellerA×10 answers
+ * "10 >= 3, success" for a request against sellerB that upstream rejected
+ * outright. That is the exact false success this check exists to prevent.
+ *
+ * Quantity is compared against the RESULT, not a delta, because VTEX's
+ * POST /items SETS a line rather than adding to it (verified live).
+ */
+export function addOutcome(
+  items: Array<{ skuId: string; sellerId: string; quantity: number }>,
+  skuId: string,
+  sellerId: string,
+  want: number,
+): { ok: boolean; got: number } {
+  const got = items.find((i) => i.skuId === skuId && i.sellerId === sellerId)?.quantity ?? 0;
+  return { ok: got >= want, got };
+}
+
 function num(v: string | boolean | undefined): number | undefined {
   if (typeof v !== "string" || v.trim() === "") return undefined;
   const n = Number(v);
@@ -198,9 +220,13 @@ async function main(argv: string[]): Promise<number> {
   const asJson = flags.json === true || flags.json === "true";
   const cmd = positional[0];
 
-  if (!cmd || flags.help === true || cmd === "help") {
+  const askedForHelp = flags.help === true || cmd === "help";
+  if (!cmd || askedForHelp) {
     console.log(HELP);
-    return cmd ? 0 : 2;
+    // Asking for help SUCCEEDED, even with no other argument — `d1 --help`
+    // exiting 2 tells a caller its invocation was wrong when it was not.
+    // A bare `d1` with nothing at all is still a usage error.
+    return askedForHelp ? 0 : 2;
   }
 
   const stored = loadSession();
@@ -351,8 +377,8 @@ async function main(argv: string[]): Promise<number> {
           // asked only "is this SKU in the cart", which answers yes whenever
           // the line already existed, so a fully rejected request on an
           // existing line reported success.
-          const got = cart.items.find((i) => i.skuId === sku)?.quantity ?? 0;
-          if (got < want) {
+          const { ok, got } = addOutcome(cart.items, sku, seller, want);
+          if (!ok) {
             console.error(
               got <= 0
                 ? `D1 accepted the request but SKU ${sku} is not in the cart — it is probably unavailable from seller ${seller}.`
@@ -370,6 +396,19 @@ async function main(argv: string[]): Promise<number> {
           const qty = num(positional[3]);
           if (idx === undefined || qty === undefined) {
             throw new UsageError("Usage: d1 cart set <index> <quantity>");
+          }
+          // Validate shape HERE so a bad argument exits 2. Left to cart.ts it
+          // raises a plain D1Error and exits 1, which tells an agent "D1
+          // refused, maybe retry" about its own malformed input.
+          if (!Number.isInteger(idx) || idx < 0) {
+            throw new UsageError(
+              `Item index must be a non-negative whole number, got "${positional[2]}".`,
+            );
+          }
+          if (!Number.isInteger(qty) || qty < 0) {
+            throw new UsageError(
+              `Quantity must be zero or a positive whole number, got "${positional[3]}".`,
+            );
           }
           cart = await setQuantity(client, cart.orderFormId, idx, qty, channel);
           persistCart();
@@ -581,7 +620,12 @@ async function main(argv: string[]): Promise<number> {
       // address, and card first/last digits that nothing about "where is my
       // order?" requires. --raw opts in deliberately.
       const raw = flags.raw === true || flags.raw === "true";
-      console.log(json(raw ? detail : redactOrder(detail)));
+      const shown = raw ? detail : redactOrder(detail);
+      // JSON is the only sensible rendering of an arbitrary upstream payload,
+      // so --json changes nothing about the body — but the advisory line is a
+      // human aid and would corrupt a consumer parsing stdout, so it is
+      // suppressed under --json (and goes to stderr regardless).
+      console.log(json(shown));
       if (!raw && !asJson) {
         console.error("Personal fields redacted. Pass --raw for the full payload.");
       }
