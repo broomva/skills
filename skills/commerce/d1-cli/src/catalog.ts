@@ -25,13 +25,13 @@ import type { D1Client } from "./client.ts";
 import { toHundredths } from "./money.ts";
 import {
   type Category,
-  D1Error,
   DEFAULT_SALES_CHANNEL,
   type Facet,
   type Offer,
   type Product,
   type SearchPage,
   type Suggestion,
+  UsageError,
 } from "./types.ts";
 
 /**
@@ -193,7 +193,7 @@ export function encodeFacetPath(facets: string): string {
   // argument they typed rather than about a URL they never saw.
   for (const seg of segments) {
     if (seg === "." || seg === "..") {
-      throw new D1Error(`Facet path may not contain "${seg}" segments: ${facets}`);
+      throw new UsageError(`Facet path may not contain "${seg}" segments: ${facets}`);
     }
   }
   return segments.map(encodeURIComponent).join("/");
@@ -212,7 +212,7 @@ export async function facets(client: D1Client, opts: SearchOptions = {}): Promis
         quantity?: number;
       }>;
     }>;
-  }>(`/api/io/_v/api/intelligent-search/facets/trade-policy/${channel}`, {
+  }>(`/api/io/_v/api/intelligent-search/facets/trade-policy/${encodeURIComponent(channel)}`, {
     query: { query: opts.query, regionId: opts.regionId },
   });
 

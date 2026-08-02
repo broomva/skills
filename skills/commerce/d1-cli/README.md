@@ -147,7 +147,7 @@ URL where a human reviews the total and pays.
 
 It is enforced in **two places, from one list** (`src/endpoints.ts`):
 
-- **At runtime**, `D1Client.request` checks the RESOLVED `URL.pathname` against
+- **At runtime**, `D1Client.request` checks the RESOLVED URL against
   the approved patterns and refuses anything else *before the request leaves the
   process*. This is the load-bearing check.
 - **Statically**, `test/safety.test.ts` extracts every `/api/` literal from the
@@ -212,13 +212,22 @@ Override the config location with `D1_CONFIG_DIR`.
 ## Tests
 
 ```bash
-bun test           # 151 tests
+bun test
 bun run lint
 bun run typecheck
 ```
 
-The suite is network-free — every test drives an injected `fetch` stub. Notable
-cases pin the gotchas above: the semicolon separator, the cross-API price-unit
+The suite is network-free. Most tests drive an injected `fetch` stub; the
+subprocess exit-code tests reach only paths that fail before any request, and
+one of them *measures* that rather than asserting it — an earlier version
+claimed network-freedom while `d1 cart bogus` was creating real orderForms on
+D1's production storefront.
+
+No exact test count appears in this file on purpose: it drifted four times in
+one arc, which is the "canonical string copied into N docs" failure. Run
+`bun test` for the number.
+
+Notable cases pin the gotchas above: the semicolon separator, the cross-API price-unit
 agreement, quantity surviving a quote, the vacuous unknown-SKU pass, and the
 absence of a payment surface.
 

@@ -78,8 +78,8 @@ search-sourced price renders identically to a checkout-sourced one.
 URL where a human reviews the total and completes payment.
 
 That boundary is checked in two places from one list (`src/endpoints.ts`):
-**at runtime**, `D1Client.request` refuses any resolved `URL.pathname` outside
-18 approved endpoints before the request leaves the process; **statically**,
+**at runtime**, `D1Client.request` refuses any request whose resolved URL is not D1's own origin
+plus one of 18 approved paths before the request leaves the process; **statically**,
 `test/safety.test.ts` fails if any `/api/` literal anywhere under `src/` is
 unapproved. Adding an endpoint — payment or otherwise — fails until it is
 listed, so the decision gets made rather than defaulted into.
@@ -114,7 +114,7 @@ is deliberately not implemented.
 ## Tests
 
 ```bash
-bun test        # 151 tests: money units, the semicolon gotcha, quantity-in-quote,
+bun test        # money units, the semicolon gotcha, quantity-in-quote,
                 # unknown-SKU vacuity, cart normalization, order redaction, and
                 # the endpoint allowlist that bounds the payment surface
 bun run lint && bun run typecheck

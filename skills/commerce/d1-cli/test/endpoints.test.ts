@@ -62,6 +62,9 @@ describe("the runtime endpoint guard", () => {
       expect(isAllowedPath(shape.replace(/\{\}/g, "SEG"))).toBe(true);
     }
     expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(18);
+    // Bidirectional: a pattern added without a shape would otherwise be
+    // invisible to the static source scan.
+    expect(ALLOWED_ENDPOINT_PATTERNS.length).toBe(ALLOWED_ENDPOINT_SHAPES.length);
   });
 });
 

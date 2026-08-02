@@ -53,6 +53,16 @@ It is now enforced in two places from one list (`src/endpoints.ts`): at runtime
 in `D1Client.request` against the resolved `URL.pathname`, and statically over
 every `/api/` literal under `src/`.
 
+The runtime half pins the **origin first, then the path**. Checking the path
+alone was itself a hole, and a worse one than the traversal it closed:
+
+    new URL("//evil.example/api/checkout/pub/regions", ORIGIN)
+      -> host evil.example, pathname /api/checkout/pub/regions   <- APPROVED
+
+`new URL()` resolves a protocol-relative path by REPLACING THE HOST, so an
+approved-looking pathname would have carried the session cookie to a foreign
+origin. Found by attacking the round-2 fix rather than by review.
+
 The runtime half was added in round 2, after review showed a static scan is not
 sufficient. Every literal in the source was approved and
 `d1 search --facets '../../../../../../api/checkout/pub/orderForm/X/transaction'`
@@ -100,6 +110,27 @@ enforces it. It now saves twice and `statSync`s the result.
   stayed green, because the first write creates the file at `0600` and the
   second inherits it. The case it actually protects — a pre-existing loose-mode
   file — is now covered.
+
+### Found in round 3
+
+- **The exit-code test harness was not network-free, and said it was.**
+  `case "cart"` fetched the cart BEFORE the subcommand switch, so
+  `d1 cart bogus` issued a live POST creating an orderForm on D1's production
+  storefront before deciding the command was invalid — 531ms versus 51ms for a
+  genuinely offline usage error. Every test run wrote to a third party, six
+  assertions silently depended on egress, and with the network down a usage
+  error surfaced as exit 1 instead of 2. Two shipped comments asserted the
+  opposite property. `validateCartArgs` now runs first, and the test MEASURES
+  network-freedom rather than claiming it.
+- A malformed `--facets` threw `D1Error`, so it exited 1 — the same class fixed
+  for `cart set` and missed on its sibling. Now `UsageError` -> 2. The test that
+  should have caught it asserted `code > 0`, the one loose assertion in a file
+  whose entire job is pinning exit codes.
+- `--sc` was the only path interpolation left unencoded, so `%2F` passed a
+  `[^/]+` guard. Now `encodeURIComponent`d.
+- The redaction DEFAULT was unbound: replacing the selection with plain `detail`
+  left all 155 tests green while shipping national IDs to stdout. Extracted as
+  `orderForDisplay` with both arms tested.
 
 ### Known gap
 

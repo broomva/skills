@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { D1Client } from "../src/client.ts";
 import { formatCOP } from "../src/money.ts";
-import { listOrders, redactOrder, statusLabel } from "../src/orders.ts";
+import { listOrders, orderForDisplay, redactOrder, statusLabel } from "../src/orders.ts";
 import { D1Error } from "../src/types.ts";
 
 function stub(body: unknown, status = 200) {
@@ -209,5 +209,23 @@ describe("redactOrder", () => {
     expect(redactOrder({ document: null })).toEqual({ document: null });
     expect(redactOrder("plain")).toBe("plain");
     expect(redactOrder([1, 2])).toEqual([1, 2]);
+  });
+});
+
+describe("orderForDisplay — the redaction DEFAULT is bound, not just available", () => {
+  const ORDER = { clientProfileData: { document: "1020304050", firstName: "Ada" } };
+
+  test("redacts by default", () => {
+    // Replacing this selection with plain `detail` left all 155 tests green
+    // while shipping national IDs to stdout — redactOrder was well tested, but
+    // nothing bound it to the CLI's default.
+    const out = JSON.stringify(orderForDisplay(ORDER, false));
+    expect(out).not.toContain("1020304050");
+    expect(out).toContain("[redacted]");
+    expect(out).toContain("Ada");
+  });
+
+  test("--raw opts in to the full payload", () => {
+    expect(JSON.stringify(orderForDisplay(ORDER, true))).toContain("1020304050");
   });
 });

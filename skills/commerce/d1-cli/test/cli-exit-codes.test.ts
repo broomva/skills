@@ -6,9 +6,17 @@
  * buggy form and every test stayed green. The behaviour was correct and
  * unproven, which is indistinguishable from correct-by-accident.
  *
- * These spawn the real CLI. They exercise only paths that fail BEFORE any
- * network call, so the suite stays network-free and cannot go red because D1 is
- * down.
+ * These spawn the real CLI and exercise only paths that fail BEFORE any network
+ * call. That property was CLAIMED here once before and was false: `case "cart"`
+ * fetched the cart ahead of the subcommand switch, so `d1 cart bogus` issued a
+ * live POST that created an orderForm on D1's production storefront before
+ * deciding the command was invalid — 531ms versus 51ms for a genuinely offline
+ * usage error. Every test run wrote to a third party, and every one of these
+ * assertions silently depended on egress.
+ *
+ * `validateCartArgs` now runs first, and `no cart command touches the network
+ * before validating` below MEASURES the property rather than asserting it in a
+ * comment.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -75,7 +83,43 @@ describe("exit codes are a contract an agent can branch on", () => {
       "--facets",
       "../../../../../../api/checkout/pub/orderForm/OF1/transaction",
     ]);
-    expect(code).toBeGreaterThan(0);
-    expect(stderr).toMatch(/may not contain|not an approved D1 endpoint/);
+    // Pinned to 2, not `> 0`: a malformed --facets is a USAGE error. The loose
+    // form was the only imprecise assertion in a file whose entire job is
+    // pinning exit codes, and it papered over this exact case returning 1.
+    expect(code).toBe(2);
+    expect(stderr).toMatch(/may not contain/);
   }, 20_000);
+});
+
+describe("a usage error costs nothing and does not depend on D1", () => {
+  /**
+   * Measures the network-free property instead of asserting it in prose.
+   *
+   * A usage error that reaches the network is wrong twice: it writes to a third
+   * party's production storefront on every typo (and every test run), and it
+   * makes the exit code depend on D1's availability — with the network down the
+   * caller saw 1 ("D1 refused, retry may help") for its own malformed input.
+   *
+   * Timing is the observable available to a subprocess test. A live orderForm
+   * POST to Bogotá measured ~530ms against ~50ms for a purely local failure, so
+   * the threshold sits well clear of both.
+   */
+  const NETWORK_FREE_MS = 350;
+
+  test("no cart usage error makes a request", async () => {
+    for (const args of [
+      ["cart", "bogus-subcommand"],
+      ["cart", "add"],
+      ["cart", "add", "262", "--qty", "abc"],
+      ["cart", "set", "0"],
+      ["cart", "set", "0", "1.5"],
+      ["cart", "set", "-1", "3"],
+    ]) {
+      const t0 = Bun.nanoseconds();
+      const { code } = await run(args);
+      const ms = (Bun.nanoseconds() - t0) / 1e6;
+      expect({ args, code }).toEqual({ args, code: 2 });
+      expect({ args, networkFree: ms < NETWORK_FREE_MS }).toEqual({ args, networkFree: true });
+    }
+  }, 60_000);
 });

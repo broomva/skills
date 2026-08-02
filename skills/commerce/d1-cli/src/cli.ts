@@ -23,7 +23,7 @@ import {
 import { categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
 import { D1Client } from "./client.ts";
 import { formatCOP } from "./money.ts";
-import { getOrder, listOrders, redactOrder } from "./orders.ts";
+import { getOrder, listOrders, orderForDisplay } from "./orders.ts";
 import {
   json,
   renderCart,
@@ -142,6 +142,55 @@ export function addOutcome(
 ): { ok: boolean; got: number } {
   const got = items.find((i) => i.skuId === skuId && i.sellerId === sellerId)?.quantity ?? 0;
   return { ok: got >= want, got };
+}
+
+/** The `cart` subcommands, so an unknown one is rejected without a round trip. */
+const CART_SUBCOMMANDS = ["show", "add", "set", "clear", "deliver-to", "checkout"] as const;
+
+/**
+ * Reject a malformed `cart` invocation before any request is made.
+ *
+ * Every check here duplicates one performed later in the command body. That is
+ * deliberate: the later ones run after the cart has been fetched, and the whole
+ * point is that a usage error must cost nothing and must not depend on D1 being
+ * reachable. Keeping both means the command body stays readable on its own and
+ * a check added there is still enforced, just one round trip later.
+ */
+export function validateCartArgs(sub: string, positional: string[], flags: Args["flags"]): void {
+  if (!(CART_SUBCOMMANDS as readonly string[]).includes(sub)) {
+    throw new UsageError(
+      `Unknown cart subcommand: ${sub}. Expected one of ${CART_SUBCOMMANDS.join(", ")}.`,
+    );
+  }
+  if (sub === "add") {
+    if (!positional[2]) throw new UsageError("Usage: d1 cart add <sku> [--qty N]");
+    quantityFlag(flags.qty);
+  }
+  if (sub === "set") {
+    const idx = num(positional[2]);
+    const qty = num(positional[3]);
+    if (idx === undefined || qty === undefined) {
+      throw new UsageError("Usage: d1 cart set <index> <quantity>");
+    }
+    if (!Number.isInteger(idx) || idx < 0) {
+      throw new UsageError(
+        `Item index must be a non-negative whole number, got "${positional[2]}".`,
+      );
+    }
+    if (!Number.isInteger(qty) || qty < 0) {
+      throw new UsageError(
+        `Quantity must be zero or a positive whole number, got "${positional[3]}".`,
+      );
+    }
+  }
+  if (sub === "deliver-to") {
+    // Called for its THROW, not its value: `pointFrom` rejects a half-given
+    // pair (`--lat` without `--lng`) itself. Returning undefined is the valid
+    // "no flags, fall back to the saved region" case, so it must NOT be
+    // treated as an error here — a user with a saved delivery point would be
+    // blocked before the command could read it.
+    pointFrom(flags, undefined);
+  }
 }
 
 function num(v: string | boolean | undefined): number | undefined {
@@ -334,6 +383,22 @@ async function main(argv: string[]): Promise<number> {
     // -- basket ------------------------------------------------------------
     case "cart": {
       const sub = positional[1] ?? "show";
+
+      // Validate BEFORE touching the network.
+      //
+      // `getCart` used to run first, so `d1 cart bogus-subcommand` — a pure
+      // usage error — issued a live POST that CREATES AN ORDERFORM on D1's
+      // production storefront before deciding the command was invalid.
+      // Measured: 531ms versus 51ms for a genuinely offline usage error.
+      //
+      // Two costs, neither acceptable. The obvious one is writing to a third
+      // party every time someone types a command wrong, including on every
+      // test run. The subtler one is that it made this CLI's exit codes depend
+      // on D1's availability: with the network down, a usage error surfaced as
+      // exit 1 ("D1 refused, retry may help") instead of 2 ("you called this
+      // wrong"), which is exactly the confusion the two codes exist to prevent.
+      validateCartArgs(sub, positional, flags);
+
       let cart = await getCart(client, channel);
       const persistCart = () =>
         saveSession({
@@ -620,7 +685,7 @@ async function main(argv: string[]): Promise<number> {
       // address, and card first/last digits that nothing about "where is my
       // order?" requires. --raw opts in deliberately.
       const raw = flags.raw === true || flags.raw === "true";
-      const shown = raw ? detail : redactOrder(detail);
+      const shown = orderForDisplay(detail, raw);
       // JSON is the only sensible rendering of an arbitrary upstream payload,
       // so --json changes nothing about the body — but the advisory line is a
       // human aid and would corrupt a consumer parsing stdout, so it is

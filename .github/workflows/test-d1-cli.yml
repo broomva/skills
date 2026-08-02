@@ -3,10 +3,15 @@ name: test-d1-cli
 # Bun test gate for the `d1-cli` skill (skills/commerce/d1-cli/). Path-filtered so it
 # runs ONLY when that directory changes.
 #
-# The suite is deliberately network-free — every test drives an injected fetch stub —
-# so CI never depends on d1.com.co being up, and a D1 outage cannot turn this red.
-# That also means CI does not verify the live endpoints still behave as documented;
-# the gotchas in README.md were established by hand and are pinned here as shape
+# The suite is network-free: unit tests drive an injected fetch stub, and the
+# subprocess exit-code tests exercise only paths that fail before any request.
+# One of them MEASURES that property rather than asserting it, because an earlier
+# version of this comment was simply false — `d1 cart bogus` fetched the cart
+# before validating its arguments, so every run created real orderForms on D1's
+# production storefront and six assertions silently depended on egress.
+#
+# CI therefore does not verify the live endpoints still behave as documented; the
+# gotchas in README.md were established by hand and are pinned here as shape
 # assertions, not as live contract checks.
 
 on:

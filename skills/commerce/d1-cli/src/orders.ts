@@ -139,3 +139,15 @@ export function redactOrder(value: unknown): unknown {
   }
   return value;
 }
+
+/**
+ * Choose what `d1 order` prints.
+ *
+ * Extracted so the DEFAULT is testable. `redactOrder` was thoroughly tested,
+ * but nothing bound it to the CLI: replacing `raw ? detail : redactOrder(detail)`
+ * with plain `detail` left all 155 tests green while shipping the customer's
+ * national ID, phone, address and card digits to stdout by default.
+ */
+export function orderForDisplay(detail: unknown, raw: boolean): unknown {
+  return raw ? detail : redactOrder(detail);
+}
