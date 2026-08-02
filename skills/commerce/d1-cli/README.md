@@ -108,19 +108,34 @@ Page 51 returns HTTP 400 carrying *"Page should not exceed 50 pages"*. Wide
 result sets have to be narrowed with `--facets`, not paged through. `search`
 reports `truncated: true` when matches exceed reachable depth.
 
-### 7. Shipping varies with basket composition, and not monotonically
+### 7. A shipping SLA's `price` is that LINE's share, not the option's cost
 
-Observed at the same delivery point, same day:
+`logisticsInfo` repeats once per cart line, and each entry's `slas[].price` is
+that line's **share** of the delivery cost. Measured at one point, same day,
+same SLA:
 
-| Basket | Items total | Quoted shipping |
+| Lines | `slas[].price` | × lines |
 |---|---|---|
-| `262 ×1` … `262 ×30` | COP 3,500 – 105,000 | COP 13,500 (flat) |
-| `262 ×2 + 892 ×1` | COP 10,090 | COP 9,000 |
+| 1 | 13,500 | 13,500 |
+| 2 | 6,750 | 13,500 |
+| 4 | 3,375 | 13,500 |
+| 12 | 1,125 | 13,500 |
 
-A larger basket got *cheaper* shipping, so this is not a simple value tier. The
-mechanism is not documented and has not been established here — which is exactly
-why the CLI always quotes shipping from upstream rather than modelling it.
-Never assume a delivery cost; run `quote` or `cart deliver-to`.
+**Delivery is a flat COP 13,500.** Deduplicating the repeated SLA and showing
+the first share — the obvious way to stop one option rendering twelve times —
+under-reports shipping by the line count. The CLI sums the shares per option,
+which is exact for every basket size measured and agrees with the orderForm's
+own `Shipping` totalizer.
+
+This is the same trap as gotcha 4, and worth stating once as a rule: **in a
+VTEX payload, a field that reads as a total is often a per-unit or per-line
+component.** Both instances are invisible to a one-line fixture, because there
+the share *is* the total.
+
+The tell, if it ever recurs: `Items + shipping ≠ Total` on the rendered cart.
+An earlier version of this file claimed shipping "varies with basket
+composition, and not monotonically" and showed a larger basket getting cheaper
+delivery. That was this bug, not a property of D1. Retracted.
 
 ### 8. `POST /items` SETS a line's quantity — it does not add to it
 

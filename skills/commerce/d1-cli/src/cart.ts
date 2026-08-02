@@ -61,6 +61,54 @@ interface WireOrderForm {
 // Normalization
 // ---------------------------------------------------------------------------
 
+/**
+ * Collapse the per-line shipping quotes into one row per delivery option.
+ *
+ * VTEX repeats `logisticsInfo` once per cart line, and each entry's
+ * `slas[].price` is that LINE'S SHARE of the option's cost — not the option's
+ * cost. Deduplicating by id and showing the first share under-reports shipping
+ * by a factor of the line count. Measured at one point, same day, same SLA:
+ *
+ *   lines   slas[].price   x lines
+ *     1        13,500      13,500
+ *     2         6,750      13,500
+ *     4         3,375      13,500
+ *    12         1,125      13,500
+ *
+ * Shipping is a flat COP 13,500; the CLI was showing 1,125 of it. So the shares
+ * are SUMMED per option, which is exact for every n measured and agrees with
+ * the orderForm's own `Shipping` totalizer.
+ *
+ * This is the same trap as `simulation`'s per-unit `price` (README gotcha 4): a
+ * VTEX field that reads as a total and is a component. Both are invisible to a
+ * fixture with one line, because one share IS the total.
+ */
+function collapseShipping(
+  logisticsInfo: Array<{
+    slas?: Array<{ id?: string; name?: string; price?: number; shippingEstimate?: string }>;
+  }>,
+): ShippingOption[] {
+  const byId = new Map<string, ShippingOption>();
+  for (const li of logisticsInfo) {
+    for (const s of li.slas ?? []) {
+      const id = s.id ?? s.name ?? "";
+      if (!id) continue;
+      const existing = byId.get(id);
+      if (existing) {
+        existing.price += s.price ?? 0;
+      } else {
+        byId.set(id, {
+          id,
+          name: s.name ?? id,
+          price: s.price ?? 0,
+          estimate: s.shippingEstimate ?? "",
+        });
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
 export function normalizeCart(w: WireOrderForm): Cart {
   const items: CartItem[] = (w.items ?? []).map((i) => ({
     skuId: i.id,
@@ -74,24 +122,7 @@ export function normalizeCart(w: WireOrderForm): Cart {
   const itemsTotal =
     w.totalizers?.find((t) => t.id === "Items")?.value ?? items.reduce((a, i) => a + i.total, 0);
 
-  // Deduplicate SLAs across logistics entries: with several items the same
-  // courier option is repeated once per item, and showing "Entrega Programada"
-  // five times would read as five different choices.
-  const seen = new Set<string>();
-  const shipping: ShippingOption[] = [];
-  for (const li of w.shippingData?.logisticsInfo ?? []) {
-    for (const s of li.slas ?? []) {
-      const id = s.id ?? s.name ?? "";
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      shipping.push({
-        id,
-        name: s.name ?? id,
-        price: s.price ?? 0,
-        estimate: s.shippingEstimate ?? "",
-      });
-    }
-  }
+  const shipping = collapseShipping(w.shippingData?.logisticsInfo ?? []);
 
   // Promotions arrive as their own totalizer. Reading only `Items` and `value`
   // renders a promoted cart as "Items 20.000 / Total 15.000" with nothing
@@ -322,21 +353,7 @@ export async function simulate(
     }),
   });
 
-  const seen = new Set<string>();
-  const shipping: ShippingOption[] = [];
-  for (const li of w.logisticsInfo ?? []) {
-    for (const s of li.slas ?? []) {
-      const id = s.id ?? s.name ?? "";
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      shipping.push({
-        id,
-        name: s.name ?? id,
-        price: s.price ?? 0,
-        estimate: s.shippingEstimate ?? "",
-      });
-    }
-  }
+  const shipping = collapseShipping(w.logisticsInfo ?? []);
 
   const returned = new Set((w.items ?? []).map((i) => i.id));
   // A SKU upstream simply omits does not exist in this catalogue. Left
