@@ -147,9 +147,13 @@ export async function search(client: D1Client, opts: SearchOptions = {}): Promis
   const page = clamp(opts.page ?? 1, 1, MAX_PAGE);
   const count = clamp(opts.count ?? 12, 1, MAX_COUNT);
   const channel = opts.salesChannel ?? DEFAULT_SALES_CHANNEL;
-  const path = `/api/io/_v/api/intelligent-search/product_search/${
-    opts.facets ? encodeFacetPath(opts.facets) : ""
-  }`;
+  // Kept on one line with a pre-computed suffix so the endpoint stays a simple
+  // literal: `test/safety.test.ts` extracts every `/api/` path from the source
+  // and checks it against an allowlist, and an interpolation spanning lines
+  // (or containing quotes) would break that extraction into an unrecognizable
+  // fragment — a check that silently stops seeing this endpoint.
+  const facetPath = opts.facets ? encodeFacetPath(opts.facets) : "";
+  const path = `/api/io/_v/api/intelligent-search/product_search/${facetPath}`;
 
   const wire = await client.request<WireSearch>(path, {
     query: {

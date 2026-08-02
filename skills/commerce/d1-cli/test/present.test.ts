@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseArgs, parseSpec } from "../src/cli.ts";
+import { parseArgs, parseSpec, quantityFlag } from "../src/cli.ts";
 import {
   bestOffer,
   humanEstimate,
@@ -8,6 +8,7 @@ import {
   renderSearch,
 } from "../src/present.ts";
 import type { Product, SearchPage } from "../src/types.ts";
+import { D1Error, UsageError } from "../src/types.ts";
 
 const product = (over: Partial<Product> = {}): Product => ({
   productId: "262",
@@ -151,6 +152,7 @@ describe("renderCart", () => {
         },
       ],
       itemsTotal: 700_000,
+      discounts: 0,
       total: 700_000,
       shipping: [],
       messages: [],
@@ -166,6 +168,7 @@ describe("renderCart", () => {
         loggedIn: false,
         items: [],
         itemsTotal: 0,
+        discounts: 0,
         total: 0,
         shipping: [],
         messages: [],
@@ -200,10 +203,20 @@ describe("parseArgs", () => {
   });
 
   test("a negative number is a value, not the next flag", () => {
-    // --lng -74.06 is the single most common invocation, and a naive parser
-    // reads the longitude as a flag because it starts with a dash.
-    const a = parseArgs(["region", "--lat", "4.65", "--lng=-74.06"]);
+    // Exercises the LOOKAHEAD branch (space-separated), which is the one the
+    // hazard lives in: a parser guarding with startsWith("-") instead of
+    // startsWith("--") reads the longitude as a flag and every
+    // `--lng -74.06` invocation breaks. The `--lng=-74.06` form takes the
+    // `indexOf("=")` branch and would NOT catch that regression, so it is
+    // asserted separately below rather than standing in for this.
+    const a = parseArgs(["region", "--lat", "4.65", "--lng", "-74.06"]);
+    expect(a.flags.lat).toBe("4.65");
     expect(a.flags.lng).toBe("-74.06");
+    expect(a.positional).toEqual(["region"]);
+  });
+
+  test("the equals form also carries a negative value", () => {
+    expect(parseArgs(["--lng=-74.06"]).flags.lng).toBe("-74.06");
   });
 
   test("a trailing valueless flag stays boolean", () => {
@@ -234,5 +247,59 @@ describe("parseSpec", () => {
   test("rejects extra colons and a missing SKU", () => {
     expect(() => parseSpec("262:2:3")).toThrow(/Malformed/);
     expect(() => parseSpec(":2")).toThrow(/Missing SKU/);
+  });
+});
+
+describe("quantityFlag", () => {
+  test("absent means one", () => {
+    expect(quantityFlag(undefined)).toBe(1);
+  });
+
+  test("parses a positive whole number", () => {
+    expect(quantityFlag("3")).toBe(3);
+  });
+
+  test("rejects an unparseable quantity instead of silently adding one", () => {
+    // This governs a MUTATION (`d1 cart add --qty abc`). The read-only
+    // `parseSpec` already rejected this class; the write path did not, and
+    // silently put 1 unit in a real basket while reporting success.
+    expect(() => quantityFlag("abc")).toThrow(/positive whole number/);
+    expect(() => quantityFlag("2 892")).toThrow(/positive whole number/);
+    expect(() => quantityFlag("0")).toThrow(/positive whole number/);
+    expect(() => quantityFlag("-3")).toThrow(/positive whole number/);
+    expect(() => quantityFlag("1.5")).toThrow(/positive whole number/);
+  });
+
+  test("a valueless --qty is rejected, not read as one", () => {
+    // `--qty` with nothing after it parses to boolean true.
+    expect(() => quantityFlag(true)).toThrow(/positive whole number/);
+    expect(() => quantityFlag("")).toThrow(/positive whole number/);
+  });
+
+  test("every rejection is a UsageError, so the CLI exits 2 not 1", () => {
+    // An agent must be able to tell "you called this wrong" (never retry) from
+    // "D1 is down" (retry). Both were exit 1 before.
+    expect(() => quantityFlag("abc")).toThrow(UsageError);
+  });
+});
+
+describe("usage errors are distinguishable from upstream failures", () => {
+  test("UsageError is a D1Error but identifiable", () => {
+    const u = new UsageError("Usage: d1 quote <sku>");
+    expect(u).toBeInstanceOf(UsageError);
+    expect(u).toBeInstanceOf(D1Error);
+    expect(u.name).toBe("UsageError");
+  });
+
+  test("a plain D1Error is NOT a UsageError", () => {
+    // The exit-code split depends on this asymmetry; if D1Error were also a
+    // UsageError, every upstream outage would exit 2 and never be retried.
+    const e = new D1Error("D1 is rate-limiting this client.");
+    expect(e).not.toBeInstanceOf(UsageError);
+  });
+
+  test("parseSpec and quantityFlag both raise UsageError", () => {
+    expect(() => parseSpec("262:abc")).toThrow(UsageError);
+    expect(() => quantityFlag("abc")).toThrow(UsageError);
   });
 });

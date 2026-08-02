@@ -18,8 +18,13 @@ bun run src/cli.ts quote 262:2 892:1
 
 ## Endpoint map
 
-Every endpoint below was verified live against `www.d1.com.co` on 2026-08-02.
-The catalogue and cart columns need **no credentials at all**.
+Every endpoint below was verified live against `www.d1.com.co` on 2026-08-02,
+except `GET /api/oms/user/orders/{orderId}`, which could not be exercised
+because the account used had no order history. Everything marked `none` needs
+**no credentials at all**.
+
+This table is also the allowlist: `test/safety.test.ts` fails if `src/` reaches
+any endpoint not on it.
 
 | Endpoint | Auth | Used for |
 |---|---|---|
@@ -39,6 +44,7 @@ The catalogue and cart columns need **no credentials at all**.
 | `POST /api/vtexid/pub/authentication/accesskey/{send,validate}` | none | `login` |
 | `GET /api/vtexid/pub/authenticated/user` | session | `whoami` |
 | `GET /api/oms/user/orders` | session | `orders` |
+| `GET /api/oms/user/orders/{orderId}` | session | `order <id>` |
 
 ## Gotchas, and why each one matters
 
@@ -115,6 +121,17 @@ mechanism is not documented and has not been established here — which is exact
 why the CLI always quotes shipping from upstream rather than modelling it.
 Never assume a delivery cost; run `quote` or `cart deliver-to`.
 
+### 8. `POST /items` SETS a line's quantity — it does not add to it
+
+`d1 cart add 262 --qty 2` run twice leaves the cart at **2**, not 4. Verified
+live. The endpoint reads as "ensure this line is N", which is why `cart add`
+verifies the *resulting* quantity rather than a before/after delta — a delta
+check reports a false failure on any legitimate repeat.
+
+The check still has to exist: asking only "is this SKU in the cart?" answers
+yes whenever the line already existed, so a fully rejected request on an
+existing line reported success.
+
 ## What the public API will not give you
 
 - **Saved addresses and profile records.** `dataentities/AD` and `dataentities/CL`
@@ -124,16 +141,41 @@ Never assume a delivery cost; run `quote` or `cart deliver-to`.
 
 ## Safety boundary
 
-`d1` assembles and prices baskets. It does not pay. No code path accepts a card
-number, posts `paymentData`, or calls `gatewayCallback`, and `test/safety.test.ts`
-fails if one is added — the boundary is enforced by CI, not by good intentions.
-`d1 cart checkout` prints the URL where a human reviews the total and pays.
+`d1` assembles and prices baskets. It does not pay. `d1 cart checkout` prints the
+URL where a human reviews the total and pays.
+
+`test/safety.test.ts` enforces this as a **positive allowlist**: it extracts
+every `/api/` path literal from the whole `src/` tree, at any depth, and fails
+unless each appears in the approved set above.
+
+The first version of that test was a blocklist — five banned strings, greped
+over a non-recursive `readdirSync`. It was defeated three ways, each proven by
+mutation while the suite stayed green: a payment module in `src/pay/` was never
+read at all; the banned list omitted `orderForm/{id}/transaction`, which is the
+endpoint VTEX actually uses to place an order; and `["card" + "Number"]` as a
+computed key slips past a substring match. A blocklist encodes only the attacks
+its author imagined, and fails silently. The allowlist has no such gap.
+
+What it proves: no *literal* unapproved endpoint is reachable from `src/`. What
+it does not: a path assembled from fragments that are individually not `/api/`
+strings would evade it. The claim is "the obvious and accidental routes are
+closed", not "payment is impossible".
 
 The only stored credential is a storefront session token (what a signed-in
 browser holds, scoped to its owner's own data), written to
-`~/.config/d1-cli/session.json` with mode `0600` and never printed. No VTEX
-admin `appKey`/`appToken` is read anywhere. Sign-in uses a one-time emailed
-code; password authentication is intentionally not implemented.
+`~/.config/d1-cli/session.json` with mode `0600` and never printed. The test for
+this calls `saveSession` twice and `statSync`s the result, because
+`writeFileSync` **ignores its mode argument when the file already exists** — an
+earlier version greped the source for the literal `0o600` and passed while real
+saves produced mode `666`.
+
+No VTEX admin `appKey`/`appToken` is read anywhere. Sign-in uses a one-time
+emailed code; password authentication is intentionally not implemented.
+
+`d1 order <id>` **redacts by default**. VTEX's order-detail payload carries the
+customer's national ID, phone, full delivery address and the card's first/last
+digits — none of it needed to answer "where is my order?", all of it otherwise
+landing in a terminal, a shell history, or an agent's context. `--raw` opts in.
 
 Override the config location with `D1_CONFIG_DIR`.
 

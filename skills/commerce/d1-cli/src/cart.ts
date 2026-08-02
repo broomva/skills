@@ -93,11 +93,18 @@ export function normalizeCart(w: WireOrderForm): Cart {
     }
   }
 
+  // Promotions arrive as their own totalizer. Reading only `Items` and `value`
+  // renders a promoted cart as "Items 20.000 / Total 15.000" with nothing
+  // accounting for the gap — no wrong number, but an unexplained one on the
+  // surface where a shopper checks the arithmetic.
+  const discounts = w.totalizers?.find((t) => t.id === "Discounts")?.value ?? 0;
+
   return {
     orderFormId: w.orderFormId,
     loggedIn: Boolean(w.loggedIn),
     items,
     itemsTotal,
+    discounts,
     total: w.value ?? itemsTotal,
     shipping,
     messages: (w.messages ?? []).map((m) => m.text ?? m.code ?? "").filter(Boolean),

@@ -23,7 +23,7 @@ import {
 import { categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
 import { D1Client } from "./client.ts";
 import { formatCOP } from "./money.ts";
-import { getOrder, listOrders } from "./orders.ts";
+import { getOrder, listOrders, redactOrder } from "./orders.ts";
 import {
   json,
   renderCart,
@@ -45,7 +45,7 @@ import {
   validateAccessKey,
   whoami,
 } from "./session.ts";
-import { D1Error, DEFAULT_SALES_CHANNEL, type LatLng } from "./types.ts";
+import { D1Error, DEFAULT_SALES_CHANNEL, type LatLng, UsageError } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Argument parsing
@@ -88,17 +88,38 @@ export function parseArgs(argv: string[]): Args {
 export function parseSpec(spec: string): { skuId: string; quantity: number } {
   const parts = spec.split(":");
   if (parts.length > 2) {
-    throw new D1Error(`Malformed item "${spec}". Expected <sku> or <sku>:<qty>.`);
+    throw new UsageError(`Malformed item "${spec}". Expected <sku> or <sku>:<qty>.`);
   }
   const [skuId, rawQty] = parts;
-  if (!skuId) throw new D1Error(`Malformed item "${spec}". Missing SKU.`);
+  if (!skuId) throw new UsageError(`Malformed item "${spec}". Missing SKU.`);
 
   if (rawQty === undefined) return { skuId, quantity: 1 };
   const quantity = Number(rawQty);
   if (!Number.isInteger(quantity) || quantity < 1) {
-    throw new D1Error(`Quantity in "${spec}" must be a positive whole number, got "${rawQty}".`);
+    throw new UsageError(`Quantity in "${spec}" must be a positive whole number, got "${rawQty}".`);
   }
   return { skuId, quantity };
+}
+
+/**
+ * Read a `--qty` flag strictly.
+ *
+ * Absent means 1. Anything else must parse as a positive whole number — an
+ * unparseable value is rejected rather than falling back to 1. This is the
+ * same rule `parseSpec` applies to `sku:qty`, and for the same reason, except
+ * that here it governs a MUTATION: `d1 cart add 262 --qty abc` silently adding
+ * one unit puts the wrong thing in a real basket, not just on a screen.
+ */
+export function quantityFlag(v: string | boolean | undefined): number {
+  if (v === undefined) return 1;
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new UsageError("--qty needs a positive whole number, e.g. --qty 3.");
+  }
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new UsageError(`--qty must be a positive whole number, got "${v}".`);
+  }
+  return n;
 }
 
 function num(v: string | boolean | undefined): number | undefined {
@@ -121,7 +142,7 @@ function pointFrom(flags: Args["flags"], saved?: { lat: number; lng: number }): 
   const lng = num(flags.lng);
   if (lat !== undefined && lng !== undefined) return { lat, lng };
   if (lat !== undefined || lng !== undefined) {
-    throw new D1Error("--lat and --lng must be given together.");
+    throw new UsageError("--lat and --lng must be given together.");
   }
   return saved ? { lat: saved.lat, lng: saved.lng } : undefined;
 }
@@ -145,7 +166,7 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
 
   Basket
     d1 cart                    show the current cart
-    d1 cart add <sku>          add a SKU            [--qty N --seller ID]
+    d1 cart add <sku>          set a line to --qty N [--qty N --seller ID]
     d1 cart set <index> <qty>  change a line (qty 0 removes it)
     d1 cart clear              empty the cart
     d1 cart deliver-to         attach the delivery point and quote shipping
@@ -224,7 +245,7 @@ async function main(argv: string[]): Promise<number> {
 
     case "suggest": {
       const q = positional.slice(1).join(" ");
-      if (!q) throw new D1Error("Usage: d1 suggest <partial term>");
+      if (!q) throw new UsageError("Usage: d1 suggest <partial term>");
       const s = await suggest(client, q);
       console.log(
         asJson ? json(s) : s.map((x) => `${String(x.count).padStart(7)}  ${x.term}`).join("\n"),
@@ -261,7 +282,7 @@ async function main(argv: string[]): Promise<number> {
     // -- location ----------------------------------------------------------
     case "region": {
       const at = pointFrom(flags, stored?.region);
-      if (!at) throw new D1Error("Usage: d1 region --lat <lat> --lng <lng>");
+      if (!at) throw new UsageError("Usage: d1 region --lat <lat> --lng <lng>");
       const r = await resolveRegion(client, at, channel);
       // Only remember a point D1 can actually deliver to. Persisting an
       // undeliverable one would make every later command fail against a place
@@ -304,20 +325,38 @@ async function main(argv: string[]): Promise<number> {
 
         case "add": {
           const sku = positional[2];
-          if (!sku) throw new D1Error("Usage: d1 cart add <sku> [--qty N]");
+          if (!sku) throw new UsageError("Usage: d1 cart add <sku> [--qty N]");
           const at = pointFrom(flags, stored?.region);
           const region = await regionFor(at);
           const seller = str(flags.seller) ?? region?.sellerId ?? "1";
+          const want = quantityFlag(flags.qty);
+
           cart = await addItems(
             client,
             cart.orderFormId,
-            [{ skuId: sku, quantity: num(flags.qty) ?? 1, sellerId: seller }],
+            [{ skuId: sku, quantity: want, sellerId: seller }],
             channel,
           );
           persistCart();
-          if (!cart.items.some((i) => i.skuId === sku)) {
+
+          // Verify against the RESULTING quantity, not a delta.
+          //
+          // VTEX's POST /items SETS the line to the requested quantity when the
+          // SKU is already present — it does not add to it. Verified live:
+          // `add 262 --qty 2` twice leaves the cart at 2, not 4. So the check
+          // is "did the line reach what was asked for", and a delta-based check
+          // reports a false failure on any legitimate repeat.
+          //
+          // Checking the outcome at all still matters: the previous version
+          // asked only "is this SKU in the cart", which answers yes whenever
+          // the line already existed, so a fully rejected request on an
+          // existing line reported success.
+          const got = cart.items.find((i) => i.skuId === sku)?.quantity ?? 0;
+          if (got < want) {
             console.error(
-              `D1 accepted the request but SKU ${sku} is not in the cart — it is probably unavailable from seller ${seller}.`,
+              got <= 0
+                ? `D1 accepted the request but SKU ${sku} is not in the cart — it is probably unavailable from seller ${seller}.`
+                : `D1 set SKU ${sku} to ${got}, not the ${want} requested (stock limit, or seller ${seller} cannot supply the rest).`,
             );
             console.log(asJson ? json(cart) : renderCart(cart));
             return 1;
@@ -330,7 +369,7 @@ async function main(argv: string[]): Promise<number> {
           const idx = num(positional[2]);
           const qty = num(positional[3]);
           if (idx === undefined || qty === undefined) {
-            throw new D1Error("Usage: d1 cart set <index> <quantity>");
+            throw new UsageError("Usage: d1 cart set <index> <quantity>");
           }
           cart = await setQuantity(client, cart.orderFormId, idx, qty, channel);
           persistCart();
@@ -346,7 +385,7 @@ async function main(argv: string[]): Promise<number> {
 
         case "deliver-to": {
           const at = pointFrom(flags, stored?.region);
-          if (!at) throw new D1Error("Usage: d1 cart deliver-to --lat <lat> --lng <lng>");
+          if (!at) throw new UsageError("Usage: d1 cart deliver-to --lat <lat> --lng <lng>");
           cart = await setDeliveryPoint(client, cart.orderFormId, at, {
             postalCode: str(flags["postal-code"]),
             city: str(flags.city),
@@ -383,14 +422,14 @@ async function main(argv: string[]): Promise<number> {
         }
 
         default:
-          throw new D1Error(`Unknown cart subcommand: ${sub}`);
+          throw new UsageError(`Unknown cart subcommand: ${sub}`);
       }
     }
 
     case "quote": {
       const specs = positional.slice(1);
       if (specs.length === 0) {
-        throw new D1Error("Usage: d1 quote <sku>[:qty] [<sku>[:qty] ...] --lat --lng");
+        throw new UsageError("Usage: d1 quote <sku>[:qty] [<sku>[:qty] ...] --lat --lng");
       }
       const at = pointFrom(flags, stored?.region);
       if (!at)
@@ -453,7 +492,7 @@ async function main(argv: string[]): Promise<number> {
 
       const email = str(flags.email);
       if (!email) {
-        throw new D1Error(
+        throw new UsageError(
           "Usage: d1 login --email <address>   (then: d1 login --email <address> --code <code>)",
         );
       }
@@ -495,10 +534,31 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
 
-    case "logout":
+    case "logout": {
+      // Clearing wipes the delivery point and the cart id along with the
+      // token — all three are personal, so that is the right default. But a
+      // basket built before signing out becomes unreachable from the CLI, and
+      // saying nothing about that reads as data loss. Hand back the URL first.
+      const orphanedCart = stored?.orderFormId;
       clearSession();
-      console.log(asJson ? json({ signedOut: true }) : "Session cleared.");
+      if (asJson) {
+        console.log(
+          json({
+            signedOut: true,
+            forgot: ["session token", "delivery point", "cart id"],
+            recoverCartUrl: orphanedCart ? checkoutUrl(orphanedCart) : null,
+          }),
+        );
+      } else {
+        console.log("Signed out. Forgot the session token, delivery point, and cart id.");
+        if (orphanedCart) {
+          console.log("");
+          console.log("Your basket still exists in the browser:");
+          console.log(`  ${checkoutUrl(orphanedCart)}`);
+        }
+      }
       return 0;
+    }
 
     case "orders": {
       const { orders, total, pages } = await listOrders(client, {
@@ -515,8 +575,16 @@ async function main(argv: string[]): Promise<number> {
 
     case "order": {
       const id = positional[1];
-      if (!id) throw new D1Error("Usage: d1 order <orderId>");
-      console.log(json(await getOrder(client, id)));
+      if (!id) throw new UsageError("Usage: d1 order <orderId>");
+      const detail = await getOrder(client, id);
+      // Redacted by default: the payload carries a national ID, phone, full
+      // address, and card first/last digits that nothing about "where is my
+      // order?" requires. --raw opts in deliberately.
+      const raw = flags.raw === true || flags.raw === "true";
+      console.log(json(raw ? detail : redactOrder(detail)));
+      if (!raw && !asJson) {
+        console.error("Personal fields redacted. Pass --raw for the full payload.");
+      }
       return 0;
     }
 
@@ -531,11 +599,17 @@ if (import.meta.main) {
   main(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((err) => {
-      if (err instanceof D1Error) {
+      if (err instanceof UsageError) {
+        // 2 = "you called this wrong"; retrying verbatim will never help.
         console.error(err.message);
-      } else {
-        console.error(`Unexpected failure: ${err instanceof Error ? err.message : err}`);
+        process.exit(2);
       }
+      if (err instanceof D1Error) {
+        // 1 = "D1 said no, or could not be reached" — a retry may help.
+        console.error(err.message);
+        process.exit(1);
+      }
+      console.error(`Unexpected failure: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
     });
 }

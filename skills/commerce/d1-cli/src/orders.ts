@@ -85,3 +85,57 @@ export async function getOrder(client: D1Client, orderId: string): Promise<unkno
   }
   return client.request(`/api/oms/user/orders/${encodeURIComponent(orderId)}`);
 }
+
+/**
+ * Fields in VTEX's order-detail payload that should not be printed by default.
+ *
+ * The response carries the customer's national ID document, phone, full
+ * delivery address, and the card's first/last digits — none of it needed to
+ * answer "where is my order?", and all of it would otherwise land in a
+ * terminal, a shell history, a log, or an agent's context simply because it
+ * happened to be in the envelope. A skill whose docs foreground credential
+ * hygiene should not leak this by default.
+ */
+const SENSITIVE_KEYS = new Set([
+  "document",
+  "documentType",
+  "corporateDocument",
+  "phone",
+  "homePhone",
+  "email",
+  "receiverName",
+  "street",
+  "number",
+  "complement",
+  "neighborhood",
+  "postalCode",
+  "reference",
+  "geoCoordinates",
+  "firstDigits",
+  "lastDigits",
+  "cardNumber",
+  "tid",
+  "nsu",
+]);
+
+/**
+ * Recursively replace sensitive values with `"[redacted]"`.
+ *
+ * Shape is preserved rather than keys dropped, so the output stays obviously
+ * censored instead of mysteriously incomplete. `d1 order --raw` opts out.
+ */
+export function redactOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactOrder);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SENSITIVE_KEYS.has(k)) {
+        out[k] = v === null || v === undefined ? v : "[redacted]";
+      } else {
+        out[k] = redactOrder(v);
+      }
+    }
+    return out;
+  }
+  return value;
+}

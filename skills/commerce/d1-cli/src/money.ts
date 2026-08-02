@@ -10,7 +10,7 @@
 
 import type { PriceHundredths } from "./types.ts";
 
-/** Convert VTEX hundredths to whole pesos. Rounds half away from zero. */
+/** Convert VTEX hundredths to whole pesos. Rounds half toward +Infinity, per `Math.round`. */
 export function toPesos(v: PriceHundredths): number {
   if (!Number.isFinite(v)) return 0;
   return Math.round(v / 100);

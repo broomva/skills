@@ -112,6 +112,9 @@ export function renderCart(c: Cart): string {
   });
   lines.push("");
   lines.push(`Items    ${formatCOP(c.itemsTotal).padStart(11)}`);
+  if (c.discounts !== 0) {
+    lines.push(`Savings  ${formatCOP(c.discounts).padStart(11)}`);
+  }
   if (c.shipping.length > 0) {
     lines.push("Shipping options:");
     lines.push(renderShipping(c.shipping));

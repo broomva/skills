@@ -35,9 +35,13 @@ bun run src/cli.ts cart deliver-to
 bun run src/cli.ts cart checkout      # prints a URL; does not pay
 ```
 
-Add `--json` to any command for agent-readable output. Exit codes are
-meaningful: `0` success, `1` failure (undeliverable point, unavailable SKU,
-unknown SKU), `2` usage error.
+Add `--json` to any command for agent-readable output. Exit codes separate the
+two failure modes an agent must tell apart: **0** success · **1** D1 refused or
+was unreachable — undeliverable point, unavailable or unknown SKU, outage
+(retry may help) · **2** the command was called wrong (retrying never helps).
+
+Note that `cart add` **sets** the line to `--qty`; it does not add to it. That
+is D1's own semantics, verified live.
 
 ## The two things that make naive D1 automation wrong
 
@@ -70,10 +74,20 @@ search-sourced price renders identically to a checkout-sourced one.
 
 ## What it will not do
 
-`d1` builds and prices baskets. It does not pay: there is no code path that
-accepts a card number, posts `paymentData`, or calls `gatewayCallback`, and
-`test/safety.test.ts` fails if one is ever added. `d1 cart checkout` prints the
+`d1` builds and prices baskets. It does not pay. `d1 cart checkout` prints the
 URL where a human reviews the total and completes payment.
+
+That boundary is checked, not merely intended: `test/safety.test.ts` extracts
+every `/api/` path literal from the whole `src/` tree and fails unless each one
+appears in an explicit allowlist of 18 approved storefront endpoints. Adding any
+endpoint — payment or otherwise — fails until it is listed, so the decision has
+to be made rather than defaulted into.
+
+Stated precisely, because an earlier version of this file overclaimed: the test
+proves no *literal* unapproved endpoint reaches the tree. It cannot stop a path
+assembled from fragments that are individually not `/api/` strings. The honest
+claim is that the obvious and the accidental routes are closed, not that payment
+is impossible for a determined committer.
 
 The only credential it stores is a storefront session token — the same thing a
 signed-in browser holds, scoped to its owner's own orders and cart — written to
@@ -92,15 +106,21 @@ is deliberately not implemented.
 | `quote <sku>[:qty]...` | price a basket, no cart mutation |
 | `cart [show\|add\|set\|clear\|deliver-to\|checkout]` | build a basket |
 | `login --email` / `--from-cookie` · `whoami` · `logout` | account |
-| `orders` · `order <id>` | order history |
+| `orders` · `order <id>` | order history (detail is redacted; `--raw` opts in) |
 
 ## Tests
 
 ```bash
-bun test        # 85 tests: money units, the semicolon gotcha, quantity-in-quote,
-                # unknown-SKU vacuity, cart normalization, payment-boundary guards
+bun test        # 124 tests: money units, the semicolon gotcha, quantity-in-quote,
+                # unknown-SKU vacuity, cart normalization, order redaction, and
+                # the endpoint allowlist that bounds the payment surface
 bun run lint && bun run typecheck
 ```
+
+Exit codes are a contract, not decoration: **0** success · **1** D1 refused or
+could not be reached (worth a retry) · **2** the command was called wrong (never
+worth retrying). An agent that cannot separate those two failure modes either
+retries a typo forever or gives up on a transient outage.
 
 See `README.md` for the full endpoint map, the shipping-tier behaviour, and
 what the public API will not give you.

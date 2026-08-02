@@ -146,6 +146,11 @@ export interface Cart {
   items: CartItem[];
   /** Item subtotal, before shipping and discounts. */
   itemsTotal: PriceHundredths;
+  /**
+   * Promotion total as reported by the `Discounts` totalizer. Negative when a
+   * promotion applies (VTEX signs it as a reduction), 0 otherwise.
+   */
+  discounts: PriceHundredths;
   /** Grand total as computed upstream, including every totalizer. */
   total: PriceHundredths;
   shipping: ShippingOption[];
@@ -179,5 +184,22 @@ export class D1Error extends Error {
   ) {
     super(message);
     this.name = "D1Error";
+  }
+}
+
+/**
+ * The caller invoked the CLI wrong — bad flags, missing arguments, malformed
+ * input. Distinct from `D1Error` so it can exit 2 instead of 1.
+ *
+ * The distinction matters most to the agents this CLI is built for: exit 1
+ * ("D1 said no, or is down") is worth retrying or backing off, while exit 2
+ * ("you called this wrong") never is. Collapsing both into 1 leaves a caller
+ * unable to tell a transient outage from a bug in its own argument
+ * construction, so it retries forever or gives up on a typo.
+ */
+export class UsageError extends D1Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UsageError";
   }
 }

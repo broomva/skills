@@ -287,3 +287,32 @@ describe("simulate — an unknown SKU must not pass vacuously", () => {
     expect(r.unknownSkus).toEqual([]);
   });
 });
+
+describe("promotions are accounted for, not silently dropped", () => {
+  test("surfaces the Discounts totalizer", () => {
+    const c = normalizeCart({
+      orderFormId: "of1",
+      value: 1_500_000,
+      items: [{ id: "262", quantity: 1, sellingPrice: 2_000_000 }],
+      totalizers: [
+        { id: "Items", value: 2_000_000 },
+        { id: "Discounts", value: -500_000 },
+      ],
+    });
+    // Without this, the cart renders "Items 20.000 / Total 15.000" with a
+    // 5.000 gap nothing explains — on the surface where a shopper checks the
+    // arithmetic before paying.
+    expect(c.itemsTotal).toBe(2_000_000);
+    expect(c.discounts).toBe(-500_000);
+    expect(c.total).toBe(1_500_000);
+    expect(c.itemsTotal + c.discounts).toBe(c.total);
+  });
+
+  test("an unpromoted cart reports zero, not undefined", () => {
+    const c = normalizeCart({
+      orderFormId: "of1",
+      totalizers: [{ id: "Items", value: 700_000 }],
+    });
+    expect(c.discounts).toBe(0);
+  });
+});

@@ -1,7 +1,7 @@
 {
   "name": "d1-cli",
   "version": "0.1.0",
-  "description": "Command-line access to Tiendas D1 (Colombia) — search the catalogue, price a basket against your nearest store, quote delivery. Builds carts; never pays.",
+  "description": "Command-line access to Tiendas D1 (Colombia) \u2014 search the catalogue, price a basket against your nearest store, quote delivery. Builds carts; never pays.",
   "type": "module",
   "module": "src/cli.ts",
   "bin": {
@@ -10,7 +10,6 @@
   "scripts": {
     "d1": "bun run src/cli.ts",
     "test": "bun test",
-    "test:live": "D1_LIVE=1 bun test",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src test",
     "format": "biome format --write src test"
