@@ -40,14 +40,31 @@ import { saveSession } from "../src/session.ts";
 
 const SRC = join(import.meta.dir, "..", "src");
 
+/**
+ * Every extension the runtime will execute.
+ *
+ * `.ts` alone is not enough: Bun happily runs `.mts`, `.cts`, `.tsx` and the
+ * plain JS variants, so a walk filtering on `.ts` leaves a payment module in
+ * `src/deep/nested/settle.mts` completely unexamined. Verified — it passed
+ * before this list existed.
+ */
+const SOURCE_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"];
+
 /** Every source file under `src/`, at any depth. */
-function sourceFiles(dir = SRC): Array<{ name: string; body: string }> {
+function sourceFiles(dir = SRC, seen = new Set<string>()): Array<{ name: string; body: string }> {
   const out: Array<{ name: string; body: string }> = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      out.push(...sourceFiles(full));
-    } else if (entry.endsWith(".ts")) {
+    const st = statSync(full);
+    if (st.isDirectory()) {
+      // statSync follows symlinks, which is what we want (a symlinked
+      // directory is still reachable code) — but a cycle would hang the suite,
+      // so each real directory is visited once.
+      const key = `${st.dev}:${st.ino}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(...sourceFiles(full, seen));
+    } else if (SOURCE_EXTENSIONS.some((e) => entry.endsWith(e))) {
       out.push({ name: full.slice(SRC.length + 1), body: readFileSync(full, "utf8") });
     }
   }
@@ -86,21 +103,28 @@ const ALLOWED_ENDPOINTS = new Set([
 ]);
 
 /**
- * Strip comments so prose mentioning an endpoint is not mistaken for code
- * reaching one. Block comments go entirely; so do lines that are wholly a
- * comment. A trailing `// ...` after code on the same line is deliberately
- * left alone, because stripping from `//` would also cut the `//` inside a
- * URL literal. The residual error direction is a false POSITIVE — an endpoint
- * named in a trailing comment fails the allowlist check loudly — which is the
+ * Drop whole-line comments so prose mentioning an endpoint is not mistaken for
+ * code reaching one.
+ *
+ * Deliberately LINE-BASED. An earlier version also ran
+ * `.replace(/\/\*[\s\S]*?\*\//g, "")` to strip block comments, which is a
+ * silent hole: a source line containing the string `"/*"` opens a match that
+ * swallows every line until the next `*​/`, so a payment literal placed
+ * between them disappears from the extractor entirely. Verified — it hid
+ * `/api/evil/payment`. Deleting only lines that are *themselves* comments
+ * cannot span lines, so nothing can be hidden behind it.
+ *
+ * A trailing `// ...` after code is left alone, because cutting from `//`
+ * would also cut the `//` inside a URL literal. That direction fails LOUDLY
+ * (an endpoint named in a trailing comment trips the allowlist), which is the
  * safe way for this to be wrong.
  */
 function stripComments(body: string): string {
   return body
-    .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n")
     .filter((l) => {
       const t = l.trimStart();
-      return !t.startsWith("//") && !t.startsWith("*");
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
     })
     .join("\n");
 }
@@ -215,5 +239,39 @@ describe("credential handling", () => {
 
     saveSession({ token: "test-token-2", savedAt: "2026-01-02" }, tmpFile);
     expect(statSync(tmpFile).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("the extractor cannot be blinded", () => {
+  test("a literal cannot hide behind a string containing a block-comment opener", () => {
+    // The hole this replaces: stripping /*...*/ with a lazy multi-line regex
+    // let `const marker = "/*"` swallow every following line until `*/`,
+    // deleting a payment literal from the extractor's view entirely.
+    const evil = [
+      'const marker = "/*";',
+      'const p = "/api/checkout/pub/orderForm/x/attachments/paymentData";',
+      'const end = "*/";',
+    ].join("\n");
+    const found = apiLiterals(evil);
+    expect(found).toContain("/api/checkout/pub/orderForm/x/attachments/paymentData");
+    expect(found.filter((p) => !ALLOWED_ENDPOINTS.has(p)).length).toBeGreaterThan(0);
+  });
+
+  test("stripping never removes code (anti-vacuity over the real tree)", () => {
+    // If stripComments ever ate a whole file, every allowlist check would pass
+    // trivially. Every source file here exports something; assert that survives.
+    for (const f of sourceFiles()) {
+      if (!f.body.includes("export ")) continue;
+      expect(stripComments(f.body)).toContain("export ");
+    }
+  });
+
+  test("a payment file under any executable extension is caught", () => {
+    // .ts alone missed .mts/.cts/.tsx/.js — Bun runs all of them.
+    for (const ext of SOURCE_EXTENSIONS) {
+      expect(SOURCE_EXTENSIONS.some((e) => `settle${ext}`.endsWith(e))).toBe(true);
+    }
+    expect(SOURCE_EXTENSIONS).toContain(".mts");
+    expect(SOURCE_EXTENSIONS).toContain(".tsx");
   });
 });
