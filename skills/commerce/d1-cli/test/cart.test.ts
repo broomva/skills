@@ -50,20 +50,65 @@ describe("normalizeCart", () => {
     expect(c.items[0].total).toBe(300_000);
   });
 
-  test("deduplicates a shipping option repeated once per item", () => {
-    // With five items VTEX repeats the same SLA five times; showing it five
-    // times would read as five different delivery choices.
+  test("collapses a repeated SLA into ONE row whose price is the whole cost", () => {
+    // VTEX repeats logisticsInfo once per line, and each entry's slas[].price
+    // is that LINE'S SHARE. Three lines of a flat COP 13,500 delivery arrive as
+    // 4,500 each. Showing one row is right; showing 4,500 is not — the previous
+    // version did exactly that and under-reported shipping by the line count.
+    const share = 450_000; // COP 4,500 in hundredths
+    const c = normalizeCart({
+      orderFormId: "of1",
+      shippingData: {
+        logisticsInfo: [
+          { slas: [{ id: "Entrega Programada", price: share, shippingEstimate: "1bd" }] },
+          { slas: [{ id: "Entrega Programada", price: share, shippingEstimate: "1bd" }] },
+          { slas: [{ id: "Entrega Programada", price: share, shippingEstimate: "1bd" }] },
+        ],
+      },
+    });
+    expect(c.shipping).toHaveLength(1);
+    expect(c.shipping[0].price).toBe(1_350_000); // COP 13,500, the real cost
+    expect(c.shipping[0].price).not.toBe(share); // the bug this replaces
+  });
+
+  test("a single-line cart is unchanged (the case that hid the bug)", () => {
+    // With one line the share IS the total, which is why 1- and 2-line fixtures
+    // could not distinguish summing from taking the first.
     const c = normalizeCart({
       orderFormId: "of1",
       shippingData: {
         logisticsInfo: [
           { slas: [{ id: "Entrega Programada", price: 1_350_000, shippingEstimate: "1bd" }] },
-          { slas: [{ id: "Entrega Programada", price: 1_350_000, shippingEstimate: "1bd" }] },
         ],
       },
     });
-    expect(c.shipping).toHaveLength(1);
     expect(c.shipping[0].price).toBe(1_350_000);
+  });
+
+  test("distinct options stay distinct and are summed independently", () => {
+    const c = normalizeCart({
+      orderFormId: "of1",
+      shippingData: {
+        logisticsInfo: [
+          {
+            slas: [
+              { id: "Programada", price: 100_000, shippingEstimate: "1bd" },
+              { id: "Express", price: 300_000, shippingEstimate: "4h" },
+            ],
+          },
+          {
+            slas: [
+              { id: "Programada", price: 100_000, shippingEstimate: "1bd" },
+              { id: "Express", price: 300_000, shippingEstimate: "4h" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(c.shipping.map((s) => [s.id, s.price])).toEqual([
+      ["Programada", 200_000],
+      ["Express", 600_000],
+    ]);
   });
 
   test("an unquoted cart reports no shipping rather than free shipping", () => {
@@ -314,5 +359,37 @@ describe("promotions are accounted for, not silently dropped", () => {
       totalizers: [{ id: "Items", value: 700_000 }],
     });
     expect(c.discounts).toBe(0);
+  });
+});
+
+describe("simulate — shipping shares are summed there too", () => {
+  const AT = { lat: 4.6486, lng: -74.0628 };
+
+  test("a 3-line simulation reports the whole delivery cost", async () => {
+    // The simulation endpoint returns no populated Shipping totalizer, so the
+    // per-line sum is the only source of truth on this path.
+    const { impl } = stub({
+      items: [
+        { id: "a", quantity: 1, availability: "available", price: 100_000 },
+        { id: "b", quantity: 1, availability: "available", price: 100_000 },
+        { id: "c", quantity: 1, availability: "available", price: 100_000 },
+      ],
+      logisticsInfo: [
+        { slas: [{ id: "Entrega Programada", price: 450_000, shippingEstimate: "1bd" }] },
+        { slas: [{ id: "Entrega Programada", price: 450_000, shippingEstimate: "1bd" }] },
+        { slas: [{ id: "Entrega Programada", price: 450_000, shippingEstimate: "1bd" }] },
+      ],
+    });
+    const r = await simulate(
+      new D1Client({ fetchImpl: impl }),
+      [
+        { skuId: "a", quantity: 1, sellerId: "s" },
+        { skuId: "b", quantity: 1, sellerId: "s" },
+        { skuId: "c", quantity: 1, sellerId: "s" },
+      ],
+      AT,
+    );
+    expect(r.shipping).toHaveLength(1);
+    expect(r.shipping[0].price).toBe(1_350_000);
   });
 });

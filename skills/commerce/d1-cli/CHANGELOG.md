@@ -3,6 +3,29 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.1.1] — 2026-08-02
+
+### Fixed
+
+- **Shipping was under-reported by the number of cart lines.** VTEX repeats
+  `logisticsInfo` per line and each entry's `slas[].price` is that line's
+  SHARE. Deduplicating the repeated SLA and showing the first share displayed
+  COP 1,125 on a 12-line basket whose delivery actually cost COP 13,500.
+  Now summed per option; agrees with the orderForm's `Shipping` totalizer.
+
+  The tell was on screen and nearly missed: `Items 109.870` + `Shipping 1.125`
+  against `Total 123.370`. Items + shipping ≠ total.
+
+  Found by building the first realistic grocery basket. Every prior fixture used
+  1–2 lines, where a share is indistinguishable from the total — the same
+  blind spot as the quantity bug that was invisible to quantity-1 fixtures.
+
+### Retracted
+
+- README gotcha 7 claimed shipping "varies with basket composition, and not
+  monotonically", with a table showing a larger basket getting cheaper delivery.
+  That was this bug, not a property of D1. Delivery is a flat COP 13,500.
+
 ## [0.1.0] — 2026-08-02
 
 Initial release. Reverse-engineered `d1.com.co` and found it runs VTEX IO
