@@ -1,0 +1,54 @@
+name: test-d1-cli
+
+# Bun test gate for the `d1-cli` skill (skills/commerce/d1-cli/). Path-filtered so it
+# runs ONLY when that directory changes.
+#
+# The suite is deliberately network-free — every test drives an injected fetch stub —
+# so CI never depends on d1.com.co being up, and a D1 outage cannot turn this red.
+# That also means CI does not verify the live endpoints still behave as documented;
+# the gotchas in README.md were established by hand and are pinned here as shape
+# assertions, not as live contract checks.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/commerce/d1-cli/**'
+      - '.github/workflows/test-d1-cli.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/commerce/d1-cli/**'
+      - '.github/workflows/test-d1-cli.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-d1-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/commerce/d1-cli
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: bun test + lint + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        # bun.lock (the text lockfile) is committed, so CI installs exactly what
+        # was tested locally. The gitignore only excludes the older binary
+        # bun.lockb, inherited from the other bun skills here.
+        run: bun install --frozen-lockfile
+      - name: Test
+        run: bun test
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck

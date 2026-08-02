@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 79 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 81 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**79 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**81 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -75,7 +75,7 @@ npx skills add broomva/skills --skill '*'
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 79 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 81 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -222,6 +222,7 @@ npx skills add broomva/skills --skill '*'
 
 | Skill | What it does |
 |---|---|
+| [`d1-cli`](skills/commerce/d1-cli/) | Shop Tiendas D1 (Colombia) from the command line — search, resolve your nearest store, price a basket against its real stock, quote delivery; builds carts but never pays |
 | [`procurer`](skills/commerce/procurer/) | Grounded procurement research for any real-world need |
 | [`swapit`](skills/commerce/swapit/) | Stateful, local-first household toxics inventory + swap engine |
 
@@ -234,21 +235,21 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 79 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
+The 81 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
 | Governance & control | `skills/governance/` | 7 |
 | Orchestration & autonomy | `skills/orchestration/` | 7 |
-| Skill & prompt tooling | `skills/tooling/` | 5 |
-| Knowledge & memory | `skills/knowledge/` | 4 |
+| Skill & prompt tooling | `skills/tooling/` | 6 |
+| Knowledge & memory | `skills/knowledge/` | 6 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 5 |
 | Operating cadence | `skills/cadence/` | 4 |
 | Publishing & growth | `skills/publishing/` | 5 |
 | Video & multimedia | `skills/video/` | 6 |
 | Audio & music | `skills/audio/` | 2 |
-| Design & brand | `skills/design/` | 4 |
+| Design & brand | `skills/design/` | 5 |
 | Finance & payments | `skills/finance/` | 4 |
 | Compute infrastructure | `skills/compute/` | 3 |
 | Model runtimes | `skills/models/` | 2 |
@@ -258,9 +259,8 @@ The 79 skills bucket into 22 single-noun categories — one row per `skills/<cat
 | Neuroscience & BCI | `skills/neuroscience/` | 3 |
 | Healthcare | `skills/healthcare/` | 2 |
 | Science | `skills/science/` | 1 |
-| Commerce & procurement | `skills/commerce/` | 2 |
+| Commerce & procurement | `skills/commerce/` | 3 |
 | Everyday utilities | `skills/utilities/` | 2 |
-
 Full details with descriptions in [`references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md).
 
 ## Skills showcase
