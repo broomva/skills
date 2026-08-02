@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.1.0 — 2026-08-02
+All notable changes to the **d1-cli** skill are documented here.
+Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
+
+## [0.1.0] — 2026-08-02
 
 Initial release. Reverse-engineered `d1.com.co` and found it runs VTEX IO
 (account `d1tiendas`), which turned the task from protocol archaeology into
