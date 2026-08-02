@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 78 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-07-26.
+> 81 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-02.
 
-## Governance & control — `skills/governance/` (6)
+## Governance & control — `skills/governance/` (7)
 
 | Skill | What it does |
 |---|---|
@@ -25,7 +25,7 @@
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
 
-## Skill & prompt tooling — `skills/tooling/` (5)
+## Skill & prompt tooling — `skills/tooling/` (6)
 
 | Skill | What it does |
 |---|---|
@@ -33,7 +33,7 @@
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 78 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 81 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (6)
 
@@ -176,10 +176,11 @@
 |---|---|
 | `ocean-genomics` | Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics, protein structure prediction, and marine biodiversity analysis |
 
-## Commerce & procurement — `skills/commerce/` (2)
+## Commerce & procurement — `skills/commerce/` (3)
 
 | Skill | What it does |
 |---|---|
+| `d1-cli` | Shop Tiendas D1 (Colombia) from the command line — search, resolve your nearest store, price a basket against its real stock, quote delivery; builds carts but never pays |
 | `procurer` | Grounded procurement research for any real-world need |
 | `swapit` | Stateful, local-first household toxics inventory + swap engine |
 
