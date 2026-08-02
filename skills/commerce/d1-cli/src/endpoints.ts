@@ -3,8 +3,9 @@
  *
  * Used twice, deliberately:
  *
- *   - **At runtime**, by `D1Client.request`, against the RESOLVED
- *     `URL.pathname` — after `new URL()` has collapsed any `..` segments.
+ *   - **At runtime**, by `D1Client.request`, against the fully RESOLVED URL —
+ *     after `new URL()` has collapsed any `..` segments AND applied any host
+ *     change. Both matter; see `assertAllowedUrl`.
  *   - **Statically**, by `test/safety.test.ts`, against every `/api/` literal
  *     in the source tree.
  *
@@ -22,7 +23,7 @@
  * what was written.
  */
 
-import { D1Error } from "./types.ts";
+import { D1Error, ORIGIN } from "./types.ts";
 
 /** A URL path segment that cannot be a traversal or a separator. */
 const SEG = "[^/]+";
@@ -105,4 +106,29 @@ export function assertAllowedPath(pathname: string, original: string): void {
       ? "This is a bug in d1-cli."
       : `(Requested as ${original}; path traversal resolved it elsewhere.)`;
   throw new D1Error(`Refusing to call ${pathname} — it is not an approved D1 endpoint. ${why}`);
+}
+
+/**
+ * Assert the whole resolved URL, not just its path.
+ *
+ * Checking `pathname` alone is not enough, and the gap is worse than the
+ * traversal it was written to close. `new URL()` resolves a protocol-relative
+ * or absolute `path` against the base by **replacing the host**:
+ *
+ *   new URL("//evil.com/api/checkout/pub/regions", ORIGIN)
+ *     → host evil.com, pathname /api/checkout/pub/regions   ← an APPROVED path
+ *
+ * The pathname passes the allowlist, and the request leaves for another host
+ * carrying the `VtexIdclientAutCookie` — a session-token exfiltration wearing
+ * an approved endpoint's clothes. The origin is therefore pinned first, so a
+ * host change fails before the path is ever consulted.
+ */
+export function assertAllowedUrl(url: URL, original: string): void {
+  if (url.origin !== ORIGIN) {
+    throw new D1Error(
+      `Refusing to call ${url.origin} — d1-cli only talks to ${ORIGIN}. ` +
+        `(Requested as ${original}.) A session cookie must never leave D1's origin.`,
+    );
+  }
+  assertAllowedPath(url.pathname, original);
 }

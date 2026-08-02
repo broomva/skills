@@ -116,3 +116,46 @@ describe("path traversal cannot escape an endpoint", () => {
     expect(encodeFacetPath("category-1/lacteos-y-huevos")).toBe("category-1/lacteos-y-huevos");
   });
 });
+
+describe("the session cookie cannot leave D1's origin", () => {
+  function spy() {
+    const seen: string[] = [];
+    const impl = (async (url: string) => {
+      seen.push(String(url));
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    return { impl, seen };
+  }
+
+  test("a protocol-relative path keeps an APPROVED pathname but changes host", () => {
+    // Why pathname-only checking is insufficient, stated as the premise of the
+    // test rather than assumed: this is an approved path on a foreign host.
+    const u = new URL("//evil.example/api/checkout/pub/regions", "https://www.d1.com.co");
+    expect(u.host).toBe("evil.example");
+    expect(isAllowedPath(u.pathname)).toBe(true);
+  });
+
+  test("...and is refused before anything is sent", async () => {
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl, authToken: "SECRET" });
+    await expect(client.request("//evil.example/api/checkout/pub/regions")).rejects.toThrow(
+      /only talks to https:\/\/www\.d1\.com\.co/,
+    );
+    expect(seen).toHaveLength(0);
+  });
+
+  test("an absolute foreign URL is refused too", async () => {
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl, authToken: "SECRET" });
+    await expect(client.request("https://evil.example/api/checkout/pub/regions")).rejects.toThrow(
+      /only talks to/,
+    );
+    expect(seen).toHaveLength(0);
+  });
+
+  test("the real origin still goes through (anti-overshoot control)", async () => {
+    const { impl, seen } = spy();
+    await new D1Client({ fetchImpl: impl }).request("/api/checkout/pub/regions");
+    expect(seen[0]).toStartWith("https://www.d1.com.co/api/checkout/pub/regions");
+  });
+});

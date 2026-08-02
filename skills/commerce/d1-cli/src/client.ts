@@ -8,7 +8,7 @@
  * config file at "can see my own orders".
  */
 
-import { assertAllowedPath } from "./endpoints.ts";
+import { assertAllowedUrl } from "./endpoints.ts";
 import { ACCOUNT, D1Error, ORIGIN } from "./types.ts";
 
 /** Presented to upstream so D1 can identify (and if it wishes, throttle) us. */
@@ -74,14 +74,18 @@ export class D1Client {
   ): Promise<T> {
     const url = new URL(path, ORIGIN);
 
-    // Enforce the endpoint allowlist HERE, on the resolved pathname, because
-    // this is the last point before the request leaves and the only place that
-    // sees what will actually be sent. `new URL()` has already collapsed any
-    // `..`, so a facet or channel argument crafted to climb out of its
-    // endpoint — which really did reach the order-settlement endpoint from
-    // `d1 search --facets ../../../..` — is caught here even though every
-    // string literal in the source was approved.
-    assertAllowedPath(url.pathname, path);
+    // Enforce the allowlist HERE, on the fully resolved URL, because this is
+    // the last point before the request leaves and the only place that sees
+    // what will actually be sent. Two distinct escapes are closed:
+    //
+    //   - `new URL()` has already collapsed any `..`, so a facet or channel
+    //     argument crafted to climb out of its endpoint — which really did
+    //     reach the order-settlement endpoint from `--facets ../../../..` — is
+    //     caught even though every string literal in the source was approved.
+    //   - It has also already applied any host change, so a protocol-relative
+    //     path cannot send the session cookie to another origin behind an
+    //     approved-looking pathname.
+    assertAllowedUrl(url, path);
 
     for (const [k, v] of Object.entries(init.query ?? {})) {
       if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
