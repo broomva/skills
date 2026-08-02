@@ -61,6 +61,12 @@ export async function listOrders(
     status: o.status ?? "",
     statusLabel: statusLabel(o.status ?? ""),
     creationDate: o.creationDate ?? "",
+    // ASSUMED hundredths, matching every other checkout-side field. NOT
+    // empirically confirmed: the account this was built against has no D1
+    // order history, so there was no real `totalValue` to check. Every other
+    // unit claim in this codebase was verified against live data; this one is
+    // inference from the surrounding API. If order totals ever read 100x high,
+    // this line is why.
     total: o.totalValue ?? 0,
     itemCount: o.ItemsQuantity ?? o.items?.length ?? 0,
   }));
