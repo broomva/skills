@@ -1,6 +1,6 @@
 {
   "name": "d1-cli",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Command-line access to Tiendas D1 (Colombia) \u2014 search the catalogue, price a basket against your nearest store, quote delivery. Builds carts; never pays.",
   "type": "module",
   "module": "src/cli.ts",

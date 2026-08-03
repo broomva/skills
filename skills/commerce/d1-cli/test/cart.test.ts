@@ -1,14 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
   addItems,
+  listAddresses,
   normalizeCart,
   setDeliveryPoint,
   setQuantity,
   simulate,
   undeliverable,
+  useSavedAddress,
 } from "../src/cart.ts";
 import { D1Client } from "../src/client.ts";
-import { renderCart } from "../src/present.ts";
+import { renderAddresses, renderCart } from "../src/present.ts";
 import { D1Error } from "../src/types.ts";
 
 function stub(body: unknown, status = 200) {
@@ -534,5 +536,145 @@ describe("an apartment address survives to the wire", () => {
     const sent = JSON.parse(calls[0].body ?? "{}").selectedAddresses[0];
     expect(sent.complement).toBeUndefined();
     expect(sent.country).toBe("COL");
+  });
+});
+
+describe("saved addresses — the customer's own, not ours", () => {
+  /** Shaped from a real account: 1 canonical record + junk the CLI itself made. */
+  const WIRE = {
+    orderFormId: "of1",
+    shippingData: {
+      availableAddresses: [
+        {
+          addressId: "bc204a4218fcba14c19eaab72c1d0fcf4fcf29f9",
+          addressType: "residential",
+          street: "KR 15",
+          number: "170 - 84",
+          complement: "T1-2102 Montpellier Ciudad La Salle",
+          neighborhood: "SAN JOSE DE USAQUEN",
+          city: "BOGOTÁ, D.C.",
+          postalCode: "110141660",
+          geoCoordinates: [-74.03525108413305, 4.751136575516661],
+        },
+        // Nine of these accumulated in a live account, one per deliver-to call.
+        {
+          addressId: "5dfea8d93a8f",
+          street: null,
+          city: null,
+          geoCoordinates: [-74.03532, 4.75068],
+        },
+      ],
+    },
+  };
+
+  test("lists the address book with ids", async () => {
+    const { impl } = stub(WIRE);
+    const a = await listAddresses(new D1Client({ fetchImpl: impl }), "of1");
+    expect(a).toHaveLength(2);
+    expect(a[0].addressId).toBe("bc204a4218fcba14c19eaab72c1d0fcf4fcf29f9");
+    expect(a[0].postalCode).toBe("110141660");
+  });
+
+  test("a record with no street is marked incomplete, not surfaced as an address", () => {
+    // These are what the CLI minted from bare coordinates. Presenting them as
+    // choosable addresses would be presenting our own litter back to the user.
+    const { impl } = stub(WIRE);
+    return listAddresses(new D1Client({ fetchImpl: impl }), "of1").then((a) => {
+      expect(a[0].complete).toBe(true);
+      expect(a[1].complete).toBe(false);
+      expect(renderAddresses(a)).toContain("1 incomplete record");
+      expect(renderAddresses(a)).not.toContain("5dfea8d93a8f");
+    });
+  });
+
+  test("nulls do not become the string 'null'", async () => {
+    const { impl } = stub(WIRE);
+    const a = await listAddresses(new D1Client({ fetchImpl: impl }), "of1");
+    expect(a[1].street).toBeUndefined();
+    expect(a[1].city).toBeUndefined();
+  });
+
+  test("passing an addressId REUSES a record instead of minting one", async () => {
+    const { impl, calls } = stub({ orderFormId: "of1" });
+    await setDeliveryPoint(
+      new D1Client({ fetchImpl: impl }),
+      "of1",
+      { lat: 4.75, lng: -74.03 },
+      {
+        addressId: "bc204a4218fcba14c19eaab72c1d0fcf4fcf29f9",
+      },
+    );
+    const sent = JSON.parse(calls[0].body ?? "{}").selectedAddresses[0];
+    expect(sent.addressId).toBe("bc204a4218fcba14c19eaab72c1d0fcf4fcf29f9");
+  });
+
+  test("omitting it sends no addressId — which is what mints a new record", async () => {
+    // Pinned so the behaviour is explicit rather than incidental: the CLI warns
+    // at this call site precisely because VTEX will create a record.
+    const { impl, calls } = stub({ orderFormId: "of1" });
+    await setDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", { lat: 4.75, lng: -74.03 });
+    expect(JSON.parse(calls[0].body ?? "{}").selectedAddresses[0].addressId).toBeUndefined();
+  });
+
+  test("an empty book explains how to create one", () => {
+    expect(renderAddresses([])).toContain("map picker");
+  });
+});
+
+describe("useSavedAddress posts the WHOLE record, not just the id", () => {
+  const BOOK = {
+    orderFormId: "of1",
+    shippingData: {
+      availableAddresses: [
+        {
+          addressId: "bc204a4218fcba14c19eaab72c1d0fcf4fcf29f9",
+          addressType: "residential",
+          street: "KR 15",
+          number: "170 - 84",
+          complement: "T1-2102 Montpellier Ciudad La Salle",
+          neighborhood: "SAN JOSE DE USAQUEN",
+          city: "BOGOTÁ, D.C.",
+          state: "BOGOTÁ, D.C.",
+          postalCode: "110141660",
+          geoCoordinates: [-74.03525108413305, 4.751136575516661],
+        },
+        { addressId: "5dfea8d93a8f", street: null, geoCoordinates: [-74.03532, 4.75068] },
+      ],
+    },
+  };
+
+  test("sends every canonical field back", async () => {
+    // Sending the addressId ALONE does not work — verified live: VTEX ignored
+    // it and selected a fresh empty address, which is both wrong and yet
+    // another junk record.
+    const { impl, calls } = stub(BOOK);
+    await useSavedAddress(new D1Client({ fetchImpl: impl }), "of1", "bc204a4218fc");
+    const sent = JSON.parse(calls[1].body ?? "{}").selectedAddresses[0];
+    expect(sent.addressId).toBe("bc204a4218fcba14c19eaab72c1d0fcf4fcf29f9");
+    expect(sent.street).toBe("KR 15");
+    expect(sent.number).toBe("170 - 84");
+    expect(sent.postalCode).toBe("110141660");
+    expect(sent.geoCoordinates).toEqual([-74.03525108413305, 4.751136575516661]);
+  });
+
+  test("a short id prefix resolves", async () => {
+    const { impl } = stub(BOOK);
+    await expect(
+      useSavedAddress(new D1Client({ fetchImpl: impl }), "of1", "bc204a"),
+    ).resolves.toBeDefined();
+  });
+
+  test("an unknown id is rejected, not silently ignored", async () => {
+    const { impl } = stub(BOOK);
+    await expect(
+      useSavedAddress(new D1Client({ fetchImpl: impl }), "of1", "deadbeef"),
+    ).rejects.toThrow(/No saved address matches/);
+  });
+
+  test("an INCOMPLETE record is refused — it is our own litter, not an address", async () => {
+    const { impl } = stub(BOOK);
+    await expect(
+      useSavedAddress(new D1Client({ fetchImpl: impl }), "of1", "5dfea8d93a8f"),
+    ).rejects.toThrow(/no street/);
   });
 });

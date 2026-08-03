@@ -45,6 +45,9 @@ export const ALLOWED_ENDPOINT_PATTERNS: readonly RegExp[] = [
   /^\/api\/checkout\/pub\/regions$/,
   // cart — builds and prices a basket; none of these settle it
   /^\/api\/checkout\/pub\/orderForm$/,
+  // Read a specific cart — how the saved address book is reached, since
+  // `availableAddresses` is empty on a freshly created orderForm.
+  new RegExp(`^/api/checkout/pub/orderForm/${SEG}$`),
   new RegExp(`^/api/checkout/pub/orderForm/${SEG}/items$`),
   new RegExp(`^/api/checkout/pub/orderForm/${SEG}/items/update$`),
   new RegExp(`^/api/checkout/pub/orderForm/${SEG}/items/removeAll$`),
@@ -74,6 +77,7 @@ export const ALLOWED_ENDPOINT_SHAPES: readonly string[] = [
   "/api/catalog_system/pub/category/tree/{}",
   "/api/checkout/pub/regions",
   "/api/checkout/pub/orderForm",
+  "/api/checkout/pub/orderForm/{}",
   "/api/checkout/pub/orderForm/{}/items",
   "/api/checkout/pub/orderForm/{}/items/update",
   "/api/checkout/pub/orderForm/{}/items/removeAll",

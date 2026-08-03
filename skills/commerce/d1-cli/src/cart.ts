@@ -25,6 +25,7 @@ import {
   type LatLng,
   ORIGIN,
   type PriceHundredths,
+  type SavedAddress,
   type ShippingOption,
 } from "./types.ts";
 
@@ -47,6 +48,7 @@ interface WireOrderForm {
   totalizers?: Array<{ id: string; value?: number }>;
   messages?: Array<{ text?: string; code?: string; status?: string }>;
   shippingData?: {
+    availableAddresses?: Array<Record<string, unknown>>;
     logisticsInfo?: Array<{
       itemIndex?: number;
       slas?: Array<{
@@ -299,7 +301,108 @@ export async function clearCart(client: D1Client, orderFormId: string): Promise<
  * `neighborhood` or `reference` — or the parcel arrives at the gate with
  * nowhere to go.
  */
+/**
+ * Read the customer's saved address book off an orderForm.
+ *
+ * `availableAddresses` is empty on a FRESHLY CREATED orderForm — which is why
+ * probing a new cart reports zero even for an account that has addresses. Pass
+ * the customer's existing cart id.
+ */
+export async function listAddresses(
+  client: D1Client,
+  orderFormId: string,
+): Promise<SavedAddress[]> {
+  const w = await client.request<WireOrderForm>(`/api/checkout/pub/orderForm/${orderFormId}`);
+  return (w.shippingData?.availableAddresses ?? []).map((a) => {
+    const g = (k: string) => {
+      const v = a[k];
+      return typeof v === "string" && v !== "" ? v : undefined;
+    };
+    return {
+      addressId: String(a.addressId ?? ""),
+      addressType: g("addressType"),
+      receiverName: g("receiverName"),
+      street: g("street"),
+      number: g("number"),
+      complement: g("complement"),
+      neighborhood: g("neighborhood"),
+      city: g("city"),
+      state: g("state"),
+      postalCode: g("postalCode"),
+      geoCoordinates: Array.isArray(a.geoCoordinates) ? (a.geoCoordinates as number[]) : undefined,
+      // A record with no street is one VTEX minted from bare coordinates —
+      // the CLI itself used to create one on every deliver-to call.
+      complete: Boolean(g("street")),
+    };
+  });
+}
+
+/**
+ * Attach one of the customer's OWN saved addresses to a cart.
+ *
+ * Looks the record up in `availableAddresses` and posts it back whole. Sending
+ * just the `addressId` does not work — VTEX ignores it and selects a fresh
+ * empty address, which is both wrong and another junk record. Verified live.
+ *
+ * Preferred over supplying an address by hand: D1 canonicalizes through its own
+ * map picker, so the stored record carries a resolved street/number, the real
+ * neighborhood, a postal code and D1's own coordinates. Free text gets none of
+ * that.
+ */
+export async function useSavedAddress(
+  client: D1Client,
+  orderFormId: string,
+  addressId: string,
+): Promise<Cart> {
+  const saved = await listAddresses(client, orderFormId);
+  const hit = saved.find((a) => a.addressId === addressId || a.addressId.startsWith(addressId));
+  if (!hit) {
+    throw new D1Error(
+      `No saved address matches "${addressId}". Run \`d1 addresses\` to list them.`,
+    );
+  }
+  if (!hit.complete) {
+    throw new D1Error(
+      `Saved address ${hit.addressId.slice(0, 12)} has no street — it is an incomplete record, not a usable address.`,
+    );
+  }
+  const w = await client.request<WireOrderForm>(
+    `/api/checkout/pub/orderForm/${orderFormId}/attachments/shippingData`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        selectedAddresses: [
+          {
+            addressId: hit.addressId,
+            addressType: hit.addressType ?? "residential",
+            country: "COL",
+            receiverName: hit.receiverName,
+            street: hit.street,
+            number: hit.number,
+            complement: hit.complement,
+            neighborhood: hit.neighborhood,
+            city: hit.city,
+            state: hit.state,
+            postalCode: hit.postalCode,
+            geoCoordinates: hit.geoCoordinates,
+          },
+        ],
+      }),
+    },
+  );
+  return normalizeCart(w);
+}
+
 export interface DeliveryAddress {
+  /**
+   * Reuse an existing saved address instead of minting a new one.
+   *
+   * Sending this id ALONE is not enough — verified against a live account:
+   * VTEX ignored it and selected a fresh empty record. The whole saved record
+   * has to be posted back, which is what `useSavedAddress` does. Callers
+   * should prefer that helper over setting this by hand.
+   */
+  addressId?: string;
   postalCode?: string;
   city?: string;
   state?: string;
@@ -323,9 +426,12 @@ export interface DeliveryAddress {
 export async function setDeliveryPoint(
   client: D1Client,
   orderFormId: string,
-  at: LatLng,
+  at: LatLng | undefined,
   opts: DeliveryAddress = {},
 ): Promise<Cart> {
+  if (!at && !opts.addressId) {
+    throw new D1Error("A delivery point needs coordinates or a saved --address-id.");
+  }
   const w = await client.request<WireOrderForm>(
     `/api/checkout/pub/orderForm/${orderFormId}/attachments/shippingData`,
     {
@@ -333,12 +439,18 @@ export async function setDeliveryPoint(
       body: JSON.stringify({
         selectedAddresses: [
           {
+            addressId: opts.addressId,
             addressType: "residential",
             country: "COL",
             // VTEX takes [longitude, latitude] here — the reverse of how the
             // regions endpoint is usually read, and the opposite order from
             // every mapping UI. See region.ts for the matching gotcha.
-            geoCoordinates: [at.lng, at.lat],
+            //
+            // Omitted entirely when reusing a saved address: the stored record
+            // already carries D1's own canonical coordinates, which are better
+            // than any we could supply, and overwriting them with ours would
+            // undo the canonicalization that made the record worth reusing.
+            geoCoordinates: at ? [at.lng, at.lat] : undefined,
             postalCode: opts.postalCode,
             city: opts.city,
             state: opts.state,

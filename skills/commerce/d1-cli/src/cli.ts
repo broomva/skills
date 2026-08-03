@@ -16,10 +16,12 @@ import {
   checkoutUrl,
   clearCart,
   getCart,
+  listAddresses,
   setDeliveryPoint,
   setQuantity,
   simulate,
   undeliverable,
+  useSavedAddress,
 } from "./cart.ts";
 import { categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
 import { D1Client } from "./client.ts";
@@ -27,6 +29,7 @@ import { formatCOP } from "./money.ts";
 import { getOrder, listOrders, orderForDisplay } from "./orders.ts";
 import {
   json,
+  renderAddresses,
   renderCart,
   renderCategories,
   renderFacets,
@@ -184,12 +187,15 @@ export function validateCartArgs(sub: string, positional: string[], flags: Args[
       );
     }
   }
-  if (sub === "deliver-to") {
+  if (sub === "deliver-to" && !flags["address-id"]) {
     // Called for its THROW, not its value: `pointFrom` rejects a half-given
     // pair (`--lat` without `--lng`) itself. Returning undefined is the valid
     // "no flags, fall back to the saved region" case, so it must NOT be
     // treated as an error here — a user with a saved delivery point would be
     // blocked before the command could read it.
+    //
+    // Skipped entirely with --address-id: a saved record already carries its
+    // own coordinates, so requiring lat/lng there would reject the better path.
     pointFrom(flags, undefined);
   }
 }
@@ -241,7 +247,9 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
     d1 cart add <sku>          set a line to --qty N [--qty N --seller ID]
     d1 cart set <index> <qty>  change a line (qty 0 removes it)
     d1 cart clear              empty the cart
+    d1 addresses               your saved addresses (canonical, from D1)
     d1 cart deliver-to         attach the delivery point and quote shipping
+                               [--address-id <id> to reuse a saved one]
                                [--street --number --complement --neighborhood
                                 --reference --city --state --postal-code]
     d1 cart checkout           print the URL where YOU complete payment
@@ -542,21 +550,42 @@ async function main(argv: string[]): Promise<number> {
           return 0;
 
         case "deliver-to": {
+          const savedId = str(flags["address-id"]);
           const at = pointFrom(flags, stored?.region);
-          if (!at) throw new UsageError("Usage: d1 cart deliver-to --lat <lat> --lng <lng>");
-          cart = await setDeliveryPoint(client, cart.orderFormId, at, {
-            postalCode: str(flags["postal-code"]),
-            city: str(flags.city),
-            state: str(flags.state),
-            street: str(flags.street),
-            number: str(flags.number),
-            complement: str(flags.complement),
-            neighborhood: str(flags.neighborhood),
-            reference: str(flags.reference),
-          });
+          if (!at && !savedId) {
+            throw new UsageError(
+              "Usage: d1 cart deliver-to --lat <lat> --lng <lng>   (or --address-id <id>; see `d1 addresses`)",
+            );
+          }
+          if (savedId) {
+            // Reuse the customer's own canonical record. D1 resolves addresses
+            // through its map picker, so a saved entry carries a real
+            // street/number, neighborhood, postal code and D1's own
+            // coordinates — none of which free text acquires.
+            cart = await useSavedAddress(client, cart.orderFormId, savedId);
+          } else {
+            if (!asJson) {
+              // Posting an address without an id makes VTEX MINT a new record
+              // in the customer's address book. Nine junk entries accumulated
+              // that way before `--address-id` existed, so warn at the write.
+              console.error(
+                "Note: this creates a new address record in your D1 account. `d1 addresses` lists saved ones; --address-id reuses one.",
+              );
+            }
+            cart = await setDeliveryPoint(client, cart.orderFormId, at, {
+              postalCode: str(flags["postal-code"]),
+              city: str(flags.city),
+              state: str(flags.state),
+              street: str(flags.street),
+              number: str(flags.number),
+              complement: str(flags.complement),
+              neighborhood: str(flags.neighborhood),
+              reference: str(flags.reference),
+            });
+          }
           persistCart();
           console.log(asJson ? json(cart) : renderCart(cart));
-          return 0;
+          return undeliverable(cart).length > 0 ? 1 : 0;
         }
 
         case "checkout": {
@@ -698,6 +727,13 @@ async function main(argv: string[]): Promise<number> {
           ? json({ signedIn: true, email: id?.email ?? email })
           : `Signed in as ${id?.email ?? email}.`,
       );
+      return 0;
+    }
+
+    case "addresses": {
+      const cart = await getCart(client, channel);
+      const addrs = await listAddresses(client, cart.orderFormId);
+      console.log(asJson ? json(addrs) : renderAddresses(addrs));
       return 0;
     }
 
