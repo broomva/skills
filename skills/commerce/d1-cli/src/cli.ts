@@ -3,8 +3,8 @@
  * `d1` — command-line access to Tiendas D1 (Colombia).
  *
  * Designed to be driven by an agent as much as by a person: every command takes
- * `--json`, exit codes are meaningful (0 ok, 1 failure, 2 usage), and nothing
- * prompts unless it has to.
+ * `--json`, exit codes are meaningful (0 ok, 1 D1 failed, 2 usage, 3 no result),
+ * and nothing prompts unless it has to.
  *
  * The CLI can find products, price a basket against a real store, and quote
  * delivery. It cannot pay — `d1 cart checkout` prints the URL where a human
@@ -131,22 +131,39 @@ export function quantityFlag(v: string | boolean | undefined): number {
 }
 
 /**
- * Read a `--limit` flag strictly, the same way `--qty` is read.
+ * Read an optional count-shaped flag strictly, the same way `--qty` is read.
  *
- * Absent means the default. Anything else must be a positive whole number —
- * clamping instead meant `--limit 0` and `--limit -3` both quietly returned
- * exactly one proposal and exited 0, which answers a question nobody asked.
+ * Absent means the caller's default. Anything else must be a positive whole
+ * number: clamping instead meant `--limit 0` and `--limit -3` both quietly
+ * returned exactly one proposal and exited 0, answering a question nobody
+ * asked — and `--count 0` did the same over a live request.
  */
-export function limitFlag(v: string | boolean | undefined): number | undefined {
+export function positiveIntFlag(name: string, v: string | boolean | undefined): number | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== "string" || v.trim() === "") {
-    throw new UsageError("--limit needs a positive whole number, e.g. --limit 5.");
+    throw new UsageError(`--${name} needs a positive whole number, e.g. --${name} 5.`);
   }
   const n = Number(v);
   if (!Number.isInteger(n) || n < 1) {
-    throw new UsageError(`--limit must be a positive whole number, got "${v}".`);
+    throw new UsageError(`--${name} must be a positive whole number, got "${v}".`);
   }
   return n;
+}
+
+export function limitFlag(v: string | boolean | undefined): number | undefined {
+  return positiveIntFlag("limit", v);
+}
+
+/**
+ * `--count` read as strictly as `--limit`.
+ *
+ * `num()` alone let `--count 0` and `--count -5` through as real numbers, and
+ * `search` then clamped them to 1 — so asking for zero products quietly asked
+ * for one, and did it over a live request. Same silent-clamp shape `--limit 0`
+ * had, one flag over.
+ */
+export function countFlag(v: string | boolean | undefined): number | undefined {
+  return positiveIntFlag("count", v);
 }
 
 /**
@@ -166,7 +183,7 @@ export function substituteOptions(
     regionId: region?.id,
     salesChannel,
     limit: limitFlag(flags.limit),
-    count: num(flags.count),
+    count: countFlag(flags.count),
   };
 }
 
@@ -441,6 +458,7 @@ async function main(argv: string[]): Promise<number> {
       // --lat .. --lng ..` went to the network before rejecting. Same idiom,
       // and same reason, as `validateCartArgs`.
       limitFlag(flags.limit);
+      countFlag(flags.count);
       const region = await regionFor(pointFrom(flags, stored?.region));
       const result = await findSubstitutes(client, sku, substituteOptions(flags, region, channel));
       console.log(asJson ? json(result) : renderSubstitutes(result));

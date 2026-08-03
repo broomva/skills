@@ -8,7 +8,7 @@ import {
   priced,
   productBySku,
 } from "../src/catalog.ts";
-import { limitFlag, substituteExit, substituteOptions } from "../src/cli.ts";
+import { countFlag, limitFlag, substituteExit, substituteOptions } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
 import {
   MAX_CATEGORY_DEPTH,
@@ -66,6 +66,16 @@ function litres(
     unitPrice: Math.round(price / amount),
     ...rest,
   });
+}
+
+/** Did `fn` throw a UsageError? Returned as a boolean so a failure names the input. */
+function throws(fn: () => unknown): boolean {
+  try {
+    fn();
+    return false;
+  } catch (e) {
+    return e instanceof UsageError;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -674,16 +684,50 @@ describe("the substitute command's policy, separated so it can be pinned", () =>
     expect(o.count).toBe(20);
     // Absent means "let findSubstitutes default", not 0.
     expect(substituteOptions({}, undefined, "1").limit).toBeUndefined();
+    expect(substituteOptions({}, undefined, "1").count).toBeUndefined();
   });
 
-  test("--limit is validated, not clamped", () => {
+  test("the options builder validates on its own, not only via the command body", () => {
+    // `case "substitute"` also calls `limitFlag`/`countFlag` up front, to keep a
+    // usage error off the network. That standalone call MASKS this one: swapping
+    // `countFlag` back to the unvalidated `num()` in here changed nothing
+    // observable, because the earlier call had already thrown. Two guards, and
+    // only one of them was pinned — so the inner one could rot silently.
+    expect(throws(() => substituteOptions({ count: "0" }, undefined, "1"))).toBe(true);
+    expect(throws(() => substituteOptions({ count: "abc" }, undefined, "1"))).toBe(true);
+    expect(throws(() => substituteOptions({ limit: "-3" }, undefined, "1"))).toBe(true);
+  });
+
+  test("--limit and --count are validated, not clamped", () => {
     // `--limit 0` used to clamp to 1 and exit 0 — answering a question nobody
     // asked. `--qty` has applied the right rule (reject, exit 2) all along.
+    //
+    // `--count` had the same shape one flag over, and worse: `num()` let 0 and
+    // -5 through as real numbers and `search` clamped them to 1, so asking for
+    // zero products quietly asked for one, over a live request.
     for (const bad of ["0", "-3", "abc", "2.5", ""]) {
-      expect(() => limitFlag(bad)).toThrow(UsageError);
+      expect({ flag: "limit", bad, throws: throws(() => limitFlag(bad)) }).toEqual({
+        flag: "limit",
+        bad,
+        throws: true,
+      });
+      expect({ flag: "count", bad, throws: throws(() => countFlag(bad)) }).toEqual({
+        flag: "count",
+        bad,
+        throws: true,
+      });
     }
     expect(limitFlag("5")).toBe(5);
+    expect(countFlag("50")).toBe(50);
     expect(limitFlag(undefined)).toBeUndefined();
+    expect(countFlag(undefined)).toBeUndefined();
+  });
+
+  test("the rejection names the flag the caller actually typed", () => {
+    // One shared implementation, two flags: a message hard-coded to "--limit"
+    // would send someone hunting the wrong argument.
+    expect(() => countFlag("0")).toThrow(/--count/);
+    expect(() => limitFlag("0")).toThrow(/--limit/);
   });
 });
 
@@ -1033,7 +1077,12 @@ describe("findSubstitutes", () => {
       [/product_search/, { recordsFiltered: 0, products: [] }],
     ]);
     const r = await findSubstitutes(new D1Client({ fetchImpl: impl }), "262");
-    expect(r.categoryDepth).toBe(MAX_CATEGORY_DEPTH);
+    // The WALK is capped; the reported depth is the real one. Capping both
+    // would make the renderer say "level 6 of 6" about a 40-deep path whose
+    // leaf it never reached — understating exactly the distance the "widened"
+    // notice exists to disclose.
+    expect(r.categoryDepth).toBe(40);
+    expect(r.searchedDepth).toBeLessThanOrEqual(MAX_CATEGORY_DEPTH);
     expect(calls.filter((c) => c.includes("product_search")).length).toBe(MAX_CATEGORY_DEPTH);
   });
 

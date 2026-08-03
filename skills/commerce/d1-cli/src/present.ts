@@ -45,13 +45,35 @@ export function json(value: unknown): string {
  * "Nothing was added to your cart" line above it; `ESC]0;…BEL` retitles the
  * window. In an agent-driven CLI the injected text also lands verbatim in a
  * transcript. `\s` does not cover ESC or BEL, so trimming was never enough.
+ *
+ * C0/C1 alone was not enough either. Three further classes defeat the same
+ * stated purpose and are in range here:
+ *
+ *   U+2028 U+2029        line/paragraph separators. Many terminals and log
+ *                        viewers break a line on these, so a product name can
+ *                        forge an output line -- exactly what the newline case
+ *                        guards against, reached by a different codepoint.
+ *   U+202A-U+202E        bidi overrides. These visually REORDER the rendered
+ *   U+2066-U+2069        line, so a name can make a price or a warning read as
+ *                        something other than what it says.
+ *   U+200B-U+200F U+FEFF zero-width and BOM. Invisible, and they break the
+ *                        column arithmetic `pad` does on string length.
  */
-export function sanitize(s: string): string {
-  // Written as escapes, not literal bytes: a regex containing a raw ESC is
-  // invisible in a diff and unreviewable. Newline and tab are in range on
-  // purpose — a newline inside a product name would forge a whole output line.
+/**
+ * Written as `\u` escapes rather than literal bytes: a regex holding a raw ESC
+ * is invisible in a diff and unreviewable.
+ *
+ * The suppression sits directly above the LITERAL, not above the `const`. The
+ * escaped form is long enough that the formatter puts it on its own line, and a
+ * `biome-ignore` one line further up silently stops applying — which is how the
+ * rule ends up firing on a line everyone believes is suppressed.
+ */
+const CONTROL_CHARS =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: neutralizing them is the point
-  return s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+export function sanitize(s: string): string {
+  return s.replace(CONTROL_CHARS, " ");
 }
 
 /** Pad to a display width, truncating with an ellipsis when too long. */

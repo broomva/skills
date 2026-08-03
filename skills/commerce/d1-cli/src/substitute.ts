@@ -490,14 +490,17 @@ export async function findSubstitutes(
       `D1 publishes no category for SKU ${skuId}, and the category is what a replacement is searched in. Try \`d1 search\` with part of the product name instead.`,
     );
   }
-  // Capped, because the depth comes from upstream and drives one request per
-  // level. D1's tree is three deep today and nothing enforces that; a 40-segment
-  // category in a malformed response issued 41 requests from one invocation,
-  // against an API whose 429 the client already treats as a live failure mode.
-  const categoryDepth = Math.min(
-    MAX_CATEGORY_DEPTH,
-    categoryPath.split("/").filter((s) => s.trim()).length,
-  );
+  // The TRUE depth, for reporting. It is the denominator of "widened to level
+  // X of Y", so capping it here would understate how far from the leaf a
+  // suggestion actually came — the renderer would say "level 6 of 6" about a
+  // ten-deep path it never reached the bottom of.
+  const categoryDepth = categoryPath.split("/").filter((s) => s.trim()).length;
+  // The WALK is what gets capped, because the depth comes from upstream and
+  // drives one request per level. D1's tree is three deep today and nothing
+  // enforces that; a 40-segment category issued 41 requests from a single
+  // invocation, against an API whose 429 the client already treats as a live
+  // failure mode.
+  const walkFrom = Math.min(MAX_CATEGORY_DEPTH, categoryDepth);
 
   // Walk UP from the leaf, one level at a time.
   //
@@ -506,12 +509,12 @@ export async function findSubstitutes(
   // member is out of stock has nothing to offer. Widening is REPORTED rather
   // than done quietly: a suggestion from two levels up is a different kind of
   // answer, and the caller should be able to see that it is one.
-  let searchedDepth = categoryDepth;
+  let searchedDepth = walkFrom;
   let pool: Product[] = [];
   let poolTotal = 0;
   let regional: Product | undefined;
 
-  for (let depth = categoryDepth; depth >= 1; depth--) {
+  for (let depth = walkFrom; depth >= 1; depth--) {
     const facets = categoryFacetPath(categoryPath, depth);
     if (!facets) {
       // `categoryFacetPath` returns "" when the FIRST name has no slug — a

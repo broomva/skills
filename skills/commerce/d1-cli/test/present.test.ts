@@ -7,6 +7,7 @@ import {
   renderRegion,
   renderSearch,
   renderSubstitutes,
+  sanitize,
 } from "../src/present.ts";
 import type { Candidate, SubstituteResult } from "../src/substitute.ts";
 import type { Product, SearchPage } from "../src/types.ts";
@@ -401,6 +402,30 @@ describe("renderSubstitutes", () => {
   test("says when the list was truncated by --limit", () => {
     const out = renderSubstitutes(base({ rankedCount: 12 }));
     expect(out).toContain("showing the closest 1");
+  });
+
+  test("strips the invisible classes too, not just C0/C1", () => {
+    // C0/C1 alone left three classes that defeat the same stated purpose:
+    // U+2028/U+2029 break a line in many terminals and log viewers (forging an
+    // output line by a different codepoint than the newline the guard names),
+    // bidi overrides visually REORDER the line so a price or a warning can read
+    // as something it is not, and zero-width characters break the column
+    // arithmetic `pad` does on string length.
+    for (const [label, ch] of [
+      ["U+2028 line separator", "\u2028"],
+      ["U+2029 paragraph separator", "\u2029"],
+      ["U+202E right-to-left override", "\u202e"],
+      ["U+2066 isolate", "\u2066"],
+      ["U+200B zero-width space", "\u200b"],
+      ["U+FEFF byte-order mark", "\ufeff"],
+    ] as const) {
+      expect({ label, present: sanitize(`A${ch}B`).includes(ch) }).toEqual({
+        label,
+        present: false,
+      });
+    }
+    // Anti-overshoot: ordinary Spanish text is untouched.
+    expect(sanitize("Panadería y repostería · $ 3.500")).toBe("Panadería y repostería · $ 3.500");
   });
 
   test("strips terminal control characters out of upstream text", () => {

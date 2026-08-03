@@ -35,10 +35,18 @@ bun run src/cli.ts cart deliver-to
 bun run src/cli.ts cart checkout      # prints a URL; does not pay
 ```
 
-Add `--json` to any command for agent-readable output. Exit codes separate the
-two failure modes an agent must tell apart: **0** success · **1** D1 refused or
-was unreachable — undeliverable point, unavailable or unknown SKU, outage
-(retry may help) · **2** the command was called wrong (retrying never helps).
+Add `--json` to any command for agent-readable output. **Exit codes are a
+contract, and this list is the only copy of it:**
+
+| code | meaning | retry? |
+|---|---|---|
+| `0` | it worked | — |
+| `1` | D1 refused or was unreachable — undeliverable point, unavailable or unknown SKU, outage | yes, may help |
+| `2` | the command was called wrong | never helps |
+| `3` | it worked and the answer is "none" (`substitute` only) | never helps |
+
+An agent that cannot separate those either retries a typo forever or gives up
+on a transient outage. `3` exists because an empty category is neither.
 
 Note that `cart add` **sets** the line to `--qty`; it does not add to it. That
 is D1's own semantics, verified live.
@@ -110,10 +118,6 @@ it is *now*, and carts go stale in ways nothing else surfaces.
 2  the command was called wrong
 ```
 
-CLI-wide, the codes mean: `0` it worked · `1` D1 refused or was unreachable, a
-retry may help · `2` the call itself was wrong, a retry never helps · `3` the
-command worked and the answer is "none" (`substitute` only).
-
 This exists because each of these happened on a real basket:
 
 - **A line sold out overnight.** `PAN ARTESANAL INTEGRAL` went `no tiene
@@ -139,7 +143,8 @@ When it returns 1, `--json` gives `undeliverable[]` naming the lines, and
 d1 substitute 192 --limit 5        # ranks in-stock products from the same category
 ```
 
-Exit 0 means there is something to propose; **3 means there is not**.
+Exit 0 means there is something to propose; **3 means there is not** — the
+only command that uses `3`.
 
 Three, not one, and the distinction is the point: `1` means *"D1 refused, or
 could not be reached"* everywhere else in this CLI, and invites a retry. An
@@ -221,10 +226,8 @@ bun test        # money units, the semicolon gotcha, quantity-in-quote,
 bun run lint && bun run typecheck
 ```
 
-Exit codes are a contract, not decoration: **0** success · **1** D1 refused or
-could not be reached (worth a retry) · **2** the command was called wrong (never
-worth retrying). An agent that cannot separate those two failure modes either
-retries a typo forever or gives up on a transient outage.
+Exit codes are a contract, not decoration — the table under **Invoke** above is
+the single copy of it.
 
 See `README.md` for the full endpoint map, the shipping-tier behaviour, and
 what the public API will not give you.
