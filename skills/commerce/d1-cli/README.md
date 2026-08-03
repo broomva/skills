@@ -18,10 +18,29 @@ bun run src/cli.ts quote 262:2 892:1
 
 ## Endpoint map
 
-Every endpoint below was verified live against `www.d1.com.co` on 2026-08-02,
-except `GET /api/oms/user/orders/{orderId}`, which could not be exercised
-because the account used had no order history. Everything marked `none` needs
-**no credentials at all**.
+Every endpoint below has been exercised live against `www.d1.com.co`, except
+`GET /api/oms/user/orders/{orderId}` — the account used has no order history,
+so there was no real order to fetch. Everything marked `none` needs **no
+credentials at all**.
+
+The one-time-code endpoints (`accesskey/send` + `accesskey/validate`) were
+verified on 2026-08-03, later than the rest: sending a code writes to someone's
+inbox, so it was deliberately left untested until there was a reason to send
+one. Until then this sentence overclaimed, which is worth recording — a doc that
+says "all verified" reads identically whether or not it is true.
+
+That verification covered both polarities, since an auth check that only ever
+sees the happy path proves nothing:
+
+| Case | Result |
+|---|---|
+| correct code | signed in, exit 0, token stored `0600` |
+| wrong code | `authStatus: WrongCredentials` → exit 1, **no session written** |
+| already-consumed code replayed | rejected, exit 1 |
+
+Note that VTEX signals a bad code with **HTTP 200** and `authStatus` in the
+body, so the transport-level status check does not catch it — `session.ts`
+inspects the body explicitly.
 
 This table is also the allowlist: `test/safety.test.ts` fails if `src/` reaches
 any endpoint not on it.

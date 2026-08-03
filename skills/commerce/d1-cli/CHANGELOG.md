@@ -3,6 +3,24 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.1.4] — 2026-08-03
+
+### Verified
+
+- The one-time-code sign-in path (`accesskey/send` + `accesskey/validate`) is
+  now exercised live, including its failure modes: a wrong code and a replayed
+  already-consumed code are both rejected with exit 1 and no session written.
+  VTEX reports a bad code with HTTP **200** and `authStatus: WrongCredentials`,
+  so the body check in `session.ts` is what catches it, not the status code.
+
+### Fixed (documentation)
+
+- README claimed every endpoint but order-detail had been verified live. The
+  two access-key endpoints had not been — sending a code writes to someone's
+  inbox, so they were deliberately left untested. The claim is true as of this
+  release; the correction is recorded because "all verified" reads the same
+  whether or not it holds.
+
 ## [0.1.3] — 2026-08-03
 
 ### Added
