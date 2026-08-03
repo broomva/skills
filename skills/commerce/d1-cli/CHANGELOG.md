@@ -3,6 +3,36 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.3.0] — 2026-08-03
+
+### Added — a guard against writing to someone else's cart
+
+The CLI twice made unrequested writes to a real account, and both times the
+operation looked read-shaped to the operator. The clearer one: a verification
+run of an unrelated fix executed `cart add 1287 1000 262` against the
+customer's LIVE cart, because the config directory already held that cart's id
+and pointing at it was convenient. A carton of milk sat in the basket,
+deliverable and priced, until the customer asked why it was there.
+
+Nothing distinguished "the cart this CLI created for me" from "a cart id that
+happens to be in the config file".
+
+- **Ownership provenance.** A cart the CLI obtains itself is stored with a
+  keyed fingerprint. An id whose fingerprint does not verify is EXTERNAL —
+  which is exactly what a hand-edited or injected id looks like.
+- **`cart add|set|clear|deliver-to` refuse an external cart** unless `--yes`,
+  and the refusal names the cart, its line count and its total, so the operator
+  sees what they nearly wrote to.
+- **`D1_SCRATCH=1`** ignores any stored cart, uses a throwaway, and persists
+  nothing. A verification run pointed at a populated config directory then
+  *cannot* reach real state rather than merely being unlikely to.
+- Reads stay unguarded. Blocking them would train people to reach for `--yes`
+  reflexively, defeating the guard on the writes that matter.
+
+This is not a security boundary — anyone reading `ownership.ts` can forge a
+fingerprint, which is fine. It exists to stop an accident, not an adversary.
+The person it protects against is the author, in a hurry.
+
 ## [0.2.1] — 2026-08-03
 
 ### Fixed

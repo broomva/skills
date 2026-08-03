@@ -33,6 +33,12 @@ export interface StoredSession {
   email?: string;
   /** Sticky cart id. */
   orderFormId?: string;
+  /**
+   * Proof this CLI obtained `orderFormId` itself. An id present without a
+   * verifying fingerprint is treated as EXTERNAL and refused for writes —
+   * see `ownership.ts` for why that distinction exists.
+   */
+  orderFormOwn?: string;
   /** Last resolved delivery point, so search defaults to somewhere real. */
   region?: { id: string; lat: number; lng: number; sellerId?: string };
   savedAt: string;
