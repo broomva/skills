@@ -292,6 +292,29 @@ export async function clearCart(client: D1Client, orderFormId: string): Promise<
 }
 
 /**
+ * The parts of a Colombian address VTEX stores separately.
+ *
+ * `street` alone is not enough for an apartment. A courier needs the unit in
+ * `complement` and the building/conjunto name somewhere it will be read —
+ * `neighborhood` or `reference` — or the parcel arrives at the gate with
+ * nowhere to go.
+ */
+export interface DeliveryAddress {
+  postalCode?: string;
+  city?: string;
+  state?: string;
+  /** Street line, e.g. `Cra 13 # 172a-51`. */
+  street?: string;
+  /** House/building number, when it is not already in `street`. */
+  number?: string;
+  /** Tower + apartment, e.g. `Torre 1 Apto 2102`. */
+  complement?: string;
+  neighborhood?: string;
+  /** Free-text landmark or conjunto name for the courier. */
+  reference?: string;
+}
+
+/**
  * Attach a delivery point so upstream will quote shipping.
  *
  * Until this is set, `shippingData` is null and the cart carries no SLAs — the
@@ -301,7 +324,7 @@ export async function setDeliveryPoint(
   client: D1Client,
   orderFormId: string,
   at: LatLng,
-  opts: { postalCode?: string; city?: string; state?: string; street?: string } = {},
+  opts: DeliveryAddress = {},
 ): Promise<Cart> {
   const w = await client.request<WireOrderForm>(
     `/api/checkout/pub/orderForm/${orderFormId}/attachments/shippingData`,
@@ -320,6 +343,14 @@ export async function setDeliveryPoint(
             city: opts.city,
             state: opts.state,
             street: opts.street,
+            number: opts.number,
+            // Where an apartment actually goes. Cramming "T1-2102" into
+            // `street` puts it on the address line, but couriers and D1's own
+            // checkout read `complement` for the unit — without it a delivery
+            // reaches the building and stops.
+            complement: opts.complement,
+            neighborhood: opts.neighborhood,
+            reference: opts.reference,
           },
         ],
       }),

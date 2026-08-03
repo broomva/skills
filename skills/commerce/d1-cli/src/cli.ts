@@ -242,6 +242,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
     d1 cart set <index> <qty>  change a line (qty 0 removes it)
     d1 cart clear              empty the cart
     d1 cart deliver-to         attach the delivery point and quote shipping
+                               [--street --number --complement --neighborhood
+                                --reference --city --state --postal-code]
     d1 cart checkout           print the URL where YOU complete payment
     d1 quote <sku:qty>...      price a basket without touching the cart
 
@@ -547,6 +549,10 @@ async function main(argv: string[]): Promise<number> {
             city: str(flags.city),
             state: str(flags.state),
             street: str(flags.street),
+            number: str(flags.number),
+            complement: str(flags.complement),
+            neighborhood: str(flags.neighborhood),
+            reference: str(flags.reference),
           });
           persistCart();
           console.log(asJson ? json(cart) : renderCart(cart));

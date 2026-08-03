@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { addItems, normalizeCart, setQuantity, simulate, undeliverable } from "../src/cart.ts";
+import {
+  addItems,
+  normalizeCart,
+  setDeliveryPoint,
+  setQuantity,
+  simulate,
+  undeliverable,
+} from "../src/cart.ts";
 import { D1Client } from "../src/client.ts";
 import { renderCart } from "../src/present.ts";
 import { D1Error } from "../src/types.ts";
@@ -487,5 +494,45 @@ describe("an undeliverable cart must not read as payable", () => {
 
   test("a stale notice is labelled, not presented as a live failure", () => {
     expect(renderCart(normalizeCart(BROKEN))).toContain("stale notice");
+  });
+});
+
+describe("an apartment address survives to the wire", () => {
+  test("complement, neighborhood and reference are all sent", async () => {
+    // `street` alone strands a parcel at the building gate: couriers and D1's
+    // checkout read the unit from `complement`. Before this, the CLI could not
+    // express "Torre 1 Apto 2102" at all.
+    const { impl, calls } = stub({ orderFormId: "of1" });
+    await setDeliveryPoint(
+      new D1Client({ fetchImpl: impl }),
+      "of1",
+      {
+        lat: 4.75068,
+        lng: -74.03532,
+      },
+      {
+        street: "Cra 13 # 172a-51",
+        complement: "Torre 1 Apto 2102",
+        neighborhood: "Ciudad La Salle Montpellier",
+        reference: "Conjunto Ciudad La Salle Montpellier",
+        city: "Bogotá",
+        state: "DC",
+      },
+    );
+    const sent = JSON.parse(calls[0].body ?? "{}").selectedAddresses[0];
+    expect(sent.complement).toBe("Torre 1 Apto 2102");
+    expect(sent.neighborhood).toBe("Ciudad La Salle Montpellier");
+    expect(sent.reference).toBe("Conjunto Ciudad La Salle Montpellier");
+    expect(sent.street).toBe("Cra 13 # 172a-51");
+    // and the coordinate order gotcha still holds
+    expect(sent.geoCoordinates).toEqual([-74.03532, 4.75068]);
+  });
+
+  test("omitted parts stay omitted rather than becoming empty strings", async () => {
+    const { impl, calls } = stub({ orderFormId: "of1" });
+    await setDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", { lat: 4.6, lng: -74.1 });
+    const sent = JSON.parse(calls[0].body ?? "{}").selectedAddresses[0];
+    expect(sent.complement).toBeUndefined();
+    expect(sent.country).toBe("COL");
   });
 });
