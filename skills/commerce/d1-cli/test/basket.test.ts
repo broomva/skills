@@ -332,3 +332,50 @@ describe("linePrice", () => {
     expect(linePrice(product("x", "ARROZ", 555_000))).toBe(555_000);
   });
 });
+
+describe("parseBudget rejects what Number() would have accepted", () => {
+  test("a decimal comma is refused, not silently multiplied by ten", () => {
+    // Colombians write "50,5" meaning 50.5. Stripping the comma made it 505 —
+    // a 10x budget that looks entirely plausible in the output.
+    expect(() => parseBudget("50,5")).toThrow(/decimal comma/);
+  });
+
+  test("hex and scientific notation are not budgets", () => {
+    // `Number("0x10")` is 16 and `Number("1e5")` is 100000. Both parsed, and
+    // both meant something other than what was typed.
+    expect(() => parseBudget("0x10")).toThrow();
+    expect(() => parseBudget("1e5")).toThrow();
+  });
+
+  test("still accepts the forms a person actually types", () => {
+    expect(parseBudget("50000")).toBe(5_000_000);
+    expect(parseBudget("50.000")).toBe(5_000_000);
+    expect(parseBudget("$ 50.000")).toBe(5_000_000);
+    expect(parseBudget("$50000")).toBe(5_000_000);
+  });
+
+  test("a malformed thousands grouping is not a number", () => {
+    expect(() => parseBudget("50.00")).toThrow();
+    expect(() => parseBudget("5.0000")).toThrow();
+  });
+});
+
+describe("a filled line always has a price", () => {
+  test("a priceless line never enters the basket at $ 0", () => {
+    // The reverse of the "$ 0 is not free" defect: a line marked filled with no
+    // price would render as $ 0 and add nothing to the total, describing a
+    // purchase that cannot happen.
+    const plan = fillToBudget(
+      [line({ term: "arroz", status: "filled", price: undefined })],
+      1_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("nothing-in-stock");
+    expect(plan.total).toBe(0);
+    // `$ 0` in the SUMMARY is honest — the total really is zero. The defect
+    // would be a priced product row, so assert on the basket body only.
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    const body = out.slice(0, out.indexOf("0 of 1 lines"));
+    expect(body).not.toContain("$ 0");
+    expect(body).toContain("Nothing fits this budget.");
+  });
+});

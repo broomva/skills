@@ -132,8 +132,21 @@ export function fillToBudget(
   let spent = 0;
 
   for (const line of candidates) {
-    if (line.price === undefined || line.status === "no-match") {
+    if (line.status === "no-match") {
       lines.push(line);
+      continue;
+    }
+    // A line with no price cannot be a filled line. Letting one through would
+    // put it in the basket at `$ 0` and count it toward the total as zero —
+    // the "a price of 0 is not free" defect, re-entered from the other side.
+    // The only way a chosen product has no price is that it has no offer at
+    // this store, which is what `nothing-in-stock` says.
+    if (line.price === undefined) {
+      lines.push(
+        line.status === "filled" || line.status === "filled-by-substitute"
+          ? { ...line, status: "nothing-in-stock" }
+          : line,
+      );
       continue;
     }
     if (spent + line.price > budget) {
@@ -152,14 +165,44 @@ export function fillToBudget(
   return { budget, lines, total, remaining: budget - total };
 }
 
-/** Reject a budget that cannot buy anything, before touching the network. */
+/**
+ * Read `--budget` as whole pesos, strictly.
+ *
+ * Parsed by an explicit grammar rather than by stripping punctuation and handing
+ * the rest to `Number()`. That shortcut accepted three things it should not, and
+ * every one of them failed the way this codebase cares about — quietly, with a
+ * plausible number:
+ *
+ *   "50,5"  -> 505      a Colombian DECIMAL comma stripped into a 10x budget
+ *   "0x10"  -> 16       Number() reads hex
+ *   "1e5"   -> 100000   and scientific notation
+ *
+ * A dot is a thousands separator here, as Colombians write it. A comma is a
+ * decimal separator, and since pesos are not quoted in cents there is no honest
+ * reading of one in a budget — so it is refused by name instead of silently
+ * becoming a different number.
+ */
+const BUDGET = /^\$?\s*(\d{1,3}(?:\.\d{3})+|\d+)$/;
+
 export function parseBudget(raw: unknown): PriceHundredths {
-  const n = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/[.,\s$]/g, ""));
-  if (!Number.isFinite(n) || n <= 0) {
+  const reject = (why: string): never => {
     throw new UsageError(
-      `--budget must be a positive number of pesos, got "${String(raw)}". Example: --budget 50000`,
+      `--budget must be a whole number of pesos, got "${String(raw)}" — ${why}. Example: --budget 50000`,
     );
+  };
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) reject("it is not a positive amount");
+    return Math.round(raw * 100);
   }
+  const text = String(raw ?? "").trim();
+  if (!text) reject("it is empty");
+  if (text.includes(",")) {
+    reject("a decimal comma has no meaning in pesos, which are not quoted in cents");
+  }
+  const m = text.match(BUDGET);
+  if (!m) reject("it is not a plain amount like 50000 or 50.000");
+  const n = Number((m?.[1] ?? "").replace(/\./g, ""));
+  if (!Number.isFinite(n) || n <= 0) reject("it is not a positive amount");
   return Math.round(n * 100);
 }
 
