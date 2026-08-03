@@ -3,6 +3,16 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.1.3] — 2026-08-03
+
+### Added
+
+- `cart deliver-to` now takes `--number`, `--complement`, `--neighborhood` and
+  `--reference` alongside `--street`. An apartment could not previously be
+  expressed at all: everything went on the street line, and couriers and D1's
+  checkout read the unit from `complement`, so a delivery would reach the
+  building and stop. Found on a real order to a tower/apartment address.
+
 ## [0.1.2] — 2026-08-03
 
 ### Fixed
