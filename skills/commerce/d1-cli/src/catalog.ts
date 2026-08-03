@@ -22,7 +22,7 @@
  */
 
 import type { D1Client } from "./client.ts";
-import { parseUnitSize, unitPrice } from "./measure.ts";
+import { parseUnitSize, readPackEvidence, resolvePackSize, unitPrice } from "./measure.ts";
 import { toHundredths } from "./money.ts";
 import {
   type Category,
@@ -76,6 +76,12 @@ interface WireProduct {
   linkText?: string;
   categories?: string[];
   items?: WireItem[];
+  /**
+   * Marketing HTML. Read for one narrow purpose: it is the only place D1 states
+   * whether a multipack's declared unit-of-measure covers the pack or one item.
+   * Both catalogue APIs serve it. See `readPackEvidence`.
+   */
+  description?: string;
 }
 interface WireSearch {
   products?: WireProduct[];
@@ -143,7 +149,15 @@ export function normalizeProduct(p: WireProduct): Product[] {
   for (const pr of p.properties ?? []) {
     if (pr.name) props.set(pr.name, pr.values ?? []);
   }
-  const size = parseUnitSize(props.get("Unidad De Medida")?.[0], props.get("Valor de Medida")?.[0]);
+  // The declared PUM is trusted as the pack size, because a census of all 1,600
+  // products found that is what it is in 44 of the 46 multipacks where D1 says
+  // enough to tell. `resolvePackSize` overrides it only for the handful whose
+  // own description states the value covers ONE item.
+  const declared = parseUnitSize(
+    props.get("Unidad De Medida")?.[0],
+    props.get("Valor de Medida")?.[0],
+  );
+  const size = resolvePackSize(declared, readPackEvidence(p.description));
   const warnings = [...props.entries()]
     .filter(([k, v]) => /^(Exceso|Contiene)/i.test(k) && v[0]?.toLowerCase() === "si")
     .map(([k]) => k);
@@ -252,6 +266,11 @@ function asSearchShape(p: WireCatalogProduct): WireProduct {
     categories: p.categories,
     items: p.items,
     properties,
+    // Forwarded explicitly: the loop above only collects string[] values, and a
+    // description is a bare string. Dropping it here would give a pack size
+    // corrected through search and uncorrected through SKU lookup — the exact
+    // silent divergence this function exists to prevent.
+    description: typeof p.description === "string" ? p.description : undefined,
   };
 }
 

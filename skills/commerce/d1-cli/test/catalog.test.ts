@@ -5,6 +5,7 @@ import {
   encodeFacetPath,
   normalizeOffer,
   normalizeProduct,
+  productBySku,
   search,
   slugify,
 } from "../src/catalog.ts";
@@ -256,5 +257,103 @@ describe("per-unit sorting groups by measure", () => {
     });
     const page = await search(new D1Client({ fetchImpl: impl }));
     expect(page.products[0].warnings).toEqual(["Exceso en Azúcares"]);
+  });
+});
+
+describe("a multipack whose PUM describes one item", () => {
+  // SKU 718, live on 2026-08-03: COP 5,490 for six 200 mL juices. D1 declares
+  // `Valor de Medida 200`, so the CLI priced the pack as if it held 200 mL.
+  const refrescos = {
+    productId: "718",
+    productName: "REFRESCOS 6 UN SABORES FRUTA SURT 200 ML",
+    brand: "D1",
+    linkText: "refrescos-6-un",
+    categories: ["/Bebidas/"],
+    description: "<ul><li><strong>Contenido Neto:</strong> 6 unidades de 200 mL cada una</li></ul>",
+    properties: [
+      { name: "Unidad De Medida", values: ["Ml"] },
+      { name: "Valor de Medida", values: ["200"] },
+    ],
+    items: [
+      {
+        itemId: "718",
+        nameComplete: "REFRESCOS 6 UN SABORES FRUTA SURT 200 ML",
+        sellers: [
+          {
+            sellerId: "1",
+            commertialOffer: { Price: 5490, ListPrice: 5490, AvailableQuantity: 100 },
+          },
+        ],
+      },
+    ],
+  };
+
+  test("prices the pack, not one juice box", () => {
+    const [p] = normalizeProduct(refrescos);
+    expect(p.size).toEqual({ measure: "L", amount: 1.2 });
+    expect(p.unitPrice).toBe(457_500); // $ 4.575/L
+  });
+
+  test("without the description it falls back to the declared value", () => {
+    // Fail-open by design: if D1 stops publishing the prose, the CLI returns to
+    // trusting the PUM rather than inventing a pack count from the name.
+    const { description: _dropped, ...bare } = refrescos;
+    const [p] = normalizeProduct(bare);
+    expect(p.size).toEqual({ measure: "L", amount: 0.2 });
+  });
+
+  test("the SKU-lookup path corrects it identically to search", () => {
+    // `asSearchShape` collects only string[] properties, so `description` has
+    // to be forwarded by hand. If that is dropped, this SKU is correct through
+    // `d1 search` and wrong through `d1 substitute`, which reads it this way.
+    const { impl } = stub([
+      {
+        ...refrescos,
+        "Unidad De Medida": ["Ml"],
+        "Valor de Medida": ["200"],
+        properties: undefined,
+      },
+    ]);
+    const client = new D1Client({ fetchImpl: impl });
+    return productBySku(client, "718").then((p) => {
+      expect(p?.size).toEqual({ measure: "L", amount: 1.2 });
+      expect(p?.unitPrice).toBe(457_500);
+    });
+  });
+});
+
+describe("a multipack whose PUM already describes the pack", () => {
+  // SKU 897 — the product the bug was reported on. Its description mentions a
+  // per-unit size but states no count, so there is nothing to multiply by, and
+  // the declared 600 mL is already right.
+  const leche = {
+    productId: "897",
+    productName: "LECHE CHOCOLATE TPAK LATTI 3 UN 600 ML",
+    brand: "LATTI",
+    linkText: "leche-chocolate-latti",
+    categories: ["/Lacteos y huevos/"],
+    description: "<ul><li><strong>Peso:</strong> 600 mL (200 mL por unidad)</li></ul>",
+    properties: [
+      { name: "Unidad De Medida", values: ["Ml"] },
+      { name: "Valor de Medida", values: ["600"] },
+    ],
+    items: [
+      {
+        itemId: "897",
+        nameComplete: "LECHE CHOCOLATE TPAK LATTI 3 UN 600 ML",
+        sellers: [
+          {
+            sellerId: "1",
+            commertialOffer: { Price: 5150, ListPrice: 5150, AvailableQuantity: 50 },
+          },
+        ],
+      },
+    ],
+  };
+
+  test("is left exactly as declared", () => {
+    const [p] = normalizeProduct(leche);
+    expect(p.size).toEqual({ measure: "L", amount: 0.6 });
+    expect(p.unitPrice).toBe(858_333); // $ 8.583/L, unchanged
   });
 });
