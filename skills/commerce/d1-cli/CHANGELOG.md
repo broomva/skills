@@ -3,6 +3,59 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.6.0] — 2026-08-03
+
+### Fixed — a multipack's unit price, measured before it was encoded
+
+It was reported that D1 declares the mandated PUM per unit, so a 3-pack reads
+at 3x its real rate, and that the fix was to parse `N UN` out of the product
+name and multiply by it.
+
+A census of all 1,600 products says the opposite. Of the 154 multipacks
+carrying a PUM pair, 62 are measured in kg or L — the only ones where this can
+go wrong — and of the 46 where D1's description says enough to decide, **44
+declare the pack total**. The proposed fix would have corrupted those 44 in
+order to correct 2. The product the report was filed on, SKU 897, states
+`Peso: 600 mL (200 mL por unidad)` in its own description: the declared 600 is
+already the pack.
+
+So the declared value stays trusted, and `resolvePackSize` overrides it only
+where the description states **both** a per-item size and a count:
+
+| SKU | Description says | Was | Is |
+|---|---|---|---|
+| 718 | `6 unidades de 200 mL cada una` | $ 27.450/L | **$ 4.575/L** |
+| 510 | `114 g por unidad (3 unidades por paquete)` | $ 42.544/kg | **$ 14.181/kg** |
+| 1008 | `2 unidades de 2.5L` | 2.5 L | **5 L** |
+
+Blast radius across the catalogue: **3 of 1,548** products carrying a PUM
+change; 1,545 are untouched. SKU 1008 is one no name-based rule could have
+found — `2 UNDX2.5L` has no word boundary after `UND`.
+
+A per-item size with no count is deliberately not enough. There is nothing to
+multiply by, and taking the count from the name instead is the heuristic this
+whole change exists to refuse. Fails **open**: if D1 stops publishing the
+prose, the CLI returns to trusting the PUM.
+
+`description` is forwarded through `asSearchShape` by hand, because that
+function collects only `string[]` properties. Without it a SKU would be
+corrected through `d1 search` and left wrong through `d1 substitute`.
+
+### Fixed — two defects that only mutation testing found
+
+Both were invisible to a green suite of 329 tests.
+
+`unidades?` matches "unidade" and "unidades" but **not the singular "unidad"**.
+So the assertion that a stated count of 1 is rejected passed because the
+pattern missed, never because the guard fired — flipping `count > 1` to
+`count > 0` did not move it.
+
+The "already the pack total" early return could not change an outcome. For a
+real multipack `count` is at least 2, so the pack total is at least twice the
+per-item size and both cannot be within 3% of the same declared value. Removing
+it broke no test because it never decided one; it is gone, and the reasoning
+stays where the branch was.
+
 ## [0.5.0] — 2026-08-03
 
 ### Added — `d1 substitute <sku>`, because a basket that strands is not repaired by pricing it better

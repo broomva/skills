@@ -162,11 +162,18 @@ describe("resolvePackSize", () => {
   });
 
   test("does not fire when the declared value is already the pack total", () => {
-    // Same evidence as 718, but a PUM that already states 1.2 L. Multiplying
-    // again would report 7.2 L and understate the price sixfold.
+    // Same evidence as 718, but a PUM that already states 1.2 L.
+    //
+    // No single-line mutation of `resolvePackSize` can fail this, because the
+    // pack total is derived from `perItem`, never from `declared` — so the
+    // right answer and the wrong ones coincide here. What it does guard is the
+    // whole rejected DESIGN: an implementation that multiplies the declared
+    // value by the count whenever a count is available reports 7.2 L and
+    // understates this juice sixfold.
     const declared = { measure: "L", amount: 1.2 } as const;
     const evidence = readPackEvidence(DESC.refrescos718);
     expect(resolvePackSize(declared, evidence)).toEqual(declared);
+    expect(resolvePackSize(declared, evidence)?.amount).not.toBe(1.2 * (evidence?.count ?? 1));
   });
 
   test("does not cross measures", () => {

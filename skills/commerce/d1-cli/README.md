@@ -194,6 +194,44 @@ Products also carry the Ley 2120 front-of-pack warnings (`Exceso en Azúcares`,
 `warnings[]`. Coverage is 70–90% by category, so an empty list means
 "not declared", not "safe".
 
+#### 9a. For a multipack, `Valor de Medida` is the pack — with three exceptions
+
+The obvious worry is that `LECHE CHOCOLATE ... 3 UN 600 ML` declaring `600`
+means 600 ml *per carton*, making the pack 1.8 L and every multipack's `$/L`
+overstated by its pack count. That was reported as a defect and it is wrong.
+
+A census of all 1,600 products settled it. Of the 154 multipacks carrying a PUM
+pair, 62 are measured in kg or L — the only ones where this can go wrong — and
+of the 46 where D1's description says enough to decide, **44 declare the pack
+total**. SKU 897 is one of them: its own description reads
+`Peso: 600 mL (200 mL por unidad)`, so 600 is the pack and 200 is the carton.
+
+Parsing `N UN` out of the name and multiplying would therefore have corrupted
+44 products to fix 2. **Do not do that.** The count in a name is not evidence
+about what the PUM means.
+
+Three products really do declare one item, and D1's own prose is the only thing
+that says so:
+
+| SKU | Name | Description says | Was | Is |
+|---|---|---|---|---|
+| 718 | `REFRESCOS 6 UN ... 200 ML` | `6 unidades de 200 mL cada una` | $27.450/L | **$4.575/L** |
+| 510 | `QUESO PERA 3 UND ... 114 GRS` | `114 g por unidad (3 unidades por paquete)` | $42.544/kg | **$14.181/kg** |
+| 1008 | `GASEOSA COCA COLA ... 2 UNDX2.5L` | `2 unidades de 2.5L` | 2.5 L | **5 L** |
+
+So `resolvePackSize` trusts the declared value and overrides it only where the
+description states **both** a per-item size and a count. A per-item size with no
+count is not enough — there is nothing to multiply by, which is precisely why
+SKU 897 is left alone. Blast radius across the catalogue: 3 of 1,548 products
+carrying a PUM change; 1,545 are untouched.
+
+Note that SKU 1008 is invisible to a name-based search — `2 UNDX2.5L` has no
+word boundary after `UND`. Reading the description finds cases that reading the
+name cannot.
+
+This fails **open**: if D1 stops publishing the prose, the CLI returns to
+trusting the PUM rather than inventing a pack count.
+
 ### 10. `intelligent-search` has no SKU filter, and ignores the one you pass
 
 There is no way to ask intelligent-search about a specific SKU. What makes this
