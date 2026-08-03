@@ -18,6 +18,7 @@ import type {
   OrderSummary,
   Product,
   Region,
+  SavedAddress,
   SearchPage,
   ShippingOption,
 } from "./types.ts";
@@ -180,4 +181,30 @@ export function renderOrders(orders: OrderSummary[]): string {
         `${pad(o.orderId, 22)} ${pad(o.creationDate.slice(0, 10), 12)} ${pad(o.statusLabel, 20)} ${formatCOP(o.total).padStart(11)}  ${o.itemCount} item${o.itemCount === 1 ? "" : "s"}`,
     )
     .join("\n");
+}
+
+/** Render the customer's saved address book. */
+export function renderAddresses(addrs: SavedAddress[]): string {
+  if (addrs.length === 0) {
+    return "No saved addresses. Add one at d1.com.co — their map picker canonicalizes it in a way free text cannot.";
+  }
+  const lines: string[] = [];
+  const complete = addrs.filter((a) => a.complete);
+  const junk = addrs.filter((a) => !a.complete);
+
+  for (const a of complete) {
+    const where = [a.street, a.number].filter(Boolean).join(" ");
+    lines.push(
+      `${a.addressId.slice(0, 12)}  ${pad(where, 26)} ${pad(a.complement ?? "", 30)} ${a.neighborhood ?? ""}`,
+    );
+  }
+  if (junk.length) {
+    lines.push("");
+    lines.push(
+      `${junk.length} incomplete record${junk.length === 1 ? "" : "s"} hidden (no street — usually created by passing bare coordinates).`,
+    );
+  }
+  lines.push("");
+  lines.push("Use one with: d1 cart deliver-to --address-id <id>");
+  return lines.join("\n");
 }

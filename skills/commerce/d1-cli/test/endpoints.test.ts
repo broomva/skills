@@ -19,6 +19,7 @@ describe("the runtime endpoint guard", () => {
       "/api/catalog_system/pub/category/tree/3",
       "/api/checkout/pub/regions",
       "/api/checkout/pub/orderForm",
+      "/api/checkout/pub/orderForm/OF1",
       "/api/checkout/pub/orderForm/OF1/items",
       "/api/checkout/pub/orderForm/OF1/items/update",
       "/api/checkout/pub/orderForm/OF1/items/removeAll",
@@ -61,7 +62,7 @@ describe("the runtime endpoint guard", () => {
     for (const shape of ALLOWED_ENDPOINT_SHAPES) {
       expect(isAllowedPath(shape.replace(/\{\}/g, "SEG"))).toBe(true);
     }
-    expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(18);
+    expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(19);
     // Bidirectional: a pattern added without a shape would otherwise be
     // invisible to the static source scan.
     expect(ALLOWED_ENDPOINT_PATTERNS.length).toBe(ALLOWED_ENDPOINT_SHAPES.length);

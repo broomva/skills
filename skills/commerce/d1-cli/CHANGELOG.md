@@ -3,6 +3,39 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.2.0] — 2026-08-03
+
+### Added
+
+- `d1 addresses` — the customer's own saved address book, with ids.
+- `cart deliver-to --address-id <id>` — reuse a saved address instead of
+  synthesizing one. Short id prefixes resolve.
+
+### Fixed
+
+- **The CLI was writing junk into the customer's address book.**
+  `setDeliveryPoint` posted an address with no `addressId`, so VTEX minted a NEW
+  record on EVERY call. Measured on a live account: **9 junk entries**, all
+  carrying the CLI's geocoded coordinates, all with null street — visible to the
+  customer under "Mis direcciones". A read-shaped command had a persistent write
+  side effect.
+
+### Why a saved address is better than ours
+
+D1 canonicalizes through a map picker the CLI cannot drive. The same address:
+
+  typed by us   street "Cra 13 # 172a-51", no postal code, OSM coordinates
+  D1 canonical  street "KR 15" + number "170 - 84",
+                neighborhood "SAN JOSE DE USAQUEN", postal 110141660,
+                D1's own coordinates
+
+Free text is never canonicalized — it just adds another uncanonical record.
+
+Note that sending the `addressId` ALONE does not work: VTEX ignores it and
+selects a fresh empty address. The whole record has to be posted back, which is
+what `useSavedAddress` does. Found by trying the obvious thing first and
+watching it fail against a live account.
+
 ## [0.1.4] — 2026-08-03
 
 ### Verified

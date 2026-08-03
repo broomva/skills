@@ -176,6 +176,32 @@ export interface Cart {
   messages: CartMessage[];
 }
 
+/**
+ * An address already in the customer's D1 address book.
+ *
+ * These are canonical in a way free text is not. D1 resolves an address through
+ * a map-click / autocomplete flow, and the record it produces differs from what
+ * a human typed: "Cra 13 # 172a-51" comes back as street `KR 15` + number
+ * `170 - 84`, neighborhood `SAN JOSE DE USAQUEN`, postal `110141660`, with
+ * D1's own coordinates. Selecting one of these by `addressId` is strictly
+ * better than sending our own approximation.
+ */
+export interface SavedAddress {
+  addressId: string;
+  addressType?: string;
+  receiverName?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  geoCoordinates?: number[];
+  /** False when the record has no street — usually junk, not a real address. */
+  complete: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Orders
 // ---------------------------------------------------------------------------
