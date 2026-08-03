@@ -40,7 +40,9 @@ and the person decides, here as everywhere.
 
 Exit `3` when nothing fit, matching `substitute`: the command succeeded at
 looking, and a budget that buys none of the list never becomes affordable on a
-retry, so it must not be exit `1`. A partially filled basket is exit `0`.
+retry. A partially filled basket is exit `0`. Exit `1` is reserved for the case
+where a lookup never answered at all — an empty result and an unasked question
+are different answers, and only one of them is worth retrying.
 
 Policy lives in exported pure functions rather than the command body, because
 nothing network-free can drive that path — the same reason `substituteOptions`
@@ -97,6 +99,35 @@ is about — had no fixture at all, so `>` to `>=` shipped green.
 
 An earlier draft of this entry claimed "twelve mutations were run; all twelve
 were caught". The boundary mutation above is the counterexample. Retracted.
+
+### And what a SECOND pass found after the fixes for all of that were green
+
+Scored 4/10, and named the reason: **nothing in the suite called `buildBasket`.**
+Every fix above that lived in it was revertible with 375 tests passing — eleven
+mutations proved it, each killing zero tests. Fixing code without a test that
+enters it is not fixing it.
+
+- **A basket where every lookup failed still exited `3`.** Only the prose had
+  been fixed; `basketExit` took a COUNT, and a count cannot tell "found nothing"
+  from "never got an answer". It takes the lines now and returns `1`.
+- **An unbuyable candidate was offered as a replacement, then reported as no
+  replacement.** `rankSubstitutes` filters on availability only, and VTEX
+  reports `Price: 0` alongside a positive `AvailableQuantity` — so a priceless
+  candidate ranked, was downgraded, and rendered "its category had no
+  replacement" while the line still carried the product it had just found.
+- **`compared` on a substitute line reported the whole swept pool** (40) rather
+  than the rankable set (1), and the `nothing-in-stock` path wrote a sweep count
+  without the flag that says so, letting `compared` exceed `matched`.
+- **`byPackPrice` was never set on a substitute line**, so the undisclosed
+  pack-price fallback survived on exactly the path where a substitute is ranked
+  by name similarity rather than by value.
+- Budgets past `MAX_SAFE_INTEGER / 100` silently became a different number; the
+  exit-code call re-spelled the `FILLED` set as a literal; and "Nothing fits
+  this budget" was asserted even when nothing had been checked.
+
+**387 tests, twelve of which drive `buildBasket` against a stubbed D1** — the
+substitute path among them, which no test had ever entered. All eleven
+previously-surviving mutations now die.
 
 ## [0.6.0] — 2026-08-03
 

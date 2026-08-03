@@ -470,7 +470,17 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     if (p.warnings.length) out.push(`          ${p.warnings.map(sanitize).join(", ")}`);
   }
 
-  if (!filled.length) out.push("  Nothing fits this budget.");
+  if (!filled.length) {
+    // "Nothing fits this budget" is an affordability claim. When every lookup
+    // failed there is no evidence for it — the basket is empty because D1 did
+    // not answer, not because the money was short — and asserting it four lines
+    // above the "unknown, not empty" reasons contradicts them.
+    out.push(
+      plan.lines.length && plan.lines.every((l) => l.status === "replacement-unknown")
+        ? "  Nothing could be checked — D1 did not answer for any of these."
+        : "  Nothing fits this budget.",
+    );
+  }
 
   out.push("");
   out.push(

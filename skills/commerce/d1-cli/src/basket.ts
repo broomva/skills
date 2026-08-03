@@ -44,7 +44,7 @@ export type LineStatus =
 
 /** The two statuses that put a product in the basket and spend money. */
 export const FILLED: readonly LineStatus[] = ["filled", "filled-by-substitute"];
-const isFilled = (s: LineStatus) => FILLED.includes(s);
+export const isFilled = (s: LineStatus) => FILLED.includes(s);
 
 export interface BasketLine {
   /** The shopping-list term, verbatim. */
@@ -248,6 +248,20 @@ export function fillToBudget(
  */
 const BUDGET = /^\$?\s*(\d{1,3}(?:\.\d{3})+|\d+)$/;
 
+/**
+ * Refuse a budget too large to survive the conversion to hundredths.
+ *
+ * Past `MAX_SAFE_INTEGER / 100` the multiply loses integer precision, so the
+ * ceiling enforced is not the one typed — `999.999.999.999.999.999` came back
+ * as 100000000000000000000. Silently becoming a different plausible number is
+ * the exact failure this parser exists to prevent, so the bound is stated.
+ */
+function assertExact(pesos: number, reject: (why: string) => never): void {
+  if (pesos * 100 > Number.MAX_SAFE_INTEGER) {
+    reject("it is too large to represent exactly, and a budget must be the number you typed");
+  }
+}
+
 export function parseBudget(raw: unknown): PriceHundredths {
   const reject = (why: string): never => {
     throw new UsageError(
@@ -261,6 +275,7 @@ export function parseBudget(raw: unknown): PriceHundredths {
   if (typeof raw === "number") {
     if (!Number.isFinite(raw) || raw <= 0) reject("it is not a positive amount");
     if (!Number.isInteger(raw)) reject("pesos are not quoted in cents, so it must be whole");
+    assertExact(raw, reject);
     return Math.round(raw * 100);
   }
   const text = String(raw ?? "").trim();
@@ -272,6 +287,7 @@ export function parseBudget(raw: unknown): PriceHundredths {
   if (!m) reject("it is not a plain amount like 50000 or 50.000");
   const n = Number((m?.[1] ?? "").replace(/\./g, ""));
   if (!Number.isFinite(n) || n <= 0) reject("it is not a positive amount");
+  assertExact(n, reject);
   return Math.round(n * 100);
 }
 
@@ -354,6 +370,10 @@ export async function buildBasket(
         product: source,
         compared: replacement.compared,
         matched,
+        // The count came from the CATEGORY sweep, not this term's own search,
+        // so it must be labelled as such here too — `compared` can otherwise
+        // exceed `matched`, giving a denominator smaller than its numerator.
+        substituteSweep: true,
       });
       continue;
     }
@@ -366,6 +386,10 @@ export async function buildBasket(
       compared: replacement.compared,
       matched,
       substituteSweep: true,
+      // A substitute is ranked by name similarity and price proximity, which
+      // cannot use unit price when nothing publishes a size. Saying "best
+      // value" about that line would be false twice over.
+      byPackPrice: replacement.product.unitPrice === undefined,
     });
   }
 
@@ -404,9 +428,22 @@ async function bestSubstitute(
       count: opts.count,
       limit: 1,
     });
-    const top: Candidate | undefined = result.candidates[0];
-    if (!top) return { outcome: "none", compared: result.poolProducts };
-    return { outcome: "found", product: top.product, compared: result.poolProducts };
+    // `rankedCount`, not `poolProducts`: the pool is every SKU swept from the
+    // category INCLUDING the out-of-stock source, and reporting it claims a
+    // choice between 40 where one alternative existed.
+    const compared = result.rankedCount;
+    // `rankSubstitutes` filters on availability only, never on price. VTEX
+    // reports `Price: 0` ("no offer in this region") alongside a positive
+    // AvailableQuantity, so a rankable candidate can carry no price at all —
+    // and one reached the basket, where it was downgraded and rendered as
+    // "its category had no replacement" while the line still carried the
+    // product it had just found. A candidate that cannot be bought is not a
+    // replacement.
+    const top: Candidate | undefined = result.candidates.find(
+      (c) => linePrice(c.product) !== undefined,
+    );
+    if (!top) return { outcome: "none", compared };
+    return { outcome: "found", product: top.product, compared };
   } catch {
     return { outcome: "unreachable" };
   }

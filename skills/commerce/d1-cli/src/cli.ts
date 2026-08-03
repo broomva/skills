@@ -11,7 +11,13 @@
  * finishes. See `cart.ts` for why that line is drawn where it is.
  */
 
-import { type BasketOptions, buildBasket, parseBudget } from "./basket.ts";
+import {
+  type BasketLine,
+  type BasketOptions,
+  buildBasket,
+  isFilled,
+  parseBudget,
+} from "./basket.ts";
 import {
   addItems,
   checkoutUrl,
@@ -209,11 +215,20 @@ export function basketOptions(
  *
  * **3 when nothing fit**, matching `substitute`: the command succeeded at
  * looking, and "your budget buys none of this list" never becomes false on a
- * retry, so it must not be exit 1. A partially filled basket is exit 0 — it is
- * a real answer, and the lines it could not fit are named in the output.
+ * retry. A partially filled basket is exit 0 — a real answer, with the lines it
+ * could not fit named in the output.
+ *
+ * **1 when a lookup never answered.** This takes the LINES, not a count, because
+ * a count cannot tell the two apart. An earlier version took `filledCount` and
+ * so returned 3 for a basket where every replacement lookup had failed — 3
+ * being documented CLI-wide as "never worth retrying", which told an agent a
+ * transient D1 outage meant its shopping list was definitively unbuyable. An
+ * empty answer and an unanswered question are not the same result.
  */
-export function basketExit(filledCount: number): number {
-  return filledCount > 0 ? 0 : 3;
+export function basketExit(lines: readonly BasketLine[]): number {
+  if (lines.some((l) => isFilled(l.status))) return 0;
+  if (lines.some((l) => l.status === "replacement-unknown")) return 1;
+  return 3;
 }
 
 /**
@@ -537,10 +552,7 @@ async function main(argv: string[]): Promise<number> {
           ? json({ ...plan, regionId: region?.id })
           : renderBasket(plan, { regionId: region?.id }),
       );
-      return basketExit(
-        plan.lines.filter((l) => l.status === "filled" || l.status === "filled-by-substitute")
-          .length,
-      );
+      return basketExit(plan.lines);
     }
 
     case "suggest": {
