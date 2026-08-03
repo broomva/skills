@@ -1,3 +1,5 @@
+import type { UnitSize } from "./measure.ts";
+
 /**
  * Domain + wire types for the D1 (Tiendas D1, Colombia) storefront.
  *
@@ -82,6 +84,20 @@ export interface Product {
   linkText: string;
   categories: string[];
   offers: Offer[];
+  /** Declared pack size, when D1 publishes it. Undefined is never a guess. */
+  size?: UnitSize;
+  /**
+   * Price per kg / L / unit for the best available offer. The number to compare
+   * on — pack price and value routinely disagree.
+   */
+  unitPrice?: PriceHundredths;
+  /**
+   * Colombia's front-of-pack warning labels (Ley 2120), as carried by D1:
+   * "Exceso en Azúcares", "Exceso en sodio", "Exceso en grasas saturadas",
+   * "Exceso en grasas trans", "Contiene Edulcorantes". Present only where the
+   * product declares them.
+   */
+  warnings: string[];
 }
 
 export interface SearchPage {
@@ -247,3 +263,5 @@ export class UsageError extends D1Error {
     this.name = "UsageError";
   }
 }
+
+export type { UnitSize };

@@ -1,6 +1,6 @@
 ---
 name: d1-cli
-version: 0.3.0
+version: 0.4.0
 source: https://github.com/broomva/skills
 description: Shop Tiendas D1 (Colombia, d1.com.co) from the command line — search the catalogue, resolve your nearest physical store, price a basket against that store's real stock, and quote delivery. D1 runs VTEX IO (account `d1tiendas`), so this drives its public storefront API with no admin key at all — catalogue and cart work fully anonymously, and a one-time emailed code unlocks order history. Handles the two traps that make naive D1 automation wrong — availability is regionalized (an unregioned query reports a national catalogue nobody can actually buy from) and prices arrive in two different units (search reports whole pesos, checkout reports hundredths, a silent 100x). Builds and prices baskets; it deliberately cannot pay, handing a checkout URL to a human instead. USE WHEN the user wants to find D1 products or prices, check whether D1 delivers somewhere, build or cost a D1 grocery basket, compare D1 items, or review their D1 orders. NOT FOR other Colombian retailers (Éxito, Jumbo, Ara, Alkosto), and not for completing a payment.
 author: broomva
@@ -97,6 +97,64 @@ signed-in browser holds, scoped to its owner's own orders and cart — written t
 `~/.config/d1-cli/session.json` with mode `0600`. No VTEX admin appKey/appToken
 is read anywhere. Sign-in is by one-time emailed code; password authentication
 is deliberately not implemented.
+
+## The checkout gate — always end here
+
+**Finish every basket with `d1 cart checkout` and act on its exit code.** Not as
+a formality: it is the only command that re-checks the whole cart against D1 as
+it is *now*, and carts go stale in ways nothing else surfaces.
+
+```
+0  every line deliverable — the URL is safe to hand over
+1  at least one line CANNOT be delivered; the URL is printed but the cart is broken
+2  the command was called wrong
+```
+
+This exists because each of these happened on a real basket:
+
+- **A line sold out overnight.** `PAN ARTESANAL INTEGRAL` went `no tiene
+  inventario` hours after it was added. The cart still rendered, still had a
+  total — a total that was silently 6.490 light, because the dead line had
+  dropped out of it.
+- **An address change stranded every line.** Nine items came back
+  `cannotBeDelivered` while each still carried a valid SLA and the cart still
+  showed a payable total.
+- **Shipping was under-reported 12x** by a per-line allocation that looked like
+  a total.
+
+In all three the cart *looked* fine. A quote taken earlier in a session is not
+evidence about the cart now, so never hand over a checkout URL you obtained
+before the last mutation — re-run the gate.
+
+When it returns 1, `--json` gives `undeliverable[]` naming the lines, and
+`readyToCheckout: false`. Remove or replace those lines and run it again.
+
+## Finding things when the ask is vague
+
+For "we need rice" rather than "buy SKU 1092", two axes matter and neither is
+the default:
+
+**Rank by unit price, not pack price.** `--sort per-unit` uses the PUM data
+Colombian law requires D1 to publish. The two rankings genuinely disagree:
+`ARROZ ESTÁNDAR 500 GRS` is the cheapest *pack* at $1.550 and costs $3.100/kg,
+while the best value in the same results is $2.775/kg — in a $5.550 bag that
+does not appear anywhere in the pack-price top five. Ranking by pack price gives
+a worse answer while looking right.
+
+Because D1's search cannot sort on this, `--sort per-unit` orders **the page you
+fetched**, not the whole result set. Raise `--count` (max 50) to widen it. The
+output says so rather than implying a superlative it cannot support, and names
+how many results publish no size and so cannot be compared at all.
+
+**Read the warning labels.** Products carry Colombia's front-of-pack warnings
+(`Exceso en Azúcares`, `Exceso en sodio`, `Exceso en grasas saturadas`,
+`Exceso en grasas trans`, `Contiene Edulcorantes`) in `warnings[]` under
+`--json`. Coverage is partial — roughly 70–90% by category — so absence means
+"not declared", never "safe".
+
+Then narrow with `d1 facets <query>` (category, brand, sub-category with counts)
+before paging: search caps at 50 pages, so a wide query is better cut by facet
+than walked through.
 
 ## Commands
 

@@ -10,6 +10,7 @@
  * rather than shown as zero.
  */
 
+import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP } from "./money.ts";
 import type {
   Cart,
@@ -44,7 +45,10 @@ export function bestOffer(p: Product) {
   return pool.slice().sort((a, b) => a.price - b.price)[0];
 }
 
-export function renderSearch(page: SearchPage, opts: { regionId?: string } = {}): string {
+export function renderSearch(
+  page: SearchPage,
+  opts: { regionId?: string; perUnitSorted?: boolean } = {},
+): string {
   if (page.products.length === 0) {
     return "No products matched.";
   }
@@ -54,9 +58,13 @@ export function renderSearch(page: SearchPage, opts: { regionId?: string } = {})
     const price = o ? formatCOP(o.price) : "—";
     const off = o ? discountPercent(o.price, o.listPrice) : 0;
     const stock = !o ? "no offer" : o.available ? "" : "out of stock";
+    const per =
+      p.unitPrice !== undefined && p.size
+        ? formatUnitPrice(formatCOP(p.unitPrice), p.size.measure)
+        : "";
     const tail = [off > 0 ? `-${off}%` : "", stock].filter(Boolean).join("  ");
     lines.push(
-      `${pad(p.skuId, 8)} ${pad(p.name, 52)} ${price.padStart(10)}${tail ? `  ${tail}` : ""}`,
+      `${pad(p.skuId, 8)} ${pad(p.name, 44)} ${price.padStart(10)} ${per.padStart(13)}${tail ? `  ${tail}` : ""}`,
     );
   }
 
@@ -71,6 +79,23 @@ export function renderSearch(page: SearchPage, opts: { regionId?: string } = {})
     lines.push(
       "Prices are national. Pass --lat/--lng for the availability and price at your nearest store.",
     );
+  }
+  if (opts.perUnitSorted) {
+    const measures = new Set(page.products.filter((p) => p.size).map((p) => p.size?.measure));
+    if (measures.size > 1) {
+      lines.push(
+        `Mixed measures in these results (${[...measures].join(", ")}) — only same-measure prices are comparable.`,
+      );
+    }
+    // Said plainly because the alternative is a false superlative: this orders
+    // the page that was fetched, not the whole result set.
+    lines.push(
+      `Sorted by unit price within these ${shown} results — not across all ${page.total}. Raise --count to widen it.`,
+    );
+  }
+  const missing = page.products.filter((p) => p.unitPrice === undefined).length;
+  if (missing > 0) {
+    lines.push(`${missing} of ${shown} publish no pack size, so they cannot be compared per unit.`);
   }
   return lines.join("\n");
 }

@@ -22,6 +22,7 @@
  */
 
 import type { D1Client } from "./client.ts";
+import { parseUnitSize, unitPrice } from "./measure.ts";
 import { toHundredths } from "./money.ts";
 import {
   type Category,
@@ -63,8 +64,13 @@ interface WireItem {
   nameComplete?: string;
   sellers?: WireSeller[];
 }
+interface WireProperty {
+  name?: string;
+  values?: string[];
+}
 interface WireProduct {
   productId: string;
+  properties?: WireProperty[];
   productName?: string;
   brand?: string;
   linkText?: string;
@@ -112,15 +118,35 @@ export function normalizeOffer(seller: WireSeller): Offer {
  */
 export function normalizeProduct(p: WireProduct): Product[] {
   const cats = (p.categories ?? []).map((c) => c.replace(/^\/|\/$/g, "")).filter(Boolean);
-  return (p.items ?? []).map((item) => ({
-    productId: p.productId,
-    skuId: item.itemId,
-    name: item.nameComplete || item.name || p.productName || "(unnamed)",
-    brand: p.brand ?? "",
-    linkText: p.linkText ?? "",
-    categories: cats,
-    offers: (item.sellers ?? []).map(normalizeOffer),
-  }));
+
+  // D1 publishes the legally-required unit-of-measure pair, and Colombia's
+  // front-of-pack warning labels, as flat product properties.
+  const props = new Map<string, string[]>();
+  for (const pr of p.properties ?? []) {
+    if (pr.name) props.set(pr.name, pr.values ?? []);
+  }
+  const size = parseUnitSize(props.get("Unidad De Medida")?.[0], props.get("Valor de Medida")?.[0]);
+  const warnings = [...props.entries()]
+    .filter(([k, v]) => /^(Exceso|Contiene)/i.test(k) && v[0]?.toLowerCase() === "si")
+    .map(([k]) => k);
+
+  return (p.items ?? []).map((item) => {
+    const offers = (item.sellers ?? []).map(normalizeOffer);
+    const best =
+      offers.filter((o) => o.available).sort((a, b) => a.price - b.price)[0] ?? offers[0];
+    return {
+      productId: p.productId,
+      skuId: item.itemId,
+      name: item.nameComplete || item.name || p.productName || "(unnamed)",
+      brand: p.brand ?? "",
+      linkText: p.linkText ?? "",
+      categories: cats,
+      offers,
+      size,
+      unitPrice: best ? unitPrice(best.price, size) : undefined,
+      warnings,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +187,8 @@ export async function search(client: D1Client, opts: SearchOptions = {}): Promis
       query: opts.query,
       page,
       count,
-      sort: opts.sort,
+      // `per-unit` is ours, not D1's — never forward it upstream.
+      sort: opts.sort === "per-unit" ? undefined : opts.sort,
       regionId: opts.regionId,
       "trade-policy": channel,
       hideUnavailableItems: opts.onlyAvailable ? "true" : undefined,
@@ -171,6 +198,31 @@ export async function search(client: D1Client, opts: SearchOptions = {}): Promis
   let products = (wire.products ?? []).flatMap(normalizeProduct);
   if (opts.onlyAvailable) {
     products = products.filter((p) => p.offers.some((o) => o.available));
+  }
+
+  if (opts.sort === "per-unit") {
+    // Sorted here, not upstream: D1's search has no unit-price sort, and the
+    // data needed lives in product properties rather than any sortable index.
+    // So this orders the page you fetched, NOT the whole result set —
+    // `renderSearch` says so, because a "cheapest" claim over a partial set
+    // would be false.
+    //
+    // Grouped by MEASURE first. $/kg, $/L and $/unit are not comparable
+    // quantities, and interleaving them produces nonsense: a search for oil
+    // ranked a $8,900 *bottle* ("/unit") in among the $/L figures as though it
+    // were a competitive buy. Products sharing the measure that dominates the
+    // result set come first, in unit-price order; other measures follow in
+    // their own order; sizeless products last.
+    const counts = new Map<string, number>();
+    for (const p of products) {
+      if (p.size) counts.set(p.size.measure, (counts.get(p.size.measure) ?? 0) + 1);
+    }
+    const dominant = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const rank = (p: Product) =>
+      p.unitPrice === undefined ? 2 : p.size?.measure === dominant ? 0 : 1;
+    products = products
+      .slice()
+      .sort((a, b) => rank(a) - rank(b) || (a.unitPrice ?? 0) - (b.unitPrice ?? 0));
   }
 
   const total = wire.recordsFiltered ?? products.length;

@@ -17,6 +17,7 @@ const product = (over: Partial<Product> = {}): Product => ({
   brand: "LATTI",
   linkText: "leche",
   categories: [],
+  warnings: [],
   offers: [
     {
       sellerId: "1",

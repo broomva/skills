@@ -3,6 +3,39 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.4.0] — 2026-08-03
+
+### Added — unit pricing, the axis "cheapest" actually means
+
+`--sort per-unit` ranks by price per kg / L using the PUM data Colombian law
+requires D1 to publish (`Unidad De Medida` + `Valor de Medida`, present on ~95%
+of products). Products also expose Colombia's Ley 2120 front-of-pack warnings
+in `warnings[]`.
+
+The two rankings genuinely disagree. For rice, the cheapest PACK is
+`ARROZ ESTÁNDAR 500 GRS` at $1.550 — which is $3.100/kg. The best value in the
+same results is $2.775/kg, in a $5.550 bag that appears nowhere in the
+pack-price top five. Ranking by pack price gives a worse answer while looking
+correct.
+
+D1's search cannot sort on this — the data lives in product properties, not a
+sortable index — so the CLI sorts the fetched page client-side and SAYS SO,
+along with how many results publish no size and therefore cannot be compared.
+A "cheapest" claim over a partial result set would be false.
+
+A missing or unrecognized size yields `undefined`, never a guess: a fabricated
+size produces a confidently wrong price-per-kg, which is worse than admitting
+the comparison cannot be made.
+
+### Documented — the checkout gate
+
+SKILL.md now states the discipline rather than leaving it implicit: finish every
+basket with `cart checkout` and act on the exit code. It is the only command
+that re-checks the whole cart against D1 as it is now, and all three of these
+happened to a real basket while the cart still rendered a payable total —
+a line sold out overnight (total silently 6.490 light), an address change
+stranded every line, and shipping was under-reported 12x.
+
 ## [0.3.0] — 2026-08-03
 
 ### Added — a guard against writing to someone else's cart
