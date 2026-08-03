@@ -10,6 +10,7 @@
  * rather than shown as zero.
  */
 
+import type { BasketLine, BasketPlan } from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP } from "./money.ts";
@@ -429,4 +430,97 @@ export function renderAddresses(addrs: SavedAddress[]): string {
   lines.push("");
   lines.push("Use one with: d1 cart deliver-to --address-id <id>");
   return lines.join("\n");
+}
+
+/**
+ * A budget basket: what went in, what did not, and why.
+ *
+ * The unfilled lines are not an appendix. A basket that reports a total while
+ * quietly dropping three of eight terms is making a claim about a shop that
+ * would not happen, which is the same defect as an empty substitute result
+ * asserting "nothing is in stock" without saying it compared 3 of 140.
+ */
+export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {}): string {
+  const out: string[] = [];
+  const filled = plan.lines.filter(
+    (l) => l.status === "filled" || l.status === "filled-by-substitute",
+  );
+  const unfilled = plan.lines.filter(
+    (l) => l.status !== "filled" && l.status !== "filled-by-substitute",
+  );
+
+  for (const l of filled) {
+    const p = l.product;
+    if (!p) continue;
+    const per = perUnit(p);
+    out.push(
+      `  ${sanitize(p.skuId).padEnd(7)} ${sanitize(p.name).padEnd(46)} ${formatCOP(l.price ?? 0).padStart(9)}  ${per}`,
+    );
+    out.push(`          for "${sanitize(l.term)}" · ${scopeOf(l)}`);
+    if (l.replaces) {
+      out.push(
+        `          replaces ${sanitize(l.replaces.skuId)} ${sanitize(l.replaces.name)}, which D1 cannot supply here`,
+      );
+    }
+    if (p.warnings.length) out.push(`          ${p.warnings.map(sanitize).join(", ")}`);
+  }
+
+  if (!filled.length) out.push("  Nothing fits this budget.");
+
+  out.push("");
+  out.push(
+    `${filled.length} of ${plan.lines.length} lines · ${formatCOP(plan.total)} of ${formatCOP(plan.budget)} · ${formatCOP(plan.remaining)} left`,
+  );
+  // The ceiling is stated, not implied. A reader who assumed best-effort would
+  // otherwise read a short basket as "that is all D1 sells".
+  out.push(
+    "The budget is a hard ceiling — a line that would exceed it is left out, not rounded into.",
+  );
+
+  if (unfilled.length) {
+    out.push("");
+    out.push("Not included:");
+    for (const l of unfilled) out.push(`  ${sanitize(l.term)} — ${reasonFor(l)}`);
+  }
+
+  if (!opts.regionId) {
+    out.push("");
+    out.push(
+      "No delivery point resolved, so these are NATIONAL prices and stock. Pass --lat/--lng for your store's.",
+    );
+  }
+  out.push("");
+  out.push(
+    "Each line is the best value among the products fetched for its term, not across all of D1. Raise --count to widen it.",
+  );
+  return out.join("\n");
+}
+
+/**
+ * How wide a look this line's choice was made over.
+ *
+ * Naming the denominator is the point. "best of 20 compared" alone reads as a
+ * survey of the shelf; "best of 20 compared, of 143 D1 matched" says plainly
+ * that 123 products were never looked at. That gap is what made an empty
+ * substitute result claim "nothing in this category is in stock" while
+ * concealing it had seen 3 of 140.
+ */
+function scopeOf(l: BasketLine): string {
+  return l.matched > l.compared
+    ? `best of ${l.compared} compared, of ${l.matched} D1 matched`
+    : `best of ${l.compared} compared`;
+}
+
+/** Why a term did not make the basket, in the reader's terms rather than the enum's. */
+function reasonFor(l: BasketLine): string {
+  switch (l.status) {
+    case "over-budget":
+      return `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
+    case "nothing-in-stock":
+      return `nothing D1 carries for this is in stock here, and its category had no replacement (${l.compared} compared)`;
+    case "no-match":
+      return "D1 returned nothing for this term";
+    default:
+      return "not included";
+  }
 }

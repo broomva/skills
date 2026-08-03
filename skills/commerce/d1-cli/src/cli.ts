@@ -11,6 +11,7 @@
  * finishes. See `cart.ts` for why that line is drawn where it is.
  */
 
+import { type BasketOptions, buildBasket, parseBudget } from "./basket.ts";
 import {
   addItems,
   checkoutUrl,
@@ -32,6 +33,7 @@ import { fingerprint, isMutating, isOwned, isScratch } from "./ownership.ts";
 import {
   json,
   renderAddresses,
+  renderBasket,
   renderCart,
   renderCategories,
   renderFacets,
@@ -185,6 +187,33 @@ export function substituteOptions(
     limit: limitFlag(flags.limit),
     count: countFlag(flags.count),
   };
+}
+
+/**
+ * The options `d1 basket` derives from its flags.
+ *
+ * Separate from the command body for the same reason `substituteOptions` is:
+ * dropping the region id silently prices the whole basket against the NATIONAL
+ * catalogue, and no network-free test of the command body can observe it.
+ */
+export function basketOptions(
+  flags: Args["flags"],
+  region: { id: string } | undefined,
+  salesChannel: string,
+): BasketOptions {
+  return { regionId: region?.id, salesChannel, count: countFlag(flags.count) };
+}
+
+/**
+ * What `d1 basket` exits with.
+ *
+ * **3 when nothing fit**, matching `substitute`: the command succeeded at
+ * looking, and "your budget buys none of this list" never becomes false on a
+ * retry, so it must not be exit 1. A partially filled basket is exit 0 — it is
+ * a real answer, and the lines it could not fit are named in the output.
+ */
+export function basketExit(filledCount: number): number {
+  return filledCount > 0 ? 0 : 3;
 }
 
 /**
@@ -479,6 +508,32 @@ async function main(argv: string[]): Promise<number> {
       const result = await findSubstitutes(client, sku, substituteOptions(flags, region, channel));
       console.log(asJson ? json(result) : renderSubstitutes(result));
       return substituteExit(result.candidates.length);
+    }
+
+    case "basket": {
+      const terms = positional.slice(1).filter(Boolean);
+      if (!terms.length) {
+        throw new UsageError(
+          "Usage: d1 basket --budget <pesos> <term> [term ...] [--count N] [--lat --lng]",
+        );
+      }
+      // Validate BEFORE the network, exactly as `substitute` does: `regionFor`
+      // below issues a live lookup, so a bad --budget or --count would
+      // otherwise cost a request and return exit 1 ("retry may help") for what
+      // is really the caller's typo.
+      const budget = parseBudget(flags.budget);
+      countFlag(flags.count);
+      const region = await regionFor(pointFrom(flags, stored?.region));
+      const plan = await buildBasket(client, terms, budget, basketOptions(flags, region, channel));
+      console.log(
+        asJson
+          ? json({ ...plan, regionId: region?.id })
+          : renderBasket(plan, { regionId: region?.id }),
+      );
+      return basketExit(
+        plan.lines.filter((l) => l.status === "filled" || l.status === "filled-by-substitute")
+          .length,
+      );
     }
 
     case "suggest": {
