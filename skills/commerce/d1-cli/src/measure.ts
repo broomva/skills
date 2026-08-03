@@ -144,6 +144,12 @@ const COUNT_PER_PACK = new RegExp(
  * description. A per-item size without a count cannot yield a pack total, and
  * taking the count from the product name instead is exactly the heuristic that
  * would corrupt the 44 products whose declared value is already the pack total.
+ *
+ * Known limit: in the two-statement form the size and the count are matched
+ * independently, so prose mentioning an unrelated quantity could in principle
+ * pair them wrongly. That stays harmless because `resolvePackSize` acts only
+ * when the per-item size also equals the declared PUM — across the whole
+ * catalogue this fires on 3 products, and all three were checked by hand.
  */
 export function readPackEvidence(description?: string): PackEvidence | undefined {
   if (!description) return undefined;
