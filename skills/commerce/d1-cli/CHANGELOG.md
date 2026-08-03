@@ -44,8 +44,59 @@ retry, so it must not be exit `1`. A partially filled basket is exit `0`.
 
 Policy lives in exported pure functions rather than the command body, because
 nothing network-free can drive that path — the same reason `substituteOptions`
-exists. Twelve mutations were run against the result; all twelve were caught,
-after two fixtures that proved nothing were rewritten.
+exists.
+
+### Fixed before release — what a cross-model review gate found after all of that was green
+
+The above passed 363 tests, lint, typecheck, a live dogfood and thirteen
+mutation proofs. An adversarial reviewer then scored it **3/10 and failed it**.
+The pattern is the useful part, and it is the same one 0.5.0 recorded: the code
+was defensible and the OUTPUT was not.
+
+- **A `$/unit` product could beat a `$/L` one after all.** Measures were never
+  *blended* — but when two were equally common the winner fell through to Map
+  INSERTION order, which is the order `search` returned, which is computed over
+  out-of-stock products too. Three sold-out bottles listed first could make
+  `unit` dominant for a contest that was really one bottle against one oil, and
+  put an empty bottle in the basket as the best value for "aceite". The same set
+  in the other array order gave the other answer. Ties now break by an explicit
+  measure precedence, with `$/unit` last.
+- **A failed replacement lookup was reported as "nothing is in stock".** A bare
+  `catch` turned a transport failure into a positive claim about a shelf,
+  asserted from zero successful requests, and exited `3` — documented as never
+  worth retrying. `substitute.ts` had already reasoned this exact case out for
+  its own sweep. There is now a `replacement-unknown` line that says *unknown,
+  not empty*.
+- **`compared` counted the page, not the choice.** A page of 20 where 18 were
+  out of stock reported "best of 20 compared" over a real choice set of 2 — the
+  "3 of 140" overstatement this module was written to kill, one module later.
+- **A substitute line added a SKU count to a product count** from a different
+  population, and when the sum exceeded `matched` the "of N D1 matched" clause
+  silently vanished — precisely when the search had drifted furthest from what
+  the shopper typed.
+- **The pack-price fallback was never disclosed.** `chooseBest` said "saying so
+  is the caller's job — see `renderBasket`", and `renderBasket` did not say it,
+  while the footer still called the line "best value". A comment asserting a
+  disclosure that does not exist.
+- **A NaN price defeated the hard ceiling**, because `sum()` coerces NaN to 0
+  while `spent` becomes NaN and every later comparison is false. `remaining`
+  went negative on the one invariant the function exists to hold.
+- **`spent` and `total` disagreed about what "filled" means**, so a priced line
+  of any other status consumed budget it was never billed for.
+- **A numeric `--budget` bypassed the grammar** the docstring claims to enforce:
+  `50.5` returned half a peso while `"50,5"` was refused by name, and `0.004`
+  returned a budget of zero from a positive input.
+- **`d1 basket` was missing from `--help` entirely**, and the in-binary
+  exit-code table still said `3` belonged to `substitute` alone — while SKILL.md
+  asserts of its own copy that it "is the only copy of it".
+
+Two more test fixtures could not fail and were rewritten: the fill-order test
+priced both lines identically, so a value-sorted fill was indistinguishable from
+an in-order one; and the exact-fit boundary — the single boundary this feature
+is about — had no fixture at all, so `>` to `>=` shipped green.
+
+An earlier draft of this entry claimed "twelve mutations were run; all twelve
+were caught". The boundary mutation above is the counterexample. Retracted.
 
 ## [0.6.0] — 2026-08-03
 

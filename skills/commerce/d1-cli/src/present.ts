@@ -10,7 +10,7 @@
  * rather than shown as zero.
  */
 
-import type { BasketLine, BasketPlan } from "./basket.ts";
+import { type BasketLine, type BasketPlan, FILLED } from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP } from "./money.ts";
@@ -442,12 +442,11 @@ export function renderAddresses(addrs: SavedAddress[]): string {
  */
 export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {}): string {
   const out: string[] = [];
-  const filled = plan.lines.filter(
-    (l) => l.status === "filled" || l.status === "filled-by-substitute",
-  );
-  const unfilled = plan.lines.filter(
-    (l) => l.status !== "filled" && l.status !== "filled-by-substitute",
-  );
+  // A filled line without a product cannot be rendered as a row, and must not
+  // be counted or billed either — dropping it from the body alone produced an
+  // empty basket whose summary still read "1 of 1 lines - $ 5.550".
+  const filled = plan.lines.filter((l) => FILLED.includes(l.status) && l.product);
+  const unfilled = plan.lines.filter((l) => !FILLED.includes(l.status) || !l.product);
 
   for (const l of filled) {
     const p = l.product;
@@ -457,6 +456,12 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
       `  ${sanitize(p.skuId).padEnd(7)} ${sanitize(p.name).padEnd(46)} ${formatCOP(l.price ?? 0).padStart(9)}  ${per}`,
     );
     out.push(`          for "${sanitize(l.term)}" · ${scopeOf(l)}`);
+    if (l.byPackPrice) {
+      // The one path where the CLI knowingly ranks on pack price. Presenting it
+      // identically to a value-ranked line is the "cheapest pack is the worst
+      // buy" error this whole feature exists to prevent.
+      out.push("          chosen on pack price — D1 publishes no size for any of these");
+    }
     if (l.replaces) {
       out.push(
         `          replaces ${sanitize(l.replaces.skuId)} ${sanitize(l.replaces.name)}, which D1 cannot supply here`,
@@ -491,7 +496,9 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
   }
   out.push("");
   out.push(
-    "Each line is the best value among the products fetched for its term, not across all of D1. Raise --count to widen it.",
+    filled.some((l) => l.byPackPrice)
+      ? "Each line is the best among the products fetched for its term, not across all of D1 — by value where D1 publishes a size, by pack price where it does not. Raise --count to widen it."
+      : "Each line is the best value among the products fetched for its term, not across all of D1. Raise --count to widen it.",
   );
   return out.join("\n");
 }
@@ -506,6 +513,12 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
  * concealing it had seen 3 of 140.
  */
 function scopeOf(l: BasketLine): string {
+  // A substitute line's `compared` counts a CATEGORY sweep, a different
+  // population from `matched` (which counts the term's own search). Comparing
+  // them was meaningless and, when the sweep was larger, silently suppressed
+  // the denominator exactly where the look had drifted furthest from what the
+  // shopper typed. So that line says which population it is talking about.
+  if (l.substituteSweep) return `best of ${l.compared} in its category`;
   return l.matched > l.compared
     ? `best of ${l.compared} compared, of ${l.matched} D1 matched`
     : `best of ${l.compared} compared`;
@@ -518,6 +531,11 @@ function reasonFor(l: BasketLine): string {
       return `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
     case "nothing-in-stock":
       return `nothing D1 carries for this is in stock here, and its category had no replacement (${l.compared} compared)`;
+    case "replacement-unknown":
+      // Never "nothing is in stock". That claim would be asserted from a
+      // request that failed, which is a statement about the network dressed up
+      // as a statement about the shelf.
+      return "nothing D1 carries for this is in stock here, and the replacement lookup did not answer — unknown, not empty";
     case "no-match":
       return "D1 returned nothing for this term";
     default:

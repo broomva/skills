@@ -38,7 +38,13 @@ export type LineStatus =
   | "filled-by-substitute"
   | "over-budget"
   | "nothing-in-stock"
+  /** The replacement lookup itself failed, so stock here is UNKNOWN, not empty. */
+  | "replacement-unknown"
   | "no-match";
+
+/** The two statuses that put a product in the basket and spend money. */
+export const FILLED: readonly LineStatus[] = ["filled", "filled-by-substitute"];
+const isFilled = (s: LineStatus) => FILLED.includes(s);
 
 export interface BasketLine {
   /** The shopping-list term, verbatim. */
@@ -56,6 +62,10 @@ export interface BasketLine {
   compared: number;
   /** How many D1 reported for the term, which may exceed `compared`. */
   matched: number;
+  /** The pick was made on PACK price because nothing published a size. */
+  byPackPrice?: boolean;
+  /** `compared` counts a category sweep, not the search page for this term. */
+  substituteSweep?: boolean;
 }
 
 export interface BasketPlan {
@@ -81,7 +91,34 @@ export interface BasketPlan {
  * when NOTHING in the set publishes one, so a comparable answer is always
  * preferred to an incomparable one.
  */
-export function chooseBest(products: readonly Product[]): Product | undefined {
+export interface Choice {
+  product: Product;
+  /**
+   * How many products this line ACTUALLY chose between — after dropping the
+   * unavailable, the unpriced, and everything outside the winning measure.
+   * Not the size of the page: reporting that would overstate the look by the
+   * out-of-stock count, which is the "3 of 140" defect wearing a new hat.
+   */
+  compared: number;
+  /**
+   * True when nothing in the set published a size, so the pick was made on PACK
+   * price. The caller must say so — a pack-price winner presented as a value
+   * winner is the error unit pricing exists to prevent.
+   */
+  byPackPrice: boolean;
+}
+
+/**
+ * Measures, worst-comparable last.
+ *
+ * `unit` sits last deliberately. A kilogram is a kilogram across products, and
+ * a litre is a litre, but one "unit" of an empty bottle and one "unit" of oil
+ * are not the same kind of thing — so when two measures are equally common,
+ * ranking by `$/unit` is the least defensible of the available answers.
+ */
+const MEASURE_RANK: Record<string, number> = { kg: 0, L: 1, unit: 2 };
+
+export function chooseBest(products: readonly Product[]): Choice | undefined {
   const eligible = products.filter((p) => {
     const o = pickOffer(p.offers);
     return o?.available === true && priced(o);
@@ -94,19 +131,41 @@ export function chooseBest(products: readonly Product[]): Product | undefined {
       byMeasure.set(p.size.measure, (byMeasure.get(p.size.measure) ?? 0) + 1);
     }
   }
-  const dominant = [...byMeasure.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  // Commonest measure wins; ties break by MEASURE_RANK, then by name.
+  //
+  // The tie-break is the whole point. Sorting on count alone left the winner to
+  // Map INSERTION ORDER, which is the order `search` happened to return — and
+  // that order is computed over out-of-stock products too. So a page listing
+  // three sold-out bottles first could make `unit` the dominant measure for a
+  // set whose only real contest was one bottle against one oil, and the CLI
+  // would put an empty bottle in the basket as the best value. Same set,
+  // different array order, different answer.
+  const dominant = [...byMeasure.entries()].sort(
+    (a, b) =>
+      b[1] - a[1] ||
+      (MEASURE_RANK[a[0]] ?? 99) - (MEASURE_RANK[b[0]] ?? 99) ||
+      a[0].localeCompare(b[0]),
+  )[0]?.[0];
 
   if (dominant) {
     const comparable = eligible.filter(
       (p) => p.size?.measure === dominant && p.unitPrice !== undefined,
     );
-    return comparable.sort((a, b) => (a.unitPrice ?? 0) - (b.unitPrice ?? 0))[0];
+    const product = comparable
+      .slice()
+      .sort((a, b) => (a.unitPrice ?? 0) - (b.unitPrice ?? 0) || a.skuId.localeCompare(b.skuId))[0];
+    if (product) return { product, compared: comparable.length, byPackPrice: false };
   }
   // Nothing in the set publishes a size. Pack price is the only axis left, and
-  // saying so is the caller's job — see `renderBasket`.
-  return eligible
+  // `byPackPrice` makes the caller say so.
+  const product = eligible
     .slice()
-    .sort((a, b) => (pickOffer(a.offers)?.price ?? 0) - (pickOffer(b.offers)?.price ?? 0))[0];
+    .sort(
+      (a, b) =>
+        (pickOffer(a.offers)?.price ?? 0) - (pickOffer(b.offers)?.price ?? 0) ||
+        a.skuId.localeCompare(b.skuId),
+    )[0];
+  return product ? { product, compared: eligible.length, byPackPrice: true } : undefined;
 }
 
 /** Price of a chosen product, as a basket line costs it. */
@@ -132,21 +191,30 @@ export function fillToBudget(
   let spent = 0;
 
   for (const line of candidates) {
-    if (line.status === "no-match") {
+    // Only a line that is trying to be FILLED can spend money. Any other status
+    // is passed through untouched — an earlier version let a priced
+    // `nothing-in-stock` line increment `spent` while never counting toward
+    // `total`, so the basket refused affordable items while reporting the money
+    // as still available.
+    if (!isFilled(line.status)) {
       lines.push(line);
       continue;
     }
-    // A line with no price cannot be a filled line. Letting one through would
-    // put it in the basket at `$ 0` and count it toward the total as zero —
-    // the "a price of 0 is not free" defect, re-entered from the other side.
-    // The only way a chosen product has no price is that it has no offer at
-    // this store, which is what `nothing-in-stock` says.
-    if (line.price === undefined) {
-      lines.push(
-        line.status === "filled" || line.status === "filled-by-substitute"
-          ? { ...line, status: "nothing-in-stock" }
-          : line,
-      );
+    // A line with no usable price cannot be a filled line. Letting one through
+    // would put it in the basket at `$ 0` and add zero to the total — the
+    // "a price of 0 is not free" defect, re-entered from the other side.
+    //
+    // `Number.isFinite`, not just `!== undefined`: a NaN price defeats the
+    // ceiling outright, because `sum()` coerces NaN to 0 while `spent` becomes
+    // NaN and every later `spent + price > budget` is then false. That made
+    // `remaining` negative on a "hard ceiling" — the one invariant this
+    // function exists to hold.
+    // A filled line needs BOTH a product and a usable price. Guarding only the
+    // price left a line that billed money for a product the output could not
+    // name: the body skipped it and the summary still read "1 of 1 lines,
+    // $ 5.550". Guard where the money is decided, not where it is printed.
+    if (!line.product || line.price === undefined || !Number.isFinite(line.price)) {
+      lines.push({ ...line, status: "nothing-in-stock", price: undefined });
       continue;
     }
     if (spent + line.price > budget) {
@@ -157,11 +225,7 @@ export function fillToBudget(
     lines.push(line);
   }
 
-  const total = sum(
-    lines
-      .filter((l) => l.status === "filled" || l.status === "filled-by-substitute")
-      .map((l) => l.price ?? 0),
-  );
+  const total = sum(lines.filter((l) => isFilled(l.status)).map((l) => l.price ?? 0));
   return { budget, lines, total, remaining: budget - total };
 }
 
@@ -190,8 +254,13 @@ export function parseBudget(raw: unknown): PriceHundredths {
       `--budget must be a whole number of pesos, got "${String(raw)}" — ${why}. Example: --budget 50000`,
     );
   };
+  // A number argument goes through the SAME rules as a string. Exempting it
+  // meant `parseBudget(50.5)` returned half a peso while `parseBudget("50,5")`
+  // was refused by name for being fractional, and `parseBudget(0.004)` rounded
+  // to a budget of ZERO from a positive input — putting every line over budget.
   if (typeof raw === "number") {
     if (!Number.isFinite(raw) || raw <= 0) reject("it is not a positive amount");
+    if (!Number.isInteger(raw)) reject("pesos are not quoted in cents, so it must be whole");
     return Math.round(raw * 100);
   }
   const text = String(raw ?? "").trim();
@@ -239,7 +308,6 @@ export async function buildBasket(
       regionId: opts.regionId,
       salesChannel,
     });
-    const compared = page.products.length;
     const matched = page.total;
 
     const best = chooseBest(page.products);
@@ -247,28 +315,46 @@ export async function buildBasket(
       chosen.push({
         term,
         status: "filled",
-        product: best,
-        price: linePrice(best),
-        compared,
+        product: best.product,
+        price: linePrice(best.product),
+        compared: best.compared,
+        matched,
+        byPackPrice: best.byPackPrice,
+      });
+      continue;
+    }
+    // No eligible product. Either D1 returned nothing at all for the term, or
+    // everything it returned is out of stock.
+    const source = page.products[0];
+    if (!source) {
+      chosen.push({ term, status: "no-match", compared: 0, matched });
+      continue;
+    }
+
+    // Ask the category what else would do, using the best-matching product as
+    // the source. `compared` stays the SEARCH's own count: the sweep's pool is
+    // a different population counted in a different unit (distinct products vs
+    // SKUs), and adding them produced a number that could exceed `matched` and
+    // silently suppress the denominator.
+    const replacement = await bestSubstitute(client, source, opts, salesChannel);
+    if (replacement.outcome === "unreachable") {
+      chosen.push({
+        term,
+        status: "replacement-unknown",
+        product: source,
+        compared: page.products.length,
         matched,
       });
       continue;
     }
-    if (!page.products.length) {
-      chosen.push({ term, status: "no-match", compared, matched });
-      continue;
-    }
-
-    // Everything the term found is out of stock. Ask the category what else
-    // would do, using the best-matching product as the source.
-    const source = page.products[0];
-    if (!source) {
-      chosen.push({ term, status: "no-match", compared, matched });
-      continue;
-    }
-    const replacement = await bestSubstitute(client, source, opts, salesChannel);
-    if (!replacement) {
-      chosen.push({ term, status: "nothing-in-stock", product: source, compared, matched });
+    if (replacement.outcome === "none") {
+      chosen.push({
+        term,
+        status: "nothing-in-stock",
+        product: source,
+        compared: replacement.compared,
+        matched,
+      });
       continue;
     }
     chosen.push({
@@ -277,21 +363,40 @@ export async function buildBasket(
       product: replacement.product,
       price: linePrice(replacement.product),
       replaces: source,
-      compared: compared + replacement.compared,
+      compared: replacement.compared,
       matched,
+      substituteSweep: true,
     });
   }
 
   return fillToBudget(chosen, budget);
 }
 
-/** First ranked in-stock replacement for a product, or undefined. */
+type SubstituteOutcome =
+  | { outcome: "found"; product: Product; compared: number }
+  | { outcome: "none"; compared: number }
+  | { outcome: "unreachable" };
+
+/**
+ * First ranked in-stock replacement for a product.
+ *
+ * Distinguishes **"the category holds nothing"** from **"the question could not
+ * be asked"**, because a bare `catch` collapsing the two turns a failed request
+ * into a positive claim about stock. `substitute.ts` already reasons this out
+ * for its own sweep — an empty pool asserted from zero successful requests is
+ * an error, not an answer — and swallowing here reintroduced it one module
+ * over, with the added harm that the basket exits 3 ("never retry") on what may
+ * be a transient outage.
+ *
+ * A failure still does not discard the lines already resolved. It surfaces as
+ * `replacement-unknown`, which says what actually happened.
+ */
 async function bestSubstitute(
   client: D1Client,
   source: Product,
   opts: BasketOptions,
   salesChannel: string,
-): Promise<{ product: Product; compared: number } | undefined> {
+): Promise<SubstituteOutcome> {
   try {
     const result = await findSubstitutes(client, source.skuId, {
       regionId: opts.regionId,
@@ -300,11 +405,9 @@ async function bestSubstitute(
       limit: 1,
     });
     const top: Candidate | undefined = result.candidates[0];
-    if (!top) return undefined;
-    return { product: top.product, compared: result.poolProducts };
+    if (!top) return { outcome: "none", compared: result.poolProducts };
+    return { outcome: "found", product: top.product, compared: result.poolProducts };
   } catch {
-    // A term that cannot be substituted is a line the basket reports as
-    // unfilled, not an error that discards the seven lines already resolved.
-    return undefined;
+    return { outcome: "unreachable" };
   }
 }

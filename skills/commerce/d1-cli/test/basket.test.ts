@@ -42,10 +42,19 @@ function product(
   };
 }
 
+/**
+ * A basket line, defaulting to a filled one.
+ *
+ * The default product is load-bearing: `fillToBudget` refuses to bill a filled
+ * line that names no product, so a fixture omitting it is silently downgraded
+ * and stops testing what it says it tests. Pass `product: undefined` explicitly
+ * to exercise that guard.
+ */
 const line = (over: Partial<BasketLine> & { term: string }): BasketLine => ({
   status: "filled",
   compared: 1,
   matched: 1,
+  product: product("stub", "PRODUCTO", over.price ?? 100_000),
   ...over,
 });
 
@@ -57,7 +66,7 @@ describe("chooseBest", () => {
       product("small", "ARROZ ESTÁNDAR 500 GRS", 155_000, { measure: "kg", amount: 0.5 }),
       product("big", "ARROZ ECONÓMICO 2000 GRS", 555_000, { measure: "kg", amount: 2 }),
     ]);
-    expect(pick?.skuId).toBe("big");
+    expect(pick?.product.skuId).toBe("big");
   });
 
   test("ignores what D1 cannot supply here", () => {
@@ -69,7 +78,7 @@ describe("chooseBest", () => {
       }),
       product("here", "ARROZ NORMAL", 300_000, { measure: "kg", amount: 1 }),
     ]);
-    expect(pick?.skuId).toBe("here");
+    expect(pick?.product.skuId).toBe("here");
   });
 
   test("a price of 0 is 'no offer here', never the best buy", () => {
@@ -83,7 +92,7 @@ describe("chooseBest", () => {
       product("noprice", "SIN OFERTA", 0),
       product("real", "CON PRECIO", 400_000),
     ]);
-    expect(pick?.skuId).toBe("real");
+    expect(pick?.product.skuId).toBe("real");
   });
 
   test("does not blend measures — a $/unit bottle cannot beat a $/L oil", () => {
@@ -101,7 +110,7 @@ describe("chooseBest", () => {
     ]);
     // Two products are measured in L against one in units, so L is dominant and
     // the bottle is not a candidate at all — despite the smallest per-unit.
-    expect(pick?.skuId).toBe("oil3");
+    expect(pick?.product.skuId).toBe("oil3");
   });
 
   test("falls back to pack price only when NOTHING publishes a size", () => {
@@ -109,7 +118,7 @@ describe("chooseBest", () => {
       product("a", "COSA CARA", 900_000),
       product("b", "COSA BARATA", 300_000),
     ]);
-    expect(pick?.skuId).toBe("b");
+    expect(pick?.product.skuId).toBe("b");
   });
 
   test("prefers a comparable answer over an incomparable cheaper one", () => {
@@ -119,7 +128,7 @@ describe("chooseBest", () => {
       product("nosize", "GENÉRICO", 100_000),
       product("sized", "ARROZ 1 KG", 300_000, { measure: "kg", amount: 1 }),
     ]);
-    expect(pick?.skuId).toBe("sized");
+    expect(pick?.product.skuId).toBe("sized");
   });
 
   test("nothing eligible yields undefined rather than a phantom line", () => {
@@ -159,12 +168,27 @@ describe("fillToBudget", () => {
   test("fills in the order the shopper wrote, not cheapest-first", () => {
     // Reordering by value would spend the budget on whatever is cheapest per kg,
     // which is a different request than the one the list expresses.
+    //
+    // The two lines must have DIFFERENT prices and the assertion must name the
+    // term. With both at 700_000 a value-sorted fill was indistinguishable from
+    // an in-order one, so this test survived the very mutation it is named for.
     const plan = fillToBudget(
-      [line({ term: "first", price: 700_000 }), line({ term: "second", price: 700_000 })],
+      [line({ term: "expensive", price: 800_000 }), line({ term: "cheap", price: 300_000 })],
       1_000_000,
     );
+    expect(plan.lines.map((l) => l.term)).toEqual(["expensive", "cheap"]);
     expect(plan.lines[0]?.status).toBe("filled");
     expect(plan.lines[1]?.status).toBe("over-budget");
+  });
+
+  test("a line costing exactly what is left still fits", () => {
+    // The boundary the whole feature is about. `>` -> `>=` passed the entire
+    // suite before this existed, and would have refused a basket that spends
+    // the budget exactly.
+    const plan = fillToBudget([line({ term: "arroz", price: 100_000 })], 100_000);
+    expect(plan.lines[0]?.status).toBe("filled");
+    expect(plan.total).toBe(100_000);
+    expect(plan.remaining).toBe(0);
   });
 
   test("a term nothing was found for stays unfilled and costs nothing", () => {
@@ -377,5 +401,173 @@ describe("a filled line always has a price", () => {
     const body = out.slice(0, out.indexOf("0 of 1 lines"));
     expect(body).not.toContain("$ 0");
     expect(body).toContain("Nothing fits this budget.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defects found by the cross-model review gate (P20)
+// ---------------------------------------------------------------------------
+
+describe("the dominant measure is decided deterministically", () => {
+  const bottle = product("bottle", "BOTELLA PARA ACEITE", 899_000, {
+    measure: "unit",
+    amount: 1,
+  });
+  const oil = product("oil3", "ACEITE 3000 ML", 2_050_000, { measure: "L", amount: 3 });
+
+  test("the same set gives the same answer in either order", () => {
+    // The tie-break used to fall through to Map INSERTION order, which is the
+    // order `search` happened to return — and that order is computed over
+    // out-of-stock products too. So a page listing sold-out bottles first could
+    // put an empty bottle in the basket as the best value for "aceite".
+    expect(chooseBest([bottle, oil])?.product.skuId).toBe(chooseBest([oil, bottle])?.product.skuId);
+  });
+
+  test("a tie never resolves in favour of $/unit", () => {
+    // A kilogram is a kilogram across products; one "unit" of an empty bottle
+    // and one "unit" of oil are not the same kind of thing, so $/unit is the
+    // least defensible answer available when the count is tied.
+    expect(chooseBest([bottle, oil])?.product.skuId).toBe("oil3");
+    expect(chooseBest([oil, bottle])?.product.skuId).toBe("oil3");
+  });
+});
+
+describe("compared counts the set actually chosen between", () => {
+  test("not the page, which includes what was never a candidate", () => {
+    // A page of 20 where 18 are out of stock reports a choice between 2, not
+    // 20. Reporting the page was the "3 of 140" overstatement by another route.
+    const page = [
+      product("a", "ACEITE A", 200_000, { measure: "L", amount: 1 }),
+      product("b", "ACEITE B", 300_000, { measure: "L", amount: 1 }),
+      ...Array.from({ length: 18 }, (_, i) =>
+        product(`gone${i}`, `ACEITE AGOTADO ${i}`, 100_000, {
+          available: false,
+          measure: "L",
+          amount: 1,
+        }),
+      ),
+    ];
+    expect(chooseBest(page)?.compared).toBe(2);
+  });
+
+  test("and excludes products outside the winning measure", () => {
+    const pick = chooseBest([
+      product("oil1", "ACEITE 1 L", 200_000, { measure: "L", amount: 1 }),
+      product("oil2", "ACEITE 2 L", 300_000, { measure: "L", amount: 2 }),
+      product("bottle", "BOTELLA", 100_000, { measure: "unit", amount: 1 }),
+    ]);
+    expect(pick?.compared).toBe(2);
+  });
+});
+
+describe("a pack-price pick says so", () => {
+  test("chooseBest flags it", () => {
+    const pick = chooseBest([
+      product("big", "ARROZ 5 KG SIN PUM", 2_000_000),
+      product("tiny", "ARROZ 250 GR SIN PUM", 190_000),
+    ]);
+    expect(pick?.byPackPrice).toBe(true);
+    expect(
+      chooseBest([product("sized", "ARROZ 1 KG", 300_000, { measure: "kg", amount: 1 })])
+        ?.byPackPrice,
+    ).toBe(false);
+  });
+
+  test("and the output does not call it the best value", () => {
+    // $ 1.900 for 250 g is $ 7.600/kg against the 5 kg bag's $ 4.000/kg. Calling
+    // that "best value" is the cheapest-pack-is-the-worst-buy error the unit
+    // pricing feature exists to prevent.
+    const plan = fillToBudget(
+      [
+        line({
+          term: "arroz",
+          price: 190_000,
+          product: product("tiny", "ARROZ 250 GR SIN PUM", 190_000),
+          byPackPrice: true,
+        }),
+      ],
+      1_000_000,
+    );
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("chosen on pack price");
+    expect(out).not.toContain("Each line is the best value");
+  });
+});
+
+describe("a failed replacement lookup is not a claim about stock", () => {
+  test("it says unknown, never empty", () => {
+    // A bare catch turned "D1 did not answer" into "nothing is in stock here",
+    // asserted from zero successful requests — and exited 3, which is
+    // documented as never worth retrying.
+    const plan = fillToBudget(
+      [line({ term: "pan", status: "replacement-unknown", compared: 1 })],
+      1_000_000,
+    );
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("did not answer");
+    expect(out).toContain("unknown, not empty");
+  });
+});
+
+describe("the ceiling holds against arithmetic accidents", () => {
+  test("a non-finite price cannot breach it", () => {
+    // `sum()` coerces NaN to 0 while `spent` becomes NaN, after which every
+    // `spent + price > budget` is false and every remaining line is admitted.
+    // `remaining` then went negative on a documented hard ceiling.
+    const plan = fillToBudget(
+      [
+        line({ term: "broken", price: Number.NaN }),
+        line({ term: "a", price: 900_000 }),
+        line({ term: "b", price: 900_000 }),
+      ],
+      100_000,
+    );
+    expect(plan.total).toBeLessThanOrEqual(plan.budget);
+    expect(plan.remaining).toBeGreaterThanOrEqual(0);
+    expect(plan.lines[0]?.status).toBe("nothing-in-stock");
+  });
+
+  test("a priced line that is not being filled does not consume budget", () => {
+    // `spent` counted any priced line while `total` counted only filled ones,
+    // so the basket refused affordable items while reporting the money as left.
+    const plan = fillToBudget(
+      [
+        line({ term: "ghost", status: "nothing-in-stock", price: 90_000 }),
+        line({ term: "real", price: 90_000 }),
+      ],
+      100_000,
+    );
+    expect(plan.lines[1]?.status).toBe("filled");
+    expect(plan.total).toBe(90_000);
+  });
+});
+
+describe("a numeric budget obeys the same rules as a typed one", () => {
+  test("fractional pesos are refused either way", () => {
+    // `parseBudget("50,5")` was refused by name for being fractional while
+    // `parseBudget(50.5)` returned half a peso, and `parseBudget(0.004)`
+    // returned a budget of ZERO from a positive input.
+    expect(() => parseBudget(50.5)).toThrow();
+    expect(() => parseBudget(0.004)).toThrow();
+    expect(parseBudget(50_000)).toBe(5_000_000);
+  });
+});
+
+describe("a filled line with no product is not billed", () => {
+  test("it neither renders nor counts", () => {
+    // Dropping it from the body alone gave an empty basket whose summary still
+    // read "1 of 1 lines · $ 5.550".
+    const plan = fillToBudget(
+      [line({ term: "arroz", price: 555_000, product: undefined })],
+      1_000_000,
+    );
+    // The total is the assertion that matters. Excluding it from the RENDER
+    // alone still left the summary reading "0 of 1 lines · $ 5.550" — a basket
+    // that bills money for a product it cannot name.
+    expect(plan.total).toBe(0);
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("0 of 1 lines");
+    expect(out).toContain("Nothing fits this budget.");
+    expect(out).not.toContain("$ 5.550");
   });
 });

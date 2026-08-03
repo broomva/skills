@@ -348,6 +348,12 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
                                and names what changes: brand, pack size, $/kg,
                                and any warning label gained or lost. Proposes
                                only — it never touches your cart.
+    d1 basket --budget <cop> <term> [term ...]      [--lat --lng --count]
+                               build a shopping list to a spending target, by
+                               VALUE rather than pack price. The budget is a
+                               hard ceiling; every term it could not fit is
+                               named, with the reason. Prints a basket — it
+                               never touches your cart.
     d1 suggest <partial>       autocomplete terms
     d1 trending                what Colombia is searching for
     d1 categories              department tree      [--depth N]
@@ -390,7 +396,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
     0  it worked
     1  D1 refused, or could not be reached — a retry may help
     2  the command was called wrong — a retry never helps
-    3  the command worked and the answer is "none" (substitute found nothing)
+    3  the command worked and the answer is "none"
+       (substitute found nothing; basket fit nothing)
 
 This CLI never handles payment. It builds and prices a basket; a human opens
 the checkout URL and pays. Stored credentials are limited to one storefront
