@@ -1,6 +1,6 @@
 ---
 name: d1-cli
-version: 0.5.0
+version: 0.6.0
 source: https://github.com/broomva/skills
 description: Shop Tiendas D1 (Colombia, d1.com.co) from the command line — search the catalogue, resolve your nearest physical store, price a basket against that store's real stock, and quote delivery. D1 runs VTEX IO (account `d1tiendas`), so this drives its public storefront API with no admin key at all — catalogue and cart work fully anonymously, and a one-time emailed code unlocks order history. Handles the two traps that make naive D1 automation wrong — availability is regionalized (an unregioned query reports a national catalogue nobody can actually buy from) and prices arrive in two different units (search reports whole pesos, checkout reports hundredths, a silent 100x). Builds and prices baskets; it deliberately cannot pay, handing a checkout URL to a human instead. USE WHEN the user wants to find D1 products or prices, check whether D1 delivers somewhere, build or cost a D1 grocery basket, compare D1 items, or review their D1 orders. NOT FOR other Colombian retailers (Éxito, Jumbo, Ara, Alkosto), and not for completing a payment.
 author: broomva
@@ -192,6 +192,17 @@ Because D1's search cannot sort on this, `--sort per-unit` orders **the page you
 fetched**, not the whole result set. Raise `--count` (max 50) to widen it. The
 output says so rather than implying a superlative it cannot support, and names
 how many results publish no size and so cannot be compared at all.
+
+**A multipack's declared size is the pack, not one item — do not "correct" it.**
+A census of all 1,600 products found that among name-matchable multipacks, 44
+of the 46 where D1 says enough to decide declare the pack total. Parsing `N UN`
+out of a product name and multiplying would corrupt those 44 to fix 2. The count
+in a name is not evidence about what the PUM means.
+
+`resolvePackSize` therefore reads descriptions rather than names. Across all
+1,548 products carrying a PUM it acts on the 10 whose description states both a
+per-item size and a count: three are corrected (SKU 718, 510, 1008), seven are
+confirmed as already stating the pack, and everything else is left as declared.
 
 **Read the warning labels.** Products carry Colombia's front-of-pack warnings
 (`Exceso en Azúcares`, `Exceso en sodio`, `Exceso en grasas saturadas`,
