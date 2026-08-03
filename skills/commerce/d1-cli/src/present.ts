@@ -122,9 +122,31 @@ export function renderCart(c: Cart): string {
     lines.push("Shipping not quoted — set a delivery point with `d1 cart deliver-to`.");
   }
   lines.push(`Total    ${formatCOP(c.total).padStart(11)}`);
-  if (c.messages.length) {
-    lines.push("");
-    for (const m of c.messages) lines.push(`! ${m}`);
+
+  // Errors go ABOVE the total, not below it. They used to print last, after the
+  // total and the checkout URL, so a cart whose every line D1 had refused to
+  // deliver still read as ready to pay.
+  // Blocked lines come from the lines themselves, not from `messages` — those
+  // are sticky and keep reporting conditions that have since been fixed.
+  const blocked = c.items.filter((i) => i.deliverable === false);
+  if (blocked.length) {
+    lines.splice(
+      lines.length - (c.shipping.length ? c.shipping.length + 2 : 1) - 1,
+      0,
+      "",
+      `!! ${blocked.length} line${blocked.length === 1 ? "" : "s"} CANNOT be delivered to this address:`,
+      ...blocked.map((i) => `   ${i.name}`),
+      "!! This cart is not safe to check out.",
+      "",
+    );
+  }
+  // Upstream notices are still shown, but never as the blocking signal. A
+  // `cannotBeDelivered` whose line now HAS a delivery option is stale, so it is
+  // labelled rather than presented as a live failure.
+  const stale = blocked.length === 0;
+  for (const m of c.messages) {
+    if (lines[lines.length - 1] !== "") lines.push("");
+    lines.push(m.status === "error" && stale ? `  (stale notice: ${m.text})` : `! ${m.text}`);
   }
   return lines.join("\n");
 }

@@ -19,6 +19,7 @@ import type { D1Client } from "./client.ts";
 import {
   type Cart,
   type CartItem,
+  type CartMessage,
   D1Error,
   DEFAULT_SALES_CHANNEL,
   type LatLng,
@@ -44,9 +45,10 @@ interface WireOrderForm {
     priceDefinition?: { total?: number };
   }>;
   totalizers?: Array<{ id: string; value?: number }>;
-  messages?: Array<{ text?: string; code?: string }>;
+  messages?: Array<{ text?: string; code?: string; status?: string }>;
   shippingData?: {
     logisticsInfo?: Array<{
+      itemIndex?: number;
       slas?: Array<{
         id?: string;
         name?: string;
@@ -110,14 +112,32 @@ function collapseShipping(
 }
 
 export function normalizeCart(w: WireOrderForm): Cart {
-  const items: CartItem[] = (w.items ?? []).map((i) => ({
-    skuId: i.id,
-    name: i.name ?? "(unnamed)",
-    quantity: i.quantity ?? 0,
-    sellerId: i.seller ?? "",
-    sellingPrice: i.sellingPrice ?? 0,
-    total: i.priceDefinition?.total ?? (i.sellingPrice ?? 0) * (i.quantity ?? 0),
-  }));
+  const logistics = w.shippingData?.logisticsInfo;
+  const items: CartItem[] = (w.items ?? []).map((i, idx) => {
+    // Deliverability comes from logisticsInfo, NOT from messages.
+    //
+    // Proven with both polarities against production, same cart, same item,
+    // only the address changed:
+    //
+    //   deliverable address   -> slas: [["Entrega Programada"]]   messages: []
+    //   unserved address      -> slas: [[]]                        messages: [cannotBeDelivered]
+    //
+    // An EMPTY slas array is the live, recomputed verdict. The message merely
+    // correlates — and it is STICKY: it survives `items/removeAll` and a
+    // re-add, so a line that is currently fine still carries the old error.
+    // Blocking on the message therefore refuses healthy carts, which is how
+    // the first version of this guard behaved.
+    const li = logistics?.find((l) => l.itemIndex === idx) ?? logistics?.[idx];
+    return {
+      skuId: i.id,
+      name: i.name ?? "(unnamed)",
+      quantity: i.quantity ?? 0,
+      sellerId: i.seller ?? "",
+      sellingPrice: i.sellingPrice ?? 0,
+      total: i.priceDefinition?.total ?? (i.sellingPrice ?? 0) * (i.quantity ?? 0),
+      deliverable: li ? (li.slas ?? []).length > 0 : undefined,
+    };
+  });
 
   const itemsTotal =
     w.totalizers?.find((t) => t.id === "Items")?.value ?? items.reduce((a, i) => a + i.total, 0);
@@ -138,7 +158,16 @@ export function normalizeCart(w: WireOrderForm): Cart {
     discounts,
     total: w.value ?? itemsTotal,
     shipping,
-    messages: (w.messages ?? []).map((m) => m.text ?? m.code ?? "").filter(Boolean),
+    messages: (w.messages ?? [])
+      .map((m) => ({
+        text: m.text ?? m.code ?? "",
+        code: m.code ?? "",
+        status: (m.status === "error" || m.status === "warning" ? m.status : "info") as
+          | "error"
+          | "warning"
+          | "info",
+      }))
+      .filter((m) => m.text),
   };
 }
 
@@ -164,6 +193,21 @@ export async function getCart(
   });
   client.orderFormId = w.orderFormId;
   return normalizeCart(w);
+}
+
+/**
+ * Lines upstream currently offers no way to deliver.
+ *
+ * Read from each line's own logistics entry, never from `messages` — those are
+ * sticky and report conditions that have since been fixed. A line with an empty
+ * `slas` array is one D1 will not ship to the selected address right now.
+ *
+ * Lines with `deliverable === undefined` are NOT included: no delivery point has
+ * been set, so nothing has been refused. Treating "not yet quoted" as "refused"
+ * would block every cart before `deliver-to` runs.
+ */
+export function undeliverable(cart: Cart): CartItem[] {
+  return cart.items.filter((i) => i.deliverable === false);
 }
 
 export interface AddItem {

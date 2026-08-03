@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { addItems, normalizeCart, setQuantity, simulate } from "../src/cart.ts";
+import { addItems, normalizeCart, setQuantity, simulate, undeliverable } from "../src/cart.ts";
 import { D1Client } from "../src/client.ts";
+import { renderCart } from "../src/present.ts";
 import { D1Error } from "../src/types.ts";
 
 function stub(body: unknown, status = 200) {
@@ -121,7 +122,9 @@ describe("normalizeCart", () => {
       orderFormId: "of1",
       messages: [{ text: "El precio de un producto cambió." }],
     });
-    expect(c.messages).toEqual(["El precio de un producto cambió."]);
+    expect(c.messages).toEqual([
+      { text: "El precio de un producto cambió.", code: "", status: "info" },
+    ]);
   });
 });
 
@@ -391,5 +394,98 @@ describe("simulate — shipping shares are summed there too", () => {
     );
     expect(r.shipping).toHaveLength(1);
     expect(r.shipping[0].price).toBe(1_350_000);
+  });
+});
+
+describe("an undeliverable cart must not read as payable", () => {
+  /**
+   * VTEX reports `cannotBeDelivered` with `status: "error"` while STILL
+   * returning a valid SLA per item and a computed total. Observed live: nine
+   * lines, nine errors, and a cart that printed a checkout URL and
+   * "$95.930 ready to pay" because the messages rendered BELOW the total.
+   */
+  const BROKEN = {
+    orderFormId: "of1",
+    value: 9_593_000,
+    items: [{ id: "262", name: "LECHE", quantity: 1, seller: "s", sellingPrice: 350_000 }],
+    totalizers: [{ id: "Items", value: 8_323_000 }],
+    shippingData: {
+      logisticsInfo: [
+        { slas: [{ id: "Entrega Programada", price: 1_270_000, shippingEstimate: "1bd" }] },
+      ],
+    },
+    messages: [
+      {
+        code: "cannotBeDelivered",
+        status: "error",
+        text: "El ítem LECHE no pudo ser enviado para las coordenadas seleccionadas",
+      },
+    ],
+  };
+
+  test("severity survives normalization — it is not just text", () => {
+    const c = normalizeCart(BROKEN);
+    expect(c.messages[0].status).toBe("error");
+    expect(c.messages[0].code).toBe("cannotBeDelivered");
+  });
+
+  test("a STICKY cannotBeDelivered on a line that HAS an SLA does not block", () => {
+    // Proven against production: the message survives items/removeAll and a
+    // re-add, so a currently-fine line still carries it. The first version of
+    // this guard blocked on the message and refused healthy carts.
+    expect(undeliverable(normalizeCart(BROKEN))).toEqual([]);
+    expect(normalizeCart(BROKEN).items[0].deliverable).toBe(true);
+  });
+
+  test("an EMPTY slas array is what actually blocks", () => {
+    // The true-negative, measured by moving one cart to an address D1 does not
+    // serve: slas went [["Entrega Programada"]] -> [[]].
+    const c = normalizeCart({
+      ...BROKEN,
+      shippingData: { logisticsInfo: [{ itemIndex: 0, slas: [] }] },
+    });
+    expect(c.items[0].deliverable).toBe(false);
+    expect(undeliverable(c)).toHaveLength(1);
+  });
+
+  test("a cart with no delivery point yet is not 'refused'", () => {
+    // deliverable === undefined means not quoted. Treating that as refused
+    // would block every cart before `deliver-to` runs.
+    const c = normalizeCart({ orderFormId: "of1", items: [{ id: "262", quantity: 1 }] });
+    expect(c.items[0].deliverable).toBeUndefined();
+    expect(undeliverable(c)).toEqual([]);
+  });
+
+  test("a healthy cart reports nothing blocked (anti-overshoot)", () => {
+    const ok = normalizeCart({
+      orderFormId: "of1",
+      items: [{ id: "262", quantity: 1, sellingPrice: 350_000 }],
+      messages: [{ code: "priceChange", status: "warning", text: "El precio cambió." }],
+    });
+    expect(undeliverable(ok)).toEqual([]);
+    expect(ok.messages[0].status).toBe("warning");
+  });
+
+  test("severity still survives normalization for display", () => {
+    const c = normalizeCart(BROKEN);
+    expect(c.messages[0].status).toBe("error");
+    expect(c.messages[0].code).toBe("cannotBeDelivered");
+  });
+
+  test("a genuinely blocked line renders ABOVE the total", () => {
+    // It printed last — after the total and the checkout URL — so an
+    // undeliverable cart still read as ready to pay.
+    const c = normalizeCart({
+      ...BROKEN,
+      shippingData: { logisticsInfo: [{ itemIndex: 0, slas: [] }] },
+    });
+    const out = renderCart(c);
+    expect(out).toContain("CANNOT be delivered");
+    expect(out.indexOf("CANNOT be delivered")).toBeLessThan(out.indexOf("Total"));
+    expect(out).toContain("not safe to check out");
+  });
+
+  test("a stale notice is labelled, not presented as a live failure", () => {
+    expect(renderCart(normalizeCart(BROKEN))).toContain("stale notice");
   });
 });

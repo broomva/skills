@@ -3,6 +3,37 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.1.2] — 2026-08-03
+
+### Fixed
+
+- **A cart D1 refused to deliver still read as ready to pay.** VTEX reports
+  `cannotBeDelivered` with `status: "error"` while STILL returning a valid SLA
+  per line and a computed total, and the CLI printed those messages BELOW the
+  total and the checkout URL. Observed live: nine lines, nine errors, and a
+  cart presenting "$95.930 ready to pay".
+
+  Three defences, because no single one is sufficient:
+
+  1. `cart add` asserts the delivery point BEFORE adding. VTEX judges
+     deliverability at ADD time against whatever address the orderForm then
+     holds; re-asserting afterwards does NOT clear the resulting errors. Proven
+     by ordering alone — add-then-deliver-to gave 9 errors where
+     deliver-to-then-add gave 0, same items, same region, same account.
+  2. `d1 region` warns when a non-empty cart was built against a different
+     point. Items already added keep their old verdict and nothing clears it,
+     so the only real fix is to rebuild — the CLI now says so instead of
+     leaving a cart quietly pinned to somewhere the user no longer is.
+  3. `cart checkout` **exits 1** and refuses the ready-to-pay framing when any
+     line is undeliverable. Message severity now travels with the text
+     (`CartMessage.status`) instead of being flattened to a string, and errors
+     render ABOVE the total.
+
+### Changed
+
+- `Cart.messages` is now `CartMessage[]` (`text`/`code`/`status`) rather than
+  `string[]`. Severity could not survive as prose.
+
 ## [0.1.1] — 2026-08-02
 
 ### Fixed

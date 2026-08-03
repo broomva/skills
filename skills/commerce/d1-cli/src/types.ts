@@ -130,6 +130,13 @@ export interface CartItem {
   sellingPrice: PriceHundredths;
   /** `sellingPrice * quantity`, as computed upstream. */
   total: PriceHundredths;
+  /**
+   * Whether upstream currently offers a way to deliver this line.
+   *
+   * `undefined` when no delivery point has been set yet, so "not quoted" is
+   * distinguishable from "quoted and refused". See `undeliverable()`.
+   */
+  deliverable?: boolean;
 }
 
 export interface ShippingOption {
@@ -138,6 +145,13 @@ export interface ShippingOption {
   price: PriceHundredths;
   /** VTEX shipping estimate, e.g. `1bd` = one business day. */
   estimate: string;
+}
+
+export interface CartMessage {
+  text: string;
+  code: string;
+  /** `error` means the cart is NOT safe to check out. */
+  status: "error" | "warning" | "info";
 }
 
 export interface Cart {
@@ -154,8 +168,12 @@ export interface Cart {
   /** Grand total as computed upstream, including every totalizer. */
   total: PriceHundredths;
   shipping: ShippingOption[];
-  /** Non-fatal notices from upstream (stock changes, price changes, promos). */
-  messages: string[];
+  /**
+   * Notices from upstream. NOT all non-fatal: VTEX reports `cannotBeDelivered`
+   * here with `status: "error"` while still returning SLAs and a payable total,
+   * so severity has to travel with the text or a broken cart reads as ready.
+   */
+  messages: CartMessage[];
 }
 
 // ---------------------------------------------------------------------------
