@@ -200,18 +200,39 @@ The obvious worry is that `LECHE CHOCOLATE ... 3 UN 600 ML` declaring `600`
 means 600 ml *per carton*, making the pack 1.8 L and every multipack's `$/L`
 overstated by its pack count. That was reported as a defect and it is wrong.
 
-A census of all 1,600 products settled it. Of the 154 multipacks carrying a PUM
-pair, 62 are measured in kg or L — the only ones where this can go wrong — and
-of the 46 where D1's description says enough to decide, **44 declare the pack
-total**. SKU 897 is one of them: its own description reads
-`Peso: 600 mL (200 mL por unidad)`, so 600 is the pack and 200 is the carton.
+A census of all 1,600 products settled it. Two measurements, over two
+deliberately different populations — quoting one without the other is what makes
+the numbers below look like they disagree.
 
-Parsing `N UN` out of the name and multiplying would therefore have corrupted
-44 products to fix 2. **Do not do that.** The count in a name is not evidence
-about what the PUM means.
+**1. Which way does the convention actually run?** Take the multipacks findable
+by name (`\d+\s*(UN|UND|UNIDADES?)\b`): 154 carry a PUM pair, 62 are measured in
+kg or L, and of the 46 where D1's description says enough to decide, **44
+declare the pack total**. SKU 897 is one of them — `Peso: 600 mL (200 mL por
+unidad)`, so 600 is the pack and 200 is the carton.
 
-Three products really do declare one item, and D1's own prose is the only thing
-that says so:
+So parsing `N UN` out of the name and multiplying would have corrupted 44
+products to fix 2. **Do not do that.** The count in a name is not evidence about
+what the PUM means.
+
+**2. What does the shipped rule actually touch?** It does not use names at all,
+so its population is every product with a PUM, not just the name-matchable ones:
+
+| | count |
+|---|---|
+| products carrying a PUM pair | 1,548 |
+| measured in kg or L — the risk surface | 1,187 |
+| description states a per-item size **and** a count | 10 |
+| → PUM described one item, corrected | **3** |
+| → PUM was already the pack, left alone | 7 |
+| description says nothing decisive, left alone | 1,177 |
+
+The two measurements answer different questions, which is why one says "2
+exceptions" and the other corrects 3. SKU 1008 is the difference: `2 UNDX2.5L`
+has no word boundary after `UND`, so it is invisible to the name-based census
+and visible to the description-based rule. Reading the description finds cases
+reading the name cannot.
+
+The three products that really do declare one item:
 
 | SKU | Name | Description says | Was | Is |
 |---|---|---|---|---|
@@ -222,12 +243,7 @@ that says so:
 So `resolvePackSize` trusts the declared value and overrides it only where the
 description states **both** a per-item size and a count. A per-item size with no
 count is not enough — there is nothing to multiply by, which is precisely why
-SKU 897 is left alone. Blast radius across the catalogue: 3 of 1,548 products
-carrying a PUM change; 1,545 are untouched.
-
-Note that SKU 1008 is invisible to a name-based search — `2 UNDX2.5L` has no
-word boundary after `UND`. Reading the description finds cases that reading the
-name cannot.
+SKU 897 is left alone.
 
 This fails **open**: if D1 stops publishing the prose, the CLI returns to
 trusting the PUM rather than inventing a pack count.

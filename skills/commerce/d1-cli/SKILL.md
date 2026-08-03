@@ -194,12 +194,15 @@ output says so rather than implying a superlative it cannot support, and names
 how many results publish no size and so cannot be compared at all.
 
 **A multipack's declared size is the pack, not one item — do not "correct" it.**
-A census of all 1,600 products found that of the 46 kg/L multipacks where D1
-says enough to decide, 44 declare the pack total. Parsing `N UN` out of a
-product name and multiplying would corrupt those 44 to fix 2. The count in a
-name is not evidence about what the PUM means. Three products genuinely declare
-one item (SKU 718, 510, 1008) and D1's own description is the only thing that
-says so; `resolvePackSize` handles them and leaves everything else alone.
+A census of all 1,600 products found that among name-matchable multipacks, 44
+of the 46 where D1 says enough to decide declare the pack total. Parsing `N UN`
+out of a product name and multiplying would corrupt those 44 to fix 2. The count
+in a name is not evidence about what the PUM means.
+
+`resolvePackSize` therefore reads descriptions rather than names. Across all
+1,548 products carrying a PUM it acts on the 10 whose description states both a
+per-item size and a count: three are corrected (SKU 718, 510, 1008), seven are
+confirmed as already stating the pack, and everything else is left as declared.
 
 **Read the warning labels.** Products carry Colombia's front-of-pack warnings
 (`Exceso en Azúcares`, `Exceso en sodio`, `Exceso en grasas saturadas`,

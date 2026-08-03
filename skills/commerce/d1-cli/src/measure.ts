@@ -178,12 +178,12 @@ const near = (a: number, b: number) => Math.abs(a - b) / Math.max(a, b) <= CLOSE
 /**
  * Reconcile the declared unit-of-measure against what the description says.
  *
- * A census of all 1,600 D1 products (2026-08-03) found 154 multipacks carrying
- * a PUM pair. Of the 62 measured in kg or L — the only ones where this can go
- * wrong — 44 declare the PACK TOTAL, 2 declare ONE ITEM, and 16 say nothing
- * either way. So the declared value is trusted by default, because that is what
- * the data says it is; the override fires only where D1's own prose contradicts
- * it:
+ * A census of all 1,600 D1 products (2026-08-03) found 154 name-matchable
+ * multipacks carrying a PUM pair. Of the 62 measured in kg or L — the only ones
+ * where this can go wrong — 44 declare the PACK TOTAL, 2 declare ONE ITEM, and
+ * 16 say nothing either way. So the declared value is trusted by default,
+ * because that is what the data says it is; the override fires only where D1's
+ * own prose contradicts it:
  *
  *   SKU 718  REFRESCOS 6 UN ... 200 ML   Valor 200 ml, "6 unidades de 200 mL"
  *            -> pack is 1.2 L, so $ 27.450/L was 6x the real $ 4.575/L
