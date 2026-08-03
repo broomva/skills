@@ -168,3 +168,93 @@ describe("slugify", () => {
     expect(slugify("Licor,  vinos y más")).toBe("licor-vinos-y-mas");
   });
 });
+
+describe("per-unit sorting groups by measure", () => {
+  const mk = (id: string, name: string, price: number, unit?: string, value?: string) => ({
+    productId: id,
+    productName: name,
+    properties: unit
+      ? [
+          { name: "Unidad De Medida", values: [unit] },
+          { name: "Valor de Medida", values: [value] },
+        ]
+      : [],
+    items: [
+      {
+        itemId: id,
+        nameComplete: name,
+        sellers: [{ sellerId: "1", commertialOffer: { Price: price, AvailableQuantity: 5 } }],
+      },
+    ],
+  });
+
+  test("a /unit product does not interleave with /L products", async () => {
+    // Observed live: searching for oil ranked a $8,900 BOTTLE ("/unit") in
+    // among the per-litre figures as though it were a competitive buy. $/kg,
+    // $/L and $/unit are not comparable quantities.
+    const { impl } = stub({
+      products: [
+        mk("bottle", "BOTELLA PARA ACEITE", 8990, "Un", "1"),
+        mk("oil3l", "ACEITE VEGETAL 3000 ML", 20500, "Ml", "3000"),
+        mk("oil900", "ACEITE VEGETAL 900 ML", 6950, "Ml", "900"),
+      ],
+      recordsFiltered: 3,
+    });
+    const page = await search(new D1Client({ fetchImpl: impl }), { sort: "per-unit" });
+    const order = page.products.map((p) => p.skuId);
+    // Litres dominate, so both oils precede the bottle regardless of number.
+    expect(order.indexOf("bottle")).toBe(2);
+    expect(order.slice(0, 2)).toEqual(["oil3l", "oil900"]);
+  });
+
+  test("within the dominant measure, cheapest per unit wins", async () => {
+    const { impl } = stub({
+      products: [
+        mk("small", "ARROZ 500 G", 1550, "Gr", "500"),
+        mk("big", "ARROZ 2000 GRS", 5550, "Gr", "2000"),
+      ],
+      recordsFiltered: 2,
+    });
+    const page = await search(new D1Client({ fetchImpl: impl }), { sort: "per-unit" });
+    // The bigger, more expensive pack is the better value — the whole point.
+    expect(page.products[0].skuId).toBe("big");
+    expect(page.products[0].unitPrice).toBe(277_500);
+    expect(page.products[1].unitPrice).toBe(310_000);
+  });
+
+  test("products with no declared size sort last, never dropped", async () => {
+    const { impl } = stub({
+      products: [
+        mk("nosize", "MISTERY ITEM", 1000),
+        mk("rice", "ARROZ 1000 G", 3990, "Gr", "1000"),
+      ],
+      recordsFiltered: 2,
+    });
+    const page = await search(new D1Client({ fetchImpl: impl }), { sort: "per-unit" });
+    expect(page.products.map((p) => p.skuId)).toEqual(["rice", "nosize"]);
+    expect(page.products[1].unitPrice).toBeUndefined();
+  });
+
+  test("per-unit is never forwarded to D1, which has no such sort", async () => {
+    const { impl, calls } = stub({ products: [], recordsFiltered: 0 });
+    await search(new D1Client({ fetchImpl: impl }), { sort: "per-unit" });
+    expect(calls[0]).not.toContain("per-unit");
+  });
+
+  test("warning labels are read only when declared 'si'", async () => {
+    const { impl } = stub({
+      products: [
+        {
+          productId: "x",
+          properties: [
+            { name: "Exceso en Azúcares", values: ["Si"] },
+            { name: "Exceso en sodio", values: ["No"] },
+          ],
+          items: [{ itemId: "x", sellers: [] }],
+        },
+      ],
+    });
+    const page = await search(new D1Client({ fetchImpl: impl }));
+    expect(page.products[0].warnings).toEqual(["Exceso en Azúcares"]);
+  });
+});

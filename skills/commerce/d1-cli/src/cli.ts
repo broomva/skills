@@ -236,6 +236,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
   Catalogue
     d1 search <query>          find products        [--lat --lng --facets --page
                                                      --count --sort --available]
+                               --sort per-unit ranks by price per kg/L, which is
+                               what "cheapest" usually means for groceries
     d1 suggest <partial>       autocomplete terms
     d1 trending                what Colombia is searching for
     d1 categories              department tree      [--depth N]
@@ -334,7 +336,10 @@ async function main(argv: string[]): Promise<number> {
       console.log(
         asJson
           ? json({ ...page, regionId: region?.id })
-          : renderSearch(page, { regionId: region?.id }),
+          : renderSearch(page, {
+              regionId: region?.id,
+              perUnitSorted: str(flags.sort) === "per-unit",
+            }),
       );
       return 0;
     }

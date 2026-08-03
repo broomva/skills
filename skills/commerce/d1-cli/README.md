@@ -167,6 +167,32 @@ The check still has to exist: asking only "is this SKU in the cart?" answers
 yes whenever the line already existed, so a fully rejected request on an
 existing line reported success.
 
+### 9. Pack price and value routinely disagree
+
+D1 publishes Colombia's mandated PUM (*precio por unidad de medida*) as two
+product properties — `Unidad De Medida` and `Valor de Medida` — on ~95% of
+products. `--sort per-unit` uses them.
+
+It matters more than it sounds. For rice:
+
+| rank by pack price | rank by unit price |
+|---|---|
+| ESTÁNDAR 500 GRS — $1.550 | ECONÓMICO 2000 GRS — **$2.775/kg** |
+| DIANA 500 G — $1.990 | ESTÁNDAR 2500G — $2.996/kg |
+| PREMIUM 1000 GRS — $3.990 | ESTÁNDAR 500 GRS — $3.100/kg |
+
+The pack-price winner is $3.100/kg. The actual best value is in a $5.550 bag
+that does not appear in that top five at all.
+
+D1's search cannot sort on this — the data lives in product properties, not a
+sortable index — so the CLI sorts the fetched page client-side and says so.
+A "cheapest" claim over a partial result set would be false.
+
+Products also carry the Ley 2120 front-of-pack warnings (`Exceso en Azúcares`,
+`sodio`, `grasas trans`, `grasas saturadas`, `Contiene Edulcorantes`) in
+`warnings[]`. Coverage is 70–90% by category, so an empty list means
+"not declared", not "safe".
+
 ## What the public API will not give you
 
 - **Saved addresses and profile records.** `dataentities/AD` and `dataentities/CL`
