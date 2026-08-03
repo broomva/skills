@@ -49,6 +49,7 @@ interface WireOrderForm {
   messages?: Array<{ text?: string; code?: string; status?: string }>;
   shippingData?: {
     availableAddresses?: Array<Record<string, unknown>>;
+    selectedAddresses?: Array<Record<string, unknown>>;
     logisticsInfo?: Array<{
       itemIndex?: number;
       slas?: Array<{
@@ -391,6 +392,46 @@ export async function useSavedAddress(
     },
   );
   return normalizeCart(w);
+}
+
+/**
+ * Make the cart's delivery point correct before an add, WITHOUT minting a
+ * new address record.
+ *
+ * Two constraints pull against each other here:
+ *
+ *  - VTEX evaluates deliverability at ADD time against whatever address the
+ *    orderForm holds, and a stale one leaves permanent `cannotBeDelivered`
+ *    errors that no later correction clears. So the address must be right
+ *    beforehand.
+ *  - Posting an address without an `addressId` MINTS a new record in the
+ *    customer's address book. Doing that on every add produced one junk entry
+ *    per item.
+ *
+ * The resolution: if the cart already carries an address at the intended
+ * point, leave it alone — it is already correct, and re-posting it would only
+ * create litter. Re-post only when the address is absent or somewhere else,
+ * and reuse its `addressId` when there is one so VTEX updates instead of
+ * minting.
+ */
+export async function ensureDeliveryPoint(
+  client: D1Client,
+  orderFormId: string,
+  at: LatLng,
+): Promise<Cart | undefined> {
+  const current = await client.request<WireOrderForm>(`/api/checkout/pub/orderForm/${orderFormId}`);
+  const sel = (current.shippingData?.selectedAddresses ?? [])[0];
+  const geo = Array.isArray(sel?.geoCoordinates) ? (sel?.geoCoordinates as number[]) : undefined;
+
+  // ~11 m at this latitude — far tighter than a store catchment, loose enough
+  // that float round-tripping through JSON does not read as a move.
+  const SAME = 1e-4;
+  if (geo && Math.abs(geo[0] - at.lng) < SAME && Math.abs(geo[1] - at.lat) < SAME) {
+    return undefined; // already correct; touching it would only mint
+  }
+
+  const existingId = typeof sel?.addressId === "string" ? sel.addressId : undefined;
+  return setDeliveryPoint(client, orderFormId, at, { addressId: existingId });
 }
 
 export interface DeliveryAddress {

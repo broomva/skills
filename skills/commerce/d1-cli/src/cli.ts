@@ -15,6 +15,7 @@ import {
   addItems,
   checkoutUrl,
   clearCart,
+  ensureDeliveryPoint,
   getCart,
   listAddresses,
   setDeliveryPoint,
@@ -477,7 +478,10 @@ async function main(argv: string[]): Promise<number> {
           // deliver-to-then-add gave none, on the same items and region.
           if (at) {
             try {
-              cart = await setDeliveryPoint(client, cart.orderFormId, at);
+              // Only writes when the cart's address is absent or elsewhere.
+              // Re-posting a correct address would mint a junk record per add.
+              const moved = await ensureDeliveryPoint(client, cart.orderFormId, at);
+              if (moved) cart = moved;
             } catch {
               // Not fatal — `cart deliver-to` can still be run explicitly, and
               // failing the add over a transient shipping hiccup is worse.

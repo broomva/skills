@@ -3,6 +3,25 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.2.1] — 2026-08-03
+
+### Fixed
+
+- **`cart add` minted an address record per item.** The 0.1.2 fix asserts the
+  delivery point BEFORE adding (VTEX judges deliverability at add time), but it
+  re-posted the address unconditionally — and posting without an `addressId`
+  mints. So the fix for one address bug caused another: one junk record per
+  `cart add`, thirteen accumulated on a live account.
+
+  `ensureDeliveryPoint` now reads the cart first and writes only when the
+  address is absent or somewhere else, reusing the existing `addressId` when it
+  re-points. Verified live: three consecutive adds left the address book
+  unchanged, while a genuine region change still re-points.
+
+  Two constraints pull against each other here and both have to hold: the
+  address must be correct before an add, and re-posting a correct address is
+  itself harmful.
+
 ## [0.2.0] — 2026-08-03
 
 ### Added

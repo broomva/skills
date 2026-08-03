@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   addItems,
+  ensureDeliveryPoint,
   listAddresses,
   normalizeCart,
   setDeliveryPoint,
@@ -676,5 +677,52 @@ describe("useSavedAddress posts the WHOLE record, not just the id", () => {
     await expect(
       useSavedAddress(new D1Client({ fetchImpl: impl }), "of1", "5dfea8d93a8f"),
     ).rejects.toThrow(/no street/);
+  });
+});
+
+describe("ensureDeliveryPoint does not mint an address when none is needed", () => {
+  const AT = { lat: 4.75068, lng: -74.03532 };
+  const withAddress = (geo: number[], addressId?: string) => ({
+    orderFormId: "of1",
+    shippingData: { selectedAddresses: [{ addressId, geoCoordinates: geo }] },
+  });
+
+  test("a cart already at the point is left untouched", async () => {
+    // The regression this prevents: re-posting a CORRECT address mints a new
+    // record, so every `cart add` added one junk entry to the customer's
+    // address book. Thirteen accumulated before this was caught.
+    const { impl, calls } = stub(withAddress([-74.03532, 4.75068], "abc"));
+    const out = await ensureDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", AT);
+    expect(out).toBeUndefined();
+    expect(calls).toHaveLength(1); // the read only — no write
+  });
+
+  test("a cart at a DIFFERENT point is re-pointed", async () => {
+    // The BRO-2064 protection must survive: VTEX judges deliverability at add
+    // time, so a stale address has to be corrected before the add.
+    const { impl, calls } = stub(withAddress([-74.0628, 4.6486], "abc"));
+    await ensureDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", AT);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].url).toContain("shippingData");
+  });
+
+  test("re-pointing REUSES the existing addressId rather than minting", async () => {
+    const { impl, calls } = stub(withAddress([-74.0628, 4.6486], "existing-id"));
+    await ensureDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", AT);
+    expect(JSON.parse(calls[1].body ?? "{}").selectedAddresses[0].addressId).toBe("existing-id");
+  });
+
+  test("a cart with no address at all gets one", async () => {
+    const { impl, calls } = stub({ orderFormId: "of1", shippingData: {} });
+    await ensureDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", AT);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("the same-point tolerance is tight enough to catch a real move", async () => {
+    // ~11 m. A genuine region change (Chapinero -> Usaquén, ~10 km) must never
+    // read as "already there".
+    const { impl, calls } = stub(withAddress([-74.03532, 4.75079], "abc")); // ~12 m north
+    await ensureDeliveryPoint(new D1Client({ fetchImpl: impl }), "of1", AT);
+    expect(calls).toHaveLength(2);
   });
 });
