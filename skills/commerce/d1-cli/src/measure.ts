@@ -113,7 +113,10 @@ const MAX_DESCRIPTION = 20_000;
 
 const AMOUNT = String.raw`([\d.,]+)`;
 const UNIT = "(kg|kgs|grs|gr|gramos|gramo|g|ml|cc|lts|lt|litros|litro|l)";
-const ITEM_NOUN = String.raw`(?:unidades?|bolsitas?|sobres?|piezas?|porciones?)`;
+// `unidades?` would match "unidade" and "unidades" but NOT the singular
+// "unidad", which is the form D1 uses for a one-item pack — so the count guard
+// below was never reached for exactly the input it exists to reject.
+const ITEM_NOUN = String.raw`(?:unidad(?:es)?|bolsita(?:s)?|sobre(?:s)?|pieza(?:s)?|porci(?:ón|on)(?:es)?)`;
 const PER_ITEM = String.raw`(?:por\s+unidad|c/u|cada\s+una?)`;
 
 /** "6 unidades de 200 mL cada una" — count and per-item size in one statement. */
@@ -195,13 +198,19 @@ export function resolvePackSize(
   // fixed number of decimals: a 400 mg sachet is 0.0004 kg, and a fixed round
   // deep enough to keep that would leave the noise on litre-scale packs.
   const packTotal = Number((perItem.amount * count).toPrecision(12));
-  // Already the pack total — the common case, and nothing to do.
-  if (near(declared.amount, packTotal)) return declared;
-  // Declares one item while the pack holds `count` of them.
+  // The ONLY case that changes anything: the declared value describes one item,
+  // while the pack holds `count` of them.
+  //
+  // There is deliberately no separate "already the pack total" branch. For any
+  // real multipack `count` is at least 2, so `packTotal` is at least twice
+  // `perItem`, and the two can never both be within 3% of the declared value.
+  // Such a branch would read as protective while never deciding anything — a
+  // mutation removing it changed no test, which is how it was found.
   if (near(declared.amount, perItem.amount)) {
     return { measure: declared.measure, amount: packTotal };
   }
-  // Matches neither. The description and the PUM are talking past each other,
-  // and picking one would be the guess this module refuses to make.
+  // Already the pack total, or matching neither — either way the description
+  // and the PUM are not in conflict about one item, and substituting a
+  // different number would be the guess this module refuses to make.
   return declared;
 }

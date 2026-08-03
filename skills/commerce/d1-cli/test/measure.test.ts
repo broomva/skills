@@ -123,8 +123,13 @@ describe("readPackEvidence", () => {
     expect(readPackEvidence(undefined)).toBeUndefined();
     expect(readPackEvidence("")).toBeUndefined();
     expect(readPackEvidence("<p>Delicioso producto colombiano.</p>")).toBeUndefined();
-    // A count of one is not a multipack.
+    // A count of one is not a multipack. Both phrasings use the SINGULAR noun,
+    // which is the point: the earlier `unidades?` pattern did not match
+    // "unidad" at all, so this assertion passed without ever reaching the
+    // count guard it is here to pin.
     expect(readPackEvidence("Contenido: 1 unidad de 500 g")).toBeUndefined();
+    expect(readPackEvidence("Contenido: 1 sobre de 25 g")).toBeUndefined();
+    expect(readPackEvidence("Peso: 500 g por unidad (1 unidad por paquete)")).toBeUndefined();
   });
 });
 
