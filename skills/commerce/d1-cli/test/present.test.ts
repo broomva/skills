@@ -292,7 +292,11 @@ describe("renderSubstitutes", () => {
     const out = renderSubstitutes(base({ regionId: undefined, sourceAvailable: true }));
     expect(out).not.toContain("still in stock at your store");
     expect(out).not.toContain("cannot supply");
-    expect(out).toContain("national");
+    // Said ONCE, in the scope block that prints on both the empty and
+    // non-empty paths. It used to be said twice, four lines apart, in two
+    // near-identical sentences — which reads as a rendering bug, not emphasis.
+    expect(out.match(/No delivery point set/g)).toHaveLength(1);
+    expect(out).toContain("NATIONAL");
   });
 
   test("recommends the FIRST candidate, which is the closest one", () => {
@@ -436,8 +440,16 @@ describe("renderSubstitutes", () => {
     const evil = "LECHE \u001b[2J\u001b]0;pwned\u0007 ENTERA";
     const out = renderSubstitutes(
       base({
-        source: sized({ name: evil, warnings: [evil] }),
-        candidates: [candidate("892", evil, 320_000, { deltas: [{ kind: "brand", text: evil }] })],
+        // The SKU ID carries the payload too. It was the one field the earlier
+        // fixture left clean, and it was also the one render path that
+        // interpolated raw — the closing `d1 cart add <sku>` line. An ESC[2J
+        // landing there clears the screen AFTER everything prints, erasing the
+        // "Nothing was added to your cart" line itself.
+        source: sized({ skuId: `262${evil}`, name: evil, warnings: [evil] }),
+        categoryPath: `Lacteos${evil}`,
+        candidates: [
+          candidate(`892${evil}`, evil, 320_000, { deltas: [{ kind: "brand", text: evil }] }),
+        ],
       }),
     );
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence is the point

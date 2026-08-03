@@ -194,7 +194,10 @@ export function renderSubstitutes(r: SubstituteResult): string {
   // then "stock is NATIONAL and may not reflect your store" four lines later
   // is one output contradicting itself.
   if (!r.regionId) {
-    lines.push("No delivery point set, so D1's stock here is national, not your store's.");
+    // Deliberately says nothing here. The national-stock caveat belongs in
+    // `scope` below, which prints on both the empty and non-empty paths — and
+    // saying it in both places produced two near-identical sentences four
+    // lines apart, which reads as a rendering bug rather than emphasis.
   } else if (r.sourcePricedNationally) {
     lines.push(
       "Priced from the national catalogue — this SKU was not on the regional page, so its stock here is unknown.",
@@ -280,8 +283,16 @@ export function renderSubstitutes(r: SubstituteResult): string {
   );
   lines.push(...scope);
   lines.push("");
+  // Sanitized like every other upstream field. This was the one render path
+  // that interpolated a raw upstream value, and it is the worst possible line
+  // to leave open: an `ESC[2J` in a SKU id lands LAST, so it clears the screen
+  // after everything has printed — erasing this very sentence, which is the
+  // one that tells the reader nothing was bought. Verbatim the attack the
+  // docstring on `sanitize` names.
   lines.push(
-    `Nothing was added to your cart. To take one:  d1 cart add ${r.candidates[0].product.skuId}`,
+    `Nothing was added to your cart. To take one:  d1 cart add ${sanitize(
+      r.candidates[0].product.skuId,
+    )}`,
   );
   return lines.join("\n");
 }

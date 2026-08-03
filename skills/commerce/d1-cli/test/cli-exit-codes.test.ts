@@ -174,6 +174,13 @@ describe("a usage error costs nothing and does not depend on D1", () => {
       ["substitute", "262", "--limit", "0", "--lat", "4.75068", "--lng", "-74.03532"],
       ["substitute", "262", "--count", "0", "--lat", "4.75068", "--lng", "-74.03532"],
       ["substitute", "262", "--count", "abc", "--lat", "4.75068", "--lng", "-74.03532"],
+      // `--sc` is user input that goes straight into a query parameter. The new
+      // query guard refuses a non-numeric one — correctly — but as a D1Error
+      // reading "This is a bug in d1-cli", which exits 1 and invites a retry of
+      // the caller's own typo. Validated up front now, on every command.
+      ["substitute", "262", "--sc", "abc"],
+      ["search", "leche", "--sc", "../../evil"],
+      ["region", "--lat", "4.75068", "--lng", "-74.03532", "--sc", "1;2"],
     ]) {
       const { code } = await run(args, DEAD_PROXY);
       expect({ args, code }).toEqual({ args, code: 2 });

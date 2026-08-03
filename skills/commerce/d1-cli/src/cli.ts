@@ -354,6 +354,7 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
 
   Global
     --json                     machine-readable output
+    --sc <n>                   sales channel (trade policy); D1's public one is 1
     --help                     this text
 
   Exit codes
@@ -384,6 +385,21 @@ async function main(argv: string[]): Promise<number> {
     return askedForHelp ? 0 : 2;
   }
 
+  // Validated here, before any command body runs.
+  //
+  // `--sc` is user input that travels straight into a query parameter, and the
+  // new `assertAllowedQuery` refuses a non-numeric one — correctly, but as a
+  // D1Error carrying "This is a bug in d1-cli", which exits 1 ("D1 refused,
+  // retry may help"). That is wrong twice over: it is the caller's typo, not a
+  // bug and not retryable. The guard stays fail-closed for anything that
+  // reaches it internally; this makes the user-facing path say 2.
+  const rawChannel = str(flags.sc);
+  if (rawChannel !== undefined && !/^\d+$/.test(rawChannel)) {
+    throw new UsageError(
+      `--sc must be a sales channel number, got "${rawChannel}". D1 serves its public catalogue on 1.`,
+    );
+  }
+
   const stored = loadSession();
   const scratch = isScratch();
   const client = new D1Client({
@@ -393,7 +409,7 @@ async function main(argv: string[]): Promise<number> {
     // cart instead of reaching the real one.
     orderFormId: scratch ? undefined : stored?.orderFormId,
   });
-  const channel = str(flags.sc) ?? DEFAULT_SALES_CHANNEL;
+  const channel = rawChannel ?? DEFAULT_SALES_CHANNEL;
 
   /** Resolve the point in play, and its region id, without re-asking upstream. */
   const regionFor = async (at?: LatLng) => {

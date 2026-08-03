@@ -396,6 +396,20 @@ describe("a zero price is an absent offer, never free", () => {
     expect(formatSize({ measure: "kg", amount: 0.0004 })).toBe("0.0004 kg");
     expect(formatSize({ measure: "kg", amount: 0.5 })).toBe("0.5 kg");
     expect(formatSize({ measure: "L", amount: 1 })).toBe("1 L");
+    // ...and is not rendered in exponential notation either. Routing the
+    // rounded value back through `Number()` to trim zeroes reintroduces it
+    // below ~1e-6: `1e-7 kg` is not a pack size anyone can read, and it is the
+    // same failure as `0 kg` — a real quantity shown in a form that carries no
+    // meaning to the reader.
+    for (const amount of [1e-7, 1e-9, 0.000_001]) {
+      const out = formatSize({ measure: "kg", amount });
+      expect({ amount, out, exponential: out.includes("e") }).toEqual({
+        amount,
+        out,
+        exponential: false,
+      });
+      expect({ amount, zeroed: out === "0 kg" }).toEqual({ amount, zeroed: false });
+    }
   });
 
   test("no unit price is derived from a non-price", () => {
@@ -516,6 +530,57 @@ describe("rankSubstitutes", () => {
     expect(rankSubstitutes(source, pool, 3)).toHaveLength(3);
     // Default is 8, not "all" — an unbounded list is not a proposal.
     expect(rankSubstitutes(source, pool)).toHaveLength(8);
+  });
+
+  test("a SIZELESS source groups candidates by their own measure, commonest first", () => {
+    // Every other fixture in this file uses a sized source, which left the
+    // whole sizeless branch unpinned: three independent mutations — forcing
+    // `group()` to 0, picking `dominant` by insertion order, and taking `tier`
+    // from `scoreCandidate` — all kept the suite green. Under the first, kg, L
+    // and unit interleave under one per-unit column with no separator, which is
+    // precisely the mixed-measure defect this branch exists to prevent.
+    const noSize = product({ skuId: "500", name: "PAN ARTESANAL INTEGRAL" });
+    const kgA = product({
+      skuId: "a1",
+      name: "PAN ARTESANAL BLANCO",
+      size: { measure: "kg", amount: 0.5 },
+      unitPrice: 700_000,
+    });
+    const kgB = product({
+      skuId: "a2",
+      name: "PAN ARTESANAL TAJADO",
+      size: { measure: "kg", amount: 0.45 },
+      unitPrice: 800_000,
+    });
+    const litre = product({
+      skuId: "b1",
+      name: "PAN ARTESANAL LIQUIDO",
+      size: { measure: "L", amount: 1 },
+      unitPrice: 300_000,
+    });
+    const sizeless = product({ skuId: "c1", name: "PAN ARTESANAL SIN MEDIDA" });
+
+    const out = rankSubstitutes(noSize, [litre, sizeless, kgA, kgB]);
+    // kg dominates the pool (2 of 3 sized), so kg comes first, then the other
+    // measure, then the sizeless one.
+    expect(out.map((c) => c.product.skuId)).toEqual(["a1", "a2", "b1", "c1"]);
+    // And the tier splits, so the renderer prints its separator.
+    expect(out.map((c) => c.tier)).toEqual([0, 0, 1, 1]);
+  });
+
+  test("a sizeless source says the comparison cannot be made, per candidate", () => {
+    // The mirror of "candidate publishes no pack size". Without it, candidate
+    // rows carry a $/kg column with nothing saying it is incomparable to a
+    // source that has no size at all.
+    const noSize = product({ skuId: "500", name: "PAN ARTESANAL INTEGRAL" });
+    const sized = product({
+      skuId: "501",
+      name: "PAN ARTESANAL BLANCO",
+      size: { measure: "kg", amount: 0.5 },
+      unitPrice: 700_000,
+    });
+    const d = describeDeltas(noSize, sized).find((x) => x.kind === "measure");
+    expect(d?.text).toContain("the original publishes no pack size");
   });
 
   test("an entirely out-of-stock pool yields nothing rather than a bad suggestion", () => {
@@ -946,6 +1011,32 @@ describe("findSubstitutes", () => {
     // The source was seen at the DEEPEST level and kept, even though it fell
     // off the widened page — otherwise a known regional price silently reverts.
     expect(r.sourcePricedNationally).toBe(false);
+  });
+
+  test("a complete sweep of a multi-SKU product does not claim to be partial", async () => {
+    // The suppression fix opened a fabrication in the other direction.
+    // `poolTotal` falls back to a SKU count when upstream omits
+    // `recordsFiltered`, and it is compared against a PRODUCT count — so one
+    // product carrying three SKUs made a complete sweep print "that category
+    // holds 3 products, only 1 was compared". Both sides are products now.
+    const multi = {
+      ...searchWire("892", "LECHE BOLSA LATTI 900 ML", 3200, 9),
+      items: [
+        searchWire("892", "LECHE BOLSA 900", 3200, 9).items[0],
+        searchWire("893", "LECHE BOLSA 1100", 3400, 9).items[0],
+        searchWire("894", "LECHE BOLSA 1500", 3900, 9).items[0],
+      ],
+    };
+    const { impl } = router([
+      [/catalog_system/, [catalogWire("262", "262", "LECHE ENTERA LATTI 900 ML")]],
+      // No `recordsFiltered` — the fallback path.
+      [/product_search/, { products: [multi] }],
+    ]);
+    const r = await findSubstitutes(new D1Client({ fetchImpl: impl }), "262");
+    expect(r.poolSize).toBe(3); // three SKUs
+    expect(r.poolProducts).toBe(1); // one product
+    expect(r.poolTotal).toBe(1); // ...counted the same way
+    expect(r.poolTotal).toBeLessThanOrEqual(r.poolProducts);
   });
 
   test("reports a partial sweep rather than implying the whole category", async () => {

@@ -421,7 +421,12 @@ export async function search(client: D1Client, opts: SearchOptions = {}): Promis
       .sort((a, b) => rank(a) - rank(b) || (a.unitPrice ?? 0) - (b.unitPrice ?? 0));
   }
 
-  const total = wire.recordsFiltered ?? products.length;
+  // Counted in PRODUCTS on both branches. `recordsFiltered` is VTEX's product
+  // count, while `products` here holds one entry per SKU — so falling back to
+  // `products.length` silently switched units whenever upstream omitted the
+  // field. A caller comparing this against its own product count then saw
+  // `total` exceed it for a COMPLETE sweep, and reported a partial one.
+  const total = wire.recordsFiltered ?? new Set(products.map((p) => p.productId)).size;
   return { products, total, truncated: total > MAX_PAGE * count };
 }
 

@@ -89,6 +89,35 @@ widening an existing pattern *in place* was invisible to it. Patterns are now
 pinned by source. Known and filed rather than fixed here: BRO-2081, a multipack's
 unit price is overstated by the pack count, since D1 publishes PUM per unit.
 
+### And what a round-2 verify found after *those* were green
+
+Fixing in one place opened holes next to it. That is the shape this codebase
+keeps hitting, so it is recorded rather than quietly patched:
+
+- **The control-character fix missed one render path** — the closing
+  `d1 cart add <sku>` line interpolated the SKU id raw. It is the worst line to
+  leave open, because an `ESC[2J` there lands LAST and clears the screen after
+  everything prints, erasing the very sentence that says nothing was bought.
+  The test could not see it: its payload was in the name, never the id.
+- **The partial-sweep fix reversed its own error.** Comparing SKU counts to
+  product counts had *suppressed* the warning; comparing them the other way
+  *fabricated* it, so a complete sweep of one product carrying three SKUs
+  announced "only 1 of 3 compared". `search` now counts products on both
+  branches.
+- **The new query guard made a usage error retryable.** `--sc abc` reached
+  `assertAllowedQuery` and came back as "This is a bug in d1-cli" with exit 1 —
+  the caller's typo, reported as an upstream failure worth retrying. `--sc` is
+  validated up front now, and appears in `--help` for the first time.
+- `guard.params[key]` resolved `constructor`/`toString` up the prototype chain
+  to truthy functions, so `?constructor=x` raised an uncaught `TypeError`
+  instead of a `D1Error`. Fail-closed either way, wrong error class.
+- The no-region caveat printed twice in two near-identical sentences, and
+  `formatSize` rendered a sub-microgram size as `1e-7 kg`.
+
+The sizeless-source ranking branch also had no coverage at all — three
+independent mutations left it green, including one that let kg, L and unit
+interleave under a single per-unit column.
+
 ### Discovered — the SKU lookup traps
 
 `intelligent-search` has no SKU filter and **silently ignores** the one you

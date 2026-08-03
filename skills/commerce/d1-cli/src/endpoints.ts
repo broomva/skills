@@ -144,7 +144,13 @@ export function assertAllowedQuery(pathname: string, query: URLSearchParams): vo
   const guard = QUERY_GUARDS.find((g) => g.path.test(pathname));
   if (!guard) return;
   for (const [key, value] of query) {
-    const expect = guard.params[key];
+    // `Object.hasOwn`, not a bracket-lookup truthiness test: `?constructor=`,
+    // `?toString=` and `?valueOf=` resolve up the prototype chain to functions,
+    // which are truthy, and the next line then calls `.test` on one — an
+    // uncaught TypeError instead of the D1Error this is supposed to raise.
+    // Still fail-closed either way, but through the wrong error class and the
+    // wrong exit code.
+    const expect = Object.hasOwn(guard.params, key) ? guard.params[key] : undefined;
     if (!expect) {
       throw new D1Error(
         `Refusing to send "${key}" to ${pathname} — that endpoint accepts only ${Object.keys(guard.params).join(", ")}. This is a bug in d1-cli.`,

@@ -205,6 +205,22 @@ describe("a query-language endpoint is constrained by its query, not just its pa
     expect(new URL(seen[0]).searchParams.get("fq")).toBe("skuId:262");
   });
 
+  test("a prototype-chain key raises a D1Error, not an uncaught TypeError", async () => {
+    // `guard.params[key]` resolved `constructor` / `toString` / `valueOf` up
+    // the prototype chain to functions, which are truthy — so the next line
+    // called `.test` on one. Still fail-closed, but through the wrong error
+    // class, which means the wrong exit code and a stack trace instead of a
+    // sentence.
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl });
+    for (const key of ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"]) {
+      await expect(
+        client.request(SEARCH, { query: { fq: "skuId:262", [key]: "x" } }),
+      ).rejects.toThrow(D1Error);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
   test("an unguarded endpoint is unconstrained, as before", async () => {
     const { impl, seen } = spy();
     const client = new D1Client({ fetchImpl: impl });

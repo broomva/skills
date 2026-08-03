@@ -241,8 +241,14 @@ function percentChange(from: number, to: number): number | undefined {
  * price as `$ 0`.
  */
 export function formatSize(size: UnitSize): string {
-  const places = size.amount >= 1 ? 3 : Math.min(9, 3 + Math.ceil(-Math.log10(size.amount)));
-  return `${Number(size.amount.toFixed(places))} ${size.measure}`;
+  const places = size.amount >= 1 ? 3 : Math.min(20, 3 + Math.ceil(-Math.log10(size.amount)));
+  // `toFixed` first, then strip trailing zeroes by hand. Routing through
+  // `Number()` re-enters exponential notation below 1e-6 — `1e-7 kg` is not a
+  // pack size anyone can read — and clamping the precision instead brings back
+  // the `0 kg` this function exists to avoid.
+  const fixed = size.amount.toFixed(places);
+  const trimmed = fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+  return `${trimmed} ${size.measure}`;
 }
 
 function signed(pct: number): string {
