@@ -62,7 +62,38 @@ describe("the runtime endpoint guard", () => {
     for (const shape of ALLOWED_ENDPOINT_SHAPES) {
       expect(isAllowedPath(shape.replace(/\{\}/g, "SEG"))).toBe(true);
     }
-    expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(19);
+    // Bumped from 19 to 20 by `catalog_system/pub/products/search` (SKU lookup
+    // for `d1 substitute`). The count is here so that widening the CLI's reach
+    // upstream cannot happen as a side effect of a feature — it has to be
+    // typed out, in a file whose whole subject is the payment boundary.
+    expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(20);
+    // ...but a COUNT only sees entries appear, never an existing one loosen.
+    // Widening `/products/search$/` to `/pub/.*/` is a one-character-class edit
+    // that leaves the length at 20 and every shape still matching its own
+    // pattern — the whole `catalog_system` surface admitted, invisibly. So the
+    // patterns are pinned by source, which is the property actually claimed.
+    expect(ALLOWED_ENDPOINT_PATTERNS.map((p) => p.source)).toEqual([
+      "^\\/api\\/io\\/_v\\/api\\/intelligent-search\\/product_search(\\/[^/]+)*\\/?$",
+      "^\\/api\\/io\\/_v\\/api\\/intelligent-search\\/facets\\/trade-policy\\/[^/]+$",
+      "^\\/api\\/io\\/_v\\/api\\/intelligent-search\\/autocomplete_suggestions$",
+      "^\\/api\\/io\\/_v\\/api\\/intelligent-search\\/top_searches$",
+      "^\\/api\\/catalog_system\\/pub\\/category\\/tree\\/[^/]+$",
+      "^\\/api\\/catalog_system\\/pub\\/products\\/search$",
+      "^\\/api\\/checkout\\/pub\\/regions$",
+      "^\\/api\\/checkout\\/pub\\/orderForm$",
+      "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+$",
+      "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+\\/items$",
+      "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+\\/items\\/update$",
+      "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+\\/items\\/removeAll$",
+      "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+\\/attachments\\/shippingData$",
+      "^\\/api\\/checkout\\/pub\\/orderForms\\/simulation$",
+      "^\\/api\\/vtexid\\/pub\\/authentication\\/start$",
+      "^\\/api\\/vtexid\\/pub\\/authentication\\/accesskey\\/send$",
+      "^\\/api\\/vtexid\\/pub\\/authentication\\/accesskey\\/validate$",
+      "^\\/api\\/vtexid\\/pub\\/authenticated\\/user$",
+      "^\\/api\\/oms\\/user\\/orders\\/?$",
+      "^\\/api\\/oms\\/user\\/orders\\/[^/]+$",
+    ]);
     // Bidirectional: a pattern added without a shape would otherwise be
     // invisible to the static source scan.
     expect(ALLOWED_ENDPOINT_PATTERNS.length).toBe(ALLOWED_ENDPOINT_SHAPES.length);
@@ -118,6 +149,85 @@ describe("path traversal cannot escape an endpoint", () => {
     expect(() => encodeFacetPath("a/./b")).toThrow(D1Error);
     // and still does its actual job
     expect(encodeFacetPath("category-1/lacteos-y-huevos")).toBe("category-1/lacteos-y-huevos");
+  });
+});
+
+describe("a query-language endpoint is constrained by its query, not just its path", () => {
+  function spy() {
+    const seen: string[] = [];
+    const impl = (async (url: string) => {
+      seen.push(String(url));
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+    return { impl, seen };
+  }
+
+  const SEARCH = "/api/catalog_system/pub/products/search";
+
+  test("an arbitrary fq is REFUSED, even though the path is approved", async () => {
+    // Every allowlist entry before this one carried its risk in the PATH. `fq`
+    // is a query language — `C:/1/`, `alternateIds_RefId:x`, `P:[0 TO 9999]`
+    // all reach the same approved path — so an approved pathname says nothing
+    // about what was asked for. `assertSkuId` guards the one caller that exists
+    // today; a second call site would inherit the path and none of the
+    // constraint. Proven by planting exactly that caller: it sailed through the
+    // static source scan and reached D1 with the session cookie attached.
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl, authToken: "tok" });
+    for (const fq of [
+      "C:/1/",
+      "alternateIds_RefId:x",
+      "P:[0 TO 9999]",
+      "skuId:262 OR productId:1",
+    ]) {
+      await expect(client.request(SEARCH, { query: { fq } })).rejects.toThrow(/must match/);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  test("the whole-catalogue paging levers are refused as UNKNOWN parameters", async () => {
+    // `_from`/`_to` are the enumeration levers, and neither would have tripped
+    // a check that only validated `fq`. Unknown params fail closed.
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl });
+    await expect(
+      client.request(SEARCH, { query: { fq: "skuId:262", _from: 0, _to: 2500 } }),
+    ).rejects.toThrow(/accepts only/);
+    expect(seen).toHaveLength(0);
+  });
+
+  test("the legitimate SKU lookup still goes through (anti-overshoot control)", async () => {
+    // Without this, a guard that refused everything would pass the two above.
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl });
+    await client.request(SEARCH, { query: { fq: "skuId:262", sc: "1" } });
+    expect(seen).toHaveLength(1);
+    expect(new URL(seen[0]).searchParams.get("fq")).toBe("skuId:262");
+  });
+
+  test("a prototype-chain key raises a D1Error, not an uncaught TypeError", async () => {
+    // `guard.params[key]` resolved `constructor` / `toString` / `valueOf` up
+    // the prototype chain to functions, which are truthy — so the next line
+    // called `.test` on one. Still fail-closed, but through the wrong error
+    // class, which means the wrong exit code and a stack trace instead of a
+    // sentence.
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl });
+    for (const key of ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"]) {
+      await expect(
+        client.request(SEARCH, { query: { fq: "skuId:262", [key]: "x" } }),
+      ).rejects.toThrow(D1Error);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  test("an unguarded endpoint is unconstrained, as before", async () => {
+    const { impl, seen } = spy();
+    const client = new D1Client({ fetchImpl: impl });
+    await client.request("/api/io/_v/api/intelligent-search/autocomplete_suggestions", {
+      query: { query: "anything at all" },
+    });
+    expect(seen).toHaveLength(1);
   });
 });
 

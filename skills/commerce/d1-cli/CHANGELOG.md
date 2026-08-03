@@ -3,6 +3,133 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.5.0] — 2026-08-03
+
+### Added — `d1 substitute <sku>`, because a basket that strands is not repaired by pricing it better
+
+Two real sessions stopped dead on a line D1 could not supply: a mandarin juice
+out of stock at the customer's store but present at the test one, and
+`PAN ARTESANAL INTEGRAL` sold out overnight mid-basket. The CLI could price a
+basket and refuse to check out a broken one; it had no way to fix one.
+
+`substitute` resolves the SKU, sweeps its own leaf category at the resolved
+region, ranks what is actually in stock, and prints **what changes** per
+candidate — brand, pack size, `$/kg` or `$/L`, pack price, and any Ley 2120
+warning gained or lost. The deltas are the output; the score only orders them.
+
+It **proposes and never replaces**. Nothing here writes to a cart; it prints the
+`d1 cart add` a human may choose to run. The customer twice preferred a line
+*removed* over a wrong substitute and said so explicitly, and a ranker that
+knows a name and a price cannot see what made them right.
+
+Two design points that are not obvious:
+
+- **Measure is a grouping, not a score.** A candidate sold by the unit can match
+  the source's name exactly and still must not lead a list of `$/L` figures,
+  because those prices cannot be compared at all. Blending them is what once
+  ranked an $8,900 bottle among the per-litre prices under `--sort per-unit`.
+- **A missing pack size redistributes weight rather than scoring zero.** About
+  5% of the catalogue publishes no size, and charging those products for the
+  absence buries them for a fact about D1's data rather than about the product.
+
+When the leaf category has nothing in stock the search widens one level at a
+time and **says which level answered** — a suggestion from two levels up is a
+looser kind of answer, and quietly returning one would hide that.
+
+### Fixed — a price of `0` is "no offer here", not "free"
+
+VTEX reports `Price: 0` for a product it has no offer for in the current region.
+`d1 search` had been rendering that as `$ 0` and `$ 0/kg` since 0.1.0, and the
+first build of `substitute` went further and *compared* against it, printing
+`$ 0/kg → $ 40.435/kg` — a per-kilo rise measured from free. Found by running
+the new command against SKU 1687, not by reading the code.
+
+Fixed at the root: `priced()` in `catalog.ts` is the one predicate, no unit
+price is derived from a non-price, and both renderers now show `—`. The
+"publishes no pack size" note in `search` now counts pack sizes rather than unit
+prices, which stopped being the same question.
+
+### Also fixed — what three adversarial reviewers found after all of the above was green
+
+Every item here passed 270 tests, lint and typecheck first. They are listed
+because the pattern is the useful part: in each case the code was defensible
+and the OUTPUT was not.
+
+- **An approved path is not an approved request.** `fq` is a query language, and
+  the allowlist checked pathnames — so `fq=C:/1/` or `_from`/`_to` paging would
+  have reached D1 with the session cookie attached from any second call site.
+  `assertAllowedQuery` now pins the parameters, and `client.ts` runs the guard
+  *after* the query is applied so it sees the URL `fetch` will send.
+- **`d1 substitute <garbage> --lat/--lng` called D1 before validating**, so a
+  typo's exit code depended on D1 being reachable — the same shape as
+  `d1 cart bogus` creating an orderForm before deciding the command was invalid.
+- **Exit 1 collided with its own meaning.** "I looked and there is none" now
+  exits **3**; `1` stays "D1 refused or was unreachable, a retry may help". An
+  agent retrying on 1 would have looped forever on an empty category.
+- **`—  -100%`**: `discountPercent` was still reading the very price the column
+  beside it had just declined to print. Both fixtures had pinned `listPrice: 0`,
+  so the guard was only exercised where it could not fail.
+- **A pack price and a `$/L` from two different sellers.** Two predicates
+  answered "which offer represents this product" and diverged precisely when
+  nothing was in stock — the case `substitute` exists for. One `pickOffer` now.
+- **`Nothing in this category is in stock`** was asserted while suppressing that
+  3 of 140 products were compared, that the search had already widened, and that
+  stock was national. A negative over a partial sweep needs its caveats *more*
+  than a positive does.
+- **A sizeless source disabled every measure safety at once**, stacking `$/kg`,
+  `$/unit` and `$/L` in one column with nothing saying they do not compare.
+- Plus: terminal control characters from upstream product names are neutralized;
+  the category walk is depth-capped (a 40-segment category issued 41 requests);
+  `searchedDepth` reports the depth *searched* rather than the depth asked for;
+  `--limit 0` is rejected instead of silently clamped to 1; and a `0 kg` shown
+  for a real 400 mg sachet now prints its actual size.
+
+The endpoint tripwire was also strengthened: it counted entries, which meant
+widening an existing pattern *in place* was invisible to it. Patterns are now
+pinned by source. Known and filed rather than fixed here: BRO-2081, a multipack's
+unit price is overstated by the pack count, since D1 publishes PUM per unit.
+
+### And what a round-2 verify found after *those* were green
+
+Fixing in one place opened holes next to it. That is the shape this codebase
+keeps hitting, so it is recorded rather than quietly patched:
+
+- **The control-character fix missed one render path** — the closing
+  `d1 cart add <sku>` line interpolated the SKU id raw. It is the worst line to
+  leave open, because an `ESC[2J` there lands LAST and clears the screen after
+  everything prints, erasing the very sentence that says nothing was bought.
+  The test could not see it: its payload was in the name, never the id.
+- **The partial-sweep fix reversed its own error.** Comparing SKU counts to
+  product counts had *suppressed* the warning; comparing them the other way
+  *fabricated* it, so a complete sweep of one product carrying three SKUs
+  announced "only 1 of 3 compared". `search` now counts products on both
+  branches.
+- **The new query guard made a usage error retryable.** `--sc abc` reached
+  `assertAllowedQuery` and came back as "This is a bug in d1-cli" with exit 1 —
+  the caller's typo, reported as an upstream failure worth retrying. `--sc` is
+  validated up front now, and appears in `--help` for the first time.
+- `guard.params[key]` resolved `constructor`/`toString` up the prototype chain
+  to truthy functions, so `?constructor=x` raised an uncaught `TypeError`
+  instead of a `D1Error`. Fail-closed either way, wrong error class.
+- The no-region caveat printed twice in two near-identical sentences, and
+  `formatSize` rendered a sub-microgram size as `1e-7 kg`.
+
+The sizeless-source ranking branch also had no coverage at all — three
+independent mutations left it green, including one that let kg, L and unit
+interleave under a single per-unit column.
+
+### Discovered — the SKU lookup traps
+
+`intelligent-search` has no SKU filter and **silently ignores** the one you
+pass: `?fq=skuId:262` returns all 1,600 products with HTTP 200, which is
+indistinguishable from a successful narrow query. Only
+`catalog_system/pub/products/search` genuinely filters.
+
+And SKU ids overlap product ids without being them — SKU `1686` belongs to
+product `1687`, so asking for skuId `1687` returns product `1688`, a different
+grocery item entirely. The lookup requires an item whose `itemId` matches and
+never takes `items[0]`.
+
 ## [0.4.0] — 2026-08-03
 
 ### Added — unit pricing, the axis "cheapest" actually means

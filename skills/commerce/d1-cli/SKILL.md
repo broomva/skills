@@ -1,6 +1,6 @@
 ---
 name: d1-cli
-version: 0.4.0
+version: 0.5.0
 source: https://github.com/broomva/skills
 description: Shop Tiendas D1 (Colombia, d1.com.co) from the command line — search the catalogue, resolve your nearest physical store, price a basket against that store's real stock, and quote delivery. D1 runs VTEX IO (account `d1tiendas`), so this drives its public storefront API with no admin key at all — catalogue and cart work fully anonymously, and a one-time emailed code unlocks order history. Handles the two traps that make naive D1 automation wrong — availability is regionalized (an unregioned query reports a national catalogue nobody can actually buy from) and prices arrive in two different units (search reports whole pesos, checkout reports hundredths, a silent 100x). Builds and prices baskets; it deliberately cannot pay, handing a checkout URL to a human instead. USE WHEN the user wants to find D1 products or prices, check whether D1 delivers somewhere, build or cost a D1 grocery basket, compare D1 items, or review their D1 orders. NOT FOR other Colombian retailers (Éxito, Jumbo, Ara, Alkosto), and not for completing a payment.
 author: broomva
@@ -35,10 +35,18 @@ bun run src/cli.ts cart deliver-to
 bun run src/cli.ts cart checkout      # prints a URL; does not pay
 ```
 
-Add `--json` to any command for agent-readable output. Exit codes separate the
-two failure modes an agent must tell apart: **0** success · **1** D1 refused or
-was unreachable — undeliverable point, unavailable or unknown SKU, outage
-(retry may help) · **2** the command was called wrong (retrying never helps).
+Add `--json` to any command for agent-readable output. **Exit codes are a
+contract, and this list is the only copy of it:**
+
+| code | meaning | retry? |
+|---|---|---|
+| `0` | it worked | — |
+| `1` | D1 refused or was unreachable — undeliverable point, unavailable or unknown SKU, outage | yes, may help |
+| `2` | the command was called wrong | never helps |
+| `3` | it worked and the answer is "none" (`substitute` only) | never helps |
+
+An agent that cannot separate those either retries a typo forever or gives up
+on a transient outage. `3` exists because an empty category is neither.
 
 Note that `cart add` **sets** the line to `--qty`; it does not add to it. That
 is D1's own semantics, verified live.
@@ -129,6 +137,45 @@ before the last mutation — re-run the gate.
 When it returns 1, `--json` gives `undeliverable[]` naming the lines, and
 `readyToCheckout: false`. Remove or replace those lines and run it again.
 
+## Replacing a line D1 cannot supply
+
+```bash
+d1 substitute 192 --limit 5        # ranks in-stock products from the same category
+```
+
+Exit 0 means there is something to propose; **3 means there is not** — the
+only command that uses `3`.
+
+Three, not one, and the distinction is the point: `1` means *"D1 refused, or
+could not be reached"* everywhere else in this CLI, and invites a retry. An
+empty category never becomes non-empty on retry, so an agent with a retry-on-1
+policy would loop on it forever. Exit 0 with an empty list is the other wrong
+answer — it reads as success and gets acted on.
+
+Each candidate names **what changes**: brand, pack size, `$/kg` or `$/L`, pack
+price, and any Ley 2120 warning gained or lost. That is the output, not the
+score. A `-12%` per litre for the same 900 ml and the same label is a different
+proposition from one that arrives with `Exceso en Azúcares` attached, and only
+the deltas tell them apart.
+
+**Propose it; do not take it.** `substitute` never writes — it prints the
+`d1 cart add` for a human to approve. This is not caution for its own sake: the
+customer twice preferred a line *removed* over a wrong substitute, said so
+explicitly, and was right both times. Present the candidates and the trade-offs;
+let the person decide, and be willing to drop the line.
+
+Three things it will tell you that are worth reading:
+
+- **"This is still in stock at your store."** Availability is per-store, so a
+  line that failed elsewhere may be fine here. Check before replacing anything.
+  With no `--lat/--lng` it says so instead of guessing — there is no store to
+  make a per-store claim about.
+- **"widened to level 2 of 3"** — the leaf category had nothing in stock, so the
+  suggestions come from a broader aisle and are correspondingly looser.
+- **"only N were compared"** — the category is bigger than one page. Raise
+  `--count`. This prints on the empty result too, because *"nothing here is in
+  stock"* asserted over a partial sweep needs the caveat more, not less.
+
 ## Finding things when the ask is vague
 
 For "we need rice" rather than "buy SKU 1092", two axes matter and neither is
@@ -164,6 +211,7 @@ than walked through.
 | `search <query>` | find products (`--facets --sort --count --page --available`) |
 | `suggest <partial>` · `trending` | autocomplete · what Colombia is searching |
 | `categories` · `facets [query]` | department tree · filters for a query |
+| `substitute <sku>` | what to buy instead, and what changes (`--limit --count`) |
 | `quote <sku>[:qty]...` | price a basket, no cart mutation |
 | `cart [show\|add\|set\|clear\|deliver-to\|checkout]` | build a basket |
 | `login --email` / `--from-cookie` · `whoami` · `logout` | account |
@@ -178,10 +226,8 @@ bun test        # money units, the semicolon gotcha, quantity-in-quote,
 bun run lint && bun run typecheck
 ```
 
-Exit codes are a contract, not decoration: **0** success · **1** D1 refused or
-could not be reached (worth a retry) · **2** the command was called wrong (never
-worth retrying). An agent that cannot separate those two failure modes either
-retries a typo forever or gives up on a transient outage.
+Exit codes are a contract, not decoration — the table under **Invoke** above is
+the single copy of it.
 
 See `README.md` for the full endpoint map, the shipping-tier behaviour, and
 what the public API will not give you.
