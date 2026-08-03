@@ -41,6 +41,11 @@ export const ALLOWED_ENDPOINT_PATTERNS: readonly RegExp[] = [
   /^\/api\/io\/_v\/api\/intelligent-search\/autocomplete_suggestions$/,
   /^\/api\/io\/_v\/api\/intelligent-search\/top_searches$/,
   new RegExp(`^/api/catalog_system/pub/category/tree/${SEG}$`),
+  // The only route from a SKU id to the product that carries it. Intelligent
+  // search cannot do this: `?fq=skuId:262` there is SILENTLY IGNORED and
+  // returns the whole 1,600-product catalogue with HTTP 200, which is
+  // indistinguishable from a successful narrow query.
+  /^\/api\/catalog_system\/pub\/products\/search$/,
   // location
   /^\/api\/checkout\/pub\/regions$/,
   // cart — builds and prices a basket; none of these settle it
@@ -75,6 +80,7 @@ export const ALLOWED_ENDPOINT_SHAPES: readonly string[] = [
   "/api/io/_v/api/intelligent-search/autocomplete_suggestions",
   "/api/io/_v/api/intelligent-search/top_searches",
   "/api/catalog_system/pub/category/tree/{}",
+  "/api/catalog_system/pub/products/search",
   "/api/checkout/pub/regions",
   "/api/checkout/pub/orderForm",
   "/api/checkout/pub/orderForm/{}",
@@ -91,9 +97,65 @@ export const ALLOWED_ENDPOINT_SHAPES: readonly string[] = [
   "/api/oms/user/orders/{}",
 ];
 
+/**
+ * Per-endpoint query constraints.
+ *
+ * Every allowlist entry before `catalog_system/pub/products/search` carried its
+ * risk in the PATH — that is what the `..`-to-order-settlement incident was
+ * about, and why checking the resolved pathname was sufficient. This one is
+ * different: `fq` is a **query language**. VTEX accepts `fq=C:/1/`,
+ * `fq=alternateIds_RefId:x`, `fq=P:[0 TO 9999]` and `_from`/`_to` paging on the
+ * same path, so an approved pathname says nothing about what was asked for.
+ *
+ * `assertSkuId` guards the one function that builds this call today, but a
+ * convention inside a caller is not a shield — a second call site would inherit
+ * the approved path and none of the constraint. Proven: a plausible future
+ * caller passing an arbitrary `fq` sailed through the static source scan (31
+ * pass) and reached D1 with the session cookie attached.
+ *
+ * So the constraint lives with the endpoint. An entry here means: these are the
+ * only parameters this path may carry, and this is what they must look like.
+ */
+const QUERY_GUARDS: ReadonlyArray<{
+  path: RegExp;
+  params: Record<string, RegExp>;
+}> = [
+  {
+    path: /^\/api\/catalog_system\/pub\/products\/search$/,
+    // Exactly a SKU lookup. `sc` is the sales channel, always a small integer.
+    params: { fq: /^skuId:\d+$/, sc: /^\d+$/ },
+  },
+];
+
 /** Whether a resolved pathname is one this CLI may request. */
 export function isAllowedPath(pathname: string): boolean {
   return ALLOWED_ENDPOINT_PATTERNS.some((p) => p.test(pathname));
+}
+
+/**
+ * Throw unless every query parameter on a guarded path is expected and
+ * well-formed. Paths with no guard are unconstrained, as before.
+ *
+ * Fail-closed on UNKNOWN parameters too, not just malformed known ones —
+ * `_from`/`_to` are the whole-catalogue enumeration lever and neither would
+ * have tripped a check that only validated `fq`.
+ */
+export function assertAllowedQuery(pathname: string, query: URLSearchParams): void {
+  const guard = QUERY_GUARDS.find((g) => g.path.test(pathname));
+  if (!guard) return;
+  for (const [key, value] of query) {
+    const expect = guard.params[key];
+    if (!expect) {
+      throw new D1Error(
+        `Refusing to send "${key}" to ${pathname} — that endpoint accepts only ${Object.keys(guard.params).join(", ")}. This is a bug in d1-cli.`,
+      );
+    }
+    if (!expect.test(value)) {
+      throw new D1Error(
+        `Refusing to send ${key}="${value}" to ${pathname} — it must match ${expect.source}. This is a bug in d1-cli.`,
+      );
+    }
+  }
 }
 
 /**

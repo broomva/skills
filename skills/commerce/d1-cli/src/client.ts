@@ -8,7 +8,7 @@
  * config file at "can see my own orders".
  */
 
-import { assertAllowedUrl } from "./endpoints.ts";
+import { assertAllowedQuery, assertAllowedUrl } from "./endpoints.ts";
 import { ACCOUNT, D1Error, ORIGIN } from "./types.ts";
 
 /** Presented to upstream so D1 can identify (and if it wishes, throttle) us. */
@@ -85,11 +85,18 @@ export class D1Client {
     //   - It has also already applied any host change, so a protocol-relative
     //     path cannot send the session cookie to another origin behind an
     //     approved-looking pathname.
-    assertAllowedUrl(url, path);
-
     for (const [k, v] of Object.entries(init.query ?? {})) {
       if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
     }
+
+    // Checked AFTER the query is applied, because "what will actually be sent"
+    // now includes the query string. This used to run first, which was fine
+    // while every approved endpoint carried its risk in the path — and stopped
+    // being fine with `catalog_system/pub/products/search`, whose `fq` is a
+    // query language. Ordering it this way means the guard sees the same URL
+    // `fetch` will.
+    assertAllowedUrl(url, path);
+    assertAllowedQuery(url.pathname, url.searchParams);
 
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");

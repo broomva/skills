@@ -10,8 +10,10 @@
  * rather than shown as zero.
  */
 
+import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP } from "./money.ts";
+import type { SubstituteResult } from "./substitute.ts";
 import type {
   Cart,
   Category,
@@ -24,25 +26,39 @@ import type {
   ShippingOption,
 } from "./types.ts";
 
+// Defined in `catalog.ts` — choosing which seller's offer represents a product
+// is a catalogue decision, and `substitute.ts` needs it without rendering
+// anything. Re-exported because this was its original home.
+export { bestOffer };
+
 export function json(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-/** Pad to a display width, truncating with an ellipsis when too long. */
-function pad(s: string, width: number): string {
-  const clean = s.replace(/\s+/g, " ").trim();
-  if (clean.length <= width) return clean.padEnd(width);
-  return `${clean.slice(0, Math.max(0, width - 1))}…`;
+/**
+ * Neutralize terminal control characters in upstream text.
+ *
+ * Every string rendered here — product names, brands, warning KEY NAMES, the
+ * category path — is attacker-adjacent data from D1's catalogue, and
+ * `asSearchShape` widened the warning source to any top-level key in the
+ * payload. A name carrying `ESC[2J` clears the screen, erasing the
+ * "Nothing was added to your cart" line above it; `ESC]0;…BEL` retitles the
+ * window. In an agent-driven CLI the injected text also lands verbatim in a
+ * transcript. `\s` does not cover ESC or BEL, so trimming was never enough.
+ */
+export function sanitize(s: string): string {
+  // Written as escapes, not literal bytes: a regex containing a raw ESC is
+  // invisible in a diff and unreviewable. Newline and tab are in range on
+  // purpose — a newline inside a product name would forge a whole output line.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: neutralizing them is the point
+  return s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
 }
 
-/**
- * The cheapest available offer, or the cheapest offer overall when nothing is
- * in stock — so an out-of-stock row still shows what it would cost.
- */
-export function bestOffer(p: Product) {
-  const available = p.offers.filter((o) => o.available);
-  const pool = available.length ? available : p.offers;
-  return pool.slice().sort((a, b) => a.price - b.price)[0];
+/** Pad to a display width, truncating with an ellipsis when too long. */
+function pad(s: string, width: number): string {
+  const clean = sanitize(s).replace(/\s+/g, " ").trim();
+  if (clean.length <= width) return clean.padEnd(width);
+  return `${clean.slice(0, Math.max(0, width - 1))}…`;
 }
 
 export function renderSearch(
@@ -55,8 +71,14 @@ export function renderSearch(
   const lines: string[] = [];
   for (const p of page.products) {
     const o = bestOffer(p);
-    const price = o ? formatCOP(o.price) : "—";
-    const off = o ? discountPercent(o.price, o.listPrice) : 0;
+    // `priced`, not merely present: an offer VTEX reports at 0 has no price
+    // here, and `$ 0` next to a real grocery item reads as free.
+    const price = priced(o) ? formatCOP(o.price) : "—";
+    // Guarded by the SAME predicate as the price beside it. Leaving this on a
+    // bare truthiness check meant `{Price: 0, ListPrice: 9300}` rendered as
+    // `—    -100%` — a discount computed from the very non-price the column to
+    // its left had just declined to print, and a worse lie than the `$ 0` was.
+    const off = priced(o) ? discountPercent(o.price, o.listPrice) : 0;
     const stock = !o ? "no offer" : o.available ? "" : "out of stock";
     const per =
       p.unitPrice !== undefined && p.size
@@ -93,10 +115,152 @@ export function renderSearch(
       `Sorted by unit price within these ${shown} results — not across all ${page.total}. Raise --count to widen it.`,
     );
   }
-  const missing = page.products.filter((p) => p.unitPrice === undefined).length;
+  // Counted on `size`, not on `unitPrice`. Since a product VTEX prices at 0
+  // now yields no unit price either, counting the latter would report a
+  // missing PACK SIZE for a product that publishes one perfectly well and
+  // merely has no offer here — a sentence that is simply not true of it.
+  const missing = page.products.filter((p) => p.size === undefined).length;
   if (missing > 0) {
     lines.push(`${missing} of ${shown} publish no pack size, so they cannot be compared per unit.`);
   }
+  return lines.join("\n");
+}
+
+/** `$ 3.889/L`, or empty when D1 publishes no pack size. */
+function perUnit(p: Product): string {
+  return p.unitPrice !== undefined && p.size
+    ? formatUnitPrice(formatCOP(p.unitPrice), p.size.measure)
+    : "";
+}
+
+/**
+ * Render a substitution proposal.
+ *
+ * The deltas are the point, not the ranking, so they get their own indented
+ * lines under each candidate rather than being compressed into a column. A
+ * shopper scanning this is deciding whether a 9% saving is worth a different
+ * brand and an added sugar warning — that judgement needs the words.
+ */
+export function renderSubstitutes(r: SubstituteResult): string {
+  const lines: string[] = [];
+  const src = bestOffer(r.source);
+  const srcPer = perUnit(r.source);
+
+  lines.push(`Replacing ${sanitize(r.source.skuId)}  ${sanitize(r.source.name)}`);
+  lines.push(
+    `          ${[
+      priced(src) ? formatCOP(src.price) : "no price at this store",
+      srcPer,
+      sanitize(r.source.brand),
+    ]
+      .filter(Boolean)
+      .join(" · ")}`,
+  );
+  lines.push(`          ${sanitize(r.categoryPath)}`);
+  if (r.source.warnings.length) {
+    lines.push(`          ${r.source.warnings.map(sanitize).join(", ")}`);
+  }
+  lines.push("");
+
+  // State the source's own stock plainly. It is usually the reason for running
+  // this, and when it turns out to be in stock after all that is the single
+  // most useful thing the command can say — the mandarin juice that started
+  // this feature was available at one store and not another.
+  //
+  // Availability is a PER-STORE fact, so with no delivery point resolved there
+  // is no store to assert it about. Saying "still in stock at your store" and
+  // then "stock is NATIONAL and may not reflect your store" four lines later
+  // is one output contradicting itself.
+  if (!r.regionId) {
+    lines.push("No delivery point set, so D1's stock here is national, not your store's.");
+  } else if (r.sourcePricedNationally) {
+    lines.push(
+      "Priced from the national catalogue — this SKU was not on the regional page, so its stock here is unknown.",
+    );
+  } else if (r.sourceAvailable) {
+    lines.push("This is still in stock at your store. You may not need a replacement.");
+  } else {
+    lines.push("D1 cannot supply this at your store right now.");
+  }
+  lines.push("");
+
+  // The scope of the sweep is stated on BOTH paths.
+  //
+  // These lines used to sit after an early return, so the empty case made the
+  // categorical claim "nothing in this category is in stock" while suppressing
+  // the three facts that qualify it — that 3 of 140 products were compared,
+  // that the search had widened, that stock was national. A negative asserted
+  // over a partial sweep needs its caveats more than a positive does, not less.
+  const scope: string[] = [];
+  const widened = r.searchedDepth < r.categoryDepth;
+  if (widened) {
+    scope.push(
+      `The leaf category had nothing in stock, so this widened to level ${r.searchedDepth} of ${r.categoryDepth}.`,
+    );
+  }
+  if (r.poolTotal > r.poolProducts) {
+    // Same honesty `--sort per-unit` owes its ranking: this ordered what was
+    // fetched, not the category. A "closest match" claim — or a "nothing here"
+    // claim — over a partial sweep would be false.
+    scope.push(
+      `That category holds ${r.poolTotal} products — only ${r.poolProducts} were compared. Raise --count to widen it.`,
+    );
+  }
+  if (!r.regionId) {
+    scope.push(
+      "No delivery point set, so stock is NATIONAL and may not reflect your store. Pass --lat/--lng, or run `d1 region`.",
+    );
+  }
+
+  if (r.candidates.length === 0) {
+    lines.push(`Nothing in ${sanitize(r.categoryPath)} is in stock to replace it.`);
+    if (scope.length) {
+      lines.push("");
+      lines.push(...scope);
+    }
+    lines.push("");
+    lines.push("Widen the search yourself with `d1 search <term> --available --sort per-unit`.");
+    return lines.join("\n");
+  }
+
+  let tier = r.candidates[0].tier;
+  r.candidates.forEach((c, i) => {
+    if (c.tier !== tier) {
+      tier = c.tier;
+      lines.push("");
+      lines.push(
+        "  — below here the pack is measured differently, so per-unit prices do not compare —",
+      );
+    }
+    const p = c.product;
+    const o = bestOffer(p);
+    lines.push("");
+    lines.push(
+      `${String(i + 1).padStart(3)}  ${pad(p.skuId, 7)} ${pad(p.name, 44)} ${
+        priced(o) ? formatCOP(o.price).padStart(10) : "—".padStart(10)
+      } ${perUnit(p).padStart(13)}`,
+    );
+    for (const d of c.deltas) {
+      lines.push(`          ${sanitize(d.text)}`);
+    }
+  });
+
+  lines.push("");
+  // Counts what was RANKED, not what was fetched. `poolSize` includes the
+  // source itself and every out-of-stock item, so "ranked against 3 products"
+  // was printed where 2 were actually compared.
+  lines.push(
+    `${r.rankedCount} in-stock alternative${r.rankedCount === 1 ? "" : "s"} in ${sanitize(
+      r.categoryPath,
+    )}, from ${r.poolProducts} product${r.poolProducts === 1 ? "" : "s"} swept${
+      r.candidates.length < r.rankedCount ? ` — showing the closest ${r.candidates.length}` : ""
+    }.`,
+  );
+  lines.push(...scope);
+  lines.push("");
+  lines.push(
+    `Nothing was added to your cart. To take one:  d1 cart add ${r.candidates[0].product.skuId}`,
+  );
   return lines.join("\n");
 }
 

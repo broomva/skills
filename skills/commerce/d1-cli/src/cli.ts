@@ -24,7 +24,7 @@ import {
   undeliverable,
   useSavedAddress,
 } from "./cart.ts";
-import { categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
+import { assertSkuId, categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
 import { D1Client } from "./client.ts";
 import { formatCOP } from "./money.ts";
 import { getOrder, listOrders, orderForDisplay } from "./orders.ts";
@@ -39,6 +39,7 @@ import {
   renderRegion,
   renderSearch,
   renderShipping,
+  renderSubstitutes,
 } from "./present.ts";
 import { deliverable, primarySeller, resolveRegion } from "./region.ts";
 import {
@@ -51,6 +52,7 @@ import {
   validateAccessKey,
   whoami,
 } from "./session.ts";
+import { type SubstituteOptions, findSubstitutes } from "./substitute.ts";
 import { D1Error, DEFAULT_SALES_CHANNEL, type LatLng, UsageError } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -126,6 +128,62 @@ export function quantityFlag(v: string | boolean | undefined): number {
     throw new UsageError(`--qty must be a positive whole number, got "${v}".`);
   }
   return n;
+}
+
+/**
+ * Read a `--limit` flag strictly, the same way `--qty` is read.
+ *
+ * Absent means the default. Anything else must be a positive whole number —
+ * clamping instead meant `--limit 0` and `--limit -3` both quietly returned
+ * exactly one proposal and exited 0, which answers a question nobody asked.
+ */
+export function limitFlag(v: string | boolean | undefined): number | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new UsageError("--limit needs a positive whole number, e.g. --limit 5.");
+  }
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new UsageError(`--limit must be a positive whole number, got "${v}".`);
+  }
+  return n;
+}
+
+/**
+ * The options `d1 substitute` derives from its flags.
+ *
+ * Separate from the command body so the derivation is testable: the region id
+ * and `--limit` reaching `findSubstitutes` are load-bearing (drop the region
+ * and every shopper silently gets NATIONAL stock) and neither can be observed
+ * from a network-free subprocess test of the command itself.
+ */
+export function substituteOptions(
+  flags: Args["flags"],
+  region: { id: string } | undefined,
+  salesChannel: string,
+): SubstituteOptions {
+  return {
+    regionId: region?.id,
+    salesChannel,
+    limit: limitFlag(flags.limit),
+    count: num(flags.count),
+  };
+}
+
+/**
+ * What `d1 substitute` exits with once it has an answer.
+ *
+ * **3, not 1.** The command SUCCEEDED at looking, and an agent needs "I have a
+ * replacement for you" apart from "I looked and there is none" — but exit 1 is
+ * documented across this CLI as "D1 refused, or could not be reached; a retry
+ * may help". An empty category never becomes non-empty on retry, so an agent
+ * with a retry-on-1 policy would loop on it forever.
+ *
+ * Exit 0 with an empty list is the other wrong answer: it reads as success and
+ * gets acted on.
+ */
+export function substituteExit(candidateCount: number): number {
+  return candidateCount > 0 ? 0 : 3;
 }
 
 /**
@@ -238,6 +296,12 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
                                                      --count --sort --available]
                                --sort per-unit ranks by price per kg/L, which is
                                what "cheapest" usually means for groceries
+    d1 substitute <sku>        what to buy instead   [--lat --lng --limit
+                                                     --count]
+                               ranks in-stock products from the same category
+                               and names what changes: brand, pack size, $/kg,
+                               and any warning label gained or lost. Proposes
+                               only — it never touches your cart.
     d1 suggest <partial>       autocomplete terms
     d1 trending                what Colombia is searching for
     d1 categories              department tree      [--depth N]
@@ -274,6 +338,12 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
   Global
     --json                     machine-readable output
     --help                     this text
+
+  Exit codes
+    0  it worked
+    1  D1 refused, or could not be reached — a retry may help
+    2  the command was called wrong — a retry never helps
+    3  the command worked and the answer is "none" (substitute found nothing)
 
 This CLI never handles payment. It builds and prices a basket; a human opens
 the checkout URL and pays. Stored credentials are limited to one storefront
@@ -342,6 +412,39 @@ async function main(argv: string[]): Promise<number> {
             }),
       );
       return 0;
+    }
+
+    case "substitute": {
+      const sku = positional[1];
+      if (!sku) throw new UsageError("Usage: d1 substitute <sku> [--limit N] [--lat --lng]");
+      // Validate BEFORE anything touches the network.
+      //
+      // `pointFrom`/`regionFor` below issue a live region lookup, so validating
+      // inside `findSubstitutes` meant `d1 substitute abc --lat .. --lng ..`
+      // called D1 to resolve a region for a SKU that was never going to parse —
+      // and with D1 unreachable the caller got exit 1 ("retry may help") for
+      // its own typo instead of 2. This is the same shape as `d1 cart bogus`
+      // POSTing a real orderForm before deciding the command was invalid, which
+      // is why `validateCartArgs` exists.
+      assertSkuId(sku);
+      // Built and decided by exported pure functions rather than inline here.
+      // Nothing in a network-free suite can drive this command's SUCCESS path —
+      // the origin is pinned to d1.com.co by construction, so there is no stub
+      // to point a subprocess at — and a mutation sweep found the consequences:
+      // the exit code could be made constant, `--limit` dropped, and the region
+      // never forwarded, all with the suite green. Moving the policy out leaves
+      // only the two call sites below unpinned instead of the whole case body.
+      // Called for its THROW, not its value, and BEFORE the region lookup.
+      // `substituteOptions` validates `--limit` too, but its arguments are
+      // evaluated first — so passing `await regionFor(...)` inline put a live
+      // request ahead of the validation and `d1 substitute 262 --limit 0
+      // --lat .. --lng ..` went to the network before rejecting. Same idiom,
+      // and same reason, as `validateCartArgs`.
+      limitFlag(flags.limit);
+      const region = await regionFor(pointFrom(flags, stored?.region));
+      const result = await findSubstitutes(client, sku, substituteOptions(flags, region, channel));
+      console.log(asJson ? json(result) : renderSubstitutes(result));
+      return substituteExit(result.candidates.length);
     }
 
     case "suggest": {

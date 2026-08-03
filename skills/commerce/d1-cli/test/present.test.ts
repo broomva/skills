@@ -6,7 +6,9 @@ import {
   renderCart,
   renderRegion,
   renderSearch,
+  renderSubstitutes,
 } from "../src/present.ts";
+import type { Candidate, SubstituteResult } from "../src/substitute.ts";
 import type { Product, SearchPage } from "../src/types.ts";
 import { D1Error, UsageError } from "../src/types.ts";
 
@@ -118,6 +120,304 @@ describe("renderSearch", () => {
 
   test("empty results say nothing matched rather than printing a bare header", () => {
     expect(renderSearch({ products: [], total: 0, truncated: false })).toBe("No products matched.");
+  });
+
+  test("a product VTEX prices at 0 shows a dash, not `$ 0`", () => {
+    // `$ 0` beside a real grocery item reads as free. VTEX reports 0 for a
+    // product it has no offer for in this region — observed live on SKU 1687,
+    // which rendered as `$ 0   $ 0/kg   out of stock`.
+    const unpriced = product({
+      offers: [
+        {
+          sellerId: "1",
+          sellerName: "Tiendas D1",
+          price: 0,
+          listPrice: 0,
+          available: false,
+          availableQuantity: 0,
+        },
+      ],
+    });
+    const out = renderSearch(
+      { products: [unpriced], total: 1, truncated: false },
+      {
+        regionId: "v2.X",
+      },
+    );
+    expect(out).not.toContain("$ 0");
+    expect(out).toContain("—");
+    expect(out).toContain("out of stock");
+  });
+
+  test("no discount is computed from a price it just declined to print", () => {
+    // The one-sided-coverage hole: both zero-price fixtures pinned `listPrice:
+    // 0` too, so the guard was only ever exercised in the polarity where it
+    // could not fail. With a real list price, `{price: 0}` rendered as
+    // `—    -100%` — a discount measured from the very non-price the column to
+    // its left had refused to show, and a worse lie than the `$ 0` was.
+    const unpriced = product({
+      offers: [
+        {
+          sellerId: "1",
+          sellerName: "Tiendas D1",
+          price: 0,
+          listPrice: 930_000,
+          available: false,
+          availableQuantity: 0,
+        },
+      ],
+    });
+    const out = renderSearch(
+      { products: [unpriced], total: 1, truncated: false },
+      {
+        regionId: "v2.X",
+      },
+    );
+    expect(out).not.toContain("-100%");
+    expect(out).not.toContain("$ 0");
+  });
+
+  test("a genuine discount IS still shown (anti-overshoot control)", () => {
+    // Without this the assertion above passes on a renderer that never shows a
+    // discount at all.
+    const onSale = product({
+      offers: [
+        {
+          sellerId: "1",
+          sellerName: "Tiendas D1",
+          price: 300_000,
+          listPrice: 400_000,
+          available: true,
+          availableQuantity: 5,
+        },
+      ],
+    });
+    expect(
+      renderSearch({ products: [onSale], total: 1, truncated: false }, { regionId: "v2.X" }),
+    ).toContain("-25%");
+  });
+
+  test("an unpriced product is not accused of publishing no pack size", () => {
+    // It publishes one perfectly well; it just has no offer here. The count
+    // reads `size`, not `unitPrice`, because those stopped being the same
+    // question once a zero price stopped yielding a unit price.
+    const unpriced = product({
+      size: { measure: "L", amount: 0.9 },
+      unitPrice: undefined,
+      offers: [
+        {
+          sellerId: "1",
+          sellerName: "Tiendas D1",
+          price: 0,
+          listPrice: 0,
+          available: false,
+          availableQuantity: 0,
+        },
+      ],
+    });
+    expect(
+      renderSearch({ products: [unpriced], total: 1, truncated: false }, { regionId: "v2.X" }),
+    ).not.toContain("publish no pack size");
+  });
+});
+
+describe("renderSubstitutes", () => {
+  // The whole human-facing surface of `d1 substitute`. It shipped with no
+  // tests at all, and a mutation sweep found that EIGHT independent semantic
+  // inversions — including swapping "in stock" with "cannot supply" and
+  // recommending the worst-ranked candidate — left the suite at 270 pass.
+  const sized = (over: Partial<Product> = {}): Product =>
+    product({ size: { measure: "L", amount: 0.9 }, unitPrice: 388_889, ...over });
+
+  const candidate = (
+    skuId: string,
+    name: string,
+    price: number,
+    over: Partial<Candidate> = {},
+  ): Candidate => ({
+    product: product({
+      skuId,
+      name,
+      size: { measure: "L", amount: 0.9 },
+      unitPrice: Math.round(price / 0.9),
+      offers: [
+        {
+          sellerId: "1",
+          sellerName: "Tiendas D1",
+          price,
+          listPrice: price,
+          available: true,
+          availableQuantity: 5,
+        },
+      ],
+    }),
+    score: 0.9,
+    tier: 0,
+    deltas: [],
+    ...over,
+  });
+
+  const base = (over: Partial<SubstituteResult> = {}): SubstituteResult => ({
+    source: sized(),
+    sourceAvailable: false,
+    sourcePricedNationally: false,
+    categoryPath: "Lacteos y huevos/Leches/Entera",
+    searchedDepth: 3,
+    categoryDepth: 3,
+    poolSize: 7,
+    poolProducts: 7,
+    poolTotal: 7,
+    rankedCount: 1,
+    candidates: [candidate("892", "LECHE ENTERA BOLSA LATTI 900 ML", 320_000)],
+    regionId: "v2.REGION",
+    ...over,
+  });
+
+  test("says the source is out of stock, and does not say the opposite", () => {
+    const out = renderSubstitutes(base({ sourceAvailable: false }));
+    expect(out).toContain("cannot supply");
+    expect(out).not.toContain("still in stock");
+  });
+
+  test("says the source IS in stock when it is — both polarities, so neither can invert", () => {
+    const out = renderSubstitutes(base({ sourceAvailable: true }));
+    expect(out).toContain("still in stock");
+    expect(out).not.toContain("cannot supply");
+  });
+
+  test("makes no per-store stock claim when no delivery point is set", () => {
+    // Availability is per-store. Saying "still in stock at your store" and then
+    // "stock is NATIONAL and may not reflect your store" is self-contradiction.
+    const out = renderSubstitutes(base({ regionId: undefined, sourceAvailable: true }));
+    expect(out).not.toContain("still in stock at your store");
+    expect(out).not.toContain("cannot supply");
+    expect(out).toContain("national");
+  });
+
+  test("recommends the FIRST candidate, which is the closest one", () => {
+    const out = renderSubstitutes(
+      base({
+        rankedCount: 2,
+        candidates: [
+          candidate("892", "LECHE ENTERA BOLSA LATTI 900 ML", 320_000),
+          candidate("645", "LECHE DESLACTOSADA LATTI 900 ML", 990_000, { score: 0.2 }),
+        ],
+      }),
+    );
+    expect(out).toContain("d1 cart add 892");
+    expect(out).not.toContain("d1 cart add 645");
+  });
+
+  test("an unpriced source says so instead of printing `$ 0`", () => {
+    // The live `$ 0 · $ 0/kg` was observed on THIS surface, and the guard was
+    // pinned only on renderSearch.
+    const out = renderSubstitutes(
+      base({
+        source: sized({
+          unitPrice: undefined,
+          offers: [
+            {
+              sellerId: "1",
+              sellerName: "Tiendas D1",
+              price: 0,
+              listPrice: 0,
+              available: false,
+              availableQuantity: 0,
+            },
+          ],
+        }),
+      }),
+    );
+    expect(out).not.toContain("$ 0");
+    expect(out).toContain("no price at this store");
+  });
+
+  test("separates measure tiers, so incomparable per-unit prices are not read as a ranking", () => {
+    const out = renderSubstitutes(
+      base({
+        rankedCount: 2,
+        candidates: [
+          candidate("892", "LECHE ENTERA BOLSA LATTI 900 ML", 320_000, { tier: 0 }),
+          candidate("900", "LECHE ENTERA LATTI", 350_000, { tier: 1 }),
+        ],
+      }),
+    );
+    expect(out).toContain("measured differently");
+  });
+
+  test("no separator when every candidate is comparable", () => {
+    // The control. Without it the assertion above passes on a renderer that
+    // prints the separator unconditionally.
+    expect(renderSubstitutes(base())).not.toContain("measured differently");
+  });
+
+  test("an empty result still carries every caveat that qualifies it", () => {
+    // The defect these tests exist to catch: the empty path used to return
+    // early, so the command asserted "nothing in this category is in stock"
+    // while suppressing that it compared 3 of 140 products, that it had already
+    // widened, and that stock was national. A negative over a partial sweep
+    // needs its caveats MORE than a positive does.
+    const out = renderSubstitutes(
+      base({
+        candidates: [],
+        rankedCount: 0,
+        regionId: undefined,
+        poolSize: 3,
+        poolProducts: 3,
+        poolTotal: 140,
+        searchedDepth: 1,
+        categoryDepth: 3,
+      }),
+    );
+    expect(out).toContain("Nothing in Lacteos y huevos/Leches/Entera is in stock");
+    expect(out).toContain("only 3 were compared");
+    expect(out).toContain("widened to level 1 of 3");
+    expect(out).toContain("NATIONAL");
+  });
+
+  test("reports a partial sweep and a widened search when there ARE candidates too", () => {
+    const out = renderSubstitutes(
+      base({ poolProducts: 3, poolTotal: 140, searchedDepth: 2, categoryDepth: 3 }),
+    );
+    expect(out).toContain("only 3 were compared");
+    expect(out).toContain("widened to level 2 of 3");
+  });
+
+  test("claims neither when the sweep was complete and unwidened", () => {
+    // Control for the pair above.
+    const out = renderSubstitutes(base());
+    expect(out).not.toContain("were compared");
+    expect(out).not.toContain("widened");
+  });
+
+  test("counts what was ranked, not what was fetched", () => {
+    // `poolSize` includes the source itself and every out-of-stock item, so
+    // reporting it as the comparison count overstated the work by both.
+    const out = renderSubstitutes(base({ poolSize: 7, poolProducts: 7, rankedCount: 1 }));
+    expect(out).toContain("1 in-stock alternative");
+    expect(out).not.toContain("7 in-stock");
+  });
+
+  test("says when the list was truncated by --limit", () => {
+    const out = renderSubstitutes(base({ rankedCount: 12 }));
+    expect(out).toContain("showing the closest 1");
+  });
+
+  test("strips terminal control characters out of upstream text", () => {
+    // Product names, brands and warning KEY NAMES are all upstream data. An
+    // ESC[2J in one clears the screen, erasing the "Nothing was added to your
+    // cart" line; in an agent-driven CLI the injected text lands in the
+    // transcript verbatim.
+    const evil = "LECHE \u001b[2J\u001b]0;pwned\u0007 ENTERA";
+    const out = renderSubstitutes(
+      base({
+        source: sized({ name: evil, warnings: [evil] }),
+        candidates: [candidate("892", evil, 320_000, { deltas: [{ kind: "brand", text: evil }] })],
+      }),
+    );
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence is the point
+    expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(out).toContain("LECHE");
   });
 });
 

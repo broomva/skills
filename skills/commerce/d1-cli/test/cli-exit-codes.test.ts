@@ -51,11 +51,17 @@ describe("exit codes are a contract an agent can branch on", () => {
       ["cart", "set", "0"],
       ["cart", "bogus-subcommand"],
       ["totally-unknown-command"],
+      ["substitute"],
+      ["substitute", "abc"],
+      ["substitute", "262 OR productId:1"],
+      ["substitute", "262", "--limit", "0"],
+      ["substitute", "262", "--limit", "abc"],
+      ["substitute", "262", "--lat", "4.65"],
     ]) {
       const { code } = await run(args);
       expect({ args, code }).toEqual({ args, code: 2 });
     }
-  }, 60_000);
+  }, 90_000);
 
   test("a malformed --qty exits 2 and says why", async () => {
     const { code, stderr } = await run(["cart", "add", "262", "--qty", "abc"]);
@@ -100,11 +106,21 @@ describe("a usage error costs nothing and does not depend on D1", () => {
    * makes the exit code depend on D1's availability — with the network down the
    * caller saw 1 ("D1 refused, retry may help") for its own malformed input.
    *
-   * Timing is the observable available to a subprocess test. A live orderForm
-   * POST to Bogotá measured ~530ms against ~50ms for a purely local failure, so
-   * the threshold sits well clear of both.
+   * Timing is the observable available to a subprocess test, and the threshold
+   * has to sit between two measured populations:
+   *
+   *   local failure, warm      40 – 55 ms
+   *   region GET (Bogotá)     ~405 ms
+   *   orderForm POST          ~530 ms
+   *
+   * It was 350ms, which is 7x clear of the local population and only 1.15x
+   * clear of the network one — and a mutation moving `--limit` validation back
+   * behind the region lookup went UNCAUGHT because the real request landed at
+   * 405ms, near enough to slip under on a warm process. A gate that close to
+   * the population it must reject is not a gate. 200ms is ~4x clear on both
+   * sides; anything above it is a round trip, not a slow start.
    */
-  const NETWORK_FREE_MS = 350;
+  const NETWORK_FREE_MS = 200;
 
   test("no cart usage error makes a request", async () => {
     for (const args of [
@@ -114,6 +130,35 @@ describe("a usage error costs nothing and does not depend on D1", () => {
       ["cart", "set", "0"],
       ["cart", "set", "0", "1.5"],
       ["cart", "set", "-1", "3"],
+    ]) {
+      const t0 = Bun.nanoseconds();
+      const { code } = await run(args);
+      const ms = (Bun.nanoseconds() - t0) / 1e6;
+      expect({ args, code }).toEqual({ args, code: 2 });
+      expect({ args, networkFree: ms < NETWORK_FREE_MS }).toEqual({ args, networkFree: true });
+    }
+  }, 60_000);
+
+  test("no substitute usage error makes a request, INCLUDING with --lat/--lng", async () => {
+    // The `--lat/--lng` rows are the point. `pointFrom` → `regionFor` issues a
+    // live region lookup, so validating the SKU inside `findSubstitutes` meant
+    // `d1 substitute abc --lat .. --lng ..` called D1 to resolve a region for a
+    // SKU that was never going to parse — and with D1 unreachable, returned 1
+    // ("retry may help") for the caller's own typo. Exactly the `d1 cart bogus`
+    // shape this file was written for, one command later.
+    // One untimed spawn first. Timing is a PROXY for "made no request", and a
+    // cold process pays for module resolution and JIT warm-up on top of the
+    // work being measured — enough, under parallel suite load, to cross a
+    // threshold set to separate ~50ms of local failure from ~530ms of round
+    // trip to Bogotá. Warming up sharpens the proxy without loosening it.
+    await run(["substitute"]);
+
+    for (const args of [
+      ["substitute"],
+      ["substitute", "abc"],
+      ["substitute", "abc", "--lat", "4.75068", "--lng", "-74.03532"],
+      ["substitute", "262 OR productId:1", "--lat", "4.75068", "--lng", "-74.03532"],
+      ["substitute", "262", "--limit", "0", "--lat", "4.75068", "--lng", "-74.03532"],
     ]) {
       const t0 = Bun.nanoseconds();
       const { code } = await run(args);

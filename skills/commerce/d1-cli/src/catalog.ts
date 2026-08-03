@@ -82,6 +82,24 @@ interface WireSearch {
   recordsFiltered?: number;
 }
 
+/**
+ * The same product as `catalog_system` serves it.
+ *
+ * A third way these two APIs disagree, after the price unit and the missing
+ * `IsAvailable` flag: the properties `intelligent-search` nests under
+ * `properties[]` are TOP-LEVEL keys here, so `Unidad De Medida` and
+ * `Exceso en sodio` arrive as `string[]` values on the product itself.
+ */
+interface WireCatalogProduct {
+  productId: string;
+  productName?: string;
+  brand?: string;
+  linkText?: string;
+  categories?: string[];
+  items?: WireItem[];
+  [property: string]: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // Normalization
 // ---------------------------------------------------------------------------
@@ -132,8 +150,12 @@ export function normalizeProduct(p: WireProduct): Product[] {
 
   return (p.items ?? []).map((item) => {
     const offers = (item.sellers ?? []).map(normalizeOffer);
-    const best =
-      offers.filter((o) => o.available).sort((a, b) => a.price - b.price)[0] ?? offers[0];
+    // `pickOffer`, not a second inline rule. Two predicates for "which offer
+    // represents this product" diverged exactly where it mattered: this one
+    // fell back to offers[0] while `bestOffer` fell back to the cheapest, so a
+    // product with nothing in stock — the case `substitute` exists for — could
+    // print a pack price from one seller beside a $/L derived from another.
+    const best = pickOffer(offers);
     return {
       productId: p.productId,
       skuId: item.itemId,
@@ -143,10 +165,184 @@ export function normalizeProduct(p: WireProduct): Product[] {
       categories: cats,
       offers,
       size,
-      unitPrice: best ? unitPrice(best.price, size) : undefined,
+      // A unit price derived from a non-price is not a unit price. Guarding at
+      // the root rather than at each renderer means `$ 0/kg` cannot reappear
+      // the next time something reads this field.
+      unitPrice: priced(best) ? unitPrice(best.price, size) : undefined,
       warnings,
     };
   });
+}
+
+/**
+ * The cheapest available offer, or the cheapest offer overall when nothing is
+ * in stock — so an out-of-stock product still shows what it would cost.
+ *
+ * Lives here rather than in `present.ts` (which re-exports it) because picking
+ * which of several sellers' offers represents a product is a catalogue
+ * decision, not a rendering one: `substitute.ts` compares prices without
+ * rendering anything.
+ */
+export function pickOffer(offers: readonly Offer[]): Offer | undefined {
+  const available = offers.filter((o) => o.available);
+  const pool = available.length ? available : offers;
+  return pool.slice().sort((a, b) => a.price - b.price)[0];
+}
+
+export function bestOffer(p: Product): Offer | undefined {
+  return pickOffer(p.offers);
+}
+
+/**
+ * Whether an offer carries a real price.
+ *
+ * VTEX reports `Price: 0` for a product it has no offer for in this region or
+ * channel. That does not mean free — no grocery item is — and treating it as a
+ * number produces two distinct lies. Observed live on SKU 1687 (`SALCHICHA
+ * PARRILLA MINI VIANDE`, out of stock at the Bogotá region):
+ *
+ *   d1 search        →  $ 0        $ 0/kg     out of stock
+ *   d1 substitute    →  $ 0/kg → $ 40.435/kg      ← a price rise from nothing
+ *
+ * The second is the worse one: a comparison against a non-price is not a
+ * comparison, and it renders as a concrete claim about what a swap costs.
+ */
+export function priced(o: Offer | undefined): o is Offer {
+  return o !== undefined && o.price > 0;
+}
+
+/**
+ * Reject anything that is not a bare SKU id.
+ *
+ * `fq` is a query language, not a value slot — `skuId:262 OR productId:1` is a
+ * legal filter — so an unconstrained argument does not narrow the catalogue,
+ * it rewrites the question, and the answer still arrives as HTTP 200 with
+ * plausible products in it. D1 issues decimal integer ids, so requiring one
+ * closes the entire grammar without refusing anything real.
+ */
+export function assertSkuId(skuId: string): void {
+  if (!/^\d+$/.test(skuId)) {
+    throw new UsageError(
+      `SKU must be a number, got "${skuId}". Find one in the first column of \`d1 search\`.`,
+    );
+  }
+}
+
+/**
+ * Reshape a `catalog_system` product into the search shape, so both paths go
+ * through `normalizeProduct`.
+ *
+ * A second normalizer would drift, and the drift is silent: a pack size parsed
+ * on one path and not the other gives a product that can be compared per-unit
+ * through search and cannot through here — which reads as "D1 publishes no
+ * size for this one" rather than as a bug.
+ */
+function asSearchShape(p: WireCatalogProduct): WireProduct {
+  const properties: WireProperty[] = [];
+  for (const [name, value] of Object.entries(p)) {
+    if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+      properties.push({ name, values: value as string[] });
+    }
+  }
+  return {
+    productId: p.productId,
+    productName: p.productName,
+    brand: p.brand,
+    linkText: p.linkText,
+    categories: p.categories,
+    items: p.items,
+    properties,
+  };
+}
+
+/**
+ * Find the product carrying a given SKU.
+ *
+ * This is the only route from a SKU id to its category, and it has to be the
+ * legacy catalogue API: `intelligent-search` has no SKU filter at all. Passing
+ * it `?fq=skuId:262` returns **the entire catalogue** — 1,600 products, HTTP
+ * 200 — because it ignores the parameter rather than rejecting it, and
+ * `product_search/skuId/262` as a facet path returns nothing.
+ *
+ * Prices here are NATIONAL: this endpoint takes no region. Callers that need a
+ * regional price re-read the product through {@link search}, which does.
+ */
+export async function productBySku(
+  client: D1Client,
+  skuId: string,
+  opts: { salesChannel?: string } = {},
+): Promise<Product | undefined> {
+  assertSkuId(skuId);
+  const wire = await client.request<WireCatalogProduct[]>(
+    "/api/catalog_system/pub/products/search",
+    { query: { fq: `skuId:${skuId}`, sc: opts.salesChannel ?? DEFAULT_SALES_CHANNEL } },
+  );
+
+  for (const p of Array.isArray(wire) ? wire : []) {
+    // Match the ITEM, never `items[0]`.
+    //
+    // SKU ids and product ids are different id spaces at D1 and they OVERLAP.
+    // SKU 1686 belongs to product 1687; ask for skuId 1687 and you get product
+    // 1688 — `SALCHICHA PARRILLA MINI VIANDE`, where you asked about potato
+    // crisps. One result, HTTP 200, entirely the wrong grocery item. Only
+    // checking the item id makes that visible.
+    const match = normalizeProduct(asSearchShape(p)).find((x) => x.skuId === skuId);
+    if (match) return match;
+  }
+  return undefined;
+}
+
+/**
+ * The deepest of the category paths a product declares.
+ *
+ * D1 lists every ancestor alongside the leaf — `Lacteos y huevos/Leches/Entera`
+ * arrives with `Lacteos y huevos/Leches` and `Lacteos y huevos` — and the leaf
+ * is the one that describes the product rather than the aisle.
+ */
+export function deepestCategory(categories: string[]): string | undefined {
+  let best: string | undefined;
+  let depth = 0;
+  for (const c of categories) {
+    const d = c.split("/").filter((s) => s.trim()).length;
+    // Ties break on the path itself, not on upstream array order. D1 can
+    // publish two equally-deep paths (a merchandising tree and an aisle tree),
+    // and nothing documents which comes first — so first-wins would silently
+    // change which category gets swept between identical runs.
+    if (d > depth || (d === depth && best !== undefined && c < best)) {
+      depth = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+/**
+ * Turn a category NAME path into the SLUG facet path search takes.
+ *
+ * The two APIs disagree here too: products carry `Lacteos y huevos/Leches/Entera`
+ * while search wants `category-1/lacteos-y-huevos/category-2/leches/category-3/entera`.
+ * Verified live that the slugified names round-trip, at every depth.
+ *
+ * A wrong slug fails CLOSED — an unrecognized leaf returns 0 products rather
+ * than widening to its parent — which is what lets a caller walk up the path
+ * and trust that a level returning nothing really is empty.
+ */
+export function categoryFacetPath(categoryPath: string, depth?: number): string {
+  const names = categoryPath
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const wanted = depth === undefined ? names.length : Math.max(1, Math.trunc(depth));
+  const out: string[] = [];
+  for (const name of names.slice(0, wanted)) {
+    const slug = slugify(name);
+    // Stop rather than emit `category-2/` — an empty segment collapses the path
+    // and would silently search a DIFFERENT, broader category than the caller
+    // asked for. A shorter honest path is the safe way for this to be wrong.
+    if (!slug) break;
+    out.push(`category-${out.length + 1}/${slug}`);
+  }
+  return out.join("/");
 }
 
 // ---------------------------------------------------------------------------

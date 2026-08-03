@@ -52,6 +52,7 @@ any endpoint not on it.
 | `GET /api/io/_v/api/intelligent-search/autocomplete_suggestions` | none | `suggest` |
 | `GET /api/io/_v/api/intelligent-search/top_searches` | none | `trending` |
 | `GET /api/catalog_system/pub/category/tree/{depth}` | none | `categories` |
+| `GET /api/catalog_system/pub/products/search?fq=skuId:{id}` | none | `substitute` |
 | `GET /api/checkout/pub/regions` | none | `region` |
 | `POST /api/checkout/pub/orderForm` | none | `cart` |
 | `POST /api/checkout/pub/orderForm/{id}/items` | none | `cart add` |
@@ -193,6 +194,80 @@ Products also carry the Ley 2120 front-of-pack warnings (`Exceso en Azúcares`,
 `warnings[]`. Coverage is 70–90% by category, so an empty list means
 "not declared", not "safe".
 
+### 10. `intelligent-search` has no SKU filter, and ignores the one you pass
+
+There is no way to ask intelligent-search about a specific SKU. What makes this
+a gotcha rather than a limitation is *how* it declines:
+
+| Request | Result |
+|---|---|
+| `product_search?fq=skuId:262` | **HTTP 200, all 1,600 products** — `fq` silently ignored |
+| `product_search/skuId/262` (facet path) | HTTP 200, 0 products |
+| `catalog_system/pub/products/search?fq=skuId:262` | HTTP 200, the one product |
+
+The first row is the dangerous one. A filter that is dropped rather than
+rejected returns a large, entirely plausible result set, and a caller that
+believed the filter applied would treat the whole catalogue as "products
+matching this SKU". Only `catalog_system` genuinely filters.
+
+**And SKU ids are not product ids, though they overlap.** SKU `1686` belongs to
+product `1687`:
+
+```
+fq=skuId:1686  →  product 1687   PAPAS EN CASCO TOASTATAS 500 G
+fq=skuId:1687  →  product 1688   SALCHICHA PARRILLA MINI VIANDE 200 G
+```
+
+Passing a product id where a SKU is expected therefore returns **a different
+grocery item**, with one result and HTTP 200. `productBySku` never takes
+`items[0]`; it requires an item whose `itemId` equals the SKU asked for, and
+returns undefined otherwise.
+
+`catalog_system` also disagrees with search about *shape*: it carries
+`Unidad De Medida` and the `Exceso en …` warnings as top-level keys, where
+search nests them under `properties[]`. Both go through one normalizer, because
+two would drift and the drift reads as "D1 publishes no pack size for this one".
+
+Finally, `catalog_system` takes **no region**, so its prices are national. That
+is why `d1 substitute` re-reads the source through the regional search before
+computing any delta — comparing regional candidates against a national baseline
+reports a saving that is partly just the two catalogues disagreeing.
+
+### 11. An approved path is not an approved request
+
+Every allowlist entry before `catalog_system/pub/products/search` carried its
+risk in the **path** — that is what the `..`-to-order-settlement incident was
+about, and why checking the resolved pathname was enough. This one is
+different: `fq` is a query language. `fq=C:/1/`, `fq=alternateIds_RefId:x`,
+`fq=P:[0 TO 9999]` and `_from`/`_to` paging all reach the same approved path.
+
+So the constraint had to move to where the risk is. `assertAllowedQuery` in
+`endpoints.ts` pins `fq` to `^skuId:\d+$` and refuses **unknown parameters
+outright** — `_from`/`_to` are the whole-catalogue enumeration lever and would
+not have tripped a check that only validated `fq`. And `client.ts` now runs the
+guard *after* the query is applied, so it inspects the URL `fetch` will actually
+send rather than the one the caller wrote.
+
+The reason this is a guard and not a convention: `assertSkuId` protects the one
+function that builds the call today, but a second call site would inherit the
+approved path and none of the constraint. That was demonstrated, not assumed —
+a plausible future caller passing an arbitrary `fq` sailed straight through the
+static source scan.
+
+### 12. A price of `0` means "no offer here", not "free"
+
+VTEX reports `Price: 0` for a product it has no offer for in the current region
+or channel. Taken at face value it renders as a real number:
+
+```
+1687   SALCHICHA PARRILLA MINI VIANDE 200 G     $ 0     $ 0/kg    out of stock
+```
+
+and, worse, it *compares*: an early build of `d1 substitute` printed
+`$ 0/kg → $ 40.435/kg` — a per-kilo rise measured from free. `priced()` in
+`catalog.ts` is the single predicate for this, no unit price is derived from a
+non-price, and both renderers show `—` instead.
+
 ## What the public API will not give you
 
 - **Saved addresses and profile records.** `dataentities/AD` and `dataentities/CL`
@@ -293,6 +368,10 @@ absence of a payment surface.
 
 ## Roadmap
 
+- Budget baskets (`d1 basket --budget`), now that unit pricing and substitution
+  both exist — a builder strands on the first out-of-stock line without the latter.
+- Cross-basket comparison ("what would this cost in store brands"), which is
+  substitution with a brand constraint rather than a stock one.
 - Pickup points (`public.favoritePickup` appears in D1's session whitelist).
 - Coupon application (`orderForm/{id}/coupons` is present but unexercised).
 - Address-string → coordinate resolution, so `--lat/--lng` becomes optional.
