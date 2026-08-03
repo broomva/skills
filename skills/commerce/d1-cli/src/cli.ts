@@ -28,6 +28,7 @@ import { categoryTree, facets, search, suggest, topSearches } from "./catalog.ts
 import { D1Client } from "./client.ts";
 import { formatCOP } from "./money.ts";
 import { getOrder, listOrders, orderForDisplay } from "./orders.ts";
+import { fingerprint, isMutating, isOwned, isScratch } from "./ownership.ts";
 import {
   json,
   renderAddresses,
@@ -249,6 +250,10 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
     d1 cart set <index> <qty>  change a line (qty 0 removes it)
     d1 cart clear              empty the cart
     d1 addresses               your saved addresses (canonical, from D1)
+
+  Safety
+    --yes                      write to a cart this session did not create
+    D1_SCRATCH=1               ignore the stored cart; use a throwaway (for tests)
     d1 cart deliver-to         attach the delivery point and quote shipping
                                [--address-id <id> to reuse a saved one]
                                [--street --number --complement --neighborhood
@@ -291,9 +296,13 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const stored = loadSession();
+  const scratch = isScratch();
   const client = new D1Client({
     authToken: stored?.token,
-    orderFormId: stored?.orderFormId,
+    // In scratch mode the stored cart is ignored entirely, so a verification
+    // run pointed at a populated config directory creates its own throwaway
+    // cart instead of reaching the real one.
+    orderFormId: scratch ? undefined : stored?.orderFormId,
   });
   const channel = str(flags.sc) ?? DEFAULT_SALES_CHANNEL;
 
@@ -443,15 +452,45 @@ async function main(argv: string[]): Promise<number> {
       // wrong"), which is exactly the confusion the two codes exist to prevent.
       validateCartArgs(sub, positional, flags);
 
+      // Refuse to WRITE to a cart this CLI did not obtain itself.
+      //
+      // A cart id sitting in session.json is honoured silently, so a test run
+      // in a populated config directory once added a stray SKU to a real
+      // customer's basket. Reads stay open — blocking them would only train
+      // people to reach for --yes.
+      if (
+        !scratch &&
+        isMutating(sub) &&
+        stored?.orderFormId &&
+        !isOwned(stored.orderFormId, stored.orderFormOwn) &&
+        flags.yes !== true
+      ) {
+        const foreign = await getCart(client, channel);
+        console.error(
+          `Refusing to modify cart ${foreign.orderFormId} — this session did not create it.`,
+        );
+        console.error(
+          `  It holds ${foreign.items.length} line${foreign.items.length === 1 ? "" : "s"}, ${formatCOP(foreign.total)}.`,
+        );
+        console.error(
+          "  Pass --yes to write to it anyway, or set D1_SCRATCH=1 to work on a throwaway cart.",
+        );
+        return 2;
+      }
+
       let cart = await getCart(client, channel);
-      const persistCart = () =>
+      const persistCart = () => {
+        // Scratch runs leave no trace: that is the whole point of the mode.
+        if (scratch) return;
         saveSession({
           ...(stored ?? { token: "", savedAt: "" }),
           token: stored?.token ?? "",
           orderFormId: cart.orderFormId,
+          orderFormOwn: fingerprint(cart.orderFormId),
           region: stored?.region,
           savedAt: new Date().toISOString(),
         });
+      };
 
       switch (sub) {
         case "show":
