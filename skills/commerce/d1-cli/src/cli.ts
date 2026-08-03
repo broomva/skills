@@ -19,6 +19,7 @@ import {
   setDeliveryPoint,
   setQuantity,
   simulate,
+  undeliverable,
 } from "./cart.ts";
 import { categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
 import { D1Client } from "./client.ts";
@@ -371,6 +372,38 @@ async function main(argv: string[]): Promise<number> {
           savedAt: new Date().toISOString(),
         });
       }
+      // Warn when an existing cart was built against a DIFFERENT point.
+      //
+      // Items already in the cart were judged deliverable at ADD time, against
+      // the address the orderForm held then. Those verdicts — including any
+      // `cannotBeDelivered` errors — do not re-evaluate when the region moves,
+      // and nothing the CLI does afterwards clears them. The only reliable fix
+      // is to rebuild, so say that rather than leave a cart that is quietly
+      // pinned to somewhere the user no longer is.
+      const movedFrom = stored?.region;
+      if (
+        deliverable(r) &&
+        movedFrom &&
+        (movedFrom.lat !== at.lat || movedFrom.lng !== at.lng) &&
+        !asJson
+      ) {
+        try {
+          const existing = await getCart(client, channel);
+          if (existing.items.length > 0) {
+            console.error("");
+            console.error(
+              `Your cart still holds ${existing.items.length} line${existing.items.length === 1 ? "" : "s"} added for ${movedFrom.lat}, ${movedFrom.lng}.`,
+            );
+            console.error(
+              "D1 judged those deliverable at the OLD address and will not re-judge them.",
+            );
+            console.error("Run `d1 cart clear` and re-add, or check `d1 cart` for errors.");
+          }
+        } catch {
+          // Advisory only — never fail `region` because the cart lookup did.
+        }
+      }
+
       console.log(asJson ? json(r) : renderRegion(r));
       if (!deliverable(r) && stored?.region && !asJson) {
         console.error(
@@ -421,6 +454,25 @@ async function main(argv: string[]): Promise<number> {
           const region = await regionFor(at);
           const seller = str(flags.seller) ?? region?.sellerId ?? "1";
           const want = quantityFlag(flags.qty);
+
+          // Assert the delivery point BEFORE adding, not after.
+          //
+          // VTEX evaluates deliverability AT ADD TIME against whatever address
+          // the orderForm currently holds, and the resulting
+          // `cannotBeDelivered` errors persist even once the address is later
+          // corrected — leaving a cart with valid SLAs, a computed total, and
+          // an error on every line. Re-asserting afterwards does NOT clear
+          // them; only being correct beforehand avoids them. Proven by
+          // ordering alone: add-then-deliver-to gave 9 errors where
+          // deliver-to-then-add gave none, on the same items and region.
+          if (at) {
+            try {
+              cart = await setDeliveryPoint(client, cart.orderFormId, at);
+            } catch {
+              // Not fatal — `cart deliver-to` can still be run explicitly, and
+              // failing the add over a transient shipping hiccup is worse.
+            }
+          }
 
           cart = await addItems(
             client,
@@ -503,6 +555,7 @@ async function main(argv: string[]): Promise<number> {
 
         case "checkout": {
           const url = checkoutUrl(cart.orderFormId);
+          const blocked = undeliverable(cart);
           if (asJson) {
             console.log(
               json({
@@ -510,10 +563,24 @@ async function main(argv: string[]): Promise<number> {
                 total: cart.total,
                 totalFormatted: formatCOP(cart.total),
                 itemCount: cart.items.length,
+                undeliverable: blocked.map((i) => ({ skuId: i.skuId, name: i.name })),
+                readyToCheckout: blocked.length === 0,
                 checkoutUrl: url,
                 note: "This CLI does not process payment. Open checkoutUrl to pay.",
               }),
             );
+          } else if (blocked.length > 0) {
+            // Do NOT present a checkout URL as ready when D1 has said it cannot
+            // deliver these lines. The URL is still printed — the cart is real
+            // and the user may want to fix it in the browser — but it is framed
+            // as broken, and the exit code says so.
+            console.log(renderCart(cart));
+            console.log("");
+            console.log(
+              `NOT ready to check out: D1 cannot deliver ${blocked.length} line${blocked.length === 1 ? "" : "s"} to this address.`,
+            );
+            console.log("Fix with `d1 cart deliver-to`, or remove the affected lines.");
+            console.log(`  ${url}`);
           } else {
             console.log(renderCart(cart));
             console.log("");
@@ -522,7 +589,7 @@ async function main(argv: string[]): Promise<number> {
             console.log("");
             console.log("d1 does not handle payment — you complete it in the browser.");
           }
-          return 0;
+          return blocked.length > 0 ? 1 : 0;
         }
 
         default:
