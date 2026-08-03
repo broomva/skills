@@ -420,10 +420,56 @@ Notable cases pin the gotchas above: the semicolon separator, the cross-API pric
 agreement, quantity surviving a quote, the vacuous unknown-SKU pass, and the
 absence of a payment surface.
 
+## Building to a budget
+
+```bash
+d1 basket --budget 30000 arroz leche aceite huevos --lat 4.75068 --lng=-74.03532
+```
+
+Takes a shopping list of **terms**, not SKUs, resolves each to the best value at
+your store, and fits what it can:
+
+```
+  1075    ARROZ ECONÓMICO 2000 GRS                 $ 5.550  $ 2.775/kg
+          for "arroz" · best of 10 compared
+  892     LECHE ENTERA BOLSA UHT LATTI 900 ML      $ 3.090  $ 3.433/L
+          for "leche" · best of 20 compared, of 29 D1 matched
+  398     ACEITE VEGETAL IMATÁ 3.000 ML           $ 20.500  $ 6.833/L
+          for "aceite" · best of 20 compared
+
+3 of 4 lines · $ 29.140 of $ 30.000 · $ 860 left
+The budget is a hard ceiling — a line that would exceed it is left out, not rounded into.
+
+Not included:
+  huevos — would cost $ 1.650, which does not fit in what is left
+```
+
+Three decisions worth stating, because each has a plausible opposite:
+
+- **The budget is a hard ceiling.** A best-effort fit that overshoots by one
+  line is the more useful answer about half the time, and which half you are in
+  is not knowable from here. Overspending someone's grocery budget unasked is
+  the worse failure. The output says the ceiling was hard, because a reader who
+  assumed otherwise would read a short basket as "that is all D1 sells".
+- **A line that does not fit is skipped, not fatal.** One expensive item early
+  in the list would otherwise strand every cheap line after it.
+- **Lines fill in the order you wrote them.** A shopping list is already ranked.
+  Reordering by value would spend the budget on whatever is cheapest per kg,
+  which is a different request.
+
+Every line names how many products it chose between **and** how many D1 matched.
+`best of 20 compared` alone reads as a survey of the shelf; `of 29 D1 matched`
+is what makes the partiality visible — the same omission that once let an empty
+substitute result claim "nothing in this category is in stock" while concealing
+that it had seen 3 products of 140.
+
+A term whose every match is out of stock falls through to `substitute`, and the
+replacement is **named in the line** rather than swapped in quietly. Exit `3`
+means nothing fit — never `1`, because a budget that buys none of your list does
+not become affordable on a retry.
+
 ## Roadmap
 
-- Budget baskets (`d1 basket --budget`), now that unit pricing and substitution
-  both exist — a builder strands on the first out-of-stock line without the latter.
 - Cross-basket comparison ("what would this cost in store brands"), which is
   substitution with a brand constraint rather than a stock one.
 - Pickup points (`public.favoritePickup` appears in D1's session whitelist).

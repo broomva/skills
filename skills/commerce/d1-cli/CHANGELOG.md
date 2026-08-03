@@ -3,6 +3,50 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.7.0] — 2026-08-03
+
+### Added — `d1 basket --budget`, which fits a shopping list to what you can spend
+
+Takes a list of TERMS rather than SKUs, resolves each to the best value at the
+resolved store, and fills to the target. It waited on substitution for a
+structural reason: a basket builder strands on the first out-of-stock line, and
+substitution is the thing that un-strands it.
+
+The ticket left two questions open. Both are settled, and both are stated in the
+output rather than left for the reader to infer:
+
+- **The budget is a hard ceiling.** A best-effort fit that overshoots is the
+  more useful answer about half the time, and which half you are in is not
+  knowable from here. Overspending a grocery budget unasked is the worse of the
+  two failures. A reader who assumed best-effort would otherwise read a short
+  basket as "that is all D1 sells", so the ceiling is named on every basket.
+- **What it could not fit is part of the answer.** Every unfilled term carries
+  its reason — over budget, nothing in stock, or no match at all. A total that
+  quietly omits three of eight lines describes a shop that would not happen.
+
+Lines are chosen by unit price within ONE measure. A `$/unit` bottle must not
+beat a `$/L` oil however small its number, and a product with no published size
+is used only when nothing in the set publishes one — a comparable answer beats
+an incomparable cheaper one.
+
+Each line names both how many products it chose between and how many D1 matched.
+`best of 20 compared, of 143 D1 matched` cannot be misread as a survey of the
+shelf, which is the omission that let an empty substitute result assert
+"nothing in this category is in stock" while concealing it had seen 3 of 140.
+
+A term whose matches are all out of stock falls through to `findSubstitutes`,
+and the replacement is NAMED rather than swapped in silently — the CLI proposes
+and the person decides, here as everywhere.
+
+Exit `3` when nothing fit, matching `substitute`: the command succeeded at
+looking, and a budget that buys none of the list never becomes affordable on a
+retry, so it must not be exit `1`. A partially filled basket is exit `0`.
+
+Policy lives in exported pure functions rather than the command body, because
+nothing network-free can drive that path — the same reason `substituteOptions`
+exists. Twelve mutations were run against the result; all twelve were caught,
+after two fixtures that proved nothing were rewritten.
+
 ## [0.6.0] — 2026-08-03
 
 ### Fixed — a multipack's unit price, measured before it was encoded
