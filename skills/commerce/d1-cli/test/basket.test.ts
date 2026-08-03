@@ -73,22 +73,34 @@ describe("chooseBest", () => {
   });
 
   test("a price of 0 is 'no offer here', never the best buy", () => {
+    // Deliberately sizeless, so the pack-price fallback is the path under test.
+    // With a size, `unitPrice` is already undefined for an unpriced product and
+    // the assertion would pass without the availability-and-price filter ever
+    // running — it did, until a mutation showed the guard could be deleted with
+    // the suite green. Sizeless, a $0 product sorts FIRST by pack price, which
+    // is exactly the "$ 0 is not free" failure.
     const pick = chooseBest([
-      product("noprice", "SIN OFERTA", 0, { measure: "kg", amount: 1 }),
-      product("real", "CON PRECIO", 400_000, { measure: "kg", amount: 1 }),
+      product("noprice", "SIN OFERTA", 0),
+      product("real", "CON PRECIO", 400_000),
     ]);
     expect(pick?.skuId).toBe("real");
   });
 
   test("does not blend measures — a $/unit bottle cannot beat a $/L oil", () => {
-    // Observed live: a $8,990 empty bottle ranked among per-litre oil prices.
+    // Observed live: an $8,990 empty bottle ranked among per-litre oil prices.
+    //
+    // The bottle is priced so its $/unit is the LOWEST number in the set. That
+    // is the point: blending measures would rank it first on a number that
+    // means nothing next to the others. An earlier fixture had the bottle
+    // dearest, so removing the measure filter changed no result and the
+    // assertion proved nothing.
     const pick = chooseBest([
-      product("bottle", "BOTELLA PARA ACEITE", 899_000, { measure: "unit", amount: 1 }),
+      product("bottle", "BOTELLA PARA ACEITE", 100_000, { measure: "unit", amount: 1 }),
       product("oil3", "ACEITE 3000 ML", 2_050_000, { measure: "L", amount: 3 }),
       product("oil900", "ACEITE 900 ML", 695_000, { measure: "L", amount: 0.9 }),
     ]);
     // Two products are measured in L against one in units, so L is dominant and
-    // the bottle is not a candidate at all.
+    // the bottle is not a candidate at all — despite the smallest per-unit.
     expect(pick?.skuId).toBe("oil3");
   });
 
