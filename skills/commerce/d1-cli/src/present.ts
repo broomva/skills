@@ -290,10 +290,16 @@ export function renderSubstitutes(r: SubstituteResult): string {
   // after everything has printed — erasing this very sentence, which is the
   // one that tells the reader nothing was bought. Verbatim the attack the
   // docstring on `sanitize` names.
+  //
+  // Control characters were only half of it. The id is decimal per
+  // `assertSkuId`, and anything else in a printed command is a second command
+  // waiting for someone — or some agent — to paste it. Gated like the
+  // `d1 substitute` line, rather than left as the one site that is not.
+  const takeSku = r.candidates[0].product.skuId;
   lines.push(
-    `Nothing was added to your cart. To take one:  d1 cart add ${sanitize(
-      r.candidates[0].product.skuId,
-    )}`,
+    SKU_ID.test(takeSku)
+      ? `Nothing was added to your cart. To take one:  d1 cart add ${takeSku}`
+      : "Nothing was added to your cart.",
   );
   return lines.join("\n");
 }
@@ -643,11 +649,17 @@ const SKU_ID = /^\d+$/;
 /**
  * Quote a value so a printed command stays ONE command.
  *
- * These are the first lines in this file to interpolate data into something a
- * reader — or an agent, since every command here has a `--json` twin — may run.
- * `sanitize` only removes control characters; a term containing a double quote
- * closed the string and appended a second command. Single quotes have exactly
- * one escape in POSIX sh, and this is it.
+ * `sanitize` only removes control characters, so a term containing a double
+ * quote closed the string and appended a second command. Single quotes have
+ * exactly one escape in POSIX sh, and this is it.
+ *
+ * An earlier version of this comment claimed these were the FIRST lines in this
+ * file to interpolate data into something a reader — or an agent, since every
+ * command here has a `--json` twin — may run. That was false when written:
+ * `renderSubstitutes` had been printing `d1 cart add <skuId>` with only
+ * `sanitize` applied, and `test/present.test.ts` says so in as many words. Both
+ * sites are gated now, which is what the claim should have prompted rather than
+ * concealed.
  */
 function shellQuote(s: string): string {
   return `'${sanitize(s).replace(/'/g, "'\\''")}'`;

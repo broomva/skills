@@ -285,6 +285,48 @@ describe("redactOrder", () => {
     expect((odd.items as Array<Record<string, unknown>>)[0]?.seller).toBe("[redacted]");
   });
 
+  test("a key literally named `[]` cannot reach the array-element subtree", () => {
+    // The array marker was stored in the same map as real JSON keys, so a
+    // payload key named `[]` matched the marker and walked into the element
+    // node's printable leaves — `items[].name`, `.ean`, `.id` all printed on the
+    // DEFAULT path. The round-1 forgery defect, re-entered one edge over.
+    const forged = redactOrder({
+      orderId: "1234",
+      items: {
+        "[]": { name: "CEDULA 1020304050", ean: "Calle 100 #7-33", id: "4111111111111111" },
+      },
+      shippingData: { logisticsInfo: { "[]": { slas: { "[]": { name: "SECRET_SLA" } } } } },
+    }) as Record<string, unknown>;
+    const blob = JSON.stringify(forged);
+    for (const secret of [
+      "CEDULA 1020304050",
+      "Calle 100 #7-33",
+      "4111111111111111",
+      "SECRET_SLA",
+    ]) {
+      expect(blob).not.toContain(secret);
+    }
+    // Still prints what it should, so this cannot pass by redacting everything.
+    expect(forged.orderId).toBe("1234");
+  });
+
+  test("a container of the WRONG KIND is withheld whole, either way round", () => {
+    // The scalar-path case was closed; these two were not. An array where an
+    // object was expected published its LENGTH, and an object where an array was
+    // expected published its KEY NAMES — the exact invariant the fix states.
+    expect(
+      (redactOrder({ shippingData: [1, 2, 3, 4, 5] }) as Record<string, unknown>).shippingData,
+    ).toBe("[redacted]");
+    expect(
+      (redactOrder({ items: { cedula: "1", telefono: "2" } }) as Record<string, unknown>).items,
+    ).toBe("[redacted]");
+    // And a real array at a real array path still works.
+    const ok = redactOrder({ items: [{ name: "LECHE" }, { name: "ARROZ" }] }) as {
+      items: Array<{ name: string }>;
+    };
+    expect(ok.items.map((i) => i.name)).toEqual(["LECHE", "ARROZ"]);
+  });
+
   test("a `__proto__` key is redacted in place, not silently dropped", () => {
     // Plain assignment set the prototype instead of defining an own property,
     // so the key vanished. No disclosure, but the output stopped being
@@ -306,8 +348,12 @@ describe("redactOrder", () => {
     // A bare scalar or array at the root is not a known printable path, so it is
     // redacted rather than echoed. An order is always an object; anything else
     // arriving here is unrecognised, which is precisely when to say less.
+    //
+    // The array is withheld WHOLE. Mapping it element-by-element still
+    // published how many elements there were, which is the same length leak
+    // that `geoCoordinates` taught, on the one path with no allowlist at all.
     expect(redactOrder("plain")).toBe("[redacted]");
-    expect(redactOrder([1, 2])).toEqual(["[redacted]", "[redacted]"]);
+    expect(redactOrder([1, 2])).toBe("[redacted]");
   });
 });
 

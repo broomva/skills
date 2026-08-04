@@ -96,6 +96,42 @@ green and 420 tests passed.
   `alternatives` assertion of `toEqual([])` was satisfied by the feature being
   deleted entirely.
 
+### Fixed — what round 2 found: both headline fixes were incomplete at an adjacent edge
+
+Round 2 confirmed all twelve round-1 fixes execute and are pinned — reverting
+any one of them takes a *named* test red. It then found that two of them were
+right and not finished, which is this repo's own recorded pattern for
+edge-dense files.
+
+- **The allowlist was still forgeable, by a key literally named `[]`.** The
+  synthetic array marker lived in the same map as real JSON keys, so a payload
+  shaped `{"items": {"[]": {...}}}` matched the marker and walked into the
+  element subtree — printing `name`, `ean` and `id` on the DEFAULT path of the
+  privacy feature this release exists to deliver, while the source comment and
+  the entry above both asserted that "nothing can be forged by naming". The
+  marker now lives in its own field, and traversal is gated on the container's
+  actual KIND. That closes two more leaks in the same stroke: an array where an
+  object was expected published its length, and an object where an array was
+  expected published its key names. A bare array at the root is now withheld
+  whole rather than mapped element-by-element, which stops publishing its
+  length too.
+- **The command-quoting fix had a second site, and its own docstring denied
+  it.** `renderSubstitutes` prints `d1 cart add <skuId>` with only `sanitize`
+  applied — control characters stripped, `;` and `|` and backticks left. The new
+  `shellQuote` docstring claimed `alternativesNote` was "the first place in this
+  file to interpolate data into something a reader may run", which was false when
+  written and contradicted by a comment already in `test/present.test.ts`. Both
+  sites are gated on `/^\d+$/` now, and the false claim is corrected in place
+  rather than deleted, because what it should have prompted is the fix.
+- The affordability filter had no lower bound, so `0`, a negative price and
+  `-Infinity` all counted as "would fit" — the "a price of 0 is not free"
+  defect, re-entered from a third direction.
+
+**Known and deliberate:** two over-budget lines each report against the same
+remaining money. Each sentence is true and scoped to its own term, and hedging
+every line would cost more clarity than the ambiguity costs. Recorded rather
+than silently accepted.
+
 ### Measured — `Envío D1 Express` is not reachable through the storefront API
 
 BRO-2080 asked for measurement before design. Seven delivery points across five

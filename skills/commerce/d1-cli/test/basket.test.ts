@@ -1582,3 +1582,36 @@ describe("a downgraded line carries no trace of prices it cannot offer [BRO-2086
     expect(plan.lines[0]?.alternatives).toBeUndefined();
   });
 });
+
+describe("an alternative must be a real price [BRO-2086]", () => {
+  test("zero, negative and infinite prices are not 'cheaper matches that fit'", () => {
+    // `packPrices` blocks these today, but `fillToBudget` is exported and
+    // `alternatives` is public — the same "the exported type permits a caller
+    // the code does not" reasoning that gated the skuId. A price of 0 is not
+    // free, re-entered from a third direction.
+    const plan = fillToBudget(
+      [
+        line({
+          term: "arroz",
+          // ABOVE the budget, or the line simply fills and the branch under
+          // test is never reached — which is how the first draft of this test
+          // passed while asserting nothing.
+          price: 1_100_000,
+          alternatives: [0, -500, Number.NEGATIVE_INFINITY, Number.NaN],
+        }),
+      ],
+      1_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("over-budget");
+    expect(plan.lines[0]?.affordableAlternatives).toBeUndefined();
+  });
+
+  test("a real price alongside the junk is still counted", () => {
+    // The opposite polarity, so the filter cannot be mutated to a constant false.
+    const plan = fillToBudget(
+      [line({ term: "arroz", price: 1_100_000, alternatives: [0, 400_000, Number.NaN] })],
+      1_000_000,
+    );
+    expect(plan.lines[0]?.affordableAlternatives).toBe(1);
+  });
+});
