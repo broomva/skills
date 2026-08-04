@@ -111,9 +111,17 @@ describe("nearbyStores", () => {
   });
 
   test("a malformed entry is dropped rather than rendered as a blank shop", async () => {
-    const { client } = paged([[{ distance: 1 }, point("ok", 2)], []]);
+    const { client } = paged([
+      // Two different malformations, because the guard does two jobs and a
+      // fixture missing `pickupPoint` entirely only exercises one of them: a
+      // mutation that kept an id-less point still passed.
+      [{ distance: 1 }, { distance: 1.5, pickupPoint: { friendlyName: "NO ID" } }, point("ok", 2)],
+      [],
+    ]);
     const r = await nearbyStores(client, AT, { limit: 5 });
     expect(r.stores.map((s) => s.id)).toEqual(["ok"]);
+    // And it is not counted as something the sweep found, either.
+    expect(r.swept).toBe(1);
   });
 
   test("an inactive point is kept but flagged, not silently dropped", async () => {

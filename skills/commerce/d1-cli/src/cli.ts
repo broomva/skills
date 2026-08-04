@@ -14,6 +14,7 @@
 import {
   type BasketLine,
   type BasketOptions,
+  type CrossBasket,
   buildBasket,
   compareBaskets,
   isFilled,
@@ -241,6 +242,22 @@ export function basketOptions(
  * line is prefixed "Finish with:" — a literal instruction to run it, in the one
  * flow where an agent is most likely to paste the follow-up unread.
  */
+/**
+ * What `d1 basket --brand` exits with.
+ *
+ * The BRANDED basket decides, because it is the one that was asked about.
+ * Reporting the unconstrained basket's success would answer "found it" to a
+ * question nobody asked — a shopper who asks what their list costs in one brand
+ * and is told 0 will read that as "yes, in that brand".
+ *
+ * Extracted so this is testable without a network stub, the same reason
+ * `orderForDisplay` and `loginFollowUp` exist. Inline, a mutation swapping
+ * `alt` for `base` survived the whole suite.
+ */
+export function comparisonExit(cmp: CrossBasket): number {
+  return basketExit(cmp.alt.lines);
+}
+
 export function loginFollowUp(email: string, authToken: string): string {
   return `A one-time code is on its way to ${email}. Finish with:\n  d1 login --email ${shellQuote(email)} --auth-token ${shellQuote(authToken)} --code <code>`;
 }
@@ -583,10 +600,7 @@ async function main(argv: string[]): Promise<number> {
       if (brand !== undefined) {
         const cmp = await compareBaskets(client, terms, budget, { ...opts, brand });
         console.log(asJson ? json({ ...cmp, regionId: region?.id }) : renderComparison(cmp));
-        // Exit on the BRANDED basket, which is the one that was asked about.
-        // Reporting the unconstrained basket's success would say "found it"
-        // about a question nobody asked.
-        return basketExit(cmp.alt.lines);
+        return comparisonExit(cmp);
       }
 
       const plan = await buildBasket(client, terms, budget, opts);

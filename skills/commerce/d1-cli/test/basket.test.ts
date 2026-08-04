@@ -10,7 +10,7 @@ import {
   packPrices,
   parseBudget,
 } from "../src/basket.ts";
-import { basketExit, basketOptions } from "../src/cli.ts";
+import { basketExit, basketOptions, comparisonExit } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
 import type { Measure } from "../src/measure.ts";
 import { renderBasket, renderComparison } from "../src/present.ts";
@@ -1866,5 +1866,32 @@ describe("renderComparison [BRO-2079]", () => {
 
   test("it states that both baskets respected the same budget", async () => {
     expect(renderComparison(await build("LATTI"))).toContain("same budget");
+  });
+});
+
+describe("what `--brand` exits with [BRO-2079]", () => {
+  const client = (brandInStock: boolean) =>
+    fakeClient({
+      search: [
+        wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+        ...(brandInStock ? [wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" })] : []),
+      ],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [],
+    });
+
+  test("the BRANDED basket decides, not the unconstrained one", async () => {
+    // A shopper who asks what their list costs in one brand and is told 0 will
+    // read that as "yes, in that brand". Swapping `alt` for `base` here
+    // survived the entire suite until this existed.
+    const empty = await compareBaskets(client(false), ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(empty.base.lines[0]?.status).toBe("filled");
+    expect(comparisonExit(empty)).toBe(3);
+  });
+
+  test("...and it is 0 when the brand really did fill the list", async () => {
+    // The other polarity, so the exit cannot be mutated to a constant 3.
+    const found = await compareBaskets(client(true), ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(comparisonExit(found)).toBe(0);
   });
 });
