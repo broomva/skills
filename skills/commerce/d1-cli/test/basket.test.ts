@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type BasketLine,
+  type LineStatus,
   buildBasket,
   chooseBest,
   compareBaskets,
@@ -2493,16 +2494,44 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     expect(out).toContain("Brands it did return: OTRA");
   });
 
-  test("the hint never names the brand that was asked for", async () => {
-    // `brandsIn` read EVERY base line, and an unfilled line carries the product
-    // it rejected — so a rejected LATTI product put LATTI in the list directly
-    // under "Nothing D1 returned for these terms is LATTI".
+  test("the hint reads FILLED lines only, and never names the asked-for brand", async () => {
+    // The shape that reaches the defect: every product for the term is a
+    // LATTI product that is out of stock. Base cannot fill, so its line is
+    // `nothing-in-stock` carrying `product: source` — a LATTI product it
+    // REJECTED. Alt is `no-brand-match`, so the headline fires. Reading every
+    // base line then printed "Brands it did return: LATTI" directly under
+    // "Nothing D1 returned for these terms is LATTI".
+    //
+    // An earlier fixture put an in-stock OTRA product alongside, so base filled
+    // and the unfilled path was never taken — both guards survived deletion.
     const c = await compareBaskets(
       fakeClient({
         search: [
-          wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" }),
-          wire("2", "ARROZ LATTI AGOTADO", { price: 4_000, brand: "LATTI", available: false }),
+          wire("1", "ARROZ LATTI AGOTADO", { price: 4_000, brand: "LATTI", available: false }),
         ],
+        sku: sourceSku("1", "ARROZ LATTI AGOTADO"),
+        sweep: [],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(isFilled(c.base.lines[0]?.status as LineStatus)).toBe(false);
+    expect(c.base.lines[0]?.product?.brand).toBe("LATTI");
+    expect(c.alt.lines[0]?.status).toBe("no-brand-match");
+    // The headline fires, so the list beside it must not refute it.
+    expect(c.brandsSeen).toEqual([]);
+    const out = renderComparison(c);
+    expect(out).toContain("Nothing D1 returned for these terms is LATTI");
+    expect(out).not.toContain("Brands it did return");
+  });
+
+  test("a filled line of another brand IS offered as a hint (positive polarity)", async () => {
+    // So the two guards above cannot be satisfied by returning nothing at all.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })],
         sku: sourceSku("1", "ARROZ OTRA"),
         sweep: [],
         sweepTotal: 140,
@@ -2511,6 +2540,45 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
       100_000_000,
       { brand: "LATTI" },
     );
-    expect(c.brandsSeen).not.toContain("LATTI");
+    expect(c.brandsSeen).toEqual(["OTRA"]);
+  });
+});
+
+describe("the table label is the bucket label [BRO-2079 round 3]", () => {
+  test("a long repeated term is not truncated out of recognition", async () => {
+    // `pad(..., 18)` cut at 17 characters, so "aceite de oliva (#2)" rendered
+    // as "aceite de oliva (…" — two indistinguishable rows, while the sentence
+    // below named "(#2)" precisely. The reader could not map one to the other.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ACEITE DE OLIVA OTRA", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ACEITE DE OLIVA LATTI", { price: 90_000, brand: "LATTI" }),
+        ],
+        sku: sourceSku("1", "ACEITE DE OLIVA OTRA"),
+        sweep: [],
+      }),
+      ["aceite de oliva", "aceite de oliva"],
+      400_000,
+      { brand: "LATTI" },
+    );
+    const out = renderComparison(c);
+    // Both labels appear IN FULL in the table, not just in the sentences.
+    const rows = out.split("\n").filter((l) => l.startsWith("  aceite"));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("aceite de oliva (#1)");
+    expect(rows[1]).toContain("aceite de oliva (#2)");
+    expect(out).not.toContain("…");
+    // And every label named in a bucket is findable in the table.
+    for (const label of [
+      ...c.onlyBase,
+      ...c.altOverBudget,
+      ...c.altUnknown,
+      ...c.altNoMatch,
+      ...c.onlyAlt,
+      ...c.neither,
+    ]) {
+      expect(rows.some((r) => r.includes(label))).toBe(true);
+    }
   });
 });
