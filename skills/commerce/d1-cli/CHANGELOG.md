@@ -3,6 +3,95 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.9.0] — 2026-08-04
+
+### Added — `d1 stores near`, and a clear statement of what it is not
+
+The pickup-point registry is real, current data: shop names, street addresses,
+opening hours, coordinates. It reads exactly like a click-and-collect offer, and
+it is not one. Every checkout simulation at every point tried, against both the
+national seller and the regional one, returns `deliveryChannels: [{"id":
+"delivery"}]`; no `pickup-in-point` has ever been observed. The output says so
+on its last line, because a list of addresses with opening hours does not say it
+by itself.
+
+Item 3 of BRO-2067's ranked next-work list.
+
+```
+    0.88 km  BOG TOBERIN                 CL 164 # 16 A - 49, TOBERIN, BOGOTA, D.C.
+           open today 07:00–21:00
+
+3 shown of 30 found within 2.6 km of the point — the registry holds more further out
+These are store locations, not collection points — D1's checkout offers
+scheduled delivery only, so you cannot have an order sent here to collect.
+```
+
+Three things measured while building it, none documented upstream:
+
+- **30 results per page, always.** `?count=100` is accepted and **silently
+  ignored** — the same dropped-filter shape as `fq=skuId:` on intelligent-search
+  (gotcha 10). So `count` is *refused* by the query guard rather than forwarded,
+  because forwarding it would let a caller believe it had asked for something.
+- `?page=N` works and page 11 is empty, so **300 is a ceiling, not a total.** At
+  the Bogotá test point the 300th store is 17 km out; a shop past that is
+  missing from the answer rather than from D1.
+- The registry is distance-sorted, so a request for 5 reads **one** page.
+
+The sweep therefore reports *why* it stopped — `registry-empty`, `cap`, or
+`limit` — and each renders a different sentence. That began as a boolean, and a
+test caught it conflating the last two: a full sweep told the reader "the
+registry holds more further out" about the one case where it will not serve any
+more.
+
+### Added — `d1 basket --brand`, the same list priced two ways
+
+BRO-2079, built as it specified: substitution with a **brand** constraint
+instead of a stock one, reusing `findSubstitutes` rather than growing a second
+ranker. The term's own page is tried first — cheap, and usually where a
+same-brand product is — and only a page with none reaches the category sweep.
+
+```
+  arroz                $ 5.550           —
+  leche                $ 3.090     $ 3.090   same
+  huevos               $ 1.650     $ 1.650   same
+
+Over the 2 terms BOTH filled: $ 4.740 best-value vs $ 4.740 in LATTI — $ 0 the same as best value.
+Not counted — no LATTI for: arroz, aceite. Their cost is in neither number above.
+```
+
+**The headline delta is computed over the terms both baskets filled, and nothing
+else.** This is the whole reason the feature is not two totals side by side. A
+brand-constrained basket routinely fills fewer lines, and differencing the totals
+then reports the missing lines as a saving — drop the two dearest terms and any
+brand looks cheap, because it did not buy them. The unfilled terms are named
+separately, where they read as a gap rather than a discount. A mutation turning
+the delta back into total-minus-total fails three tests.
+
+Both baskets are fit to the **same budget**, so each is one a shopper could
+actually have bought.
+
+Two smaller honesty points:
+
+- A brand that matches nothing anywhere lists **the brands that did appear**. An
+  empty branded basket is otherwise the same output for a typo and for a brand
+  D1 does not carry.
+- **`no-brand-match` is its own status.** "D1 has none of this brand" and "D1 has
+  none of this in stock" are different facts, and only one of them is about the
+  shelf. A lookup that failed is still `replacement-unknown`, never either.
+
+### Fixed — two behaviours a mutation sweep found unpinned
+
+19 mutations, 17 dead on the first pass. Both survivors were real:
+
+- The `--brand` exit code was read inline from the branded basket, so swapping
+  it for the unconstrained one passed the entire suite. A shopper who asks what
+  their list costs in one brand and is told `0` will read that as "yes, in that
+  brand". Extracted as `comparisonExit` so the wiring is testable without a
+  network stub — the same reason `orderForDisplay` and `loginFollowUp` exist.
+- The malformed-pickup-point fixture omitted `pickupPoint` entirely, so it
+  exercised only one of the guard's two jobs; a point that *has* a `pickupPoint`
+  but no `id` slipped through green.
+
 ## [0.8.0] — 2026-08-04
 
 ### Changed — `d1 order` redacts by ALLOWLIST, and the customer's name no longer prints
