@@ -265,6 +265,21 @@ export function basketTerms(positional: readonly string[]): string[] {
   return positional.slice(1).filter((t) => t.trim().length > 0);
 }
 
+/**
+ * What `d1 stores near` exits with.
+ *
+ * Extracted so the three-way split is testable without a network stub that
+ * serves malformed entries — the same reason `comparisonExit` and
+ * `loginFollowUp` exist.
+ */
+export function storesExit(r: { stores: readonly unknown[]; dropped: number }): number {
+  if (r.stores.length) return 0;
+  // Exit 3 is "asked, and the answer is genuinely none", documented CLI-wide as
+  // never worth retrying. An answer this parser could not read is a failure on
+  // our side, and the render already declines to call it an empty neighbourhood.
+  return r.dropped ? 1 : 3;
+}
+
 export function comparisonExit(cmp: CrossBasket): number {
   return basketExit(cmp.alt.lines);
 }
@@ -682,10 +697,12 @@ async function main(argv: string[]): Promise<number> {
           ? json({ ...result, at, maxReachable: MAX_REACHABLE, collection: false })
           : renderStores(result, at, vtexDay(new Date().getDay())),
       );
-      // Exit 3 when the registry knows of nothing here — the same "asked, and
-      // the answer is genuinely empty" code the basket uses, distinct from a
-      // usage error (2) and from success with results (0).
-      return result.stores.length ? 0 : 3;
+      // Exit 3 is "asked, and the answer is genuinely none" — documented CLI-wide
+      // as never worth retrying. An answer this parser could not read is not
+      // that: the render already refuses to call it an empty neighbourhood, and
+      // an agent branching on 3 would record the false fact the prose declines
+      // to state. That is a failure on our side, so it is 1.
+      return storesExit(result);
     }
 
     case "region": {

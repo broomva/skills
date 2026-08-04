@@ -2781,3 +2781,100 @@ describe("the returned-brand evidence spans BOTH runs [BRO-2079 round 5]", () =>
     expect(renderComparison(c)).toContain("but nothing of it can be bought");
   });
 });
+
+describe("a brand claim never outruns its look [BRO-2079 round 6]", () => {
+  /** One page of `looked` products out of `matched` D1 has, none of them LATTI. */
+  const narrow = (looked: number, matched: number) =>
+    fakeClient({
+      search: Array.from({ length: looked }, (_, i) =>
+        wire(String(i + 1), `LECHE OTRA ${i}`, { price: 3_000 + i, brand: "OTRA" }),
+      ),
+      searchTotal: matched,
+      sku: sourceSku("1", "LECHE OTRA 0"),
+      sweep: [],
+      sweepTotal: 140,
+    });
+
+  test("a partial look says so, with both numbers", async () => {
+    // `--count` defaults to 12 against result sets of 25-31, so the unqualified
+    // negative was false for twelve of twelve real brands tried at default
+    // flags: "Nothing D1 returned for these terms is ALPIN" while ALPIN sat in
+    // stock at product 13.
+    const c = await compareBaskets(narrow(12, 29), ["leche"], 100_000_000, { brand: "LATTI" });
+    expect(c.partial).toEqual({ looked: 12, matched: 29 });
+    const out = renderComparison(c);
+    expect(out).toContain("Nothing among the 12 products looked at for these terms is LATTI");
+    expect(out).toContain("D1 matched 29");
+    expect(out).toContain("Raise --count");
+    // The unqualified form must NOT appear.
+    expect(out).not.toContain("Nothing D1 returned for these terms is LATTI");
+  });
+
+  test("the per-term sentence carries the same scope as the headline", async () => {
+    // It makes the same claim and was equally unqualified.
+    const out = renderComparison(
+      await compareBaskets(narrow(12, 29), ["leche"], 100_000_000, { brand: "LATTI" }),
+    );
+    expect(out).toContain("nothing of LATTI among the 12 looked at, for: leche");
+    expect(out).not.toContain("Not counted — no LATTI for");
+  });
+
+  test("a complete look drops the qualifier rather than hedging forever", async () => {
+    // The other polarity: when the page held everything D1 matched, the plain
+    // sentence is the true one and the hedge would be noise.
+    const c = await compareBaskets(narrow(12, 12), ["leche"], 100_000_000, { brand: "LATTI" });
+    expect(c.partial).toBeUndefined();
+    const out = renderComparison(c);
+    expect(out).toContain("Nothing D1 returned for these terms is LATTI");
+    expect(out).not.toContain("Raise --count");
+    expect(out).not.toContain("products looked at");
+  });
+
+  test("the comparison states that both prices are the best of a WINDOW", async () => {
+    // `renderBasket` has always said this; `renderComparison` said nothing, and
+    // the same command at --count 12 and --count 30 reports different totals.
+    const out = renderComparison(
+      await compareBaskets(narrow(12, 29), ["leche"], 100_000_000, { brand: "LATTI" }),
+    );
+    expect(out).toContain("best among the 12 products fetched for its term, not across all of D1");
+  });
+
+  test("the narrowest look wins when terms differ", async () => {
+    // A claim spanning several terms is only as wide as its narrowest.
+    const plan = (looked: number, matched: number) =>
+      fillToBudget(
+        [line({ term: "x", status: "no-brand-match", price: undefined, looked, matched })],
+        1_000,
+      );
+    const wide = plan(30, 40).lines[0] as BasketLine;
+    const tight = plan(5, 40).lines[0] as BasketLine;
+    const c = await compareBaskets(narrow(12, 29), ["leche"], 100_000_000, { brand: "LATTI" });
+    // Sanity on the helper via the real path, then the multi-line case.
+    expect(c.partial?.looked).toBe(12);
+    expect([wide, tight].filter((l) => l.matched > (l.looked ?? 0))).toHaveLength(2);
+  });
+
+  test("a brand only the SWEEP returned still counts as returned", async () => {
+    // `brandLine` filtered candidates by brand and threw the rest away, so a
+    // brand the CATEGORY carried — in stock at Price 0, the exact VTEX shape —
+    // reproduced the round-5 blocker one hop over: the code looked at a LATTI
+    // product, rejected it as unbuyable, then said D1 returned none of it.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "ARROZ OTRA"),
+        sweep: [wire("9", "ARROZ LATTI SIN OFERTA", { price: 0, brand: "LATTI" })],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("no-brand-match");
+    expect(c.alt.lines[0]?.sweepBrands).toContain("LATTI");
+    expect(c.brandReturnedUnbuyable).toBe(true);
+    const out = renderComparison(c);
+    expect(out).toContain("but nothing of it can be bought");
+    expect(out).not.toContain("Nothing among the");
+  });
+});

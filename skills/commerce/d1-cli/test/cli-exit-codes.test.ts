@@ -294,3 +294,18 @@ describe("the new commands validate BEFORE the network", () => {
     expect(code).toBe(2);
   });
 });
+
+describe("an unreadable registry answer is not exit 3", () => {
+  test("exit 3 is reserved for 'the answer is genuinely none'", async () => {
+    // The render refuses to call an unreadable answer an empty neighbourhood;
+    // the exit code was calling it one, and an agent branching on 3 — documented
+    // CLI-wide as never worth retrying — would have recorded the false fact.
+    //
+    // Driven through the real `storesExit` decision rather than the network,
+    // which cannot be made to serve malformed entries from here.
+    const { storesExit } = await import("../src/cli.ts");
+    expect(storesExit({ stores: [{}], dropped: 0 })).toBe(0);
+    expect(storesExit({ stores: [], dropped: 0 })).toBe(3);
+    expect(storesExit({ stores: [], dropped: 30 })).toBe(1);
+  });
+});

@@ -843,10 +843,20 @@ export function renderComparison(c: CrossBasket): string {
     // means nothing of the brand was BUYABLE — it does not mean D1 returned none
     // of it, and saying so was false whenever the brand was on the page at
     // `Price: 0` (live: `--brand COPELIA leche`).
+    // Three sentences, and which one is true depends on evidence this now reads.
+    //
+    // The unqualified negative was false for twelve of twelve real brands tried
+    // at default flags: `--count` defaults to 12 against result sets of 25-31,
+    // so "Nothing D1 returned for these terms is ALPIN" was a universal over
+    // twelve products while ALPIN sat in stock at product 13. `scopeOf`,
+    // `sweepCaveat` and `footerFor` hold this line everywhere else in the
+    // module; this render called none of them.
     out.push(
       c.brandReturnedUnbuyable
         ? `D1 returned ${brand} for these terms, but nothing of it can be bought at this store.`
-        : `Nothing D1 returned for these terms is ${brand}.`,
+        : c.partial
+          ? `Nothing among the ${c.partial.looked} products looked at for these terms is ${brand} — D1 matched ${c.partial.matched}. Raise --count to widen the look.`
+          : `Nothing D1 returned for these terms is ${brand}.`,
     );
     if (c.brandsSeen.length) {
       // Truncated OUT LOUD. A silent `.slice(0, 12)` is the same shape as every
@@ -910,8 +920,15 @@ export function renderComparison(c: CrossBasket): string {
   // was found and priced and refused on budget, and about one whose lookup never
   // answered. Those are facts about a wallet and about a network; only the first
   // line below is a fact about D1's shelf.
+  // The per-term sentence carries the same scope as the headline, because it
+  // makes the same claim and was equally unqualified — it printed
+  // "no RED FLAG for: aceite" about a term whose RED FLAG product was on the
+  // page one `--count` wider, at $ 8.900.
+  const notFound = c.partial
+    ? `nothing of ${brand} among the ${c.partial.looked} looked at, for`
+    : `no ${brand} for`;
   const missing: Array<[readonly string[], string]> = [
-    [c.onlyBase, `no ${brand} for`],
+    [c.onlyBase, notFound],
     [c.altOverBudget, `${brand} found but over budget for`],
     [c.altUnknown, `the ${brand} lookup did not answer for`],
     [c.altNoMatch, "D1 returned nothing at all for"],
@@ -949,6 +966,16 @@ export function renderComparison(c: CrossBasket): string {
     );
   }
   out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
+  // The footer `renderBasket` has had all along. Both prices above are the best
+  // of a window, not of D1, and the window moves with `--count`: the same
+  // command at 12 and at 30 picks different products and reports different
+  // totals. A comparison that does not say so invites the reader to treat it as
+  // a fact about the shop.
+  if (c.partial) {
+    out.push(
+      `Each price is the best among the ${c.partial.looked} products fetched for its term, not across all of D1 — raise --count to widen it.`,
+    );
+  }
   return out.join("\n");
 }
 
