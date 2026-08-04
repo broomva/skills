@@ -63,10 +63,13 @@ describe("the runtime endpoint guard", () => {
       expect(isAllowedPath(shape.replace(/\{\}/g, "SEG"))).toBe(true);
     }
     // Bumped from 19 to 20 by `catalog_system/pub/products/search` (SKU lookup
-    // for `d1 substitute`). The count is here so that widening the CLI's reach
-    // upstream cannot happen as a side effect of a feature — it has to be
-    // typed out, in a file whose whole subject is the payment boundary.
-    expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(20);
+    // for `d1 substitute`), and from 20 to 21 by `checkout/pub/pickup-points`
+    // (the store locator for `d1 stores near` — a READ of public shop addresses
+    // and hours, carrying nothing customer-scoped and settling nothing).
+    // The count is here so that widening the CLI's reach upstream cannot happen
+    // as a side effect of a feature — it has to be typed out, in a file whose
+    // whole subject is the payment boundary.
+    expect(ALLOWED_ENDPOINT_SHAPES.length).toBe(21);
     // ...but a COUNT only sees entries appear, never an existing one loosen.
     // Widening `/products/search$/` to `/pub/.*/` is a one-character-class edit
     // that leaves the length at 20 and every shape still matching its own
@@ -80,6 +83,7 @@ describe("the runtime endpoint guard", () => {
       "^\\/api\\/catalog_system\\/pub\\/category\\/tree\\/[^/]+$",
       "^\\/api\\/catalog_system\\/pub\\/products\\/search$",
       "^\\/api\\/checkout\\/pub\\/regions$",
+      "^\\/api\\/checkout\\/pub\\/pickup-points$",
       "^\\/api\\/checkout\\/pub\\/orderForm$",
       "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+$",
       "^\\/api\\/checkout\\/pub\\/orderForm\\/[^/]+\\/items$",

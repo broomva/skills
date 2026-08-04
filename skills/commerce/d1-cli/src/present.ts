@@ -14,11 +14,13 @@ import { type BasketLine, type BasketPlan, FILLED, type LineStatus } from "./bas
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP, sum } from "./money.ts";
+import { MAX_REACHABLE, type StoresResult, hoursOn } from "./stores.ts";
 import type { SubstituteResult } from "./substitute.ts";
 import type {
   Cart,
   Category,
   Facet,
+  LatLng,
   OrderSummary,
   Product,
   Region,
@@ -714,4 +716,94 @@ function reasonFor(l: BasketLine): string {
       // like a shopping outcome.
       return "not included — this line names no product, which is a bug in whatever built this plan";
   }
+}
+
+/**
+ * Nearby stores.
+ *
+ * The last two lines carry the weight. A list of street addresses with opening
+ * hours reads as a collection offer to anyone who does not already know it is
+ * not one, so it says so — and it states the radius its "nearest" claim is good
+ * for, because the registry caps at 300 points and a shop past that edge is
+ * missing from the answer without being missing from the world.
+ */
+export function renderStores(r: StoresResult, at: LatLng, today?: number): string {
+  // Gated on the SWEEP. Keying on `stores.length` asserted "that is the
+  // registry's answer" whenever the shown list happened to be empty — including
+  // when points were fetched and every one was dropped as malformed, which is a
+  // statement about this parser rather than about the registry.
+  if (!r.stores.length) {
+    // The registry ANSWERED, and this parser could not read what it said. That
+    // is a fact about this code, and reporting it as the registry's answer
+    // would be the same substitution the sentence below exists to avoid.
+    if (r.dropped) {
+      return [
+        `No D1 store near ${fmtCoord(at)} could be read from the pickup registry.`,
+        `It returned ${r.dropped} ${r.dropped === 1 ? "entry" : "entries"} and none of them carried the fields this needs, which is a bug here rather than an empty neighbourhood.`,
+      ].join("\n");
+    }
+    return [
+      `No D1 store is in the pickup registry near ${fmtCoord(at)}.`,
+      "That is the registry's answer, not a survey of the neighbourhood — it lists points D1 has configured for logistics, which is not the same set as shops with a door.",
+    ].join("\n");
+  }
+
+  const out: string[] = [];
+  for (const s of r.stores) {
+    const where = [s.street, s.neighborhood, s.city].filter(Boolean).join(", ");
+    out.push(
+      `  ${fmtKm(s.distanceKm)}  ${pad(sanitize(s.name), 26)}  ${sanitize(where)}${s.active ? "" : "   [inactive]"}`,
+    );
+    const h = today === undefined ? undefined : hoursOn(s, today);
+    if (h) out.push(`${" ".repeat(11)}open today ${h.opens.slice(0, 5)}–${h.closes.slice(0, 5)}`);
+  }
+
+  out.push("");
+  out.push(`${r.stores.length} shown of ${r.swept} found${scopeLine(r)}`);
+  // The load-bearing sentence. Measured, not assumed: no checkout simulation at
+  // any point tried has ever offered a `pickup-in-point` delivery channel.
+  out.push(
+    "These are store locations, not collection points — D1's checkout offers scheduled delivery only, so you cannot have an order sent here to collect.",
+  );
+  return out.join("\n");
+}
+
+/**
+ * How wide the look was, and why it stopped where it did.
+ *
+ * Three endings, three different sentences. A boolean conflated the last two,
+ * so a sweep that hit the API's own ceiling said "the registry holds more
+ * further out" — true of the world, false of anything this command can reach.
+ */
+function scopeLine(r: StoresResult): string {
+  const reach =
+    r.reachedKm === undefined ? "" : ` within ${r.reachedKm.toFixed(1)} km of the point`;
+  switch (r.stopped) {
+    case "registry-empty":
+      return `${reach} — that is every point the registry returns here`;
+    case "cap":
+      return `${reach} — that is the registry's own ceiling of ${MAX_REACHABLE}, so a shop further out is missing from this answer rather than from D1`;
+    default:
+      // Hedged when the registry did not report a total. Stopping on `limit`
+      // after a page that happened to hold exactly the limit proves nothing
+      // about what lies beyond it, and "holds more" is an assertion.
+      // An exact remainder needs a total that is a TOTAL. `stores.ts` refuses to
+      // treat `registryTotal` as one at exactly MAX_REACHABLE — 300 at both
+      // Bogotá and Medellín is too round to be a coincidence — and then this
+      // turned the same number into "the registry holds 270 more further out".
+      return r.registryTotal !== undefined &&
+        r.registryTotal < MAX_REACHABLE &&
+        r.registryTotal > r.swept
+        ? `${reach} — the registry holds ${r.registryTotal - r.swept} more further out`
+        : `${reach} — the registry may hold more further out`;
+  }
+}
+
+function fmtKm(km: number): string {
+  if (Number.isNaN(km)) return "   ?   ";
+  return `${km.toFixed(2).padStart(6)} km`;
+}
+
+function fmtCoord(at: LatLng): string {
+  return `${at.lat}, ${at.lng}`;
 }
