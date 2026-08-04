@@ -639,7 +639,15 @@ async function main(argv: string[]): Promise<number> {
         throw new UsageError("Usage: d1 stores near --lat <lat> --lng <lng> [--limit N]");
       }
       const limit = num(flags.limit);
-      if (flags.limit !== undefined && (limit === undefined || limit < 1)) {
+      // `Number.isInteger`, because the message promises a whole number and
+      // `num("2.7")` returns 2.7 — which passed, was silently truncated to 2,
+      // and gave the caller two stores for a request the CLI had told them was
+      // valid. Refusing costs a retype; truncating costs a wrong answer nobody
+      // was warned about.
+      if (
+        flags.limit !== undefined &&
+        (limit === undefined || !Number.isInteger(limit) || limit < 1)
+      ) {
         throw new UsageError("--limit must be a positive whole number.");
       }
       const result = await nearbyStores(client, at, { limit });

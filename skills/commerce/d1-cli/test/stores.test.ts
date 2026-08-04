@@ -435,3 +435,59 @@ describe("renderStores keys its empty branch on the SWEEP [BRO-2067]", () => {
     expect(out).not.toContain("could be read from the pickup registry");
   });
 });
+
+describe("CodeRabbit round [BRO-2067]", () => {
+  test("a page nobody could read is not 'every point the registry returns'", async () => {
+    // `fresh === 0` fires both for a page of duplicates and for a page this
+    // parser could not read a word of. The second is not the registry running
+    // out; it is us running out, and claiming completeness from it is the same
+    // substitution the `dropped` count exists to prevent.
+    const good = fullPage("p", 1);
+    const impl = (async (url: string) => {
+      const page = Number(new URL(String(url)).searchParams.get("page") ?? "1");
+      const items =
+        page === 1
+          ? good
+          : Array.from({ length: PAGE_SIZE }, () => ({ distance: 9, pickupPoint: { name: "x" } }));
+      return new Response(
+        JSON.stringify({ paging: { page, pageSize: PAGE_SIZE, total: 300, pages: 10 }, items }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const r = await nearbyStores(new D1Client({ fetchImpl: impl }), AT, { limit: 300 });
+    expect(r.stopped).toBe("registry-empty");
+    expect(r.dropped).toBe(PAGE_SIZE);
+    const out = renderStores(r, AT, 1);
+    expect(out).toContain("could not be read here, so there may be others");
+    expect(out).not.toContain("that is every point the registry returns here");
+  });
+
+  test("...and a clean exhaustion still claims completeness", () => {
+    // The other polarity, or the fix is a hedge everywhere.
+    const out = renderStores(
+      {
+        stores: [
+          {
+            id: "a",
+            name: "X",
+            distanceKm: 1,
+            street: "",
+            neighborhood: "",
+            city: "",
+            state: "",
+            postalCode: "",
+            hours: [],
+            active: true,
+          },
+        ],
+        swept: 1,
+        reachedKm: 1,
+        dropped: 0,
+        stopped: "registry-empty",
+      },
+      AT,
+      1,
+    );
+    expect(out).toContain("that is every point the registry returns here");
+  });
+});

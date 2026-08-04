@@ -230,7 +230,11 @@ describe("`d1 stores near` validates BEFORE the network", () => {
   });
 
   test("`d1 stores near` rejects a bad --limit offline", async () => {
-    for (const v of ["0", "-3", "abc"]) {
+    // "2.7" included deliberately: `num` returns 2.7, which passed a guard whose
+    // message promises a whole number, and `nearbyStores` then truncated it to
+    // 2 — the caller got two stores for a request the CLI had told them was
+    // valid.
+    for (const v of ["0", "-3", "abc", "2.7"]) {
       const { code } = await run(
         ["stores", "near", "--lat", "4.75", "--lng", "-74.03", "--limit", v],
         DEAD_PROXY,

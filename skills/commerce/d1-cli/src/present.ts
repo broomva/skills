@@ -780,7 +780,13 @@ function scopeLine(r: StoresResult): string {
     r.reachedKm === undefined ? "" : ` within ${r.reachedKm.toFixed(1)} km of the point`;
   switch (r.stopped) {
     case "registry-empty":
-      return `${reach} — that is every point the registry returns here`;
+      // Only claim completeness when everything the registry sent was readable.
+      // `fresh === 0` is true both for a page of duplicates and for a page this
+      // parser could not read a word of, and the second is not the registry
+      // running out — it is us running out.
+      return r.dropped
+        ? `${reach} — and ${r.dropped} more the registry sent could not be read here, so there may be others`
+        : `${reach} — that is every point the registry returns here`;
     case "cap":
       return `${reach} — that is the registry's own ceiling of ${MAX_REACHABLE}, so a shop further out is missing from this answer rather than from D1`;
     default:
