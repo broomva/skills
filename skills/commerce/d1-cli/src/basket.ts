@@ -100,6 +100,17 @@ export interface BasketLine {
    */
   alternatives?: readonly PriceHundredths[];
   /**
+   * Distinct brands among everything D1 RETURNED for this term.
+   *
+   * The whole page, not the one product the line chose. The brand hint read
+   * `product.brand` — one brand per term — and then claimed to name "the brands
+   * it did return": for `leche` D1 returns ten, and the hint printed one, a
+   * bakery brand that happened to win the unit-price ranking, while
+   * `NATURAL FEELING` — the exact near-miss a shopper typing `NATURAL` needs to
+   * see — was on the page and unmentioned.
+   */
+  pageBrands?: readonly string[];
+  /**
    * How many of those runners-up WOULD have fitted in the money left when this
    * line was refused. Set only on an `over-budget` line, where it is the whole
    * point; meaningless anywhere else, so it is absent there rather than zero.
@@ -503,6 +514,9 @@ export async function buildBasket(
       salesChannel,
     });
     const matched = page.total;
+    // Captured before any filtering: this is what D1 RETURNED, which is what
+    // the brand hint claims to report.
+    const pageBrands = distinctBrands(page.products);
 
     // With a brand constraint, the term's own page is tried first — cheap, and
     // it is where a same-brand product usually is. Only when the page holds
@@ -512,13 +526,14 @@ export async function buildBasket(
     const best = chooseBest(page.products, opts.brand);
     if (!best && normalizeBrand(opts.brand) !== undefined) {
       const line = await brandLine(client, term, page, matched, opts, salesChannel);
-      chosen.push(line);
+      chosen.push({ ...line, pageBrands });
       continue;
     }
     if (best) {
       chosen.push({
         term,
         status: "filled",
+        pageBrands,
         product: best.product,
         price: linePrice(best.product),
         compared: best.compared,
@@ -533,7 +548,7 @@ export async function buildBasket(
     // everything it returned is out of stock.
     const source = page.products[0];
     if (!source) {
-      chosen.push({ term, status: "no-match", compared: 0, matched });
+      chosen.push({ term, status: "no-match", compared: 0, matched, pageBrands });
       continue;
     }
 
@@ -547,6 +562,7 @@ export async function buildBasket(
       chosen.push({
         term,
         status: "replacement-unknown",
+        pageBrands,
         product: source,
         compared: page.products.length,
         matched,
@@ -557,6 +573,7 @@ export async function buildBasket(
       chosen.push({
         term,
         status: "nothing-in-stock",
+        pageBrands,
         product: source,
         compared: replacement.compared,
         inStock: replacement.inStock,
@@ -573,6 +590,7 @@ export async function buildBasket(
     chosen.push({
       term,
       status: "filled-by-substitute",
+      pageBrands,
       product: replacement.product,
       price: linePrice(replacement.product),
       replaces: source,
@@ -923,7 +941,7 @@ export async function compareBaskets(
     // LATTI" about a list where LATTI was never the reason.
     brandsSeen:
       alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
-        ? brandsIn(base.lines, want).slice(0, 12)
+        ? brandsIn(base.lines, want)
         : undefined,
   };
 }
@@ -1016,11 +1034,26 @@ export function pairRows(
  * requested brand appears here the headline above it is false, and no hint is
  * worth printing a lie for.
  */
-function brandsIn(lines: readonly BasketLine[], exclude?: string): string[] {
+export function brandsIn(lines: readonly BasketLine[], exclude?: string): string[] {
   const seen = new Set<string>();
   for (const l of lines) {
-    const b = l.product?.brand?.trim();
-    if (b && normalizeBrand(b) !== exclude) seen.add(b);
+    // The whole page D1 returned, falling back to the chosen product only when
+    // a line carries no page (a hand-built plan, or a path that never searched).
+    const from = l.pageBrands?.length ? l.pageBrands : [l.product?.brand ?? ""];
+    for (const raw of from) {
+      const b = raw.trim();
+      if (b && normalizeBrand(b) !== exclude) seen.add(b);
+    }
+  }
+  return [...seen].sort((x, y) => x.localeCompare(y));
+}
+
+/** Distinct, trimmed brands across a set of products, in a stable order. */
+export function distinctBrands(products: readonly Product[]): string[] {
+  const seen = new Set<string>();
+  for (const p of products) {
+    const b = p.brand?.trim();
+    if (b) seen.add(b);
   }
   return [...seen].sort((x, y) => x.localeCompare(y));
 }

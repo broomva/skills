@@ -1863,7 +1863,33 @@ describe("renderComparison [BRO-2079]", () => {
 
   test("unfilled terms are named as a gap, not folded into the number", async () => {
     const out = renderComparison(await build("TYPOO"));
-    expect(out).toContain("Their cost is in neither number above");
+    // NOT "their cost is in neither number above" — nothing shared means no two
+    // numbers were printed, and the term's own price IS on screen, so a reader
+    // takes that sentence as a claim about it.
+    expect(out).not.toContain("neither number above");
+  });
+
+  test("...and it DOES point at the two numbers when there are two", async () => {
+    // Two terms: one both baskets fill (so a comparison exists), one only the
+    // base fills (so something is missing). Both at once is the only state
+    // where the sentence is true, and the one-term `build` above cannot make it.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" }),
+        ],
+        sku: sourceSku("1", "ARROZ OTRA"),
+        sweep: [],
+      }),
+      ["arroz", "arroz"],
+      800_000,
+      { brand: "LATTI" },
+    );
+    expect(c.comparable.terms).toBeGreaterThan(0);
+    const missing = [...c.onlyBase, ...c.altOverBudget, ...c.altUnknown, ...c.altNoMatch];
+    expect(missing.length).toBeGreaterThan(0);
+    expect(renderComparison(c)).toContain("Their cost is in neither number above");
   });
 
   test("it names the brands that did appear when the ask matched none", async () => {
@@ -2423,7 +2449,8 @@ describe("altNoMatch is computed AND rendered [BRO-2079]", () => {
     };
     const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
     expect(out).toContain("D1 returned nothing at all for: leche");
-    expect(out).toContain("Their cost is in neither number above");
+    // Suppressed: nothing was shared, so there are no two numbers to point at.
+    expect(out).not.toContain("neither number above");
   });
 });
 
@@ -2494,7 +2521,7 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     expect(out).toContain("Brands it did return: OTRA");
   });
 
-  test("the hint reads FILLED lines only, and never names the asked-for brand", async () => {
+  test("the hint never names the brand that was asked for", async () => {
     // The shape that reaches the defect: every product for the term is a
     // LATTI product that is out of stock. Base cannot fill, so its line is
     // `nothing-in-stock` carrying `product: source` — a LATTI product it
@@ -2503,7 +2530,9 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     // "Nothing D1 returned for these terms is LATTI".
     //
     // An earlier fixture put an in-stock OTRA product alongside, so base filled
-    // and the unfilled path was never taken — both guards survived deletion.
+    // and the unfilled path was never taken. (The companion filled-only guard
+    // was later deleted as one of two mutually-masking guards; this exclusion
+    // is the load-bearing one, and the name above no longer claims otherwise.)
     const c = await compareBaskets(
       fakeClient({
         search: [
@@ -2580,5 +2609,100 @@ describe("the table label is the bucket label [BRO-2079 round 3]", () => {
     ]) {
       expect(rows.some((r) => r.includes(label))).toBe(true);
     }
+  });
+});
+
+describe("the brands hint and no-match [BRO-2079 round 4]", () => {
+  test("a no-match term alongside a no-brand-match term suppresses the hint", async () => {
+    // The one shape the round-3 narrowing changes, and neither test written for
+    // it constructed: `no-brand-match` + `no-match`. The round-2 expression
+    // (`some(no-brand-match) && every(no-brand-match || no-match)`) admits it
+    // and prints "Nothing D1 returned for these terms is LATTI" about a list
+    // where LATTI was never the reason for the second term.
+    let searches = 0;
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("1", "ARROZ OTRA")), { status: 200 });
+      }
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        const isSweep =
+          u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+          "";
+        if (isSweep) {
+          return new Response(JSON.stringify({ products: [], recordsFiltered: 0 }), {
+            status: 200,
+          });
+        }
+        searches++;
+        // Odd calls: "arroz" exists but has no LATTI  -> no-brand-match.
+        // Even calls: "unicornio" — D1 returns nothing -> no-match.
+        const products =
+          searches % 2 === 1 ? [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })] : [];
+        return new Response(JSON.stringify({ products, recordsFiltered: products.length }), {
+          status: 200,
+        });
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const c = await compareBaskets(
+      new D1Client({ fetchImpl: impl }),
+      ["arroz", "unicornio"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines.map((l) => l.status)).toEqual(["no-brand-match", "no-match"]);
+    // One term's failure has nothing to do with the brand, so the headline
+    // must not speak for the whole list.
+    expect(c.brandsSeen).toBeUndefined();
+    expect(renderComparison(c)).not.toContain("Nothing D1 returned for these terms is LATTI");
+  });
+
+  test("the hint reports every brand D1 RETURNED, not one per term", async () => {
+    // `brandsIn` read `product.brand` — one brand per line — and then claimed to
+    // name "the brands it did return". Live, D1 returns ten brands for `leche`
+    // and the hint printed one: a bakery brand that won the unit-price ranking,
+    // while NATURAL FEELING — the exact near-miss a shopper typing NATURAL
+    // needs — was on the page and unmentioned.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "LECHE ALPIN", { price: 3_000, brand: "ALPIN" }),
+          wire("2", "LECHE MUUU", { price: 3_500, brand: "MUUU" }),
+          wire("3", "LECHE NATURAL FEELING", { price: 4_000, brand: "NATURAL FEELING" }),
+        ],
+        sku: sourceSku("1", "LECHE ALPIN"),
+        sweep: [],
+        sweepTotal: 140,
+      }),
+      ["leche"],
+      100_000_000,
+      { brand: "NATURAL" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("no-brand-match");
+    // All three, not just the one the basket picked.
+    expect(c.brandsSeen).toEqual(["ALPIN", "MUUU", "NATURAL FEELING"]);
+    // And the near-miss is the whole reason the hint exists.
+    expect(renderComparison(c)).toContain("NATURAL FEELING");
+  });
+
+  test("a long brand list is truncated OUT LOUD, not silently", async () => {
+    const many = Array.from({ length: 20 }, (_, i) =>
+      wire(String(i + 1), `LECHE M${i}`, {
+        price: 3_000 + i,
+        brand: `MARCA${String(i).padStart(2, "0")}`,
+      }),
+    );
+    const c = await compareBaskets(
+      fakeClient({ search: many, sku: sourceSku("1", "LECHE M0"), sweep: [], sweepTotal: 140 }),
+      ["leche"],
+      100_000_000,
+      { brand: "NOSUCH" },
+    );
+    expect(c.brandsSeen).toHaveLength(20);
+    const out = renderComparison(c);
+    // A silent slice would drop exactly the near-miss the hint exists for.
+    expect(out).toContain("and 8 more");
   });
 });

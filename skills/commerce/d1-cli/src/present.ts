@@ -832,7 +832,15 @@ export function renderComparison(c: CrossBasket): string {
   if (c.brandsSeen) {
     out.push(`Nothing D1 returned for these terms is ${brand}.`);
     if (c.brandsSeen.length) {
-      out.push(`Brands it did return: ${c.brandsSeen.map(sanitize).join(", ")}.`);
+      // Truncated OUT LOUD. A silent `.slice(0, 12)` is the same shape as every
+      // partial-sweep claim this module already caveats — and the whole point of
+      // the hint is to surface a near-miss, which is exactly what a silent cut
+      // would drop.
+      const shown = c.brandsSeen.slice(0, MAX_BRAND_HINT);
+      const more = c.brandsSeen.length - shown.length;
+      out.push(
+        `Brands it did return: ${shown.map(sanitize).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`,
+      );
     }
     out.push("");
   }
@@ -897,10 +905,18 @@ export function renderComparison(c: CrossBasket): string {
     anyMissing = true;
     out.push(`Not counted — ${why}: ${terms.map(sanitize).join(", ")}.`);
   }
-  if (anyMissing) out.push("Their cost is in neither number above.");
   if (c.onlyAlt.length) {
     out.push(`Not counted — only ${brand} could fill: ${c.onlyAlt.map(sanitize).join(", ")}.`);
   }
+  // Only when there ARE two numbers. With nothing shared the line above says
+  // there is no price to compare, and this then pointed at numbers that were
+  // never printed — while the term's own price WAS on screen, so a reader takes
+  // it as a claim about that. Fourth instance of one shape: a sentence
+  // asserting something about state it does not read.
+  //
+  // Moved below `onlyAlt` too: "their" reached backwards over a bucket that
+  // printed after it.
+  if (anyMissing && terms > 0) out.push("Their cost is in neither number above.");
   if (c.neither.length) {
     // No "that is not about <brand>" clause. It was false whenever the branded
     // line's own status was `no-brand-match` — the brand WAS looked for and
@@ -918,6 +934,9 @@ export function renderComparison(c: CrossBasket): string {
   out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
   return out.join("\n");
 }
+
+/** How many brands the near-miss hint lists before saying "and N more". */
+const MAX_BRAND_HINT = 12;
 
 /** A price, or why there is not one, in a fixed-width cell. */
 function priceCell(l: BasketLine | undefined): string {

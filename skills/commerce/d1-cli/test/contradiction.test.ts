@@ -20,6 +20,7 @@ import {
   type BasketPlan,
   type CrossBasket,
   type LineStatus,
+  brandsIn,
   isFilled,
   normalizeBrand,
 } from "../src/basket.ts";
@@ -116,15 +117,17 @@ function crossOf(baseStatus: LineStatus, altStatus: LineStatus, brandOnBase: str
       filledBase && (al.status === "no-match" || al.status === "nothing-in-stock") ? ["arroz"] : [],
     onlyAlt: isFilled(al.status) && !filledBase ? ["arroz"] : [],
     neither: !filledBase && !isFilled(al.status) ? ["arroz"] : [],
-    // Computed EXACTLY as `compareBaskets` does, so every state enumerated here
-    // is one the production path can actually produce. A looser rule would
-    // report contradictions in states that cannot occur, which is a different
-    // and much less useful test.
+    // PRODUCTION's own `brandsIn`, not a copy of it.
+    //
+    // This was re-derived inline, and drifted the moment `brandsIn` changed —
+    // in the very commit series that wrote this file. The two flagship rules
+    // below then became unfalsifiable: side b of the "names the brand it says
+    // is absent" rule occurred in 0 of 98 states, because the mirror
+    // re-implemented the exclusion the rule exists to check. A mirror of the
+    // code under test tests the mirror.
     brandsSeen:
-      al.status === "no-brand-match"
-        ? filledBase && normalizeBrand(brandOnBase) !== normalizeBrand(BRAND)
-          ? [brandOnBase]
-          : []
+      alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
+        ? brandsIn(base.lines, normalizeBrand(BRAND))
         : undefined,
   };
 }
@@ -135,14 +138,26 @@ function crossOf(baseStatus: LineStatus, altStatus: LineStatus, brandOnBase: str
  * Each entry is the *reason* a pair is contradictory, so a failure names the
  * defect rather than a line number. All four rounds' findings are here.
  */
-const FORBIDDEN: Array<{ why: string; a: RegExp; b: RegExp }> = [
+const FORBIDDEN: Array<{ why: string; a: RegExp; b: RegExp; regressionOnly?: boolean }> = [
   {
     why: "claims the brand is absent from what D1 returned, while naming it among the brands returned",
+    // Unreachable BECAUSE production excludes the requested brand from the hint
+    // — which is the behaviour, so this is a regression guard rather than a
+    // live rule, and the reachability check below would otherwise (correctly)
+    // report it as a rule matching nothing. The live pin is
+    // "the hint reads FILLED lines only, and never names the asked-for brand"
+    // in basket.test.ts, which dies when the exclusion is removed.
+    regressionOnly: true,
     a: new RegExp(`Nothing D1 returned for these terms is ${BRAND}\\.`),
-    b: new RegExp(`Brands it did return:[^\\n]*\\b${BRAND}\\b`),
+    // The brand as a COMPLETE list item, not a word inside one. `\\b${BRAND}\\b`
+    // also matched "LATTI FOODS", which is a different brand and precisely the
+    // near-miss the hint exists to surface — flagging it would have made the
+    // rule fire on the feature working correctly.
+    b: new RegExp(`Brands it did return: (?:[^\\n]*, )?${BRAND}(?:,|\\.)`),
   },
   {
     why: "claims the brand is absent, while a line says the absence is not about the brand",
+    regressionOnly: true,
     a: new RegExp(`Nothing D1 returned for these terms is ${BRAND}\\.`),
     // The clause this catches has been removed, so this rule is a REGRESSION
     // guard rather than a live finding. "Neither basket filled: X" alone is not
@@ -157,16 +172,19 @@ const FORBIDDEN: Array<{ why: string; a: RegExp; b: RegExp }> = [
   },
   {
     why: "claims the brand is no alternative to anything, while a line says it was the only thing that could fill a term",
+    regressionOnly: true,
     a: /not an alternative/,
     b: /only .* could fill/,
   },
   {
     why: "claims the brand is no alternative to anything, while a line prices it over budget",
+    regressionOnly: true,
     a: /not an alternative/,
     b: /found but over budget/,
   },
   {
     why: "claims the brand is no alternative to anything, while a lookup never answered so nothing is known",
+    regressionOnly: true,
     a: /not an alternative/,
     b: /lookup did not answer/,
   },
@@ -187,7 +205,7 @@ describe("no two sentences the comparison prints can contradict each other", () 
     const offenders: string[] = [];
     for (const baseStatus of ALL_STATUSES) {
       for (const altStatus of ALL_STATUSES) {
-        for (const brandOnBase of ["OTRA", BRAND]) {
+        for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
           const out = renderComparison(crossOf(baseStatus, altStatus, brandOnBase));
           for (const { why, a, b } of FORBIDDEN) {
             if (a.test(out) && b.test(out)) {
@@ -209,7 +227,7 @@ describe("no two sentences the comparison prints can contradict each other", () 
     const seen = new Set<string>();
     for (const baseStatus of ALL_STATUSES) {
       for (const altStatus of ALL_STATUSES) {
-        for (const brandOnBase of ["OTRA", BRAND]) {
+        for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
           const out = renderComparison(crossOf(baseStatus, altStatus, brandOnBase));
           for (const marker of [
             "BOTH filled:",
@@ -228,6 +246,29 @@ describe("no two sentences the comparison prints can contradict each other", () 
       }
     }
     expect(seen.size).toBe(9);
+  });
+
+  test("every LIVE rule can actually fire — a rule matching nothing proves nothing", () => {
+    // Four rules guard sentences this arc DELETED; they are regression guards
+    // and are marked as such. Every other rule must have both its sides occur
+    // somewhere in the enumeration, or it is a rule about a string the render
+    // cannot produce — which passes forever and means nothing. Two of them were
+    // exactly that before the mirror stopped re-deriving `brandsIn`.
+    const outs: string[] = [];
+    for (const baseStatus of ALL_STATUSES) {
+      for (const altStatus of ALL_STATUSES) {
+        for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
+          outs.push(renderComparison(crossOf(baseStatus, altStatus, brandOnBase)));
+        }
+      }
+    }
+    const dead: string[] = [];
+    for (const f of FORBIDDEN) {
+      if (f.regressionOnly) continue;
+      if (!outs.some((o) => f.a.test(o))) dead.push(`side a never occurs: ${f.why}`);
+      if (!outs.some((o) => f.b.test(o))) dead.push(`side b never occurs: ${f.why}`);
+    }
+    expect(dead).toEqual([]);
   });
 
   test("and a deliberately contradictory render IS caught (control)", () => {
