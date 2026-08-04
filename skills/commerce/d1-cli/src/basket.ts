@@ -1000,20 +1000,25 @@ export function pairRows(
 }
 
 /**
- * Distinct brands among the products a basket actually CHOSE, for a typo hint.
+ * Distinct brands among the products D1 returned, for a typo hint.
  *
- * Filled lines only. An unfilled line still carries `product: source` — the
- * thing it rejected — so reading every line printed "Brands it did return:
- * LATTI" directly under "Nothing D1 returned for these terms is LATTI",
- * sourcing the contradiction from a product the basket had refused.
+ * **Every** line, filled or not — the sentence says "brands it did return",
+ * and a product that was returned and then rejected on stock or price was
+ * still returned. An earlier version also skipped unfilled lines, which read
+ * as an extra safeguard and was not one: with the exclusion below in place it
+ * changed no output, and neither guard could be killed by a mutation because
+ * each masked the other. Two guards where one is load-bearing is one guard and
+ * one decoration, and the decoration is the one that goes.
  *
- * The requested brand is excluded outright. If it appears in this list the
- * headline above it is false, and no hint is worth printing a lie for.
+ * The exclusion IS load-bearing. An unfilled line carries `product: source` —
+ * the thing it rejected — so a rejected LATTI put "Brands it did return:
+ * LATTI" directly under "Nothing D1 returned for these terms is LATTI". If the
+ * requested brand appears here the headline above it is false, and no hint is
+ * worth printing a lie for.
  */
 function brandsIn(lines: readonly BasketLine[], exclude?: string): string[] {
   const seen = new Set<string>();
   for (const l of lines) {
-    if (!isFilled(l.status)) continue;
     const b = l.product?.brand?.trim();
     if (b && normalizeBrand(b) !== exclude) seen.add(b);
   }
