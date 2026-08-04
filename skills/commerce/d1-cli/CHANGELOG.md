@@ -55,9 +55,9 @@ $ d1 basket --budget 40000 arroz leche aceite huevos --brand LATTI --lat 4.75068
   arroz                $ 5.550           —
   leche                $ 3.090     $ 3.090   same
   aceite              $ 20.500           —
-  huevos               $ 1.650     $ 1.650   same
+  huevos               $ 4.200     $ 4.200   same
 
-Over the 2 terms BOTH filled: $ 4.740 best-value vs $ 4.740 in LATTI — $ 0 the same as best value.
+Over the 2 terms BOTH filled: $ 7.290 best-value vs $ 7.290 in LATTI — $ 0 the same as best value.
 Not counted — no LATTI for: arroz, aceite.
 Their cost is in neither number above.
 Both baskets were fit to the same budget, so each is one a shopper could have bought.
@@ -82,6 +82,50 @@ Two smaller honesty points:
 - **`no-brand-match` is its own status.** "D1 has none of this brand" and "D1 has
   none of this in stock" are different facts, and only one of them is about the
   shelf. A lookup that failed is still `replacement-unknown`, never either.
+
+### Fixed — rounds 3 and 4: stop patching arms; and the property test was testing its own mirror
+
+Scores across four rounds: 5, 5, 4, 6. The recurring defect was never a
+particular sentence — it was that several sentences **inferred a cause from
+state they did not read**, and each round conditioned one such clause on one
+more field while the next found the arm left open.
+
+**Round 3 deleted the inferences.** "`<brand>` is not an alternative for any
+line above" is gone; so is "that is not about `<brand>`". The per-term buckets
+already state the cause precisely, and a summary that competes with them can
+only ever be wrong in some state nobody enumerated.
+
+**And it stopped enumerating by hand.** `test/contradiction.test.ts` walks every
+reachable render state and asserts no forbidden sentence pair appears. It found
+ten further states of the neither-filled defect on its first run.
+
+**Round 4 then found the property test was testing a copy of the code.**
+`crossOf` re-derived the bucketing instead of calling it, and drifted the moment
+`brandsIn` changed — in the same commit series that wrote the test. Two of its
+rules had become unfalsifiable: one side occurred in **0 of 98** states, because
+the mirror re-implemented the exclusion the rule existed to check. It now calls
+production's own function and carries a **reachability guard**: a rule whose
+sides never occur is reported as dead unless explicitly marked a regression
+guard. That guard found the problem immediately.
+
+Live defects fixed in round 4:
+
+- **"Their cost is in neither number above." printed with no numbers above it**,
+  directly under "there is no price to compare". Worse than dangling — the
+  term's own price *is* on screen, so a reader takes it as a claim about that.
+  The sentence never read `comparable.terms`.
+- **"Brands it did return" named one brand per term.** D1 returns ten for
+  `leche`; the hint printed a bakery brand that happened to win the unit-price
+  ranking, while `NATURAL FEELING` — the exact near-miss a shopper typing
+  `NATURAL` needs — sat on the page unmentioned. Lines carry the page's brand
+  set now, and the cap says "and N more" rather than cutting silently.
+- Two guards in `brandsIn` **masked each other**, so neither could be killed by
+  a mutation. Two guards where one is load-bearing is one guard and one
+  decoration; the decoration went.
+- `rowLabels` verifies its own uniqueness and falls back to row indices — a
+  suffix scheme collides when a bare unique term equals a generated label.
+- The comparison table no longer truncates a label, so the name in the table is
+  the name in the sentence below it.
 
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 
