@@ -70,8 +70,20 @@ export interface Store {
 
 export interface StoresResult {
   stores: Store[];
-  /** Points actually fetched, before any `limit` was applied. */
+  /**
+   * Points that survived normalization and de-duplication, before `limit`.
+   *
+   * Not "points fetched": a malformed entry is dropped here and must not be
+   * counted as something the look found.
+   */
   swept: number;
+  /**
+   * What the registry says it holds for this point, when it says.
+   *
+   * This is the answer to "is there more?", and it was being inferred from page
+   * arithmetic while sitting unread in every response.
+   */
+  registryTotal?: number;
   /**
    * How far the sweep reached, in km — the radius the "nearest" claim is good
    * for. Undefined when nothing came back.
@@ -88,6 +100,20 @@ export interface StoresResult {
    *   - `limit` — the caller asked for fewer than were available.
    */
   stopped: "registry-empty" | "cap" | "limit";
+}
+
+/**
+ * What the endpoint actually returns.
+ *
+ * An OBJECT with `paging` and `items` — never a bare array. Every fixture in
+ * `test/stores.test.ts` originally served an array, so the whole suite
+ * exercised a branch the API has never produced: deleting the `items` handler
+ * left 487 tests green while the command returned nothing at all against live
+ * D1 and printed "no store is in the registry near you" to say so.
+ */
+interface WirePage {
+  paging?: { page?: number; pageSize?: number; total?: number; pages?: number };
+  items?: WirePoint[];
 }
 
 interface WirePoint {
@@ -153,18 +179,28 @@ export async function nearbyStores(
   opts: StoresOptions = {},
 ): Promise<StoresResult> {
   assertCoordinate(at);
-  const limit = Math.max(1, Math.min(MAX_REACHABLE, Math.trunc(opts.limit ?? 10)));
+  // `Math.trunc(NaN)` is NaN and every comparison against it is false, so a NaN
+  // limit fetched all ten pages and then returned nothing — the command denying
+  // the registry it had just read in full.
+  const asked = Math.trunc(opts.limit ?? 10);
+  const limit = Number.isFinite(asked) ? Math.max(1, Math.min(MAX_REACHABLE, asked)) : 10;
 
   const collected: Store[] = [];
   const seen = new Set<string>();
   let stopped: StoresResult["stopped"] = "limit";
 
+  let registryTotal: number | undefined;
+
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const w = await client.request<WirePoint[] | { items?: WirePoint[] }>(
-      "/api/checkout/pub/pickup-points",
-      { query: { geoCoordinates: geoParam(at), countryCode: "COL", page } },
-    );
+    const w = await client.request<WirePage | WirePoint[]>("/api/checkout/pub/pickup-points", {
+      query: { geoCoordinates: geoParam(at), countryCode: "COL", page },
+    });
+    // The live endpoint returns `{paging, items}`. The array arm is tolerated
+    // only because a shape assumption is cheaper to keep than to prove absent.
     const raw = Array.isArray(w) ? w : (w.items ?? []);
+    if (!Array.isArray(w) && typeof w.paging?.total === "number") {
+      registryTotal = w.paging.total;
+    }
     if (!raw.length) {
       stopped = "registry-empty";
       break;
@@ -185,10 +221,23 @@ export async function nearbyStores(
       stopped = "registry-empty";
       break;
     }
-    // The limit check comes first ONLY when the cap has not also been reached.
-    // Ordering it before the cap check made a full ten-page sweep report
-    // `limit`, so the output said "the registry holds more further out" about
-    // the exact case where the registry will not serve any more.
+    // A SHORT page is the last page, definitively — and this is checked before
+    // the cap, because reaching page 10 is not the same as page 10 being full.
+    // A point with 299 stores fills ten pages, the tenth holding 29, and was
+    // reported as "the registry's own ceiling of 300, so a shop further out is
+    // missing" about a registry that had just served everything it has.
+    if (raw.length < PAGE_SIZE) {
+      stopped = "registry-empty";
+      break;
+    }
+    if (registryTotal !== undefined && collected.length >= registryTotal) {
+      // Everything the registry admits to holding. At exactly MAX_REACHABLE the
+      // two readings are indistinguishable — `total` reports 300 at both Bogotá
+      // and Medellín, which is too round to be a coincidence — so the ambiguous
+      // case takes the more cautious sentence rather than claiming completeness.
+      stopped = registryTotal >= MAX_REACHABLE ? "cap" : "registry-empty";
+      break;
+    }
     if (page === MAX_PAGES) {
       stopped = "cap";
       break;
@@ -211,6 +260,7 @@ export async function nearbyStores(
     stores: collected.slice(0, limit),
     swept: collected.length,
     reachedKm: placed.length ? placed[placed.length - 1].distanceKm : undefined,
+    registryTotal,
     stopped,
   };
 }

@@ -50,13 +50,16 @@ instead of a stock one, reusing `findSubstitutes` rather than growing a second
 ranker. The term's own page is tried first — cheap, and usually where a
 same-brand product is — and only a page with none reaches the category sweep.
 
-```
+```text
   arroz                $ 5.550           —
   leche                $ 3.090     $ 3.090   same
+  aceite              $ 20.500           —
   huevos               $ 1.650     $ 1.650   same
 
 Over the 2 terms BOTH filled: $ 4.740 best-value vs $ 4.740 in LATTI — $ 0 the same as best value.
-Not counted — no LATTI for: arroz, aceite. Their cost is in neither number above.
+Not counted — no LATTI for: arroz, aceite.
+Their cost is in neither number above.
+Both baskets were fit to the same budget, so each is one a shopper could have bought.
 ```
 
 **The headline delta is computed over the terms both baskets filled, and nothing
@@ -78,6 +81,54 @@ Two smaller honesty points:
 - **`no-brand-match` is its own status.** "D1 has none of this brand" and "D1 has
   none of this in stock" are different facts, and only one of them is about the
   shelf. A lookup that failed is still `replacement-unknown`, never either.
+
+### Fixed — what the cross-model review found (5/10, below the gate)
+
+Six of these are defects in this release's own additions, all after `bun test`
+was green at 487.
+
+- **CI was red and the local check said otherwise.** `bun run lint` is
+  `biome check src test`; the workflow I had been running was `biome check
+  --write`, which fixes as it goes and therefore never reports what CI sees.
+- **A repeated term erased the lines before it.** `compareBaskets` joined the
+  two baskets through a Map keyed on the term, which is last-wins, so
+  `d1 basket --brand LATTI leche leche` discarded the first line of each —
+  including filled, money-spending ones — and then reported that nothing was
+  bought and nothing was comparable about a basket holding two products. The
+  dropped line was neither named nor netted, which is the one direction the
+  "named, never netted" rule had not anticipated. Paired by position now, with
+  the one-line-per-term invariant asserted rather than assumed.
+- **The registry's own `paging.total` was sitting unread in every response**
+  while the cap question was answered by page arithmetic — and answered wrongly:
+  reaching page 10 was treated as hitting the ceiling, so a point with 299
+  stores (ten pages, the tenth holding 29) was told "that is the registry's own
+  ceiling of 300, so a shop further out is missing", about a registry that had
+  just served everything it has. A short page is now definitive exhaustion, and
+  `total` is read.
+- **Every test served a response shape the API has never produced.** The
+  endpoint returns `{paging, items}`; every fixture served a bare array, so
+  deleting the `items` handler left the whole suite green while the command
+  returned nothing at all against live D1 — and printed "no store is in the
+  registry near you" to say so.
+- **The brands hint fired on "not bought" rather than "not found".** `!isFilled`
+  includes `over-budget` and `replacement-unknown`, so the output printed
+  "Nothing D1 returned for these terms is LATTI" directly above "Brands it did
+  return: LATTI" — two adjacent sentences in contradiction, and the second was
+  the true one.
+- **One sentence covered five different reasons a term was missing.** "no LATTI
+  for this" was asserted about a branded product found and priced and refused on
+  budget, and about one whose lookup never answered — a fact about a wallet and
+  a fact about a network, both reported as facts about D1's shelf. Split by
+  cause, with a fourth line for terms neither basket filled.
+- `reasonFor` had no arm for the new `no-brand-match` status, so it fell to a
+  default telling the reader the line named no product and the plan was
+  malformed — while the line named the product it had just rejected.
+- A non-finite `--limit` fetched all ten pages and then reported the registry
+  empty. Three vacuous tests (`onlyAlt` asserted only in its empty polarity, the
+  brands hint's `every` indistinguishable from `some` with one-term fixtures,
+  and the array-shape fixtures above).
+- The 0.9.0 sample output in this file was **hand-assembled and wrong** — it
+  named a term that appeared in no row. Replaced with a captured run.
 
 ### Fixed — two behaviours a mutation sweep found unpinned
 

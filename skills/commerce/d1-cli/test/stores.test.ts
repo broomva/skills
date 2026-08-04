@@ -35,17 +35,37 @@ const point = (id: string, distance: number, over: Record<string, unknown> = {})
   },
 });
 
-/** A client that serves canned pages and records which pages were asked for. */
-function paged(pages: unknown[][]) {
+/**
+ * A client serving canned pages in the shape the endpoint ACTUALLY returns.
+ *
+ * `{paging, items}` — never a bare array. Every fixture here originally served
+ * an array, and a mutation deleting the `items` handler left the whole suite
+ * green while the command returned nothing at all against live D1 and printed
+ * "no store is in the registry near you" to say so. The tests were exercising a
+ * branch the API has never produced.
+ */
+function paged(pages: unknown[][], total?: number) {
   const asked: number[] = [];
+  const all = total ?? pages.reduce((n, p) => n + p.length, 0);
   const impl = (async (url: string) => {
     const u = new URL(String(url));
     const p = Number(u.searchParams.get("page") ?? "1");
     asked.push(p);
-    return new Response(JSON.stringify(pages[p - 1] ?? []), { status: 200 });
+    const items = pages[p - 1] ?? [];
+    return new Response(
+      JSON.stringify({
+        paging: { page: p, pageSize: PAGE_SIZE, total: all, pages: Math.ceil(all / PAGE_SIZE) },
+        items,
+      }),
+      { status: 200 },
+    );
   }) as unknown as typeof fetch;
   return { client: new D1Client({ fetchImpl: impl }), asked };
 }
+
+/** A full page, so a sweep does not stop early on a short one. */
+const fullPage = (prefix: string, from: number) =>
+  Array.from({ length: PAGE_SIZE }, (_, i) => point(`${prefix}${i}`, from + i * 0.01));
 
 describe("nearbyStores", () => {
   test("a small request reads ONE page, not the whole registry", async () => {
@@ -82,12 +102,59 @@ describe("nearbyStores", () => {
   test("a page of nothing but repeats also ends it, rather than looping", async () => {
     // A paged endpoint that starts repeating would otherwise inflate `swept`
     // and make the disclosed radius describe a look that never happened.
-    const { client, asked } = paged([[point("a", 1)], [point("a", 1)], [point("b", 2)]]);
-    const r = await nearbyStores(client, AT, { limit: 50 });
-    expect(r.stores.map((s) => s.id)).toEqual(["a"]);
+    //
+    // FULL pages, deliberately: a short page is now definitive exhaustion on its
+    // own, so a one-item fixture would stop at page 1 and never reach the
+    // repeat guard this test is named for.
+    const first = fullPage("p", 1);
+    const { client, asked } = paged([first, first, fullPage("q", 9)], 300);
+    const r = await nearbyStores(client, AT, { limit: 200 });
+    expect(r.swept).toBe(PAGE_SIZE);
     expect(r.stopped).toBe("registry-empty");
-    // It stopped at page 2 — it did not go on to find `b`.
+    // It stopped at page 2 — it did not go on to find the `q` page.
     expect(asked).toEqual([1, 2]);
+  });
+
+  test("a SHORT page is the last page, and is not reported as the API's cap", async () => {
+    // 299 stores fill ten pages whose tenth holds 29. Reaching page 10 was
+    // treated as hitting the ceiling, so the output said "a shop further out is
+    // missing from this answer" about a registry that had just served
+    // everything it has.
+    const pages = [
+      ...Array.from({ length: 9 }, (_, i) => fullPage(`p${i}`, i + 1)),
+      fullPage("z", 10).slice(0, 29),
+    ];
+    const { client } = paged(pages, 299);
+    const r = await nearbyStores(client, AT, { limit: 300 });
+    expect(r.swept).toBe(299);
+    expect(r.registryTotal).toBe(299);
+    expect(r.stopped).toBe("registry-empty");
+  });
+
+  test("the registry's own total is read rather than inferred", async () => {
+    // `paging.total` sat unread in every response while the cap question was
+    // being answered by page arithmetic.
+    const { client } = paged([fullPage("p", 1)], 300);
+    const r = await nearbyStores(client, AT, { limit: 10 });
+    expect(r.registryTotal).toBe(300);
+  });
+
+  test("a bare array is still tolerated, since that tolerance is deliberate", async () => {
+    const impl = (async () =>
+      new Response(JSON.stringify([point("a", 1)]), { status: 200 })) as unknown as typeof fetch;
+    const r = await nearbyStores(new D1Client({ fetchImpl: impl }), AT, { limit: 5 });
+    expect(r.stores.map((s) => s.id)).toEqual(["a"]);
+    expect(r.registryTotal).toBeUndefined();
+  });
+
+  test("a non-finite limit does not fetch everything and then deny it", async () => {
+    // `Math.trunc(NaN)` is NaN and every comparison against it is false, so this
+    // read all ten pages and returned zero stores — the command denying the
+    // registry it had just read in full.
+    const { client, asked } = paged([fullPage("p", 1)], 300);
+    const r = await nearbyStores(client, AT, { limit: Number.NaN });
+    expect(r.stores.length).toBe(10);
+    expect(asked).toEqual([1]);
   });
 
   test("reachedKm is the radius of the whole look, not of what is shown", async () => {
@@ -137,9 +204,8 @@ describe("nearbyStores", () => {
 
   test("the limit is clamped to what the registry can actually serve", async () => {
     const { client, asked } = paged(
-      Array.from({ length: MAX_PAGES }, (_, p) =>
-        Array.from({ length: PAGE_SIZE }, (_, i) => point(`p${p}-${i}`, p + i * 0.01)),
-      ),
+      Array.from({ length: MAX_PAGES }, (_, p) => fullPage(`p${p}-`, p + 1)),
+      MAX_REACHABLE,
     );
     const r = await nearbyStores(client, AT, { limit: 99_999 });
     expect(r.stores).toHaveLength(MAX_REACHABLE);

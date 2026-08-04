@@ -5,6 +5,7 @@ import {
   chooseBest,
   compareBaskets,
   fillToBudget,
+  isFilled,
   linePrice,
   normalizeBrand,
   packPrices,
@@ -1893,5 +1894,173 @@ describe("what `--brand` exits with [BRO-2079]", () => {
     // The other polarity, so the exit cannot be mutated to a constant 3.
     const found = await compareBaskets(client(true), ["arroz"], 100_000_000, { brand: "LATTI" });
     expect(comparisonExit(found)).toBe(0);
+  });
+});
+
+describe("the comparison survives the inputs a shopper actually types [BRO-2079]", () => {
+  const stub = () =>
+    fakeClient({
+      search: [
+        wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+        wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" }),
+      ],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [],
+    });
+
+  test("a REPEATED term does not erase the lines before it", async () => {
+    // `byTerm` was a last-wins Map keyed on the term, so every row for a
+    // repeated term showed the LAST line and every earlier one vanished —
+    // including filled, money-spending ones. The render then reported that
+    // nothing was bought and nothing was comparable about a basket that had
+    // bought two things, and the dropped line was neither named nor netted.
+    const c = await compareBaskets(stub(), ["arroz", "arroz"], 100_000_000, { brand: "LATTI" });
+    expect(c.rows).toHaveLength(2);
+    expect(c.rows.every((r) => r.base && r.alt)).toBe(true);
+    expect(c.comparable.terms).toBe(2);
+    // Both baskets bought twice, so the delta is twice the per-line difference.
+    expect(c.comparable.delta).toBe(400_000);
+  });
+
+  test("the row count always matches the term count", async () => {
+    const c = await compareBaskets(stub(), ["arroz", "arroz", "arroz"], 100_000_000, {
+      brand: "LATTI",
+    });
+    expect(c.rows).toHaveLength(3);
+    expect(c.base.lines).toHaveLength(3);
+    expect(c.alt.lines).toHaveLength(3);
+  });
+});
+
+describe("a missing term is reported by CAUSE, not lumped [BRO-2079]", () => {
+  test("over-budget is a fact about the wallet, not about D1's shelf", async () => {
+    // One sentence covering every reason asserted "no LATTI for this" about a
+    // branded product that was found, priced, and refused only on money.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ARROZ LATTI", { price: 90_000, brand: "LATTI" }),
+        ],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        sweep: [],
+      }),
+      ["arroz"],
+      400_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("over-budget");
+    expect(c.onlyBase).toEqual([]);
+    expect(c.altOverBudget).toEqual(["arroz"]);
+    const out = renderComparison(c);
+    expect(out).toContain("LATTI found but over budget for: arroz");
+    expect(out).not.toContain("no LATTI for");
+    // ...and it does not claim the brand was absent from what D1 returned.
+    expect(out).not.toContain("Nothing D1 returned");
+  });
+
+  test("an unanswered lookup is a fact about the network", async () => {
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+        skuThrows: true,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.altUnknown).toEqual(["arroz"]);
+    const out = renderComparison(c);
+    expect(out).toContain("the LATTI lookup did not answer for: arroz");
+    expect(out).not.toContain("Nothing D1 returned");
+  });
+
+  test("the brands hint appears ONLY when no line ever saw the brand", async () => {
+    // `!isFilled` included over-budget, so the render printed "Nothing D1
+    // returned for these terms is LATTI" directly above "Brands it did return:
+    // LATTI" — two adjacent sentences in contradiction.
+    const overBudget = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ARROZ LATTI", { price: 90_000, brand: "LATTI" }),
+        ],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        sweep: [],
+      }),
+      ["arroz"],
+      400_000,
+      { brand: "LATTI" },
+    );
+    expect(overBudget.brandsSeen).toBeUndefined();
+
+    // The genuine case still offers it.
+    const genuine = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        sweep: [],
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "TYPOO" },
+    );
+    expect(genuine.brandsSeen).toEqual(["OTRA"]);
+  });
+
+  test("the hint needs EVERY line to have missed, not merely one", async () => {
+    // With one term in every fixture, `every` and `some` are the same function.
+    // Two terms, one filled: `some` would print "Nothing D1 returned for these
+    // terms is LATTI" about a basket holding a LATTI product.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" }),
+        ],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        sweep: [],
+      }),
+      ["arroz", "arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines.filter((l) => isFilled(l.status))).toHaveLength(2);
+    expect(c.brandsSeen).toBeUndefined();
+  });
+});
+
+describe("onlyAlt is asserted in BOTH polarities [BRO-2079]", () => {
+  test("a term only the branded basket could fill is named", async () => {
+    // Previously only ever asserted empty, so deleting the filter and the
+    // sentence that renders it both passed the whole suite.
+    const rows: BasketLine[] = [
+      line({ term: "arroz", status: "no-match", product: undefined, price: undefined }),
+      line({ term: "leche", price: 200_000 }),
+    ];
+    const alt = fillToBudget(rows, 1_000_000);
+    expect(alt.lines[1]?.status).toBe("filled");
+
+    const c = {
+      brand: "LATTI",
+      base: fillToBudget(
+        [
+          line({ term: "arroz", price: 100_000 }),
+          line({ term: "leche", status: "no-match", product: undefined, price: undefined }),
+        ],
+        1_000_000,
+      ),
+      alt,
+      rows: [] as never[],
+      comparable: { terms: 0, baseTotal: 0, altTotal: 0, delta: 0 },
+      onlyBase: [],
+      altOverBudget: [],
+      altUnknown: [],
+      altNoMatch: [],
+      onlyAlt: ["leche"],
+      neither: [],
+    };
+    const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
+    expect(out).toContain("only LATTI could fill: leche");
   });
 });

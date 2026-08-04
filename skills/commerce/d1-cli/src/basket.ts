@@ -30,7 +30,13 @@ import { pickOffer, priced, search } from "./catalog.ts";
 import type { D1Client } from "./client.ts";
 import { sum } from "./money.ts";
 import { type Candidate, findSubstitutes } from "./substitute.ts";
-import { DEFAULT_SALES_CHANNEL, type PriceHundredths, type Product, UsageError } from "./types.ts";
+import {
+  D1Error,
+  DEFAULT_SALES_CHANNEL,
+  type PriceHundredths,
+  type Product,
+  UsageError,
+} from "./types.ts";
 
 /** Why a term is not in the basket, or that it is. */
 export type LineStatus =
@@ -797,10 +803,18 @@ export interface CrossBasket {
     altTotal: PriceHundredths;
     delta: PriceHundredths;
   };
-  /** Terms the base basket filled and the branded one could not. */
+  /** Terms where D1 genuinely has nothing of the brand. */
   onlyBase: string[];
+  /** Terms where the branded product exists and was priced, but did not fit. */
+  altOverBudget: string[];
+  /** Terms where the branded lookup never answered — unknown, not empty. */
+  altUnknown: string[];
+  /** Terms D1 returned nothing for, or nothing in stock, on the branded run. */
+  altNoMatch: string[];
   /** Terms the branded basket filled and the base one could not. */
   onlyAlt: string[];
+  /** Terms neither basket filled — not a brand difference, and not silent either. */
+  neither: string[];
   /**
    * Brands actually seen while searching, when the requested one matched
    * nothing anywhere. A typo is otherwise indistinguishable from a brand D1
@@ -830,13 +844,28 @@ export async function compareBaskets(
   const base = await buildBasket(client, terms, budget, { ...opts, brand: undefined });
   const alt = await buildBasket(client, terms, budget, opts);
 
-  const byTerm = (plan: BasketPlan) => new Map(plan.lines.map((l) => [l.term, l]));
-  const b = byTerm(base);
-  const a = byTerm(alt);
+  // Paired by POSITION, not by term.
+  //
+  // A Map keyed on the term is last-wins, so `d1 basket --brand X leche leche`
+  // silently discarded the first line of each basket — including filled,
+  // money-spending ones — and the render then reported that nothing was bought
+  // and nothing was comparable about a basket that had bought two things. The
+  // dropped line was neither named nor netted, which is the one direction the
+  // "named, never netted" rule did not anticipate.
+  //
+  // `buildBasket` emits exactly one line per input term in order, and
+  // `fillToBudget` maps them 1:1, so position is the reliable join. Asserted
+  // rather than assumed, because a silent length mismatch would reintroduce the
+  // same class of defect through a different door.
+  if (base.lines.length !== terms.length || alt.lines.length !== terms.length) {
+    throw new D1Error(
+      `Basket comparison expected one line per term (${terms.length}), got ${base.lines.length} and ${alt.lines.length}. This is a bug in d1-cli.`,
+    );
+  }
 
-  const rows: BasketComparison[] = terms.map((term) => {
-    const bl = b.get(term);
-    const al = a.get(term);
+  const rows: BasketComparison[] = terms.map((term, i) => {
+    const bl = base.lines[i];
+    const al = alt.lines[i];
     const both = bl && al && isFilled(bl.status) && isFilled(al.status);
     return {
       term,
@@ -863,9 +892,39 @@ export async function compareBaskets(
       altTotal,
       delta: altTotal - baseTotal,
     },
-    onlyBase: rows.filter((r) => filled(r.base) && !filled(r.alt)).map((r) => r.term),
+    // Split by WHY, not lumped under one sentence. `over-budget` is a fact
+    // about the shopper's wallet and `replacement-unknown` is a fact about the
+    // network; reporting either as "no LATTI for this" turns them into facts
+    // about D1's shelf.
+    onlyBase: rows
+      .filter((r) => filled(r.base) && !filled(r.alt) && r.alt?.status === "no-brand-match")
+      .map((r) => r.term),
+    altOverBudget: rows
+      .filter((r) => filled(r.base) && r.alt?.status === "over-budget")
+      .map((r) => r.term),
+    altUnknown: rows
+      .filter((r) => filled(r.base) && r.alt?.status === "replacement-unknown")
+      .map((r) => r.term),
+    altNoMatch: rows
+      .filter(
+        (r) =>
+          filled(r.base) && (r.alt?.status === "no-match" || r.alt?.status === "nothing-in-stock"),
+      )
+      .map((r) => r.term),
     onlyAlt: rows.filter((r) => filled(r.alt) && !filled(r.base)).map((r) => r.term),
-    brandsSeen: alt.lines.every((l) => !isFilled(l.status))
+    // Neither side filled these, so they are not a brand difference at all —
+    // but a row of two dashes with no sentence beside it leaves the reader to
+    // guess, which is the one thing this output is built not to do.
+    neither: rows.filter((r) => !filled(r.base) && !filled(r.alt)).map((r) => r.term),
+    // Offered only when NO line ever saw a product of the brand.
+    //
+    // `!isFilled` was wrong and said so out loud: `over-budget` means the
+    // branded product was found and priced and refused on money, and
+    // `replacement-unknown` means the lookup never answered. Both rendered
+    // "Nothing D1 returned for these terms is LATTI" directly above "Brands it
+    // did return: LATTI" — two adjacent sentences in contradiction, and the
+    // second one is the true one.
+    brandsSeen: alt.lines.every((l) => l.status === "no-brand-match" || l.status === "no-match")
       ? brandsIn(base.lines).slice(0, 12)
       : undefined,
   };

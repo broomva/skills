@@ -714,6 +714,13 @@ function reasonFor(l: BasketLine): string {
       // request that failed, which is a statement about the network dressed up
       // as a statement about the shelf.
       return "nothing D1 carries for this is in stock here, and the replacement lookup did not answer — unknown, not empty";
+    case "no-brand-match":
+      // Added with the status. Without an arm here it fell to the default,
+      // which told the reader the line named no product and that the plan was
+      // malformed — while the line named the product it had just rejected.
+      return l.substituteSweep
+        ? `D1 sells this, but nothing of that brand — its category was searched too${sweepCaveat(l)}`
+        : "D1 sells this, but nothing of that brand";
     case "no-match":
       return "D1 returned nothing for this term";
     default:
@@ -735,7 +742,11 @@ function reasonFor(l: BasketLine): string {
  * missing from the answer without being missing from the world.
  */
 export function renderStores(r: StoresResult, at: LatLng, today?: number): string {
-  if (!r.stores.length) {
+  // Gated on the SWEEP. Keying on `stores.length` asserted "that is the
+  // registry's answer" whenever the shown list happened to be empty — including
+  // when points were fetched and every one was dropped as malformed, which is a
+  // statement about this parser rather than about the registry.
+  if (!r.swept) {
     return [
       `No D1 store is in the pickup registry near ${fmtCoord(at)}.`,
       "That is the registry's answer, not a survey of the neighbourhood — it lists points D1 has configured for logistics, which is not the same set as shops with a door.",
@@ -835,17 +846,33 @@ export function renderComparison(c: CrossBasket): string {
     );
   }
 
-  // Named, not netted. These are the lines that make a naive total-vs-total
-  // comparison a lie.
-  if (c.onlyBase.length) {
-    out.push(
-      `Not counted — no ${brand} for: ${c.onlyBase.map(sanitize).join(", ")}. Their cost is in neither number above.`,
-    );
+  // Named, not netted — and named by CAUSE. One sentence covering every reason a
+  // term is missing asserted "no LATTI for this" about a branded product that
+  // was found and priced and refused on budget, and about one whose lookup never
+  // answered. Those are facts about a wallet and about a network; only the first
+  // line below is a fact about D1's shelf.
+  const missing: Array<[readonly string[], string]> = [
+    [c.onlyBase, `no ${brand} for`],
+    [c.altOverBudget, `${brand} found but over budget for`],
+    [c.altUnknown, `the ${brand} lookup did not answer for`],
+    [c.altNoMatch, "D1 returned nothing at all for"],
+  ];
+  let anyMissing = false;
+  for (const [terms, why] of missing) {
+    if (!terms.length) continue;
+    anyMissing = true;
+    out.push(`Not counted — ${why}: ${terms.map(sanitize).join(", ")}.`);
   }
+  if (anyMissing) out.push("Their cost is in neither number above.");
   if (c.onlyAlt.length) {
     out.push(`Not counted — only ${brand} could fill: ${c.onlyAlt.map(sanitize).join(", ")}.`);
   }
-  out.push(`Both baskets were fit to the same budget, so each is one a shopper could have bought.`);
+  if (c.neither.length) {
+    out.push(
+      `Neither basket filled: ${c.neither.map(sanitize).join(", ")} — that is not about ${brand}. Run the same list without --brand for the reason.`,
+    );
+  }
+  out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
   return out.join("\n");
 }
 

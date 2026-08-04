@@ -574,7 +574,9 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "basket": {
-      const terms = positional.slice(1).filter(Boolean);
+      // `.filter(Boolean)` keeps "   ", which searched for whitespace and then
+      // rendered a nameless comparison row.
+      const terms = positional.slice(1).filter((t) => t.trim().length > 0);
       if (!terms.length) {
         throw new UsageError(
           "Usage: d1 basket --budget <pesos> <term> [term ...] [--count N] [--lat --lng]",
