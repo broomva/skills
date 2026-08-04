@@ -1246,3 +1246,40 @@ describe("a categorical claim is only as wide as the sweep behind it", () => {
     expect(renderBasket(plan, { regionId: "v2.ABC" })).not.toContain("were searched");
   });
 });
+
+describe("an over-budget replacement is still named", () => {
+  test("its price is not attributed to the term the shopper typed", async () => {
+    // The one path where a substitution was applied and then not shown. The
+    // line read "huevos — would cost $ 24.900" for a price belonging to a
+    // product the render never mentioned, so the shopper read a different,
+    // larger product's price as the price of what they asked for.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("16", "HUEVO AA X30", { available: false, price: 16_900 })],
+        sku: sourceSku("16", "HUEVO AA X30"),
+        sweep: [wire("36", "HUEVO AAA X36 BANDEJA", { price: 24_900 })],
+        sweepTotal: 140,
+      }),
+      ["huevos"],
+      // Deliberately below the replacement's price, so it is resolved and then
+      // rejected — the exact shape a tight budget hits late in a list.
+      1_000_000,
+    );
+    const l = plan.lines[0];
+    expect(l?.status).toBe("over-budget");
+    expect(l?.replaces?.skuId).toBe("16");
+
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("HUEVO AAA X36 BANDEJA");
+    expect(out).toContain("closest replacement");
+    // And the sweep disclosure is not dropped on this branch either.
+    expect(out).toContain("only 1 of 140 in that category were searched");
+  });
+
+  test("a plain over-budget line says nothing about replacements", () => {
+    const plan = fillToBudget([line({ term: "caviar", price: 900_000 })], 10_000);
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("would cost");
+    expect(out).not.toContain("replacement");
+  });
+});

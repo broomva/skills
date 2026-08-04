@@ -617,7 +617,19 @@ function sweepCaveat(l: BasketLine): string {
 function reasonFor(l: BasketLine): string {
   switch (l.status) {
     case "over-budget":
-      return `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
+      // Name the replacement here too.
+      //
+      // This is the one path where a substitution was applied and then not
+      // shown. When a term is out of stock its line is resolved to a category
+      // replacement; if that replacement then exceeds what is left, the line is
+      // downgraded here and printed as `huevos — would cost $ 24.900` — a price
+      // belonging to a product the whole render never mentions. The shopper
+      // reads it as the price of the thing they typed. `replaces` is documented
+      // "Named, never applied silently", and the filled row honours that; this
+      // row did not.
+      return l.replaces
+        ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}`
+        : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
     case "nothing-in-stock":
       // Only claim a category was searched when one actually was. A line
       // downgraded for having no usable price never reached `findSubstitutes`,
