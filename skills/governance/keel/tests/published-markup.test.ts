@@ -32,8 +32,8 @@
  * not arguable.
  */
 
-import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -72,6 +72,15 @@ function renderPages(): string {
 }
 
 const SITE = renderPages();
+
+// Every other suite here routes its temp dirs through `tree()` in
+// tests/helpers/tree.ts, which records them and drops them in an afterAll. This
+// file renders directly instead — it needs real Reports, not a synthetic tree —
+// and so has to do its own housekeeping. It did not, and left one directory of
+// rendered HTML behind per run.
+afterAll(() => {
+  rmSync(SITE, { recursive: true, force: true });
+});
 
 const CHECKER = `
 import json, pathlib, re, sys
