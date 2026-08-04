@@ -3,6 +3,60 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.9.0] — 2026-08-04
+
+### Added — `d1 stores near`, and a clear statement of what it is not
+
+The pickup-point registry is real, current data: shop names, street addresses,
+opening hours. It reads exactly like a click-and-collect offer, and it is not
+one — every checkout simulation at every point tried returns
+`deliveryChannels: [{"id": "delivery"}]`, and no `pickup-in-point` has ever been
+observed. The output says so on its last line, because a list of addresses with
+opening hours does not say it by itself.
+
+Item 3 of BRO-2067's ranked next-work list.
+
+```text
+    0.88 km  BOG TOBERIN                 CL 164 # 16 A - 49, TOBERIN, BOGOTA, D.C.
+           open today 07:00–21:00
+
+2 shown of 30 found within 2.6 km of the point — the registry may hold more further out
+These are store locations, not collection points — D1's checkout offers
+scheduled delivery only, so you cannot have an order sent here to collect.
+```
+
+Three things measured while building, none documented upstream:
+
+- **30 results per page, always.** `?count=100` is accepted and **silently
+  ignored** — the same dropped-filter shape as `fq=skuId:` (gotcha 10). So
+  `count` is *refused* by the query guard rather than forwarded, because
+  forwarding it would let a caller believe it had asked for something.
+- `?page=N` works and page 11 is empty, so **300 is a ceiling, not a total.** At
+  the Bogotá test point the 300th store is 17 km out; a shop past that is
+  missing from the answer rather than from D1.
+- The registry is distance-sorted, so a request for 5 reads **one** page.
+
+The sweep therefore reports *why* it stopped — `registry-empty`, `cap`, or
+`limit` — and each renders a different sentence. That began as a boolean and a
+test caught it conflating the last two: a full sweep told the reader "the
+registry holds more further out" about the one case where it will not serve any
+more. `paging.total` is read rather than inferred, and an exact remainder is
+claimed only below the ceiling (300 is what both Bogotá and Medellín report,
+which is too round to be a coincidence).
+
+An answer this parser cannot read is not reported as an empty neighbourhood:
+`swept` counts survivors of normalization, so a `dropped` count tells the two
+apart, and the exit code follows the prose — 3 is "genuinely none", 1 is "we
+could not read it".
+
+### Held back — `d1 basket --brand`
+
+Built alongside this and **not shipped**. Seven cross-model review rounds each
+found a live false sentence: the feature makes categorical claims about a
+catalogue over a `--count`-wide window (default 12) against result sets of
+25–31, and every round's fix left an arm open or opened a new one. Tracked on
+BRO-2079 with the full history; the work is on `kg/d1-cli-closeout-2`.
+
 ## [0.8.0] — 2026-08-04
 
 ### Changed — `d1 order` redacts by ALLOWLIST, and the customer's name no longer prints

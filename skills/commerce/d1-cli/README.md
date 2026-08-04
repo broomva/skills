@@ -363,6 +363,46 @@ a confidently wrong shipping estimate — the same class of error as the per-lin
 shipping share in gotcha 7. Reaching it, if it is worth reaching, means
 starting from the mobile app's own traffic, which is a different arc.
 
+### 14. The pickup-point registry pages at 30, ignores `count`, and caps at 300
+
+`GET /api/checkout/pub/pickup-points?geoCoordinates={lon};{lat}&countryCode=COL`
+returns real store data — names, addresses, opening hours. Measured 2026-08-04
+against a Bogotá point:
+
+| you send | what happens |
+|---|---|
+| nothing | 30 results |
+| `count=100` | 30 results — **silently ignored**, HTTP 200 |
+| `page=2` | the *next* 30, farther out |
+| `page=11` | empty |
+
+So `count` is the gotcha-10 shape again: a parameter the API accepts and drops,
+where the success status is indistinguishable from it having worked. `d1-cli`
+**refuses** to send it rather than forwarding a request it knows will be ignored.
+
+**300 is a ceiling, not a total.** At that Bogotá point the 300th store is 17 km
+away; a shop at 18 km is absent from the answer and its absence says nothing
+about whether it exists. `d1 stores near` therefore reports the radius its look
+actually reached, and distinguishes *the registry ran out* from *we hit the cap*
+from *you asked for fewer* — three different facts that a boolean conflated into
+one misleading sentence during development.
+
+Note the same `{lon};{lat}` semicolon convention as `regions` (gotcha 1).
+
+### 15. These are store locations, not collection points
+
+The registry is named `pickup-points` and lists opening hours, which reads as
+click-and-collect. It is not. Every checkout simulation at every delivery point
+tried — national seller and regional seller alike — returns:
+
+```json
+"deliveryChannels": [{"id": "delivery"}]
+```
+
+No `pickup-in-point` channel has ever been observed, so nothing in the API
+supports having an order sent to a shop to collect. `d1 stores near` says this
+on its last line rather than leaving a list of addresses to imply otherwise.
+
 ## What the public API will not give you
 
 - **Saved addresses and profile records.** `dataentities/AD` and `dataentities/CL`
@@ -537,8 +577,12 @@ a universal over a sample.
 ## Roadmap
 
 - Cross-basket comparison ("what would this cost in store brands"), which is
-  substitution with a brand constraint rather than a stock one.
-- Pickup points (`public.favoritePickup` appears in D1's session whitelist).
+  substitution with a brand constraint rather than a stock one. Built and held
+  back — see BRO-2079; its output kept making categorical claims wider than the
+  `--count` window behind them.
+- Reorder from a past order (`d1 reorder <id>`) — buildable from order detail
+  into a cart with no new endpoint, and the one thing D1's own account UI
+  advertises. Blocked only on having a completed order to build it against.
 - Express delivery, only from the mobile app's traffic — the storefront API has
   been measured and does not carry it (gotcha 13).
 - Coupon application (`orderForm/{id}/coupons` is present but unexercised).

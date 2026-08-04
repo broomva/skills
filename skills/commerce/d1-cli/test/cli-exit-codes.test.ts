@@ -213,3 +213,96 @@ describe("the login follow-up prints ONE command", () => {
     expect(out).toContain("--auth-token 'eyJhbGciOiJFUzI1NiJ9' --code <code>");
   });
 });
+
+describe("`d1 stores near` validates BEFORE the network", () => {
+  // Under DEAD_PROXY anything that reaches the network exits 1, so a guard that
+  // runs first is observable as a 2. Every one of these survived deletion with
+  // the unit suite green, because nothing invoked `main()` for them.
+
+  test("`d1 stores` rejects an unknown subcommand offline", async () => {
+    // The comment on this guard states its own failure mode — "silently meaning
+    // near and then changing meaning later" — and had no test.
+    const { code } = await run(
+      ["stores", "nearby", "--lat", "4.75", "--lng", "-74.03"],
+      DEAD_PROXY,
+    );
+    expect(code).toBe(2);
+  });
+
+  test("`d1 stores near` rejects a bad --limit offline", async () => {
+    // "2.7" included deliberately: `num` returns 2.7, which passed a guard whose
+    // message promises a whole number, and `nearbyStores` then truncated it to
+    // 2 — the caller got two stores for a request the CLI had told them was
+    // valid.
+    for (const v of ["0", "-3", "abc", "2.7"]) {
+      const { code } = await run(
+        ["stores", "near", "--lat", "4.75", "--lng", "-74.03", "--limit", v],
+        DEAD_PROXY,
+      );
+      expect(code).toBe(2);
+    }
+  });
+
+  test("`d1 stores near` with a valid limit DOES reach the network", async () => {
+    const { code } = await run(
+      ["stores", "near", "--lat", "4.75", "--lng", "-74.03", "--limit", "5"],
+      DEAD_PROXY,
+    );
+    expect(code).toBe(1);
+  });
+
+  test("`d1 stores near` needs a coordinate", async () => {
+    const { code } = await run(["stores", "near"], DEAD_PROXY);
+    expect(code).toBe(2);
+  });
+});
+
+describe("an unreadable registry answer is not exit 3", () => {
+  test("exit 3 is reserved for 'the answer is genuinely none'", async () => {
+    // The render refuses to call an unreadable answer an empty neighbourhood;
+    // the exit code was calling it one, and an agent branching on 3 — documented
+    // CLI-wide as never worth retrying — would have recorded the false fact.
+    //
+    // Driven through the real `storesExit` decision rather than the network,
+    // which cannot be made to serve malformed entries from here.
+    const { storesExit } = await import("../src/cli.ts");
+    expect(storesExit({ stores: [{}], dropped: 0 })).toBe(0);
+    expect(storesExit({ stores: [], dropped: 0 })).toBe(3);
+    expect(storesExit({ stores: [], dropped: 30 })).toBe(1);
+  });
+
+  test("...and `main` actually CALLS it", async () => {
+    // The test above pins a pure function. Nothing pinned the call site, so
+    // reverting `return storesExit(result)` to the old
+    // `result.stores.length ? 0 : 3` left the whole suite green while the
+    // command went back to reporting an unreadable answer as "genuinely none".
+    // The comment claiming this could not be driven without the network was
+    // wrong; it takes a stubbed global fetch.
+    const { main } = await import("../src/cli.ts");
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          paging: { page: 1, pageSize: 30, total: 300, pages: 10 },
+          // 30 entries, none carrying `pickupPoint.id` — the registry answered
+          // and this parser cannot read a word of it.
+          items: Array.from({ length: 30 }, () => ({ distance: 1, pickupPoint: { name: "x" } })),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as unknown as typeof fetch;
+    try {
+      const code = await main([
+        "stores",
+        "near",
+        "--lat",
+        "4.75068",
+        "--lng",
+        "-74.03532",
+        "--json",
+      ]);
+      expect(code).toBe(1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+});
