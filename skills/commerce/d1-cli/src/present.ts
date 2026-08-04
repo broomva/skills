@@ -10,9 +10,10 @@
  * rather than shown as zero.
  */
 
+import { type BasketLine, type BasketPlan, FILLED, type LineStatus } from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
-import { discountPercent, formatCOP } from "./money.ts";
+import { discountPercent, formatCOP, sum } from "./money.ts";
 import type { SubstituteResult } from "./substitute.ts";
 import type {
   Cart,
@@ -429,4 +430,225 @@ export function renderAddresses(addrs: SavedAddress[]): string {
   lines.push("");
   lines.push("Use one with: d1 cart deliver-to --address-id <id>");
   return lines.join("\n");
+}
+
+/**
+ * A budget basket: what went in, what did not, and why.
+ *
+ * The unfilled lines are not an appendix. A basket that reports a total while
+ * quietly dropping three of eight terms is making a claim about a shop that
+ * would not happen, which is the same defect as an empty substitute result
+ * asserting "nothing is in stock" without saying it compared 3 of 140.
+ */
+export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {}): string {
+  const out: string[] = [];
+  // A filled line without a product cannot be rendered as a row, and must not
+  // be counted or billed either — dropping it from the body alone produced an
+  // empty basket whose summary still read "1 of 1 lines - $ 5.550".
+  const filled = plan.lines.filter((l) => FILLED.includes(l.status) && l.product);
+  const unfilled = plan.lines.filter((l) => !FILLED.includes(l.status) || !l.product);
+
+  for (const l of filled) {
+    const p = l.product;
+    if (!p) continue;
+    const per = perUnit(p);
+    out.push(
+      `  ${sanitize(p.skuId).padEnd(7)} ${sanitize(p.name).padEnd(46)} ${formatCOP(l.price ?? 0).padStart(9)}  ${per}`,
+    );
+    out.push(`          for "${sanitize(l.term)}" · ${scopeOf(l)}`);
+    if (l.byPackPrice) {
+      // The one path where the CLI knowingly ranks on pack price. Presenting it
+      // identically to a value-ranked line is the "cheapest pack is the worst
+      // buy" error this whole feature exists to prevent.
+      out.push(
+        l.anySized
+          ? "          chosen on pack price — no two of these are measured the same way"
+          : "          chosen on pack price — D1 publishes no size for any of these",
+      );
+    }
+    if (l.replaces) {
+      out.push(
+        `          replaces ${sanitize(l.replaces.skuId)} ${sanitize(l.replaces.name)}, which D1 cannot supply here`,
+      );
+    }
+    if (p.warnings.length) out.push(`          ${p.warnings.map(sanitize).join(", ")}`);
+  }
+
+  if (!filled.length) {
+    // Composed from one clause per condition PRESENT, never a single sentence
+    // picked by priority.
+    //
+    // The headline is a causal claim, and four earlier attempts each made it
+    // false for whichever lines the losing condition described: blaming the
+    // budget over an unanswered lookup (while the same run exited 1, "D1 could
+    // not be reached"), then blaming the lookup over lines whose price was
+    // known and rejected. Each clause names a condition rather than "others",
+    // which reads as a contrast with lines that went in — of which there are
+    // none here.
+    const has = (st: LineStatus) => plan.lines.some((l) => l.status === st);
+    const why: string[] = [];
+    if (has("replacement-unknown")) why.push("D1 did not answer");
+    if (has("over-budget")) why.push("the budget was short");
+    if (has("nothing-in-stock")) why.push("some are not in stock");
+    if (has("no-match")) why.push("some matched nothing");
+    // Three cases, not two. "Nothing was asked for" is only true of an EMPTY
+    // list; a plan carrying lines whose statuses match none of the reasons
+    // above still asked for something, and saying otherwise is false about the
+    // one thing the reader can see for themselves.
+    out.push(
+      why.length
+        ? `  Nothing could go in the basket — ${why.join("; ")}.`
+        : plan.lines.length
+          ? "  Nothing could go in the basket."
+          : "  Nothing was asked for.",
+    );
+  }
+
+  out.push("");
+  // Billed from the lines actually RENDERED, not from `plan.total`. A plan
+  // built by hand — which is how this function is called from tests and from
+  // `--json` consumers — could otherwise show zero rows and still charge for
+  // one, which is the same body-and-summary disagreement in the other
+  // direction.
+  const shown = sum(filled.map((l) => l.price ?? 0));
+  out.push(
+    `${filled.length} of ${plan.lines.length} lines · ${formatCOP(shown)} of ${formatCOP(plan.budget)} · ${formatCOP(plan.budget - shown)} left`,
+  );
+  // The ceiling is stated, not implied. A reader who assumed best-effort would
+  // otherwise read a short basket as "that is all D1 sells".
+  out.push(
+    "The budget is a hard ceiling — a line that would exceed it is left out, not rounded into.",
+  );
+
+  if (unfilled.length) {
+    out.push("");
+    out.push("Not included:");
+    for (const l of unfilled) out.push(`  ${sanitize(l.term)} — ${reasonFor(l)}`);
+  }
+
+  if (!opts.regionId) {
+    out.push("");
+    out.push(
+      "No delivery point resolved, so these are NATIONAL prices and stock. Pass --lat/--lng for your store's.",
+    );
+  }
+  out.push("");
+  out.push(footerFor(filled));
+  return out.join("\n");
+}
+
+/**
+ * How wide a look this line's choice was made over.
+ *
+ * Naming the denominator is the point. "best of 20 compared" alone reads as a
+ * survey of the shelf; "best of 20 compared, of 143 D1 matched" says plainly
+ * that 123 products were never looked at. That gap is what made an empty
+ * substitute result claim "nothing in this category is in stock" while
+ * concealing it had seen 3 of 140.
+ */
+function scopeOf(l: BasketLine): string {
+  // A substitute line's `compared` counts a CATEGORY sweep, a different
+  // population from `matched` (which counts the term's own search). Comparing
+  // them was meaningless and, when the sweep was larger, silently suppressed
+  // the denominator exactly where the look had drifted furthest from what the
+  // shopper typed. So that line says which population it is talking about.
+  if (l.substituteSweep) return `best of ${l.compared} in its category${sweepCaveat(l)}`;
+  return l.matched > l.compared
+    ? `best of ${l.compared} compared, of ${l.matched} D1 matched`
+    : `best of ${l.compared} compared`;
+}
+
+/**
+ * What the basket as a whole is claiming about how its lines were picked.
+ *
+ * Three different mechanisms can be in play at once, and one sentence cannot
+ * cover them: value ranking, the pack-price fallback, and a substitute chosen
+ * by similarity from a DIFFERENT category page. The old single sentence said
+ * "best value among the products fetched for its term", which was false for the
+ * last two.
+ */
+function footerFor(filled: readonly BasketLine[]): string {
+  const substitutes = filled.filter((l) => l.substituteSweep).length;
+  // When EVERY line is a replacement, "the products fetched for its term" is
+  // false for the whole basket and the exception swallows the rule.
+  const parts = [
+    substitutes === filled.length && filled.length
+      ? "Every line here is a replacement — the closest match from its category, not a product fetched for the term you typed"
+      : "Each line is the best among the products fetched for its term, not across all of D1",
+  ];
+  if (filled.some((l) => l.byPackPrice)) {
+    parts.push("by pack price where D1 publishes no size");
+  }
+  if (substitutes && substitutes !== filled.length) {
+    parts.push(
+      "except a replacement, which is the closest match from its category rather than for the term you typed",
+    );
+  }
+  return `${parts.join(" — ")}. Raise --count to widen it.`;
+}
+
+/**
+ * How partial the category sweep was, when it was partial.
+ *
+ * A categorical claim about a category — "nothing in it is in stock", "this is
+ * the best of it" — is only as wide as the sweep behind it, and the sweep reads
+ * ONE page capped at 50. `d1 substitute` states this on both its empty and
+ * non-empty paths, and SKILL.md sets the rule: a negative over a partial sweep
+ * needs the caveat more than a positive does, not less. The basket said neither
+ * until this existed.
+ */
+function sweepCaveat(l: BasketLine): string {
+  const { swept, categoryTotal } = l;
+  if (!swept || !categoryTotal || categoryTotal <= swept) return "";
+  return ` — only ${swept} of ${categoryTotal} in that category were searched`;
+}
+
+/** Why a term did not make the basket, in the reader's terms rather than the enum's. */
+function reasonFor(l: BasketLine): string {
+  switch (l.status) {
+    case "over-budget":
+      // Name the replacement here too.
+      //
+      // This is the one path where a substitution was applied and then not
+      // shown. When a term is out of stock its line is resolved to a category
+      // replacement; if that replacement then exceeds what is left, the line is
+      // downgraded here and printed as `huevos — would cost $ 24.900` — a price
+      // belonging to a product the whole render never mentions. The shopper
+      // reads it as the price of the thing they typed. `replaces` is documented
+      // "Named, never applied silently", and the filled row honours that; this
+      // row did not.
+      return l.replaces
+        ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}`
+        : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
+    case "nothing-in-stock":
+      // "returned", not "carries". The look is one search page plus a bounded
+      // category sweep, so a claim about what D1 STOCKS is wider than the
+      // evidence; a claim about what it RETURNED is exactly as wide as it.
+      //
+      // Only claim a category was searched when one actually was. A line
+      // downgraded for having no usable price never reached `findSubstitutes`,
+      // and saying "its category had no replacement" invents a lookup.
+      if (!l.substituteSweep) {
+        return "D1 publishes no price for this at your store, so it cannot go in a basket";
+      }
+      if (l.inStock === undefined) {
+        return "nothing D1 returned for this is in stock here, and its category was not reported on";
+      }
+      return l.inStock
+        ? `nothing D1 returned for this is in stock here; ${l.inStock} in its category are, but none is priced at your store${sweepCaveat(l)}`
+        : `nothing D1 returned for this is in stock here, and nothing in the part of its category that was searched is either${sweepCaveat(l)}`;
+    case "replacement-unknown":
+      // Never "nothing is in stock". That claim would be asserted from a
+      // request that failed, which is a statement about the network dressed up
+      // as a statement about the shelf.
+      return "nothing D1 carries for this is in stock here, and the replacement lookup did not answer — unknown, not empty";
+    case "no-match":
+      return "D1 returned nothing for this term";
+    default:
+      // Reached only by a filled line carrying no product, which `fillToBudget`
+      // makes impossible — so if a reader ever sees this, the plan was built by
+      // hand and is malformed. Say that rather than "not included", which reads
+      // like a shopping outcome.
+      return "not included — this line names no product, which is a bug in whatever built this plan";
+  }
 }

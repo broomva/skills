@@ -12,6 +12,13 @@
  */
 
 import {
+  type BasketLine,
+  type BasketOptions,
+  buildBasket,
+  isFilled,
+  parseBudget,
+} from "./basket.ts";
+import {
   addItems,
   checkoutUrl,
   clearCart,
@@ -32,6 +39,7 @@ import { fingerprint, isMutating, isOwned, isScratch } from "./ownership.ts";
 import {
   json,
   renderAddresses,
+  renderBasket,
   renderCart,
   renderCategories,
   renderFacets,
@@ -188,6 +196,42 @@ export function substituteOptions(
 }
 
 /**
+ * The options `d1 basket` derives from its flags.
+ *
+ * Separate from the command body for the same reason `substituteOptions` is:
+ * dropping the region id silently prices the whole basket against the NATIONAL
+ * catalogue, and no network-free test of the command body can observe it.
+ */
+export function basketOptions(
+  flags: Args["flags"],
+  region: { id: string } | undefined,
+  salesChannel: string,
+): BasketOptions {
+  return { regionId: region?.id, salesChannel, count: countFlag(flags.count) };
+}
+
+/**
+ * What `d1 basket` exits with.
+ *
+ * **3 when nothing fit**, matching `substitute`: the command succeeded at
+ * looking, and "your budget buys none of this list" never becomes false on a
+ * retry. A partially filled basket is exit 0 — a real answer, with the lines it
+ * could not fit named in the output.
+ *
+ * **1 when a lookup never answered.** This takes the LINES, not a count, because
+ * a count cannot tell the two apart. An earlier version took `filledCount` and
+ * so returned 3 for a basket where every replacement lookup had failed — 3
+ * being documented CLI-wide as "never worth retrying", which told an agent a
+ * transient D1 outage meant its shopping list was definitively unbuyable. An
+ * empty answer and an unanswered question are not the same result.
+ */
+export function basketExit(lines: readonly BasketLine[]): number {
+  if (lines.some((l) => isFilled(l.status))) return 0;
+  if (lines.some((l) => l.status === "replacement-unknown")) return 1;
+  return 3;
+}
+
+/**
  * What `d1 substitute` exits with once it has an answer.
  *
  * **3, not 1.** The command SUCCEEDED at looking, and an agent needs "I have a
@@ -319,6 +363,12 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
                                and names what changes: brand, pack size, $/kg,
                                and any warning label gained or lost. Proposes
                                only — it never touches your cart.
+    d1 basket --budget <cop> <term> [term ...]      [--lat --lng --count]
+                               build a shopping list to a spending target, by
+                               VALUE rather than pack price. The budget is a
+                               hard ceiling; every term it could not fit is
+                               named, with the reason. Prints a basket — it
+                               never touches your cart.
     d1 suggest <partial>       autocomplete terms
     d1 trending                what Colombia is searching for
     d1 categories              department tree      [--depth N]
@@ -361,7 +411,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
     0  it worked
     1  D1 refused, or could not be reached — a retry may help
     2  the command was called wrong — a retry never helps
-    3  the command worked and the answer is "none" (substitute found nothing)
+    3  the command worked and the answer is "none"
+       (substitute found nothing; basket fit nothing)
 
 This CLI never handles payment. It builds and prices a basket; a human opens
 the checkout URL and pays. Stored credentials are limited to one storefront
@@ -479,6 +530,29 @@ async function main(argv: string[]): Promise<number> {
       const result = await findSubstitutes(client, sku, substituteOptions(flags, region, channel));
       console.log(asJson ? json(result) : renderSubstitutes(result));
       return substituteExit(result.candidates.length);
+    }
+
+    case "basket": {
+      const terms = positional.slice(1).filter(Boolean);
+      if (!terms.length) {
+        throw new UsageError(
+          "Usage: d1 basket --budget <pesos> <term> [term ...] [--count N] [--lat --lng]",
+        );
+      }
+      // Validate BEFORE the network, exactly as `substitute` does: `regionFor`
+      // below issues a live lookup, so a bad --budget or --count would
+      // otherwise cost a request and return exit 1 ("retry may help") for what
+      // is really the caller's typo.
+      const budget = parseBudget(flags.budget);
+      countFlag(flags.count);
+      const region = await regionFor(pointFrom(flags, stored?.region));
+      const plan = await buildBasket(client, terms, budget, basketOptions(flags, region, channel));
+      console.log(
+        asJson
+          ? json({ ...plan, regionId: region?.id })
+          : renderBasket(plan, { regionId: region?.id }),
+      );
+      return basketExit(plan.lines);
     }
 
     case "suggest": {

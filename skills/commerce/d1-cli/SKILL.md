@@ -1,6 +1,6 @@
 ---
 name: d1-cli
-version: 0.6.0
+version: 0.7.0
 source: https://github.com/broomva/skills
 description: Shop Tiendas D1 (Colombia, d1.com.co) from the command line — search the catalogue, resolve your nearest physical store, price a basket against that store's real stock, and quote delivery. D1 runs VTEX IO (account `d1tiendas`), so this drives its public storefront API with no admin key at all — catalogue and cart work fully anonymously, and a one-time emailed code unlocks order history. Handles the two traps that make naive D1 automation wrong — availability is regionalized (an unregioned query reports a national catalogue nobody can actually buy from) and prices arrive in two different units (search reports whole pesos, checkout reports hundredths, a silent 100x). Builds and prices baskets; it deliberately cannot pay, handing a checkout URL to a human instead. USE WHEN the user wants to find D1 products or prices, check whether D1 delivers somewhere, build or cost a D1 grocery basket, compare D1 items, or review their D1 orders. NOT FOR other Colombian retailers (Éxito, Jumbo, Ara, Alkosto), and not for completing a payment.
 author: broomva
@@ -29,6 +29,9 @@ bun run src/cli.ts search --facets category-1/lacteos-y-huevos --sort price:asc
 # 3. Price a basket without touching your cart
 bun run src/cli.ts quote 262:2 892:1
 
+# 3b. Or let a budget decide what goes in it — terms, not SKUs
+bun run src/cli.ts basket --budget 30000 arroz leche aceite huevos
+
 # 4. Or build a real one, then hand off to a human to pay
 bun run src/cli.ts cart add 262 --qty 2
 bun run src/cli.ts cart deliver-to
@@ -43,7 +46,7 @@ contract, and this list is the only copy of it:**
 | `0` | it worked | — |
 | `1` | D1 refused or was unreachable — undeliverable point, unavailable or unknown SKU, outage | yes, may help |
 | `2` | the command was called wrong | never helps |
-| `3` | it worked and the answer is "none" (`substitute` only) | never helps |
+| `3` | it worked and the answer is "none" (`substitute`, `basket`) | never helps |
 
 An agent that cannot separate those either retries a typo forever or gives up
 on a transient outage. `3` exists because an empty category is neither.
@@ -143,8 +146,8 @@ When it returns 1, `--json` gives `undeliverable[]` naming the lines, and
 d1 substitute 192 --limit 5        # ranks in-stock products from the same category
 ```
 
-Exit 0 means there is something to propose; **3 means there is not** — the
-only command that uses `3`.
+Exit 0 means there is something to propose; **3 means there is not** — one of
+the two commands that use `3`, alongside `d1 basket`.
 
 Three, not one, and the distinction is the point: `1` means *"D1 refused, or
 could not be reached"* everywhere else in this CLI, and invites a retry. An
