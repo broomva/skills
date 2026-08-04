@@ -222,10 +222,42 @@ category that may hold hundreds, so those were universals over a sample.
 Both sentences now carry *"only N of M in that category were searched"* when the
 look was partial, and say nothing when it was complete.
 
-**404 tests.** Across six rounds the score went 3 → 4 → 5 → 6 → 6 → 6, and the
-recurring finding was never the same defect twice: it was that the *previous
-round's fix* was inert, unpinned, or had quietly deleted something. Four of the
-six rounds found a test that could not fail.
+**404 tests.**
+
+### A SEVENTH pass — the one path where a substitution was applied and not shown
+
+When a term is out of stock its line is resolved to a category replacement. If
+that replacement then exceeds what is left, the line is downgraded to
+`over-budget`, and it printed only *"huevos — would cost $ 24.900, which does not
+fit in what is left"* — a price belonging to a product the entire render never
+mentions. The shopper reads a larger tray's price as the price of the eggs they
+typed. `replaces` is documented "Named, never applied silently"; the filled row
+honoured that and this row did not. It now names the replacement and carries the
+same sweep disclosure as everywhere else.
+
+Reachable with nothing exotic: a tight budget — the feature's premise — plus an
+out-of-stock term, its other premise.
+
+**406 tests. The gate passed on the eighth pass at 8/10**, with no blockers and
+no majors.
+
+### What eight rounds of review actually cost, and bought
+
+The score went **3 → 4 → 5 → 6 → 6 → 6 → 6 → 8**. Two things are worth recording
+because neither is visible from the final diff:
+
+**The recurring finding was almost never the same defect twice.** It was that the
+*previous round's fix* was inert, unpinned, or had quietly deleted something. The
+skip-an-unbuyable-replacement fix never ran, because the caller asked for one
+candidate and then skipped it. The count-only-buyable fix was right on one path
+and made the other a structural zero. Round 4 removed the end-to-end test of the
+path it was changing, in the same commit.
+
+**Six tests that could not fail were found across the eight rounds** — including
+three the earlier rounds had *written as fixes*. A green suite said nothing about
+them; only mutation did. The lesson this project already had — that a test's
+absence hides a defect rather than merely risking one — extends: a test's
+*presence* hides one too, when nothing has ever made it fail.
 
 ## [0.6.0] — 2026-08-03
 
