@@ -256,14 +256,21 @@ describe("renderStores", () => {
     // A boolean conflated `cap` with `limit`, so a sweep that hit the API's own
     // ceiling told the reader "the registry holds more further out" — true of
     // the world, false of anything this command can reach.
-    expect(renderStores(result(), AT, 1)).toContain("holds more further out");
+    // Without a reported total, "holds more" is an assertion the sweep cannot
+    // make: stopping on `limit` after a page that happened to hold exactly the
+    // limit proves nothing about what lies beyond it.
+    expect(renderStores(result(), AT, 1)).toContain("may hold more further out");
+    // WITH a total, the number is known and stated exactly.
+    expect(renderStores(result({ registryTotal: 300 }), AT, 1)).toContain(
+      "the registry holds 270 more further out",
+    );
     expect(renderStores(result({ stopped: "registry-empty" }), AT, 1)).toContain(
       "that is every point the registry returns here",
     );
     expect(renderStores(result({ stopped: "cap" }), AT, 1)).toContain("own ceiling of 300");
     // And the three are mutually exclusive, or a sentence is saying two of them.
-    expect(renderStores(result({ stopped: "registry-empty" }), AT, 1)).not.toContain("holds more");
-    expect(renderStores(result({ stopped: "cap" }), AT, 1)).not.toContain("holds more");
+    expect(renderStores(result({ stopped: "registry-empty" }), AT, 1)).not.toContain("hold more");
+    expect(renderStores(result({ stopped: "cap" }), AT, 1)).not.toContain("hold more");
     expect(renderStores(result({ stopped: "cap" }), AT, 1)).not.toContain("every point");
   });
 

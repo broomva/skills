@@ -11,6 +11,7 @@ import {
   packPrices,
   pairRows,
   parseBudget,
+  rowLabel,
 } from "../src/basket.ts";
 import { basketExit, basketOptions, basketTerms, comparisonExit } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
@@ -2173,5 +2174,180 @@ describe("renderBasket handles the new status [BRO-2079]", () => {
     expect(out).not.toContain("is a bug in whatever built this plan");
     // And the sweep caveat still rides along.
     expect(out).toContain("only 2 of 140 in that category were searched");
+  });
+});
+
+describe("the comparison never contradicts itself [BRO-2079 round 2]", () => {
+  /** Base's best-value pick busts the budget; the branded one fits. */
+  const inverted = () =>
+    fakeClient({
+      search: [
+        // Best VALUE per kg, but a big pack — `chooseBest` ranks on unit price,
+        // so this wins the unconstrained basket and then does not fit.
+        wire("1", "ACEITE OTRA 3000 ML", {
+          price: 20_000,
+          brand: "OTRA",
+          unit: "Ml",
+          value: "3000",
+        }),
+        wire("2", "ACEITE LATTI 900 ML", {
+          price: 9_000,
+          brand: "LATTI",
+          unit: "Ml",
+          value: "900",
+        }),
+      ],
+      sku: sourceSku("1", "ACEITE OTRA 3000 ML"),
+      sweep: [],
+    });
+
+  test("onlyAlt is computed, not merely rendered", async () => {
+    // The round-1 "both polarities" test hand-built the CrossBasket, so it
+    // pinned the RENDER and left the computation asserted only in its empty
+    // polarity — mutating it to `[]` kept the whole suite green, which is
+    // exactly the vacuity the changelog claimed had been fixed.
+    const c = await compareBaskets(inverted(), ["aceite"], 1_500_000, { brand: "LATTI" });
+    expect(c.base.lines[0]?.status).toBe("over-budget");
+    expect(c.alt.lines[0]?.status).toBe("filled");
+    expect(c.onlyAlt).toEqual(["aceite"]);
+    expect(c.comparable.terms).toBe(0);
+  });
+
+  test("...and the summary does not then deny the line beside it", async () => {
+    // "LATTI is not an alternative for any line above" printed directly above
+    // "only LATTI could fill: aceite", with the table showing LATTI filling it.
+    const out = renderComparison(
+      await compareBaskets(inverted(), ["aceite"], 1_500_000, { brand: "LATTI" }),
+    );
+    expect(out).toContain("only LATTI could fill: aceite");
+    expect(out).not.toContain("is not an alternative for any line above");
+    expect(out).toContain("though LATTI filled 1 the best-value basket could not");
+  });
+
+  test("a term D1 knows nothing about does not trigger the brands hint", async () => {
+    // The round-1 fix widened the gate to include `no-match`, which means D1
+    // returned nothing at all — nothing to do with the brand. A single typo'd
+    // term then printed "Nothing D1 returned for these terms is LATTI" four
+    // lines above "that is not about LATTI".
+    const c = await compareBaskets(
+      fakeClient({ search: [], sku: [], sweep: [] }),
+      ["zzqqxxnotaproduct"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("no-match");
+    expect(c.brandsSeen).toBeUndefined();
+    const out = renderComparison(c);
+    expect(out).not.toContain("Nothing D1 returned for these terms is LATTI");
+    expect(out).toContain("Neither basket filled");
+  });
+
+  test("a repeated term cannot land in two buckets under one name", async () => {
+    // One `aceite` row filled in base, the other unfilled in both. Bare term
+    // labels printed "no LATTI for: aceite" AND "Neither basket filled: aceite"
+    // — mutually exclusive claims about the same name.
+    const c = await compareBaskets(inverted(), ["aceite", "aceite"], 2_500_000, { brand: "LATTI" });
+    const labels = [
+      ...c.onlyBase,
+      ...c.altOverBudget,
+      ...c.altUnknown,
+      ...c.altNoMatch,
+      ...c.onlyAlt,
+      ...c.neither,
+    ];
+    expect(new Set(labels).size).toBe(labels.length);
+    for (const l of labels) expect(l).toMatch(/^aceite \(#[12]\)$/);
+  });
+});
+
+describe("rowLabel [BRO-2079]", () => {
+  test("a unique term keeps its own name", () => {
+    expect(rowLabel(["arroz", "leche"], 0)).toBe("arroz");
+    expect(rowLabel(["arroz", "leche"], 1)).toBe("leche");
+  });
+
+  test("a repeated term is numbered in the order it was typed", () => {
+    expect(rowLabel(["arroz", "arroz"], 0)).toBe("arroz (#1)");
+    expect(rowLabel(["arroz", "arroz"], 1)).toBe("arroz (#2)");
+    // Only the repeated one is numbered.
+    expect(rowLabel(["arroz", "leche", "arroz"], 1)).toBe("leche");
+    expect(rowLabel(["arroz", "leche", "arroz"], 2)).toBe("arroz (#2)");
+  });
+});
+
+describe("brandLine's guards are load-bearing [BRO-2079]", () => {
+  test("the sweep is asked for EVERY candidate, not just the top-ranked one", async () => {
+    // `findSubstitutes` slices to `limit` before returning, so asking for 1 and
+    // then filtering by brand examines only the closest match — almost never
+    // the wanted brand — and reports `no-brand-match` where a match existed.
+    // The same defect BRO-2078 hit on the stock path.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        // The LATTI product ranks below several closer name matches.
+        sweep: [
+          wire("9", "ARROZ BARATO EXTRA", { price: 3_100, brand: "OTRA" }),
+          wire("10", "ARROZ BARATO SUPER", { price: 3_200, brand: "OTRA" }),
+          wire("11", "ARROZ LATTI PREMIUM", { price: 7_000, brand: "LATTI" }),
+        ],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("filled-by-substitute");
+    expect(c.alt.lines[0]?.product?.name).toBe("ARROZ LATTI PREMIUM");
+  });
+
+  test("an unpriced candidate of the right brand is not offered", async () => {
+    // `rankSubstitutes` filters on availability only, and VTEX reports
+    // `Price: 0` ("no offer in this region") alongside a positive
+    // AvailableQuantity. Without the price filter that candidate wins, `price`
+    // becomes undefined, `fillToBudget` downgrades it, and the render says
+    // "D1 returned nothing at all" about a product D1 did return.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        sweep: [
+          wire("9", "ARROZ LATTI SIN OFERTA", { price: 0, brand: "LATTI" }),
+          wire("10", "ARROZ LATTI REAL", { price: 7_000, brand: "LATTI" }),
+        ],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("filled-by-substitute");
+    expect(c.alt.lines[0]?.product?.name).toBe("ARROZ LATTI REAL");
+    expect(c.alt.lines[0]?.price).toBe(700_000);
+  });
+});
+
+describe("altNoMatch is computed AND rendered [BRO-2079]", () => {
+  test("a term the branded run found nothing for is named as such", () => {
+    // Emptying either the bucket or its render line left the suite green.
+    const c = {
+      brand: "LATTI",
+      base: fillToBudget([line({ term: "leche", price: 100_000 })], 1_000_000),
+      alt: fillToBudget(
+        [line({ term: "leche", status: "no-match", product: undefined, price: undefined })],
+        1_000_000,
+      ),
+      rows: [],
+      comparable: { terms: 0, baseTotal: 0, altTotal: 0, delta: 0 },
+      onlyBase: [],
+      altOverBudget: [],
+      altUnknown: [],
+      altNoMatch: ["leche"],
+      onlyAlt: [],
+      neither: [],
+    };
+    const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
+    expect(out).toContain("D1 returned nothing at all for: leche");
+    expect(out).toContain("Their cost is in neither number above");
   });
 });

@@ -213,3 +213,84 @@ describe("the login follow-up prints ONE command", () => {
     expect(out).toContain("--auth-token 'eyJhbGciOiJFUzI1NiJ9' --code <code>");
   });
 });
+
+describe("the new commands validate BEFORE the network", () => {
+  // Under DEAD_PROXY anything that reaches the network exits 1, so a guard that
+  // runs first is observable as a 2. Every one of these survived deletion with
+  // the unit suite green, because nothing invoked `main()` for them.
+
+  test("a bare --brand is refused rather than silently dropped", async () => {
+    // `str()` maps a valueless flag to undefined, so without the guard control
+    // falls through to the UNBRANDED basket: the shopper asks for a brand
+    // comparison, gets an ordinary basket, and is told nothing.
+    const { code } = await run(
+      ["basket", "--budget", "50000", "arroz", "--lat", "4.75", "--lng", "-74.03", "--brand"],
+      DEAD_PROXY,
+    );
+    expect(code).toBe(2);
+  });
+
+  test("an empty or whitespace --brand is refused too", async () => {
+    for (const v of ["", "   "]) {
+      const { code } = await run(
+        ["basket", "--budget", "50000", "arroz", "--lat", "4.75", "--lng", "-74.03", "--brand", v],
+        DEAD_PROXY,
+      );
+      expect(code).toBe(2);
+    }
+  });
+
+  test("a real --brand does reach the network (anti-vacuity control)", async () => {
+    // Without this the two above pass for a `basket` command that refuses
+    // everything.
+    const { code } = await run(
+      [
+        "basket",
+        "--budget",
+        "50000",
+        "arroz",
+        "--lat",
+        "4.75",
+        "--lng",
+        "-74.03",
+        "--brand",
+        "LATTI",
+      ],
+      DEAD_PROXY,
+    );
+    expect(code).toBe(1);
+  });
+
+  test("`d1 stores` rejects an unknown subcommand offline", async () => {
+    // The comment on this guard states its own failure mode — "silently meaning
+    // near and then changing meaning later" — and had no test.
+    const { code } = await run(
+      ["stores", "nearby", "--lat", "4.75", "--lng", "-74.03"],
+      DEAD_PROXY,
+    );
+    expect(code).toBe(2);
+  });
+
+  test("`d1 stores near` rejects a bad --limit offline", async () => {
+    for (const v of ["0", "-3", "abc"]) {
+      const { code } = await run(
+        ["stores", "near", "--lat", "4.75", "--lng", "-74.03", "--limit", v],
+        DEAD_PROXY,
+      );
+      expect(code).toBe(2);
+    }
+  });
+
+  test("`d1 stores near` with a valid limit DOES reach the network", async () => {
+    const { code } = await run(
+      ["stores", "near", "--lat", "4.75", "--lng", "-74.03", "--limit", "5"],
+      DEAD_PROXY,
+    );
+    expect(code).toBe(1);
+  });
+
+  test("`d1 stores near` needs a coordinate", async () => {
+    const { code } = await run(["stores", "near"], DEAD_PROXY);
+    expect(code).toBe(2);
+  });
+});

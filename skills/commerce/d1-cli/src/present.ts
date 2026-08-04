@@ -715,8 +715,10 @@ function reasonFor(l: BasketLine): string {
       // as a statement about the shelf.
       return "nothing D1 carries for this is in stock here, and the replacement lookup did not answer — unknown, not empty";
     case "no-brand-match":
-      // Added with the status. Without an arm here it fell to the default,
-      // which told the reader the line named no product and that the plan was
+      // Added with the status, and DEFENSIVE: `--brand` renders through
+      // `renderComparison`, which never calls this, so no command reaches this
+      // arm today. It exists because without it the status fell to the default,
+      // which told the reader the line named no product and the plan was
       // malformed — while the line named the product it had just rejected.
       return l.substituteSweep
         ? `D1 sells this, but nothing of that brand — its category was searched too${sweepCaveat(l)}`
@@ -789,7 +791,12 @@ function scopeLine(r: StoresResult): string {
     case "cap":
       return `${reach} — that is the registry's own ceiling of ${MAX_REACHABLE}, so a shop further out is missing from this answer rather than from D1`;
     default:
-      return `${reach} — the registry holds more further out`;
+      // Hedged when the registry did not report a total. Stopping on `limit`
+      // after a page that happened to hold exactly the limit proves nothing
+      // about what lies beyond it, and "holds more" is an assertion.
+      return r.registryTotal !== undefined && r.registryTotal > r.swept
+        ? `${reach} — the registry holds ${r.registryTotal - r.swept} more further out`
+        : `${reach} — the registry may hold more further out`;
   }
 }
 
@@ -836,8 +843,17 @@ export function renderComparison(c: CrossBasket): string {
     // No shared line means there is no comparison to report. Printing a delta
     // of zero here would read as "the same price", which is the opposite of
     // what happened.
+    //
+    // The "not an alternative for any line" clause is conditional, because it
+    // was false exactly when `onlyAlt` was populated: `chooseBest` ranks by unit
+    // price, so the best-value pick is routinely a larger, pricier pack that
+    // busts the budget while the branded one fits. The output then said the
+    // brand was not an alternative to anything, directly above the line saying
+    // it was the only thing that could fill the term.
     out.push(
-      `No term was filled by both baskets, so there is nothing to compare — ${brand} is not an alternative for any line above.`,
+      c.onlyAlt.length
+        ? `No term was filled by BOTH baskets, so there is no price to compare — though ${brand} filled ${c.onlyAlt.length} the best-value basket could not.`
+        : `No term was filled by both baskets, so there is nothing to compare — ${brand} is not an alternative for any line above.`,
     );
   } else {
     const dir = delta === 0 ? "the same as" : delta > 0 ? "more than" : "less than";

@@ -907,9 +907,18 @@ export async function compareBaskets(
     // "Nothing D1 returned for these terms is LATTI" directly above "Brands it
     // did return: LATTI" — two adjacent sentences in contradiction, and the
     // second one is the true one.
-    brandsSeen: alt.lines.every((l) => l.status === "no-brand-match" || l.status === "no-match")
-      ? brandsIn(base.lines).slice(0, 12)
-      : undefined,
+    // Offered only when a line actually LOOKED for the brand and did not find
+    // it. `every(no-brand-match || no-match)` was still too wide: `no-match`
+    // means D1 returned nothing at all for the term, which is not about the
+    // brand, and a single typo'd term then printed "Nothing D1 returned for
+    // these terms is LATTI" four lines above "that is not about LATTI". So at
+    // least one line must be `no-brand-match` — the only status that means the
+    // brand was searched for and missing.
+    brandsSeen:
+      alt.lines.some((l) => l.status === "no-brand-match") &&
+      alt.lines.every((l) => l.status === "no-brand-match" || l.status === "no-match")
+        ? brandsIn(base.lines).slice(0, 12)
+        : undefined,
   };
 }
 
@@ -927,6 +936,27 @@ export async function compareBaskets(
  * asserted rather than assumed, because a silent length mismatch would
  * reintroduce the same defect through a different door.
  */
+/**
+ * A term's label in the comparison, disambiguated when the shopper repeated it.
+ *
+ * The buckets below project rows back to strings. With a bare term, a list
+ * containing `aceite` twice — one row filled, one not — printed
+ * "no LATTI for: aceite" and "Neither basket filled: aceite" about the same
+ * name, which are mutually exclusive claims. A label that is unique per row
+ * makes them separate lines about separate rows.
+ */
+export function rowLabel(terms: readonly string[], i: number): string {
+  const term = terms[i] ?? "";
+  let total = 0;
+  let ordinal = 0;
+  for (let k = 0; k < terms.length; k++) {
+    if (terms[k] !== term) continue;
+    total++;
+    if (k <= i) ordinal++;
+  }
+  return total > 1 ? `${term} (#${ordinal})` : term;
+}
+
 export function pairRows(
   terms: readonly string[],
   base: BasketPlan,
@@ -937,7 +967,8 @@ export function pairRows(
       `Basket comparison expected one line per term (${terms.length}), got ${base.lines.length} and ${alt.lines.length}. This is a bug in d1-cli.`,
     );
   }
-  return terms.map((term, i) => {
+  return terms.map((_term, i) => {
+    const term = rowLabel(terms, i);
     const bl = base.lines[i];
     const al = alt.lines[i];
     const both = bl && al && isFilled(bl.status) && isFilled(al.status);
