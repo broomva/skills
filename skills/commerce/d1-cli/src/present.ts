@@ -748,7 +748,16 @@ export function renderStores(r: StoresResult, at: LatLng, today?: number): strin
   // registry's answer" whenever the shown list happened to be empty — including
   // when points were fetched and every one was dropped as malformed, which is a
   // statement about this parser rather than about the registry.
-  if (!r.swept) {
+  if (!r.stores.length) {
+    // The registry ANSWERED, and this parser could not read what it said. That
+    // is a fact about this code, and reporting it as the registry's answer
+    // would be the same substitution the sentence below exists to avoid.
+    if (r.dropped) {
+      return [
+        `No D1 store near ${fmtCoord(at)} could be read from the pickup registry.`,
+        `It returned ${r.dropped} ${r.dropped === 1 ? "entry" : "entries"} and none of them carried the fields this needs, which is a bug here rather than an empty neighbourhood.`,
+      ].join("\n");
+    }
     return [
       `No D1 store is in the pickup registry near ${fmtCoord(at)}.`,
       "That is the registry's answer, not a survey of the neighbourhood — it lists points D1 has configured for logistics, which is not the same set as shops with a door.",
@@ -830,7 +839,15 @@ export function renderComparison(c: CrossBasket): string {
   const brand = sanitize(c.brand);
 
   if (c.brandsSeen) {
-    out.push(`Nothing D1 returned for these terms is ${brand}.`);
+    // Two different facts, and the code now knows which one it has. `no-brand-match`
+    // means nothing of the brand was BUYABLE — it does not mean D1 returned none
+    // of it, and saying so was false whenever the brand was on the page at
+    // `Price: 0` (live: `--brand COPELIA leche`).
+    out.push(
+      c.brandReturnedUnbuyable
+        ? `D1 returned ${brand} for these terms, but nothing of it can be bought at this store.`
+        : `Nothing D1 returned for these terms is ${brand}.`,
+    );
     if (c.brandsSeen.length) {
       // Truncated OUT LOUD. A silent `.slice(0, 12)` is the same shape as every
       // partial-sweep claim this module already caveats — and the whole point of

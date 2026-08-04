@@ -90,6 +90,17 @@ export interface StoresResult {
    */
   reachedKm?: number;
   /**
+   * Registry entries fetched but discarded as unreadable.
+   *
+   * `swept` counts survivors, so a page of 30 entries that all fail
+   * {@link normalize} leaves `swept: 0` — which the renderer then reported as
+   * "that is the registry's answer" about a registry that had answered with
+   * 30. Moving that gate off `stores.length` and onto `swept` fixed the
+   * truncation case only; both counts are post-normalization and collapse the
+   * same way. This is the count that does not.
+   */
+  dropped: number;
+  /**
    * Why the sweep stopped, because the three reasons mean different things to
    * a reader and a boolean conflated two of them.
    *
@@ -187,6 +198,7 @@ export async function nearbyStores(
 
   const collected: Store[] = [];
   const seen = new Set<string>();
+  let dropped = 0;
   let stopped: StoresResult["stopped"] = "limit";
 
   let registryTotal: number | undefined;
@@ -212,7 +224,11 @@ export async function nearbyStores(
       // repeat, but a paged endpoint that starts repeating would otherwise
       // inflate `swept` and make the disclosed radius describe a look that did
       // not happen.
-      if (!s || seen.has(s.id)) continue;
+      if (!s) {
+        dropped++;
+        continue;
+      }
+      if (seen.has(s.id)) continue;
       seen.add(s.id);
       collected.push(s);
       fresh++;
@@ -261,6 +277,7 @@ export async function nearbyStores(
     swept: collected.length,
     reachedKm: placed.length ? placed[placed.length - 1].distanceKm : undefined,
     registryTotal,
+    dropped,
     stopped,
   };
 }

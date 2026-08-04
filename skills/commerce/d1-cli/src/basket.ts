@@ -834,11 +834,29 @@ export interface CrossBasket {
   /** Terms neither basket filled — not a brand difference, and not silent either. */
   neither: string[];
   /**
-   * Brands actually seen while searching, when the requested one matched
-   * nothing anywhere. A typo is otherwise indistinguishable from a brand D1
-   * does not carry, and both render as an empty basket.
+   * Brands D1 returned for these terms, when nothing of the requested one could
+   * be bought. A typo is otherwise indistinguishable from a brand D1 does not
+   * carry, and both render as an empty basket.
+   *
+   * COMPLETE — the requested brand is no longer filtered out of it. It used to
+   * be, and that is what {@link brandReturnedUnbuyable} exists to make
+   * unnecessary: see there.
    */
   brandsSeen?: string[];
+  /**
+   * The requested brand WAS returned by D1 — it just cannot be bought here.
+   *
+   * `no-brand-match` means nothing of the brand was BUYABLE, and the headline
+   * said D1 had returned nothing of it. Live: `--brand COPELIA leche` returns
+   * `COCADA LECHE PANELA COPELIA 23GR` at `Price: 0, AvailableQuantity: 0`, and
+   * the output said "Nothing D1 returned for these terms is COPELIA".
+   *
+   * The first fix filtered the brand out of the hint list so the contradiction
+   * could not be seen, and called that filter load-bearing. It was deleting the
+   * evidence and keeping the claim. The claim is conditioned on the evidence
+   * now, the list is complete, and the true sentence is the more useful one.
+   */
+  brandReturnedUnbuyable?: boolean;
 }
 
 /**
@@ -882,6 +900,18 @@ export async function compareBaskets(
   const altTotal = sum(shared.map((r) => r.alt?.price ?? 0));
 
   const filled = (l: BasketLine | undefined) => l !== undefined && isFilled(l.status);
+
+  // Every line looked for the brand and found nothing BUYABLE.
+  const brandMissed = alt.lines.length > 0 && alt.lines.every((l) => l.status === "no-brand-match");
+  // ...and whether D1 returned it at all, which is a different question and the
+  // one the headline was answering wrongly.
+  const returned = new Set(
+    [...base.lines, ...alt.lines]
+      .flatMap((l) => l.pageBrands ?? [])
+      .map((x) => normalizeBrand(x))
+      .filter((x): x is string => x !== undefined),
+  );
+
   return {
     brand: opts.brand,
     base,
@@ -939,10 +969,8 @@ export async function compareBaskets(
     // for the term, which says nothing whatever about the brand, and mixing it
     // in let a two-term list print "Nothing D1 returned for these terms is
     // LATTI" about a list where LATTI was never the reason.
-    brandsSeen:
-      alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
-        ? brandsIn(base.lines, want)
-        : undefined,
+    brandsSeen: brandMissed ? brandsIn([...base.lines, ...alt.lines]) : undefined,
+    brandReturnedUnbuyable: brandMissed ? returned.has(want) : undefined,
   };
 }
 
@@ -1034,15 +1062,12 @@ export function pairRows(
  * requested brand appears here the headline above it is false, and no hint is
  * worth printing a lie for.
  */
-export function brandsIn(lines: readonly BasketLine[], exclude?: string): string[] {
+export function brandsIn(lines: readonly BasketLine[]): string[] {
   const seen = new Set<string>();
   for (const l of lines) {
-    // The whole page D1 returned, falling back to the chosen product only when
-    // a line carries no page (a hand-built plan, or a path that never searched).
-    const from = l.pageBrands?.length ? l.pageBrands : [l.product?.brand ?? ""];
-    for (const raw of from) {
+    for (const raw of l.pageBrands ?? []) {
       const b = raw.trim();
-      if (b && normalizeBrand(b) !== exclude) seen.add(b);
+      if (b) seen.add(b);
     }
   }
   return [...seen].sort((x, y) => x.localeCompare(y));

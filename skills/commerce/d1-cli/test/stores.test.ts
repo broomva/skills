@@ -235,6 +235,7 @@ describe("renderStores", () => {
     ],
     swept: 30,
     reachedKm: 2.56,
+    dropped: 0,
     stopped: "limit" as const,
     ...over,
   });
@@ -290,7 +291,7 @@ describe("renderStores", () => {
     // The registry lists points D1 configured for logistics. That is not the
     // same set as shops with a door, and saying so is the difference between
     // reporting a lookup and asserting a fact about a neighbourhood.
-    const out = renderStores({ stores: [], swept: 0, stopped: "registry-empty" }, AT);
+    const out = renderStores({ stores: [], swept: 0, dropped: 0, stopped: "registry-empty" }, AT);
     expect(out).toContain("not a survey of the neighbourhood");
   });
 
@@ -404,13 +405,33 @@ describe("the page-10 ceiling stands on its own [BRO-2067]", () => {
 });
 
 describe("renderStores keys its empty branch on the SWEEP [BRO-2067]", () => {
-  test("points fetched and all dropped is not 'the registry's answer'", () => {
-    // That claim is about the registry. When every point was fetched and then
-    // discarded by `normalize`, it is a claim about this parser instead.
-    const swept = renderStores({ stores: [], swept: 3, stopped: "registry-empty" }, AT);
-    expect(swept).not.toContain("not a survey of the neighbourhood");
+  test("an answer this parser could not read is not 'the registry's answer'", async () => {
+    // `swept` counts SURVIVORS of normalization, so 30 unreadable entries leave
+    // it at 0 — and the earlier gate on `swept` collapsed exactly like the
+    // `stores.length` gate it replaced. Driven end to end, because a hand-built
+    // `{stores: [], swept: 3}` is a state `nearbyStores` cannot produce.
+    const impl = (async () =>
+      new Response(
+        JSON.stringify({
+          paging: { page: 1, pageSize: PAGE_SIZE, total: 300, pages: 10 },
+          items: Array.from({ length: 30 }, () => ({ distance: 1, pickupPoint: { name: "x" } })),
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const r = await nearbyStores(new D1Client({ fetchImpl: impl }), AT, { limit: 5 });
+    expect(r.swept).toBe(0);
+    expect(r.dropped).toBe(30);
+    const out = renderStores(r, AT);
+    expect(out).toContain("could be read from the pickup registry");
+    expect(out).toContain("30 entries");
+    expect(out).toContain("a bug here rather than an empty neighbourhood");
+    expect(out).not.toContain("not a survey of the neighbourhood");
+  });
 
-    const genuinely = renderStores({ stores: [], swept: 0, stopped: "registry-empty" }, AT);
-    expect(genuinely).toContain("not a survey of the neighbourhood");
+  test("a genuinely empty registry still says so", () => {
+    // The other polarity, or the fix is just a different sentence everywhere.
+    const out = renderStores({ stores: [], swept: 0, dropped: 0, stopped: "registry-empty" }, AT);
+    expect(out).toContain("not a survey of the neighbourhood");
+    expect(out).not.toContain("could be read from the pickup registry");
   });
 });

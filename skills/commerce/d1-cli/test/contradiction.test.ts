@@ -60,7 +60,12 @@ const ALL_STATUSES: LineStatus[] = [
   "no-match",
 ];
 
-function lineFor(term: string, status: LineStatus, brand: string): BasketLine {
+function lineFor(
+  term: string,
+  status: LineStatus,
+  brand: string,
+  pageBrands: string[],
+): BasketLine {
   const named = status !== "no-match";
   return {
     term,
@@ -70,6 +75,12 @@ function lineFor(term: string, status: LineStatus, brand: string): BasketLine {
     product: named ? product(`PRODUCTO ${term}`, 300_000, brand) : undefined,
     price: isFilled(status) ? 300_000 : undefined,
     substituteSweep: status === "no-brand-match",
+    // Set, because production always sets it and the live defect lived here.
+    // Whether the page CARRIED the requested brand is its own axis: D1 returning
+    // a COPELIA product at Price 0 and D1 returning no COPELIA at all are
+    // different facts that produce different headlines, and an enumeration
+    // fixing one of them can never exercise the other.
+    pageBrands: named ? pageBrands : [],
   };
 }
 
@@ -87,9 +98,19 @@ const planOf = (lines: BasketLine[]): BasketPlan => ({
  * RENDER against the state it is handed, and every state the type permits — not
  * only the ones one production path happens to produce today.
  */
-function crossOf(baseStatus: LineStatus, altStatus: LineStatus, brandOnBase: string): CrossBasket {
-  const base = planOf([lineFor("arroz", baseStatus, brandOnBase)]);
-  const alt = planOf([lineFor("arroz", altStatus, BRAND)]);
+function crossOf(
+  baseStatus: LineStatus,
+  altStatus: LineStatus,
+  brandOnBase: string,
+  pageHasBrand = true,
+): CrossBasket {
+  const page = pageHasBrand ? [brandOnBase, BRAND] : [brandOnBase];
+  // The ALT line's product is the source it REJECTED, not something of the
+  // requested brand — that is what `no-brand-match` means. Deriving the page
+  // from it pinned the requested brand into every page, so the other headline
+  // was never rendered and its rule reported itself dead.
+  const base = planOf([lineFor("arroz", baseStatus, brandOnBase, page)]);
+  const alt = planOf([lineFor("arroz", altStatus, brandOnBase, page)]);
   const bl = base.lines[0] as BasketLine;
   const al = alt.lines[0] as BasketLine;
   const bothFilled = isFilled(bl.status) && isFilled(al.status);
@@ -127,7 +148,13 @@ function crossOf(baseStatus: LineStatus, altStatus: LineStatus, brandOnBase: str
     // code under test tests the mirror.
     brandsSeen:
       alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
-        ? brandsIn(base.lines, normalizeBrand(BRAND))
+        ? brandsIn([...base.lines, ...alt.lines])
+        : undefined,
+    brandReturnedUnbuyable:
+      alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
+        ? [...base.lines, ...alt.lines]
+            .flatMap((l) => l.pageBrands ?? [])
+            .some((x) => normalizeBrand(x) === normalizeBrand(BRAND))
         : undefined,
   };
 }
@@ -141,13 +168,11 @@ function crossOf(baseStatus: LineStatus, altStatus: LineStatus, brandOnBase: str
 const FORBIDDEN: Array<{ why: string; a: RegExp; b: RegExp; regressionOnly?: boolean }> = [
   {
     why: "claims the brand is absent from what D1 returned, while naming it among the brands returned",
-    // Unreachable BECAUSE production excludes the requested brand from the hint
-    // — which is the behaviour, so this is a regression guard rather than a
-    // live rule, and the reachability check below would otherwise (correctly)
-    // report it as a rule matching nothing. The live pin is
-    // "the hint reads FILLED lines only, and never names the asked-for brand"
-    // in basket.test.ts, which dies when the exclusion is removed.
-    regressionOnly: true,
+    // LIVE again. It was marked a regression guard because production excluded
+    // the requested brand from the hint, which made the pair unobservable — the
+    // guard was reporting a real defect (the exclusion deleted the evidence and
+    // kept the claim) and the exemption silenced it. The claim is conditioned on
+    // the evidence now, the list is complete, and this rule can fire.
     a: new RegExp(`Nothing D1 returned for these terms is ${BRAND}\\.`),
     // The brand as a COMPLETE list item, not a word inside one. `\\b${BRAND}\\b`
     // also matched "LATTI FOODS", which is a different brand and precisely the
@@ -206,12 +231,14 @@ describe("no two sentences the comparison prints can contradict each other", () 
     for (const baseStatus of ALL_STATUSES) {
       for (const altStatus of ALL_STATUSES) {
         for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
-          const out = renderComparison(crossOf(baseStatus, altStatus, brandOnBase));
-          for (const { why, a, b } of FORBIDDEN) {
-            if (a.test(out) && b.test(out)) {
-              offenders.push(
-                `${baseStatus} / ${altStatus} / base brand ${brandOnBase}: ${why}\n${out}\n`,
-              );
+          for (const pageHasBrand of [true, false]) {
+            const out = renderComparison(crossOf(baseStatus, altStatus, brandOnBase, pageHasBrand));
+            for (const { why, a, b } of FORBIDDEN) {
+              if (a.test(out) && b.test(out)) {
+                offenders.push(
+                  `${baseStatus} / ${altStatus} / base brand ${brandOnBase}: ${why}\n${out}\n`,
+                );
+              }
             }
           }
         }
@@ -228,24 +255,27 @@ describe("no two sentences the comparison prints can contradict each other", () 
     for (const baseStatus of ALL_STATUSES) {
       for (const altStatus of ALL_STATUSES) {
         for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
-          const out = renderComparison(crossOf(baseStatus, altStatus, brandOnBase));
-          for (const marker of [
-            "BOTH filled:",
-            "no price to compare",
-            "Not counted — no LATTI for",
-            "found but over budget for",
-            "lookup did not answer for",
-            "D1 returned nothing at all for",
-            "only LATTI could fill",
-            "Neither basket filled",
-            "Nothing D1 returned for these terms",
-          ]) {
-            if (out.includes(marker)) seen.add(marker);
+          for (const pageHasBrand of [true, false]) {
+            const out = renderComparison(crossOf(baseStatus, altStatus, brandOnBase, pageHasBrand));
+            for (const marker of [
+              "BOTH filled:",
+              "no price to compare",
+              "Not counted — no LATTI for",
+              "found but over budget for",
+              "lookup did not answer for",
+              "D1 returned nothing at all for",
+              "only LATTI could fill",
+              "Neither basket filled",
+              "Nothing D1 returned for these terms",
+              "but nothing of it can be bought at this store",
+            ]) {
+              if (out.includes(marker)) seen.add(marker);
+            }
           }
         }
       }
     }
-    expect(seen.size).toBe(9);
+    expect(seen.size).toBe(10);
   });
 
   test("every LIVE rule can actually fire — a rule matching nothing proves nothing", () => {
@@ -258,7 +288,9 @@ describe("no two sentences the comparison prints can contradict each other", () 
     for (const baseStatus of ALL_STATUSES) {
       for (const altStatus of ALL_STATUSES) {
         for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
-          outs.push(renderComparison(crossOf(baseStatus, altStatus, brandOnBase)));
+          for (const pageHasBrand of [true, false]) {
+            outs.push(renderComparison(crossOf(baseStatus, altStatus, brandOnBase, pageHasBrand)));
+          }
         }
       }
     }
@@ -307,6 +339,7 @@ describe("no two sentences the store locator prints can contradict each other", 
             swept,
             reachedKm: swept ? 2 : undefined,
             registryTotal,
+            dropped: 0,
             stopped,
           };
           const out = renderStores(r, at, 1);

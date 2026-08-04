@@ -2521,7 +2521,7 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     expect(out).toContain("Brands it did return: OTRA");
   });
 
-  test("the hint never names the brand that was asked for", async () => {
+  test("a brand D1 returned but cannot sell is reported as exactly that", async () => {
     // The shape that reaches the defect: every product for the term is a
     // LATTI product that is out of stock. Base cannot fill, so its line is
     // `nothing-in-stock` carrying `product: source` — a LATTI product it
@@ -2547,13 +2547,36 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
       { brand: "LATTI" },
     );
     expect(isFilled(c.base.lines[0]?.status as LineStatus)).toBe(false);
-    expect(c.base.lines[0]?.product?.brand).toBe("LATTI");
     expect(c.alt.lines[0]?.status).toBe("no-brand-match");
-    // The headline fires, so the list beside it must not refute it.
-    expect(c.brandsSeen).toEqual([]);
+    // D1 DID return a LATTI product — it just cannot be bought here. Saying
+    // "nothing D1 returned is LATTI" was false, and the first fix hid the
+    // contradiction by filtering LATTI out of the list rather than correcting
+    // the claim. Live: `--brand COPELIA leche` returns COCADA LECHE PANELA
+    // COPELIA at Price 0.
+    expect(c.brandReturnedUnbuyable).toBe(true);
+    expect(c.brandsSeen).toContain("LATTI");
+    const out = renderComparison(c);
+    expect(out).toContain("D1 returned LATTI for these terms, but nothing of it can be bought");
+    expect(out).not.toContain("Nothing D1 returned for these terms is LATTI");
+  });
+
+  test("...and a brand D1 never returned is reported as THAT instead", async () => {
+    // The other polarity. Both sentences must exist, or the fix is a rename.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "ARROZ OTRA"),
+        sweep: [],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.brandReturnedUnbuyable).toBe(false);
     const out = renderComparison(c);
     expect(out).toContain("Nothing D1 returned for these terms is LATTI");
-    expect(out).not.toContain("Brands it did return");
+    expect(out).not.toContain("cannot be bought");
   });
 
   test("a filled line of another brand IS offered as a hint (positive polarity)", async () => {
