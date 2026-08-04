@@ -57,6 +57,45 @@ arithmetic rather than an assumption. On a replacement line the sentence sits
 inside the sweep's own `only N of M in that category were searched` caveat and
 says "of those searched", so it never claims more than the look behind it.
 
+### Fixed — what the cross-model review round 1 found (6/10, below the gate)
+
+Three of these are defects in *this release's own additions*, found after CI was
+green and 420 tests passed.
+
+- **The basket contradicted itself in one screen.** `affordableAlternatives` was
+  counted inside the fill loop, against the money left at the moment a line was
+  refused — but lines *after* it keep spending. A basket could print
+  `$ 1.000 left` and, one line below, "1 cheaper match would fit" about a
+  $ 3.000 product. Settled after the loop against the final `remaining`. The
+  arithmetic that makes "cheaper" true survives and tightens, because
+  `remaining <= budget - spent_at_refusal < price`.
+- **The allowlist failed OPEN on a forged path.** Paths were built by string
+  concatenation, so a key's own characters were indistinguishable from a nesting
+  boundary: a payload with a root key literally named `shippingData.address.city`
+  matched and printed. Matching is now segment-by-segment through a tree, so one
+  key is one segment and nothing can be forged by naming. This was the single
+  direction the change exists to close.
+- **A printed command could become two commands.** `alternativesNote` was the
+  first place in `present.ts` to interpolate data into something a reader — or an
+  agent, since every command has a `--json` twin — may run, and `sanitize` only
+  strips control characters. A term containing `"` closed the string. Terms are
+  single-quoted with POSIX escaping; a `skuId`, which arrives from VTEX rather
+  than the shopper, must match `/^\d+$/` or the command clause is dropped. The
+  repo already owned this lesson: `assertSkuId` exists because "a value slot that
+  is really a grammar does not narrow the question, it rewrites it".
+- A container arriving where a scalar was documented is now withheld whole
+  (every leaf path was also registered as its own ancestor, so such a value was
+  walked and published its keys and length).
+- A `__proto__` key is redacted in place rather than silently vanishing.
+- The suggested search carries `--available`, so it shows the same population
+  the count was drawn from.
+- A `nothing-in-stock` downgrade drops `alternatives`.
+- **Two vacuous tests**, both written this release. The order fixture had
+  single-element arrays, so "`items[].name` matches at any index" was asserted
+  nowhere and a mutation collapsing only index 0 stayed green. And an
+  `alternatives` assertion of `toEqual([])` was satisfied by the feature being
+  deleted entirely.
+
 ### Measured — `Envío D1 Express` is not reachable through the storefront API
 
 BRO-2080 asked for measurement before design. Seven delivery points across five

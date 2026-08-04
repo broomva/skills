@@ -312,28 +312,20 @@ export function fillToBudget(
     // name: the body skipped it and the summary still read "1 of 1 lines,
     // $ 5.550". Guard where the money is decided, not where it is printed.
     if (!line.product || line.price === undefined || !Number.isFinite(line.price)) {
-      lines.push({ ...line, status: "nothing-in-stock", price: undefined });
+      // `alternatives` goes too. A line that reports nothing is in stock must
+      // not carry prices of things that were, however unreachable that is from
+      // `buildBasket` today — the exported type permits a caller the code does
+      // not, and the whole status exists to say the shelf was empty.
+      lines.push({
+        ...line,
+        status: "nothing-in-stock",
+        price: undefined,
+        alternatives: undefined,
+      });
       continue;
     }
     if (spent + line.price > budget) {
-      // Say how many of the runners-up would have fitted — and stop there.
-      //
-      // Reaching down the ranking to fill the line is the tempting fix and the
-      // wrong one. This line's product is the best VALUE of its set, or the
-      // closest MATCH from a category; a cheaper one is neither, and swapping it
-      // in silently is the auto-substitution BRO-2076 exists to forbid. So the
-      // count is disclosed and the choice stays with the person, who can widen
-      // the budget or run `d1 substitute` and pick.
-      //
-      // Anything that fits here is necessarily cheaper than what was refused:
-      // `spent + price > budget >= spent + alt` gives `alt < price`. The word
-      // "cheaper" in the rendered line is arithmetic, not an assumption.
-      const affordable = (line.alternatives ?? []).filter((p) => spent + p <= budget).length;
-      lines.push({
-        ...line,
-        status: "over-budget",
-        affordableAlternatives: affordable || undefined,
-      });
+      lines.push({ ...line, status: "over-budget" });
       continue;
     }
     spent += line.price;
@@ -341,7 +333,37 @@ export function fillToBudget(
   }
 
   const total = sum(lines.filter((l) => isFilled(l.status)).map((l) => l.price ?? 0));
-  return { budget, lines, total, remaining: budget - total };
+  const remaining = budget - total;
+
+  // Say how many of the runners-up would have fitted — and stop there.
+  //
+  // Reaching down the ranking to fill the line is the tempting fix and the wrong
+  // one. This line's product is the best VALUE of its set, or the closest MATCH
+  // from a category; a cheaper one is neither, and swapping it in silently is
+  // the auto-substitution BRO-2076 exists to forbid. So the count is disclosed
+  // and the choice stays with the person.
+  //
+  // Settled HERE, against the money finally left, rather than inside the loop
+  // against the money left at the moment of refusal. Lines after a refused one
+  // keep spending, so the in-loop count could claim "1 cheaper match would fit"
+  // directly beneath a footer reading "$ 1.000 left" about an alternative
+  // costing $ 3.000 — a claim refuted by the evidence printed next to it.
+  //
+  // The arithmetic that makes "cheaper" true survives, and tightens: at refusal
+  // `spent_t + price > budget`, and `total >= spent_t` because later lines only
+  // add, so `remaining = budget - total <= budget - spent_t < price`. Anything
+  // fitting in `remaining` is therefore strictly cheaper than what was refused.
+  const settled = lines.map((l) =>
+    l.status === "over-budget"
+      ? {
+          ...l,
+          affordableAlternatives:
+            (l.alternatives ?? []).filter((p) => p <= remaining).length || undefined,
+        }
+      : l,
+  );
+
+  return { budget, lines: settled, total, remaining };
 }
 
 /**

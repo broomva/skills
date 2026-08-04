@@ -203,34 +203,70 @@ const PRINTABLE_PATHS = new Set([
   "storePreferencesData.timeZone",
 ]);
 
-/** The path of a value, with every array index collapsed to a single `[]`. */
-function childPath(parent: string, key: string): string {
-  return parent ? `${parent}.${key}` : key;
+/**
+ * The allowlist as a tree, so a path is matched SEGMENT by segment.
+ *
+ * The dotted strings above are for reading. Matching them by string comparison
+ * would be unsound, because a JSON key may itself contain a `.` or a `[]` and a
+ * concatenated path cannot tell a key's own characters from a nesting boundary.
+ * A payload with a key literally named `shippingData.address.city` therefore
+ * built the path `shippingData.address.city` at the ROOT and printed — the
+ * allowlist failing open on the one direction it exists to close.
+ *
+ * One key is one segment here, so nothing can be forged by naming.
+ */
+interface PathNode {
+  /** A value ending here may print. */
+  printable: boolean;
+  children: Map<string, PathNode>;
 }
 
-/**
- * Every path that has a printable descendant — `items`, `shippingData.address`,
- * and so on — derived from {@link PRINTABLE_PATHS} rather than listed twice.
- *
- * A container outside this set contains nothing printable at any depth, so it is
- * withheld whole instead of being walked. That matters for arrays of plain
- * values: recursing into `geoCoordinates` redacted both numbers but still
- * published that there were exactly two of them. A value's LENGTH is part of the
- * value, and this is a module about not leaking parts of values.
- */
-const PRINTABLE_ANCESTORS = new Set<string>(
-  [...PRINTABLE_PATHS].flatMap((path) => {
-    const out: string[] = [];
-    let acc = "";
-    // Split on "." but keep an "x[]" segment attached to its own key.
-    for (const seg of path.split(".")) {
-      acc = acc ? `${acc}.${seg}` : seg;
-      out.push(acc);
-      if (acc.endsWith("[]")) out.push(acc.slice(0, -2));
+/** `items[].name` → `["items", "[]", "name"]`. */
+function segmentsOf(path: string): string[] {
+  const out: string[] = [];
+  for (const part of path.split(".")) {
+    if (part.endsWith("[]")) {
+      out.push(part.slice(0, -2), "[]");
+    } else {
+      out.push(part);
     }
-    return out;
-  }),
-);
+  }
+  return out;
+}
+
+const PRINTABLE_TREE: PathNode = (() => {
+  const root: PathNode = { printable: false, children: new Map() };
+  for (const path of PRINTABLE_PATHS) {
+    let node = root;
+    for (const seg of segmentsOf(path)) {
+      let next = node.children.get(seg);
+      if (!next) {
+        next = { printable: false, children: new Map() };
+        node.children.set(seg, next);
+      }
+      node = next;
+    }
+    node.printable = true;
+  }
+  return root;
+})();
+
+/**
+ * Assign without letting a key named `__proto__` be swallowed.
+ *
+ * Plain `out[k] = v` on `__proto__` sets the prototype instead of defining an
+ * own property, so the key vanished from the output entirely — no disclosure,
+ * but the operator could not tell it had ever been there, which breaks the
+ * "obviously censored rather than mysteriously incomplete" promise below.
+ */
+function define(out: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(out, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
 
 /**
  * Recursively replace every value not named in {@link PRINTABLE_PATHS} with
@@ -246,25 +282,29 @@ const PRINTABLE_ANCESTORS = new Set<string>(
  * turning them into the string `"[redacted]"` would invent a value where the
  * payload said there was none.
  */
-function redactAt(value: unknown, path: string): unknown {
+function redactAt(value: unknown, node: PathNode | undefined): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "object") {
-    // The root is always walked; below it, only containers that hold something
-    // printable somewhere inside. Everything else is withheld whole, so neither
-    // its keys, its depth, nor its length is published.
-    if (path !== "" && !PRINTABLE_ANCESTORS.has(path)) return "[redacted]";
-    if (Array.isArray(value)) return value.map((v) => redactAt(v, `${path}[]`));
+    // Walk only where something printable lies below. A container with no
+    // printable descendant — including one sitting where a SCALAR was expected,
+    // which is a live risk for a payload nobody has observed — is withheld
+    // whole, so neither its keys, its depth, nor its length is published.
+    if (!node || node.children.size === 0) return "[redacted]";
+    if (Array.isArray(value)) {
+      const each = node.children.get("[]");
+      return value.map((v) => redactAt(v, each));
+    }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = redactAt(v, childPath(path, k));
+      define(out, k, redactAt(v, node.children.get(k)));
     }
     return out;
   }
-  return PRINTABLE_PATHS.has(path) ? value : "[redacted]";
+  return node?.printable === true ? value : "[redacted]";
 }
 
 export function redactOrder(value: unknown): unknown {
-  return redactAt(value, "");
+  return redactAt(value, PRINTABLE_TREE);
 }
 
 /**

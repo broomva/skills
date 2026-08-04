@@ -621,10 +621,36 @@ function alternativesNote(l: BasketLine): string {
   if (n <= 0) return "";
   if (l.replaces) {
     const s = n === 1 ? "replacement" : "replacements";
-    return `. ${n} cheaper ${s} of those searched would fit — run \`d1 substitute ${sanitize(l.replaces.skuId)}\` to choose one`;
+    const said = `. ${n} cheaper ${s} of those searched would fit`;
+    // The id comes off VTEX, not off the shopper. `catalog.ts` already refuses
+    // to put an unvalidated one in an `fq` filter, for the reason stated there:
+    // a value slot that is really a grammar does not narrow the question, it
+    // rewrites it. A printed command is another such grammar.
+    return SKU_ID.test(l.replaces.skuId)
+      ? `${said} — run \`d1 substitute ${l.replaces.skuId}\` to choose one`
+      : said;
   }
   const s = n === 1 ? "match" : "matches";
-  return `. ${n} cheaper ${s} for this term would fit — run \`d1 search "${sanitize(l.term)}" --sort per-unit\` to choose one`;
+  // `--available` matters: the count came from products that are in stock AND
+  // priced, and a bare `d1 search` lists the rest too. Without it the shopper is
+  // told "3 would fit" and handed a command that shows a different population.
+  return `. ${n} cheaper ${s} for this term would fit — run \`d1 search ${shellQuote(l.term)} --available --sort per-unit\` to choose one`;
+}
+
+/** A SKU id is digits. Anything else is not an id and does not go in a command. */
+const SKU_ID = /^\d+$/;
+
+/**
+ * Quote a value so a printed command stays ONE command.
+ *
+ * These are the first lines in this file to interpolate data into something a
+ * reader — or an agent, since every command here has a `--json` twin — may run.
+ * `sanitize` only removes control characters; a term containing a double quote
+ * closed the string and appended a second command. Single quotes have exactly
+ * one escape in POSIX sh, and this is it.
+ */
+function shellQuote(s: string): string {
+  return `'${sanitize(s).replace(/'/g, "'\\''")}'`;
 }
 
 /** Why a term did not make the basket, in the reader's terms rather than the enum's. */

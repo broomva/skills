@@ -144,7 +144,17 @@ describe("redactOrder", () => {
         },
       ],
     },
-    items: [{ id: "262", name: "LECHE", quantity: 2, sellingPrice: 350_000 }],
+    // TWO items and TWO totals, deliberately. With one element each, a mutation
+    // collapsing only index 0 to `[]` left the whole suite green — the claim
+    // "`items[].name` matches at ANY index" was asserted nowhere.
+    items: [
+      { id: "262", name: "LECHE", quantity: 2, sellingPrice: 350_000 },
+      { id: "263", name: "ARROZ", quantity: 1, sellingPrice: 555_000 },
+    ],
+    totals: [
+      { id: "Items", name: "Total dos itens", value: 905_000 },
+      { id: "Shipping", name: "Total do frete", value: 1_270_000 },
+    ],
   };
 
   // Redaction replaces values with a string, so the redacted object is
@@ -208,6 +218,9 @@ describe("redactOrder", () => {
     expect(red.value).toBe(8_500_000);
     expect(red.items[0].name).toBe("LECHE");
     expect(red.items[0].quantity).toBe(2);
+    // Index 1, which is the point: `[]` is not "the first one".
+    expect(red.items[1].name).toBe("ARROZ");
+    expect(red.totals[1].value).toBe(1_270_000);
     // Allowlisted neighbours of redacted keys survive, arbitrarily deep.
     expect(red.shippingData.address.city).toBe("Bogotá");
     expect(red.paymentData.transactions[0].payments[0].paymentSystemName).toBe("Visa");
@@ -239,6 +252,50 @@ describe("redactOrder", () => {
     ]) {
       expect(blob).not.toContain(secret);
     }
+  });
+
+  test("a key containing dots or brackets cannot FORGE a printable path", () => {
+    // Paths were built by string concatenation, so a key's own characters were
+    // indistinguishable from a nesting boundary: a payload whose ROOT key was
+    // literally named `shippingData.address.city` matched the allowlist and
+    // printed. The allowlist failed open on the one direction it exists to
+    // close. Segments are now matched one key at a time.
+    const forged = redactOrder({
+      "shippingData.address.city": "SECRET_CITY",
+      "items[].name": "SECRET_NAME",
+      items: [{ "additionalInfo.categories[].name": "SECRET_NESTED" }],
+    }) as Record<string, unknown>;
+    const blob = JSON.stringify(forged);
+    for (const secret of ["SECRET_CITY", "SECRET_NAME", "SECRET_NESTED"]) {
+      expect(blob).not.toContain(secret);
+    }
+  });
+
+  test("a container where a scalar was expected is withheld whole", () => {
+    // Every leaf path was also registered as its own ancestor, so a value that
+    // arrived as an object or array at an allowlisted LEAF path got walked and
+    // published its keys and its length. For a payload nobody has ever
+    // observed, "documented as a scalar, actually a container" is a realistic
+    // miss rather than a contrived one.
+    const odd = redactOrder({
+      orderId: ["a", "b", "c", "d", "e"],
+      items: [{ seller: { secretA: 1, secretB: 2 } }],
+    }) as Record<string, unknown>;
+    expect(odd.orderId).toBe("[redacted]");
+    expect((odd.items as Array<Record<string, unknown>>)[0]?.seller).toBe("[redacted]");
+  });
+
+  test("a `__proto__` key is redacted in place, not silently dropped", () => {
+    // Plain assignment set the prototype instead of defining an own property,
+    // so the key vanished. No disclosure, but the output stopped being
+    // obviously censored and became mysteriously incomplete.
+    const out = redactOrder(JSON.parse('{"orderId":"1","__proto__":{"p":"YES"}}')) as Record<
+      string,
+      unknown
+    >;
+    expect(Object.hasOwn(out, "__proto__")).toBe(true);
+    expect(JSON.stringify(out)).not.toContain("YES");
+    expect((out as { polluted?: unknown }).polluted).toBeUndefined();
   });
 
   test("handles nulls and primitives without crashing, and still fails closed", () => {
