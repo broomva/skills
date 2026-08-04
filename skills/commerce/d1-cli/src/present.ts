@@ -485,16 +485,24 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     // one blamed the budget — while the same run exited 1, "D1 could not be
     // reached, a retry may help". Two outputs of one invocation disagreeing
     // about why the basket is empty is worse than either being vague.
-    const anyUnreachable = plan.lines.some((l) => l.status === "replacement-unknown");
-    const rejectedOnPrice = plan.lines.some((l) => l.status === "over-budget");
+    // COMPOSED, not prioritised. Picking one sentence by priority made the
+    // headline false for whichever lines the other condition described: a
+    // basket with one dear line and one unanswered lookup said "nothing could
+    // be checked" directly above a line whose price was known and rejected.
+    // One clause per condition actually present says something true of all of
+    // them.
+    const why: string[] = [];
+    if (plan.lines.some((l) => l.status === "replacement-unknown")) {
+      why.push("D1 did not answer for some of these");
+    }
+    if (plan.lines.some((l) => l.status === "over-budget")) why.push("others did not fit");
+    if (plan.lines.some((l) => l.status === "nothing-in-stock"))
+      why.push("others are not in stock");
+    if (plan.lines.some((l) => l.status === "no-match")) why.push("others matched nothing");
     out.push(
-      anyUnreachable
-        ? "  Nothing could be checked — D1 did not answer for some of these."
-        : rejectedOnPrice
-          ? "  Nothing fits this budget."
-          : plan.lines.length
-            ? "  Nothing here could go in the basket. The reasons are below."
-            : "  Nothing was asked for.",
+      why.length
+        ? `  Nothing could go in the basket — ${why.join(", ")}.`
+        : "  Nothing could go in the basket.",
     );
   }
 
@@ -590,9 +598,12 @@ function reasonFor(l: BasketLine): string {
       // Only claim a category was searched when one actually was. A line
       // downgraded for having no usable price never reached `findSubstitutes`,
       // and saying "its category had no replacement" invents a lookup.
-      return l.substituteSweep
-        ? `nothing D1 carries for this is in stock here, and its category had no replacement that can be bought (${l.compared} compared)`
-        : "D1 publishes no price for this at your store, so it cannot go in a basket";
+      if (!l.substituteSweep) {
+        return "D1 publishes no price for this at your store, so it cannot go in a basket";
+      }
+      return l.inStock
+        ? `nothing D1 carries for this is in stock here; ${l.inStock} in its category are, but none is priced at your store`
+        : "nothing D1 carries for this is in stock here, and nothing in its category is either";
     case "replacement-unknown":
       // Never "nothing is in stock". That claim would be asserted from a
       // request that failed, which is a statement about the network dressed up

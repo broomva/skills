@@ -327,7 +327,7 @@ describe("renderBasket", () => {
 
   test("says plainly when nothing fit at all", () => {
     const none = fillToBudget([line({ term: "arroz", price: 555_000 })], 10_000);
-    expect(renderBasket(none)).toContain("Nothing fits this budget.");
+    expect(renderBasket(none)).toContain("Nothing could go in the basket — others did not fit.");
   });
 
   test("names a substitute rather than swapping it in quietly", () => {
@@ -902,11 +902,10 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
   });
 
   test("an empty category is reported as swept, not as a term with no matches", () => {
-    // The previous version asserted `not.toContain("of 12 D1 matched")`, which
-    // is unreachable: a `nothing-in-stock` line renders through `reasonFor`,
-    // and `scopeOf` — the only producer of "D1 matched" — runs for FILLED lines
-    // only. So it could not fail for the mix it was named for, and its other
-    // two assertions were byte-identical to the test above it.
+    // Render-level. Its end-to-end sibling below asserts that production
+    // actually COMPUTES the flag and the count this fixture hands it — round 4
+    // replaced the end-to-end version with this one and thereby stopped
+    // observing the production path entirely.
     const plan = fillToBudget(
       [
         line({
@@ -914,6 +913,7 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
           status: "nothing-in-stock",
           product: undefined,
           compared: 39,
+          inStock: 39,
           matched: 12,
           substituteSweep: true,
         }),
@@ -921,11 +921,76 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
       1_000_000,
     );
     const out = renderBasket(plan, { regionId: "v2.ABC" });
-    // The count is the SWEEP's, so the sentence must say "in its category" —
-    // never hold 39 against the term's own 12.
-    expect(out).toContain("its category had no replacement");
-    expect(out).toContain("39 compared");
+    expect(out).toContain("39 in its category");
     expect(out).not.toContain("12");
+  });
+
+  test("and production computes that flag and count itself", async () => {
+    // The regression this catches: `compared` was briefly `buyable.length`,
+    // which is 0 BY CONSTRUCTION on the empty path — so "(4 compared)" became
+    // "(0 compared)" for every empty sweep, indistinguishable from an empty
+    // category, and the number could no longer vary with the shelf at all.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })],
+        searchTotal: 12,
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        // In stock, but D1 publishes no offer for any of them here.
+        sweep: [
+          wire("500", "PAN A", { price: 0 }),
+          wire("501", "PAN B", { price: 0 }),
+          wire("502", "PAN C", { price: 0 }),
+        ],
+        sweepTotal: 140,
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    const l = plan.lines[0];
+    expect(l?.status).toBe("nothing-in-stock");
+    expect(l?.substituteSweep).toBe(true);
+    // Must vary with the shelf, not collapse to zero.
+    expect(l?.compared).toBe(3);
+    expect(l?.inStock).toBe(3);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain("3 in its category");
+  });
+
+  test("a truly empty category says so, rather than counting nothing", async () => {
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })],
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        sweep: [wire("x", "TODO AGOTADO", { available: false, price: 3000 })],
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.inStock).toBe(0);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain(
+      "nothing in its category is either",
+    );
+  });
+
+  test("the ranker's order decides which replacement is used", async () => {
+    // `buyable[0]` was unpinned: reversing it, or re-sorting by price, both left
+    // the suite green because no fixture had two buyable candidates.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })],
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        sweep: [
+          // Closest by name, and NOT the cheapest — so a price-sorted or
+          // reversed pick would choose differently.
+          wire("700", "PAN ARTESANAL INTEGRAL GRANDE", { price: 4100 }),
+          wire("900", "GALLETA BARATA", { price: 1000 }),
+        ],
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("filled-by-substitute");
+    expect(plan.lines[0]?.product?.skuId).toBe("700");
+    expect(plan.lines[0]?.compared).toBe(2);
   });
 });
 
@@ -1063,9 +1128,27 @@ describe("an unanswered lookup outranks an affordability claim", () => {
     expect(basketExit(plan.lines)).toBe(1);
   });
 
-  test("a purely unaffordable basket still blames the budget", () => {
+  test("a purely unaffordable basket still says so", () => {
     const plan = fillToBudget([line({ term: "arroz", price: 900_000 })], 10_000);
-    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain("Nothing fits this budget");
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("did not fit");
+    expect(out).not.toContain("did not answer");
+  });
+
+  test("a mixed basket names BOTH reasons, rather than picking one", () => {
+    // Priority-picking made the headline false for whichever lines the losing
+    // condition described — "nothing could be checked" printed directly above a
+    // line whose price was known and rejected.
+    const plan = fillToBudget(
+      [
+        line({ term: "arroz", price: 900_000 }),
+        line({ term: "pan", status: "replacement-unknown", product: undefined }),
+      ],
+      10_000,
+    );
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("D1 did not answer for some of these");
+    expect(out).toContain("others did not fit");
   });
 });
 

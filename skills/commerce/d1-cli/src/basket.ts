@@ -66,6 +66,11 @@ export interface BasketLine {
   byPackPrice?: boolean;
   /** `compared` counts a category sweep, not the search page for this term. */
   substituteSweep?: boolean;
+  /**
+   * On an empty sweep: how many products WERE in stock in the category but
+   * carry no price here. Separates an empty shelf from an unpriced one.
+   */
+  inStock?: number;
 }
 
 export interface BasketPlan {
@@ -115,6 +120,14 @@ export interface Choice {
  * a litre is a litre, but one "unit" of an empty bottle and one "unit" of oil
  * are not the same kind of thing — so when two measures are equally common,
  * ranking by `$/unit` is the least defensible of the available answers.
+ *
+ * Stated precisely, because an earlier version of this comment overclaimed:
+ * with today's three measures this table is INTENT, not the operative rule.
+ * `"kg" < "L" < "unit"` alphabetically too, so deleting it changes no current
+ * outcome and no test can distinguish it from the `localeCompare` fallback
+ * below. It earns its place by surviving a fourth measure — add `"m"` and
+ * alphabetical order would rank it above `unit`, which is exactly the mistake
+ * the table prevents.
  */
 const MEASURE_RANK: Record<string, number> = { kg: 0, L: 1, unit: 2 };
 
@@ -374,6 +387,7 @@ export async function buildBasket(
         status: "nothing-in-stock",
         product: source,
         compared: replacement.compared,
+        inStock: replacement.inStock,
         matched,
         // The count came from the CATEGORY sweep, not this term's own search,
         // so it must be labelled as such here too — `compared` can otherwise
@@ -404,8 +418,15 @@ export async function buildBasket(
 }
 
 type SubstituteOutcome =
+  /** `compared` is how many could have been BOUGHT — the real choice. */
   | { outcome: "found"; product: Product; compared: number }
-  | { outcome: "none"; compared: number }
+  /**
+   * `compared` is how WIDE the look was, not how many were buyable — on this
+   * path that is zero by construction, and reporting it deleted the disclosure.
+   * `inStock` separates "the category is empty" from "four were in stock and
+   * none is priced at your store".
+   */
+  | { outcome: "none"; compared: number; inStock: number }
   | { outcome: "unreachable" };
 
 /**
@@ -459,7 +480,12 @@ async function bestSubstitute(
     // product it had just found. A candidate that cannot be bought is not a
     // replacement.
     const top: Candidate | undefined = buyable[0];
-    if (!top) return { outcome: "none", compared };
+    // On the empty path `buyable.length` is 0 BY CONSTRUCTION, so reporting it
+    // turned "(4 compared)" into a constant "(0 compared)" — indistinguishable
+    // across an empty category, 140 sold-out SKUs, and four in-stock products
+    // with no regional offer. A conclusion drawn from a look the sentence says
+    // was zero wide also reads as self-refuting.
+    if (!top) return { outcome: "none", compared: result.rankedCount, inStock: result.rankedCount };
     return { outcome: "found", product: top.product, compared };
   } catch {
     return { outcome: "unreachable" };

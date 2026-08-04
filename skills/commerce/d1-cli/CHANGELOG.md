@@ -183,9 +183,29 @@ product; the `nothing-in-stock` reason claimed "its category had no replacement"
 for lines that never reached a category lookup; and an all-replacement basket
 called the exception a rule.
 
-**398 tests.** The fifth inert test was replaced: its distinguishing assertion
+**402 tests.** The fifth inert test was replaced: its distinguishing assertion
 was unreachable, because the string it checked for is only ever produced for
 filled lines and the fixture's line was not one.
+
+### A FIFTH pass — and round 4's own fix had deleted the disclosure it protected
+
+Scored 6/10 again, with no blockers. The one MAJOR was a regression introduced
+by round 4: making `compared` count BUYABLE candidates is right on the found
+path and wrong on the empty one, where that number is zero **by construction**.
+Every empty sweep therefore reported "(0 compared)" — indistinguishable across
+an empty category, 140 sold-out SKUs, and four in-stock products carrying no
+regional offer — and self-refuting besides, since it drew a conclusion from a
+look it described as zero wide. Round 4 had also replaced the only end-to-end
+test of that path with a hand-built fixture, so it went unpinned in the same
+commit that introduced it.
+
+The empty-basket headline is **composed** now rather than prioritised: picking
+one sentence made it false for whichever lines the losing condition described.
+
+Two comments stopped overclaiming. `MEASURE_RANK`'s tie-break is *intent*, not
+today's operative rule — `"kg" < "L" < "unit"` alphabetically as well, so
+deleting the table changes no current outcome; it earns its place against a
+fourth measure, and now says so instead of calling itself "the whole point".
 
 ## [0.6.0] — 2026-08-03
 
