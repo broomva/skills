@@ -243,8 +243,21 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
     : undefined;
 }
 
-/** Buyable pack prices of a set of runners-up, in the order they were ranked. */
-function packPrices(products: readonly Product[]): readonly PriceHundredths[] {
+/**
+ * Buyable pack prices of a set of runners-up, in the order they were ranked.
+ *
+ * The unpriced filter is defence in depth, and deliberately kept even though no
+ * current caller can trigger it: all three pre-filter on `priced()`, which is
+ * `price > 0`. A mutation removing it therefore survived the whole suite, which
+ * is this repo's definition of an unverified claim — so the function is exported
+ * and tested directly rather than left as a guard nobody can falsify.
+ *
+ * It stays because "is buyable" is an invariant the `Product` type does not
+ * carry. A future caller handing over an unfiltered list would otherwise promise
+ * a fit that cannot be bought — the "a price of 0 is not free" defect, which has
+ * now been re-entered from three different directions in this codebase.
+ */
+export function packPrices(products: readonly Product[]): readonly PriceHundredths[] {
   const out: PriceHundredths[] = [];
   for (const p of products) {
     const price = linePrice(p);

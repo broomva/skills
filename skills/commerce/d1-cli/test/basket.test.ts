@@ -5,6 +5,7 @@ import {
   chooseBest,
   fillToBudget,
   linePrice,
+  packPrices,
   parseBudget,
 } from "../src/basket.ts";
 import { basketExit, basketOptions } from "../src/cli.ts";
@@ -1329,6 +1330,20 @@ describe("an over-budget line says what else would have fitted [BRO-2086]", () =
     // their PACK prices are what a budget is spent in.
     expect(best?.product.skuId).toBe("a");
     expect([...(best?.alternatives ?? [])].sort((x, y) => x - y)).toEqual([3_000, 12_000]);
+  });
+
+  test("packPrices drops what cannot be bought, so no alternative is a phantom", () => {
+    // Reached directly because no current caller can reach it: `chooseBest` and
+    // `bestSubstitute` both pre-filter on `priced()` (price > 0), so a mutation
+    // deleting this guard survived the entire suite. An unfalsifiable guard is
+    // an unverified one, and the fix for that is a test, not a deletion.
+    expect(
+      packPrices([
+        product("ok", "CON PRECIO", 4_000),
+        product("zero", "SIN OFERTA", 0),
+        product("also", "TAMBIÉN", 9_000),
+      ]),
+    ).toEqual([4_000, 9_000]);
   });
 
   test("an out-of-stock runner-up is never offered as an alternative", () => {
