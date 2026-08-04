@@ -30,7 +30,13 @@ import { pickOffer, priced, search } from "./catalog.ts";
 import type { D1Client } from "./client.ts";
 import { sum } from "./money.ts";
 import { type Candidate, findSubstitutes } from "./substitute.ts";
-import { DEFAULT_SALES_CHANNEL, type PriceHundredths, type Product, UsageError } from "./types.ts";
+import {
+  D1Error,
+  DEFAULT_SALES_CHANNEL,
+  type PriceHundredths,
+  type Product,
+  UsageError,
+} from "./types.ts";
 
 /** Why a term is not in the basket, or that it is. */
 export type LineStatus =
@@ -40,6 +46,8 @@ export type LineStatus =
   | "nothing-in-stock"
   /** The replacement lookup itself failed, so stock here is UNKNOWN, not empty. */
   | "replacement-unknown"
+  /** D1 sells this, but nothing of the requested BRAND — a constraint, not a shortage. */
+  | "no-brand-match"
   | "no-match";
 
 /** The two statuses that put a product in the basket and spend money. */
@@ -91,6 +99,32 @@ export interface BasketLine {
    * can reach its own conclusion rather than only ours.
    */
   alternatives?: readonly PriceHundredths[];
+  /**
+   * Distinct brands among everything D1 RETURNED for this term.
+   *
+   * The whole page, not the one product the line chose. The brand hint read
+   * `product.brand` — one brand per term — and then claimed to name "the brands
+   * it did return": for `leche` D1 returns ten, and the hint printed one, a
+   * bakery brand that happened to win the unit-price ranking, while
+   * `NATURAL FEELING` — the exact near-miss a shopper typing `NATURAL` needs to
+   * see — was on the page and unmentioned.
+   */
+  pageBrands?: readonly string[];
+  /**
+   * Products actually examined for this term — the page, not the match count.
+   *
+   * Every brand claim is a universal over THIS number, and `--count` defaults
+   * to 12 against result sets that are routinely 25-31. `--brand ALPIN leche`
+   * said "Nothing D1 returned for these terms is ALPIN" while ALPIN sat in
+   * stock at product 13. Twelve of twelve real brands tried produced a false
+   * sentence at default flags.
+   *
+   * `scopeOf`, `sweepCaveat` and `footerFor` already hold this line everywhere
+   * else in the module: a categorical claim never outruns its look.
+   */
+  looked?: number;
+  /** Distinct brands the CATEGORY sweep returned, when one ran. */
+  sweepBrands?: readonly string[];
   /**
    * How many of those runners-up WOULD have fitted in the money left when this
    * line was refused. Set only on an `over-budget` line, where it is the whole
@@ -169,10 +203,15 @@ export interface Choice {
  */
 const MEASURE_RANK: Record<string, number> = { kg: 0, L: 1, unit: 2 };
 
-export function chooseBest(products: readonly Product[]): Choice | undefined {
+export function chooseBest(products: readonly Product[], brand?: string): Choice | undefined {
+  const want = normalizeBrand(brand);
   const eligible = products.filter((p) => {
     const o = pickOffer(p.offers);
-    return o?.available === true && priced(o);
+    if (!(o?.available === true && priced(o))) return false;
+    // Filtered BEFORE the measure census below, so the dominant measure is
+    // decided within the brand. Filtering after would let products the shopper
+    // has excluded pick the axis the remaining ones are ranked on.
+    return want === undefined || normalizeBrand(p.brand) === want;
   });
   if (!eligible.length) return undefined;
 
@@ -257,6 +296,20 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
  * a fit that cannot be bought — the "a price of 0 is not free" defect, which has
  * now been re-entered from three different directions in this codebase.
  */
+/**
+ * A brand, comparably.
+ *
+ * Case and surrounding whitespace are noise — D1 writes `LATTI`, a shopper
+ * writes `Latti` — but inner punctuation is not, so nothing else is stripped.
+ * A blank yields undefined, so `--brand ""` cannot become a filter that matches
+ * only the products whose brand is also blank.
+ */
+export function normalizeBrand(brand?: string): string | undefined {
+  if (typeof brand !== "string") return undefined;
+  const t = brand.trim().replace(/\s+/g, " ").toUpperCase();
+  return t.length ? t : undefined;
+}
+
 export function packPrices(products: readonly Product[]): readonly PriceHundredths[] {
   const out: PriceHundredths[] = [];
   for (const p of products) {
@@ -434,6 +487,14 @@ export interface BasketOptions {
   salesChannel?: string;
   /** Products to fetch per term. Capped upstream at 50. */
   count?: number;
+  /**
+   * Restrict every line to one brand.
+   *
+   * The constraint is the BRAND rather than availability, which is the only
+   * thing separating this from the substitute path — so it reuses the same
+   * ranker rather than growing a second one.
+   */
+  brand?: string;
 }
 
 /**
@@ -468,12 +529,28 @@ export async function buildBasket(
       salesChannel,
     });
     const matched = page.total;
+    // Captured before any filtering: this is what D1 RETURNED, which is what
+    // the brand hint claims to report.
+    const pageBrands = distinctBrands(page.products);
+    const looked = page.products.length;
 
-    const best = chooseBest(page.products);
+    // With a brand constraint, the term's own page is tried first — cheap, and
+    // it is where a same-brand product usually is. Only when the page holds
+    // none does the category sweep run, which is the ticket's own design: the
+    // constraint is the brand rather than availability, so it reuses the
+    // ranker rather than growing a second one.
+    const best = chooseBest(page.products, opts.brand);
+    if (!best && normalizeBrand(opts.brand) !== undefined) {
+      const line = await brandLine(client, term, page, matched, opts, salesChannel);
+      chosen.push({ ...line, pageBrands, looked });
+      continue;
+    }
     if (best) {
       chosen.push({
         term,
         status: "filled",
+        pageBrands,
+        looked,
         product: best.product,
         price: linePrice(best.product),
         compared: best.compared,
@@ -488,7 +565,7 @@ export async function buildBasket(
     // everything it returned is out of stock.
     const source = page.products[0];
     if (!source) {
-      chosen.push({ term, status: "no-match", compared: 0, matched });
+      chosen.push({ term, status: "no-match", compared: 0, matched, pageBrands, looked });
       continue;
     }
 
@@ -502,6 +579,8 @@ export async function buildBasket(
       chosen.push({
         term,
         status: "replacement-unknown",
+        pageBrands,
+        looked,
         product: source,
         compared: page.products.length,
         matched,
@@ -512,6 +591,8 @@ export async function buildBasket(
       chosen.push({
         term,
         status: "nothing-in-stock",
+        pageBrands,
+        looked,
         product: source,
         compared: replacement.compared,
         inStock: replacement.inStock,
@@ -528,6 +609,7 @@ export async function buildBasket(
     chosen.push({
       term,
       status: "filled-by-substitute",
+      pageBrands,
       product: replacement.product,
       price: linePrice(replacement.product),
       replaces: source,
@@ -589,6 +671,83 @@ interface SweepScope {
  * A failure still does not discard the lines already resolved. It surfaces as
  * `replacement-unknown`, which says what actually happened.
  */
+/**
+ * A line for a term whose own search page holds nothing of the wanted brand.
+ *
+ * Falls through to the category sweep and keeps the best-ranked candidate that
+ * matches — substitution with a BRAND constraint instead of a stock one, which
+ * is exactly what BRO-2079 asked for and why it reuses `findSubstitutes`.
+ *
+ * A failure to look is reported as `replacement-unknown`, never as "that brand
+ * is not sold here": a request that did not answer is a statement about the
+ * network, not about the shelf. Same rule as the stock path.
+ */
+async function brandLine(
+  client: D1Client,
+  term: string,
+  page: { products: readonly Product[] },
+  matched: number,
+  opts: BasketOptions,
+  salesChannel: string,
+): Promise<BasketLine> {
+  const want = normalizeBrand(opts.brand);
+  const source = page.products[0];
+  if (!source) {
+    return { term, status: "no-match", compared: 0, matched };
+  }
+  try {
+    const result = await findSubstitutes(client, source.skuId, {
+      regionId: opts.regionId,
+      salesChannel,
+      count: opts.count,
+      limit: Number.POSITIVE_INFINITY,
+    });
+    // Every brand the sweep returned, kept rather than discarded. `brandLine`
+    // inspected these and threw them away, so a brand that only the CATEGORY
+    // carried — in stock at `Price: 0`, the exact VTEX shape `bestSubstitute`
+    // documents — reproduced the round-5 blocker one hop over: the code looked
+    // at a LATTI product, rejected it as unbuyable, and then said D1 had
+    // returned none of that brand.
+    const sweepBrands = distinctBrands(result.candidates.map((c) => c.product));
+    const buyable = result.candidates.filter(
+      (c) => linePrice(c.product) !== undefined && normalizeBrand(c.product.brand) === want,
+    );
+    const top = buyable[0];
+    if (!top) {
+      return {
+        term,
+        status: "no-brand-match",
+        sweepBrands,
+        product: source,
+        // How wide the look was. On this path the brand-matching count is zero
+        // by construction, so reporting it would be the structural-zero defect
+        // the stock path already learned about.
+        compared: result.rankedCount,
+        swept: result.poolProducts,
+        categoryTotal: result.poolTotal,
+        matched,
+        substituteSweep: true,
+      };
+    }
+    return {
+      term,
+      status: "filled-by-substitute",
+      product: top.product,
+      price: linePrice(top.product),
+      replaces: source,
+      sweepBrands,
+      compared: buyable.length,
+      swept: result.poolProducts,
+      categoryTotal: result.poolTotal,
+      matched,
+      substituteSweep: true,
+      alternatives: packPrices(buyable.slice(1).map((c) => c.product)),
+    };
+  } catch {
+    return { term, status: "replacement-unknown", product: source, compared: 0, matched };
+  }
+}
+
 async function bestSubstitute(
   client: D1Client,
   source: Product,
@@ -658,4 +817,344 @@ async function bestSubstitute(
   } catch {
     return { outcome: "unreachable" };
   }
+}
+
+/** One term, priced both ways. */
+export interface BasketComparison {
+  term: string;
+  base?: BasketLine;
+  alt?: BasketLine;
+  /** Set only when BOTH sides filled: `alt.price - base.price`. */
+  delta?: PriceHundredths;
+}
+
+export interface CrossBasket {
+  /** The brand asked for, as typed. */
+  brand: string;
+  base: BasketPlan;
+  alt: BasketPlan;
+  rows: BasketComparison[];
+  /**
+   * The comparison, over the terms BOTH baskets filled — and nothing else.
+   *
+   * This is the whole reason the type is not two totals side by side. A
+   * brand-constrained basket routinely fills fewer lines, and subtracting its
+   * total from the unconstrained one then reports the missing lines as a
+   * saving: drop the two most expensive terms and the "store brand" looks
+   * dramatically cheaper, because it did not buy them.
+   */
+  comparable: {
+    terms: number;
+    baseTotal: PriceHundredths;
+    altTotal: PriceHundredths;
+    delta: PriceHundredths;
+  };
+  /** Terms where D1 genuinely has nothing of the brand. */
+  onlyBase: string[];
+  /** Terms where the branded product exists and was priced, but did not fit. */
+  altOverBudget: string[];
+  /** Terms where the branded lookup never answered — unknown, not empty. */
+  altUnknown: string[];
+  /** Terms D1 returned nothing for, or nothing in stock, on the branded run. */
+  altNoMatch: string[];
+  /** Terms the branded basket filled and the base one could not. */
+  onlyAlt: string[];
+  /** Terms neither basket filled — not a brand difference, and not silent either. */
+  neither: string[];
+  /**
+   * How wide the look was, when it was narrower than what D1 matched.
+   *
+   * Undefined when every term's page held everything D1 had. Set, it is the
+   * denominator every brand claim in this comparison is really scoped to, and
+   * without it those claims are universals asserted over twelve products.
+   */
+  partial?: { looked: number; matched: number };
+  /**
+   * Brands D1 returned for these terms, when nothing of the requested one could
+   * be bought. A typo is otherwise indistinguishable from a brand D1 does not
+   * carry, and both render as an empty basket.
+   *
+   * COMPLETE — the requested brand is no longer filtered out of it. It used to
+   * be, and that is what {@link brandReturnedUnbuyable} exists to make
+   * unnecessary: see there.
+   */
+  brandsSeen?: string[];
+  /**
+   * The requested brand WAS returned by D1 — it just cannot be bought here.
+   *
+   * `no-brand-match` means nothing of the brand was BUYABLE, and the headline
+   * said D1 had returned nothing of it. Live: `--brand COPELIA leche` returns
+   * `COCADA LECHE PANELA COPELIA 23GR` at `Price: 0, AvailableQuantity: 0`, and
+   * the output said "Nothing D1 returned for these terms is COPELIA".
+   *
+   * The first fix filtered the brand out of the hint list so the contradiction
+   * could not be seen, and called that filter load-bearing. It was deleting the
+   * evidence and keeping the claim. The claim is conditioned on the evidence
+   * now, the list is complete, and the true sentence is the more useful one.
+   */
+  brandReturnedUnbuyable?: boolean;
+}
+
+/**
+ * The same shopping list, priced twice: as the best value D1 has, and
+ * restricted to one brand.
+ *
+ * Both runs are fit to the same budget, so the comparison is between two
+ * baskets a person could actually have bought, not between one real basket and
+ * a hypothetical one that overspends.
+ */
+export async function compareBaskets(
+  client: D1Client,
+  terms: readonly string[],
+  budget: PriceHundredths,
+  opts: BasketOptions & { brand: string },
+): Promise<CrossBasket> {
+  const want = normalizeBrand(opts.brand);
+  if (want === undefined) {
+    throw new UsageError("--brand needs a brand name, for example --brand LATTI.");
+  }
+  const base = await buildBasket(client, terms, budget, { ...opts, brand: undefined });
+  const alt = await buildBasket(client, terms, budget, opts);
+
+  // Paired by POSITION, not by term.
+  //
+  // A Map keyed on the term is last-wins, so `d1 basket --brand X leche leche`
+  // silently discarded the first line of each basket — including filled,
+  // money-spending ones — and the render then reported that nothing was bought
+  // and nothing was comparable about a basket that had bought two things. The
+  // dropped line was neither named nor netted, which is the one direction the
+  // "named, never netted" rule did not anticipate.
+  //
+  // `buildBasket` emits exactly one line per input term in order, and
+  // `fillToBudget` maps them 1:1, so position is the reliable join. Asserted
+  // rather than assumed, because a silent length mismatch would reintroduce the
+  // same class of defect through a different door.
+  const rows = pairRows(terms, base, alt);
+
+  const shared = rows.filter((r) => r.delta !== undefined);
+  const baseTotal = sum(shared.map((r) => r.base?.price ?? 0));
+  const altTotal = sum(shared.map((r) => r.alt?.price ?? 0));
+
+  const filled = (l: BasketLine | undefined) => l !== undefined && isFilled(l.status);
+
+  // Every line looked for the brand and found nothing BUYABLE.
+  const brandMissed = alt.lines.length > 0 && alt.lines.every((l) => l.status === "no-brand-match");
+  // ...and whether D1 returned it at all, which is a different question and the
+  // one the headline was answering wrongly.
+  const returned = new Set(
+    [...base.lines, ...alt.lines]
+      .flatMap((l) => [...(l.pageBrands ?? []), ...(l.sweepBrands ?? [])])
+      .map((x) => normalizeBrand(x))
+      .filter((x): x is string => x !== undefined),
+  );
+
+  return {
+    brand: opts.brand,
+    base,
+    alt,
+    rows,
+    comparable: {
+      terms: shared.length,
+      baseTotal,
+      altTotal,
+      delta: altTotal - baseTotal,
+    },
+    // Split by WHY, not lumped under one sentence. `over-budget` is a fact
+    // about the shopper's wallet and `replacement-unknown` is a fact about the
+    // network; reporting either as "no LATTI for this" turns them into facts
+    // about D1's shelf.
+    onlyBase: rows
+      .filter((r) => filled(r.base) && !filled(r.alt) && r.alt?.status === "no-brand-match")
+      .map((r) => r.term),
+    altOverBudget: rows
+      .filter((r) => filled(r.base) && r.alt?.status === "over-budget")
+      .map((r) => r.term),
+    altUnknown: rows
+      .filter((r) => filled(r.base) && r.alt?.status === "replacement-unknown")
+      .map((r) => r.term),
+    altNoMatch: rows
+      .filter(
+        (r) =>
+          filled(r.base) && (r.alt?.status === "no-match" || r.alt?.status === "nothing-in-stock"),
+      )
+      .map((r) => r.term),
+    onlyAlt: rows.filter((r) => filled(r.alt) && !filled(r.base)).map((r) => r.term),
+    // Neither side filled these, so they are not a brand difference at all —
+    // but a row of two dashes with no sentence beside it leaves the reader to
+    // guess, which is the one thing this output is built not to do.
+    neither: rows.filter((r) => !filled(r.base) && !filled(r.alt)).map((r) => r.term),
+    partial: partialLook(alt.lines),
+    // Offered only when every line looked for the brand and could not BUY one.
+    // Whether D1 RETURNED it is a separate question, answered separately below.
+    //
+    // `!isFilled` was wrong and said so out loud: `over-budget` means the
+    // branded product was found and priced and refused on money, and
+    // `replacement-unknown` means the lookup never answered. Both rendered
+    // "Nothing D1 returned for these terms is LATTI" directly above "Brands it
+    // did return: LATTI" — two adjacent sentences in contradiction, and the
+    // second one is the true one.
+    // Offered only when a line actually LOOKED for the brand and did not find
+    // it. `every(no-brand-match || no-match)` was still too wide: `no-match`
+    // means D1 returned nothing at all for the term, which is not about the
+    // brand, and a single typo'd term then printed "Nothing D1 returned for
+    // these terms is LATTI" four lines above "that is not about LATTI". So at
+    // least one line must be `no-brand-match` — the only status that means the
+    // brand was searched for and missing.
+    // EVERY line must have looked for the brand and missed.
+    //
+    // Three rounds narrowed this and each left one arm open, so it is now the
+    // strictest reading there is: `no-match` means D1 returned nothing at all
+    // for the term, which says nothing whatever about the brand, and mixing it
+    // in let a two-term list print "Nothing D1 returned for these terms is
+    // LATTI" about a list where LATTI was never the reason.
+    brandsSeen: brandMissed ? brandsIn([...base.lines, ...alt.lines]) : undefined,
+    brandReturnedUnbuyable: brandMissed ? returned.has(want) : undefined,
+  };
+}
+
+/**
+ * Join the two baskets, by POSITION.
+ *
+ * Exported so the join itself is testable — the length guard below is
+ * unreachable from `compareBaskets` today and a mutation deleting it therefore
+ * survived the whole suite.
+ *
+ * A Map keyed on the term is last-wins, so `d1 basket --brand X leche leche`
+ * silently discarded the first line of each basket, including filled,
+ * money-spending ones. `buildBasket` emits exactly one line per input term in
+ * order and `fillToBudget` maps them 1:1, so position is the reliable join —
+ * asserted rather than assumed, because a silent length mismatch would
+ * reintroduce the same defect through a different door.
+ */
+/**
+ * A term's label in the comparison, disambiguated when the shopper repeated it.
+ *
+ * The buckets below project rows back to strings. With a bare term, a list
+ * containing `aceite` twice — one row filled, one not — printed
+ * "no LATTI for: aceite" and "Neither basket filled: aceite" about the same
+ * name, which are mutually exclusive claims. A label that is unique per row
+ * makes them separate lines about separate rows.
+ */
+export function rowLabels(terms: readonly string[]): string[] {
+  const count = new Map<string, number>();
+  for (const t of terms) count.set(t, (count.get(t) ?? 0) + 1);
+
+  const seen = new Map<string, number>();
+  const labels = terms.map((term) => {
+    if ((count.get(term) ?? 0) < 2) return term;
+    const n = (seen.get(term) ?? 0) + 1;
+    seen.set(term, n);
+    return `${term} (#${n})`;
+  });
+
+  // Verified, not assumed. Any suffix scheme that leaves unique terms bare can
+  // collide: a list containing both `aceite` (twice) and the literal string
+  // `aceite (#1)` produces that label twice, and the two rows then land in two
+  // mutually exclusive buckets under one name — the very defect the labels
+  // exist to prevent. The row index cannot collide, so falling back to it is
+  // the only construction that is right for every input.
+  if (new Set(labels).size === labels.length) return labels;
+  return terms.map((term, i) => `${i + 1}. ${term}`);
+}
+
+export function pairRows(
+  terms: readonly string[],
+  base: BasketPlan,
+  alt: BasketPlan,
+): BasketComparison[] {
+  if (base.lines.length !== terms.length || alt.lines.length !== terms.length) {
+    throw new D1Error(
+      `Basket comparison expected one line per term (${terms.length}), got ${base.lines.length} and ${alt.lines.length}. This is a bug in d1-cli.`,
+    );
+  }
+  const labels = rowLabels(terms);
+  return terms.map((_term, i) => {
+    const term = labels[i] as string;
+    const bl = base.lines[i];
+    const al = alt.lines[i];
+    const both = bl && al && isFilled(bl.status) && isFilled(al.status);
+    return {
+      term,
+      base: bl,
+      alt: al,
+      delta:
+        both && bl.price !== undefined && al.price !== undefined ? al.price - bl.price : undefined,
+    };
+  });
+}
+
+/**
+ * Distinct brands among the products D1 returned, for a typo hint.
+ *
+ * **Every** line, filled or not — the sentence says "brands it did return",
+ * and a product that was returned and then rejected on stock or price was
+ * still returned. An earlier version also skipped unfilled lines, which read
+ * as an extra safeguard and was not one: with the exclusion below in place it
+ * changed no output, and neither guard could be killed by a mutation because
+ * each masked the other. Two guards where one is load-bearing is one guard and
+ * one decoration, and the decoration is the one that goes.
+ *
+ * The exclusion IS load-bearing. An unfilled line carries `product: source` —
+ * the thing it rejected — so a rejected LATTI put "Brands it did return:
+ * LATTI" directly under "Nothing D1 returned for these terms is LATTI". If the
+ * requested brand appears here the headline above it is false, and no hint is
+ * worth printing a lie for.
+ */
+export function brandsIn(lines: readonly BasketLine[]): string[] {
+  const seen = new Set<string>();
+  for (const l of lines) {
+    // The PAGE only. Merging the category sweep in put nineteen brands under
+    // "brands it did return for these terms" where D1 had returned six — the
+    // other thirteen were sweetener brands swept from one product's category,
+    // and the look was COMPLETE, so no qualifier even applied. The sweep IS
+    // evidence, but for a different question ({@link
+    // CrossBasket.brandReturnedUnbuyable}), whose consumer unions it separately.
+    // One label, one population.
+    for (const raw of l.pageBrands ?? []) {
+      const b = raw.trim();
+      if (b) seen.add(b);
+    }
+  }
+  return [...seen].sort((x, y) => x.localeCompare(y));
+}
+
+/**
+ * The narrowest look any term got, when some term saw less than D1 matched.
+ *
+ * Reported so a negative brand claim can name its own denominator. The whole
+ * point of `--count` is that it moves this number, and a sentence that does not
+ * mention it is a universal over whatever the default happened to be.
+ */
+function partialLook(
+  lines: readonly BasketLine[],
+): { looked: number; matched: number } | undefined {
+  // SUMMED across terms, not the narrowest term's own pair.
+  //
+  // Minimising on `looked` reported one term's shortfall as the whole
+  // comparison's. At the default count every partial line has `looked: 12`, so
+  // ties resolved to whichever term was typed FIRST: `--brand ALPIN sal leche`
+  // said "D1 matched 4" while 28 unseen `leche` products — including the ALPIN
+  // milk the whole example is about — went unmentioned, and reversing the two
+  // arguments changed the number to 29. A denominator that depends on argument
+  // order is not a denominator.
+  let looked = 0;
+  let matched = 0;
+  let anyPartial = false;
+  for (const l of lines) {
+    if (l.looked === undefined) continue;
+    looked += l.looked;
+    matched += l.matched;
+    if (l.matched > l.looked) anyPartial = true;
+  }
+  return anyPartial ? { looked, matched } : undefined;
+}
+
+/** Distinct, trimmed brands across a set of products, in a stable order. */
+export function distinctBrands(products: readonly Product[]): string[] {
+  const seen = new Set<string>();
+  for (const p of products) {
+    const b = p.brand?.trim();
+    if (b) seen.add(b);
+  }
+  return [...seen].sort((x, y) => x.localeCompare(y));
 }

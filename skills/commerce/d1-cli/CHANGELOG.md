@@ -3,6 +3,321 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+> **Not released.** `d1 basket --brand` is on this branch and has not passed its
+> review gate — seven cross-model rounds, each finding a live false sentence
+> against real D1. The history below is kept because it is the useful part.
+> Tracked on BRO-2079.
+
+## [Unreleased] — `d1 basket --brand`
+
+### Added — `d1 basket --brand`, the same list priced two ways
+
+BRO-2079, built as it specified: substitution with a **brand** constraint
+instead of a stock one, reusing `findSubstitutes` rather than growing a second
+ranker. The term's own page is tried first — cheap, and usually where a
+same-brand product is — and only a page with none reaches the category sweep.
+
+```text
+$ d1 basket --budget 40000 arroz leche aceite huevos --brand LATTI --lat 4.75068 --lng=-74.03532 --count 20
+  arroz                $ 5.550           —
+  leche                $ 3.090     $ 3.090   same
+  aceite              $ 20.500           —
+  huevos               $ 4.200     $ 4.200   same
+
+Over the 2 terms BOTH filled: $ 7.290 best-value vs $ 7.290 in LATTI — $ 0 the same as best value.
+Not counted — no LATTI for: arroz, aceite.
+Their cost is in neither number above.
+Both baskets were fit to the same budget, so each is one a shopper could have bought.
+```
+
+**The headline delta is computed over the terms both baskets filled, and nothing
+else.** This is the whole reason the feature is not two totals side by side. A
+brand-constrained basket routinely fills fewer lines, and differencing the totals
+then reports the missing lines as a saving — drop the two dearest terms and any
+brand looks cheap, because it did not buy them. The unfilled terms are named
+separately, where they read as a gap rather than a discount. A mutation turning
+the delta back into total-minus-total fails three tests.
+
+Both baskets are fit to the **same budget**, so each is one a shopper could
+actually have bought.
+
+Two smaller honesty points:
+
+- A brand that matches nothing anywhere lists **the brands that did appear**. An
+  empty branded basket is otherwise the same output for a typo and for a brand
+  D1 does not carry.
+- **`no-brand-match` is its own status.** "D1 has none of this brand" and "D1 has
+  none of this in stock" are different facts, and only one of them is about the
+  shelf. A lookup that failed is still `replacement-unknown`, never either.
+
+### Fixed — rounds 3 and 4: stop patching arms; and the property test was testing its own mirror
+
+Scores across four rounds: 5, 5, 4, 6. The recurring defect was never a
+particular sentence — it was that several sentences **inferred a cause from
+state they did not read**, and each round conditioned one such clause on one
+more field while the next found the arm left open.
+
+**Round 3 deleted the inferences.** "`<brand>` is not an alternative for any
+line above" is gone; so is "that is not about `<brand>`". The per-term buckets
+already state the cause precisely, and a summary that competes with them can
+only ever be wrong in some state nobody enumerated.
+
+**And it stopped enumerating by hand.** `test/contradiction.test.ts` walks every
+reachable render state and asserts no forbidden sentence pair appears. It found
+ten further states of the neither-filled defect on its first run.
+
+**Round 4 then found the property test was testing a copy of the code.**
+`crossOf` re-derived the bucketing instead of calling it, and drifted the moment
+`brandsIn` changed — in the same commit series that wrote the test. Two of its
+rules had become unfalsifiable: one side occurred in **0 of 98** states, because
+the mirror re-implemented the exclusion the rule existed to check. It now calls
+production's own function and carries a **reachability guard**: a rule whose
+sides never occur is reported as dead unless explicitly marked a regression
+guard. That guard found the problem immediately.
+
+Live defects fixed in round 4:
+
+- **"Their cost is in neither number above." printed with no numbers above it**,
+  directly under "there is no price to compare". Worse than dangling — the
+  term's own price *is* on screen, so a reader takes it as a claim about that.
+  The sentence never read `comparable.terms`.
+- **"Brands it did return" named one brand per term.** D1 returns ten for
+  `leche`; the hint printed a bakery brand that happened to win the unit-price
+  ranking, while `NATURAL FEELING` — the exact near-miss a shopper typing
+  `NATURAL` needs — sat on the page unmentioned. Lines carry the page's brand
+  set now, and the cap says "and N more" rather than cutting silently.
+- Two guards in `brandsIn` **masked each other**, so neither could be killed by
+  a mutation. Two guards where one is load-bearing is one guard and one
+  decoration; the decoration went.
+- `rowLabels` verifies its own uniqueness and falls back to row indices — a
+  suffix scheme collides when a bare unique term equals a generated label.
+- The comparison table no longer truncates a label, so the name in the table is
+  the name in the sentence below it.
+
+### Fixed — round 5 (BLOCKER): the guard was deleting the evidence, not the lie
+
+Live, against real D1:
+
+```text
+$ d1 basket --budget 50000 --brand COPELIA --count 50 leche
+Nothing D1 returned for these terms is COPELIA.
+```
+
+D1 had returned `COCADA LECHE PANELA COPELIA 23GR` at `Price: 0,
+AvailableQuantity: 0`. `no-brand-match` means nothing of the brand was
+**buyable**; the headline asserted D1 had returned **none of it**.
+
+Round 4 had filtered the requested brand out of the hint list so the
+contradiction could not be seen, and called that filter load-bearing — "if the
+requested brand appears here the headline above it is false, and no hint is
+worth printing a lie for". The premise was right and the conclusion inverted:
+it deleted the evidence and kept the claim. Round 4's own `pageBrands` change
+then put the disproof in the same object, so `--json` shipped `COPELIA` in
+`pageBrands` beside a headline denying it.
+
+The claim is conditioned on the evidence now. Two sentences, both true:
+
+```text
+D1 returned COPELIA for these terms, but nothing of it can be bought at this store.
+Brands it did return: ALPIN, BESTIES, COCUK, COPELIA, HORNEADITOS, LATTI, MUUU,
+NATURAL FEELING, OZMO, TRADICIÓN 1915.
+```
+
+The exclusion is gone and the list is complete — which is also the more useful
+hint, since the requested brand's presence is exactly what a shopper needs to
+see.
+
+**The property test had recorded this defect and exempted it.** Its reachability
+guard correctly reported rule #1 as unfirable; round 4 wrote down the reason
+("production excludes the requested brand — which is the behaviour") and marked
+the rule `regressionOnly`. That reason *was* the bug. The rule is live again,
+and the enumeration gained the axis the defect lived on: whether the **page**
+carried the requested brand, which deriving `pageBrands` from the line's own
+brand had pinned to a single value.
+
+Also: `renderStores` said "that is the registry's answer" when the registry had
+answered with 30 entries this parser could not read. `swept` counts survivors of
+normalization, so it collapsed exactly like the `stores.length` gate it
+replaced; a `dropped` count now tells the two apart.
+
+### Fixed — round 6 (BLOCKER): a universal asserted over twelve products
+
+Six rounds found symptoms. This one found the disease.
+
+`--count` defaults to **12**, against result sets that are routinely 25–31, and
+every brand claim was an unqualified universal over that window:
+
+```text
+$ d1 basket --budget 100000 --brand ALPIN leche
+Nothing D1 returned for these terms is ALPIN.
+
+$ d1 basket --budget 100000 --brand ALPIN --count 30 leche
+  leche                $ 4.400    $ 10.150   +$ 5.750
+```
+
+ALPIN is in stock at $ 10.150 — at product 13. **Twelve of twelve real brands
+tried against a real store produced a false sentence at default flags.**
+
+The module already owns the fix and applies it everywhere else — `scopeOf`,
+`sweepCaveat`, `footerFor`, `renderSearch`'s "not across all N": *a categorical
+claim never outruns its look.* `renderComparison` called none of them, which is
+precisely why this survived six rounds of review looking for contradictions
+*between* sentences. It was one sentence, wrong on its own.
+
+```text
+Nothing among the 12 products looked at for these terms is ALPIN —
+D1 matched 29. Raise --count to widen the look.
+Not counted — nothing of ALPIN among the 12 looked at, for: leche.
+Each price is the best among the 12 products fetched for its term, not
+across all of D1 — raise --count to widen it.
+```
+
+A complete look drops the qualifier rather than hedging forever.
+
+**Second arm, same defect:** `brandLine` filtered the category sweep's
+candidates by brand and discarded the rest, so a brand only the *sweep* carried
+— in stock at `Price: 0`, the exact VTEX shape gotcha 12 describes — reproduced
+the round-5 blocker one hop over. `sweepBrands` is kept now and unioned into the
+evidence.
+
+**And `d1 stores near` returned exit 3** — "the answer is genuinely none",
+documented CLI-wide as never worth retrying — for an answer this parser could
+not read, while the prose beside it explicitly refused to call it an empty
+neighbourhood. Extracted as `storesExit`; unreadable is 1.
+
+### Fixed — round 7: round 6 fixed three sentences and broke a fourth
+
+The decisive finding is a **regression introduced by round 6**. Its `sweepBrands`
+union turned a true sentence false:
+
+```text
+$ d1 basket --budget 100000 --brand ZZNOSUCH arroz sal
+Brands it did return: ALBAR, CABAL, COOLTIVO, D1, DULCRALIGHT, EL ESTIO, …and 7 more.
+```
+
+D1 returned **six** brands across those terms. The other thirteen were sweetener
+brands swept from one product's *category*, printed under a label reading "for
+these terms" — and the look was complete, so no qualifier even applied. One
+label, one population: the display list is the page, and the sweep is evidence
+for a different question whose consumer unions it separately.
+
+- **The brand list carried the same unqualified universal** round 6 had just
+  removed from the headline, one line below it. For `leche` it named one brand
+  of the eleven D1 returns. Scoped now.
+- **The denominator flipped with argument order.** `partialLook` minimised on
+  `looked`, which at the default count is 12 for every partial line, so ties
+  resolved to whichever term was typed first: `--brand ALPIN sal leche` reported
+  "D1 matched 4" while 28 unseen `leche` products — including the ALPIN milk the
+  example is about — went unmentioned. Reversed, it said 29. Summed now; both
+  orderings say "6 looked at, D1 matched 33".
+- **The per-term cause printed the round-5 lie under the round-5 fix**: "no
+  NATURAL FEELING for: leche", six lines below "D1 returned NATURAL FEELING …
+  but nothing of it can be bought". It reads the same evidence now.
+- **`--brand` exited 3** — documented as "never worth retrying" — on runs whose
+  own prose says "Raise `--count`", where widening does fill the basket.
+- **The `storesExit` fix reverted silently**: the test pinned the extracted
+  function and nothing pinned the call site. Its own comment claimed this could
+  not be driven without the network; a stubbed global `fetch` through `main`
+  takes twenty lines.
+
+### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
+
+The review's own summary: the pinning is much stronger — 42 of 51 mutations
+die — and the feature's central thesis, that no printed sentence may contradict
+another, was still violated three live-reproducible ways inside round 1's own
+new code.
+
+- **"LATTI is not an alternative for any line above"** printed directly above
+  **"only LATTI could fill: aceite"**, with the table showing LATTI filling it.
+  Not a corner case: `chooseBest` ranks on unit price, so the best-value pick is
+  routinely a larger, pricier pack that busts the budget while the branded one
+  fits. The clause is conditional now.
+- Round 1's own brands-hint fix widened the gate to include `no-match`, which
+  means D1 returned nothing at all and has nothing to do with the brand. One
+  typo'd term printed "Nothing D1 returned for these terms is LATTI" four lines
+  above "that is not about LATTI". At least one line must now be
+  `no-brand-match` — the only status that means the brand was looked for.
+- A repeated term landed in two mutually exclusive buckets under one name
+  ("no LATTI for: aceite" and "Neither basket filled: aceite"). Rows carry a
+  label that is unique per row.
+
+And the one worth recording above the rest: **round 1 claimed to fix the
+`onlyAlt` vacuity and did not.** The test it added hand-built the `CrossBasket`
+literal, so it pinned the *render* while the *computation* stayed asserted only
+in its empty polarity — mutating it to `[]` kept the suite green. The same
+mistake was then found a second time in this round's own `altNoMatch` test.
+A hand-built fixture tests the renderer; only driving the real function tests
+the function.
+
+Newly pinned, all previously unfalsifiable: the `--brand` guard (deleting it
+silently returns an *unbranded* basket, no error, no mention of the brand),
+every `d1 stores` CLI guard, and both `brandLine` guards — through the
+dead-proxy `main()` harness that already existed for exactly this purpose.
+
+`scopeLine` no longer asserts "the registry holds more further out" without a
+reported total to support it; with one, it states the exact number remaining.
+
+### Fixed — what the cross-model review found (5/10, below the gate)
+
+Six of these are defects in this release's own additions, all after `bun test`
+was green at 487.
+
+- **CI was red and the local check said otherwise.** `bun run lint` is
+  `biome check src test`; the workflow I had been running was `biome check
+  --write`, which fixes as it goes and therefore never reports what CI sees.
+- **A repeated term erased the lines before it.** `compareBaskets` joined the
+  two baskets through a Map keyed on the term, which is last-wins, so
+  `d1 basket --brand LATTI leche leche` discarded the first line of each —
+  including filled, money-spending ones — and then reported that nothing was
+  bought and nothing was comparable about a basket holding two products. The
+  dropped line was neither named nor netted, which is the one direction the
+  "named, never netted" rule had not anticipated. Paired by position now, with
+  the one-line-per-term invariant asserted rather than assumed.
+- **The registry's own `paging.total` was sitting unread in every response**
+  while the cap question was answered by page arithmetic — and answered wrongly:
+  reaching page 10 was treated as hitting the ceiling, so a point with 299
+  stores (ten pages, the tenth holding 29) was told "that is the registry's own
+  ceiling of 300, so a shop further out is missing", about a registry that had
+  just served everything it has. A short page is now definitive exhaustion, and
+  `total` is read.
+- **Every test served a response shape the API has never produced.** The
+  endpoint returns `{paging, items}`; every fixture served a bare array, so
+  deleting the `items` handler left the whole suite green while the command
+  returned nothing at all against live D1 — and printed "no store is in the
+  registry near you" to say so.
+- **The brands hint fired on "not bought" rather than "not found".** `!isFilled`
+  includes `over-budget` and `replacement-unknown`, so the output printed
+  "Nothing D1 returned for these terms is LATTI" directly above "Brands it did
+  return: LATTI" — two adjacent sentences in contradiction, and the second was
+  the true one.
+- **One sentence covered five different reasons a term was missing.** "no LATTI
+  for this" was asserted about a branded product found and priced and refused on
+  budget, and about one whose lookup never answered — a fact about a wallet and
+  a fact about a network, both reported as facts about D1's shelf. Split by
+  cause, with a fourth line for terms neither basket filled.
+- `reasonFor` had no arm for the new `no-brand-match` status, so it fell to a
+  default telling the reader the line named no product and the plan was
+  malformed — while the line named the product it had just rejected.
+- A non-finite `--limit` fetched all ten pages and then reported the registry
+  empty. Three vacuous tests (`onlyAlt` asserted only in its empty polarity, the
+  brands hint's `every` indistinguishable from `some` with one-term fixtures,
+  and the array-shape fixtures above).
+- The 0.9.0 sample output in this file was **hand-assembled and wrong** — it
+  named a term that appeared in no row. Replaced with a captured run.
+
+### Fixed — two behaviours a mutation sweep found unpinned
+
+19 mutations, 17 dead on the first pass. Both survivors were real:
+
+- The `--brand` exit code was read inline from the branded basket, so swapping
+  it for the unconstrained one passed the entire suite. A shopper who asks what
+  their list costs in one brand and is told `0` will read that as "yes, in that
+  brand". Extracted as `comparisonExit` so the wiring is testable without a
+  network stub — the same reason `orderForDisplay` and `loginFollowUp` exist.
+- The malformed-pickup-point fixture omitted `pickupPoint` entirely, so it
+  exercised only one of the guard's two jobs; a point that *has* a `pickupPoint`
+  but no `id` slipped through green.
+
 ## [0.9.0] — 2026-08-04
 
 ### Added — `d1 stores near`, and a clear statement of what it is not

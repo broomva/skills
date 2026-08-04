@@ -14,8 +14,11 @@
 import {
   type BasketLine,
   type BasketOptions,
+  type CrossBasket,
   buildBasket,
+  compareBaskets,
   isFilled,
+  normalizeBrand,
   parseBudget,
 } from "./basket.ts";
 import {
@@ -42,6 +45,7 @@ import {
   renderBasket,
   renderCart,
   renderCategories,
+  renderComparison,
   renderFacets,
   renderOrders,
   renderRegion,
@@ -257,6 +261,41 @@ export function storesExit(r: { stores: readonly unknown[]; dropped: number }): 
   return r.dropped ? 1 : 3;
 }
 
+/**
+ * The shopping-list terms from a `d1 basket` argv.
+ *
+ * `.filter(Boolean)` keeps `"   "`, which searched D1 for whitespace and then
+ * rendered a nameless comparison row. Extracted so the filter is testable
+ * without a network stub.
+ */
+export function basketTerms(positional: readonly string[]): string[] {
+  return positional.slice(1).filter((t) => t.trim().length > 0);
+}
+
+/**
+ * What `d1 basket --brand` exits with.
+ *
+ * The BRANDED basket decides, because it is the one that was asked about.
+ * Reporting the unconstrained basket's success would answer "found it" to a
+ * question nobody asked — a shopper who asks what their list costs in one brand
+ * and is told 0 will read that as "yes, in that brand".
+ *
+ * Extracted so this is testable without a network stub, the same reason
+ * `orderForDisplay` and `loginFollowUp` exist. Inline, a mutation swapping
+ * `alt` for `base` survived the whole suite.
+ */
+
+export function comparisonExit(cmp: CrossBasket): number {
+  const code = basketExit(cmp.alt.lines);
+  // 3 is documented CLI-wide as "asked, and the answer is genuinely none —
+  // never worth retrying". A PARTIAL look is the opposite: the same run prints
+  // "Raise --count to widen the look", and widening it does fill the basket
+  // (`--brand ALPIN leche` is empty at the default and $ 10.150 at --count 40).
+  // An agent branching on 3 would record a fact the prose beside it denies.
+  if (code === 3 && cmp.partial) return 0;
+  return code;
+}
+
 export function basketExit(lines: readonly BasketLine[]): number {
   if (lines.some((l) => isFilled(l.status))) return 0;
   if (lines.some((l) => l.status === "replacement-unknown")) return 1;
@@ -396,6 +435,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
                                and any warning label gained or lost. Proposes
                                only — it never touches your cart.
     d1 basket --budget <cop> <term> [term ...]      [--lat --lng --count]
+                               add --brand <name> to price the same list
+                               in one brand and compare the two
                                build a shopping list to a spending target, by
                                VALUE rather than pack price. The budget is a
                                hard ceiling; every term it could not fit is
@@ -567,7 +608,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "basket": {
-      const terms = positional.slice(1).filter(Boolean);
+      const terms = basketTerms(positional);
       if (!terms.length) {
         throw new UsageError(
           "Usage: d1 basket --budget <pesos> <term> [term ...] [--count N] [--lat --lng]",
@@ -579,8 +620,24 @@ async function main(argv: string[]): Promise<number> {
       // is really the caller's typo.
       const budget = parseBudget(flags.budget);
       countFlag(flags.count);
+      const brand = str(flags.brand);
+      // Validated here, before the network, for the same reason the budget is:
+      // `--brand` with no value parses as boolean true, and letting that reach
+      // `compareBaskets` would spend two full basket builds to raise a usage
+      // error the caller could have been told about for free.
+      if (flags.brand !== undefined && normalizeBrand(brand) === undefined) {
+        throw new UsageError("--brand needs a brand name, for example --brand LATTI.");
+      }
       const region = await regionFor(pointFrom(flags, stored?.region));
-      const plan = await buildBasket(client, terms, budget, basketOptions(flags, region, channel));
+      const opts = basketOptions(flags, region, channel);
+
+      if (brand !== undefined) {
+        const cmp = await compareBaskets(client, terms, budget, { ...opts, brand });
+        console.log(asJson ? json({ ...cmp, regionId: region?.id }) : renderComparison(cmp));
+        return comparisonExit(cmp);
+      }
+
+      const plan = await buildBasket(client, terms, budget, opts);
       console.log(
         asJson
           ? json({ ...plan, regionId: region?.id })

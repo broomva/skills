@@ -10,7 +10,14 @@
  * rather than shown as zero.
  */
 
-import { type BasketLine, type BasketPlan, FILLED, type LineStatus } from "./basket.ts";
+import {
+  type BasketComparison,
+  type BasketLine,
+  type BasketPlan,
+  type CrossBasket,
+  FILLED,
+  type LineStatus,
+} from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP, sum } from "./money.ts";
@@ -707,6 +714,15 @@ function reasonFor(l: BasketLine): string {
       // request that failed, which is a statement about the network dressed up
       // as a statement about the shelf.
       return "nothing D1 carries for this is in stock here, and the replacement lookup did not answer — unknown, not empty";
+    case "no-brand-match":
+      // Added with the status, and DEFENSIVE: `--brand` renders through
+      // `renderComparison`, which never calls this, so no command reaches this
+      // arm today. It exists because without it the status fell to the default,
+      // which told the reader the line named no product and the plan was
+      // malformed — while the line named the product it had just rejected.
+      return l.substituteSweep
+        ? `D1 sells this, but nothing of that brand — its category was searched too${sweepCaveat(l)}`
+        : "D1 sells this, but nothing of that brand";
     case "no-match":
       return "D1 returned nothing for this term";
     default:
@@ -812,4 +828,191 @@ function fmtKm(km: number): string {
 
 function fmtCoord(at: LatLng): string {
   return `${at.lat}, ${at.lng}`;
+}
+
+/**
+ * The same list, priced two ways.
+ *
+ * The rule this render exists to enforce: **the headline delta is computed over
+ * the terms BOTH baskets filled, and nothing else.** A brand-constrained basket
+ * routinely fills fewer lines, and differencing the two totals then reports the
+ * lines it could not fill as a saving — drop the two dearest terms and any
+ * brand looks cheap, because it did not buy them. The unfilled terms are named
+ * separately, where they read as a gap rather than a discount.
+ */
+export function renderComparison(c: CrossBasket): string {
+  const out: string[] = [];
+  const brand = sanitize(c.brand);
+
+  if (c.brandsSeen) {
+    // Two different facts, and the code now knows which one it has. `no-brand-match`
+    // means nothing of the brand was BUYABLE — it does not mean D1 returned none
+    // of it, and saying so was false whenever the brand was on the page at
+    // `Price: 0` (live: `--brand COPELIA leche`).
+    // Three sentences, and which one is true depends on evidence this now reads.
+    //
+    // The unqualified negative was false for twelve of twelve real brands tried
+    // at default flags: `--count` defaults to 12 against result sets of 25-31,
+    // so "Nothing D1 returned for these terms is ALPIN" was a universal over
+    // twelve products while ALPIN sat in stock at product 13. `scopeOf`,
+    // `sweepCaveat` and `footerFor` hold this line everywhere else in the
+    // module; this render called none of them.
+    out.push(
+      c.brandReturnedUnbuyable
+        ? `D1 returned ${brand} for these terms, but nothing of it can be bought at this store.`
+        : c.partial
+          ? `Nothing among the ${c.partial.looked} products looked at for these terms is ${brand} — D1 matched ${c.partial.matched}. Raise --count to widen the look.`
+          : `Nothing D1 returned for these terms is ${brand}.`,
+    );
+    if (c.brandsSeen.length) {
+      // Truncated OUT LOUD. A silent `.slice(0, 12)` is the same shape as every
+      // partial-sweep claim this module already caveats — and the whole point of
+      // the hint is to surface a near-miss, which is exactly what a silent cut
+      // would drop.
+      const shown = c.brandsSeen.slice(0, MAX_BRAND_HINT);
+      const more = c.brandsSeen.length - shown.length;
+      // Scoped like the headline above it. This was the same unqualified
+      // universal, one line below the sentence that had just been fixed: for
+      // `leche` it named one brand of the eleven D1 returns, under a label that
+      // reads as the complete set — the exact "typo or absent brand?" confusion
+      // the hint exists to remove.
+      const label = c.partial
+        ? `Brands among the ${c.partial.looked} looked at`
+        : "Brands it did return";
+      out.push(
+        `${label}: ${shown.map(sanitize).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`,
+      );
+    }
+    out.push("");
+  }
+
+  // The label is NEVER truncated here. `pad` cut at 17 characters, so
+  // "aceite de oliva (#2)" rendered as "aceite de oliva (…" — two
+  // indistinguishable rows, while the buckets below named "(#2)" precisely. The
+  // column widens to fit instead, because the whole point of the label is that
+  // the reader can match it to the sentence underneath.
+  const width = Math.max(18, ...c.rows.map((r) => sanitize(r.term).length));
+  for (const r of c.rows) {
+    const basePart = priceCell(r.base);
+    const altPart = priceCell(r.alt);
+    out.push(`  ${sanitize(r.term).padEnd(width)} ${basePart}   ${altPart}${deltaCell(r)}`);
+  }
+
+  out.push("");
+  const { terms, baseTotal, altTotal, delta } = c.comparable;
+  if (terms === 0) {
+    // No shared line means there is no comparison to report. Printing a delta
+    // of zero here would read as "the same price", which is the opposite of
+    // what happened.
+    //
+    // The "not an alternative for any line" clause is conditional, because it
+    // was false exactly when `onlyAlt` was populated: `chooseBest` ranks by unit
+    // price, so the best-value pick is routinely a larger, pricier pack that
+    // busts the budget while the branded one fits. The output then said the
+    // brand was not an alternative to anything, directly above the line saying
+    // it was the only thing that could fill the term.
+    // States what happened, and stops.
+    //
+    // Three rounds each conditioned the old "…is not an alternative for any
+    // line above" clause on one more bucket and each left another open —
+    // `onlyAlt`, then `altOverBudget`, then `altUnknown`, the last of which
+    // asserted a fact about D1's shelf from a lookup that never answered. The
+    // clause was an INFERENCE from state this sentence does not inspect, and
+    // every fix was another guess at which states it holds for. The buckets
+    // below already say, precisely, what happened to each term; this line no
+    // longer competes with them.
+    out.push("No term was filled by both baskets, so there is no price to compare.");
+  } else {
+    const dir = delta === 0 ? "the same as" : delta > 0 ? "more than" : "less than";
+    out.push(
+      `Over the ${terms} ${terms === 1 ? "term" : "terms"} BOTH filled: ${formatCOP(baseTotal)} best-value vs ${formatCOP(altTotal)} in ${brand} — ${formatCOP(Math.abs(delta))} ${dir} best value.`,
+    );
+  }
+
+  // Named, not netted — and named by CAUSE. One sentence covering every reason a
+  // term is missing asserted "no LATTI for this" about a branded product that
+  // was found and priced and refused on budget, and about one whose lookup never
+  // answered. Those are facts about a wallet and about a network; only the first
+  // line below is a fact about D1's shelf.
+  // The per-term sentence carries the same scope as the headline, because it
+  // makes the same claim and was equally unqualified — it printed
+  // "no RED FLAG for: aceite" about a term whose RED FLAG product was on the
+  // page one `--count` wider, at $ 8.900.
+  // Reads `brandReturnedUnbuyable` too, because it names a CAUSE and that is
+  // the cause. It printed "no NATURAL FEELING for: leche" six lines under
+  // "D1 returned NATURAL FEELING ... but nothing of it can be bought" — the
+  // round-5 contradiction, reintroduced in the bucket whose whole design rule
+  // is that a term is named by why it is missing.
+  const notFound = c.brandReturnedUnbuyable
+    ? `${brand} found but not buyable here, for`
+    : c.partial
+      ? `nothing of ${brand} among the ${c.partial.looked} looked at, for`
+      : `no ${brand} for`;
+  const missing: Array<[readonly string[], string]> = [
+    [c.onlyBase, notFound],
+    [c.altOverBudget, `${brand} found but over budget for`],
+    [c.altUnknown, `the ${brand} lookup did not answer for`],
+    [c.altNoMatch, "D1 returned nothing at all for"],
+  ];
+  let anyMissing = false;
+  for (const [terms, why] of missing) {
+    if (!terms.length) continue;
+    anyMissing = true;
+    out.push(`Not counted — ${why}: ${terms.map(sanitize).join(", ")}.`);
+  }
+  if (c.onlyAlt.length) {
+    out.push(`Not counted — only ${brand} could fill: ${c.onlyAlt.map(sanitize).join(", ")}.`);
+  }
+  // Only when there ARE two numbers. With nothing shared the line above says
+  // there is no price to compare, and this then pointed at numbers that were
+  // never printed — while the term's own price WAS on screen, so a reader takes
+  // it as a claim about that. Fourth instance of one shape: a sentence
+  // asserting something about state it does not read.
+  //
+  // Moved below `onlyAlt` too: "their" reached backwards over a bucket that
+  // printed after it.
+  if (anyMissing && terms > 0) out.push("Their cost is in neither number above.");
+  if (c.neither.length) {
+    // No "that is not about <brand>" clause. It was false whenever the branded
+    // line's own status was `no-brand-match` — the brand WAS looked for and
+    // missing — and it then sat four lines under a header saying exactly that.
+    //
+    // Third instance of one shape in this file: a clause that INFERS a cause
+    // from state the sentence does not inspect. Each of the previous two was
+    // fixed by conditioning it on one more field, and each left another arm
+    // open. Stating the fact and pointing at where the reason lives cannot be
+    // wrong in any state.
+    out.push(
+      `Neither basket filled: ${c.neither.map(sanitize).join(", ")}. Run the same list without --brand for the reason.`,
+    );
+  }
+  out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
+  // The footer `renderBasket` has had all along. Both prices above are the best
+  // of a window, not of D1, and the window moves with `--count`: the same
+  // command at 12 and at 30 picks different products and reports different
+  // totals. A comparison that does not say so invites the reader to treat it as
+  // a fact about the shop.
+  if (c.partial) {
+    out.push(
+      `Each price is the best among the ${c.partial.looked} products fetched for its term, not across all of D1 — raise --count to widen it.`,
+    );
+  }
+  return out.join("\n");
+}
+
+/** How many brands the near-miss hint lists before saying "and N more". */
+const MAX_BRAND_HINT = 12;
+
+/** A price, or why there is not one, in a fixed-width cell. */
+function priceCell(l: BasketLine | undefined): string {
+  if (!l || !FILLED.includes(l.status) || l.price === undefined) {
+    return "—".padStart(9);
+  }
+  return formatCOP(l.price).padStart(9);
+}
+
+function deltaCell(r: BasketComparison): string {
+  if (r.delta === undefined) return "";
+  if (r.delta === 0) return "   same";
+  return r.delta > 0 ? `   +${formatCOP(r.delta)}` : `   -${formatCOP(Math.abs(r.delta))}`;
 }
