@@ -308,4 +308,39 @@ describe("an unreadable registry answer is not exit 3", () => {
     expect(storesExit({ stores: [], dropped: 0 })).toBe(3);
     expect(storesExit({ stores: [], dropped: 30 })).toBe(1);
   });
+
+  test("...and `main` actually CALLS it", async () => {
+    // The test above pins a pure function. Nothing pinned the call site, so
+    // reverting `return storesExit(result)` to the old
+    // `result.stores.length ? 0 : 3` left the whole suite green while the
+    // command went back to reporting an unreadable answer as "genuinely none".
+    // The comment claiming this could not be driven without the network was
+    // wrong; it takes a stubbed global fetch.
+    const { main } = await import("../src/cli.ts");
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          paging: { page: 1, pageSize: 30, total: 300, pages: 10 },
+          // 30 entries, none carrying `pickupPoint.id` — the registry answered
+          // and this parser cannot read a word of it.
+          items: Array.from({ length: 30 }, () => ({ distance: 1, pickupPoint: { name: "x" } })),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as unknown as typeof fetch;
+    try {
+      const code = await main([
+        "stores",
+        "near",
+        "--lat",
+        "4.75068",
+        "--lng",
+        "-74.03532",
+        "--json",
+      ]);
+      expect(code).toBe(1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
 });

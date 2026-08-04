@@ -865,8 +865,16 @@ export function renderComparison(c: CrossBasket): string {
       // would drop.
       const shown = c.brandsSeen.slice(0, MAX_BRAND_HINT);
       const more = c.brandsSeen.length - shown.length;
+      // Scoped like the headline above it. This was the same unqualified
+      // universal, one line below the sentence that had just been fixed: for
+      // `leche` it named one brand of the eleven D1 returns, under a label that
+      // reads as the complete set — the exact "typo or absent brand?" confusion
+      // the hint exists to remove.
+      const label = c.partial
+        ? `Brands among the ${c.partial.looked} looked at`
+        : "Brands it did return";
       out.push(
-        `Brands it did return: ${shown.map(sanitize).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`,
+        `${label}: ${shown.map(sanitize).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`,
       );
     }
     out.push("");
@@ -924,9 +932,16 @@ export function renderComparison(c: CrossBasket): string {
   // makes the same claim and was equally unqualified — it printed
   // "no RED FLAG for: aceite" about a term whose RED FLAG product was on the
   // page one `--count` wider, at $ 8.900.
-  const notFound = c.partial
-    ? `nothing of ${brand} among the ${c.partial.looked} looked at, for`
-    : `no ${brand} for`;
+  // Reads `brandReturnedUnbuyable` too, because it names a CAUSE and that is
+  // the cause. It printed "no NATURAL FEELING for: leche" six lines under
+  // "D1 returned NATURAL FEELING ... but nothing of it can be bought" — the
+  // round-5 contradiction, reintroduced in the bucket whose whole design rule
+  // is that a term is named by why it is missing.
+  const notFound = c.brandReturnedUnbuyable
+    ? `${brand} found but not buyable here, for`
+    : c.partial
+      ? `nothing of ${brand} among the ${c.partial.looked} looked at, for`
+      : `no ${brand} for`;
   const missing: Array<[readonly string[], string]> = [
     [c.onlyBase, notFound],
     [c.altOverBudget, `${brand} found but over budget for`],

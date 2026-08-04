@@ -281,7 +281,14 @@ export function storesExit(r: { stores: readonly unknown[]; dropped: number }): 
 }
 
 export function comparisonExit(cmp: CrossBasket): number {
-  return basketExit(cmp.alt.lines);
+  const code = basketExit(cmp.alt.lines);
+  // 3 is documented CLI-wide as "asked, and the answer is genuinely none —
+  // never worth retrying". A PARTIAL look is the opposite: the same run prints
+  // "Raise --count to widen the look", and widening it does fill the basket
+  // (`--brand ALPIN leche` is empty at the default and $ 10.150 at --count 40).
+  // An agent branching on 3 would record a fact the prose beside it denies.
+  if (code === 3 && cmp.partial) return 0;
+  return code;
 }
 
 export function loginFollowUp(email: string, authToken: string): string {

@@ -1103,7 +1103,14 @@ export function pairRows(
 export function brandsIn(lines: readonly BasketLine[]): string[] {
   const seen = new Set<string>();
   for (const l of lines) {
-    for (const raw of [...(l.pageBrands ?? []), ...(l.sweepBrands ?? [])]) {
+    // The PAGE only. Merging the category sweep in put nineteen brands under
+    // "brands it did return for these terms" where D1 had returned six — the
+    // other thirteen were sweetener brands swept from one product's category,
+    // and the look was COMPLETE, so no qualifier even applied. The sweep IS
+    // evidence, but for a different question ({@link
+    // CrossBasket.brandReturnedUnbuyable}), whose consumer unions it separately.
+    // One label, one population.
+    for (const raw of l.pageBrands ?? []) {
       const b = raw.trim();
       if (b) seen.add(b);
     }
@@ -1121,12 +1128,25 @@ export function brandsIn(lines: readonly BasketLine[]): string[] {
 function partialLook(
   lines: readonly BasketLine[],
 ): { looked: number; matched: number } | undefined {
-  let worst: { looked: number; matched: number } | undefined;
+  // SUMMED across terms, not the narrowest term's own pair.
+  //
+  // Minimising on `looked` reported one term's shortfall as the whole
+  // comparison's. At the default count every partial line has `looked: 12`, so
+  // ties resolved to whichever term was typed FIRST: `--brand ALPIN sal leche`
+  // said "D1 matched 4" while 28 unseen `leche` products — including the ALPIN
+  // milk the whole example is about — went unmentioned, and reversing the two
+  // arguments changed the number to 29. A denominator that depends on argument
+  // order is not a denominator.
+  let looked = 0;
+  let matched = 0;
+  let anyPartial = false;
   for (const l of lines) {
-    if (l.looked === undefined || l.matched <= l.looked) continue;
-    if (!worst || l.looked < worst.looked) worst = { looked: l.looked, matched: l.matched };
+    if (l.looked === undefined) continue;
+    looked += l.looked;
+    matched += l.matched;
+    if (l.matched > l.looked) anyPartial = true;
   }
-  return worst;
+  return anyPartial ? { looked, matched } : undefined;
 }
 
 /** Distinct, trimmed brands across a set of products, in a stable order. */
