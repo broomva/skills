@@ -2729,3 +2729,55 @@ describe("the brands hint and no-match [BRO-2079 round 4]", () => {
     expect(out).toContain("and 8 more");
   });
 });
+
+describe("the returned-brand evidence spans BOTH runs [BRO-2079 round 5]", () => {
+  test("a brand only the branded run's page carried still counts as returned", async () => {
+    // `compareBaskets` searches twice, and D1 can answer differently between
+    // them — that is the whole reason `altNoMatch` exists. Building the
+    // returned-brand set from the base run alone therefore misses a brand that
+    // only the second page carried, and the headline reverts to claiming D1
+    // returned none of it.
+    //
+    // Base's page: OTRA only. Alt's page: OTRA plus an out-of-stock LATTI.
+    let searches = 0;
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("1", "ARROZ OTRA")), { status: 200 });
+      }
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        const isSweep =
+          u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+          "";
+        if (isSweep) {
+          return new Response(JSON.stringify({ products: [], recordsFiltered: 0 }), {
+            status: 200,
+          });
+        }
+        searches++;
+        const products =
+          searches === 1
+            ? [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })]
+            : [
+                wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" }),
+                wire("2", "ARROZ LATTI", { price: 4_000, brand: "LATTI", available: false }),
+              ];
+        return new Response(JSON.stringify({ products, recordsFiltered: products.length }), {
+          status: 200,
+        });
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const c = await compareBaskets(new D1Client({ fetchImpl: impl }), ["arroz"], 100_000_000, {
+      brand: "LATTI",
+    });
+    // Only the SECOND page carried LATTI.
+    expect(c.base.lines[0]?.pageBrands).toEqual(["OTRA"]);
+    expect(c.alt.lines[0]?.pageBrands).toEqual(["LATTI", "OTRA"]);
+    expect(c.alt.lines[0]?.status).toBe("no-brand-match");
+    // ...and that is still evidence D1 returned it.
+    expect(c.brandReturnedUnbuyable).toBe(true);
+    expect(renderComparison(c)).toContain("but nothing of it can be bought");
+  });
+});
