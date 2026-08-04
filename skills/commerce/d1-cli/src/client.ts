@@ -8,12 +8,19 @@
  * config file at "can see my own orders".
  */
 
+import pkg from "../package.json" with { type: "json" };
 import { assertAllowedQuery, assertAllowedUrl } from "./endpoints.ts";
 import { ACCOUNT, D1Error, ORIGIN } from "./types.ts";
 
-/** Presented to upstream so D1 can identify (and if it wishes, throttle) us. */
-const USER_AGENT =
-  "d1-cli/0.1.0 (+https://github.com/broomva/skills; broomva/skills commerce/d1-cli)";
+/**
+ * Presented to upstream so D1 can identify (and if it wishes, throttle) us.
+ *
+ * Read from `package.json` rather than written out, because it WAS written out
+ * and then said `0.1.0` through seven releases. A version string that drifts is
+ * worse than no version string: it tells the other side something confident and
+ * false, and nothing in the build could notice.
+ */
+export const USER_AGENT = `d1-cli/${pkg.version} (+https://github.com/broomva/skills; broomva/skills commerce/d1-cli)`;
 
 export interface ClientOptions {
   /**

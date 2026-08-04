@@ -326,8 +326,10 @@ non-price, and both renderers show `—` instead.
 
 D1's own header offers two delivery methods and the storefront API only ever
 answers with one. Measured across seven delivery points in five cities — each
-resolving to a *different* store-seller — every checkout simulation returns
-exactly one SLA, and it is always the scheduled one:
+resolving to a *different* store-seller — **no simulation ever returned more
+than one SLA**, and every SLA returned was the scheduled one. Six of the seven
+points returned exactly one; Bogotá centro returned none at all, which is a
+seller with no delivery coverage rather than a second option hiding:
 
 | point | seller | SLAs | name |
 |---|---|---|---|

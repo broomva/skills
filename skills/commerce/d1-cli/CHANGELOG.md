@@ -37,7 +37,7 @@ payload that would confirm the useful fields are reachable, and for the
 When a line does not fit, the basket now reports how many of the runners-up it
 actually weighed WOULD have fitted, and names the command that shows them:
 
-```
+```text
 leche — would cost $ 3.090, which does not fit in what is left. 3 cheaper
 matches for this term would fit — run `d1 search "leche" --sort per-unit` to
 choose one
@@ -99,10 +99,12 @@ green and 420 tests passed.
 ### Measured — `Envío D1 Express` is not reachable through the storefront API
 
 BRO-2080 asked for measurement before design. Seven delivery points across five
-cities, each resolving to a different D1 store-seller, every one returns exactly
-**one** shipping SLA and it is always the scheduled one (`Entrega Programada`,
-or `Envio Programado` in Barranquilla). Never express, at any coordinate, on any
-sales channel — so this is not a coverage gap at one address.
+cities, each resolving to a different D1 store-seller, **no simulation returned
+more than one** shipping SLA, and every SLA returned was the scheduled one
+(`Entrega Programada`, or `Envio Programado` in Barranquilla). Six of the seven
+returned exactly one; Bogotá centro returned none, a seller with no delivery
+coverage rather than a second option hiding. Never express, at any coordinate,
+on any sales channel — so this is not a coverage gap at one address.
 
 The mechanism is named in D1's own storefront config:
 `"activeForDeliveryMethods": {"express": true, "programado": true}`, attached to
