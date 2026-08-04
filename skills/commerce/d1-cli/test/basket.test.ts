@@ -2312,8 +2312,11 @@ describe("brandLine's guards are load-bearing [BRO-2079]", () => {
         search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
         sku: sourceSku("1", "ARROZ BARATO"),
         sweep: [
-          wire("9", "ARROZ LATTI SIN OFERTA", { price: 0, brand: "LATTI" }),
-          wire("10", "ARROZ LATTI REAL", { price: 7_000, brand: "LATTI" }),
+          // Named to rank ABOVE the priced one against the source. With the
+          // unpriced candidate ranked second, dropping the price filter changed
+          // no outcome and the test could not fail.
+          wire("9", "ARROZ BARATO LATTI", { price: 0, brand: "LATTI" }),
+          wire("10", "ARROZ LATTI PREMIUM", { price: 7_000, brand: "LATTI" }),
         ],
         sweepTotal: 140,
       }),
@@ -2322,12 +2325,44 @@ describe("brandLine's guards are load-bearing [BRO-2079]", () => {
       { brand: "LATTI" },
     );
     expect(c.alt.lines[0]?.status).toBe("filled-by-substitute");
-    expect(c.alt.lines[0]?.product?.name).toBe("ARROZ LATTI REAL");
+    expect(c.alt.lines[0]?.product?.name).toBe("ARROZ LATTI PREMIUM");
     expect(c.alt.lines[0]?.price).toBe(700_000);
   });
 });
 
 describe("altNoMatch is computed AND rendered [BRO-2079]", () => {
+  test("it is COMPUTED, not only rendered from a hand-built plan", async () => {
+    // The same mistake as the round-1 `onlyAlt` test: a hand-built CrossBasket
+    // pins the render and leaves the computation asserted nowhere. Emptying it
+    // kept the whole suite green.
+    //
+    // `compareBaskets` issues two identical searches, so the only way alt can
+    // see a different shelf from base is for D1 to answer differently between
+    // them — rare, real, and exactly what this bucket exists for.
+    let searches = 0;
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        searches++;
+        const products =
+          searches === 1 ? [wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" })] : [];
+        return new Response(JSON.stringify({ products, recordsFiltered: products.length }), {
+          status: 200,
+        });
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const c = await compareBaskets(new D1Client({ fetchImpl: impl }), ["leche"], 100_000_000, {
+      brand: "LATTI",
+    });
+    expect(c.base.lines[0]?.status).toBe("filled");
+    expect(c.alt.lines[0]?.status).toBe("no-match");
+    expect(c.altNoMatch).toEqual(["leche"]);
+    expect(c.onlyBase).toEqual([]);
+    expect(renderComparison(c)).toContain("D1 returned nothing at all for: leche");
+  });
+
   test("a term the branded run found nothing for is named as such", () => {
     // Emptying either the bucket or its render line left the suite green.
     const c = {
