@@ -153,17 +153,46 @@ describe("redactOrder", () => {
   const red = redactOrder(ORDER) as any;
 
   test("removes the national ID, phone and email", () => {
-    expect(red.clientProfileData.document).toBe("[redacted]");
-    expect(red.clientProfileData.documentType).toBe("[redacted]");
-    expect(red.clientProfileData.phone).toBe("[redacted]");
-    expect(red.clientProfileData.email).toBe("[redacted]");
+    // These lived under `clientProfileData`, which is now withheld whole — so
+    // the assertion is on the serialized output rather than on each key, which
+    // would only prove the key vanished, not that its value did.
+    const blob = JSON.stringify(red);
+    for (const secret of ["1020304050", "CPF", "+573001234567", "someone@example.com"]) {
+      expect(blob).not.toContain(secret);
+    }
+    expect(red.clientProfileData).toBe("[redacted]");
   });
 
   test("removes the delivery address and coordinates, nested arbitrarily deep", () => {
     const a = red.shippingData.address;
     expect(a.street).toBe("[redacted]");
     expect(a.postalCode).toBe("[redacted]");
+    // Withheld WHOLE, not element-by-element. Redacting each number still
+    // published that there were exactly two of them, and the length of a value
+    // is part of the value.
     expect(a.geoCoordinates).toBe("[redacted]");
+    expect(Array.isArray(a.geoCoordinates)).toBe(false);
+  });
+
+  test("an unanticipated key is redacted — the allowlist fails CLOSED", () => {
+    // The defect this replaced: `SENSITIVE_KEYS` was a blocklist, so any PII key
+    // its author had not thought of printed in full. Nobody has ever seen a real
+    // D1 order, so "keys the author thought of" was a guess about an unopened
+    // envelope. These are all plausible VTEX fields that the blocklist missed.
+    const exotic = redactOrder({
+      orderId: "1234567890-01",
+      clientProfileData: { stateInscription: "1020304050", tradeName: "Ada Lovelace" },
+      giftRegistryData: { recipientEmail: "someone@example.com" },
+      marketplacePaymentValue: 8_500_000,
+      customData: { customApps: [{ fields: { cedula: "1020304050" } }] },
+    }) as Record<string, unknown>;
+    const blob = JSON.stringify(exotic);
+    for (const secret of ["1020304050", "Ada Lovelace", "someone@example.com"]) {
+      expect(blob).not.toContain(secret);
+    }
+    // ...while the field that IS on the allowlist still prints, so the test
+    // cannot pass by redacting everything unconditionally.
+    expect(exotic.orderId).toBe("1234567890-01");
   });
 
   test("removes card digits and the transaction id", () => {
@@ -179,10 +208,18 @@ describe("redactOrder", () => {
     expect(red.value).toBe(8_500_000);
     expect(red.items[0].name).toBe("LECHE");
     expect(red.items[0].quantity).toBe(2);
-    // Non-sensitive neighbours of redacted keys survive.
-    expect(red.clientProfileData.firstName).toBe("Ada");
+    // Allowlisted neighbours of redacted keys survive, arbitrarily deep.
     expect(red.shippingData.address.city).toBe("Bogotá");
     expect(red.paymentData.transactions[0].payments[0].paymentSystemName).toBe("Visa");
+  });
+
+  test("the customer's name no longer survives — clientProfileData is withheld whole", () => {
+    // The blocklist printed `firstName` because it was not on the list, and the
+    // test asserted that as intended behaviour. It was not intended; it was the
+    // blocklist's failure mode written down as a promise. Nothing in
+    // `clientProfileData` is needed to answer "where is my order?", so under the
+    // allowlist none of it is worth printing by default.
+    expect(red.clientProfileData).toBe("[redacted]");
   });
 
   test("does not mutate the input", () => {
@@ -204,11 +241,16 @@ describe("redactOrder", () => {
     }
   });
 
-  test("handles nulls and primitives without crashing", () => {
+  test("handles nulls and primitives without crashing, and still fails closed", () => {
+    // `null` passes through: it discloses nothing, and turning it into the
+    // string "[redacted]" would invent a value where the payload said none.
     expect(redactOrder(null)).toBeNull();
     expect(redactOrder({ document: null })).toEqual({ document: null });
-    expect(redactOrder("plain")).toBe("plain");
-    expect(redactOrder([1, 2])).toEqual([1, 2]);
+    // A bare scalar or array at the root is not a known printable path, so it is
+    // redacted rather than echoed. An order is always an object; anything else
+    // arriving here is unrecognised, which is precisely when to say less.
+    expect(redactOrder("plain")).toBe("[redacted]");
+    expect(redactOrder([1, 2])).toEqual(["[redacted]", "[redacted]"]);
   });
 });
 
@@ -222,7 +264,13 @@ describe("orderForDisplay — the redaction DEFAULT is bound, not just available
     const out = JSON.stringify(orderForDisplay(ORDER, false));
     expect(out).not.toContain("1020304050");
     expect(out).toContain("[redacted]");
-    expect(out).toContain("Ada");
+    // "Ada" used to survive here. Under the allowlist it does not, and the
+    // orderId is what proves this selection is redaction rather than a blanket
+    // refusal to print.
+    expect(out).not.toContain("Ada");
+    expect(JSON.stringify(orderForDisplay({ ...ORDER, orderId: "77-01" }, false))).toContain(
+      "77-01",
+    );
   });
 
   test("--raw opts in to the full payload", () => {

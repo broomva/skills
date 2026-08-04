@@ -87,57 +87,184 @@ export async function getOrder(client: D1Client, orderId: string): Promise<unkno
 }
 
 /**
- * Fields in VTEX's order-detail payload that should not be printed by default.
+ * The leaf fields of a VTEX order that `d1 order` may print.
  *
- * The response carries the customer's national ID document, phone, full
- * delivery address, and the card's first/last digits — none of it needed to
- * answer "where is my order?", and all of it would otherwise land in a
- * terminal, a shell history, a log, or an agent's context simply because it
- * happened to be in the envelope. A skill whose docs foreground credential
- * hygiene should not leak this by default.
+ * ## Why an allowlist, and why the blocklist had to go
+ *
+ * This was a `SENSITIVE_KEYS` blocklist: it named `document`, `phone`, `street`
+ * and a dozen more, redacted those, and printed everything else. That is an
+ * **allowlist by omission** — every key the author did not think of prints in
+ * full, and the author cannot think of the keys they have never seen. The
+ * account this was built against has no completed D1 order, so the real payload
+ * has *never been observed*; the blocklist was a guess about the contents of an
+ * envelope nobody had opened, and every wrong guess failed towards disclosure.
+ *
+ * `test/safety.test.ts` was rewritten to eliminate exactly this shape for
+ * endpoints. It survived here.
+ *
+ * Inverted, the failure direction flips: an unanticipated key is redacted. A
+ * field missing from this list costs a reader one `--raw`; a field missing from
+ * a blocklist costs the customer their national ID. Only one of those is
+ * recoverable.
+ *
+ * ## Paths, not bare key names
+ *
+ * Matching bare names would let an allowlisted `name` or `value` print wherever
+ * it appeared, including under a key added later that happens to nest one. Each
+ * entry is a full dotted path with array indices collapsed to `[]`, so
+ * `items[].name` prints and `clientProfileData.name` would not.
+ *
+ * ## This list is provisional
+ *
+ * Derived from VTEX's documented OMS order schema, not from an observed D1
+ * order — BRO-2077 wants one real payload to confirm the useful fields are
+ * actually reachable. Being wrong here now means over-redacting, which is the
+ * survivable direction and what `--raw` is for.
+ *
+ * Note what is deliberately absent: **all of `clientProfileData`**. Nothing in
+ * it — not the first name, not the corporate name — is needed to answer "where
+ * is my order?", so none of it is worth the risk of printing by default.
  */
-const SENSITIVE_KEYS = new Set([
-  "document",
-  "documentType",
-  "corporateDocument",
-  "phone",
-  "homePhone",
-  "email",
-  "receiverName",
-  "street",
-  "number",
-  "complement",
-  "neighborhood",
-  "postalCode",
-  "reference",
-  "geoCoordinates",
-  "firstDigits",
-  "lastDigits",
-  "cardNumber",
-  "tid",
-  "nsu",
+const PRINTABLE_PATHS = new Set([
+  // The order's own identity and lifecycle.
+  "orderId",
+  "sequence",
+  "status",
+  "statusDescription",
+  "creationDate",
+  "lastChange",
+  "orderGroup",
+  "salesChannel",
+  "origin",
+  "isCompleted",
+  "allowCancellation",
+  "allowEdition",
+  "cancelReason",
+  "currencyCode",
+  "value",
+  // Money, broken out.
+  "totals[].id",
+  "totals[].name",
+  "totals[].value",
+  // What was bought.
+  "items[].id",
+  "items[].uniqueId",
+  "items[].productId",
+  "items[].refId",
+  "items[].ean",
+  "items[].name",
+  "items[].skuName",
+  "items[].quantity",
+  "items[].seller",
+  "items[].price",
+  "items[].listPrice",
+  "items[].sellingPrice",
+  "items[].measurementUnit",
+  "items[].unitMultiplier",
+  "items[].imageUrl",
+  "items[].detailUrl",
+  "items[].isGift",
+  "items[].additionalInfo.brandName",
+  "items[].additionalInfo.categories[].id",
+  "items[].additionalInfo.categories[].name",
+  // Delivery, to the resolution a shopper needs — a city, never a doorstep.
+  "shippingData.address.city",
+  "shippingData.address.state",
+  "shippingData.address.country",
+  "shippingData.address.addressType",
+  "shippingData.logisticsInfo[].itemIndex",
+  "shippingData.logisticsInfo[].selectedSla",
+  "shippingData.logisticsInfo[].deliveryChannel",
+  "shippingData.logisticsInfo[].shippingEstimate",
+  "shippingData.logisticsInfo[].shippingEstimateDate",
+  "shippingData.logisticsInfo[].price",
+  "shippingData.logisticsInfo[].slas[].id",
+  "shippingData.logisticsInfo[].slas[].name",
+  "shippingData.logisticsInfo[].slas[].shippingEstimate",
+  "shippingData.logisticsInfo[].slas[].price",
+  "shippingData.logisticsInfo[].slas[].deliveryChannel",
+  // How it was paid — the instrument's NAME, never its digits.
+  "paymentData.transactions[].payments[].paymentSystem",
+  "paymentData.transactions[].payments[].paymentSystemName",
+  "paymentData.transactions[].payments[].value",
+  "paymentData.transactions[].payments[].installments",
+  "paymentData.transactions[].payments[].referenceValue",
+  // Where the parcel is.
+  "packageAttachment.packages[].courier",
+  "packageAttachment.packages[].invoiceNumber",
+  "packageAttachment.packages[].invoiceValue",
+  "packageAttachment.packages[].issuanceDate",
+  "packageAttachment.packages[].trackingNumber",
+  "packageAttachment.packages[].trackingUrl",
+  // Store-level formatting, which carries nothing personal.
+  "storePreferencesData.countryCode",
+  "storePreferencesData.currencyCode",
+  "storePreferencesData.currencyLocale",
+  "storePreferencesData.timeZone",
 ]);
 
+/** The path of a value, with every array index collapsed to a single `[]`. */
+function childPath(parent: string, key: string): string {
+  return parent ? `${parent}.${key}` : key;
+}
+
 /**
- * Recursively replace sensitive values with `"[redacted]"`.
+ * Every path that has a printable descendant — `items`, `shippingData.address`,
+ * and so on — derived from {@link PRINTABLE_PATHS} rather than listed twice.
  *
- * Shape is preserved rather than keys dropped, so the output stays obviously
- * censored instead of mysteriously incomplete. `d1 order --raw` opts out.
+ * A container outside this set contains nothing printable at any depth, so it is
+ * withheld whole instead of being walked. That matters for arrays of plain
+ * values: recursing into `geoCoordinates` redacted both numbers but still
+ * published that there were exactly two of them. A value's LENGTH is part of the
+ * value, and this is a module about not leaking parts of values.
  */
-export function redactOrder(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactOrder);
-  if (value && typeof value === "object") {
+const PRINTABLE_ANCESTORS = new Set<string>(
+  [...PRINTABLE_PATHS].flatMap((path) => {
+    const out: string[] = [];
+    let acc = "";
+    // Split on "." but keep an "x[]" segment attached to its own key.
+    for (const seg of path.split(".")) {
+      acc = acc ? `${acc}.${seg}` : seg;
+      out.push(acc);
+      if (acc.endsWith("[]")) out.push(acc.slice(0, -2));
+    }
+    return out;
+  }),
+);
+
+/**
+ * Recursively replace every value not named in {@link PRINTABLE_PATHS} with
+ * `"[redacted]"`.
+ *
+ * Containers are always traversed rather than redacted whole, so the output
+ * keeps the payload's shape and stays obviously censored instead of
+ * mysteriously incomplete. Only leaves are subject to the allowlist — which
+ * means a *new* leaf under an already-known object is redacted too, not just a
+ * new top-level key. `d1 order --raw` opts out of all of it.
+ *
+ * `null` and `undefined` pass through unredacted: they disclose nothing, and
+ * turning them into the string `"[redacted]"` would invent a value where the
+ * payload said there was none.
+ */
+function redactAt(value: unknown, path: string): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "object") {
+    // The root is always walked; below it, only containers that hold something
+    // printable somewhere inside. Everything else is withheld whole, so neither
+    // its keys, its depth, nor its length is published.
+    if (path !== "" && !PRINTABLE_ANCESTORS.has(path)) return "[redacted]";
+    if (Array.isArray(value)) return value.map((v) => redactAt(v, `${path}[]`));
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (SENSITIVE_KEYS.has(k)) {
-        out[k] = v === null || v === undefined ? v : "[redacted]";
-      } else {
-        out[k] = redactOrder(v);
-      }
+      out[k] = redactAt(v, childPath(path, k));
     }
     return out;
   }
-  return value;
+  return PRINTABLE_PATHS.has(path) ? value : "[redacted]";
+}
+
+export function redactOrder(value: unknown): unknown {
+  return redactAt(value, "");
 }
 
 /**

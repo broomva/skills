@@ -603,6 +603,30 @@ function sweepCaveat(l: BasketLine): string {
   return ` — only ${swept} of ${categoryTotal} in that category were searched`;
 }
 
+/**
+ * What else would have fitted, when anything would have.
+ *
+ * Reports, and stops. The line's product is the best value of its set or the
+ * closest match from a category; a cheaper one is by definition neither, so
+ * choosing it here would be the silent auto-substitution the whole skill is
+ * built to refuse. Naming the count and the command hands the judgement to the
+ * person — the same shape as `d1 substitute` itself.
+ *
+ * The wording stays inside the sweep. On a replacement line this sentence sits
+ * directly after `— only 2 of 140 in that category were searched`, so it says
+ * "of those searched" rather than making a claim about the category entire.
+ */
+function alternativesNote(l: BasketLine): string {
+  const n = l.affordableAlternatives ?? 0;
+  if (n <= 0) return "";
+  if (l.replaces) {
+    const s = n === 1 ? "replacement" : "replacements";
+    return `. ${n} cheaper ${s} of those searched would fit — run \`d1 substitute ${sanitize(l.replaces.skuId)}\` to choose one`;
+  }
+  const s = n === 1 ? "match" : "matches";
+  return `. ${n} cheaper ${s} for this term would fit — run \`d1 search "${sanitize(l.term)}" --sort per-unit\` to choose one`;
+}
+
 /** Why a term did not make the basket, in the reader's terms rather than the enum's. */
 function reasonFor(l: BasketLine): string {
   switch (l.status) {
@@ -618,8 +642,8 @@ function reasonFor(l: BasketLine): string {
       // "Named, never applied silently", and the filled row honours that; this
       // row did not.
       return l.replaces
-        ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}`
-        : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
+        ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}${alternativesNote(l)}`
+        : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${alternativesNote(l)}`;
     case "nothing-in-stock":
       // "returned", not "carries". The look is one search page plus a bounded
       // category sweep, so a claim about what D1 STOCKS is wider than the

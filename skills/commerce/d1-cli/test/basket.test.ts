@@ -1317,3 +1317,126 @@ describe("the pack-price disclosure does not overclaim about D1's data", () => {
     );
   });
 });
+
+describe("an over-budget line says what else would have fitted [BRO-2086]", () => {
+  test("chooseBest carries the runners-up it passed over", () => {
+    const best = chooseBest([
+      product("a", "ARROZ 1KG", 5_000, { measure: "kg", amount: 1 }),
+      product("b", "ARROZ 500G", 3_000, { measure: "kg", amount: 0.5 }),
+      product("c", "ARROZ 2KG", 12_000, { measure: "kg", amount: 2 }),
+    ]);
+    // Best value is the 1kg at $5/kg; the other two are the alternatives, and
+    // their PACK prices are what a budget is spent in.
+    expect(best?.product.skuId).toBe("a");
+    expect([...(best?.alternatives ?? [])].sort((x, y) => x - y)).toEqual([3_000, 12_000]);
+  });
+
+  test("an out-of-stock runner-up is never offered as an alternative", () => {
+    const best = chooseBest([
+      product("a", "ARROZ 1KG", 5_000, { measure: "kg", amount: 1 }),
+      product("b", "ARROZ 500G", 3_000, { measure: "kg", amount: 0.5, available: false }),
+    ]);
+    // `chooseBest` filters to available+priced before ranking, so the sold-out
+    // one is not in the set at all. Counting it would promise a fit that cannot
+    // be bought — the "0 is not free" defect wearing an availability hat.
+    expect(best?.alternatives).toEqual([]);
+  });
+
+  test("fillToBudget counts only the alternatives that fit what is LEFT", () => {
+    const plan = fillToBudget(
+      [
+        line({ term: "arroz", price: 6_000 }),
+        // 4.000 of the 10.000 budget is left when this line is judged, so the
+        // 3.000 alternative fits and the 5.000 one does not.
+        line({ term: "aceite", price: 9_000, alternatives: [3_000, 5_000, 12_000] }),
+      ],
+      10_000,
+    );
+    expect(plan.lines[1]?.status).toBe("over-budget");
+    expect(plan.lines[1]?.affordableAlternatives).toBe(1);
+  });
+
+  test("the count is ABSENT, not zero, when nothing else would have fitted", () => {
+    const plan = fillToBudget(
+      [line({ term: "caviar", price: 90_000, alternatives: [80_000] })],
+      10_000,
+    );
+    // Absent rather than 0 so `--json` consumers cannot read a meaningless zero
+    // on every filled line as "nothing else was available".
+    expect(plan.lines[0]?.affordableAlternatives).toBeUndefined();
+  });
+
+  test("a fitting alternative is necessarily CHEAPER, so the wording is arithmetic", () => {
+    // spent + price > budget >= spent + alt  =>  alt < price. The rendered word
+    // "cheaper" is derived, not assumed — this pins the inequality at the exact
+    // boundary, where an off-by-one in either comparison would show.
+    //
+    // Both surviving alternatives are strictly below the refused 9.001: the one
+    // equal to the budget fits (the ceiling is inclusive) and is still cheaper,
+    // which is the case that makes "cheaper" true rather than merely usually true.
+    const plan = fillToBudget(
+      [line({ term: "x", price: 9_001, alternatives: [8_999, 9_000, 9_001] })],
+      9_000,
+    );
+    expect(plan.lines[0]?.status).toBe("over-budget");
+    expect(plan.lines[0]?.affordableAlternatives).toBe(2);
+  });
+
+  test("the shopper is told, and pointed at the command that shows them", () => {
+    const plan = fillToBudget(
+      [line({ term: "aceite", price: 9_000, alternatives: [3_000] })],
+      5_000,
+    );
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("1 cheaper match for this term would fit");
+    expect(out).toContain('d1 search "aceite" --sort per-unit');
+  });
+
+  test("it pluralises, because a basket prints this next to real numbers", () => {
+    const plan = fillToBudget(
+      [line({ term: "aceite", price: 9_000, alternatives: [3_000, 2_000] })],
+      5_000,
+    );
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain("2 cheaper matches");
+  });
+
+  test("nothing is said when nothing would have fitted", () => {
+    const plan = fillToBudget(
+      [line({ term: "caviar", price: 90_000, alternatives: [80_000] })],
+      10_000,
+    );
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).not.toContain("would fit");
+  });
+
+  test("the ticket's own scenario, end to end through buildBasket", async () => {
+    // BRO-2086 as filed: the closest replacement does not fit, a cheaper one in
+    // the same sweep would, and the line was dropped saying nothing about it.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("16", "HUEVO AA X30", { available: false, price: 16_900 })],
+        sku: sourceSku("16", "HUEVO AA X30"),
+        sweep: [
+          wire("36", "HUEVO AA X36 BANDEJA", { price: 24_900 }),
+          wire("15", "HUEVOS CODORNIZ X15 PEQUE", { price: 4_000 }),
+        ],
+        sweepTotal: 140,
+      }),
+      ["huevos"],
+      1_000_000,
+    );
+    const l = plan.lines[0];
+    expect(l?.status).toBe("over-budget");
+    // The CLOSEST match is still what was chosen — this fix reports, it does not
+    // re-pick. Swapping in the cheaper one is the auto-substitution BRO-2076
+    // forbids, and the whole point of option 1 is that it does not happen.
+    expect(l?.product?.name).toBe("HUEVO AA X36 BANDEJA");
+    expect(l?.affordableAlternatives).toBe(1);
+
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("1 cheaper replacement of those searched would fit");
+    expect(out).toContain("d1 substitute 16");
+    // And it still sits inside the sweep's own caveat rather than claiming the
+    // category entire.
+    expect(out).toContain("only 2 of 140 in that category were searched");
+  });
+});

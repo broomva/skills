@@ -84,6 +84,21 @@ export interface BasketLine {
   swept?: number;
   /** Products that category holds. Above `swept` means the look was partial. */
   categoryTotal?: number;
+  /**
+   * Pack prices of the runners-up this line weighed and did not pick.
+   *
+   * Input to the disclosure below, and left on the line so a `--json` consumer
+   * can reach its own conclusion rather than only ours.
+   */
+  alternatives?: readonly PriceHundredths[];
+  /**
+   * How many of those runners-up WOULD have fitted in the money left when this
+   * line was refused. Set only on an `over-budget` line, where it is the whole
+   * point; meaningless anywhere else, so it is absent there rather than zero.
+   *
+   * Reported, never acted on — see {@link fillToBudget}.
+   */
+  affordableAlternatives?: number;
 }
 
 export interface BasketPlan {
@@ -126,6 +141,14 @@ export interface Choice {
   byPackPrice: boolean;
   /** Whether ANY eligible product published a size, for an honest disclosure. */
   anySized?: boolean;
+  /**
+   * Pack prices of the products this line weighed and did NOT pick.
+   *
+   * Carried so that a line which turns out not to fit can say how many of them
+   * would have — see {@link fillToBudget}. Exactly the set counted by
+   * `compared`, minus the winner, so the two numbers describe one population.
+   */
+  alternatives: readonly PriceHundredths[];
 }
 
 /**
@@ -179,10 +202,18 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
     const comparable = eligible.filter(
       (p) => p.size?.measure === dominant && p.unitPrice !== undefined,
     );
-    const product = comparable
+    const ranked = comparable
       .slice()
-      .sort((a, b) => (a.unitPrice ?? 0) - (b.unitPrice ?? 0) || a.skuId.localeCompare(b.skuId))[0];
-    if (product) return { product, compared: comparable.length, byPackPrice: false };
+      .sort((a, b) => (a.unitPrice ?? 0) - (b.unitPrice ?? 0) || a.skuId.localeCompare(b.skuId));
+    const product = ranked[0];
+    if (product) {
+      return {
+        product,
+        compared: comparable.length,
+        byPackPrice: false,
+        alternatives: packPrices(ranked.slice(1)),
+      };
+    }
   }
   // No comparable measure. Pack price is the only axis left, and `byPackPrice`
   // makes the caller say so.
@@ -192,17 +223,34 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
   // would let it print "D1 publishes no size for any of these" about a set
   // where D1 published sizes and only the unit prices were missing — a claim
   // about the data that the data contradicts.
-  const product = eligible
+  const ranked = eligible
     .slice()
     .sort(
       (a, b) =>
         (pickOffer(a.offers)?.price ?? 0) - (pickOffer(b.offers)?.price ?? 0) ||
         a.skuId.localeCompare(b.skuId),
-    )[0];
+    );
+  const product = ranked[0];
   const sized = eligible.some((p) => p.size !== undefined);
   return product
-    ? { product, compared: eligible.length, byPackPrice: true, anySized: sized }
+    ? {
+        product,
+        compared: eligible.length,
+        byPackPrice: true,
+        anySized: sized,
+        alternatives: packPrices(ranked.slice(1)),
+      }
     : undefined;
+}
+
+/** Buyable pack prices of a set of runners-up, in the order they were ranked. */
+function packPrices(products: readonly Product[]): readonly PriceHundredths[] {
+  const out: PriceHundredths[] = [];
+  for (const p of products) {
+    const price = linePrice(p);
+    if (price !== undefined && Number.isFinite(price)) out.push(price);
+  }
+  return out;
 }
 
 /** Price of a chosen product, as a basket line costs it. */
@@ -255,7 +303,24 @@ export function fillToBudget(
       continue;
     }
     if (spent + line.price > budget) {
-      lines.push({ ...line, status: "over-budget" });
+      // Say how many of the runners-up would have fitted — and stop there.
+      //
+      // Reaching down the ranking to fill the line is the tempting fix and the
+      // wrong one. This line's product is the best VALUE of its set, or the
+      // closest MATCH from a category; a cheaper one is neither, and swapping it
+      // in silently is the auto-substitution BRO-2076 exists to forbid. So the
+      // count is disclosed and the choice stays with the person, who can widen
+      // the budget or run `d1 substitute` and pick.
+      //
+      // Anything that fits here is necessarily cheaper than what was refused:
+      // `spent + price > budget >= spent + alt` gives `alt < price`. The word
+      // "cheaper" in the rendered line is arithmetic, not an assumption.
+      const affordable = (line.alternatives ?? []).filter((p) => spent + p <= budget).length;
+      lines.push({
+        ...line,
+        status: "over-budget",
+        affordableAlternatives: affordable || undefined,
+      });
       continue;
     }
     spent += line.price;
@@ -379,6 +444,7 @@ export async function buildBasket(
         matched,
         byPackPrice: best.byPackPrice,
         anySized: best.anySized,
+        alternatives: best.alternatives,
       });
       continue;
     }
@@ -434,6 +500,7 @@ export async function buildBasket(
       categoryTotal: replacement.categoryTotal,
       matched,
       substituteSweep: true,
+      alternatives: replacement.alternatives,
       // `byPackPrice` is deliberately NOT set here. A substitute is ranked by
       // name similarity and price proximity — never by pack price — so the
       // "chosen on pack price" note would misname the mechanism, and its
@@ -448,7 +515,13 @@ export async function buildBasket(
 
 type SubstituteOutcome =
   /** `compared` is how many could have been BOUGHT — the real choice. */
-  | ({ outcome: "found"; product: Product; compared: number } & SweepScope)
+  | ({
+      outcome: "found";
+      product: Product;
+      compared: number;
+      /** Prices of the other buyable candidates, so an unaffordable pick can say what else was there. */
+      alternatives: readonly PriceHundredths[];
+    } & SweepScope)
   /**
    * `compared` is how WIDE the look was, not how many were buyable — on this
    * path that is zero by construction, and reporting it deleted the disclosure.
@@ -535,7 +608,17 @@ async function bestSubstitute(
         ...scope,
       };
     }
-    return { outcome: "found", product: top.product, compared, ...scope };
+    return {
+      outcome: "found",
+      product: top.product,
+      compared,
+      // The rest of the buyable sweep, in RANK order — the candidates that were
+      // passed over for being less like what was asked for, not for costing
+      // more. `buyable` is already filtered to what has a price, so every entry
+      // is a real alternative rather than an unpurchasable one.
+      alternatives: packPrices(buyable.slice(1).map((c) => c.product)),
+      ...scope,
+    };
   } catch {
     return { outcome: "unreachable" };
   }
