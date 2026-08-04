@@ -218,6 +218,41 @@ documented CLI-wide as never worth retrying — for an answer this parser could
 not read, while the prose beside it explicitly refused to call it an empty
 neighbourhood. Extracted as `storesExit`; unreadable is 1.
 
+### Fixed — round 7: round 6 fixed three sentences and broke a fourth
+
+The decisive finding is a **regression introduced by round 6**. Its `sweepBrands`
+union turned a true sentence false:
+
+```text
+$ d1 basket --budget 100000 --brand ZZNOSUCH arroz sal
+Brands it did return: ALBAR, CABAL, COOLTIVO, D1, DULCRALIGHT, EL ESTIO, …and 7 more.
+```
+
+D1 returned **six** brands across those terms. The other thirteen were sweetener
+brands swept from one product's *category*, printed under a label reading "for
+these terms" — and the look was complete, so no qualifier even applied. One
+label, one population: the display list is the page, and the sweep is evidence
+for a different question whose consumer unions it separately.
+
+- **The brand list carried the same unqualified universal** round 6 had just
+  removed from the headline, one line below it. For `leche` it named one brand
+  of the eleven D1 returns. Scoped now.
+- **The denominator flipped with argument order.** `partialLook` minimised on
+  `looked`, which at the default count is 12 for every partial line, so ties
+  resolved to whichever term was typed first: `--brand ALPIN sal leche` reported
+  "D1 matched 4" while 28 unseen `leche` products — including the ALPIN milk the
+  example is about — went unmentioned. Reversed, it said 29. Summed now; both
+  orderings say "6 looked at, D1 matched 33".
+- **The per-term cause printed the round-5 lie under the round-5 fix**: "no
+  NATURAL FEELING for: leche", six lines below "D1 returned NATURAL FEELING …
+  but nothing of it can be bought". It reads the same evidence now.
+- **`--brand` exited 3** — documented as "never worth retrying" — on runs whose
+  own prose says "Raise `--count`", where widening does fill the basket.
+- **The `storesExit` fix reverted silently**: the test pinned the extracted
+  function and nothing pinned the call site. Its own comment claimed this could
+  not be driven without the network; a stubbed global `fetch` through `main`
+  takes twenty lines.
+
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 
 The review's own summary: the pinning is much stronger — 42 of 51 mutations
