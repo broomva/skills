@@ -51,6 +51,7 @@ ranker. The term's own page is tried first — cheap, and usually where a
 same-brand product is — and only a page with none reaches the category sweep.
 
 ```text
+$ d1 basket --budget 40000 arroz leche aceite huevos --brand LATTI --lat 4.75068 --lng=-74.03532 --count 20
   arroz                $ 5.550           —
   leche                $ 3.090     $ 3.090   same
   aceite              $ 20.500           —
@@ -81,6 +82,43 @@ Two smaller honesty points:
 - **`no-brand-match` is its own status.** "D1 has none of this brand" and "D1 has
   none of this in stock" are different facts, and only one of them is about the
   shelf. A lookup that failed is still `replacement-unknown`, never either.
+
+### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
+
+The review's own summary: the pinning is much stronger — 42 of 51 mutations
+die — and the feature's central thesis, that no printed sentence may contradict
+another, was still violated three live-reproducible ways inside round 1's own
+new code.
+
+- **"LATTI is not an alternative for any line above"** printed directly above
+  **"only LATTI could fill: aceite"**, with the table showing LATTI filling it.
+  Not a corner case: `chooseBest` ranks on unit price, so the best-value pick is
+  routinely a larger, pricier pack that busts the budget while the branded one
+  fits. The clause is conditional now.
+- Round 1's own brands-hint fix widened the gate to include `no-match`, which
+  means D1 returned nothing at all and has nothing to do with the brand. One
+  typo'd term printed "Nothing D1 returned for these terms is LATTI" four lines
+  above "that is not about LATTI". At least one line must now be
+  `no-brand-match` — the only status that means the brand was looked for.
+- A repeated term landed in two mutually exclusive buckets under one name
+  ("no LATTI for: aceite" and "Neither basket filled: aceite"). Rows carry a
+  label that is unique per row.
+
+And the one worth recording above the rest: **round 1 claimed to fix the
+`onlyAlt` vacuity and did not.** The test it added hand-built the `CrossBasket`
+literal, so it pinned the *render* while the *computation* stayed asserted only
+in its empty polarity — mutating it to `[]` kept the suite green. The same
+mistake was then found a second time in this round's own `altNoMatch` test.
+A hand-built fixture tests the renderer; only driving the real function tests
+the function.
+
+Newly pinned, all previously unfalsifiable: the `--brand` guard (deleting it
+silently returns an *unbranded* basket, no error, no mention of the brand),
+every `d1 stores` CLI guard, and both `brandLine` guards — through the
+dead-proxy `main()` harness that already existed for exactly this purpose.
+
+`scopeLine` no longer asserts "the registry holds more further out" without a
+reported total to support it; with one, it states the exact number remaining.
 
 ### Fixed — what the cross-model review found (5/10, below the gate)
 
