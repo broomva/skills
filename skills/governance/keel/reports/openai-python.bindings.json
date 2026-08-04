@@ -1,0 +1,40 @@
+{
+  "target": "openai-python",
+  "revision": "d4c151d92ba713e56518a4483d3b7918dd1be838",
+  "generatedAt": "2026-07-25T05:17:57.179Z",
+  "sourceReport": "reports/openai-python.json",
+  "bindings": [
+    {
+      "loop": ".github/workflows/python-version-review.yml#125-validate-and-package-the-assessment",
+      "from": "self_referential",
+      "anchoredOn": ".github/workflows/python-version-review.yml#58-snapshot-official-lifecycle-and-public-usage-data",
+      "argument": "The measured argument records that the one consequential output of this step is `action_required`, the sole condition gating the open_issue job at line 174, and that it is currently produced by matching the first line of a file the model wrote against two marker strings — the model decides whether its own finding is actionable. Step 58, in this same job, has already written `$PYTHON_RELEASE_CYCLE` from https://peps.python.org/api/release-cycle.json under `curl --fail`, and has already proven with `jq --exit-status` that every entry carries `status` and `end_of_life`. Those two fields decide the same proposition the marker is standing in for — whether a Python version this repo still declares support for has passed the point the release managers published for it. The producer of that fact is the CPython release-cycle publication: the openai-python maintainers have no write path to peps.python.org, and no prompt, permission profile, or model output can move an end_of_life date. The signal stops originating inside the run and starts originating at the body that sets the dates. Named limit: this re-grounds the lifecycle-date half of the trigger only. The usage-share judgement the model also makes from pypistats — how much adoption is low enough to drop a version — is a policy call, and after this change it lives in the advisory prose where a human weighs it, not in the gate.",
+      "status": "proposed",
+      "change": "in the same job, replace the `head -n 1 $CODEX_OUTPUT_FILE` marker branch that sets `action_required` with a jq comparison of `$PYTHON_RELEASE_CYCLE` against the version floor declared in pyproject.toml (action_required=true when any version still in the declared support matrix has status \"end-of-life\"/\"security\" or an `end_of_life` date at or before `$REVIEW_DATE_FILE`), and leave the Codex prose as the issue body rather than the trigger",
+      "effort": "wiring"
+    },
+    {
+      "loop": ".github/CODEOWNERS#codeowners",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "The proposition this edge would assert is that a change cannot merge without approval from someone outside its author's write boundary. Every anchored node in this report is a machine reading committed text or bytes on the wire — ruff, mypy, pyright, pytest, and one HTTP fetch of Python lifecycle data. Not one of them observes a human reviewing, or observes a merge being blocked. There is no candidate here that asserts the proposition, so any route would be a substitution of a different claim, and the measured verdict's own reason for `unknown` — that the requirement, if it exists, lives in GitHub settings this clone cannot read — is not something a rewiring can reach.",
+      "status": "proposed",
+      "noRouteReason": "Two decisions are required first, both human. (1) Whether the merge requirement is pinned in an artifact anyone can read: today the CODEOWNERS file only routes reviewers, and whether approval is REQUIRED lives in unversioned branch-protection/ruleset configuration; committing rulesets as code would make the edge inspectable, and that is an adoption choice, not a wire. (2) Whether @openai/sdks-team approving Stainless-codegenned changes that the same team lands is independent of the author at all — settling that is a governance decision about who the reviewer must be. Until both are answered, `unknown` is the honest state and it correctly counts against the ratio."
+    },
+    {
+      "loop": ".github/workflows/python-version-review.yml#104-ask-codex-to-assess-the-policy",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "This step's product is an assessment of whether the version-support policy is well judged. The only candidate whose subject matter is even adjacent, step 58, asserts something strictly narrower: that two third-party payloads were fetched and are well-shaped. Wiring the model invocation onto the fetch would say the assessment is grounded because its input arrived, which grounds nothing — the output is still a model's prose, produced by the same class of system that writes the code under review, and step 58's exit code is silent about its content. There is no rewiring that makes 'ask a language model for a recommendation' read from an exogenous producer; the producer IS the model. Note that the gate this step feeds IS routable and is proposed separately at line 125 — the trigger can be moved outside the boundary while the explanation stays a model's.",
+      "status": "proposed",
+      "noRouteReason": "The decision required is a policy one, not a wire: whether this monthly review's verdict should be an LLM's recommendation at all, or a deterministic lifecycle rule with the model demoted to writing the explanation beneath it. A human owns that choice about what the workflow is for. If the gate is re-grounded at line 125 as proposed, the honest follow-up question about this step is whether an advisory generator that no longer decides anything is a verification edge at all — and that reclassification is the scorer's call on a re-measured report, not this layer's."
+    }
+  ],
+  "summary": {
+    "currentRatio": 0.7692307692307693,
+    "projectedRatio": 0.8461538461538461,
+    "routable": 1,
+    "unroutable": 2
+  },
+  "warnings": []
+}

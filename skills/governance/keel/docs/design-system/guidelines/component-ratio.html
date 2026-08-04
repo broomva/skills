@@ -1,0 +1,76 @@
+<!-- @keelCard group="Components" name="Grounding ratio + node graph" subtitle="The denominator never leaves the screen" height="660" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-6); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+
+  <p class="k-eyebrow">Grounding ratio</p>
+
+  <div class="k-ratio">
+    <span class="k-ratio__value">0.43</span>
+    <p class="k-ratio__formula">anchored / (anchored + self_referential + unknown)</p>
+
+    <div class="k-meter">
+      <div class="k-meter__seg" data-class="anchored" style="width: 43%"></div>
+      <div class="k-meter__seg" data-class="self_referential" style="width: 37%"></div>
+      <div class="k-meter__seg" data-class="unknown" style="width: 20%"></div>
+    </div>
+
+    <div class="k-ratio__counts">
+      <span class="k-ratio__count"><span class="k-class" data-class="anchored">anchored</span> 30</span>
+      <span class="k-ratio__count"><span class="k-class" data-class="self_referential">self_referential</span> 26</span>
+      <span class="k-ratio__count"><span class="k-class" data-class="unknown">unknown</span> 14</span>
+      <span class="k-ratio__count k-ratio__count--excluded">
+        <span class="k-class" data-class="not_a_check">not_a_check</span> 9
+        <span class="k-meta">excluded from the denominator</span>
+      </span>
+    </div>
+  </div>
+
+  <p class="k-eyebrow">Node graph — 79 nodes</p>
+  <div class="k-graph" id="graph"></div>
+  <div class="k-legend">
+    <span class="k-legend__item"><span class="k-mark" data-class="anchored"></span> anchored</span>
+    <span class="k-legend__item"><span class="k-mark" data-class="self_referential"></span> self_referential</span>
+    <span class="k-legend__item"><span class="k-mark" data-class="unknown"></span> unknown</span>
+    <span class="k-legend__item"><span class="k-mark" data-class="not_a_check"></span> not_a_check</span>
+    <span class="k-legend__item"><span class="k-mark" data-class="anchored" data-smell></span> confidence &lt; 0.5</span>
+  </div>
+
+  <p class="note" style="margin-top: var(--k-space-5)">
+    Marks are squares. A circle in a verification UI reads as a status dot, and the
+    status dot is the thing being audited. The grid wraps rather than scaling, so 15
+    nodes and 200 nodes share a mark size and neither clips.
+  </p>
+
+  <p class="k-scope">
+    <strong>Scope.</strong> Keel measures the <em>shape</em> of verification, not its
+    quality. A repo can be 100% anchored with terrible tests. Anchoring says the signal
+    comes from outside; it does not say the signal is sufficient.
+  </p>
+
+  <script>
+    /* Specimen convenience only — `render.ts` emits these marks as static
+       markup, because the report artifact must render with scripting off. */
+    const counts = { anchored: 30, self_referential: 26, unknown: 14, not_a_check: 9 };
+    const nodes = Object.entries(counts).flatMap(([c, n]) => Array(n).fill(c));
+    /* Deterministic shuffle. Real nodes arrive in file order, so a graph sorted
+       by class would misrepresent how the marks actually read — clustering makes
+       any distribution look more orderly than it is. Seeded so the specimen is
+       stable across renders. */
+    let seed = 7;
+    const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let i = nodes.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [nodes[i], nodes[j]] = [nodes[j], nodes[i]];
+    }
+    document.getElementById('graph').innerHTML = nodes
+      .map((c, i) => `<span class="k-mark" data-class="${c}"${c === 'anchored' && i % 9 === 0 ? ' data-smell' : ''}></span>`)
+      .join('');
+  </script>
+</body></html>

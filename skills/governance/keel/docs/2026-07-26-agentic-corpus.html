@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Finding · The agentic corpus scored higher</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --line:#242c37; --ink:#d8dee6; --dim:#8b95a3;
+    --accent:#5ec2a8; --warn:#e0a458; --bad:#d97b7b;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  main{max-width:880px;margin:0 auto;padding:56px 24px 96px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:44px 0 12px;letter-spacing:-.01em;
+     padding-bottom:7px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:26px 0 8px;color:var(--accent)}
+  p{margin:0 0 14px}
+  .meta{color:var(--dim);font-size:13.5px;margin-bottom:30px;font-family:var(--mono)}
+  .badge{display:inline-block;padding:2px 9px;border-radius:3px;font-size:11.5px;
+    font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;vertical-align:2px;
+    background:rgba(217,123,123,.14);color:var(--bad);border:1px solid rgba(217,123,123,.32)}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:2px solid var(--accent);
+    background:var(--panel);border-radius:0 4px 4px 0}
+  blockquote p:last-child{margin:0}
+  table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  td.num{font-family:var(--mono);text-align:right}
+  code{font-family:var(--mono);font-size:13px;background:var(--panel);
+    padding:1.5px 5px;border-radius:3px;color:var(--accent)}
+  .cite{color:var(--dim);font-family:var(--mono);font-size:12.5px}
+  ul,ol{margin:0 0 14px;padding-left:22px} li{margin-bottom:6px}
+  .callout{background:var(--panel);border:1px solid var(--line);border-radius:5px;
+    padding:15px 18px;margin:18px 0}
+  .callout.bad{border-color:rgba(217,123,123,.35)}
+  .callout.warn{border-color:rgba(224,164,88,.35)}
+  .lede{font-size:17.5px;color:#e8edf3;margin-bottom:20px}
+  .anch{color:var(--accent);font-family:var(--mono);font-size:12.5px}
+  hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+</style>
+</head>
+<body>
+<main>
+
+<h1>The agentic corpus scored <em>higher</em></h1>
+<p class="meta">Finding · 2026-07-26 · <span class="badge">Against our own thesis</span></p>
+
+<p class="lede">Six repositories where agents write the code were measured with the same engine, the
+same rubric and the same 25-node cap as the fourteen human-maintained ones. They pooled
+<strong>0.947</strong> against the published <strong>0.853</strong>. The prediction behind
+<em>"your agents are grading their own homework"</em> is not visible in Keel's grounding ratio,
+and this document exists because the corpus file said it would be published either way.</p>
+
+<h2>The pre-registered question</h2>
+
+<p>From <code>corpus-agentic.json</code>, committed in
+the commit that fixed it before any target was cloned:</p>
+
+<blockquote><p>One stated question: how many of these score exactly 1.000, and does the pooled
+agentic ratio differ from the published human-maintained 0.853 by more than 0.10? Both answers are
+reportable results. <strong>If agent-maintained repositories score just as well, that is a finding
+against the product's own thesis and it gets published in the same voice.</strong></p></blockquote>
+
+<h2>The answer</h2>
+
+<table>
+<tr><th>Population</th><th class="num">Pooled</th><th class="num">Anchored</th><th class="num">Denominator</th><th class="num">Exactly 1.000</th><th class="num">not_a_check</th></tr>
+<tr><td>Agent-maintained (6)</td><td class="num">0.947</td><td class="num">71</td><td class="num">75</td><td class="num">3 of 6 · 50%</td><td class="num">50%</td></tr>
+<tr><td>Human-maintained (14)</td><td class="num">0.853</td><td class="num">122</td><td class="num">143</td><td class="num">7 of 14 · 50%</td><td class="num">57%</td></tr>
+</table>
+
+<p><strong>Difference +0.094 — inside the pre-registered 0.10 band, and in the opposite direction
+from the one the pitch predicts.</strong> The saturation rate is identical to the percentage point:
+half of each population scores exactly 1.000.</p>
+
+<table>
+<tr><th>Target</th><th class="num">Ratio</th><th class="num">Anchored</th><th>Language</th><th>Agent</th></tr>
+<tr><td><a href="../reports/karaoke-gen.json">karaoke-gen</a></td><td class="num">1.000</td><td class="num">11</td><td>Python</td><td>Claude</td></tr>
+<tr><td><a href="../reports/xorq.json">xorq</a></td><td class="num">1.000</td><td class="num">17</td><td>Python</td><td>Claude</td></tr>
+<tr><td><a href="../reports/aspect-cli.json">aspect-cli</a></td><td class="num">1.000</td><td class="num">10</td><td>Rust/Starlark</td><td>Claude</td></tr>
+<tr><td><a href="../reports/wvlet.json">wvlet</a></td><td class="num">0.923</td><td class="num">12</td><td>Scala</td><td>Claude</td></tr>
+<tr><td><a href="../reports/binius64.json">binius64</a></td><td class="num">0.909</td><td class="num">10</td><td>Rust</td><td>Claude</td></tr>
+<tr><td><a href="../reports/kody.json">kody</a></td><td class="num">0.846</td><td class="num">11</td><td>TypeScript</td><td>Cursor</td></tr>
+</table>
+
+<p class="cite">1,127 nodes gathered, 150 judged, 6 of 6 measured. Full index:
+<a href="../reports/corpus-agentic-summary.json">reports/corpus-agentic-summary.json</a></p>
+
+<h2>What this does and does not mean</h2>
+
+<div class="callout bad">
+<p><strong>It does not mean agents are not grading their own homework.</strong> It means Keel's
+grounding ratio cannot see it. Those are different claims and the difference is the whole finding.</p>
+</div>
+
+<p>The ratio classifies the <strong>execution axis</strong>: who produces the exit code. On that
+axis these repositories are genuinely well wired — real test runners, real compilers, real
+containers, and in one case a real third-party proof-system counterparty. The number is not wrong.
+It is answering a question that does not discriminate.</p>
+
+<p>Meanwhile, <em>every one of the six judging passes independently reported an oracle problem in
+prose while assigning <span class="anch">anchored</span> in the verdict.</em> Not as a caveat we
+asked for — as the thing each agent found most worth saying:</p>
+
+<ul>
+<li><strong>karaoke-gen</strong> — <code>backend/tests/conftest.py</code> replaces
+<code>google.auth.default</code>, <code>firestore.Client</code> and <code>storage.Client</code> at
+import and auto-overrides <code>require_auth</code>. The datastore, object store and auth layer the
+code is verified against are all repo-authored. Separately: <code>next build</code> does not
+typecheck (<code>ignoreBuildErrors: true</code>, no <code>tsc --noEmit</code> in CI).</li>
+<li><strong>kody</strong> — a repo-authored fake of the Cloudflare API is installed into both the
+unit suite and the preview environment, so the "external API" in those signals is code the same
+authors write. Production D1 backup and restore are gated on two hand-typed strings whose evidence
+is a prose comment — <em>"the blocking export benchmark passed 2026-07-23"</em> — that nothing
+re-executes.</li>
+<li><strong>xorq</strong> — the three strongest anchors gate no merge (<code>workflow_dispatch</code>
+only), and BigQuery <code>pytest.skip</code>s on every credential fork, so a labelled run with an
+expired key goes green having executed zero BigQuery tests.</li>
+<li><strong>aspect-cli</strong> — six launcher integration tests discard the process exit status with
+<code>|| true</code> and judge by grepping the binary's own debug log. Three of them have no
+producer outside the crate other than <code>bash</code> and <code>grep</code>.</li>
+<li><strong>wvlet</strong> — the TypeScript SDK asserts
+<code>expect(sql).toContain('select name, email')</code>. No engine ever runs the generated SQL. A
+committed golden file exists in <code>highlightjs-wvlet</code> and is read into a variable that is
+then never compared.</li>
+</ul>
+
+<h3>And one counterexample, which is what makes the axis real rather than rhetorical</h3>
+
+<p><strong>binius64</strong> has an oracle that is genuinely outside the write boundary: 90
+<code>proptest!</code> blocks generating inputs nobody enumerated and asserting algebraic identities
+(<code>x * x.invert() == ONE</code>), circuit outputs cross-checked against independent
+implementations (<code>sha2</code>, <code>sha3</code>, <code>blake3</code>, <code>k256</code>,
+<code>rsa</code>), and a known-answer test citing RFC 6234. It scored <strong>0.909</strong> — lower
+than three repositories whose oracles are mocks.</p>
+
+<div class="callout">
+<p>That inversion is the finding stated as a single fact: <strong>the repository with the strongest
+oracle in the corpus scored below three repositories with the weakest.</strong> A metric that ranks
+them that way is not measuring what the product claims to measure.</p>
+</div>
+
+<h2>What follows</h2>
+
+<p><strong>U18 — the independence vector — is now supported by data rather than by argument.</strong>
+Its case was 68 of 122 anchored verdicts in the human corpus carrying a written admission that the
+oracle or the scope sat inside the boundary. That was an argument from prose. This is the same
+finding as a measurement: two populations, an execution-axis ratio that separates them by less than
+its own sampling noise, and an oracle axis that visibly separates them in the transcripts and is
+counted nowhere.</p>
+
+<p>The schema change it needs — <code>writeBoundary.independence: { execution, oracle, scope }</code>,
+each failing closed — is a re-freeze decision, and the argument for spending it is now empirical.</p>
+
+<p><strong>The non-coverage finding landed too, exactly where it was aimed.</strong> aspect-cli was
+chosen for its CI shape: Buildkite, CircleCI, GitLab, twelve GitHub workflows and Bazel. Keel reads
+three of those five. <code>.buildkite/pipeline.yaml</code> holds <code>bazelrc-e2e</code>, a gate
+that exists nowhere else <em>by explicit design</em> — the repo's own comment reads
+<em>"intentionally NOT ported here… It stays a Buildkite-only test on main."</em> A load-bearing
+gate that structurally cannot appear in any ratio Keel computes for that repository.</p>
+
+<p class="cite">Follow-up filed: <code>corpus.ts</code> does not carry gather's unread-surface record
+into the report, so the blindness disclosure shipped in #18 does not reach corpus artifacts — the
+one place this run proves it was needed.</p>
+
+<h2>Limits, before anyone quotes the number</h2>
+
+<ul>
+<li><strong>Six targets, 25 nodes each.</strong> Every judging pass volunteered that its ratio was
+sample-shaped: karaoke-gen's draw landed on eight <code>package.json</code> scripts, aspect-cli's
+never touched <code>ci-workflows.yaml</code>, the 25-job workflow that is the actual PR gate. A
+denominator of ten to seventeen does not support decimals.</li>
+<li><strong>The predicate measures surviving trailers, not agent authorship.</strong> Squash merges
+drop commit bodies, so <code>openai/codex</code> and <code>sst/opencode</code> both measure 0.000.
+This corpus is therefore biased toward solo-maintainer and small-org repositories and away from
+large organisations with merge hygiene. 93 repositories were cloned to assemble six.</li>
+<li><strong>Five of six are Claude-trailered.</strong> kody was the only non-Claude agent-authored
+repository found at scale, and that scarcity is itself a limit on what can be concluded.</li>
+<li><strong>Agent tooling was excluded deliberately</strong> — several qualified at higher rates.
+A finding drawn from repositories built to serve agents would be attackable as being about their
+CI conventions rather than about agent-written code.</li>
+</ul>
+
+<hr>
+
+<p class="cite">Keel measures the shape of verification, not its quality. A repo can be 100%
+anchored with terrible tests. This corpus is six repositories that are largely well-wired on the
+axis Keel measures, and the reason that is worth publishing is that it was supposed to come out the
+other way.</p>
+
+</main>
+</body>
+</html>

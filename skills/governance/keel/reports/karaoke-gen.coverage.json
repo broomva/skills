@@ -1,0 +1,196 @@
+{
+  "schema": "keel.gather-coverage.v1",
+  "target": "/tmp/kc/karaoke-gen",
+  "nodesGathered": 280,
+  "unread": [
+    {
+      "path": ".githooks",
+      "kind": "dir",
+      "tool": "git hooks"
+    }
+  ],
+  "silent": [
+    {
+      "path": ".github/workflows/security.yml",
+      "parser": "workflow-steps"
+    }
+  ],
+  "blind": [
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/sk/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/pl/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/vi/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/sv/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/he/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ms/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/app/jobs/local/instrumental",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/app/jobs/local/review",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/da/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ja/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/el/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/it/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ca/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/cs/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ru/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/tl/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ro/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/pt/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/zh/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/uk/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ar/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/hr/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/hu/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/nl/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/nb/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/hi/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/de/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/ko/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/fi/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/id/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/fr/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/es/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/en/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/th/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "karaoke_gen/nextjs_frontend/out/tr/app/jobs/local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    }
+  ],
+  "note": "A ratio computed over the nodes this gatherer could read says nothing about the surfaces listed here. A repo whose real verification lives in an unread surface reads exactly like a repo with no verification at all, and that ambiguity — not a low score — is the failure this list exists to prevent. These paths carry no verdict and no class: an unread surface produces no node, so there is nothing to classify. Read them by hand, or teach gather.ts to read them, before quoting the number."
+}

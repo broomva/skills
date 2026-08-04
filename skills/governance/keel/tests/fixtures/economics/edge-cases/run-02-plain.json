@@ -1,0 +1,412 @@
+{
+  "target": "synthetic/edge-plain",
+  "revision": "synthetic-edge-plain-rev",
+  "generatedAt": "2026-07-24T11:00:00.000Z",
+  "nodes": [
+    {
+      "id": "edge-plain/surface-00#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 0",
+      "source": "edge-plain/surface-00:1",
+      "raw": "# synthetic ci_step 0 for synthetic/edge-plain\nrun: ./verify --ci-step 0"
+    },
+    {
+      "id": "edge-plain/surface-01#script",
+      "kind": "script",
+      "name": "script 1",
+      "source": "edge-plain/surface-01:1",
+      "raw": "# synthetic script 1 for synthetic/edge-plain\nrun: ./verify --script 1"
+    },
+    {
+      "id": "edge-plain/surface-02#test_target",
+      "kind": "test_target",
+      "name": "test_target 2",
+      "source": "edge-plain/surface-02:1",
+      "raw": "# synthetic test_target 2 for synthetic/edge-plain\nrun: ./verify --test-target 2"
+    },
+    {
+      "id": "edge-plain/surface-03#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 3",
+      "source": "edge-plain/surface-03:1",
+      "raw": "# synthetic review_gate 3 for synthetic/edge-plain\nrun: ./verify --review-gate 3"
+    },
+    {
+      "id": "edge-plain/surface-04#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 4",
+      "source": "edge-plain/surface-04:1",
+      "raw": "# synthetic deploy_gate 4 for synthetic/edge-plain\nrun: ./verify --deploy-gate 4"
+    },
+    {
+      "id": "edge-plain/surface-05#integration",
+      "kind": "integration",
+      "name": "integration 5",
+      "source": "edge-plain/surface-05:1",
+      "raw": "# synthetic integration 5 for synthetic/edge-plain\nrun: ./verify --integration 5"
+    },
+    {
+      "id": "edge-plain/surface-06#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 6",
+      "source": "edge-plain/surface-06:1",
+      "raw": "# synthetic doc_claim 6 for synthetic/edge-plain\nrun: ./verify --doc-claim 6"
+    },
+    {
+      "id": "edge-plain/surface-07#other",
+      "kind": "other",
+      "name": "other 7",
+      "source": "edge-plain/surface-07:1",
+      "raw": "# synthetic other 7 for synthetic/edge-plain\nrun: ./verify --other 7"
+    },
+    {
+      "id": "edge-plain/surface-08#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 8",
+      "source": "edge-plain/surface-08:1",
+      "raw": "# synthetic ci_step 8 for synthetic/edge-plain\nrun: ./verify --ci-step 8"
+    },
+    {
+      "id": "edge-plain/surface-09#script",
+      "kind": "script",
+      "name": "script 9",
+      "source": "edge-plain/surface-09:1",
+      "raw": "# synthetic script 9 for synthetic/edge-plain\nrun: ./verify --script 9"
+    },
+    {
+      "id": "edge-plain/surface-10#test_target",
+      "kind": "test_target",
+      "name": "test_target 10",
+      "source": "edge-plain/surface-10:1",
+      "raw": "# synthetic test_target 10 for synthetic/edge-plain\nrun: ./verify --test-target 10"
+    },
+    {
+      "id": "edge-plain/surface-11#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 11",
+      "source": "edge-plain/surface-11:1",
+      "raw": "# synthetic review_gate 11 for synthetic/edge-plain\nrun: ./verify --review-gate 11"
+    },
+    {
+      "id": "edge-plain/surface-12#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 12",
+      "source": "edge-plain/surface-12:1",
+      "raw": "# synthetic deploy_gate 12 for synthetic/edge-plain\nrun: ./verify --deploy-gate 12"
+    },
+    {
+      "id": "edge-plain/surface-13#integration",
+      "kind": "integration",
+      "name": "integration 13",
+      "source": "edge-plain/surface-13:1",
+      "raw": "# synthetic integration 13 for synthetic/edge-plain\nrun: ./verify --integration 13"
+    },
+    {
+      "id": "edge-plain/surface-14#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 14",
+      "source": "edge-plain/surface-14:1",
+      "raw": "# synthetic doc_claim 14 for synthetic/edge-plain\nrun: ./verify --doc-claim 14"
+    },
+    {
+      "id": "edge-plain/surface-15#other",
+      "kind": "other",
+      "name": "other 15",
+      "source": "edge-plain/surface-15:1",
+      "raw": "# synthetic other 15 for synthetic/edge-plain\nrun: ./verify --other 15"
+    },
+    {
+      "id": "edge-plain/surface-16#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 16",
+      "source": "edge-plain/surface-16:1",
+      "raw": "# synthetic ci_step 16 for synthetic/edge-plain\nrun: ./verify --ci-step 16"
+    },
+    {
+      "id": "edge-plain/surface-17#script",
+      "kind": "script",
+      "name": "script 17",
+      "source": "edge-plain/surface-17:1",
+      "raw": "# synthetic script 17 for synthetic/edge-plain\nrun: ./verify --script 17"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "edge-plain/surface-00#ci_step",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-00#ci_step",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-00:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "edge-plain/surface-01#script",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-01#script",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-01:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "edge-plain/surface-02#test_target",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-02#test_target",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-02:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "edge-plain/surface-03#review_gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-03#review_gate",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-03:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "edge-plain/surface-04#deploy_gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-04#deploy_gate",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-04:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "edge-plain/surface-05#integration",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-05#integration",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-05:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "edge-plain/surface-06#doc_claim",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-06#doc_claim",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-06:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-07#other",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-07#other",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-07:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-08#ci_step",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-08#ci_step",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-08:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-09#script",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-09#script",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-09:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-10#test_target",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-10#test_target",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-10:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-11#review_gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-11#review_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-11:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-12#deploy_gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-12#deploy_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-12:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-13#integration",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-13#integration",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-13:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-14#doc_claim",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-14#doc_claim",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-14:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-15#other",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-15#other",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-15:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-16#ci_step",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-16#ci_step",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-16:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "edge-plain/surface-17#script",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for edge-plain/surface-17#script",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "edge-plain/surface-17:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 7,
+    "selfReferential": 6,
+    "unknown": 2,
+    "notACheck": 3,
+    "ratio": 0.4666666666666667
+  },
+  "economics": {
+    "nodesTotal": 18,
+    "nodesSampled": 18,
+    "decidedByProbe": 6,
+    "decidedByAgent": 12,
+    "probesMinted": 0,
+    "probeLibrarySize": 3,
+    "tokensIn": 40000,
+    "tokensOut": 10000,
+    "tokensEstimated": true,
+    "wallClockMs": 210000
+  }
+}

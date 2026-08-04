@@ -1,0 +1,597 @@
+{
+  "target": "mcp-python-sdk",
+  "revision": "00a70148bcd39b40ee0b0745e0b468eac0a44efb",
+  "generatedAt": "2026-07-25T02:55:11.583Z",
+  "nodes": [
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "fail_fast: true\n\nrepos:\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n      - id: end-of-file-fixer\n\n  - repo: https://github.com/pre-commit/mirrors-prettier\n    rev: v3.1.0\n    hooks:\n      - id: prettier\n        types_or: [yaml, json5]\n\n  - repo: https://github.com/igorshubovych/markdownlint-cli\n    rev: v0.45.0\n    hooks:\n      - id: markdownlint\n        args:\n          [\n            \"--fix\",\n            \"--config\",\n            \"pyproject.toml\",\n            \"--configPointer\",\n            \"/tool/markdown/lint\",\n          ]\n        types: [markdown]\n\n  - repo: local\n    hooks:\n      - id: ruff-format\n        name: Ruff Format\n        entry: uv run --frozen ruff\n        args: [format]\n        language: system\n        types: [python]\n        pass_filenames: false\n      - id: ruff\n        name: Ruff\n        entry: uv run --frozen ruff\n        args: [\"check\", \"--fix\", \"--exit-non-zero-on-fix\"]\n        types: [python]\n        language: system\n        pass_filenames: false\n      - id: pyright\n        name: pyright\n        entry: uv run --frozen pyright\n        language: system\n        types: [python]\n        pass_filenames: false\n      - id: uv-lock-check\n        name: Check uv.lock is up to date\n        entry: uv lock --check\n        language: system\n        files: ^(pyproject\\.toml|uv\\.lock)$\n        pass_filenames: false\n      - id: readme-snippets\n        name: Check README snippets are up to date\n        entry: uv run --frozen python scripts/update_readme_snippets.py --check\n        language: system\n        files: ^(README\\.md|docs_src/.*\\.py|scripts/update_readme_snippets\\.py)$\n        pass_filenames: false\n"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:150",
+      "raw": "[tool.pyright]\ntypeCheckingMode = \"strict\"\ninclude = [\n    \"src/mcp\",\n    \"src/mcp-types/mcp_types\",\n    \"tests\",\n    \"docs_src\",\n    \"examples/stories\",\n    \"examples/servers\",\n    \"examples/snippets\",\n    \"examples/clients\",\n]\nvenvPath = \".\"\nvenv = \".venv\"\n# `stories` is a workspace package rooted at examples/; the IDE language server\n# does not always pick up the editable-install .pth, so resolve it statically.\nextraPaths = [\"examples\"]\n# The FastAPI style of using decorators in tests gives a `reportUnusedFunction` error.\n# See https://github.com/microsoft/pyright/issues/7771 for more details.\n# TODO(Marcelo): We should remove `reportPrivateUsage = false`. The idea is that we should test the workflow that uses\n# those private functions instead of testing the private functions directly. It makes it easier to maintain the code source\n# and refactor code that is not public.\nexecutionEnvironments = [\n    { root = \"tests\", extraPaths = [\n        \".\",\n        \"examples\",\n    ], reportUnusedFunction = false, reportPrivateUsage = false },\n    { root = \"examples/stories\", extraPaths = [\n        \"examples\",\n    ], reportUnusedFunction = false },\n    # The `mcp-example-stories` editable install puts `examples/` on sys.path,\n    # which defeats pyright's auto-detection of `simple-auth/` as a package\n    # root (it's the one server example that imports itself by absolute name).\n    { root = \"examples/servers\", extraPaths = [\n        \"examples/servers/simple-auth\",\n    ], reportUnusedFunction = false },\n    # docs_src/ holds the complete, runnable code examples included into docs/*.md.\n    # Decorated (@mcp.tool/...) module-level functions are never called by name.\n    { root = \"docs_src\", reportUnusedFunction = false },\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "pyproject.toml:191",
+      "raw": "[tool.ruff]\nline-length = 120\ntarget-version = \"py310\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:195",
+      "raw": "[tool.ruff.lint]\nselect = [\n    \"C4\",     # flake8-comprehensions\n    \"C90\",    # mccabe\n    \"D212\",   # pydocstyle: multi-line docstring summary should start at the first line\n    \"E\",      # pycodestyle\n    \"F\",      # pyflakes\n    \"I\",      # isort\n    \"PERF\",   # Perflint\n    \"UP\",     # pyupgrade\n    \"TID251\", # https://docs.astral.sh/ruff/rules/banned-api/\n]\nignore = [\"PERF203\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-flake8-tidy-imports-banned-api",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.flake8-tidy-imports.banned-api])",
+      "source": "pyproject.toml:209",
+      "raw": "[tool.ruff.lint.flake8-tidy-imports.banned-api]\n\"pydantic.RootModel\".msg = \"Use `pydantic.TypeAdapter` instead.\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-mccabe",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.mccabe])",
+      "source": "pyproject.toml:213",
+      "raw": "[tool.ruff.lint.mccabe]\nmax-complexity = 24 # Default is 10"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.per-file-ignores])",
+      "source": "pyproject.toml:216",
+      "raw": "[tool.ruff.lint.per-file-ignores]\n\"__init__.py\" = [\"F401\"]\n# Generated by scripts/gen_surface_types.py: raw datamodel-codegen output (TID251 lifts the repo-wide RootModel ban for these generated validators).\n\"src/mcp-types/mcp_types/v*/__init__.py\" = [\"D212\", \"E501\", \"I001\", \"TID251\", \"UP007\", \"UP037\"]\n\"tests/server/mcpserver/test_func_metadata.py\" = [\"E501\"]\n\"tests/shared/test_progress_notifications.py\" = [\"PLW0603\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-pylint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.pylint])",
+      "source": "pyproject.toml:223",
+      "raw": "[tool.ruff.lint.pylint]\nallow-magic-value-types = [\"bytes\", \"float\", \"int\", \"str\"]\nmax-args = 23                                              # Default is 5\nmax-branches = 23                                          # Default is 12\nmax-returns = 13                                           # Default is 6\nmax-statements = 102                                       # Default is 50"
+    },
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:239",
+      "raw": "[tool.pytest.ini_options]\nlog_cli = true\nxfail_strict = true\nmarkers = [\n    \"requirement(id): links a test to the entry in tests/interaction/_requirements.py it exercises\",\n]\naddopts = \"\"\"\n    --color=yes\n    --capture=fd\n    -p anyio\n    -p examples\n\"\"\"\nfilterwarnings = [\n    \"error\",\n    # pywin32 internal deprecation warning\n    \"ignore:getargs.*The 'u' format is deprecated:DeprecationWarning\",\n    # SEP-2577 deprecates the roots/sampling/logging methods; the SDK still calls\n    # them internally (e.g. `ctx.debug` -> `log` -> `send_log_message`), so the\n    # advisory warning is silenced. Tests asserting it opt back in with pytest.warns.\n    \"ignore:.*is deprecated as of 2026-07-28 \\\\(SEP-2577\\\\).:mcp.MCPDeprecationWarning\",\n    # 2026-07-28 restricts progress to server->client; the client send path is\n    # advisory-deprecated and a handful of tests still exercise it.\n    \"ignore:Client-to-server progress is deprecated as of 2026-07-28.*:mcp.MCPDeprecationWarning\",\n    # 2026-07-28 drops ping; Client.send_ping() is advisory-deprecated and the\n    # legacy interaction/transport tests still drive it.\n    \"ignore:ping is removed as of 2026-07-28.*:mcp.MCPDeprecationWarning\",\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "pyproject.toml:279",
+      "raw": "[tool.coverage.run]\nbranch = true\npatch = [\"subprocess\"]\nconcurrency = [\"multiprocessing\", \"thread\"]\nsource = [\"src\", \"src/mcp-types/mcp_types\", \"tests\"]\nomit = [\n    \"src/mcp/client/__main__.py\",\n    \"src/mcp/server/__main__.py\",\n    \"src/mcp/os/posix/utilities.py\",\n    \"src/mcp/os/win32/utilities.py\",\n]\n\n# https://coverage.readthedocs.io/en/latest/config.html#report"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-report",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.report])",
+      "source": "pyproject.toml:292",
+      "raw": "[tool.coverage.report]\nfail_under = 100\nskip_covered = true\nshow_missing = true\nignore_errors = true\nprecision = 2\nexclude_also = [\n    \"pragma: lax no cover\",\n    \"@overload\",\n    \"raise NotImplementedError\",\n]\n\n# https://coverage.readthedocs.io/en/latest/config.html#paths"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-paths",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.paths])",
+      "source": "pyproject.toml:305",
+      "raw": "[tool.coverage.paths]\nsource = [\n    \"src/\",\n    \"/home/runner/work/python-sdk/python-sdk/src/\",\n    'D:\\a\\python-sdk\\python-sdk\\src',\n]"
+    },
+    {
+      "id": "tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/conftest.py",
+      "raw": "import os\nfrom collections.abc import AsyncIterator, Iterator\n\nimport pytest\n\n# OpenTelemetry's `set_tracer_provider` is set-once per process, so the suite\n# uses a single span-capture mechanism: logfire's `capfire` fixture (its\n# `configure()` swaps span processors on repeat calls rather than re-setting\n# the provider). Logfire's default `distributed_tracing=None` emits a\n# RuntimeWarning + diagnostic span when incoming W3C trace context is\n# extracted; several tests exercise that propagation deliberately, so opt in\n# suite-wide. Set before logfire is imported anywhere.\nos.environ.setdefault(\"LOGFIRE_DISTRIBUTED_TRACING\", \"true\")\n\nimport opentelemetry.trace  # noqa: E402  (env var must be set before logfire import below)\nfrom logfire.testing import CaptureLogfire  # noqa: E402\n\nimport mcp.shared._otel  # noqa: E402\n\n\n@pytest.fixture(scope=\"session\")\ndef anyio_backend() -> str:\n    return \"asyncio\"\n\n\n@pytest.fixture(scope=\"module\", autouse=True)\nasync def _module_runner_lease(anyio_backend: str) -> AsyncIterator[None]:\n    \"\"\"Share one event loop across each module's tests instead of one per test.\n\n    anyio's pytest plugin tears its runner down whenever the last lease is\n    released, so with only function-scoped async fixtures every async test\n    creates and destroys its own event loop. On Windows each loop's self-pipe\n    is an emulated loopback-TCP socketpair, and churning thousands of those per\n    run can transiently exhaust kernel socket buffers — surfacing in CI as\n    `OSError: [WinError 10055]` raised from `asyncio.new_event_loop()` before\n    an arbitrary test's body even starts. Holding a module-scoped lease caps\n    the churn at one loop per module per xdist worker.\n\n    Modules that parametrize `anyio_backend` or call `trio.run(...)` directly\n    must shadow this fixture with a sync no-op: a module-scoped lease cannot\n    depend on the function-scoped parameter (pytest raises ScopeMismatch at\n    setup), and the lease's live asyncio loop lingers over direct trio runs,\n    whose signal handling collides with the loop's wakeup fd on Windows. The\n    lease also makes sniffio report asyncio to the module's sync tests, so a\n    sync test must not call `anyio.run()` itself.\n    \"\"\"\n    yield\n\n\n@pytest.fixture(name=\"capfire\")\ndef _capfire_isolated(capfire: CaptureLogfire) -> Iterator[CaptureLogfire]:\n    \"\"\"Override of logfire's `capfire` that scopes the MCP tracer to the test.\n\n    `capfire` installs a real tracer provider, and logfire's proxy machinery\n    mutates the cached `mcp.shared._otel._tracer` to delegate to it for the\n    rest of the process. Without isolation, every subsequent test in the same\n    worker would emit real spans, and `send_raw_request` would inject a real\n    `traceparent` into outbound `_meta`, breaking the interaction-suite\n    snapshots that pin `_meta={}` under a no-op tracer.\n\n    Setup points `_tracer` at the now-live provider so MCP spans record;\n    teardown replaces it with a `NoOpTracer`.\n    \"\"\"\n    mcp.shared._otel._tracer = opentelemetry.trace.get_tracer_provider().get_tracer(\"mcp-python-sdk\")\n    try:\n        yield capfire\n    finally:\n        mcp.shared._otel._tracer = opentelemetry.trace.NoOpTracer()\n"
+    },
+    {
+      "id": "tests/transports/stdio/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/transports/stdio/conftest.py",
+      "raw": "\"\"\"Fixtures for the stdio lifecycle suite.\n\nProvides recording seams around `stdio_client`'s spawn and tree-termination\ninternals (the real implementations still run), plus a teardown that keeps a\ncrashed test from orphaning its sleep-forever subprocesses.\n\"\"\"\n\nimport os\nimport signal\nimport sys\nfrom collections.abc import Generator\nfrom contextlib import suppress\nfrom pathlib import Path\nfrom typing import TextIO\n\nimport anyio.abc\nimport pytest\n\nfrom mcp.client import stdio\nfrom mcp.client.stdio import _create_platform_compatible_process, _terminate_process_tree\nfrom mcp.os.win32.utilities import FallbackProcess\n\n\n@pytest.fixture\ndef spawned_processes(\n    monkeypatch: pytest.MonkeyPatch,\n) -> Generator[list[anyio.abc.Process | FallbackProcess]]:\n    \"\"\"Record every process `stdio_client` spawns; the real spawn still runs.\n\n    Teardown SIGKILLs each spawn-time process group on POSIX: the safety net for a\n    test that dies mid-body and the reaper for deliberate survivors. On Windows\n    there is no group to signal (the Job Object covers strays).\n    \"\"\"\n    spawned: list[anyio.abc.Process | FallbackProcess] = []\n\n    async def recording_spawn(\n        command: str,\n        args: list[str],\n        env: dict[str, str] | None = None,\n        errlog: TextIO = sys.stderr,\n        cwd: Path | str | None = None,\n    ) -> anyio.abc.Process | FallbackProcess:\n        process = await _create_platform_compatible_process(command, args, env, errlog, cwd)\n        spawned.append(process)\n        return process\n\n    monkeypatch.setattr(stdio, \"_create_platform_compatible_process\", recording_spawn)\n    yield spawned\n    _kill_spawn_groups(spawned)\n\n\n@pytest.fixture\ndef terminate_calls(monkeypatch: pytest.MonkeyPatch) -> list[anyio.abc.Process | FallbackProcess]:\n    \"\"\"Record every invocation of `stdio_client`'s tree-termination seam; the real termination still runs.\n\n    An empty list after the context exits proves the graceful path: a FIN looks the\n    same whether the peer exited on stdin closure or was killed.\n    \"\"\"\n    terminated: list[anyio.abc.Process | FallbackProcess] = []\n\n    async def recording_terminate(process: anyio.abc.Process | FallbackProcess) -> None:\n        terminated.append(process)\n        await _terminate_process_tree(process)\n\n    monkeypatch.setattr(stdio, \"_terminate_process_tree\", recording_terminate)\n    return terminated\n\n\n# lax no cover: registered on every platform but a no-op on Windows, whose runners enforce 100% per job.\ndef _kill_spawn_groups(spawned: list[anyio.abc.Process | FallbackProcess]) -> None:  # pragma: lax no cover\n    \"\"\"SIGKILL each spawn-time process group; see `spawned_processes`.\"\"\"\n    if sys.platform == \"win32\":\n        return\n    for process in spawned:\n        # macOS killpg raises EPERM for a group holding only unreaped zombies.\n        with suppress(ProcessLookupError, PermissionError):\n            os.killpg(process.pid, signal.SIGKILL)\n"
+    },
+    {
+      "id": "tests/server/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/server/conftest.py",
+      "raw": "\"\"\"Shared fixtures for server-side tests.\"\"\"\n\nfrom collections.abc import Iterator\n\nimport pytest\nfrom logfire.testing import CaptureLogfire, TestExporter\nfrom opentelemetry.sdk.trace import ReadableSpan\n\n\nclass SpanCapture:\n    \"\"\"Thin adapter over logfire's `TestExporter` for asserting on MCP spans.\n\n    `finished()` returns the raw `ReadableSpan` objects emitted by the\n    `mcp-python-sdk` instrumentation scope, filtered to exclude logfire's\n    synthetic `pending_span` markers, so tests can assert directly on\n    `.name`, `.kind`, `.status`, `.attributes`, `.parent`, `.events`.\n    \"\"\"\n\n    def __init__(self, exporter: TestExporter) -> None:\n        self._exporter = exporter\n\n    def clear(self) -> None:\n        self._exporter.clear()\n\n    def finished(self) -> list[ReadableSpan]:\n        return [\n            s\n            for s in self._exporter.exported_spans\n            if s.instrumentation_scope is not None\n            and s.instrumentation_scope.name == \"mcp-python-sdk\"\n            and not (s.attributes and s.attributes.get(\"logfire.span_type\") == \"pending_span\")\n        ]\n\n\n@pytest.fixture\ndef spans(capfire: CaptureLogfire) -> Iterator[SpanCapture]:\n    \"\"\"In-memory MCP span capture, cleared before and after each test.\n\n    Backed by the project-level `capfire` override (see `tests/conftest.py`),\n    which scopes `mcp.shared._otel._tracer` to the test so the real tracer\n    doesn't leak into later tests in the same worker.\n    \"\"\"\n    capture = SpanCapture(capfire.exporter)\n    capture.clear()\n    yield capture\n    capture.clear()\n"
+    },
+    {
+      "id": "tests/shared/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/shared/conftest.py",
+      "raw": "\"\"\"Shared fixtures for `Dispatcher` contract tests.\n\nThe `pair_factory` fixture parametrizes contract tests over every `Dispatcher`\nimplementation, so the same behavioral assertions run against `DirectDispatcher`\n(in-memory) and `JSONRPCDispatcher` (over crossed anyio memory streams).\n\"\"\"\n\nfrom collections.abc import Callable\n\nimport anyio\nimport pytest\n\nfrom mcp.shared.direct_dispatcher import create_direct_dispatcher_pair\nfrom mcp.shared.dispatcher import Dispatcher\nfrom mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher\nfrom mcp.shared.message import SessionMessage\nfrom mcp.shared.transport_context import TransportContext\n\nDispatcherTriple = tuple[Dispatcher[TransportContext], Dispatcher[TransportContext], Callable[[], None]]\nPairFactory = Callable[..., DispatcherTriple]\n\n\ndef direct_pair(*, can_send_request: bool = True) -> DispatcherTriple:\n    client, server = create_direct_dispatcher_pair(can_send_request=can_send_request)\n\n    def close() -> None:\n        client.close()\n        server.close()\n\n    return client, server, close\n\n\ndef jsonrpc_pair(*, can_send_request: bool = True) -> DispatcherTriple:\n    \"\"\"Two `JSONRPCDispatcher`s wired over crossed in-memory streams.\"\"\"\n    c2s_send, c2s_recv = anyio.create_memory_object_stream[SessionMessage | Exception](32)\n    s2c_send, s2c_recv = anyio.create_memory_object_stream[SessionMessage | Exception](32)\n\n    def builder(_meta: object) -> TransportContext:\n        return TransportContext(kind=\"jsonrpc\", can_send_request=can_send_request)\n\n    client: JSONRPCDispatcher[TransportContext] = JSONRPCDispatcher(s2c_recv, c2s_send, transport_builder=builder)\n    server: JSONRPCDispatcher[TransportContext] = JSONRPCDispatcher(c2s_recv, s2c_send, transport_builder=builder)\n\n    def close() -> None:\n        for s in (c2s_send, c2s_recv, s2c_send, s2c_recv):\n            s.close()\n\n    return client, server, close\n\n\n@pytest.fixture(\n    params=[\n        pytest.param(direct_pair, id=\"direct\"),\n        pytest.param(jsonrpc_pair, id=\"jsonrpc\"),\n    ]\n)\ndef pair_factory(request: pytest.FixtureRequest) -> PairFactory:\n    return request.param\n\n\n__all__ = [\"PairFactory\", \"direct_pair\", \"jsonrpc_pair\"]\n"
+    },
+    {
+      "id": "tests/examples/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/examples/conftest.py",
+      "raw": "\"\"\"Discovery + parametrization for the example-stories matrix.\n\nReads ``examples/stories/manifest.toml`` and expands each story across\n(server_variant × transport × era). The story modules are imported as\nreal packages (the ``mcp-example-stories`` workspace member installs ``stories``\neditable), so pyright sees them and a signature change red-lines every story.\n\nThe HTTP-ASGI leg reuses the interaction suite's in-process bridge directly\nfrom ``tests.interaction.transports._bridge`` (both live under ``tests/``); the\nmove to ``stories._shared.bridge`` is a later batch.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport importlib\nimport sys\nfrom collections.abc import AsyncIterator\nfrom dataclasses import dataclass\nfrom pathlib import Path\nfrom typing import Any\n\nimport httpx2\nimport pytest\nimport stories\nfrom mcp_types.version import LATEST_MODERN_VERSION\nfrom starlette.applications import Starlette\nfrom stories._harness import AuthBuilder, TargetFactory\nfrom stories._hosting import asgi_from\n\nfrom mcp.client.streamable_http import streamable_http_client\nfrom tests.interaction.transports._bridge import StreamingASGITransport\n\nif sys.version_info >= (3, 11):  # pragma: lax no cover\n    import tomllib\nelse:  # pragma: lax no cover\n    import tomli as tomllib\n\nSTORIES_DIR = Path(stories.__file__).parent\nBASE_URL = \"http://127.0.0.1:8000\"\n\nMANIFEST = tomllib.loads((STORIES_DIR / \"manifest.toml\").read_text())\nDEFAULTS: dict[str, Any] = MANIFEST[\"defaults\"]\nSTORIES: dict[str, dict[str, Any]] = MANIFEST[\"story\"]\n\n_ERA_TO_MODE = {\"modern\": LATEST_MODERN_VERSION, \"legacy\": \"legacy\", \"in-body\": \"auto\"}\n\"\"\"``Client`` rejects handshake-era version strings, so ``legacy`` resolves to\n``mode='legacy'`` rather than ``LATEST_HANDSHAKE_VERSION``. ``in-body`` legs pin\ntheir connection modes inside ``main`` themselves, so they get ``\"auto\"`` — the\n``Client`` default; the era axis still passes every ``mode=`` explicitly.\"\"\"\n\n\ndef story_cfg(name: str) -> dict[str, Any]:\n    return DEFAULTS | STORIES.get(name, {})\n\n\ndef _expand_era(era: str) -> tuple[str, ...]:\n    if era == \"dual\":\n        return (\"modern\", \"legacy\")\n    if era == \"dual-in-body\":\n        return (\"in-body\",)\n    return (era,)\n\n\n@dataclass(frozen=True)\nclass Leg:\n    story: str\n    server_variant: str\n    transport: str\n    era: str\n\n    @property\n    def id(self) -> str:\n        return \"-\".join((self.story, self.server_variant, self.transport, self.era))\n\n    @property\n    def mode(self) -> str:\n        \"\"\"The explicit ``mode=`` this leg passes to the story's ``main``.\"\"\"\n        return _ERA_TO_MODE[self.era]\n\n\ndef _legs() -> list[tuple[Leg, dict[str, Any]]]:\n    out: list[tuple[Leg, dict[str, Any]]] = []\n    for name in STORIES:\n        cfg = story_cfg(name)\n        variants = [\"server\"] + ([\"server_lowlevel\"] if cfg[\"lowlevel\"] else [])\n        out.extend(\n            (Leg(name, variant, transport, era), cfg)\n            for variant in variants\n            for transport in cfg[\"transports\"]\n            for era in _expand_era(cfg[\"era\"])\n        )\n    return out\n\n\ndef pytest_generate_tests(metafunc: pytest.Metafunc) -> None:\n    if \"leg\" not in metafunc.fixturenames:\n        return\n    params: list[Any] = []\n    for leg, cfg in _legs():\n        marks: list[pytest.MarkDecorator] = []\n        if f\"{leg.transport}:{leg.era}\" in cfg[\"xfail\"]:\n            marks.append(pytest.mark.xfail(strict=True, reason=\"manifest xfail\"))  # pragma: lax no cover\n        params.append(pytest.param(leg, marks=marks, id=leg.id))\n    metafunc.parametrize(\"leg\", params)\n\n\n@pytest.fixture\ndef cfg(leg: Leg) -> dict[str, Any]:\n    return story_cfg(leg.story)\n\n\n@pytest.fixture\ndef server_module(leg: Leg) -> Any:\n    return importlib.import_module(f\"stories.{leg.story}.{leg.server_variant}\")\n\n\n@pytest.fixture\ndef client_module(leg: Leg) -> Any:\n    return importlib.import_module(f\"stories.{leg.story}.client\")\n\n\n@dataclass\nclass Hosted:\n    \"\"\"One server/app instance hosted for the leg's whole duration.\n\n    ``target"
+    },
+    {
+      "id": "tests/client/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/client/conftest.py",
+      "raw": "from collections.abc import Callable, Generator\nfrom contextlib import asynccontextmanager\nfrom typing import Any\nfrom unittest.mock import patch\n\nimport pytest\nfrom mcp_types import JSONRPCNotification, JSONRPCRequest\n\nimport mcp.shared.memory\nfrom mcp.client._transport import WriteStream\nfrom mcp.shared.message import SessionMessage\n\n\nclass SpyMemoryObjectSendStream:\n    def __init__(self, original_stream: WriteStream[SessionMessage]):\n        self.original_stream = original_stream\n        self.sent_messages: list[SessionMessage] = []\n\n    async def send(self, message: SessionMessage):\n        self.sent_messages.append(message)\n        await self.original_stream.send(message)\n\n    async def aclose(self):\n        await self.original_stream.aclose()\n\n    async def __aenter__(self):\n        return self\n\n    async def __aexit__(self, *args: Any):\n        await self.aclose()\n\n\nclass StreamSpyCollection:\n    def __init__(self, client_spy: SpyMemoryObjectSendStream, server_spy: SpyMemoryObjectSendStream):\n        self.client = client_spy\n        self.server = server_spy\n\n    def clear(self) -> None:\n        \"\"\"Clear all captured messages.\"\"\"\n        self.client.sent_messages.clear()\n        self.server.sent_messages.clear()\n\n    def get_client_requests(self, method: str | None = None) -> list[JSONRPCRequest]:\n        \"\"\"Get client-sent requests, optionally filtered by method.\"\"\"\n        return [\n            req.message\n            for req in self.client.sent_messages\n            if isinstance(req.message, JSONRPCRequest) and (method is None or req.message.method == method)\n        ]\n\n    def get_server_requests(self, method: str | None = None) -> list[JSONRPCRequest]:  # pragma: no cover\n        \"\"\"Get server-sent requests, optionally filtered by method.\"\"\"\n        return [  # pragma: no cover\n            req.message\n            for req in self.server.sent_messages\n            if isinstance(req.message, JSONRPCRequest) and (method is None or req.message.method == method)\n        ]\n\n    def get_client_notifications(self, method: str | None = None) -> list[JSONRPCNotification]:  # pragma: no cover\n        \"\"\"Get client-sent notifications, optionally filtered by method.\"\"\"\n        return [\n            notif.message\n            for notif in self.client.sent_messages\n            if isinstance(notif.message, JSONRPCNotification) and (method is None or notif.message.method == method)\n        ]\n\n    def get_server_notifications(self, method: str | None = None) -> list[JSONRPCNotification]:  # pragma: no cover\n        \"\"\"Get server-sent notifications, optionally filtered by method.\"\"\"\n        return [\n            notif.message\n            for notif in self.server.sent_messages\n            if isinstance(notif.message, JSONRPCNotification) and (method is None or notif.message.method == method)\n        ]\n\n\n@pytest.fixture\ndef stream_spy() -> Generator[Callable[[], StreamSpyCollection], None, None]:\n    \"\"\"Fixture that provides spies for both client and server write streams.\n\n    Example:\n        ```python\n        async def test_something(stream_spy):\n            # ... set up server and client ...\n\n            spies = stream_spy()\n\n            # Run some operation that sends messages\n            await client.some_operation()\n\n            # Check the messages\n            requests = spies.get_client_requests(method=\"some/method\")\n            assert len(requests) == 1\n\n            # Clear for the next operation\n            spies.clear()\n        ```\n    \"\"\"\n    client_spy = None\n    server_spy = None\n\n    # Store references to our spy objects\n    def capture_spies(c_spy: SpyMemoryObjectSendStream, s_spy: SpyMemoryObjectSendStream):\n        nonlocal client_spy, server_spy\n        client_spy = c_spy\n        server_spy = s_spy\n\n    # Create patched version of stream creation\n    original_create_streams = mcp.shared.memory.create_client_server_memory_streams\n\n    @asynccontextmanager\n    async def patched_create_streams():\n        async with original_c"
+    },
+    {
+      "id": "tests/interaction/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/interaction/conftest.py",
+      "raw": "\"\"\"Shared fixtures for the interaction suite.\n\nThe ``connect`` fixture is parametrized per-test from the ``@requirement`` marks the test\ncarries: ``pytest_generate_tests`` looks up each cited requirement in the manifest and computes\nthe (transport, spec_version) cells via :func:`compute_cells`, applying arm exclusions, version\nbounds, and known-failure xfails declaratively.\n\"\"\"\n\nfrom contextlib import AbstractAsyncContextManager\nfrom typing import Any\n\nimport pytest\nfrom mcp_types import SERVER_INFO_META_KEY\nfrom mcp_types.version import MODERN_PROTOCOL_VERSIONS\n\nfrom mcp.client.client import Client\nfrom mcp.server import Server\nfrom mcp.server.mcpserver import MCPServer\nfrom tests._stamp import R, Unstamp\nfrom tests._stamp import unstamped as _strip_required_stamp\nfrom tests.interaction._connect import (\n    Connect,\n    connect_in_memory,\n    connect_over_sse,\n    connect_over_streamable_http,\n    connect_over_streamable_http_stateless,\n)\nfrom tests.interaction._requirements import REQUIREMENTS, compute_cells\n\n_FACTORIES: dict[str, Connect] = {\n    \"in-memory\": connect_in_memory,\n    \"streamable-http\": connect_over_streamable_http,\n    \"streamable-http-stateless\": connect_over_streamable_http_stateless,\n    \"sse\": connect_over_sse,\n}\n\n\ndef pytest_generate_tests(metafunc: pytest.Metafunc) -> None:\n    \"\"\"Parametrize ``connect`` from the test's stacked ``@requirement`` marks.\"\"\"\n    if \"connect\" not in metafunc.fixturenames:\n        return\n    requirements = [REQUIREMENTS[mark.args[0]] for mark in metafunc.definition.iter_markers(\"requirement\")]\n    metafunc.parametrize(\"connect\", compute_cells(requirements), indirect=True)\n\n\nclass CellConnect:\n    \"\"\"The cell's connection factory, also naming the cell's `spec_version`.\n\n    Callable exactly like the `Connect` factories it wraps; the attribute lets\n    sibling fixtures (`unstamped`) key on the cell's era without re-deriving it.\n    \"\"\"\n\n    def __init__(self, factory: Connect, spec_version: str) -> None:\n        self._factory = factory\n        self.spec_version = spec_version\n\n    def __call__(self, server: Server | MCPServer, **kwargs: Any) -> AbstractAsyncContextManager[Client]:\n        return self._factory(server, spec_version=self.spec_version, **kwargs)\n\n\n@pytest.fixture\ndef connect(request: pytest.FixtureRequest) -> CellConnect:\n    \"\"\"The transport-parametrized connection factory: a test using it runs once per matrix cell.\n\n    Tests that are tied to one transport (the wire-recording tests, the bare-ClientSession tests,\n    the transport-specific tests under transports/) do not use this fixture and connect directly.\n    \"\"\"\n    transport, spec_version = request.param\n    assert isinstance(transport, str)\n    assert isinstance(spec_version, str)\n    return CellConnect(_FACTORIES[transport], spec_version)\n\n\n@pytest.fixture\ndef unstamped(connect: CellConnect) -> Unstamp:\n    \"\"\"The cell's era-aware serverInfo-stamp normalizer, for full-result comparisons.\n\n    On a modern cell the stamp MUST be present (asserted) and is stripped so\n    one expected payload stays valid across eras; on a handshake-era cell the\n    result must not be stamped at all. Either direction failing is a runner\n    regression, so the same comparison line enforces both.\n    \"\"\"\n    if connect.spec_version in MODERN_PROTOCOL_VERSIONS:\n        return _strip_required_stamp\n\n    def _assert_never_stamped(result: R) -> R:\n        meta = result.meta\n        assert meta is None or SERVER_INFO_META_KEY not in meta, \"handshake-era results are never stamped\"\n        return result\n\n    return _assert_never_stamped\n"
+    },
+    {
+      "id": "examples/clients/sse-polling-client/pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "examples/clients/sse-polling-client/pyproject.toml:22",
+      "raw": "[tool.pyright]\ninclude = [\"mcp_sse_polling_client\"]\nvenvPath = \".\"\nvenv = \".venv\""
+    },
+    {
+      "id": "examples/clients/sse-polling-client/pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "examples/clients/sse-polling-client/pyproject.toml:27",
+      "raw": "[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\"]\nignore = []"
+    },
+    {
+      "id": "examples/clients/sse-polling-client/pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "examples/clients/sse-polling-client/pyproject.toml:31",
+      "raw": "[tool.ruff]\nline-length = 120\ntarget-version = \"py310\""
+    },
+    {
+      "id": "examples/clients/simple-chatbot/pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "examples/clients/simple-chatbot/pyproject.toml:33",
+      "raw": "[tool.pyright]\ninclude = [\"mcp_simple_chatbot\"]\nvenvPath = \".\"\nvenv = \".venv\""
+    },
+    {
+      "id": "examples/clients/simple-chatbot/pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "examples/clients/simple-chatbot/pyproject.toml:38",
+      "raw": "[tool.ruff.lint]\nselect = [\"E\", \"F\", \"I\"]\nignore = []"
+    },
+    {
+      "id": "examples/clients/simple-chatbot/pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "examples/clients/simple-chatbot/pyproject.toml:42",
+      "raw": "[tool.ruff]\nline-length = 120\ntarget-version = \"py310\""
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the exit codes of the hook binaries pre-commit shells out to (ruff, pyright, uv), plus pre-commit's own detection that a hook modified a tracked file",
+        "actorCanWrite": false,
+        "argument": "This manifest is not merely a client-side git hook here: shared.yml's `pre-commit` job runs `pre-commit/action` with `--all-files`, and that job feeds `checks` -> `all-green` (main.yml:16-23), so its exit code is on the merge path and cannot be skipped with `git commit --no-verify`. The substantive local hooks execute pinned tools over the committed tree — `uv run --frozen pyright` returns non-zero when its own analysis of the source finds a type error, and `uv run --frozen ruff check --fix --exit-non-zero-on-fix` returns non-zero when the linter both rewrites and reports; `uv lock --check` recomputes the resolution from pyproject.toml and fails when uv.lock does not match it. None of those verdicts can be flipped by an author writing a status anywhere; only by changing the source or the pinned config. Two documented limits: (a) the `readme-snippets` hook runs `scripts/update_readme_snippets.py --check`, which only diffs README code blocks against `docs_src/*.py` — two artefacts the same authors write, so that sub-edge is self-referential paperwork-against-paperwork and would stay green if both drifted together; (b) the remote hooks (`pre-commit-hooks`, `mirrors-prettier`, `markdownlint-cli`) are pinned by mutable tag `rev:`, not by digest, so their implementations live outside this repo."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml:31-64",
+        ".github/workflows/shared.yml:40-42",
+        ".github/workflows/main.yml:13-23",
+        "scripts/update_readme_snippets.py:1-10"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright process exit code — a type checker parsing the checked-out source under this table's settings",
+        "actorCanWrite": false,
+        "argument": "This is the root-project pyright config, and pyright is actually executed on the merge path: the `pyright` local hook in .pre-commit-config.yaml runs `uv run --frozen pyright` with `pass_filenames: false`, and pre-commit runs `--all-files` inside the CI `pre-commit` job. `typeCheckingMode = \"strict\"` plus `include = [src, tests, docs_src, examples/...]` is what turns an inference failure in those trees into a non-zero exit, and that verdict is computed by the pinned pyright binary from the source text — an author cannot make an ill-typed file report clean by asserting anything. Documented limit: this table emits no signal itself, and the scope it declares is author-controlled (the `executionEnvironments` entries switch off reportUnusedFunction and reportPrivateUsage for tests/examples), so the execution axis is anchored while what gets enforced sits inside the write boundary."
+      },
+      "evidence": [
+        "pyproject.toml:150-189",
+        ".pre-commit-config.yaml:47-52",
+        ".github/workflows/shared.yml:40-42"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code, computed from the source text under this table's line-length and target-version settings",
+        "actorCanWrite": false,
+        "argument": "`line-length = 120` is the threshold ruff's pycodestyle E501 rule compares against, and `E` is in the selected rule set (pyproject.toml:195-207); `target-version = \"py310\"` is what the selected `UP` (pyupgrade) rules rewrite/report against. Ruff runs on the merge path via the `ruff` pre-commit hook (`ruff check --fix --exit-non-zero-on-fix`) inside the CI pre-commit job, so a 121-character line makes that job exit non-zero. The producer is the linter binary reading the committed file, not a claim the repo makes about itself. Documented limit: the number itself is author-editable, and the table on its own emits nothing — it parameterizes a check that runs elsewhere."
+      },
+      "evidence": [
+        "pyproject.toml:191-193",
+        "pyproject.toml:195-207",
+        ".pre-commit-config.yaml:40-46"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — this table is the enabled rule set whose violations produce that non-zero exit",
+        "actorCanWrite": false,
+        "argument": "`select = [C4, C90, D212, E, F, I, PERF, UP, TID251]` is precisely the list of analyses that can fail the CI `pre-commit` job, which runs `uv run --frozen ruff check --fix --exit-non-zero-on-fix` over all files. An unused import (F401) or an unsorted import block (I001) is detected by ruff parsing the committed source, so an author cannot make a violating file report clean without editing the file or editing this list. Documented limit: editing this list is exactly the escape hatch — the rule set is inside the write boundary even though each verdict is produced outside it; and `ignore = [\"PERF203\"]` is a suppression this table also carries."
+      },
+      "evidence": [
+        "pyproject.toml:195-207",
+        ".pre-commit-config.yaml:40-46",
+        ".github/workflows/shared.yml:40-42"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-flake8-tidy-imports-banned-api",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code via rule TID251, which is in the selected rule set",
+        "actorCanWrite": false,
+        "argument": "`TID251` appears in `[tool.ruff.lint].select`, so this banned-api entry is live: ruff parses the import graph of the committed source and exits non-zero on any `pydantic.RootModel` reference outside the per-file exemption for generated validators. The producer is the linter executing over the file, and the check runs on the merge path through the pre-commit CI job. Documented limit: the ban list is author-editable and one directory is already exempted via per-file-ignores, so the scope of enforcement lives inside the boundary while each individual verdict does not."
+      },
+      "evidence": [
+        "pyproject.toml:209-211",
+        "pyproject.toml:195-207",
+        "pyproject.toml:216-221"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-mccabe",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code via rule C901 (mccabe), computed by walking the AST of the committed source",
+        "actorCanWrite": false,
+        "argument": "`C90` is in `select`, so this table's `max-complexity = 24` is the threshold ruff compares a computed cyclomatic-complexity number against; a function above it fails the CI pre-commit job. The complexity number is derived by the linter from the code's branch structure, not declared by the author. Documented limit, and it is a large one: the threshold was raised from the default 10 to 24, so the enforced bar is set inside the write boundary even though the measurement is not."
+      },
+      "evidence": [
+        "pyproject.toml:213-214",
+        "pyproject.toml:195-207"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the table only removes rule codes from consideration for four path globs",
+        "actorCanWrite": null,
+        "argument": "Every entry here is a suppression: F401 for `__init__.py`, six codes for the generated mcp-types validators, E501 and PLW0603 for two test modules. It can only prevent ruff from reporting a violation; there is no configuration of this table that causes a run to fail that would otherwise pass, so it emits no pass/fail signal of any kind. It is filed here rather than as a check because it asserts nothing about correctness — not because it was hard to trace; the enforced side of ruff is captured by the `select` table, which is judged separately, and mis-filing this as a check would put a pure escape hatch in the numerator."
+      },
+      "evidence": [
+        "pyproject.toml:216-221",
+        "pyproject.toml:195-207"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-pylint",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — these settings parameterize ruff's `PL` rules, and `PL` is not in the selected rule set",
+        "actorCanWrite": null,
+        "argument": "`select` at pyproject.toml:195-207 enables C4, C90, D212, E, F, I, PERF, UP and TID251. No `PL*` code is selected, so ruff never runs the pylint-family rules these values configure (`max-args`, `max-branches`, `max-returns`, `max-statements`, `allow-magic-value-types`). The table is inert on the CI path: no value in it can make `ruff check` exit non-zero, and raising or lowering any of these numbers changes no outcome. Recorded as not_a_check on that specific, checkable ground rather than as `unknown` — the fork point is fully traceable, and the honest statement is that there is no signal here at all."
+      },
+      "evidence": [
+        "pyproject.toml:223-228",
+        "pyproject.toml:195-207"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code, produced by the CPython runtime executing the suite under these settings",
+        "actorCanWrite": false,
+        "argument": "This table is what makes the CI test run strict rather than advisory: `filterwarnings = [\"error\"]` promotes any warning emitted at runtime into a raised exception that fails the test, and `xfail_strict = true` fails the run when a test marked xfail unexpectedly passes. Both conditions are decided by the interpreter while the code actually executes in `coverage run -m pytest -n auto` (shared.yml:104), across the 3.10-3.14 x {ubuntu, windows} x {locked, lowest-direct} matrix, and that job gates the merge through `all-green`. An author cannot suppress a real DeprecationWarning by declaring anything; only by fixing the code or adding an explicit ignore entry here. Two documented limits: the four `ignore:` entries are exactly such author-authored suppressions, and the deeper oracle limit applies to the suite this configures — execution is anchored, but the assertions were written by the same people as the implementation."
+      },
+      "evidence": [
+        "pyproject.toml:239-277",
+        ".github/workflows/shared.yml:96-106",
+        ".github/workflows/main.yml:16-23"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-run",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "coverage.py's tracer, recording which lines and branch arcs the CPython interpreter actually executed during the CI pytest run",
+        "actorCanWrite": false,
+        "argument": "This table decides what the enforced 100% gate is measured over: `branch = true` adds branch arcs to the denominator, and `source = [src, src/mcp-types/mcp_types, tests]` puts the whole library and the test tree in scope, so an unexecuted line or an untaken branch arc anywhere in those trees drops the number below `fail_under = 100` and fails `coverage report` in shared.yml. The coverage figure is produced by the interpreter's trace callback while the code runs — an author cannot mark a line covered without executing it. Documented limits: the four-entry `omit` list is a suppression that shrinks the measured surface, and coverage measures REACH, not correctness; a fully-covered line can still be wrong."
+      },
+      "evidence": [
+        "pyproject.toml:279-290",
+        "pyproject.toml:292-303",
+        ".github/workflows/shared.yml:102-106"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-report",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "coverage.py's process exit code, computed from the line/branch execution trace collected by the interpreter during the test run",
+        "actorCanWrite": false,
+        "argument": "`fail_under = 100` is the gate condition itself: `uv run coverage report` in the CI test job exits non-zero whenever the combined trace shows any measured line or branch arc that the interpreter did not execute, and that job reaches the merge through `checks` -> `all-green`. The number is not a field anyone writes — it is derived by coverage.py from what actually ran, so the only way to raise it is to execute the code. Documented limits: (a) coverage measures REACH, not correctness — 100% says every line ran, never that any assertion about it was right; (b) `exclude_also` (and the `omit` list in [tool.coverage.run]) are author-controlled exclusions that shrink the denominator, which is why the repo pairs this with a `strict-no-cover` step that fails when a `# pragma: no cover` line IS executed."
+      },
+      "evidence": [
+        "pyproject.toml:292-303",
+        ".github/workflows/shared.yml:102-110",
+        ".github/workflows/main.yml:16-23",
+        "AGENTS.md: \"CI requires 100% (fail_under = 100, branch = true)\""
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-paths",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the table maps runner-specific absolute paths onto the repo-relative `src/` prefix so `coverage combine` can merge data files",
+        "actorCanWrite": null,
+        "argument": "The three entries are the same tree seen from three machines (local `src/`, the Linux runner's `/home/runner/work/...`, the Windows runner's `D:\\a\\...`). It declares no threshold and enables no analysis; its only effect is that data files from different runners resolve to one set of files during `coverage combine`. There is no content for this table that fails a run on its own — the failing condition lives in `[tool.coverage.report].fail_under`, judged separately — so it asserts nothing about correctness."
+      },
+      "evidence": [
+        "pyproject.toml:305-310",
+        ".github/workflows/shared.yml:105"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the module sets one environment variable and defines three pytest fixtures (`anyio_backend`, `_module_runner_lease`, a `capfire` override)",
+        "actorCanWrite": null,
+        "argument": "Read in full (68 lines, no `assert`, no `pytest.fail`, no `raise`), this file only supplies the suite's execution context: it pins the anyio backend to asyncio, holds a module-scoped runner lease to cap event-loop churn on Windows, and scopes the OTel tracer so span capture does not leak between tests. It emits no pass/fail verdict — the gating signal for this suite is the `coverage run -m pytest` step in shared.yml, which the gatherer surfaced as its own node (in the 121 gathered, outside this 25-node sample). Filing the fixture module as a check would double-count that same pytest exit code under a second node."
+      },
+      "evidence": [
+        "tests/conftest.py:1-68",
+        "grep 'assert|raise|pytest.fail' tests/conftest.py -> only prose in docstrings",
+        ".github/workflows/shared.yml:96-106"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/transports/stdio/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the module defines two recording fixtures (`spawned_processes`, `terminate_calls`) and a teardown that SIGKILLs leaked process groups",
+        "actorCanWrite": null,
+        "argument": "Both fixtures monkeypatch a seam and then call straight through to the real `_create_platform_compatible_process` / `_terminate_process_tree`, recording the calls into a list for tests to inspect; the file contains no assertion of its own (77 lines, zero `assert`). The verdicts about stdio lifecycle are produced by the test bodies that read those lists, running under the CI pytest step. `_kill_spawn_groups` is a reaper, not an oracle: it prevents orphaned subprocesses from a crashed test and cannot itself fail a run."
+      },
+      "evidence": [
+        "tests/transports/stdio/conftest.py:1-77",
+        "tests/transports/stdio/conftest.py:61-77"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/server/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the module defines a `SpanCapture` adapter over logfire's in-memory `TestExporter` and one `spans` fixture",
+        "actorCanWrite": null,
+        "argument": "`finished()` filters exported spans down to the `mcp-python-sdk` instrumentation scope and hands the list to the test; the fixture clears the exporter before and after each test. 46 lines, no assertion. It makes span assertions POSSIBLE but performs none, so no configuration of this file can turn a passing run red on its own — the pass/fail comes from the server tests that call `spans.finished()` inside the CI pytest step."
+      },
+      "evidence": [
+        "tests/server/conftest.py:1-46"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/shared/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the module builds two `Dispatcher` pairs (direct and JSONRPC-over-memory-streams) and exposes them as a parametrized `pair_factory` fixture",
+        "actorCanWrite": null,
+        "argument": "It determines WHAT runs — every contract test using `pair_factory` executes twice, once per implementation — but it verifies nothing itself: 61 lines, no assertion, no strict xfail. Widening a matrix is not a verdict; the verdicts are the assertions in the dispatcher contract tests, produced by the interpreter during the CI pytest run. Filing it as a check would credit the numerator for test scaffolding."
+      },
+      "evidence": [
+        "tests/shared/conftest.py:1-61"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/examples/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest runtime executing the expanded story matrix — including the strict-xfail arcs this file attaches",
+        "actorCanWrite": false,
+        "argument": "Unlike the other conftests in this sample, this one authors a failing condition of its own: `pytest.mark.xfail(strict=True, ...)` at line 102 makes an unexpectedly-PASSING leg fail the run, so a story listed as broken in `manifest.toml` that starts working red-lines CI until the manifest is updated. It also imports each story's server/client module for real (`importlib.import_module`) across the (variant x transport x era) expansion, so a signature break surfaces as a collection error decided by the interpreter, not by any claim in the repo. The whole expansion executes inside `coverage run -m pytest -n auto` in shared.yml, which gates the merge. Documented limits: the matrix itself (`manifest.toml` defaults, the `xfail` list) is authored inside the write boundary, and the oracle limit applies — execution is anchored, the assertions in the story bodies were written by the same authors as the SDK."
+      },
+      "evidence": [
+        "tests/examples/conftest.py:95-105",
+        "tests/examples/conftest.py:60-93",
+        ".github/workflows/shared.yml:96-106"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/client/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the module defines a `SpyMemoryObjectSendStream` wrapper and a `stream_spy` fixture that patches `create_client_server_memory_streams`",
+        "actorCanWrite": null,
+        "argument": "The spy forwards every message to the original stream and records it so tests can inspect what was sent; the two `assert` statements at lines 131-132 are internal plumbing guards (`client_spy was not initialized`) that fire only when the fixture is used out of order, and the `assert len(requests) == 1` at line 92 is inside a docstring example, not executed. Nothing here asserts anything about the SDK's behaviour — the client tests that read `spies.get_client_requests(...)` do, under the CI pytest step."
+      },
+      "evidence": [
+        "tests/client/conftest.py:1-135",
+        "tests/client/conftest.py:92",
+        "tests/client/conftest.py:131-132"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/interaction/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest runtime raising AssertionError from the era-aware stamp assertions this module installs into every interaction test",
+        "actorCanWrite": false,
+        "argument": "This conftest does verify: `_assert_never_stamped` (line 88) asserts that a handshake-era result carries no `SERVER_INFO_META_KEY`, and the modern branch routes through `tests._stamp.unstamped`, whose contract is that the stamp MUST be present. Every interaction test that compares a full result runs one of those two assertions, and the failure is raised by the interpreter while the real client/server pair is exercised over the parametrized (transport, spec_version) cells that `pytest_generate_tests` computes from `REQUIREMENTS`. The run happens in `coverage run -m pytest` in shared.yml and gates the merge. Documented limits: the requirement manifest that drives the cells — including its declared xfails — is authored in-repo, and the oracle limit stands (execution decides, but the SDK authors wrote the expectation)."
+      },
+      "evidence": [
+        "tests/interaction/conftest.py:80-91",
+        "tests/interaction/conftest.py:63-70",
+        ".github/workflows/shared.yml:96-106"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/clients/sse-polling-client/pyproject.toml#tool-pyright",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing on the CI path — no pipeline step invokes pyright with this directory as its project root",
+        "actorCanWrite": null,
+        "argument": "Pyright reads its configuration from the project root it is executed in; it does not do per-directory config discovery the way ruff does. The only pyright invocation on the merge path is the pre-commit local hook `uv run --frozen pyright` with `pass_filenames: false`, which runs at the repo root and therefore uses the ROOT `[tool.pyright]` table (whose `include` already covers `examples/clients`). No workflow step changes directory into this example, and no per-example CI job exists (grep of .github/workflows for `examples` returns only a comment about a smoke-test env var). So `venvPath = \".\"` / `venv = \".venv\"` here describe a local editor/dev environment; no value in this table can make any CI job exit non-zero. Confidence is held down because this rests on pyright's config-resolution semantics rather than on a line I can point at in a workflow."
+      },
+      "evidence": [
+        "examples/clients/sse-polling-client/pyproject.toml:22-26",
+        ".pre-commit-config.yaml:47-52",
+        "pyproject.toml:150-160",
+        "grep -rn 'examples' .github/workflows/ -> shared.yml:99 (comment only)"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/clients/sse-polling-client/pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — ruff resolves the closest config to each file, so this table is the live rule set for this example's sources during the repo-wide run",
+        "actorCanWrite": false,
+        "argument": "The CI pre-commit job runs `ruff check --fix --exit-non-zero-on-fix` over the whole tree with `pass_filenames: false`, and ruff resolves settings hierarchically — for files under this directory the nearest pyproject.toml with a `[tool.ruff]` section wins. `select = [\"E\", \"F\", \"I\"]` therefore means an undefined name (F821) or an unsorted import block in this example fails the merge-gating job, with the verdict computed by the linter from the source text. Documented limits: the enforced set here is NARROWER than the root's (no C90/UP/TID251/PERF), so this table's net effect on this subtree is relaxation as much as enforcement; and confidence is moderate because it depends on ruff's hierarchical resolution rather than on an explicit per-example CI step."
+      },
+      "evidence": [
+        "examples/clients/sse-polling-client/pyproject.toml:27-29",
+        ".pre-commit-config.yaml:40-46",
+        "pyproject.toml:195-207 (root select, superset)"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/clients/sse-polling-client/pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code via rule E501, whose threshold is this table's line-length, applied to this subtree by ruff's nearest-config resolution",
+        "actorCanWrite": false,
+        "argument": "`E` is selected in the sibling `[tool.ruff.lint]` table, so `line-length = 120` is the number ruff compares each line of this example against during the repo-wide `ruff check` in the CI pre-commit job; `target-version = \"py310\"` sets the syntax level the parser accepts. The failing condition is produced by the linter reading the file. Documented limits: the values duplicate the root config, so the marginal enforcement this table adds is nil; and it emits no signal itself — it parameterizes a run that happens elsewhere."
+      },
+      "evidence": [
+        "examples/clients/sse-polling-client/pyproject.toml:31-33",
+        "examples/clients/sse-polling-client/pyproject.toml:27-29",
+        "pyproject.toml:191-193"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/clients/simple-chatbot/pyproject.toml#tool-pyright",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing on the CI path — no pipeline step invokes pyright with this directory as its project root",
+        "actorCanWrite": null,
+        "argument": "Same fork point as the sibling example package: the only merge-gating pyright run is the repo-root pre-commit hook `uv run --frozen pyright` (`pass_filenames: false`), which reads the ROOT `[tool.pyright]` table; pyright does not walk down into nested pyproject.toml files for configuration the way ruff does, and no workflow job cds into `examples/clients/*`. This table's `include`/`venvPath`/`venv` therefore describe a local per-example virtualenv for an editor or a manual run, and no value in it can change any CI outcome. Confidence held down because the claim rests on pyright's config-resolution behaviour rather than on an explicit workflow line."
+      },
+      "evidence": [
+        "examples/clients/simple-chatbot/pyproject.toml:33-36",
+        ".pre-commit-config.yaml:47-52",
+        "pyproject.toml:150-160"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/clients/simple-chatbot/pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — this is the rule set ruff resolves for this example's files during the repo-wide check",
+        "actorCanWrite": false,
+        "argument": "Ruff picks the closest `[tool.ruff]`-bearing config for each file, so `select = [\"E\", \"F\", \"I\"]` governs this example's sources when the CI pre-commit job runs `ruff check --fix --exit-non-zero-on-fix` across the tree. A pyflakes error or an unsorted import in this package fails that job, and the verdict is the linter's reading of the source, not a claim the repo makes. Documented limits: this set is narrower than the root's, so the table also relaxes what would otherwise apply; and confidence is moderate because it depends on ruff's hierarchical config resolution rather than on a dedicated CI step for this package."
+      },
+      "evidence": [
+        "examples/clients/simple-chatbot/pyproject.toml:38-40",
+        ".pre-commit-config.yaml:40-46",
+        "pyproject.toml:195-207"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/clients/simple-chatbot/pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code via rule E501 under this table's line-length, applied to this subtree by nearest-config resolution",
+        "actorCanWrite": false,
+        "argument": "With `E` selected in the sibling lint table, `line-length = 120` is the threshold ruff enforces on this example's files during the merge-gating `ruff check` run, and `target-version = \"py310\"` fixes the syntax level. The failing condition is computed by the linter from the file's bytes. Documented limits: the values are identical to the root config so the table adds no enforcement the root would not already provide, and the table itself produces no signal — it configures a tool that runs elsewhere."
+      },
+      "evidence": [
+        "examples/clients/simple-chatbot/pyproject.toml:42-44",
+        "examples/clients/simple-chatbot/pyproject.toml:38-40",
+        "pyproject.toml:191-193"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 15,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 10,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 121,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 1,
+    "probeLibrarySize": 13,
+    "tokensIn": 7501,
+    "tokensOut": 7309,
+    "tokensEstimated": true,
+    "wallClockMs": 503738
+  }
+}

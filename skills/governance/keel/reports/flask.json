@@ -1,0 +1,600 @@
+{
+  "target": "flask",
+  "revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+  "generatedAt": "2026-07-25T03:33:58.626Z",
+  "nodes": [
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "repos:\n  - repo: https://github.com/astral-sh/ruff-pre-commit\n    rev: 5e2fb545eba1ea9dc051f6f962d52fe8f76a9794  # frozen: v0.15.13\n    hooks:\n      - id: ruff-check\n      - id: ruff-format\n  - repo: https://github.com/astral-sh/uv-pre-commit\n    rev: fa60a193803535a9e2accdb3ca4b1b584b1150cb  # frozen: 0.11.15\n    hooks:\n      - id: uv-lock\n  - repo: https://github.com/codespell-project/codespell\n    rev: 2ccb47ff45ad361a21071a7eedda4c37e6ae8c5a  # frozen: v2.4.2\n    hooks:\n      - id: codespell\n        args: ['--write-changes']\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0\n    hooks:\n      - id: check-merge-conflict\n      - id: debug-statements\n      - id: fix-byte-order-marker\n      - id: trailing-whitespace\n      - id: end-of-file-fixer\n"
+    },
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:106",
+      "raw": "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\nfilterwarnings = [\n    \"error\",\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "pyproject.toml:112",
+      "raw": "[tool.coverage.run]\nbranch = true\nsource = [\"flask\", \"tests\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-paths",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.paths])",
+      "source": "pyproject.toml:116",
+      "raw": "[tool.coverage.paths]\nsource = [\"src\", \"*/site-packages\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-report",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.report])",
+      "source": "pyproject.toml:119",
+      "raw": "[tool.coverage.report]\nexclude_also = [\n    \"if t.TYPE_CHECKING\",\n    \"raise NotImplementedError\",\n    \": \\\\.{3}\",\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-mypy",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.mypy])",
+      "source": "pyproject.toml:126",
+      "raw": "[tool.mypy]\npython_version = \"3.10\"\nfiles = [\"src\", \"tests/type_check\"]\nshow_error_codes = true\npretty = true\nstrict = true"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:142",
+      "raw": "[tool.pyright]\npythonVersion = \"3.10\"\ninclude = [\"src\", \"tests/type_check\"]\ntypeCheckingMode = \"basic\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "pyproject.toml:147",
+      "raw": "[tool.ruff]\nsrc = [\"src\"]\nfix = true\nshow-fixes = true\noutput-format = \"full\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:153",
+      "raw": "[tool.ruff.lint]\nselect = [\n    \"B\",  # flake8-bugbear\n    \"E\",  # pycodestyle error\n    \"F\",  # pyflakes\n    \"I\",  # isort\n    \"UP\",  # pyupgrade\n    \"W\",  # pycodestyle warning\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-isort",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.isort])",
+      "source": "pyproject.toml:163",
+      "raw": "[tool.ruff.lint.isort]\nforce-single-line = true\norder-by-type = false"
+    },
+    {
+      "id": "pyproject.toml#tool-tox",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox])",
+      "source": "pyproject.toml:170",
+      "raw": "[tool.tox]\nenv_list = [\n    \"py3.14\", \"py3.14t\",\n    \"py3.13\", \"py3.12\", \"py3.11\", \"py3.10\",\n    \"pypy3.11\",\n    \"tests-min\", \"tests-dev\",\n    \"style\",\n    \"typing\",\n    \"docs\",\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-run-base",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env_run_base])",
+      "source": "pyproject.toml:181",
+      "raw": "[tool.tox.env_run_base]\ndescription = \"pytest on latest dependency versions\"\nrunner = \"uv-venv-lock-runner\"\npackage = \"wheel\"\nwheel_build_env = \".pkg\"\nconstrain_package_deps = true\nuse_frozen_constraints = true\ndependency_groups = [\"tests\"]\nenv_tmp_dir = \"{toxworkdir}/tmp/{envname}\"\ncommands = [[\n    \"pytest\", \"-v\", \"--tb=short\", \"--basetemp={env_tmp_dir}\",\n    {replace = \"posargs\", default = [], extend = true},\n]]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-tests-min",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.tests-min])",
+      "source": "pyproject.toml:195",
+      "raw": "[tool.tox.env.tests-min]\ndescription = \"pytest on minimum dependency versions\"\nbase_python = [\"3.14\"]\ncommands = [\n    [\n        \"uv\", \"pip\", \"install\",\n        \"blinker==1.9.0\",\n        \"click==8.1.3\",\n        \"itsdangerous==2.2.0\",\n        \"jinja2==3.1.2\",\n        \"markupsafe==2.1.1\",\n        \"werkzeug==3.1.0\",\n    ],\n    [\n        \"pytest\", \"-v\", \"--tb=short\", \"--basetemp={env_tmp_dir}\",\n        {replace = \"posargs\", default = [], extend = true},\n    ],\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-tests-dev",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.tests-dev])",
+      "source": "pyproject.toml:214",
+      "raw": "[tool.tox.env.tests-dev]\ndescription = \"pytest on development dependency versions (git main branch)\"\nbase_python = [\"3.10\"]\ncommands = [\n    [\n        \"uv\", \"pip\", \"install\",\n        \"https://github.com/pallets-eco/blinker/archive/refs/heads/main.tar.gz\",\n        \"https://github.com/pallets/click/archive/refs/heads/main.tar.gz\",\n        \"https://github.com/pallets/itsdangerous/archive/refs/heads/main.tar.gz\",\n        \"https://github.com/pallets/jinja/archive/refs/heads/main.tar.gz\",\n        \"https://github.com/pallets/markupsafe/archive/refs/heads/main.tar.gz\",\n        \"https://github.com/pallets/werkzeug/archive/refs/heads/main.tar.gz\",\n    ],\n    [\n        \"pytest\", \"-v\", \"--tb=short\", \"--basetemp={env_tmp_dir}\",\n        {replace = \"posargs\", default = [], extend = true},\n    ],\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-style",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.style])",
+      "source": "pyproject.toml:233",
+      "raw": "[tool.tox.env.style]\ndescription = \"run all pre-commit hooks on all files\"\ndependency_groups = [\"pre-commit\"]\nskip_install = true\ncommands = [[\"pre-commit\", \"run\", \"--all-files\"]]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-typing",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.typing])",
+      "source": "pyproject.toml:239",
+      "raw": "[tool.tox.env.typing]\ndescription = \"run static type checkers\"\ndependency_groups = [\"typing\"]\ncommands = [\n    [\"mypy\"],\n    [\"pyright\"],\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-docs",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.docs])",
+      "source": "pyproject.toml:247",
+      "raw": "[tool.tox.env.docs]\ndescription = \"build docs\"\ndependency_groups = [\"docs\"]\ncommands = [[\"sphinx-build\", \"-E\", \"-W\", \"-b\", \"dirhtml\", \"docs\", \"docs/_build/dirhtml\"]]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-docs-auto",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.docs-auto])",
+      "source": "pyproject.toml:252",
+      "raw": "[tool.tox.env.docs-auto]\ndescription = \"continuously rebuild docs and start a local server\"\ndependency_groups = [\"docs\", \"docs-auto\"]\ncommands = [[\"sphinx-autobuild\", \"-W\", \"-b\", \"dirhtml\", \"--watch\", \"src\", \"docs\", \"docs/_build/dirhtml\"]]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-update-actions",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.update-actions])",
+      "source": "pyproject.toml:257",
+      "raw": "[tool.tox.env.update-actions]\ndescription = \"update GitHub Actions pins\"\nlabels = [\"update\"]\ndependency_groups = [\"gha-update\"]\nskip_install = true\ncommands = [[\"gha-update\"]]"
+    },
+    {
+      "id": "pyproject.toml#tool-tox-env-update-pre-commit",
+      "kind": "test_target",
+      "name": "tox config ([tool.tox.env.update-pre_commit])",
+      "source": "pyproject.toml:264",
+      "raw": "[tool.tox.env.update-pre_commit]\ndescription = \"update pre-commit pins\"\nlabels = [\"update\"]\ndependency_groups = [\"pre-commit\"]\nskip_install = true\ncommands = [[\"pre-commit\", \"autoupdate\", \"--freeze\", \"-j4\"]]"
+    },
+    {
+      "id": "docs/Makefile#help",
+      "kind": "script",
+      "name": "help",
+      "source": "docs/Makefile:12",
+      "raw": "help:\n\t@$(SPHINXBUILD) -M help \"$(SOURCEDIR)\" \"$(BUILDDIR)\" $(SPHINXOPTS) $(O)"
+    },
+    {
+      "id": "examples/tutorial/pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "examples/tutorial/pyproject.toml:35",
+      "raw": "[tool.coverage.run]\nbranch = true\nsource = [\"flaskr\", \"tests\"]"
+    },
+    {
+      "id": "examples/tutorial/pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "examples/tutorial/pyproject.toml:39",
+      "raw": "[tool.ruff]\nsrc = [\"src\"]"
+    },
+    {
+      "id": "examples/celery/pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "examples/celery/pyproject.toml:16",
+      "raw": "[tool.ruff]\nsrc = [\"src\"]"
+    },
+    {
+      "id": "examples/javascript/pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "examples/javascript/pyproject.toml:28",
+      "raw": "[tool.coverage.run]\nbranch = true\nsource = [\"js_example\", \"tests\"]"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the `pre-commit` process exit code, aggregating the exit status of hook binaries fetched from third-party repositories pinned to full commit SHAs",
+        "actorCanWrite": false,
+        "argument": "The pre-commit workflow runs `uv run --locked --no-default-groups --group pre-commit pre-commit run --show-diff-on-failure --color=always --all-files` on every pull_request and on pushes to main/stable, so this config is the live gate rather than a local convenience. Each hook is executed from an external repository pinned by full SHA (`astral-sh/ruff-pre-commit` at 5e2fb545…, `codespell-project/codespell` at 2ccb47ff…, `pre-commit/pre-commit-hooks` at 3e8a8703…), so a flask author cannot make a violating file report clean without changing the file or changing the pinned rev — the deciding programs are outside their write boundary. The rewriting hooks (ruff-format, codespell --write-changes, trailing-whitespace, end-of-file-fixer) still produce a falsifiable signal because pre-commit exits non-zero when a hook modifies a file. Documented limits: (1) this is an AGGREGATE — its exit code is only as anchored as its children, and I descended by hook id and pinned rev rather than by reading each hook's source; (2) the rule set (ruff select list, codespell ignore-words) lives in the repo, so scope is author-controlled even though each verdict is not."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml:1-27",
+        ".github/workflows/pre-commit.yaml:28 (`pre-commit run --show-diff-on-failure --all-files`)",
+        "pyproject.toml:167-168 ([tool.codespell])"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code — the CPython/PyPy interpreter executing the modules under tests/ against the built flask wheel",
+        "actorCanWrite": false,
+        "argument": "This ini block is the live configuration of the suite that the Tests workflow runs: the matrix job executes `uv run --locked --no-default-groups --group dev tox run` with TOX_ENV per interpreter, and every tox env's command is `pytest -v --tb=short --basetemp=...` (pyproject.toml:190-193). testpaths=[\"tests\"] selects which modules the interpreter imports and `filterwarnings = [\"error\"]` promotes any DeprecationWarning raised at runtime into a test failure, so the block widens rather than suppresses what can fail. A failing assertion, an import error or a warning cannot be argued into a zero exit status. Documented limit — the EXECUTION is anchored, the ORACLE is not: tests/ and src/flask/ are written by the same maintainers, so a green run proves the code does what these tests say, not that the tests say the right thing."
+      },
+      "evidence": [
+        "pyproject.toml:106-110",
+        "pyproject.toml:190-193 ([tool.tox.env_run_base] commands = pytest)",
+        ".github/workflows/tests.yaml:40 (`tox run`)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-run",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — no process reads this table in any pipeline path; `coverage` is not installed by any dependency group and is not invoked by any tox env or workflow step",
+        "actorCanWrite": null,
+        "argument": "I grepped the whole .github/ tree, .readthedocs.yaml and every tox env command: there is no `coverage run`, no `--cov`, and `coverage` appears in no dependency-group (pyproject.toml:36-72). Nothing executes with this configuration, and even when a maintainer runs it locally the table only declares measurement SCOPE (branch=true, source=[\"flask\",\"tests\"]) — there is no fail_under anywhere in the file, so coverage emits a number and never a non-zero exit. A declaration that no runner consumes and that carries no threshold cannot report differently on a broken tree than on a healthy one, so it asserts nothing about correctness. Filing it here shrinks the denominator, so the burden is met explicitly: this is not a hard node, it is an inert one."
+      },
+      "evidence": [
+        "pyproject.toml:112-114",
+        "pyproject.toml:36-72 (no coverage in any dependency-group)",
+        "grep -rn 'coverage|--cov' .github/ .readthedocs.yaml -> no invocation",
+        "pyproject.toml:170-277 (no tox env runs coverage)"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-paths",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — a path-remapping table for a tool that no workflow step, tox env or dependency group installs or invokes",
+        "actorCanWrite": null,
+        "argument": "[tool.coverage.paths] only tells coverage that `src` and `*/site-packages` are the same tree when combining data files. It computes no verdict of its own, and the tool that would consume it is never run: no `coverage`/`--cov` invocation exists in .github/workflows/, .readthedocs.yaml or any tox env command, and `coverage` is absent from every dependency-group. Nothing here can vary between a passing and a failing tree."
+      },
+      "evidence": [
+        "pyproject.toml:116-117",
+        "pyproject.toml:170-277 (tox env commands: pytest / pre-commit / mypy / pyright / sphinx-build only)",
+        ".github/workflows/tests.yaml:40,62"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-report",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — an exclusion list for a report that is never generated in any pipeline path",
+        "actorCanWrite": null,
+        "argument": "`exclude_also` narrows which lines a coverage report counts (TYPE_CHECKING blocks, NotImplementedError, `...` bodies). It is the SCOPE knob of a measurement, and critically there is no `fail_under` in this table or anywhere else in the file, so even if a report were produced it would print a percentage and exit zero. Combined with the fact that no CI job, readthedocs command or tox env invokes coverage at all, this table produces no signal that could ever be non-green."
+      },
+      "evidence": [
+        "pyproject.toml:119-124",
+        "no `fail_under` anywhere in pyproject.toml",
+        "grep -rn 'coverage' .github/ -> no matches"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-mypy",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the mypy process exit code — a type checker parsing the committed source under src/ and tests/type_check and returning non-zero on a type error",
+        "actorCanWrite": false,
+        "argument": "This table is the live configuration of a gate that runs: the `typing` job in the Tests workflow executes `uv run --locked --no-default-groups --group dev tox run -e typing`, and that env's first command is bare `mypy` (pyproject.toml:242-245), which picks up exactly this table. `strict = true` over files=[\"src\",\"tests/type_check\"] means the verdict is computed by the checker from the source text; an author cannot make an ill-typed function report clean without changing the code or loosening this pinned config. Documented limit: the RULE SET is author-controlled — `[[tool.mypy.overrides]] ignore_missing_imports = true` for asgiref/dotenv/cryptography (pyproject.toml:133-140) removes those modules from the checked surface — so this is anchored on the execution axis while its scope sits inside the write boundary."
+      },
+      "evidence": [
+        "pyproject.toml:126-131",
+        "pyproject.toml:239-245 ([tool.tox.env.typing] commands = mypy, pyright)",
+        ".github/workflows/tests.yaml:62 (`tox run -e typing`)"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright process exit code — a second, independently-implemented type checker analysing the committed source and returning non-zero on a diagnostic",
+        "actorCanWrite": false,
+        "argument": "The `typing` tox env runs `pyright` as its second command and the Tests workflow's typing job invokes that env, so this table configures an executing gate rather than an aspiration. Pyright is a different implementation from mypy (Microsoft's TypeScript-based checker vs. the Python one), so the two commands in the env are not correlated implementations of the same analysis — a bug in one is unlikely to be reproduced by the other. The verdict is computed from the source; changing it requires changing the code or this pinned config. Documented limit: `typeCheckingMode = \"basic\"` (not \"strict\") is an author-chosen scope, so the amount of the surface this gate can fail on is inside the write boundary even though each diagnostic is not."
+      },
+      "evidence": [
+        "pyproject.toml:142-145",
+        "pyproject.toml:242-245",
+        ".github/workflows/tests.yaml:44-62"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code (and pre-commit's file-modification detection wrapping it), executed from a SHA-pinned third-party hook repo against the committed tree",
+        "actorCanWrite": false,
+        "argument": "This table configures the ruff invocation that the pre-commit workflow actually runs on every PR via the `ruff-check` / `ruff-format` hooks pinned at astral-sh/ruff-pre-commit rev 5e2fb545…. `fix = true` means ruff rewrites what it can rather than only reporting — but under `pre-commit run --all-files` a hook that modifies a file makes pre-commit exit non-zero, and unfixable violations exit non-zero directly, so the edge remains falsifiable in both branches. `src = [\"src\"]` fixes first-party import resolution for the isort rules. The deciding program is a pinned external binary, not a claim the repo makes about itself. Documented limit: which rules are enforced is author-controlled (see [tool.ruff.lint])."
+      },
+      "evidence": [
+        "pyproject.toml:147-151",
+        ".pre-commit-config.yaml:2-6 (ruff-check, ruff-format at frozen rev)",
+        ".github/workflows/pre-commit.yaml:28"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code — a linter executing the selected rule set (bugbear, pycodestyle, pyflakes, isort, pyupgrade) over the committed source",
+        "actorCanWrite": false,
+        "argument": "This is the rule-selection table that decides what makes ruff exit non-zero, and ruff is executed on every pull request by the pre-commit workflow through a SHA-pinned hook. F (pyflakes) and B (bugbear) are genuine defect rules — an undefined name or a mutable default argument is detected by the binary parsing the file, and no amount of assertion in the repo makes a violating file report clean without editing the file or this select list. Documented limit: the select list is itself committed, so an author can shrink the enforced surface by editing this table; the individual verdicts are outside the write boundary, the scope is not."
+      },
+      "evidence": [
+        "pyproject.toml:153-161",
+        ".pre-commit-config.yaml:2-6",
+        ".github/workflows/pre-commit.yaml:28"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-isort",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code for the `I` (isort) rules it was configured to enforce, run from the pinned pre-commit hook",
+        "actorCanWrite": false,
+        "argument": "`I` is in the select list (pyproject.toml:159), so this sub-table parameterises rules that actually fire: ruff compares each file's import block against the ordering these settings define and exits non-zero (or, with fix=true, rewrites the file, which makes the pre-commit hook fail). The comparison is computed by the pinned external binary from the file's text, so an author cannot get a mis-ordered import block past the gate without editing the file or this config. Documented limit, and it is a large one: this asserts import ORDER, a style property — Keel measures the shape of the signal, not its value, and nothing here says anything about whether the code is correct."
+      },
+      "evidence": [
+        "pyproject.toml:163-165",
+        "pyproject.toml:159 (\"I\", # isort selected)",
+        ".github/workflows/pre-commit.yaml:28"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — a list of environment names; every signal attributed to it is actually produced by the per-env `commands` tables, which are separate nodes",
+        "actorCanWrite": null,
+        "argument": "`env_list` only enumerates which envs a bare `tox run` would execute locally. In CI it is not even consulted: each Tests matrix entry sets `TOX_ENV` (tests.yaml:41-42) and the typing job passes `-e typing` explicitly, so the selection comes from the workflow, not this list. The list itself parses no source, runs no interpreter and has no exit code — the falsifiable edges are `[tool.tox.env_run_base]`, `[tool.tox.env.typing]`, `[tool.tox.env.style]` and friends, each judged on its own. Excluding a name list from the ratio does not hide a real gate; the gates it names are all in the denominator individually."
+      },
+      "evidence": [
+        "pyproject.toml:170-179",
+        ".github/workflows/tests.yaml:40-42 (TOX_ENV per matrix entry)",
+        ".github/workflows/tests.yaml:62 (`tox run -e typing`)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-run-base",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code, produced by the target interpreter executing the committed test suite against a freshly built flask wheel",
+        "actorCanWrite": false,
+        "argument": "This is the env every Tests matrix entry runs (`uv run --locked ... tox run` with TOX_ENV=py3.14/py3.13/… on ubuntu, windows, macos and pypy), so its exit status is the signal that gates the merge. `package = \"wheel\"` plus `constrain_package_deps`/`use_frozen_constraints` means the suite runs against a built artefact under versions constrained by the committed uv.lock, and the verdict is the interpreter's: a failing assertion, an import error or a segfault cannot be talked into exiting zero. Documented limit — the EXECUTION is anchored, the ORACLE is not: tests/ is authored by the same maintainers as src/flask/, so a green run proves the implementation matches these assertions, not that the assertions are right."
+      },
+      "evidence": [
+        "pyproject.toml:181-193",
+        ".github/workflows/tests.yaml:18-42 (matrix of 11 interpreters/OSes, `tox run`)",
+        "uv.lock"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-tests-min",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code, with the dependency versions under test fixed to specific immutable PyPI releases installed by `uv pip install`",
+        "actorCanWrite": false,
+        "argument": "The `Minimum Versions` matrix entry sets TOX_ENV=tests-min, so this env runs on every PR. Its first command installs exactly the floor versions declared in [project].dependencies (blinker==1.9.0, click==8.1.3, werkzeug==3.1.0, …) — already-published PyPI artefacts that cannot be rewritten in place — and the second command runs pytest against them. The signal is therefore the interpreter's verdict on running the suite under the oldest supported dependency set, which is precisely the drift this env exists to catch. Documented limits: the version floor itself is author-chosen (they could raise it to dodge a failure), and as with any suite the execution is anchored while the assertions were authored inside the write boundary."
+      },
+      "evidence": [
+        "pyproject.toml:195-212",
+        ".github/workflows/tests.yaml:31 ({name: Minimum Versions, python: '3.14', tox: tests-min})",
+        "pyproject.toml:23-30 (declared floors match the pins)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-tests-dev",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code, executing the suite against dependency source tarballs pulled live from upstream `main` branches",
+        "actorCanWrite": false,
+        "argument": "The `Development Versions` matrix entry sets TOX_ENV=tests-dev, so this runs on every PR. It installs blinker/click/itsdangerous/jinja/markupsafe/werkzeug from `archive/refs/heads/main.tar.gz` and then runs pytest, so the exit code is the interpreter's verdict on flask against unreleased upstream code — a canary whose whole point is that its inputs are not controlled by this repository's tree. Documented limit worth naming: those six upstreams are all Pallets-org projects, so the same maintainer group can write to the branches being tested against, and the env is non-deterministic across runs (an unpinned tarball fetched at build time); the pass/fail is still decided by executing the suite, not by any claim the repo makes."
+      },
+      "evidence": [
+        "pyproject.toml:214-231",
+        ".github/workflows/tests.yaml:32 ({name: Development Versions, python: '3.10', tox: tests-dev})"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-style",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the `pre-commit` process exit code, aggregating SHA-pinned third-party hook binaries run over every file in the tree",
+        "actorCanWrite": false,
+        "argument": "`commands = [[\"pre-commit\", \"run\", \"--all-files\"]]` re-runs the same hook set that .pre-commit-config.yaml pins (ruff, codespell, merge-conflict/debug-statement checks) against the whole tree, and the dedicated pre-commit workflow runs the equivalent command on every pull_request. The exit code is produced by external binaries fetched at pinned revisions parsing the committed files; a violation cannot report clean without editing the file or the pinned rev. Documented limits: (1) it is an AGGREGATE and I descended only to hook id + pinned rev, not into each hook's source; (2) this tox env is not itself selected by any CI matrix entry — the pre-commit.yaml workflow is what actually blocks the merge, and this env is the local mirror of it."
+      },
+      "evidence": [
+        "pyproject.toml:233-237",
+        ".pre-commit-config.yaml:1-27",
+        ".github/workflows/pre-commit.yaml:28"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-typing",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the mypy and pyright process exit codes — two independently implemented type checkers analysing the committed source, either of which fails the env",
+        "actorCanWrite": false,
+        "argument": "The Tests workflow's `typing` job runs `uv run --locked --no-default-groups --group dev tox run -e typing`, so this env is directly on the merge path. tox fails the env if either command returns non-zero, and both commands are static analysers computing their verdict from the source text under src/ and tests/type_check. An author cannot make an ill-typed change report clean without changing the code or relaxing the pinned [tool.mypy]/[tool.pyright] tables. Documented limit: strictness and the ignore_missing_imports overrides are author-controlled scope, so what the gate is capable of seeing lives inside the write boundary even though each diagnostic does not."
+      },
+      "evidence": [
+        "pyproject.toml:239-245",
+        ".github/workflows/tests.yaml:44-62",
+        "pyproject.toml:126-145"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-docs",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the sphinx-build process exit code, with `-W` promoting every build warning (broken cross-reference, unknown role, missing toctree entry) into a non-zero exit",
+        "actorCanWrite": false,
+        "argument": "`sphinx-build -E -W -b dirhtml docs docs/_build/dirhtml` re-parses the whole doc tree from scratch and, because of -W, fails on any warning — a genuinely falsifiable signal computed by the builder from the sources, not a claim the docs make about themselves. The equivalent command runs on Read the Docs for the hosted build (.readthedocs.yaml:8, `uv run --group docs sphinx-build -W -b dirhtml docs $READTHEDOCS_OUTPUT/html`). Documented limits: (1) no job in .github/workflows/ selects this tox env — the Tests matrix sets TOX_ENV only to test/typing envs, and tests.yaml even carries `paths-ignore: ['docs/**']` — so within this repository's own merge path the env gates nothing; whether the RTD build is a required PR check is not visible in the tree; (2) it checks that the docs BUILD, never that they are true."
+      },
+      "evidence": [
+        "pyproject.toml:247-250",
+        ".readthedocs.yaml:5-9",
+        ".github/workflows/tests.yaml:3-7 (paths-ignore docs/**), :40-42 (TOX_ENV set from matrix)"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-docs-auto",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a long-running local HTTP server (sphinx-autobuild) that watches src/ and docs/ and rebuilds on change; it never terminates, so it has no verdict to hand to anything",
+        "actorCanWrite": null,
+        "argument": "`sphinx-autobuild --watch src docs docs/_build/dirhtml` is a developer preview loop: it serves the rendered docs on localhost and rebuilds on file save. Nothing consumes its exit status — no CI job selects this env and by construction the process runs until interrupted — so it can never report differently on a broken tree than on a healthy one. It is provisioning for a human's eyeballs, not an assertion."
+      },
+      "evidence": [
+        "pyproject.toml:252-255",
+        ".github/workflows/ (no job selects docs-auto)"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-update-actions",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `gha-update` tool, whose effect is to REWRITE the action SHAs in .github/workflows/*.yaml to the latest upstream releases",
+        "actorCanWrite": null,
+        "argument": "This env exists to mutate the repository, not to evaluate it: gha-update resolves each `uses:` to its newest tag and writes the new pin back into the workflow files. It is labelled `update` and is not in env_list, so no CI job runs it. A tool that succeeds by editing files reports the same success whether or not the tree was correct beforehand — there is no assertion to fail. (Contrast a `--check`/`--frozen` mode, which would be a real falsifiable claim that the pins are current; no such mode is used here.)"
+      },
+      "evidence": [
+        "pyproject.toml:257-262",
+        "pyproject.toml:171-179 (env_list excludes update-*)"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-tox-env-update-pre-commit",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `pre-commit autoupdate --freeze` command, whose effect is to REWRITE the `rev:` pins in .pre-commit-config.yaml",
+        "actorCanWrite": null,
+        "argument": "`autoupdate` queries each hook repo for its newest tag and writes the resolved SHA back into the config; it runs no hook against any file. Like the gha-update env it is labelled `update`, is excluded from env_list, and is selected by no CI job. Its success is a statement that the network was reachable, not that anything in this repository is correct — nothing here can go red because of a defect in the tree."
+      },
+      "evidence": [
+        "pyproject.toml:264-269",
+        ".pre-commit-config.yaml (the `rev:` lines it rewrites)",
+        "pyproject.toml:171-179 (env_list excludes update-*)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "docs/Makefile#help",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "sphinx-build's `-M help` mode, which prints the list of available builders to stdout and exits",
+        "actorCanWrite": null,
+        "argument": "The recipe is `@$(SPHINXBUILD) -M help \"$(SOURCEDIR)\" \"$(BUILDDIR)\"` — a usage listing. It does not parse the doc sources, produce output artefacts, or evaluate anything about the repository; its exit status depends only on sphinx being installed. It is the canonical help target: informational plumbing with no correctness claim attached."
+      },
+      "evidence": [
+        "docs/Makefile:12-13",
+        "docs/Makefile:1-10 (SPHINXBUILD ?= sphinx-build)"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/tutorial/pyproject.toml#tool-coverage-run",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — measurement-scope configuration for a tool that no workflow, tox env or readthedocs command runs, in an example package that CI never installs or tests",
+        "actorCanWrite": null,
+        "argument": "Two independent reasons it emits no signal. First, as with the root table it declares only branch/source scope and no `fail_under`, so coverage would print a percentage and exit zero. Second, nothing in the pipeline touches examples/ at all: the Tests matrix runs the root tox envs whose pytest is bound to testpaths=[\"tests\"] (root), and no job installs the `flaskr` package. The one CI process that does read files under examples/ is pre-commit/ruff, which never consults a coverage table."
+      },
+      "evidence": [
+        "examples/tutorial/pyproject.toml:35-37",
+        "pyproject.toml:106-107 (root testpaths = tests)",
+        ".github/workflows/tests.yaml (no examples/ install or test step)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/tutorial/pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code, run from the SHA-pinned ruff-pre-commit hook over every Python file in the repository, including those under examples/",
+        "actorCanWrite": false,
+        "argument": "`pre-commit run --all-files` in the pre-commit workflow passes every tracked .py file to the pinned `ruff-check` hook, and .pre-commit-config.yaml sets no exclude, so example sources are linted on each PR. Ruff resolves configuration hierarchically from the nearest pyproject.toml containing a [tool.ruff] table, which makes this two-line table the live settings (src=[\"src\"] for first-party import resolution) for those files; the rule selection is inherited from nowhere else, so the root select list does not apply here and only ruff's defaults (E/F) fire. The verdict is still computed by the pinned external binary from the file text. Confidence is held down because the block itself sets no rules — its effect on what can fail is limited to isort first-party detection, and I inferred ruff's config-discovery behaviour rather than observing it run."
+      },
+      "evidence": [
+        "examples/tutorial/pyproject.toml:39-40",
+        ".pre-commit-config.yaml:2-6 (ruff-check, no exclude)",
+        ".github/workflows/pre-commit.yaml:28"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/celery/pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code, run from the SHA-pinned ruff-pre-commit hook over the example package's Python files",
+        "actorCanWrite": false,
+        "argument": "Same causal path as the other example config: the pre-commit workflow runs `pre-commit run --all-files` on every PR with no exclude list, so `examples/celery/src/task_app/*.py` goes through the pinned ruff-check hook, and ruff picks this nearest [tool.ruff] table as its configuration for those files. A syntax error or an undefined name in the example fails the job, and no assertion inside the repo can change that verdict — the deciding binary is fetched at a frozen rev from astral-sh. Confidence is low because the table declares only `src`, so its own contribution to what can fail is confined to isort first-party resolution, and ruff's hierarchical config discovery is inferred rather than executed here."
+      },
+      "evidence": [
+        "examples/celery/pyproject.toml:16-17",
+        ".pre-commit-config.yaml:2-6",
+        ".github/workflows/pre-commit.yaml:28"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/javascript/pyproject.toml#tool-coverage-run",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — a coverage scope table with no threshold, for a tool no pipeline step invokes, in an example package CI never installs",
+        "actorCanWrite": null,
+        "argument": "Identical to the tutorial example: branch/source scope only, no `fail_under` in the file, no `coverage`/`--cov` invocation anywhere in .github/workflows/, .readthedocs.yaml or any tox env, and no CI job that installs `js_example` or runs its tests (the root pytest run is bound to the root tests/ directory). There is no process whose result could differ between a healthy and a broken tree."
+      },
+      "evidence": [
+        "examples/javascript/pyproject.toml:28-30",
+        "examples/javascript/pyproject.toml (no fail_under)",
+        ".github/workflows/tests.yaml (no examples/ test step)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 15,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 10,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 59,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 3,
+    "probeLibrarySize": 22,
+    "tokensIn": 2808,
+    "tokensOut": 7404,
+    "tokensEstimated": true,
+    "wallClockMs": 512752
+  }
+}

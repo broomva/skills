@@ -1,0 +1,66 @@
+{
+  "schema": "keel.gather-coverage.v1",
+  "target": "/tmp/kc/xorq",
+  "nodesGathered": 240,
+  "unread": [
+    {
+      "path": "justfile",
+      "kind": "file",
+      "tool": "Just"
+    },
+    {
+      "path": "flake.nix",
+      "kind": "file",
+      "tool": "Nix flake"
+    }
+  ],
+  "silent": [],
+  "blind": [
+    {
+      "path": "python/xorq/backends/xorq_datafusion/tests/snapshots/test_cache",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/backends/sqlite/tests/snapshots/test_udf",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_packager/test_sdist_path_hexdigest",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_compiler/test_build_file_stability_https",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_compiler/test_generated_name_sanitization_memtable",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_compiler/test_build_file_stability_local",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_compiler/test_artifact_store_expr_hash",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_compiler/test_generated_name_sanitization_parquet",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "python/xorq/ibis_yaml/tests/snapshots/test_compiler/test_build_file_stability_and_relocatability",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    }
+  ],
+  "note": "A ratio computed over the nodes this gatherer could read says nothing about the surfaces listed here. A repo whose real verification lives in an unread surface reads exactly like a repo with no verification at all, and that ambiguity — not a low score — is the failure this list exists to prevent. These paths carry no verdict and no class: an unread surface produces no node, so there is nothing to classify. Read them by hand, or teach gather.ts to read them, before quoting the number."
+}

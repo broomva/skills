@@ -1,0 +1,11 @@
+{
+  "note": "The curve is a function of ordering, so the order is declared here rather than inferred.",
+  "order": [
+    "run-00-target-01.json",
+    "run-01-target-02.json",
+    "run-02-target-03.json",
+    "run-03-target-04.json",
+    "run-04-target-05.json",
+    "run-05-target-06.json"
+  ]
+}

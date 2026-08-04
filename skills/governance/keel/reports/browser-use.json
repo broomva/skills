@@ -1,0 +1,610 @@
+{
+  "target": "browser-use",
+  "revision": "b909fbfba0ae42790f8402dd3daecc8f265be246",
+  "generatedAt": "2026-07-25T02:46:11.681Z",
+  "nodes": [
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "default_language_version:\n  python: python3.11\n\nrepos:\n  - repo: https://github.com/asottile/yesqa\n    rev: v1.5.0\n    hooks:\n      - id: yesqa\n\n  - repo: https://github.com/codespell-project/codespell\n    rev: v2.4.1\n    hooks:\n      - id: codespell # See pyproject.toml for args\n        additional_dependencies:\n          - tomli\n\n  - repo: https://github.com/asottile/pyupgrade\n    rev: v3.20.0\n    hooks:\n      - id: pyupgrade\n        args: [--py311-plus]\n\n  # - repo: https://github.com/asottile/add-trailing-comma\n  #   rev: v3.1.0\n  #   hooks:\n  #     - id: add-trailing-comma\n\n  - repo: https://github.com/astral-sh/ruff-pre-commit\n    rev: v0.12.10\n    hooks:\n      - id: ruff-check\n        args: [ --fix ]\n      - id: ruff-format\n      # see pyproject.toml for more details on ruff config\n\n  - repo: https://github.com/RobertCraigie/pyright-python\n    rev: v1.1.404\n    hooks:\n    - id: pyright\n\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v6.0.0\n    hooks:\n      # check for basic syntax errors in python and data files\n      - id: check-ast\n      - id: check-toml\n      - id: check-yaml\n      - id: check-json\n      - id: check-merge-conflict\n      # check for bad files and folders\n      - id: check-symlinks\n      - id: destroyed-symlinks\n      - id: check-case-conflict\n      - id: check-illegal-windows-names\n      - id: check-shebang-scripts-are-executable\n      - id: mixed-line-ending\n      - id: fix-byte-order-marker\n      - id: end-of-file-fixer\n      # best practices enforcement\n      - id: detect-private-key\n      # - id: check-docstring-first\n      - id: debug-statements\n      - id: forbid-submodules\n      - id: check-added-large-files\n        args: [\"--maxkb=600\"]\n      # - id: name-tests-test\n      #   args: [\"--pytest-test-first\"]\n"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "pyproject.toml:119",
+      "raw": "[tool.ruff]\nline-length = 130\nfix = true"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:123",
+      "raw": "[tool.ruff.lint]\nselect = [\"ASYNC\", \"E\", \"F\", \"FAST\", \"I\", \"PLE\"]\nignore = [\n    \"ASYNC109\",\n    \"E101\",\n    \"E402\",\n    \"E501\",\n    \"F841\",\n    \"E731\",\n    \"W291\",\n] # TODO: determine if adding timeouts to all the unbounded async functions is needed / worth-it so we can un-ignore ASYNC109\nunfixable = [\"E101\", \"E402\", \"E501\", \"F841\", \"E731\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-format",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.format])",
+      "source": "pyproject.toml:136",
+      "raw": "[tool.ruff.format]\nquote-style = \"single\"\nindent-style = \"tab\"\nline-ending = \"lf\"\ndocstring-code-format = true\ndocstring-code-line-length = 140\nskip-magic-trailing-comma = false"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:144",
+      "raw": "[tool.pyright]\ntypeCheckingMode = \"basic\"\ninclude = [\"browser_use\", \"examples\", \"tests\"]\nexclude = [\n    \".venv/\",\n    \".venv*/\",\n    \".git/\",\n    \"__pycache__/\",\n    \"**/site-packages/\",\n    \"./test_*.py\",\n    \"./debug_*.py\",\n    \"private_example/\",\n    \"debug/*\",\n    \"tests/scripts/*\",\n    \"tests/old/*\",\n    \"browser_use/dom/playground/*\",\n    \"examples/use-cases/onepassword.py\",\n    \"browser_use/llm/oci_raw/*\",\n    \"browser_use/llm/tests/test_chat_models.py\",\n    \"browser_use/llm/tests/test_single_step.py\",\n    # Dynamic beta agent wrapper; covered by tests/ci/test_beta_agent.py.\n    \"browser_use/beta/service.py\",\n    \"tests/ci/test_beta_agent.py\",\n    \"product_extraction.py\",\n    \"discover/\",\n    \"list/\",\n]\nvenvPath = \".\"\nvenv = \".venv\"\nreportMissingTypeStubs = false"
+    },
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:190",
+      "raw": "[tool.pytest.ini_options]\ntimeout = 300\nasyncio_mode = \"auto\"\nasyncio_default_fixture_loop_scope = \"session\"\nasyncio_default_test_loop_scope = \"session\"\nmarkers = [\n    \"slow: marks tests as slow (deselect with `-m 'not slow'`)\",\n    \"integration: marks tests as integration tests\",\n    \"unit: marks tests as unit tests\",\n    \"asyncio: mark tests as async tests\",\n]\ntestpaths = [\"tests\"]\npython_files = [\"test_*.py\", \"*_test.py\"]\naddopts = \"-svx --strict-markers --tb=short --dist=loadscope\"\nlog_cli = true\nlog_cli_format = \"%(levelname)-8s [%(name)s] %(message)s\"\nfilterwarnings = [\n    \"ignore::pytest.PytestDeprecationWarning\",\n    \"ignore::DeprecationWarning\",\n]\nlog_level = \"DEBUG\""
+    },
+    {
+      "id": "tests/ci/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/ci/conftest.py",
+      "raw": "\"\"\"\nPytest configuration for browser-use CI tests.\n\nSets up environment variables to ensure tests never connect to production services.\n\"\"\"\n\nimport os\nimport socketserver\nimport tempfile\nfrom unittest.mock import AsyncMock\n\nimport pytest\nfrom dotenv import load_dotenv\nfrom pytest_httpserver import HTTPServer\n\n# Fix for httpserver hanging on shutdown - prevent blocking on socket close\n# This prevents tests from hanging when shutting down HTTP servers\nsocketserver.ThreadingMixIn.block_on_close = False\n# Also set daemon threads to prevent hanging\nsocketserver.ThreadingMixIn.daemon_threads = True\n\nfrom browser_use.agent.views import AgentOutput\nfrom browser_use.llm import BaseChatModel\nfrom browser_use.llm.views import ChatInvokeCompletion\nfrom browser_use.tools.service import Tools\n\n# Load environment variables before any imports\nload_dotenv()\n\n\n# Skip LLM API key verification for tests\nos.environ['SKIP_LLM_API_KEY_VERIFICATION'] = 'true'\n\nfrom bubus import BaseEvent\n\nfrom browser_use import Agent\nfrom browser_use.browser import BrowserProfile, BrowserSession\nfrom browser_use.sync.service import CloudSync\n\n\n@pytest.fixture(autouse=True)\ndef setup_test_environment():\n\t\"\"\"\n\tAutomatically set up test environment for all tests.\n\t\"\"\"\n\n\t# Create a temporary directory for test config (but not for extensions)\n\tconfig_dir = tempfile.mkdtemp(prefix='browseruse_tests_')\n\n\toriginal_env = {}\n\ttest_env_vars = {\n\t\t'SKIP_LLM_API_KEY_VERIFICATION': 'true',\n\t\t'ANONYMIZED_TELEMETRY': 'false',\n\t\t'BROWSER_USE_CLOUD_SYNC': 'true',\n\t\t'BROWSER_USE_CLOUD_API_URL': 'http://placeholder-will-be-replaced-by-specific-test-fixtures',\n\t\t'BROWSER_USE_CLOUD_UI_URL': 'http://placeholder-will-be-replaced-by-specific-test-fixtures',\n\t\t# Don't set BROWSER_USE_CONFIG_DIR anymore - let it use the default ~/.config/browseruse\n\t\t# This way extensions will be cached in ~/.config/browseruse/extensions\n\t}\n\n\tfor key, value in test_env_vars.items():\n\t\toriginal_env[key] = os.environ.get(key)\n\t\tos.environ[key] = value\n\n\tyield\n\n\t# Restore original environment\n\tfor key, value in original_env.items():\n\t\tif value is None:\n\t\t\tos.environ.pop(key, None)\n\t\telse:\n\t\t\tos.environ[key] = value\n\n\n# not a fixture, mock_llm() provides this in a fixture below, this is a helper so that it can accept args\ndef create_mock_llm(actions: list[str] | None = None) -> BaseChatModel:\n\t\"\"\"Create a mock LLM that returns specified actions or a default done action.\n\n\tArgs:\n\t\tactions: Optional list of JSON strings representing actions to return in sequence.\n\t\t\tIf not provided, returns a single done action.\n\t\t\tAfter all actions are exhausted, returns a done action.\n\n\tReturns:\n\t\tMock LLM that will return the actions in order, or just a done action if no actions provided.\n\t\"\"\"\n\ttools = Tools()\n\tActionModel = tools.registry.create_action_model()\n\tAgentOutputWithActions = AgentOutput.type_with_custom_actions(ActionModel)\n\n\tllm = AsyncMock(spec=BaseChatModel)\n\tllm.model = 'mock-llm'\n\tllm._verified_api_keys = True\n\n\t# Add missing properties from BaseChatModel protocol\n\tllm.provider = 'mock'\n\tllm.name = 'mock-llm'\n\tllm.model_name = 'mock-llm'  # Ensure this returns a string, not a mock\n\n\t# Default done action\n\tdefault_done_action = \"\"\"\n\t{\n\t\t\"thinking\": \"null\",\n\t\t\"evaluation_previous_goal\": \"Successfully completed the task\",\n\t\t\"memory\": \"Task completed\",\n\t\t\"next_goal\": \"Task completed\",\n\t\t\"action\": [\n\t\t\t{\n\t\t\t\t\"done\": {\n\t\t\t\t\t\"text\": \"Task completed successfully\",\n\t\t\t\t\t\"success\": true\n\t\t\t\t}\n\t\t\t}\n\t\t]\n\t}\n\t\"\"\"\n\n\t# Unified logic for both cases\n\taction_index = 0\n\n\tdef get_next_action() -> str:\n\t\tnonlocal action_index\n\t\tif actions is not None and action_index < len(actions):\n\t\t\taction = actions[action_index]\n\t\t\taction_index += 1\n\t\t\treturn action\n\t\telse:\n\t\t\treturn default_done_action\n\n\tasync def mock_ainvoke(*args, **kwargs):\n\t\t# Check if output_format is provided (2nd argument or in kwargs)\n\t\toutput_format = None\n\t\tif len(args) >= 2:\n\t\t\toutput_format = args[1]\n\t\telif 'output_format' in kwargs:\n\t\t\toutput_format = kwargs['outpu"
+    },
+    {
+      "id": ".github/workflows/stale-bot.yml#15-actions-stale-5bef64f19d7facfb25b37b414482c7164d639639-v9",
+      "kind": "ci_step",
+      "name": "actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9",
+      "source": ".github/workflows/stale-bot.yml:15",
+      "raw": "      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9\n        with:\n          # General settings\n          repo-token: ${{ secrets.GITHUB_TOKEN }}\n          \n          # Days before marking as stale (more lenient for AI/browser automation project)\n          days-before-stale: 60\n          days-before-close: 14\n          \n          # Different timing for PRs vs issues\n          days-before-pr-stale: 45\n          days-before-pr-close: 14\n          \n          # Stale labels\n          stale-issue-label: 'stale'\n          stale-pr-label: 'stale'\n          \n          # Remove stale label when there's activity\n          remove-stale-when-updated: true\n          remove-issue-stale-when-updated: true\n          remove-pr-stale-when-updated: true\n          \n          # Messages\n          stale-issue-message: |\n            👋 This issue has been automatically marked as stale because it hasn't had activity for 60 days.\n            \n            **⚡ We've made significant progress recently!** Please test with the latest version of browser-use to see if this issue has been resolved. If the issue persists, please let us know by commenting below.\n            \n            **To keep this issue open:**\n            - Add a comment explaining why this is still relevant after testing the latest version\n            - Add the `pinned` label if this is an important long-term issue\n            - Reference it in a PR if you're working on a fix\n            \n            **This will be automatically closed in 14 days** if no further activity occurs.\n            \n            Thanks for contributing to browser-use! 🤖 If you have questions, join our [Discord](https://discord.gg/uC9hDSbt).\n          \n          stale-pr-message: |\n            👋 This PR has been automatically marked as stale because it hasn't had activity for 45 days.\n            \n            **To keep this PR open:**\n            - Rebase against the latest main branch\n            - Address any review feedback or merge conflicts\n            - Add a comment explaining the current status\n            - Add the `work-in-progress` label if you're still actively working on this\n            \n            **This will be automatically closed in 14 days** if no further activity occurs.\n            \n            Thanks for contributing to browser-use! 🤖\n          \n          close-issue-message: |\n            🔒 This issue was automatically closed because it was stale for 14 days with no activity.\n            \n            **Don't worry!** If this issue is still relevant:\n            - **First, test with the latest version** - we've made tons of improvements recently!\n            - **Reopen it** if you have permissions and the issue persists\n            - **Create a fresh issue** with updated information if the problem still exists after testing the latest version\n            - **Join our [Discord](https://discord.gg/uC9hDSbt)** to discuss\n            \n            We appreciate your contribution to browser-use! 🤖\n          \n          close-pr-message: |\n            🔒 This PR was automatically closed because it was stale for 14 days with no activity.\n            \n            **Don't worry!** If you'd like to continue this work:\n            - **Reopen this PR** and rebase against main\n            - **Create a fresh PR** with updated changes\n            - **Join our [Discord](https://discord.gg/uC9hDSbt)** if you need help\n            \n            Thanks for contributing to browser-use! 🤖\n          \n          # Comprehensive exemptions for AI/browser automation project\n          exempt-issue-labels: 'pinned,security,bug,enhancement,good-first-issue,help-wanted,documentation,ci,breaking-change,feature-request,roadmap'\n          exempt-pr-labels: 'pinned,work-in-progress,wip,breaking-change,security,dependencies,ci'\n          exempt-milestones: true\n          exempt-all-assignees: true\n          exempt-all-pr-assignees: true\n          \n          # Don't mark issues/PRs stale if they have recent PR references\n          exempt-pr-author: true\n          \n          # Advanced settings\n          operations-per-run: 200  # More conservative to avoid rate limits\n          ascending: true  # Process oldest issues first\n          \n          # Enable debug output\n          debug-only: false\n          \n          # Only process issues/PRs, not drafts\n          include-only-assigned: false\n          \n          # Additional safety: don't close issues with many reactions (community interest)\n          ignore-issue-updates: false\n          ignore-pr-updates: false",
+      "hints": {
+        "action": "actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#38-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/publish.yml:38",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#39-create-pre-release-tag",
+      "kind": "ci_step",
+      "name": "Create pre-release tag",
+      "source": ".github/workflows/publish.yml:39",
+      "raw": "      - name: Create pre-release tag\n        run: |\n          git fetch --tags\n          latest_tag=$(git tag --list --sort=-v:refname | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?$' | head -n 1)\n          if [ -z \"$latest_tag\" ]; then\n            echo \"Failed to find the latest git tag from list:\" > /dev/stderr\n            git tag --list --sort=-v:refname\n            exit 1\n          else\n            # Bump the tag rc version\n            if [[ \"$latest_tag\" =~ ^([0-9]+)\\.([0-9]+)\\.([0-9]+)(rc([0-9]+))?$ ]]; then\n              major=\"${BASH_REMATCH[1]}\"\n              minor=\"${BASH_REMATCH[2]}\"\n              patch=\"${BASH_REMATCH[3]}\"\n              rc=\"${BASH_REMATCH[5]}\"\n              echo \"latest_tag: ${major}.${minor}.${patch}rc${rc:-0}\"\n              if [ -z \"$rc\" ]; then\n                # No rc, so bump patch and set rc=1            # 0.2.1 -> 0.2.2rc1\n                patch=$((patch + 1))\n                new_tag=\"${major}.${minor}.${patch}rc1\"\n              else\n                if [ \"$rc\" -ge 99 ]; then\n                  echo \"Error: rc version is already at 99 for tag $latest_tag, refusing to increment further.\" > /dev/stderr\n                  exit 1\n                fi\n                rc=$((rc + 1))\n                new_tag=\"${major}.${minor}.${patch}rc${rc}\"    # 0.2.1rc1 -> 0.2.1rc2\n              fi\n            else\n              echo \"Error: latest_tag '$latest_tag' does not match expected version pattern.\" > /dev/stderr\n              exit 1\n            fi\n          fi\n          echo \"new_tag: $new_tag\"\n          git tag $new_tag\n          git push origin $new_tag"
+    },
+    {
+      "id": ".github/workflows/publish.yml#88-verify-release-environment-is-protected-fail-closed",
+      "kind": "ci_step",
+      "name": "Verify release environment is protected (fail-closed)",
+      "source": ".github/workflows/publish.yml:88",
+      "raw": "      - name: Verify release environment is protected (fail-closed)\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        run: |\n          set -euo pipefail\n          ENV_NAME=\"release\"\n          if ! RESP=\"$(gh api -H 'Accept: application/vnd.github+json' \\\n              \"/repos/${GITHUB_REPOSITORY}/environments/${ENV_NAME}\" 2>/dev/null)\"; then\n            echo \"::error::Environment '${ENV_NAME}' does not exist (or is inaccessible). Create it at https://github.com/${GITHUB_REPOSITORY}/settings/environments/new with required reviewers and prevent_self_review enabled, then re-run.\"\n            exit 1\n          fi\n          HAS_REVIEWERS=\"$(echo \"$RESP\" | jq -r '[.protection_rules[]? | select(.type == \"required_reviewers\")] | length')\"\n          if [ \"${HAS_REVIEWERS:-0}\" -lt 1 ]; then\n            echo \"::error::Environment '${ENV_NAME}' exists but has no required-reviewers protection rule.\"\n            exit 1\n          fi\n          SELF_REVIEW_BLOCKED=\"$(echo \"$RESP\" | jq -r '[.protection_rules[]? | select(.type==\"required_reviewers\") | .prevent_self_review] | any')\"\n          if [ \"$SELF_REVIEW_BLOCKED\" != \"true\" ]; then\n            echo \"::error::Environment '${ENV_NAME}' must have prevent_self_review enabled. Without it, the gate collapses to one identity when the dispatcher is also a reviewer.\"\n            exit 1\n          fi\n          echo \"::notice::Environment '${ENV_NAME}' is protected with prevent_self_review. OK.\""
+    },
+    {
+      "id": ".github/workflows/publish.yml#110-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/publish.yml:110",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#111-astral-sh-setup-uv-v6",
+      "kind": "ci_step",
+      "name": "astral-sh/setup-uv@v6",
+      "source": ".github/workflows/publish.yml:111",
+      "raw": "      - uses: astral-sh/setup-uv@v6\n        with:\n          enable-cache: true\n          activate-environment: true",
+      "hints": {
+        "action": "astral-sh/setup-uv@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#115-uv-sync",
+      "kind": "ci_step",
+      "name": "uv sync",
+      "source": ".github/workflows/publish.yml:115",
+      "raw": "      - run: uv sync"
+    },
+    {
+      "id": ".github/workflows/publish.yml#117-uv-run-no-sync-ruff-check-no-fix-select-ple-quick-ch",
+      "kind": "ci_step",
+      "name": "uv run --no-sync ruff check --no-fix --select PLE # quick ch",
+      "source": ".github/workflows/publish.yml:117",
+      "raw": "      - run: uv run --no-sync ruff check --no-fix --select PLE # quick check for syntax errors to avoid waiting time doing the rest of the build"
+    },
+    {
+      "id": ".github/workflows/publish.yml#118-uv-build",
+      "kind": "ci_step",
+      "name": "uv build",
+      "source": ".github/workflows/publish.yml:118",
+      "raw": "      - run: uv build"
+    },
+    {
+      "id": ".github/workflows/publish.yml#130-uvx-playwright-install-chrome",
+      "kind": "ci_step",
+      "name": "uvx playwright install chrome",
+      "source": ".github/workflows/publish.yml:130",
+      "raw": "      - run: uvx playwright install chrome"
+    },
+    {
+      "id": ".github/workflows/publish.yml#131-uvx-playwright-install-chromium",
+      "kind": "ci_step",
+      "name": "uvx playwright install chromium",
+      "source": ".github/workflows/publish.yml:131",
+      "raw": "      - run: uvx playwright install chromium"
+    },
+    {
+      "id": ".github/workflows/publish.yml#137-uv-publish-trusted-publishing-always",
+      "kind": "ci_step",
+      "name": "uv publish --trusted-publishing always",
+      "source": ".github/workflows/publish.yml:137",
+      "raw": "      - run: uv publish --trusted-publishing always"
+    },
+    {
+      "id": ".github/workflows/publish.yml#138-push-to-stable-branch-if-stable-release",
+      "kind": "ci_step",
+      "name": "Push to stable branch (if stable release)",
+      "source": ".github/workflows/publish.yml:138",
+      "raw": "      - name: Push to stable branch (if stable release)\n        if: github.event_name == 'release' && !contains(github.ref_name, 'rc')\n        run: |\n          git checkout -b stable\n          git push origin -f stable"
+    },
+    {
+      "id": ".github/workflows/lint.yml#27-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/lint.yml:27",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/lint.yml#28-astral-sh-setup-uv-v5",
+      "kind": "ci_step",
+      "name": "astral-sh/setup-uv@v5",
+      "source": ".github/workflows/lint.yml:28",
+      "raw": "      - uses: astral-sh/setup-uv@v5\n        with:\n          enable-cache: true",
+      "hints": {
+        "action": "astral-sh/setup-uv@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/lint.yml#31-uv-run-ruff-check-no-fix-select-ple",
+      "kind": "ci_step",
+      "name": "uv run ruff check --no-fix --select PLE",
+      "source": ".github/workflows/lint.yml:31",
+      "raw": "      - run: uv run ruff check --no-fix --select PLE"
+    },
+    {
+      "id": ".github/workflows/lint.yml#37-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/lint.yml:37",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/lint.yml#38-astral-sh-setup-uv-v5",
+      "kind": "ci_step",
+      "name": "astral-sh/setup-uv@v5",
+      "source": ".github/workflows/lint.yml:38",
+      "raw": "      - uses: astral-sh/setup-uv@v5\n        with:\n          enable-cache: true",
+      "hints": {
+        "action": "astral-sh/setup-uv@v5"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/publish.yml#38-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#110-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#111-astral-sh-setup-uv-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#115-uv-sync",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/lint.yml#27-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/lint.yml#28-astral-sh-setup-uv-v5",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/lint.yml#37-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/lint.yml#38-astral-sh-setup-uv-v5",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "exit codes of pinned third-party programs (ruff, pyright, codespell, pyupgrade, yesqa, pre-commit-hooks) executed by the pre-commit runner against the committed working tree",
+        "actorCanWrite": false,
+        "argument": "This hook set is not decorative: .github/workflows/lint.yml:43 runs `uv run --no-sync pre-commit run --all-files --show-diff-on-failure` on every pull_request, so the gate is on the merge path. Each hook is a separate process fetched from an external repository at a declared rev and run over the files as committed; a violation makes that process exit non-zero and pre-commit propagates the failure, and a rewriting hook (ruff-format, end-of-file-fixer, fix-byte-order-marker) also fails the run because pre-commit treats a modified file as a failed hook. An author cannot make check-ast accept a syntax error, or detect-private-key ignore a key, without changing the file or changing the pinned hook config. Documented limits: the revs are mutable tags (v0.12.10, v1.1.404, v6.0.0) rather than SHAs, so the upstream owner — not the PR author — could move what runs; and the hook LIST itself is author-controlled, so several checks are commented out (add-trailing-comma, check-docstring-first, name-tests-test) and simply do not run."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml",
+        ".github/workflows/lint.yml:43",
+        ".github/workflows/lint.yml:16"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — this is a TOML table read by ruff, not a process that emits a pass/fail",
+        "actorCanWrite": false,
+        "argument": "`line-length = 130` and `fix = true` are parameters handed to a linter; the table is never executed and no exit code is derived from it. The signal-producing edges that read it are classified separately (.github/workflows/lint.yml:31 `ruff check --no-fix --select PLE`, and the ruff-check/ruff-format pre-commit hooks run at lint.yml:43). Filing it here is deliberate rather than convenient: counting a config table as a check would either add a phantom anchored edge or invent a producer that does not exist. Worth recording as shape, not as verdict: `fix = true` makes autofix the default, which is why the CI invocations must pass `--no-fix` to keep the run assertive rather than rewriting."
+      },
+      "evidence": [
+        "pyproject.toml:119",
+        ".github/workflows/lint.yml:31"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — a TOML rule-selection table consumed by ruff; it emits no verdict of its own",
+        "actorCanWrite": false,
+        "argument": "`select`/`ignore`/`unfixable` set which rules ruff enforces; the exit code that can block a merge is produced by the ruff process at .github/workflows/lint.yml:31 and by the ruff-check hook under lint.yml:43, both classified on their own. The table asserts nothing and cannot fail. It is, however, the actor-writable lever on the checks that do fire, and the narrowing here is real and should be read next to those verdicts: E501, F841 (unused variable), E731, E402, W291 and ASYNC109 are all ignored, and the standalone lint job at lint.yml:31 overrides `select` down to PLE alone, so the full rule set only gates via the pre-commit job."
+      },
+      "evidence": [
+        "pyproject.toml:123",
+        ".github/workflows/lint.yml:31",
+        ".github/workflows/lint.yml:43"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-format",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — a TOML style table (quote-style, indent-style, line-ending) consumed by the ruff formatter",
+        "actorCanWrite": false,
+        "argument": "This block chooses single quotes, tab indentation and LF line endings. It emits no signal, and what it configures is a rewriter: the ruff-format hook's job is to change files, not to make a claim about whether the program is correct. It does become failure-capable inside `pre-commit run --all-files --show-diff-on-failure` at .github/workflows/lint.yml:43 — a file the formatter rewrites fails the hook — but that gate is a statement about typography, not about correctness, and it is already carried by the .pre-commit-config.yaml verdict rather than by this table."
+      },
+      "evidence": [
+        "pyproject.toml:136",
+        ".pre-commit-config.yaml",
+        ".github/workflows/lint.yml:43"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — a TOML scope/strictness table read by pyright; the type checker's exit code is produced by the invocations elsewhere",
+        "actorCanWrite": false,
+        "argument": "`typeCheckingMode`, `include`, `exclude`, `venv` are inputs to pyright, not a verdict. The edges that actually gate are `uv run --no-sync pyright` at .github/workflows/lint.yml:54 and the pyright pre-commit hook at lint.yml:43, and those are where the anchored/self-referential question is decided. Recorded as shape because it directly bounds those edges: mode is `basic` (not strict), `reportMissingTypeStubs` is off, and the exclude list removes real product code from analysis — notably `browser_use/beta/service.py` together with `tests/ci/test_beta_agent.py`, plus browser_use/llm/oci_raw/* and two llm test modules. That narrowing is written by the same authors the checker is supposed to constrain."
+      },
+      "evidence": [
+        "pyproject.toml:144",
+        ".github/workflows/lint.yml:54",
+        ".github/workflows/lint.yml:43"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code — the CPython runtime executing the declared suite and the assertions in it",
+        "actorCanWrite": false,
+        "argument": "Unlike the linter tables above, this node is the declaration of the test suite itself (`testpaths = [\"tests\"]`, `python_files`), and that suite is executed on the merge path: .github/workflows/test.yaml:182 runs `pytest \"tests/ci/<file>.py\"` as a matrix job over every discovered test file, with `max_attempts: 1` and no continue-on-error, so a non-zero pytest exit fails the required job. Nothing an author writes in the module under test can turn a raised AssertionError or a segfaulting browser process into a pass without changing the test or the code. Documented limits, on the axis this does NOT cover: the oracle is co-authored — the assertions live in the same repository as the implementation, so the suite proves the code does what the tests say and not that the tests say the right thing; `addopts = \"-svx\"` stops at the first failure; `timeout = 300` and the job's 4-minute cap mean a slow suite is truncated by the clock; and tests/ci/conftest.py replaces the LLM with an AsyncMock returning canned JSON, so agent-behaviour tests exercise a scripted oracle rather than a real model."
+      },
+      "evidence": [
+        "pyproject.toml:190",
+        ".github/workflows/test.yaml:182",
+        ".github/workflows/test.yaml:100",
+        "tests/ci/conftest.py"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/ci/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — pytest fixtures and environment setup; the file contains no test and emits no pass/fail",
+        "actorCanWrite": false,
+        "argument": "This module sets env vars (SKIP_LLM_API_KEY_VERIFICATION, ANONYMIZED_TELEMETRY=false, placeholder cloud URLs), makes a temp config dir, disables blocking socket shutdown, and builds fixtures. It is harness provisioning: nothing here can fail in a way that says anything about the correctness of browser_use. The assertions it supports run under the pytest edge classified at pyproject.toml#tool-pytest-ini-options. What it does deserve recording is where it puts the write boundary for those assertions: `create_mock_llm` returns an AsyncMock whose responses are hard-coded JSON agent outputs authored in this file, so every test that drives the agent loop through `mock_llm` is scoring the code against a script the test author wrote, not against a model's behaviour — execution stays anchored, the oracle does not."
+      },
+      "evidence": [
+        "tests/ci/conftest.py",
+        ".github/workflows/test.yaml:182"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/stale-bot.yml#15-actions-stale-5bef64f19d7facfb25b37b414482c7164d639639-v9",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/stale reading issue/PR timestamps from the GitHub API and writing labels and comments back",
+        "actorCanWrite": false,
+        "argument": "Every input to this step is an inactivity timer (days-before-stale 60/45, days-before-close 14) and every output is a label, a comment, or a close. It makes no claim about whether any code, artifact or deployment is correct, and there is no pass/fail it could contribute to a merge decision — `debug-only: false` just means it acts for real. It is repository housekeeping, so it is excluded from the ratio rather than counted as a weak check. The pin is a full commit SHA, so the implementation is at least identified even though it lives outside this repo — but that is moot here, since the step asserts nothing regardless of what the action does internally."
+      },
+      "evidence": [
+        ".github/workflows/stale-bot.yml:15"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#39-create-pre-release-tag",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "bash + git, reading the repository's own tag list and writing a new tag back to origin",
+        "actorCanWrite": true,
+        "argument": "The step's purpose is mutation: compute the next rc version and `git tag` / `git push origin $new_tag`. It does contain `exit 1` branches, but every one of them fires on a property of the tag namespace the same maintainers push (no tag matched the version regex, or the rc counter hit 99) — never on a property of the code being released. So it asserts nothing about correctness and is excluded from the ratio rather than counted; the reason `actorCanWrite` is true here is recorded because the only thing it could be said to validate is an input the actor authored, which is why treating it as a check would have been the wrong call in the other direction."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:39-74",
+        ".github/workflows/publish.yml:35"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#88-verify-release-environment-is-protected-fail-closed",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "GitHub's environments API (`GET /repos/{repo}/environments/release`) — repository settings stored in GitHub's control plane, outside the git tree",
+        "actorCanWrite": false,
+        "argument": "The step asks GitHub for the release environment's protection_rules and exits 1 unless a required_reviewers rule exists AND prevent_self_review is true; `set -euo pipefail` plus the explicit `exit 1` on a failed API call make it fail closed if the environment is missing or unreadable. The value being read is not in the repository and is not writable by this job: GITHUB_TOKEN here carries contents/id-token/actions only, and changing environment protection needs repository-admin access through the settings UI. Nothing a PR author commits, and nothing an earlier step in this pipeline writes, can make an unprotected environment report as protected. Documented limit: a repository admin can turn the protection off — but then this step fails rather than silently passing, which is the property that makes it a real gate on the publish job at publish.yml:76."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:88-109",
+        ".github/workflows/publish.yml:79",
+        ".github/workflows/publish.yml:80-83"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#117-uv-run-no-sync-ruff-check-no-fix-select-ple-quick-ch",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — a linter binary parsing the committed source and returning non-zero on a violation",
+        "actorCanWrite": false,
+        "argument": "`--no-fix` means ruff reports instead of rewriting, so a PLE-class error (Python syntax / pyflakes-error rules) yields a non-zero exit, and with no `continue-on-error` and no `|| true` that failure stops the publish job before `uv build` at line 118 and before `uv publish` at line 137. The author cannot make a file with a syntax error report clean without editing the file or editing the pinned ruff configuration. Documented limit: `--select PLE` is a deliberately tiny rule set — this is a fast syntax tripwire, not the repository's lint gate, which lives in lint.yml."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:117",
+        ".github/workflows/publish.yml:118",
+        ".github/workflows/publish.yml:137"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#118-uv-build",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the uv/PEP 517 build-backend process exit code, running against pyproject.toml and the source tree",
+        "actorCanWrite": false,
+        "argument": "The build backend resolves the project metadata and assembles the sdist and wheel; malformed pyproject metadata, an unresolvable version, or a missing declared file makes the process exit non-zero, and with no failure suppression that stops the job before `uv publish` at line 137. The verdict is produced by the packaging toolchain executing over the committed tree, not by anything the authors assert about it. Documented limit — narrow scope, and it should never be read as more: a Python wheel build neither imports nor executes browser_use, so this says the package can be assembled, not that the code in it works."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:118",
+        ".github/workflows/publish.yml:137"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#130-uvx-playwright-install-chrome",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the playwright CLI downloading a Chrome build into the runner's cache",
+        "actorCanWrite": false,
+        "argument": "Pure machine preparation — it fetches a browser binary so later steps have one. Its only failure modes are network or CDN availability, which are properties of the runner's environment rather than of the repository, and no assertion about browser-use's correctness is derived from it. Note it is doing nothing for this job in particular: the test invocation it would have supported (`uv run pytest tests/ci/test_tools.py`) is commented out at publish.yml:134, so the download feeds no check at all in this workflow."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:130",
+        ".github/workflows/publish.yml:134"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#131-uvx-playwright-install-chromium",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the playwright CLI downloading a Chromium build into the runner's cache",
+        "actorCanWrite": false,
+        "argument": "Same shape as the chrome install one line above: a binary fetch that provisions the runner. It emits no verdict about the artifact being published, its failure modes are environmental, and the only step in this job that would have consumed the browser is commented out at publish.yml:134, so nothing downstream reads it."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:131",
+        ".github/workflows/publish.yml:134"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#137-uv-publish-trusted-publishing-always",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "PyPI's upload API accepting or rejecting the distribution, with the uploader identity minted as an OIDC token by GitHub's identity provider",
+        "actorCanWrite": false,
+        "argument": "`--trusted-publishing always` forces the OIDC path: the job exchanges a GitHub-signed id-token (permissions: id-token: write, publish.yml:82) for a short-lived PyPI credential, and PyPI decides whether the token's repository/workflow/environment claims match a configured trusted publisher. Neither the repository contents nor any earlier step in this pipeline can forge that token or overrule PyPI's decision, and PyPI also rejects a version that already exists or metadata it will not accept — a non-zero exit here stops the stable-branch push at line 138. Documented limit, and it is a real one: what the third party validates is publisher identity, version uniqueness and package metadata. It says nothing about whether the code in the wheel behaves. Confidence is held low deliberately because this step's primary role is the release action itself; the assertion is a by-product of it."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:137",
+        ".github/workflows/publish.yml:82",
+        ".github/workflows/publish.yml:138"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#138-push-to-stable-branch-if-stable-release",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git, writing a ref to origin",
+        "actorCanWrite": true,
+        "argument": "`git checkout -b stable` followed by `git push origin -f stable` is state mutation with no predicate: it force-moves a branch pointer to whatever commit the release was cut from. There is nothing here that can fail on a property of the code, and the `if:` guard is a condition on the triggering event, not a verification. It is excluded from the ratio; recorded separately is that this is the step which makes the `stable` branch a claim the release process writes about itself, so anything downstream that trusts `stable` is trusting an actor-set pointer rather than an independent signal."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:138-142"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/lint.yml#31-uv-run-ruff-check-no-fix-select-ple",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — the linter binary analysing the checked-out source and returning non-zero on a violation",
+        "actorCanWrite": false,
+        "argument": "This is the `lint-syntax` job's only real step and lint.yml triggers on `pull_request` (lint.yml:16), so its exit code is on the merge path. `--no-fix` keeps it reporting rather than rewriting, so committing a file with a Python syntax error or a pyflakes-error-class defect makes ruff exit non-zero and fails the job; no `|| true`, no continue-on-error, nothing to suppress it. The author would have to change the file or the pinned ruff configuration to get a clean result. Documented limit: `--select PLE` restricts this to the error-class subset, so it is a syntax tripwire; the broader rule set only runs through the pre-commit job at lint.yml:43."
+      },
+      "evidence": [
+        ".github/workflows/lint.yml:31",
+        ".github/workflows/lint.yml:16",
+        ".github/workflows/lint.yml:23"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 7,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 18,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 104,
+    "nodesSampled": 25,
+    "decidedByProbe": 8,
+    "decidedByAgent": 17,
+    "probesMinted": 2,
+    "probeLibrarySize": 12,
+    "tokensIn": 4501,
+    "tokensOut": 4939,
+    "tokensEstimated": true,
+    "wallClockMs": 543632
+  }
+}

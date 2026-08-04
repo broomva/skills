@@ -1,0 +1,5 @@
+{
+  "label": "synthetic FLAT corpus (5 runs)",
+  "synthetic": true,
+  "note": "The probe library grows and cost per node does NOT fall — the probes are narrow and each target is novel. This fixture exists so the flat path is exercised: curve.ts must publish a flat curve rather than assume a decline. No order.json: ordering falls back to Report.generatedAt."
+}

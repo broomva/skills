@@ -1,0 +1,9 @@
+{
+  "schema": "keel.gather-coverage.v1",
+  "target": "/tmp/kc/binius64",
+  "nodesGathered": 37,
+  "unread": [],
+  "silent": [],
+  "blind": [],
+  "note": "A ratio computed over the nodes this gatherer could read says nothing about the surfaces listed here. A repo whose real verification lives in an unread surface reads exactly like a repo with no verification at all, and that ambiguity — not a low score — is the failure this list exists to prevent. These paths carry no verdict and no class: an unread surface produces no node, so there is nothing to classify. Read them by hand, or teach gather.ts to read them, before quoting the number."
+}

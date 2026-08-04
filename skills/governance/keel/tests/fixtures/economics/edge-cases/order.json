@@ -1,0 +1,8 @@
+{
+  "note": "The curve is a function of ordering, so the order is declared here rather than inferred.",
+  "order": [
+    "run-00-empty.json",
+    "run-01-capped.json",
+    "run-02-plain.json"
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "schema": "keel.gather-coverage.v1",
+  "target": "/tmp/kc/wvlet",
+  "nodesGathered": 261,
+  "unread": [
+    {
+      "path": "flake.nix",
+      "kind": "file",
+      "tool": "Nix flake"
+    }
+  ],
+  "silent": [],
+  "blind": [
+    {
+      "path": "wvlet-cli-core/src/main/scala/wvlet/lang/cli",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-client/src/main/scala/wvlet/lang/api",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-api/src/test/scala/wvlet/lang/api",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-api/src/main/scala/wvlet/lang/api",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/test/scala/wvlet/lang/catalog",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/test/scala/wvlet/lang/model",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/test/scala/wvlet/lang/compiler",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/main/scala/wvlet/lang/catalog",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/main/scala/wvlet/lang/ext",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/main/scala/wvlet/lang/model",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-lang/src/main/scala/wvlet/lang/compiler",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-ui-playground/src/main/scala/wvlet/lang/ui",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-ui/src/test/scala/wvlet/lang/ui",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-ui/src/main/scala/wvlet/lang/ui",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-connector/src/test/scala/wvlet/lang/connector",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-connector/src/main/scala/wvlet/lang/connector",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-runner/src/test/scala/wvlet/lang/runner",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-runner/src/main/scala/wvlet/lang/runner",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-cli/src/test/scala/wvlet/lang/cli",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-cli/src/main/scala/wvlet/lang/cli",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvc/src/test/scala/wvlet/lang/native",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvc/src/main/scala/wvlet/lang/native",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-spec/src/test/scala/wvlet/lang/spec",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-server/src/test/scala/wvlet/lang/server",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-server/src/main/scala/wvlet/lang/server",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-http-server/src/test/scala/wvlet/lang/http",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-http-server/src/main/scala/wvlet/lang/http",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-ui-main/src/main/scala/wvlet/lang/ui",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-labs/src/main/scala/wvlet/lang/labs",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-test-util/src/main/scala/wvlet/lang/test",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "wvlet-sdk-js/src/main/scala/wvlet/lang/sdk",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    }
+  ],
+  "note": "A ratio computed over the nodes this gatherer could read says nothing about the surfaces listed here. A repo whose real verification lives in an unread surface reads exactly like a repo with no verification at all, and that ambiguity — not a low score — is the failure this list exists to prevent. These paths carry no verdict and no class: an unread surface produces no node, so there is nothing to classify. Read them by hand, or teach gather.ts to read them, before quoting the number."
+}

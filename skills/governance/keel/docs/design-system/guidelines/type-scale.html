@@ -1,0 +1,31 @@
+<!-- @keelCard group="Type" name="Scale and weight" subtitle="One display size is reserved for the ratio" height="330" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-5); }
+  .spec { display: flex; align-items: baseline; gap: var(--k-space-4); padding: var(--k-space-2) 0; border-bottom: 1px solid var(--k-line); }
+  .tok { flex: 0 0 auto; width: var(--k-space-24); font-family: var(--k-font-mono); font-size: var(--k-fs-micro); color: var(--k-ink-2); }
+  .note { margin-top: var(--k-space-4); font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+  <div class="spec"><span class="tok">fs-ratio</span><span style="font-size: var(--k-fs-h1); letter-spacing: var(--k-track-ratio); font-variant-numeric: tabular-nums">0.43 — clamp(64, 13vw, 128), reserved</span></div>
+  <div class="spec"><span class="tok">fs-display</span><span class="k-display" style="font-size: var(--k-fs-h1)">Page hero, tracking −0.022em</span></div>
+  <div class="spec"><span class="tok">fs-h1 / h2 / h3</span><span style="font-size: var(--k-fs-h3)">24 · 19 · 16</span></div>
+  <div class="spec"><span class="tok">fs-lede</span><span style="font-size: var(--k-fs-lede); color: var(--k-ink-2)">Subcopy, 19</span></div>
+  <div class="spec"><span class="tok">fs-body / ui</span><span style="font-size: var(--k-fs-body)">Prose 16 · dense report UI 15</span></div>
+  <div class="spec"><span class="tok">fs-sm / xs</span><span style="font-size: var(--k-fs-sm)">Arguments 14 · meta 12.5</span></div>
+  <div class="spec"><span class="tok">fs-micro</span><span class="k-eyebrow" style="margin: 0">Eyebrow · table header · 11</span></div>
+  <div class="spec"><span class="tok">weights</span><span>
+    <span style="font-weight: var(--k-fw-regular)">400 regular</span> ·
+    <span style="font-weight: var(--k-fw-medium)">500 medium</span> ·
+    <span style="font-weight: var(--k-fw-semibold)">600 semibold</span>
+  </span></div>
+  <p class="note">
+    No 700: on a near-black canvas heavy strokes bloom, and the halation costs more
+    legibility than the emphasis buys. <span class="k-mono">--k-fs-ratio</span> is for
+    the grounding ratio and nothing else — using it elsewhere puts a second number at
+    the same visual weight as the only number the artifact is about.
+  </p>
+</body></html>

@@ -1,0 +1,619 @@
+{
+  "target": "anthropic-quickstarts",
+  "revision": "370e18d4a20ff5fd4bc1a6bf11d5105b2383977c",
+  "generatedAt": "2026-07-25T03:58:05.194Z",
+  "nodes": [
+    {
+      "id": "customer-support-agent/package.json#dev",
+      "kind": "script",
+      "name": "dev",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"dev\": \"NEXT_PUBLIC_INCLUDE_LEFT_SIDEBAR=true NEXT_PUBLIC_INCLUDE_RIGHT_SIDEBAR=true next dev\""
+    },
+    {
+      "id": "customer-support-agent/package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"build\": \"NEXT_PUBLIC_INCLUDE_LEFT_SIDEBAR=true NEXT_PUBLIC_INCLUDE_RIGHT_SIDEBAR=true next build\""
+    },
+    {
+      "id": "customer-support-agent/package.json#start",
+      "kind": "script",
+      "name": "start",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"start\": \"next start\""
+    },
+    {
+      "id": "customer-support-agent/package.json#lint",
+      "kind": "script",
+      "name": "lint",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"lint\": \"next lint\""
+    },
+    {
+      "id": "customer-support-agent/package.json#dev-full",
+      "kind": "script",
+      "name": "dev:full",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"dev:full\": \"npm run dev\""
+    },
+    {
+      "id": "customer-support-agent/package.json#dev-left",
+      "kind": "script",
+      "name": "dev:left",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"dev:left\": \"NEXT_PUBLIC_INCLUDE_LEFT_SIDEBAR=true NEXT_PUBLIC_INCLUDE_RIGHT_SIDEBAR=false next dev\""
+    },
+    {
+      "id": "customer-support-agent/package.json#dev-right",
+      "kind": "script",
+      "name": "dev:right",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"dev:right\": \"NEXT_PUBLIC_INCLUDE_LEFT_SIDEBAR=false NEXT_PUBLIC_INCLUDE_RIGHT_SIDEBAR=true next dev\""
+    },
+    {
+      "id": "customer-support-agent/package.json#dev-chat",
+      "kind": "script",
+      "name": "dev:chat",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"dev:chat\": \"NEXT_PUBLIC_INCLUDE_LEFT_SIDEBAR=false NEXT_PUBLIC_INCLUDE_RIGHT_SIDEBAR=false next dev\""
+    },
+    {
+      "id": "customer-support-agent/package.json#build-full",
+      "kind": "script",
+      "name": "build:full",
+      "source": "customer-support-agent/package.json",
+      "raw": "\"build:full\": \"npm run build\""
+    },
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "files: ^computer-use-demo/\ndefault_stages: [pre-commit, pre-push]\nrepos:\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    rev: v2.3.0\n    hooks:\n      - id: check-yaml\n      - id: end-of-file-fixer\n      - id: trailing-whitespace\n  - repo: https://github.com/astral-sh/ruff-pre-commit\n    rev: v0.6.7\n    hooks:\n      - id: ruff\n        name: Run `ruff` to autofix lint errors\n        args: [--fix-only]\n      - id: ruff\n        name: Run `ruff` to format code\n        entry: ruff format --force-exclude\n      - id: ruff\n        name: Run `ruff` to lint code\n  - repo: https://github.com/RobertCraigie/pyright-python\n    rev: v1.1.384\n    hooks:\n      - id: pyright\n"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:1",
+      "raw": "[tool.pyright]\nvenvPath = \"computer-use-demo\"\nvenv = \".venv\"\nuseLibraryCodeForTypes = false"
+    },
+    {
+      "id": ".github/workflows/tests.yaml#20-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/tests.yaml:20",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yaml#21-astral-sh-ruff-action-v1",
+      "kind": "ci_step",
+      "name": "astral-sh/ruff-action@v1",
+      "source": ".github/workflows/tests.yaml:21",
+      "raw": "      - uses: astral-sh/ruff-action@v1\n        with:\n          src: \"computer-use-demo\"",
+      "hints": {
+        "action": "astral-sh/ruff-action@v1"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yaml#30-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/tests.yaml:30",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yaml#31-actions-setup-python-v5",
+      "kind": "ci_step",
+      "name": "actions/setup-python@v5",
+      "source": ".github/workflows/tests.yaml:31",
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          cache: \"pip\"\n          python-version: \"3.11.6\"",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yaml#35",
+      "kind": "ci_step",
+      "name": "|",
+      "source": ".github/workflows/tests.yaml:35",
+      "raw": "      - run: |\n          python -m venv .venv\n          source .venv/bin/activate\n          pip install -r dev-requirements.txt"
+    },
+    {
+      "id": ".github/workflows/tests.yaml#39-echo-pwd-venv-bin-github-path",
+      "kind": "ci_step",
+      "name": "echo \"$PWD/.venv/bin\" >> $GITHUB_PATH",
+      "source": ".github/workflows/tests.yaml:39",
+      "raw": "      - run: echo \"$PWD/.venv/bin\" >> $GITHUB_PATH"
+    },
+    {
+      "id": ".github/workflows/tests.yaml#40-jakebailey-pyright-action-v1",
+      "kind": "ci_step",
+      "name": "jakebailey/pyright-action@v1",
+      "source": ".github/workflows/tests.yaml:40",
+      "raw": "      - uses: jakebailey/pyright-action@v1\n        with:\n          working-directory: computer-use-demo",
+      "hints": {
+        "action": "jakebailey/pyright-action@v1"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yaml#49-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/tests.yaml:49",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yaml#50-actions-setup-python-v5",
+      "kind": "ci_step",
+      "name": "actions/setup-python@v5",
+      "source": ".github/workflows/tests.yaml:50",
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          cache: \"pip\"\n          python-version: \"3.11.6\"",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": "computer-use-demo/pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "computer-use-demo/pyproject.toml:10",
+      "raw": "[tool.pytest.ini_options]\npythonpath = \".\"\nasyncio_mode = \"auto\""
+    },
+    {
+      "id": "computer-use-demo/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "computer-use-demo/tests/conftest.py",
+      "raw": "import os\nfrom unittest import mock\n\nimport pytest\n\n\n@pytest.fixture(autouse=True)\ndef mock_screen_dimensions():\n    with mock.patch.dict(\n        os.environ, {\"HEIGHT\": \"768\", \"WIDTH\": \"1024\", \"DISPLAY_NUM\": \"1\"}\n    ):\n        yield\n"
+    },
+    {
+      "id": "computer-use-best-practices/pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "computer-use-best-practices/pyproject.toml:46",
+      "raw": "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]"
+    },
+    {
+      "id": "browser-use-demo/pytest.ini#pytest-ini",
+      "kind": "test_target",
+      "name": "pytest config (pytest.ini)",
+      "source": "browser-use-demo/pytest.ini",
+      "raw": "[pytest]\n# Test discovery patterns\npython_files = test_*.py\npython_classes = Test*\npython_functions = test_*\n\n# Test directories\ntestpaths = tests\n\n# Markers for test categorization\nmarkers =\n    integration: Integration tests that test multiple components\n    slow: Tests that take longer than usual to run\n    asyncio: Tests that use asyncio\n\n# Coverage settings\naddopts =\n    -v\n    --strict-markers\n    --tb=short\n    --disable-warnings\n    -p pytest_asyncio\n\n# Asyncio configuration\nasyncio_mode = auto\nasyncio_default_fixture_loop_scope = function\n\n# Minimum Python version\nminversion = 3.11\n\n# Ignore specific warnings\nfilterwarnings =\n    ignore::DeprecationWarning\n    ignore::PendingDeprecationWarning"
+    },
+    {
+      "id": "browser-use-demo/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "browser-use-demo/tests/conftest.py",
+      "raw": "\"\"\"Shared fixtures and configuration for tests.\"\"\"\n\nimport asyncio\nimport sys\nfrom pathlib import Path\nfrom unittest.mock import MagicMock, Mock, patch\n\nimport pytest\n\n# Add the parent directory to the path\nsys.path.insert(0, str(Path(__file__).parent.parent))\n\nfrom browser_use_demo.tools import ToolResult\n\n\n@pytest.fixture\ndef mock_streamlit():\n    \"\"\"Mock Streamlit module and session_state.\"\"\"\n    with patch(\"streamlit.session_state\") as mock_state:\n        # Initialize with default values\n        mock_state.hide_screenshots = False\n        mock_state.tools = {}\n        mock_state.messages = []\n        mock_state.api_key = \"test-key\"\n        mock_state.provider = MagicMock()\n        mock_state.event_loop = None\n\n        # Mock other streamlit components\n        with patch(\"streamlit.chat_message\") as mock_chat:\n            mock_chat.return_value.__enter__ = Mock()\n            mock_chat.return_value.__exit__ = Mock()\n\n            with patch(\"streamlit.markdown\") as mock_markdown:\n                with patch(\"streamlit.write\") as mock_write:\n                    with patch(\"streamlit.error\") as mock_error:\n                        with patch(\"streamlit.code\") as mock_code:\n                            with patch(\"streamlit.image\") as mock_image:\n                                yield {\n                                    \"session_state\": mock_state,\n                                    \"chat_message\": mock_chat,\n                                    \"markdown\": mock_markdown,\n                                    \"write\": mock_write,\n                                    \"error\": mock_error,\n                                    \"code\": mock_code,\n                                    \"image\": mock_image,\n                                }\n\n\n@pytest.fixture\ndef mock_browser_tool():\n    \"\"\"Mock BrowserTool to avoid Playwright dependencies.\"\"\"\n    with patch(\"browser_use_demo.tools.BrowserTool\") as mock_tool:\n        mock_instance = MagicMock()\n        mock_tool.return_value = mock_instance\n        yield mock_instance\n\n\n@pytest.fixture\ndef sample_tool_result():\n    \"\"\"Create sample ToolResult objects for testing.\"\"\"\n    return {\n        \"success\": ToolResult(output=\"Success message\"),\n        \"error\": ToolResult(error=\"Error message\"),\n        \"with_image\": ToolResult(\n            output=\"With screenshot\",\n            base64_image=\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==\",\n        ),\n        \"empty\": ToolResult(),\n        \"all_fields\": ToolResult(\n            output=\"Output text\",\n            error=\"Error text\",\n            base64_image=\"base64data\",\n            system=\"System message\",\n        ),\n    }\n\n\n@pytest.fixture\ndef sample_messages():\n    \"\"\"Provide various message structures for testing edge cases.\"\"\"\n    return [\n        # Normal messages\n        {\"role\": \"user\", \"content\": \"Hello\"},\n        {\"role\": \"assistant\", \"content\": \"Hi there!\"},\n        # Complex content structures\n        {\n            \"role\": \"user\",\n            \"content\": [\n                {\"type\": \"text\", \"text\": \"Multiple items\"},\n                {\"type\": \"image\", \"source\": \"data:image/png;base64,abc123\"},\n            ],\n        },\n        # Assistant with tool results\n        {\n            \"role\": \"assistant\",\n            \"content\": [\n                {\"type\": \"text\", \"text\": \"Let me help with that\"},\n                {\n                    \"type\": \"tool_use\",\n                    \"name\": \"browser\",\n                    \"input\": {\"url\": \"example.com\"},\n                },\n                {\"type\": \"tool_result\", \"tool_use_id\": \"tool_123\"},\n            ],\n        },\n        # Edge cases\n        {\"role\": \"user\", \"content\": \"\"},  # Empty content\n        {\"role\": \"assistant\", \"content\": None},  # None content\n        {\"role\": \"unknown\", \"content\": \"Unknown role\"},  # Unknown role\n        {\"role\": \"user\"},  # Missing content field\n        {\"content\": \"No role\"},  # Missing role field\n        # Unicode and special characters\n "
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/tests.yaml#20-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#30-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#31-actions-setup-python-v5",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#35",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#49-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#50-actions-setup-python-v5",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#dev",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `next dev` development server process (a long-running HTTP server), plus two NEXT_PUBLIC_* env assignments",
+        "actorCanWrite": null,
+        "argument": "The script starts Next.js in development mode and blocks serving requests until interrupted; it never terminates with a pass/fail verdict about the committed source. The only variation in its exit status comes from how the operator kills it, so no property of the code can make it succeed or fail. Nothing in amplify.yml or the three workflow files invokes it either."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:9",
+        "customer-support-agent/amplify.yml:6-13 (deploy runs `npm ci` then `npm run build`, never `dev`)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#build",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the `next build` process — Next 14.2.5 runs `tsc` over tsconfig.json (`strict: true`, no `typescript.ignoreBuildErrors` escape in next.config.mjs) and ESLint over .eslintrc.json before emitting, and exits non-zero on the first type or lint error",
+        "actorCanWrite": false,
+        "argument": "The exit code comes from the TypeScript compiler and ESLint executing against the committed sources; an author cannot make a type-incorrect file report clean without editing the file or editing the committed tsconfig.json / .eslintrc.json (both of which are diffable). This edge is on a real gating path: amplify.yml's build phase runs `npm run build`, and a non-zero exit fails the AWS Amplify deploy. Documented limit — it is a compile-and-lint gate only; no test executes here, and `next build` says nothing about runtime behaviour."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:10",
+        "customer-support-agent/tsconfig.json:6 (\"strict\": true), :7 (\"noEmit\": true)",
+        "customer-support-agent/next.config.mjs:1-15 (no typescript.ignoreBuildErrors / eslint.ignoreDuringBuilds)",
+        "customer-support-agent/amplify.yml:9",
+        "customer-support-agent/package.json:34 (next 14.2.5)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#start",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `next start` production server process",
+        "actorCanWrite": null,
+        "argument": "It serves an already-built .next directory over HTTP and runs until killed. It compares nothing, asserts nothing about correctness, and produces no terminating verdict; a broken application starts exactly as happily as a correct one."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:11"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ESLint process invoked by `next lint`, resolving the committed .eslintrc.json (`extends: next/core-web-vitals`)",
+        "actorCanWrite": false,
+        "argument": "ESLint parses the committed .ts/.tsx files and exits non-zero on any error-level rule violation; the author cannot make a violating file report clean without changing the file or the committed .eslintrc.json. Documented limits, and they are why confidence is low: (a) `next lint` is verify-mode, not `--fix`, so it does not rewrite; (b) nothing in the repository invokes this script — no workflow covers customer-support-agent (build.yaml and tests.yaml both filter `paths:` to `.github/**` and `computer-use-demo/**`) and amplify.yml runs only `npm run build`; the same ESLint pass does, however, run inside `next build`, which IS on the Amplify deploy path."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:12",
+        "customer-support-agent/.eslintrc.json:2",
+        ".github/workflows/tests.yaml:4-12 (path filter excludes customer-support-agent)",
+        ".github/workflows/build.yaml:5-14 (same path filter)"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#dev-full",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`npm run dev`, which re-enters the `dev` script and starts the `next dev` server",
+        "actorCanWrite": null,
+        "argument": "Descending one hop: this is a pure alias for the dev-server script at package.json:9. A blocking development server terminates on operator interrupt, not on a property of the code, so it cannot report a verdict about anything."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:13",
+        "customer-support-agent/package.json:9 (the aliased target)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#dev-left",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `next dev` development server process, with the right sidebar feature flag off",
+        "actorCanWrite": null,
+        "argument": "Identical causal path to `dev`: a blocking HTTP dev server started with a different NEXT_PUBLIC_* flag combination. Feature-flag permutation changes what is rendered, not whether anything is evaluated — nothing is compared, so nothing can fail."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:14"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#dev-right",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `next dev` development server process, with the left sidebar feature flag off",
+        "actorCanWrite": null,
+        "argument": "Same as `dev:left` — a long-running development server under a different NEXT_PUBLIC_* flag combination. It renders an application; it evaluates no property of the committed source and emits no pass/fail signal."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:15"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#dev-chat",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `next dev` development server process, with both sidebar feature flags off",
+        "actorCanWrite": null,
+        "argument": "The fourth permutation of the same dev-server invocation. A server that runs until interrupted produces no terminating verdict, so there is no signal here to trace to a producer inside or outside the write boundary."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:16"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "customer-support-agent/package.json#build-full",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "`npm run build` → the `next build` process, i.e. tsc + ESLint over the committed sources",
+        "actorCanWrite": false,
+        "argument": "Descending the alias: this re-enters package.json:10, so the signal has exactly the causal path of `build` — the TypeScript compiler and ESLint decide the exit code from the committed files under a committed tsconfig.json with `strict: true`, and Amplify's build phase fails the deploy on non-zero. Same documented limit: compile-and-lint only, no behavioural assertion."
+      },
+      "evidence": [
+        "customer-support-agent/package.json:17",
+        "customer-support-agent/package.json:10 (the aliased target)",
+        "customer-support-agent/amplify.yml:9"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff (v0.6.7) and pyright (v1.1.384) processes that pre-commit installs from pinned upstream revs and executes against the staged computer-use-demo files; check-yaml additionally parses each YAML file with a real parser",
+        "actorCanWrite": false,
+        "argument": "The hook exit codes come from analyzers running over the committed source at pinned revisions, so an author cannot make a lint error or a type error report clean without changing the file or changing a pinned rev in a reviewable diff. Two documented limits: (a) three of the six hooks (end-of-file-fixer, trailing-whitespace, `ruff --fix-only`, `ruff format`) are rewriters — pre-commit still fails when they modify a file, so they are falsifiable, but they assert formatting, not correctness; (b) enforcement is local-only — no workflow runs `pre-commit run --all-files` and there is no pre-commit.ci config, so a developer who never installs the hook, or who passes `git commit --no-verify`, is never touched by any of it."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml:10-24 (ruff v0.6.7, pyright v1.1.384)",
+        ".pre-commit-config.yaml:1 (files: ^computer-use-demo/)",
+        ".github/workflows/tests.yaml (no pre-commit job)",
+        "computer-use-demo/dev-requirements.txt:3 (pre-commit==3.8.0, installed locally)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright type checker, when invoked from the repository root — its exit code is decided by static analysis of the computer-use-demo sources against the interpreter environment named by venvPath/venv",
+        "actorCanWrite": false,
+        "argument": "This is configuration, not an invocation, so I traced its consumer: the only thing that reads THIS file is the pyright pre-commit hook (.pre-commit-config.yaml:21-24), which runs from the repo root. The CI pyright job does not read it — jakebailey/pyright-action@v1 runs with `working-directory: computer-use-demo` and therefore resolves computer-use-demo/pyproject.toml instead. So the producer is a real type checker whose verdict the author cannot forge, but the edge this config feeds is a bypassable local hook, not the merge gate. Confidence is deliberately low: anchored-with-low-confidence is the honest shape for a config block whose only consumer runs on developer machines. Second limit: `useLibraryCodeForTypes = false` suppresses inference from untyped dependencies, narrowing what the checker can detect."
+      },
+      "evidence": [
+        "pyproject.toml:1-4",
+        ".pre-commit-config.yaml:21-24 (pyright hook, run from repo root)",
+        ".github/workflows/tests.yaml:40-42 (CI pyright uses working-directory: computer-use-demo)",
+        "computer-use-demo/pyproject.toml:1-8 (the config CI actually resolves)"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#21-astral-sh-ruff-action-v1",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary the action installs, executing `ruff check` over the `computer-use-demo` source tree on the GitHub-hosted runner",
+        "actorCanWrite": false,
+        "argument": "The step's exit code is the linter's exit code over the checked-out source, and it is the only step in the `ruff` job that can fail, so it is the job's verdict on a pull request. A contributor cannot make a violating file pass without editing the file or adding a `[tool.ruff]` table (computer-use-demo/pyproject.toml currently declares none, so ruff runs its default E/F rule set). Documented limit, and the reason confidence is not higher: the action is referenced at the mutable tag `@v1`, not a commit SHA, so the implementation that actually runs is not pinned by this repository and is not present in the tree — I am reading the action's contract from its inputs (`src:`) rather than from its code."
+      },
+      "evidence": [
+        ".github/workflows/tests.yaml:21-23",
+        ".github/workflows/tests.yaml:14-19 (the ruff job has only checkout + this step)",
+        ".github/workflows/tests.yaml:3-6 (runs on pull_request touching computer-use-demo/**)",
+        "computer-use-demo/pyproject.toml (no [tool.ruff] table — default rules)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#39-echo-pwd-venv-bin-github-path",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the runner's `echo` builtin appending a directory string to the GITHUB_PATH file",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to prepend the virtualenv's bin directory to PATH so the following pyright/pytest step resolves the installed tools. It reads no property of the committed source and performs no comparison — a string append to a runner-managed file succeeds regardless of whether the code is correct. Any assertion in this job is made by the step that runs afterwards."
+      },
+      "evidence": [
+        ".github/workflows/tests.yaml:39",
+        ".github/workflows/tests.yaml:35-38 (the venv it is pointing at)",
+        ".github/workflows/tests.yaml:40 (the step that consumes the PATH)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yaml#40-jakebailey-pyright-action-v1",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright type checker executing over computer-use-demo, resolving computer-use-demo/pyproject.toml's [tool.pyright] table and the .venv built two steps earlier",
+        "actorCanWrite": false,
+        "argument": "The exit code comes from static analysis of the committed Python sources; a contributor cannot make a type error disappear without changing the code or changing a reviewable config key. It is the final and only assertion step of the `pyright` job, so it is what turns that job red on a pull request touching computer-use-demo/**. Two documented limits: the action is at the mutable tag `@v1` rather than a SHA, so its body is neither in the tree nor pinned; and the effective config sets `useLibraryCodeForTypes = false` and `reportPrivateImportUsage = false` in default (basic) mode, which narrows what the checker will flag."
+      },
+      "evidence": [
+        ".github/workflows/tests.yaml:40-42",
+        ".github/workflows/tests.yaml:24-28 (job defaults working-directory: computer-use-demo)",
+        "computer-use-demo/pyproject.toml:1-8",
+        ".github/workflows/tests.yaml:35-39 (venv + PATH the checker runs against)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "computer-use-demo/pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the CPython interpreter running the committed tests under pytest 8.3.3 — `pytest tests --junitxml=junit/test-results.xml` in the `pytest` job",
+        "actorCanWrite": false,
+        "argument": "I traced this config to a real invocation: tests.yaml:59 runs pytest in computer-use-demo on every pull request touching that directory, and the runner's exit code — decided by whether the committed loop_test.py / streamlit_test.py / tools tests raise — turns the job red. The config itself only sets pythonpath and asyncio_mode; it does not weaken any assertion. Documented limit (the oracle axis): the assertions were authored by the same contributors as the implementation, so execution independence holds while the specification does not — the suite proves the code does what the tests say, not that the tests say the right thing."
+      },
+      "evidence": [
+        "computer-use-demo/pyproject.toml:10-12",
+        ".github/workflows/tests.yaml:59",
+        ".github/workflows/tests.yaml:43-47",
+        "computer-use-demo/dev-requirements.txt:4-5 (pytest==8.3.3, pytest-asyncio==0.23.6)",
+        "computer-use-demo/tests/ (loop_test.py, streamlit_test.py, tools/)"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "computer-use-demo/tests/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "an autouse pytest fixture that patches os.environ with HEIGHT/WIDTH/DISPLAY_NUM for the duration of every test",
+        "actorCanWrite": null,
+        "argument": "The whole file is one `mock.patch.dict` fixture and its yield — it contains no assert, no `def test_`, and no collection hook that can fail. It cannot turn the suite red; every assertion in this job lives in the test modules the fixture merely sets up. Worth naming rather than crediting: what it does do is substitute fabricated screen dimensions for the real environment, so it narrows what the tests it supports can observe."
+      },
+      "evidence": [
+        "computer-use-demo/tests/conftest.py:1-15",
+        "computer-use-demo/tests/conftest.py:8-12 (mock.patch.dict of HEIGHT/WIDTH/DISPLAY_NUM)"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "computer-use-best-practices/pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the CPython interpreter running the 16 committed test modules under pytest, when a developer invokes it by hand",
+        "actorCanWrite": false,
+        "argument": "The suite is real — tests/ holds 16 test_*.py modules with executed assertions, and pytest's exit code is decided by the interpreter, which no contributor can write to without changing the code or the tests. The limit is enforcement, and it is severe enough that I am recording it here rather than in prose: NOTHING in this repository invokes it. Both workflows filter `paths:` to `.github/**` and `computer-use-demo/**`, the pre-commit config filters `files: ^computer-use-demo/`, and there is no Makefile, tox.ini or noxfile — the only invocation anywhere is `python -m pytest` in the subproject README. So the producer is anchored while the edge gates no merge; low confidence is the honest expression of that gap, and I have deliberately NOT filed it under not_a_check, which would have removed it from the denominator and inflated the score."
+      },
+      "evidence": [
+        "computer-use-best-practices/pyproject.toml:46-47",
+        "computer-use-best-practices/tests/ (16 test_*.py modules)",
+        "computer-use-best-practices/README.md:427 (`python -m pytest`, manual)",
+        ".github/workflows/tests.yaml:4-12 and .github/workflows/build.yaml:5-14 (path filters exclude this directory)",
+        ".pre-commit-config.yaml:1 (files: ^computer-use-demo/)"
+      ],
+      "confidence": 0.45,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "browser-use-demo/pytest.ini#pytest-ini",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the CPython interpreter running tests/test_*.py under pytest with `--strict-markers`, when a developer invokes it by hand",
+        "actorCanWrite": false,
+        "argument": "Four committed test modules are discovered by this config and their assertions are decided by the runtime; `--strict-markers` additionally makes an undeclared marker a hard error rather than a warning, so the config is falsifiable on its own terms. Same enforcement limit as computer-use-best-practices, verified the same way: no workflow covers browser-use-demo (both workflows filter to `.github/**` and `computer-use-demo/**`), build.sh only runs `docker build`, and there is no Makefile or tox config — so this suite gates no merge and its only documented invocation is `pytest tests/` in tests/README.md. Confidence is low for exactly that reason. Second limit: `--disable-warnings` and blanket `filterwarnings` ignores suppress deprecation signal the suite would otherwise surface."
+      },
+      "evidence": [
+        "browser-use-demo/pytest.ini:1-40",
+        "browser-use-demo/tests/ (test_integration.py, test_message_renderer.py, test_sampling_loop.py, test_streamlit_helpers.py)",
+        "browser-use-demo/tests/README.md:19 (`pytest tests/`, manual)",
+        "browser-use-demo/build.sh:5 (docker build only)",
+        ".github/workflows/tests.yaml:4-12 (path filter excludes browser-use-demo)"
+      ],
+      "confidence": 0.45,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "browser-use-demo/tests/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "pytest fixtures that patch streamlit's module surface and BrowserTool with MagicMock objects, plus a sys.path insert",
+        "actorCanWrite": null,
+        "argument": "The file defines fixtures and mutates sys.path; it contains no assert and no test function, so it can never turn a run red — the assertions live in the four test modules it feeds. It is also worth naming that these fixtures replace BrowserTool and every streamlit call with mocks, so the suite they support never exercises the real Playwright or Streamlit paths; that weakens the oracle of the tests downstream, but it is not itself a check."
+      },
+      "evidence": [
+        "browser-use-demo/tests/conftest.py:1-60",
+        "browser-use-demo/tests/conftest.py (mock_streamlit and mock_browser_tool fixtures; patch of browser_use_demo.tools.BrowserTool)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 10,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 15,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 62,
+    "nodesSampled": 25,
+    "decidedByProbe": 6,
+    "decidedByAgent": 19,
+    "probesMinted": 3,
+    "probeLibrarySize": 29,
+    "tokensIn": 2612,
+    "tokensOut": 5144,
+    "tokensEstimated": true,
+    "wallClockMs": 510257
+  }
+}

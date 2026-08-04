@@ -1,0 +1,5 @@
+{
+  "label": "synthetic malformed-economics corpus (2 runs, 1 usable)",
+  "synthetic": true,
+  "note": "run-01 declares a run report whose economics is missing nodesSampled. It must be EXCLUDED and DISCLOSED \u2014 never plotted as a gap captioned 'measured', and never allowed to abort SVG rendering after curve.json has already been written."
+}

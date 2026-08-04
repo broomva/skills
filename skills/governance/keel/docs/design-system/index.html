@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Keel — design system</title>
+<link rel="icon" type="image/png" href="../../skills/keel/design/mark-compact.png" />
+<meta name="description" content="Foundations, components, and specimen cards for the Keel design language." />
+<link rel="stylesheet" href="../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../skills/keel/design/keel.css" />
+<style>
+  .shell { max-width: var(--k-measure-report); margin: 0 auto; padding: var(--k-space-16) var(--k-space-6) var(--k-space-24); }
+  .group { margin-top: var(--k-space-16); }
+  .group > h2 { margin: 0 0 var(--k-space-5); font-size: var(--k-fs-h2); letter-spacing: var(--k-track-tight); }
+  .card { margin-bottom: var(--k-space-6); border: 1px solid var(--k-line); border-radius: var(--k-r-xl); overflow: hidden; background: var(--k-bg-1); }
+  .card__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--k-space-4); padding: var(--k-space-3) var(--k-space-5); border-bottom: 1px solid var(--k-line); }
+  .card__name { font-size: var(--k-fs-sm); font-weight: var(--k-fw-medium); }
+  .card__sub { font-size: var(--k-fs-xs); color: var(--k-ink-2); text-align: right; }
+  .card iframe { display: block; width: 100%; border: 0; background: var(--k-bg-0); }
+  .files { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--k-space-24), 1fr)); gap: var(--k-space-3); margin-top: var(--k-space-6); }
+  .file { padding: var(--k-space-4); border: 1px solid var(--k-line); border-radius: var(--k-r-lg); }
+  .file b { display: block; font-family: var(--k-font-mono); font-size: var(--k-fs-xs); font-weight: var(--k-fw-regular); color: var(--k-accent); margin-bottom: var(--k-space-2); }
+  .file span { font-size: var(--k-fs-xs); color: var(--k-ink-2); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <p class="k-wordmark" style="display:flex;align-items:center;gap:var(--k-space-3)"><img src="../../skills/keel/design/mark-compact.png" alt="" style="height:var(--k-space-8);width:auto;display:block;border-radius:var(--k-r-md)" />Keel · design system</p>
+
+  <h1 class="k-display" style="margin-top: var(--k-space-6)">Never let the artifact make a claim it cannot show the evidence&nbsp;for.</h1>
+
+  <p class="k-lede" style="margin-top: var(--k-space-6)">
+    Oasis's rigor, Keel's register. The structure — layered tokens, specimen cards, an
+    agent-facing component brief, a machine-checkable adherence gate — is adapted from
+    the Oasis Design System. The look is inverted on purpose: Oasis sells calm, Keel
+    reports that your pipeline is green and nothing has been verified.
+  </p>
+
+  <p style="margin-top: var(--k-space-6)">
+    <a href="./standards.html">Read the standards</a> — seven principles, voice,
+    foundations, enforcement, and the constraints that produced them.
+  </p>
+
+  <div class="files">
+    <div class="file">
+      <b>skills/keel/design/tokens.css</b>
+      <span>The canonical values. There is no second copy — <span class="k-mono">site/</span> carries a byte-identical duplicate under a diff gate.</span>
+    </div>
+    <div class="file">
+      <b>skills/keel/design/keel.css</b>
+      <span>Element defaults and component classes. Every value is a <span class="k-mono">var()</span>.</span>
+    </div>
+    <div class="file">
+      <b>skills/keel/design/README.md</b>
+      <span>The component contract, written for the agent that emits the markup.</span>
+    </div>
+    <div class="file">
+      <b>make design-audit</b>
+      <span>The gate. Executed comparison, not an assertion this repo also writes.</span>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Brand</h2>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">The mark</span>
+        <span class="card__sub">A ledger, and one cell outside it</span>
+      </div>
+      <iframe src="./guidelines/brand-mark.html" height="360" title="The Keel mark"></iframe>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Components</h2>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Grounding ratio + node graph</span>
+        <span class="card__sub">The denominator never leaves the screen</span>
+      </div>
+      <iframe src="./guidelines/component-ratio.html" height="660" title="Grounding ratio and node graph"></iframe>
+    </div>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Verdict row</span>
+        <span class="card__sub">A class without its causal path is not a verdict</span>
+      </div>
+      <iframe src="./guidelines/component-verdict.html" height="960" title="Verdict row"></iframe>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Color</h2>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Verdict classes</span>
+        <span class="card__sub">Four, matching the frozen schema</span>
+      </div>
+      <iframe src="./guidelines/color-verdicts.html" height="270" title="Verdict class colors"></iframe>
+    </div>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Canvas, ink, accent</span>
+        <span class="card__sub">Elevation is a background step plus a hairline</span>
+      </div>
+      <iframe src="./guidelines/color-canvas.html" height="330" title="Canvas, ink and accent"></iframe>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Type</h2>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Provenance: mono vs sans</span>
+        <span class="card__sub">Mono is quoted from the world; sans is Keel talking</span>
+      </div>
+      <iframe src="./guidelines/type-provenance.html" height="260" title="Type provenance"></iframe>
+    </div>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Scale and weight</span>
+        <span class="card__sub">One display size is reserved for the ratio</span>
+      </div>
+      <iframe src="./guidelines/type-scale.html" height="330" title="Type scale"></iframe>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>Foundations</h2>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Space, radius, marks</span>
+        <span class="card__sub">4px grid · small radii · square marks</span>
+      </div>
+      <iframe src="./guidelines/space-radius.html" height="300" title="Space and radius"></iframe>
+    </div>
+
+    <div class="card">
+      <div class="card__head">
+        <span class="card__name">Motion</span>
+        <span class="card__sub">Measurement, not delight — hover the swatches</span>
+      </div>
+      <iframe src="./guidelines/motion.html" height="200" title="Motion"></iframe>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

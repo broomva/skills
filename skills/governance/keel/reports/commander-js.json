@@ -1,0 +1,522 @@
+{
+  "target": "commander-js",
+  "revision": "ba6d13ddb4243e5913367734f8c159089ffe7834",
+  "generatedAt": "2026-07-25T03:48:59.993Z",
+  "nodes": [
+    {
+      "id": "package.json#check",
+      "kind": "script",
+      "name": "check",
+      "source": "package.json",
+      "raw": "\"check\": \"npm run check:type && npm run check:lint && npm run check:format\""
+    },
+    {
+      "id": "package.json#check-format",
+      "kind": "script",
+      "name": "check:format",
+      "source": "package.json",
+      "raw": "\"check:format\": \"prettier --check .\""
+    },
+    {
+      "id": "package.json#check-lint",
+      "kind": "script",
+      "name": "check:lint",
+      "source": "package.json",
+      "raw": "\"check:lint\": \"eslint .\""
+    },
+    {
+      "id": "package.json#check-type",
+      "kind": "script",
+      "name": "check:type",
+      "source": "package.json",
+      "raw": "\"check:type\": \"npm run check:type:js && npm run check:type:ts\""
+    },
+    {
+      "id": "package.json#check-type-ts",
+      "kind": "script",
+      "name": "check:type:ts",
+      "source": "package.json",
+      "raw": "\"check:type:ts\": \"tsd && tsc -p tsconfig.ts.json\""
+    },
+    {
+      "id": "package.json#check-type-js",
+      "kind": "script",
+      "name": "check:type:js",
+      "source": "package.json",
+      "raw": "\"check:type:js\": \"tsc -p tsconfig.js.json\""
+    },
+    {
+      "id": "package.json#fix",
+      "kind": "script",
+      "name": "fix",
+      "source": "package.json",
+      "raw": "\"fix\": \"npm run fix:lint && npm run fix:format\""
+    },
+    {
+      "id": "package.json#fix-format",
+      "kind": "script",
+      "name": "fix:format",
+      "source": "package.json",
+      "raw": "\"fix:format\": \"prettier --write .\""
+    },
+    {
+      "id": "package.json#fix-lint",
+      "kind": "script",
+      "name": "fix:lint",
+      "source": "package.json",
+      "raw": "\"fix:lint\": \"eslint --fix .\""
+    },
+    {
+      "id": "package.json#test",
+      "kind": "script",
+      "name": "test",
+      "source": "package.json",
+      "raw": "\"test\": \"node --test && npm run check:type:ts\""
+    },
+    {
+      "id": "package.json#test-all",
+      "kind": "script",
+      "name": "test-all",
+      "source": "package.json",
+      "raw": "\"test-all\": \"node --test && npm run check\""
+    },
+    {
+      "id": ".github/workflows/codeql-analysis.yml#28-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout repository",
+      "source": ".github/workflows/codeql-analysis.yml:28",
+      "raw": "    - name: Checkout repository\n      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/codeql-analysis.yml#32-initialize-codeql",
+      "kind": "ci_step",
+      "name": "Initialize CodeQL",
+      "source": ".github/workflows/codeql-analysis.yml:32",
+      "raw": "    - name: Initialize CodeQL\n      uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0\n      with:\n        languages: ${{ matrix.language }}\n        # If you wish to specify custom queries, you can do so here or in a config file.\n        # By default, queries listed here will override any specified in a config file.\n        # Prefix the list here with \"+\" to use these queries and those in the config file.\n        # queries: ./path/to/local/query, your-org/your-repo/queries@main",
+      "hints": {
+        "action": "github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0"
+      }
+    },
+    {
+      "id": ".github/workflows/codeql-analysis.yml#43-autobuild",
+      "kind": "ci_step",
+      "name": "Autobuild",
+      "source": ".github/workflows/codeql-analysis.yml:43",
+      "raw": "    - name: Autobuild\n      uses: github/codeql-action/autobuild@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0",
+      "hints": {
+        "action": "github/codeql-action/autobuild@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0"
+      }
+    },
+    {
+      "id": ".github/workflows/codeql-analysis.yml#57-perform-codeql-analysis",
+      "kind": "ci_step",
+      "name": "Perform CodeQL Analysis",
+      "source": ".github/workflows/codeql-analysis.yml:57",
+      "raw": "    - name: Perform CodeQL Analysis\n      uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0",
+      "hints": {
+        "action": "github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yml#19-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "source": ".github/workflows/tests.yml:19",
+      "raw": "    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yml#20-use-node-js-matrix-node-version",
+      "kind": "ci_step",
+      "name": "Use Node.js ${{ matrix.node-version }}",
+      "source": ".github/workflows/tests.yml:20",
+      "raw": "    - name: Use Node.js ${{ matrix.node-version }}\n      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0\n      with:\n        cache: 'npm'\n        node-version: ${{ matrix.node-version }}",
+      "hints": {
+        "action": "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0"
+      }
+    },
+    {
+      "id": ".github/workflows/tests.yml#26-npm-install",
+      "kind": "ci_step",
+      "name": "npm install",
+      "source": ".github/workflows/tests.yml:26",
+      "raw": "    - name: npm install\n      run: npm ci"
+    },
+    {
+      "id": ".github/workflows/tests.yml#28-npm-test",
+      "kind": "ci_step",
+      "name": "npm test",
+      "source": ".github/workflows/tests.yml:28",
+      "raw": "    - name: npm test\n      run: npm test"
+    },
+    {
+      "id": ".github/workflows/tests.yml#30-npm-run-check",
+      "kind": "ci_step",
+      "name": "npm run check",
+      "source": ".github/workflows/tests.yml:30",
+      "raw": "    - name: npm run check\n      run: npm run check"
+    },
+    {
+      "id": ".github/dependabot.yml#dependabot-yml",
+      "kind": "ci_step",
+      "name": "dependency automation (dependabot.yml)",
+      "source": ".github/dependabot.yml",
+      "raw": "version: 2\nupdates:\n  - package-ecosystem: \"npm\"\n    target-branch: \"develop\"\n    directory: \"/\"\n    schedule:\n      interval: \"monthly\"\n  - package-ecosystem: \"github-actions\"\n    target-branch: \"develop\"\n    directory: \"/\"\n    schedule:\n      interval: \"weekly\"\n"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "package.json#check-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the static-analysis tool's process exit code — a linter or type checker parsing the checked-out source and returning non-zero on a violation",
+        "actorCanWrite": false,
+        "argument": "The step shells out to a static analyser (ruff check, eslint, mypy, pyright, flake8, pylint, golangci-lint, cargo clippy, biome check, staticcheck, tsc --noEmit) over the committed tree. The verdict is computed by that program from the source text, so an author cannot make a violating file report clean without changing the file or changing the pinned analyser configuration — the signal's producer is the interpreter/binary, not any claim the repository makes about itself. Documented limit: the RULE SET is author-controlled (select/ignore/exclude lists live in the repo), so this is anchored on the execution axis while the scope of what gets enforced sits inside the write boundary."
+      },
+      "evidence": [
+        ".github/workflows/lint.yml:31"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "probe",
+      "probeId": "static-analysis-check-invocation"
+    },
+    {
+      "nodeId": ".github/workflows/codeql-analysis.yml#28-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yml#19-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yml#20-use-node-js-matrix-node-version",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": "package.json#check",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the shell's && chain propagating the exit codes of tsc, eslint and prettier --check, each executing over the committed tree",
+        "actorCanWrite": false,
+        "argument": "This is an aggregate, so I descended rather than classifying the wrapper: it expands to check:type (tsc -p tsconfig.js.json, then tsd + tsc -p tsconfig.ts.json), check:lint (eslint .) and check:format (prettier --check .). Every leaf is a program computing a verdict from the source text, and the shell's && short-circuit means any non-zero leaf becomes this target's exit code — an author cannot make a type error or a lint violation report clean without editing the file or the pinned config. The CI job runs this exact target at .github/workflows/tests.yml:30 on push and pull_request, so the exit code is on the merge path. DOCUMENTED LIMIT: the rule sets (eslint.config.js, tsconfig*.json, .prettierrc.js) live inside the write boundary, so what is anchored is the enforcement, not the choice of what gets enforced."
+      },
+      "evidence": [
+        "package.json:12 (\"check\": \"npm run check:type && npm run check:lint && npm run check:format\")",
+        "package.json:13-16 (check:format, check:lint, check:type leaves)",
+        ".github/workflows/tests.yml:30-31 (run: npm run check)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#check-format",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the prettier process's exit code, computed by re-formatting each committed file in memory and comparing the result to the bytes on disk",
+        "actorCanWrite": false,
+        "argument": "`--check` is the verify mode, not the rewrite mode: prettier prints the offending paths and exits 1 without touching the tree, so the signal is a genuine falsifiable comparison performed by the formatter binary against the committed bytes. An author cannot make an unformatted file pass without reformatting it or editing .prettierrc.js / .prettierignore. It reaches the merge path through `npm run check` at .github/workflows/tests.yml:30. DOCUMENTED LIMIT: what this asserts is formatting agreement only — it says nothing about whether the code is correct, and the style rules themselves are in-repo."
+      },
+      "evidence": [
+        "package.json:13 (\"check:format\": \"prettier --check .\")",
+        ".prettierrc.js",
+        ".github/workflows/tests.yml:30-31"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#check-type",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the TypeScript compiler's exit code, from two tsc invocations (one over the JavaScript sources with checkJs, one over the TypeScript declarations) plus tsd",
+        "actorCanWrite": false,
+        "argument": "Descending: this expands to check:type:js (`tsc -p tsconfig.js.json`) and check:type:ts (`tsd && tsc -p tsconfig.ts.json`). tsconfig.json sets allowJs+checkJs+noEmit and skipLibCheck:false, so tsc actually type-checks lib/**/*.js and the hand-written typings/index.d.ts; the verdict is computed by the compiler from the source and cannot be talked into passing. Chained with &&, so either compiler failure becomes this target's exit code, and CI runs it via `npm run check`. DOCUMENTED LIMIT: strictness knobs (noImplicitAny:false, strictNullChecks:false in the shared tsconfig.json) are author-controlled, so the compiler decides honestly but the repo decides how much it is allowed to see."
+      },
+      "evidence": [
+        "package.json:15 (\"check:type\": \"npm run check:type:js && npm run check:type:ts\")",
+        "tsconfig.json (allowJs, checkJs, noEmit, skipLibCheck:false)",
+        ".github/workflows/tests.yml:30-31"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#check-type-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "tsd's type-assertion runner and the tsc compiler, both executing over typings/index.d.ts and typings/index.test-d.ts",
+        "actorCanWrite": false,
+        "argument": "`tsd` compiles typings/index.test-d.ts and fails when an `expectType<...>` assertion does not hold or when a `@ts-expect-error` line stops erroring; `tsc -p tsconfig.ts.json` then re-checks the .ts/.mts files under the stricter override (noImplicitAny, strictNullChecks, useUnknownInCatchVariables all back on). Both verdicts are computed by the TypeScript type system from the committed declarations, so a broken public type signature cannot report clean without changing the declarations. This target is on the merge path twice — directly inside `npm test` (package.json:20) and transitively through `npm run check`. DOCUMENTED LIMIT: the ORACLE is in-repo — index.test-d.ts is written by the same maintainers as index.d.ts, so a green run proves the declarations match the assertions, not that the assertions describe the right API."
+      },
+      "evidence": [
+        "package.json:16 (\"check:type:ts\": \"tsd && tsc -p tsconfig.ts.json\")",
+        "typings/index.test-d.ts:1-30 (expectType assertions, @ts-expect-error)",
+        "tsconfig.ts.json (stricter overrides)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#check-type-js",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the tsc process's exit code from type-checking the committed JavaScript (index.js, lib/**/*.js) with checkJs and noEmit",
+        "actorCanWrite": false,
+        "argument": "tsconfig.js.json extends tsconfig.json, which turns on allowJs/checkJs and noEmit, so tsc parses the JSDoc and the JavaScript in lib/ and returns non-zero on an inconsistency. The producer is the compiler executing over the source text; an author cannot make a mismatched JSDoc annotation report clean without editing the source or the tsconfig. Reaches CI through `npm run check` (.github/workflows/tests.yml:30). DOCUMENTED LIMIT: the shared tsconfig deliberately relaxes noImplicitAny and strictNullChecks for the JS files, so the compiler's honesty is bounded by an in-repo setting."
+      },
+      "evidence": [
+        "package.json:17 (\"check:type:js\": \"tsc -p tsconfig.js.json\")",
+        "tsconfig.js.json (include: *.js, lib/**/*.js)",
+        "tsconfig.json (checkJs: true, noEmit: true)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#fix",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing that yields a verdict — the target's whole effect is eslint --fix and prettier --write rewriting the working tree",
+        "actorCanWrite": null,
+        "argument": "This expands to fix:lint (`eslint --fix .`) and fix:format (`prettier --write .`), both of which mutate the files rather than report on them; the target exists so a developer can make the check:* targets pass, and no workflow invokes it (.github/workflows/tests.yml runs `npm test` and `npm run check` only). Nothing consumes its exit code and it leaves no signal behind, so counting it in either direction would be a lie about what gates this repo. The falsifiable form of the same rules is check:lint / check:format, which are counted."
+      },
+      "evidence": [
+        "package.json:18 (\"fix\": \"npm run fix:lint && npm run fix:format\")",
+        "package.json:19-20 (fix:format = prettier --write, fix:lint = eslint --fix)",
+        ".github/workflows/tests.yml:26-31 (only npm ci / npm test / npm run check are invoked)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#fix-format",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "no verdict producer — prettier in --write mode edits the files and exits 0",
+        "actorCanWrite": null,
+        "argument": "`prettier --write .` rewrites every file it can parse and reports success; it is the remediation counterpart of check:format, not an assertion. There is no state in which it says 'this tree is wrong' — it makes the tree conform instead — so it is structurally incapable of being a check, and no workflow calls it. The assertion about formatting is made by `prettier --check .` in the CI-invoked `npm run check`."
+      },
+      "evidence": [
+        "package.json:19 (\"fix:format\": \"prettier --write .\")",
+        "package.json:13 (the --check counterpart)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#fix-lint",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "no verdict producer for gating purposes — eslint in --fix mode edits the files it can repair before reporting",
+        "actorCanWrite": null,
+        "argument": "The target's contract is to mutate the working tree until auto-fixable violations disappear, and nothing in the pipeline reads its exit status: .github/workflows/tests.yml runs `npm test` and `npm run check`, never `npm run fix`. Its one residual signal — a non-zero exit on a rule eslint cannot auto-fix — is already made, gatingly, by `eslint .` in check:lint. Filing the rewriting sibling here does not shrink the enforcement surface, because the asserting sibling is counted."
+      },
+      "evidence": [
+        "package.json:20 (\"fix:lint\": \"eslint --fix .\")",
+        "package.json:14 (\"check:lint\": \"eslint .\" — the asserting counterpart, counted)",
+        ".github/workflows/tests.yml:26-31"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#test",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Node.js runtime's exit code from `node --test` executing 112 test files, followed by the TypeScript compiler and tsd",
+        "actorCanWrite": false,
+        "argument": "`node --test` discovers and runs tests/*.test.{js,cjs} in child processes; the tests import ../index.js and assert with node:assert/strict, so a failed assertion, a thrown exception or an import error becomes a non-zero exit from the runtime — nobody can persuade a crashing parse into reporting green. This is the exact target CI runs at .github/workflows/tests.yml:28-29, across 3 Node versions x 3 operating systems, on push and pull_request, so the exit code is on the merge path. DOCUMENTED LIMIT: the EXECUTION is anchored, the ORACLE is not — tests/ and lib/ are authored by the same maintainers, so a green suite proves the code does what these tests say, not that the tests say the right thing."
+      },
+      "evidence": [
+        "package.json:21 (\"test\": \"node --test && npm run check:type:ts\")",
+        "tests/command.action.test.js:1-20 (node:test + node:assert/strict against ../index.js)",
+        ".github/workflows/tests.yml:28-29 (run: npm test)",
+        ".github/workflows/tests.yml:13-16 (matrix: node 22/24/26 x ubuntu/windows/macos)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#test-all",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Node.js runtime's exit code from `node --test`, chained with the tsc/eslint/prettier exit codes behind `npm run check`",
+        "actorCanWrite": false,
+        "argument": "Same execution path as `test`: the runtime runs the committed suite and the analysers run over the committed source, so no author-authored claim sits between the artefact and the verdict. NOTED, because it changes what this edge is worth: no workflow invokes `test-all` — .github/workflows/tests.yml runs `npm test` and `npm run check` as two separate steps (a comment there says this is deliberate, for correct status handling on Windows) — so this target is a local convenience alias and gates no merge by itself. It is anchored on the execution axis and redundant on the gating axis. DOCUMENTED LIMIT: the test oracle is co-authored with the implementation, as with `test`."
+      },
+      "evidence": [
+        "package.json:22 (\"test-all\": \"node --test && npm run check\")",
+        ".github/workflows/tests.yml:25-31 (npm test and npm run check invoked separately; test-all never invoked)"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/codeql-analysis.yml#32-initialize-codeql",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the codeql-action/init step, which downloads the CodeQL bundle and creates an empty analysis database on the runner",
+        "actorCanWrite": null,
+        "argument": "This step provisions the scanner: it fetches the CodeQL CLI and sets up the extractor for `matrix.language: javascript`, and emits no verdict about the repository. A failure here means the runner could not download or configure the tooling, not that the code is wrong. The signal in this job is produced by the `analyze` step at line 57, which is the edge classified on its merits; counting the setup step would double-count that one job."
+      },
+      "evidence": [
+        ".github/workflows/codeql-analysis.yml:32-33 (uses: github/codeql-action/init@7211b7c... with languages only)",
+        ".github/workflows/codeql-analysis.yml:57-58 (the analysing step)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/codeql-analysis.yml#43-autobuild",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the codeql-action/autobuild step, whose job is to produce a build for compiled languages so the extractor has something to trace",
+        "actorCanWrite": null,
+        "argument": "The matrix pins `language: ['javascript']` (line 23), and JavaScript is an interpreted language CodeQL extracts directly from source — autobuild has no compiler to invoke here, so it asserts nothing about the artefact and would only fail on a tooling error. The in-file comment says as much ('Autobuild attempts to build any compiled languages (C/C++, C#, or Java)'). For a compiled-language matrix this same step WOULD be a real compile gate; that is not this instance."
+      },
+      "evidence": [
+        ".github/workflows/codeql-analysis.yml:43-44 (uses: github/codeql-action/autobuild@7211b7c...)",
+        ".github/workflows/codeql-analysis.yml:21-23 (matrix: language: ['javascript'])",
+        ".github/workflows/codeql-analysis.yml:41-42 (comment: attempts to build any compiled languages)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/codeql-analysis.yml#57-perform-codeql-analysis",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the CodeQL engine executing GitHub's default javascript query pack over an extracted database, on GitHub-hosted infrastructure, from an action pinned to a full commit SHA",
+        "actorCanWrite": false,
+        "argument": "The findings are computed by a scanner the repository does not ship and cannot edit: the action is pinned to github/codeql-action@7211b7c8077ea37d8641b6271f6a365a22a5fbfa, and with no `queries:` or config-file override in this workflow the rule set is GitHub's default suite, so unlike eslint (whose rules live in eslint.config.js) neither the engine nor the queries sit inside the write boundary. That is what makes the fork point traceable and external. LOW CONFIDENCE, and here is why: with the default configuration `analyze` uploads alerts to code scanning and exits non-zero on an analysis error, not on a finding — whether an alert actually blocks a merge depends on branch-protection settings that do not live in the clone. So the producer is anchored while the strength of the gate it feeds is not visible from the repository."
+      },
+      "evidence": [
+        ".github/workflows/codeql-analysis.yml:57-58 (uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa)",
+        ".github/workflows/codeql-analysis.yml:32-40 (no `queries:` override — default suite)",
+        ".github/workflows/codeql-analysis.yml:14-18 (security-events: write; alerts go to code scanning)"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yml#26-npm-install",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "npm's installer refusing to proceed when the committed package-lock.json and package.json disagree, plus registry tarball integrity hashes verified against the lockfile",
+        "actorCanWrite": false,
+        "argument": "`npm ci` is the frozen form of install, not the ordinary one: it will not refresh a stale lock, it errors out when package.json and package-lock.json are out of sync, and it verifies each downloaded tarball against the integrity hash recorded in the lock. So the step is a falsifiable assertion that two committed files agree and that the registry still serves the exact artefacts they name — an author who bumps a dependency and forgets to regenerate the lock cannot make it pass without changing the tree. Its exit code gates the rest of the job: `npm test` and `npm run check` (lines 28-31) only run if it succeeds. DOCUMENTED LIMIT: what is anchored is manifest/lock agreement and registry reachability, nothing about whether the code works."
+      },
+      "evidence": [
+        ".github/workflows/tests.yml:26-27 (run: npm ci)",
+        "package-lock.json (the committed lockfile npm ci is pinned to)",
+        ".github/workflows/tests.yml:28-31 (subsequent steps depend on this exit code)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yml#28-npm-test",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Node.js runtime's exit code from `node --test` over 112 committed test files, then tsd and tsc",
+        "actorCanWrite": false,
+        "argument": "I descended into the script rather than trusting the step name: `npm test` is package.json:21, `node --test && npm run check:type:ts`. Node's test runner executes the suites in tests/ as real processes and reports failures through the process exit code, which becomes this step's status; the workflow triggers on push and pull_request, so this is the edge that actually blocks a merge, and it runs nine times (node 22/24/26 x ubuntu/windows/macos) with fail-fast disabled. DOCUMENTED LIMIT: execution is anchored, the oracle is not — the assertions in tests/ and the implementation in lib/ are written by the same maintainers, so green means the code matches these tests, not that these tests are the right specification."
+      },
+      "evidence": [
+        ".github/workflows/tests.yml:28-29 (run: npm test)",
+        "package.json:21 (\"test\": \"node --test && npm run check:type:ts\")",
+        ".github/workflows/tests.yml:3 (on: [push, pull_request, workflow_dispatch])",
+        "tests/ (112 *.test.js files using node:test + node:assert/strict)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/tests.yml#30-npm-run-check",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the exit codes of tsc, tsd, eslint and prettier --check, each computed by a program reading the committed source",
+        "actorCanWrite": false,
+        "argument": "Descending into package.json:12, this step runs check:type (tsc over both the JS with checkJs and the TS declarations, plus tsd), check:lint (eslint .) and check:format (prettier --check .), chained with && so any leaf failure becomes the step's status. Every leaf verdict is computed by an analyser from the source text, not asserted by any file in the repo, and the workflow's push/pull_request triggers put this status on the merge path. DOCUMENTED LIMIT: the rule sets — eslint.config.js, tsconfig*.json's relaxed strict flags, .prettierrc.js and .prettierignore — are all in-repo, so the enforcement is anchored while its scope is author-controlled."
+      },
+      "evidence": [
+        ".github/workflows/tests.yml:30-31 (run: npm run check)",
+        "package.json:12-17 (check and its leaves)",
+        "eslint.config.js, .prettierrc.js, tsconfig.json (author-controlled rule sets)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/dependabot.yml#dependabot-yml",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing that emits a pass/fail — the file subscribes the repo to scheduled Dependabot version-update pull requests against the develop branch",
+        "actorCanWrite": null,
+        "argument": "Both entries are `package-ecosystem` version-update schedules (npm monthly, github-actions weekly). Dependabot's output here is a pull request, not a verdict: there is no exit code, nothing reads it, and no merge is blocked by it. The freshness of dependencies is proposed, and the proposal is then judged by the ordinary CI edges (tests.yml). A security-alert gate would be a different surface — branch protection or Dependabot alerts — and none is declared in this file."
+      },
+      "evidence": [
+        ".github/dependabot.yml:1-14 (version: 2; updates: two package-ecosystem schedule entries, no security or gating configuration)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 12,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 9,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 21,
+    "nodesSampled": 21,
+    "decidedByProbe": 4,
+    "decidedByAgent": 17,
+    "probesMinted": 3,
+    "probeLibrarySize": 26,
+    "tokensIn": 1506,
+    "tokensOut": 5131,
+    "tokensEstimated": true,
+    "wallClockMs": 393405
+  }
+}

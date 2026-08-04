@@ -1,0 +1,47 @@
+{
+  "target": "anthropic-sdk-python",
+  "revision": "60c64fba5c2bf340567f627328e57cf0196b868f",
+  "generatedAt": "2026-07-25T05:15:24.487Z",
+  "sourceReport": "reports/anthropic-sdk-python.json",
+  "bindings": [
+    {
+      "loop": ".github/CODEOWNERS#codeowners",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "The proposition here is 'a change reaching main was approved by a party responsible for the code'. It is unknown because the producer of that signal — GitHub's branch-protection engine — is configured outside the clone, so the edge cannot be traced to a fork point at all. Routing requires an anchored node that asserts THAT proposition, and this report contains none: every anchored candidate produces a machine verdict over the committed tree (ruff, pyright, mypy, the interpreter's import, the uv build backend, PyPI's upload response). A machine's verdict on the source is not an approval by a responsible party — substituting one for the other would silently redefine the claim rather than ground it. There is also no node in this report whose producer is a human decision of any kind.",
+      "status": "proposed",
+      "noRouteReason": "Two decisions have to be made before anything can be wired. First, the gating state must be made legible: whether 'Require review from Code Owners' is on lives in repository settings, so someone must decide to commit a GitHub ruleset into the repo or to have a job query the branch-protection API and fail on drift — that is a process choice with an owner and a permissions cost. Second, and independent of it, someone must decide whether review by @anthropics/sdk — the same team that owns the generated source — sits outside the write boundary at all. No rewiring answers that; it is a judgement about the org chart."
+    },
+    {
+      "loop": ".github/workflows/claude.yml#38-run-claude-code",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "There is nothing here to re-ground, and that is the first reason. The workflow `if:` at claude.yml:15-19 makes this step mention-triggered, so it is not on the merge path; moving its signal to an anchored producer would change no admission decision. The second reason is that the propositions do not match. Whatever this step asserts is a broad judgement — 'this change or this answer is sound' — while every anchored candidate in the report asserts something strictly narrower and different in kind: ci.yml#34-run-lints and the pyproject linter tables say the tree type-checks, lints and imports; create-releases.yml#34-publish-to-pypi says the tree packages and PyPI took it; pyproject.toml#tool-pytest-ini-options says the collected tests executed to a clean exit. Declaring 'the lints are green' to be the grounded form of 'the model reviewed it' would rename the claim rather than anchor it. Those producers already run on push against anything this job commits, so the honest statement is that they cover what they cover and the model's judgement remains unverified — not that the judgement has been routed.",
+      "status": "proposed",
+      "noRouteReason": "The real defect is a permissions decision, not a missing wire: the job holds `contents: write` and `pull-requests: write` and `allowed_tools` grants `git commit`, `git push`, `git merge` and `gh pr`, so the reviewer can write into the branch whose state it reports on. Closing that means someone decides to strip the write-scoped tools, and separately decides which producers become required status checks on the merge path — and that second decision lives in branch-protection settings that are not in this repository (the same gap that leaves .github/CODEOWNERS#codeowners unknown)."
+    },
+    {
+      "loop": ".github/workflows/create-releases.yml#22-stainless-api-trigger-release-please-bb6677c5a04578eec1ccfd9e1913b5b78ed64c61-v1-4-0",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "The proposition this step asserts is 'a release is warranted now, at this version, with this changelog and tag state'. The only anchored candidate anywhere near it is create-releases.yml#34-publish-to-pypi, and it fails on both counts. Direction: #34 runs BECAUSE of this step's `releases_created` output, so it is downstream and cannot be a producer this step reads — a check cannot be grounded by its own consequence. Proposition: PyPI's upload response asserts that an artefact was built and accepted; it rejects a duplicate version but says nothing about whether a release was warranted, whether the changelog is honest, or whether the version bump matches the diff. A wrongly-triggered release carrying a fresh version number passes #34 cleanly, so wiring these together would raise the number while leaving the actual claim ungrounded. The opacity itself is untouched either way: the action's body is pinned by SHA but not vendored, so nothing in this repo can be read to learn what it validates.",
+      "status": "proposed",
+      "noRouteReason": "The decision required is about a vendor boundary. Either vendor or replace the action so its release logic is inspectable in-tree, or accept it as opaque third-party plumbing — and in accepting it, decide explicitly whether Stainless being both the generator of src/anthropic (per .stats.yml and the tests/conftest.py header) and the operator of the release gate is an acceptable arrangement. That is a human call about a supplier relationship, and no rewiring of existing producers can substitute for it."
+    },
+    {
+      "loop": "tests/conftest.py#conftest-py",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "The proposition this conftest is trying to assert is behavioural: that the client's requests and its handling of responses match the API it will actually talk to. Its producer is a Steady mock booted from the `openapi_spec_url` in .stats.yml plus inline_snapshot recordings of the client's own traffic — both derived from artefacts inside the write boundary, which is exactly why it is self_referential. Every anchored producer in this report sits on a different axis: ruff/pyright/mypy/`import anthropic` (.github/workflows/ci.yml#34-run-lints and the four pyproject linter tables) assert that the committed tree analyses and imports cleanly, and create-releases.yml#34-publish-to-pypi asserts that the tree packages and that PyPI accepted the upload. None of them observes the behaviour of the Anthropic API, so none of them can supply the oracle this suite is missing. pyproject.toml#tool-pytest-ini-options is the trap: it is anchored, but only on the EXECUTION axis, and its own measured argument names the identical spec-derived-oracle limit. Routing the oracle onto the config of the very suite whose oracle is in question is a circle, and would move the count without grounding the claim.",
+      "status": "proposed",
+      "noRouteReason": "This needs a policy decision, not a rewiring: someone must choose an oracle the SDK cannot author. Either (a) run a contract suite against the live Anthropic API with real credentials — which is a decision about cost, secrets, rate limits and flakiness in the merge path — or (b) declare the OpenAPI spec an external frozen contract, published and versioned independently of the generation input, so the mock is derived from something the SDK's authors do not also write. Both are human calls about what counts as ground truth for this SDK; neither is a wire an agent can move."
+    }
+  ],
+  "summary": {
+    "currentRatio": 0.6666666666666666,
+    "projectedRatio": 0.6666666666666666,
+    "routable": 0,
+    "unroutable": 4
+  },
+  "warnings": []
+}

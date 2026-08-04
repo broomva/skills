@@ -1,0 +1,103 @@
+{
+  "$comment": [
+    "THE AGENTIC CORPUS — the population the product sentence is actually about.",
+    "",
+    "Keel's published corpus is fifteen repositories, pooled 0.853, and thirteen of the fourteen",
+    "measured are human-maintained open source. The banner over that number reads 'your agents are",
+    "grading their own homework'. The one agent-built target in it — Keel itself — scored 0.357, by",
+    "far the lowest, and was described as the corpus floor when it was really the only on-thesis",
+    "data point. This corpus is the missing population.",
+    "",
+    "THE SELECTION PREDICATE, committed before any target here was measured so that it cannot be",
+    "revised after seeing a score:",
+    "",
+    "  A target qualifies if MORE THAN 50% of its last 200 commits carry an agent trailer.",
+    "",
+    "Agent trailers, case-insensitive, matched against the commit body:",
+    "  Co-Authored-By: Claude | Devin | Codex | Cursor | aider",
+    "  'Generated with [Claude Code]' / 'Generated with Codex' / 'Generated with Cursor'",
+    "  '🤖 Generated with'",
+    "Excluded: any trailer whose DISPLAY NAME contains '[bot]' or '-bot@' — dependabot and renovate",
+    "are automation, not agent authorship. The exclusion is on the display name rather than the whole",
+    "line on purpose: Devin's genuine trailer is 'Devin AI <devin-ai-integration[bot]@...>', and a",
+    "whole-line rule would erase the very agent the predicate names.",
+    "",
+    "The predicate is mechanically checkable from git log alone, which is what makes the selection",
+    "criterion itself anchored: no judgment of ours decides who is in this corpus.",
+    "",
+    "THE BIAS THIS PREDICATE HAS, stated here rather than discovered later.",
+    "It measures SURVIVING TRAILERS, not agent authorship. A squash merge drops the commit body, so",
+    "agent-heavy projects that merge through a queue score near zero: openai/codex and sst/opencode",
+    "both measured 0.000 across their last 200 commits. Every repository that clears 50% is therefore",
+    "one where agent commits land on the default branch with their bodies intact — typically",
+    "solo-maintainer or small-org repos. This corpus is biased toward small teams and away from large",
+    "organisations with merge hygiene, and any ratio computed over it inherits that bias. 93",
+    "repositories were cloned and counted to assemble these six.",
+    "",
+    "WHAT WAS DELIBERATELY EXCLUDED, and why it matters more than what was included:",
+    "  - Agent TOOLING. Repositories that exist to serve coding agents (claudekit, catacomb,",
+    "    claude-code-templates, amplifier, agent-of-empires, ...) all qualified, several at higher",
+    "    rates than the targets chosen. They are excluded because a finding drawn from them is",
+    "    attackable as 'repos built for agents have unusual CI' rather than a fact about",
+    "    agent-written code. Every target below is an ordinary product: a karaoke pipeline, a",
+    "    zero-knowledge proof system, a data engine, a build CLI, a query language, an agent-memory",
+    "    server.",
+    "  - broomva/* — 26 of 30 clear the predicate, and they share an author with Keel. Measuring",
+    "    them would be measuring ourselves twice.",
+    "  - Copyleft licences, because this corpus quotes CI snippets as evidence in a published report.",
+    "",
+    "VENDOR CONCENTRATION, disclosed. Five of six are Claude-trailered; kody is Cursor. Across 93",
+    "repositories scanned, kody was the only non-Claude agent-authored repository found at scale, and",
+    "that scarcity is itself a finding about what is publicly observable today. A corpus that were",
+    "100% one vendor would be attackable as an artifact of one tool's conventions, so kody is here",
+    "specifically to weaken that objection — not to remove it.",
+    "",
+    "ACCEPTANCE. The run answers one stated question: how many of these score exactly 1.000, and does",
+    "the pooled agentic ratio differ from the published human-maintained 0.853 by more than 0.10?",
+    "Both answers are reportable results. If agent-maintained repositories score just as well, that",
+    "is a finding against the product's own thesis and it gets published in the same voice.",
+    "",
+    "Node cap 25, matching the published corpus so the two are comparable. The cap is disclosed",
+    "beside every ratio, and the summary derives it from the recorded entries rather than from this",
+    "declaration."
+  ],
+  "nodeCap": 25,
+  "targets": [
+    {
+      "name": "karaoke-gen",
+      "url": "https://github.com/nomadkaraoke/karaoke-gen.git",
+      "revision": "c94abbf7f44c8465d78a19379260670b38c8ea36",
+      "culture": "Python karaoke-video pipeline — stem separation, lyric sync, CDG render, upload. MIT. 196/200 = 0.980 Claude-trailered. 7 workflows incl. e2e-daily and a DR backup-freshness check, plus a Makefile."
+    },
+    {
+      "name": "kody",
+      "url": "https://github.com/kentcdodds/kody.git",
+      "revision": "ca183641ebe63bf7582305aabd470fab75ace14f",
+      "culture": "TypeScript portable agent-memory server on Cloudflare Workers. FSL-1.1-ALv2 (source-available, converts to Apache-2.0). 192/200 = 0.960 CURSOR-trailered — the vendor-diversity target. CI: validate, deploy, preview, dr-escrow."
+    },
+    {
+      "name": "binius64",
+      "url": "https://github.com/binius-zk/binius64.git",
+      "revision": "4891fc9b74ca0d21ba5545aeaf0e325dbc76c7fb",
+      "culture": "Rust binary-field zero-knowledge proof system. MIT + Apache-2.0. 178/200 = 0.890. CI: ci.yml, docs.yml. Cryptography — a domain where a wrong test is expensive and the maintainers know it."
+    },
+    {
+      "name": "xorq",
+      "url": "https://github.com/xorq-labs/xorq.git",
+      "revision": "22f03a65e67805bd1521784384656a79a4148123",
+      "culture": "Python executable-memory engine for tabular data, Ibis-derived. Apache-2.0. 169/200 = 0.845. 24 workflows including a CI matrix across BigQuery, Snowflake, Databricks, S3 and GCS — the heaviest integration surface in this corpus."
+    },
+    {
+      "name": "aspect-cli",
+      "url": "https://github.com/aspect-build/aspect-cli.git",
+      "revision": "2cb4fec13701722e027ee49c32f6b3873a4ff74d",
+      "culture": "Rust + Starlark Bazel-compatible build CLI. Apache-2.0. 140/200 = 0.700. Deliberately included for its CI shape: Buildkite AND CircleCI AND GitLab CI AND 12 GitHub workflows AND MODULE.bazel. Keel reads two of those five, so this target exercises the unread-surfaces disclosure rather than only the ratio."
+    },
+    {
+      "name": "wvlet",
+      "url": "https://github.com/wvlet/wvlet.git",
+      "revision": "90751f91a666b0c83816625d7ab2b1c96490ef5b",
+      "culture": "Scala flow-style query language compiling to SQL engines. Apache-2.0. 129/200 = 0.645. 17 workflows spanning JVM, Python and TypeScript test lanes — the only JVM-ecosystem target in either corpus."
+    }
+  ]
+}

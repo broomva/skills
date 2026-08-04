@@ -1,0 +1,619 @@
+{
+  "target": "kody",
+  "revision": "ca183641ebe63bf7582305aabd470fab75ace14f",
+  "generatedAt": "2026-07-26T19:01:00.444Z",
+  "nodes": [
+    {
+      "id": "package.json#dev",
+      "kind": "script",
+      "name": "dev",
+      "source": "package.json",
+      "raw": "\"dev\": \"node --env-file=packages/worker/.env cli.ts\""
+    },
+    {
+      "id": "package.json#dev-client",
+      "kind": "script",
+      "name": "dev:client",
+      "source": "package.json",
+      "raw": "\"dev:client\": \"npm run dev:client:web\""
+    },
+    {
+      "id": "package.json#dev-client-web",
+      "kind": "script",
+      "name": "dev:client:web",
+      "source": "package.json",
+      "raw": "\"dev:client:web\": \"esbuild packages/worker/client/entry.tsx --bundle --format=esm --target=es2022 --outdir=packages/worker/public --entry-names=client-entry --chunk-names=assets/[name] --asset-names=assets/[name] --jsx=automatic --jsx-import-source=remix/ui --watch\""
+    },
+    {
+      "id": "package.json#dev-worker",
+      "kind": "script",
+      "name": "dev:worker",
+      "source": "package.json",
+      "raw": "\"dev:worker\": \"node --env-file=packages/worker/.env ./wrangler-env.ts dev --local\""
+    },
+    {
+      "id": "package.json#dev-mock-cloudflare",
+      "kind": "script",
+      "name": "dev:mock-cloudflare",
+      "source": "package.json",
+      "raw": "\"dev:mock-cloudflare\": \"node --env-file=packages/worker/.env ./wrangler-env.ts dev --local --config packages/mock-servers/cloudflare/wrangler.jsonc\""
+    },
+    {
+      "id": "package.json#deploy",
+      "kind": "script",
+      "name": "deploy",
+      "source": "package.json",
+      "raw": "\"deploy\": \"node --input-type=module -e \"if (['preview','test'].includes(process.env.CLOUDFLARE_ENV ?? '')) { await import('./tools/prepare-e2e-env.ts'); }\" && npm run build && node --env-file=packages/worker/.env ./wrangler-env.ts deploy --outdir .wrangler/sentry-bundle --upload-source-maps\""
+    },
+    {
+      "id": "package.json#sentry-upload-sourcemaps",
+      "kind": "script",
+      "name": "sentry:upload-sourcemaps",
+      "source": "package.json",
+      "raw": "\"sentry:upload-sourcemaps\": \"node tools/sentry-upload-sourcemaps.ts\""
+    },
+    {
+      "id": "package.json#build-client-web",
+      "kind": "script",
+      "name": "build:client:web",
+      "source": "package.json",
+      "raw": "\"build:client:web\": \"esbuild packages/worker/client/entry.tsx --bundle --format=esm --target=es2022 --outdir=packages/worker/public --entry-names=client-entry --chunk-names=assets/[name] --asset-names=assets/[name] --jsx=automatic --jsx-import-source=remix/ui --minify\""
+    },
+    {
+      "id": "package.json#build-client",
+      "kind": "script",
+      "name": "build:client",
+      "source": "package.json",
+      "raw": "\"build:client\": \"npm run build:client:web\""
+    },
+    {
+      "id": "packages/mock-servers/cloudflare/wrangler.jsonc#wrangler-jsonc",
+      "kind": "deploy_gate",
+      "name": "deploy config (wrangler.jsonc)",
+      "source": "packages/mock-servers/cloudflare/wrangler.jsonc",
+      "raw": "{\n\t\"$schema\": \"../../../node_modules/wrangler/config-schema.json\",\n\t\"name\": \"kody-mock-cloudflare\",\n\t\"compatibility_date\": \"2026-04-16\",\n\t\"compatibility_flags\": [\"nodejs_compat\", \"global_fetch_strictly_public\"],\n\t\"main\": \"./src/worker.ts\",\n\t\"preview_urls\": true,\n\t\"observability\": { \"enabled\": true },\n\t\"migrations\": [\n\t\t{\n\t\t\t\"new_classes\": [\"MockCloudflareEmailMessagesDurableObject\"],\n\t\t\t\"tag\": \"v1\",\n\t\t},\n\t\t{\n\t\t\t\"new_classes\": [\"MockCloudflareArtifactsDurableObject\"],\n\t\t\t\"tag\": \"v2\",\n\t\t},\n\t],\n\t\"durable_objects\": {\n\t\t\"bindings\": [\n\t\t\t{\n\t\t\t\t\"class_name\": \"MockCloudflareArtifactsDurableObject\",\n\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_ARTIFACTS_STATE\",\n\t\t\t},\n\t\t\t{\n\t\t\t\t\"class_name\": \"MockCloudflareEmailMessagesDurableObject\",\n\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_EMAIL_STATE\",\n\t\t\t},\n\t\t],\n\t},\n\t\"env\": {\n\t\t\"production\": {\n\t\t\t\"durable_objects\": {\n\t\t\t\t\"bindings\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MockCloudflareArtifactsDurableObject\",\n\t\t\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_ARTIFACTS_STATE\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MockCloudflareEmailMessagesDurableObject\",\n\t\t\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_EMAIL_STATE\",\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t\t\"preview\": {\n\t\t\t\"durable_objects\": {\n\t\t\t\t\"bindings\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MockCloudflareArtifactsDurableObject\",\n\t\t\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_ARTIFACTS_STATE\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MockCloudflareEmailMessagesDurableObject\",\n\t\t\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_EMAIL_STATE\",\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t\t\"test\": {\n\t\t\t\"durable_objects\": {\n\t\t\t\t\"bindings\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MockCloudflareArtifactsDurableObject\",\n\t\t\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_ARTIFACTS_STATE\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MockCloudflareEmailMessagesDurableObject\",\n\t\t\t\t\t\t\"name\": \"MOCK_CLOUDFLARE_EMAIL_STATE\",\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t},\n}\n"
+    },
+    {
+      "id": "packages/backup-control-plane/wrangler.jsonc#wrangler-jsonc",
+      "kind": "deploy_gate",
+      "name": "deploy config (wrangler.jsonc)",
+      "source": "packages/backup-control-plane/wrangler.jsonc",
+      "raw": "{\n\t\"$schema\": \"../../node_modules/wrangler/config-schema.json\",\n\t\"name\": \"kody-production-d1-backups\",\n\t\"main\": \"./worker.ts\",\n\t\"compatibility_date\": \"2026-07-22\",\n\t\"compatibility_flags\": [\"nodejs_compat\"],\n\t\"observability\": {\n\t\t\"enabled\": true,\n\t},\n\t\"triggers\": {\n\t\t\"crons\": [\"15 2 * * *\", \"45 * * * *\"],\n\t},\n\t\"workflows\": [\n\t\t{\n\t\t\t\"binding\": \"BACKUP_WORKFLOW\",\n\t\t\t\"name\": \"kody-production-d1-backup\",\n\t\t\t\"class_name\": \"ProductionD1BackupWorkflow\",\n\t\t},\n\t\t{\n\t\t\t\"binding\": \"RESTORE_WORKFLOW\",\n\t\t\t\"name\": \"kody-production-dr-restore\",\n\t\t\t\"class_name\": \"ProductionDrRestoreWorkflow\",\n\t\t},\n\t],\n\t\"r2_buckets\": [\n\t\t{\n\t\t\t\"binding\": \"BACKUP_BUCKET\",\n\t\t\t\"bucket_name\": \"kody-production-backups\",\n\t\t},\n\t],\n\t\"vars\": {\n\t\t// Both must be exactly \"true\" for any schedule to run. The blocking\n\t\t// export benchmark passed 2026-07-23: a clean production export\n\t\t// completed in ~6s and produced a ~101 MB SQL object.\n\t\t\"ENABLE_PRODUCTION_D1_BACKUPS\": \"true\",\n\t\t\"BACKUP_BENCHMARK_APPROVED\": \"true\",\n\t\t// Production Kody Cloudflare account and D1 database.\n\t\t\"SOURCE_ACCOUNT_ID\": \"a99ee2e72728dd52902ef288b7b1447d\",\n\t\t\"SOURCE_DATABASE_ID\": \"8c1014d1-6b41-4695-a0a2-159071f0f919\",\n\t\t\"SOURCE_DATABASE_NAME\": \"kody\",\n\t\t\"ALLOWED_SOURCE_ACCOUNT_IDS\": \"a99ee2e72728dd52902ef288b7b1447d\",\n\t\t\"ALLOWED_SOURCE_DATABASE_IDS\": \"8c1014d1-6b41-4695-a0a2-159071f0f919\",\n\t\t\"BUILD_COMMIT\": \"REPLACE_AT_DEPLOY_TIME\",\n\t\t// Non-secret provenance. The matching PKCS#8 private key is a Worker secret.\n\t\t\"BACKUP_MANIFEST_SIGNING_KEY_ID\": \"kody-dr-2026-07\",\n\t\t\"BACKUP_MANIFEST_VERIFYING_PUBLIC_KEY_SPKI_BASE64\": \"MCowBQYDK2VwAyEA3jqjPcGTzWefE5PGyRBdUQKAEj7FFGtFIz+223sbt9A=\",\n\t\t// SHA-256 of the JSON array of sorted migration filenames at the\n\t\t// deployment commit (see docs/contributing/disaster-recovery.md).\n\t\t\"TRUSTED_RESTORE_BASELINE_ID\": \"kody-migration-set-2026-07\",\n\t\t\"TRUSTED_RESTORE_BASELINE_SHA256\": \"a132fab33e6a614e861af54ac9c82ba1493f36a5c9fe02c9004ea0e755b47ea2\",\n\t\t\"BACKUP_MAX_AGE_HOURS\": \"26\",\n\t\t// D1 GET file_size must remain strictly below this single-object ceiling.\n\t\t\"BACKUP_MAX_SOURCE_BYTES\": \"4500000000\",\n\t\t\"ACCESS_TEAM_DOMAIN\": \"kentcdodds.cloudflareaccess.com\",\n\t\t\"ACCESS_APP_AUD\": \"769c70e393e2652f5878af99333322184a35cc3aef53376344f8753805e42a76\",\n\t\t\"ACCESS_ALLOWED_EMAIL\": \"me@kentcdodds.com\",\n\t\t// DR (KCD) account: isolated restore drills only, never production.\n\t\t\"DRILL_ACCOUNT_ID\": \"a41d50ecaf0ae0f86dd1824ef6729cb2\",\n\t\t\"PRIMARY_WORKER_ORIGIN\": \"https://heykody.dev\",\n\t},\n}\n"
+    },
+    {
+      "id": "packages/backup-control-plane/vitest.config.ts#vitest-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.ts)",
+      "source": "packages/backup-control-plane/vitest.config.ts",
+      "raw": "import { defineConfig } from 'vitest/config'\n\nexport default defineConfig({\n\ttest: {\n\t\tenvironment: 'node',\n\t\tinclude: ['*.node.test.ts'],\n\t},\n})\n"
+    },
+    {
+      "id": "packages/worker/wrangler.jsonc#wrangler-jsonc",
+      "kind": "deploy_gate",
+      "name": "deploy config (wrangler.jsonc)",
+      "source": "packages/worker/wrangler.jsonc",
+      "raw": "{\n\t\"$schema\": \"../../node_modules/wrangler/config-schema.json\",\n\t\"name\": \"kody\",\n\t\"compatibility_date\": \"2026-04-16\",\n\t\"compatibility_flags\": [\"nodejs_compat\", \"global_fetch_strictly_public\"],\n\t\"main\": \"./src/index.ts\",\n\t\"upload_source_maps\": true,\n\t\"rules\": [\n\t\t{\n\t\t\t\"type\": \"Text\",\n\t\t\t\"globs\": [\"**/*.md\"],\n\t\t\t\"fallthrough\": true,\n\t\t},\n\t],\n\t\"migrations\": [\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"MCP\"],\n\t\t\t\"tag\": \"v1\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"ChatAgent\"],\n\t\t\t\"tag\": \"v2\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"HomeConnectorSession\", \"HomeMCP\"],\n\t\t\t\"tag\": \"v3\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"SchedulerDO\"],\n\t\t\t\"tag\": \"v4\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"JobManager\", \"JobRunner\"],\n\t\t\t\"tag\": \"v6\",\n\t\t},\n\t\t{\n\t\t\t\"deleted_classes\": [\"SchedulerDO\"],\n\t\t\t\"tag\": \"v7\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"StorageRunner\"],\n\t\t\t\"tag\": \"v8\",\n\t\t},\n\t\t{\n\t\t\t\"deleted_classes\": [\"JobRunner\"],\n\t\t\t\"tag\": \"v9\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"AgentTurnRunner\"],\n\t\t\t\"tag\": \"v10\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"RepoSession\"],\n\t\t\t\"tag\": \"v11\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"PackageRealtimeSession\"],\n\t\t\t\"tag\": \"v13\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"PackageServiceInstance\"],\n\t\t\t\"tag\": \"v14\",\n\t\t},\n\t\t{\n\t\t\t\"renamed_classes\": [\n\t\t\t\t{\n\t\t\t\t\t\"from\": \"HomeConnectorSession\",\n\t\t\t\t\t\"to\": \"RemoteConnectorSession\",\n\t\t\t\t},\n\t\t\t],\n\t\t\t\"tag\": \"v15\",\n\t\t},\n\t\t{\n\t\t\t\"deleted_classes\": [\"HomeMCP\"],\n\t\t\t\"tag\": \"v16\",\n\t\t},\n\t\t{\n\t\t\t\"deleted_classes\": [\"ChatAgent\", \"AgentTurnRunner\"],\n\t\t\t\"tag\": \"v17\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"McpClientHub\"],\n\t\t\t\"tag\": \"v18\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"OAuthPurgeCoordinator\"],\n\t\t\t\"tag\": \"v19\",\n\t\t},\n\t\t{\n\t\t\t\"new_sqlite_classes\": [\"RunLog\"],\n\t\t\t\"tag\": \"v20\",\n\t\t},\n\t],\n\n\t\"observability\": {\n\t\t\"enabled\": true,\n\t\t// Workers automatic tracing (beta): OTel-standard spans for handler\n\t\t// invocations, outbound fetches, and binding calls (D1, KV, R2, DO,\n\t\t// queues). Spans share the Workers Logs event quota. Inherited by all\n\t\t// environments unless overridden; local dev and tests ignore it. The\n\t\t// production env overrides this block to add the Sentry OTLP export\n\t\t// destination, so preview spans stay in the Cloudflare dashboard only.\n\t\t\"traces\": {\n\t\t\t\"enabled\": true,\n\t\t},\n\t},\n\t\"triggers\": {\n\t\t\"crons\": [\"*/5 * * * *\"],\n\t},\n\t\"env\": {\n\t\t\"production\": {\n\t\t\t// Replaces the top-level observability block (wrangler env keys\n\t\t\t// override wholesale, so \"enabled\" is restated): same tracing,\n\t\t\t// plus the account-level Sentry OTLP export destination\n\t\t\t// \"sentry-otlp-traces\" (Workers Observability -> Destinations),\n\t\t\t// which points at the kody-cloudflare Sentry project's OTLP\n\t\t\t// traces endpoint. The destination must exist in the target\n\t\t\t// account before deploy; forks create their own or remove it.\n\t\t\t// See docs/contributing/setup-manifest.md.\n\t\t\t\"observability\": {\n\t\t\t\t\"enabled\": true,\n\t\t\t\t\"traces\": {\n\t\t\t\t\t\"enabled\": true,\n\t\t\t\t\t\"destinations\": [\"sentry-otlp-traces\"],\n\t\t\t\t},\n\t\t\t},\n\t\t\t\"worker_loaders\": [\n\t\t\t\t{\n\t\t\t\t\t\"binding\": \"LOADER\",\n\t\t\t\t},\n\t\t\t\t{\n\t\t\t\t\t\"binding\": \"APP_LOADER\",\n\t\t\t\t},\n\t\t\t],\n\t\t\t\"workflows\": [\n\t\t\t\t{\n\t\t\t\t\t\"binding\": \"DYNAMIC_CALLABLE_WORKFLOWS\",\n\t\t\t\t\t\"name\": \"kody-dynamic-callable-workflows\",\n\t\t\t\t\t\"class_name\": \"DynamicCallableWorkflow\",\n\t\t\t\t},\n\t\t\t],\n\t\t\t\"assets\": {\n\t\t\t\t\"directory\": \"./public\",\n\t\t\t\t\"binding\": \"ASSETS\",\n\t\t\t\t\"run_worker_first\": [\n\t\t\t\t\t\"/@*/api/package-invocations/*\",\n\t\t\t\t\t\"/@*/connectors/*\",\n\t\t\t\t\t\"/@*/packages/*\",\n\t\t\t\t\t\"/@*/webhooks/*\",\n\t\t\t\t\t\"/styles.css\",\n\t\t\t\t\t\"/client-entry.js\",\n\t\t\t\t\t\"/assets/*\",\n\t\t\t\t],\n\t\t\t},\n\t\t\t\"durable_objects\": {\n\t\t\t\t\"bindings\": [\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"MCP\",\n\t\t\t\t\t\t\"name\": \"MCP_OBJECT\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"RemoteConnectorSession\",\n\t\t\t\t\t\t\"name\": \"REMOTE_CONNECTOR_SESSION\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"McpClientHub\",\n\t\t\t\t\t\t\"name\": \"MCP_CLIENT_HUB\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"OAuthPurgeCoordinator\",\n\t\t\t\t\t\t\"name\": \"OAUTH_PURGE_COORDINATOR\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t\"class_name\": \"JobManager\",\n\t\t\t\t\t\t\"name\": \"JOB_MANAGER\",\n\t\t\t\t\t},\n\t\t\t\t\t{\n\t\t\t\t\t\t"
+    },
+    {
+      "id": ".github/workflows/publish-mcp-registry.yml#26-checkout",
+      "kind": "ci_step",
+      "name": "Checkout",
+      "source": ".github/workflows/publish-mcp-registry.yml:26",
+      "raw": "      - name: Checkout\n        uses: actions/checkout@v6.0.2",
+      "hints": {
+        "action": "actions/checkout@v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/publish-mcp-registry.yml#29-install-mcp-publisher",
+      "kind": "ci_step",
+      "name": "Install mcp-publisher",
+      "source": ".github/workflows/publish-mcp-registry.yml:29",
+      "raw": "      - name: Install mcp-publisher\n        run: |\n          set -euo pipefail\n          curl -fsSL \\\n            \"https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz\" \\\n            | tar xz mcp-publisher"
+    },
+    {
+      "id": ".github/workflows/publish-mcp-registry.yml#36-authenticate-with-github-oidc",
+      "kind": "ci_step",
+      "name": "Authenticate with GitHub OIDC",
+      "source": ".github/workflows/publish-mcp-registry.yml:36",
+      "raw": "      - name: Authenticate with GitHub OIDC\n        run: ./mcp-publisher login github-oidc"
+    },
+    {
+      "id": ".github/workflows/publish-mcp-registry.yml#39-publish",
+      "kind": "ci_step",
+      "name": "Publish",
+      "source": ".github/workflows/publish-mcp-registry.yml:39",
+      "raw": "      - name: Publish\n        run: ./mcp-publisher publish"
+    },
+    {
+      "id": ".github/workflows/validate.yml#39-checkout",
+      "kind": "ci_step",
+      "name": "📦 Checkout",
+      "source": ".github/workflows/validate.yml:39",
+      "raw": "      - name: 📦 Checkout\n        uses: actions/checkout@v6.0.2\n        with:\n          # Migration immutability validation compares against the PR merge\n          # base and must never silently fall back to an editable ledger.\n          fetch-depth: 0\n          persist-credentials: false",
+      "hints": {
+        "action": "actions/checkout@v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/validate.yml#47-setup",
+      "kind": "ci_step",
+      "name": "🧰 Setup",
+      "source": ".github/workflows/validate.yml:47",
+      "raw": "      - name: 🧰 Setup\n        uses: ./.github/actions/setup-validate",
+      "hints": {
+        "action": "./.github/actions/setup-validate"
+      }
+    },
+    {
+      "id": ".github/workflows/validate.yml#52-format",
+      "kind": "ci_step",
+      "name": "✨ Format",
+      "source": ".github/workflows/validate.yml:52",
+      "raw": "      - name: ✨ Format\n        if: ${{ !cancelled() }}\n        run: npm run format:check"
+    },
+    {
+      "id": ".github/workflows/validate.yml#56-lint",
+      "kind": "ci_step",
+      "name": "🔍 Lint",
+      "source": ".github/workflows/validate.yml:56",
+      "raw": "      - name: 🔍 Lint\n        if: ${{ !cancelled() }}\n        run: npm run lint"
+    },
+    {
+      "id": ".github/workflows/validate.yml#60-typecheck",
+      "kind": "ci_step",
+      "name": "🧠 Typecheck",
+      "source": ".github/workflows/validate.yml:60",
+      "raw": "      - name: 🧠 Typecheck\n        if: ${{ !cancelled() }}\n        run: npm run typecheck"
+    },
+    {
+      "id": ".github/workflows/validate.yml#64-backup-build",
+      "kind": "ci_step",
+      "name": "🏗️ Backup build",
+      "source": ".github/workflows/validate.yml:64",
+      "raw": "      - name: 🏗️ Backup build\n        if: ${{ !cancelled() }}\n        run: npm run backup:build"
+    },
+    {
+      "id": "playwright.config.ts#playwright-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (playwright.config.ts)",
+      "source": "playwright.config.ts",
+      "raw": "import { defineConfig, devices } from '@playwright/test'\n\nconst hasExplicitBaseUrl = Boolean(process.env.PLAYWRIGHT_BASE_URL)\nconst defaultPlaywrightPort = '3847'\nconst baseURL =\n\tprocess.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${defaultPlaywrightPort}`\nconst webServerCommand = `npm run preview:e2e -- --port ${defaultPlaywrightPort}`\n\nexport default defineConfig({\n\ttestDir: './e2e',\n\tfullyParallel: true,\n\tforbidOnly: !!process.env.CI,\n\tretries: process.env.CI ? 2 : 0,\n\t// CI runs `validate`, which executes unit, MCP, and Playwright suites\n\t// concurrently on one runner. The default 30s per-test budget flakes under\n\t// that resource contention (page.goto alone has been observed taking >30s).\n\ttimeout: process.env.CI ? 60_000 : 30_000,\n\t// Every worker hits the same local D1 file (`.wrangler/state/e2e`) through\n\t// Wrangler and the `d1 execute` helpers. Parallel workers cause SQLITE_BUSY\n\t// and transient 500s during auth/admin flows.\n\tworkers: 1,\n\treporter: process.env.CI ? 'github' : 'list',\n\tuse: {\n\t\tbaseURL,\n\t\ttrace: 'on-first-retry',\n\t},\n\twebServer: {\n\t\tcommand: webServerCommand,\n\t\turl: baseURL,\n\t\t// Startup (client build + D1 migrations + Wrangler boot) competes with\n\t\t// the parallel unit test workers at the beginning of `validate`, and the\n\t\t// default 60s budget times out on 4-core CI runners.\n\t\ttimeout: process.env.CI ? 180_000 : 60_000,\n\t\treuseExistingServer: hasExplicitBaseUrl,\n\t\tenv: {\n\t\t\tCLOUDFLARE_ENV: 'test',\n\t\t\tWRANGLER_LOG_PATH: './logs.local',\n\t\t\tWRANGLER_DISABLE_REQUEST_BODY_DRAINING: 'true',\n\t\t},\n\t},\n\tprojects: [\n\t\t{\n\t\t\tname: 'chromium',\n\t\t\tuse: { ...devices['Desktop Chrome'] },\n\t\t},\n\t],\n})\n"
+    },
+    {
+      "id": "vitest.config.ts#vitest-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.ts)",
+      "source": "vitest.config.ts",
+      "raw": "import { defineConfig } from 'vitest/config'\nimport { markdownAsText } from './tools/vite-markdown-as-text.ts'\nimport { suppressThirdPartySourcemapWarnings } from './tools/vite-suppress-sourcemap-warnings.ts'\n\nexport default defineConfig({\n\t// The workers pool resolves modules through this root-level Vite server, so\n\t// the broken-third-party-sourcemap warning filter has to apply here too\n\t// (see tools/vite-suppress-sourcemap-warnings.ts).\n\tplugins: [suppressThirdPartySourcemapWarnings(), markdownAsText()],\n\ttest: {\n\t\tprojects: [\n\t\t\t'./vitest.node.config.ts',\n\t\t\t'./vitest.workers.config.ts',\n\t\t\t'./vitest.mcp-e2e.config.ts',\n\t\t],\n\t},\n})\n"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "package.json#dev",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "cli.ts, a long-running local dev orchestrator that spawns `wrangler dev` plus the mock-Cloudflare worker and streams their logs",
+        "actorCanWrite": null,
+        "argument": "The script launches an interactive process tree (cli.ts spawns the worker and mock servers via tools/dev-process-utils.ts) and never terminates with a verdict; it produces logs, not a pass/fail signal. No workflow invokes it, so there is no gating edge whose producer could be located."
+      },
+      "evidence": [
+        "package.json:25",
+        "cli.ts:1-40",
+        "tools/dev-process-utils.ts"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#dev-client",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "delegation only — `npm run dev:client:web`, i.e. esbuild in --watch mode",
+        "actorCanWrite": null,
+        "argument": "A one-hop alias. Descending, the terminal producer is `esbuild --watch`, which stays resident and reports bundle errors to the console instead of exiting non-zero. Nothing about correctness is asserted and no CI job reaches it."
+      },
+      "evidence": [
+        "package.json:26",
+        "package.json:27"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#dev-client-web",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "esbuild in --watch mode, resident in a developer terminal",
+        "actorCanWrite": null,
+        "argument": "In watch mode esbuild does not exit on a bundle failure; it prints the error and keeps rebuilding, so the edge cannot produce a red signal. The CI path uses the sibling `build:client:web` (--minify, no --watch) instead, which is where the falsifiable esbuild signal actually lives."
+      },
+      "evidence": [
+        "package.json:27",
+        "package.json:32"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#dev-worker",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`wrangler dev --local` — a resident local workerd server",
+        "actorCanWrite": null,
+        "argument": "A dev server. It serves requests until killed; it asserts nothing and returns no verdict. Not referenced by any workflow (.github/workflows/*.yml never runs dev:worker)."
+      },
+      "evidence": [
+        "package.json:28",
+        "wrangler-env.ts:20-30"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#dev-mock-cloudflare",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`wrangler dev --local` booting the repo-authored mock Cloudflare API worker",
+        "actorCanWrite": null,
+        "argument": "A dev server for a fixture. It asserts nothing and yields no verdict. Worth noting for the graph, though: what it boots is an in-repo fake of a third-party API (packages/mock-servers/cloudflare/src/*), which is where the write-boundary problem shows up for the nodes that consume it, not here."
+      },
+      "evidence": [
+        "package.json:29",
+        "packages/mock-servers/cloudflare/wrangler.jsonc:1-12",
+        "packages/mock-servers/cloudflare/src/mock-artifacts-do.ts"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#deploy",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Cloudflare Workers deploy API (via wrangler's bundler + upload), which accepts or rejects the script",
+        "actorCanWrite": false,
+        "argument": "`npm run build` then `wrangler deploy`: the exit code is decided by wrangler bundling the worker and by Cloudflare accepting the upload — bundle validity, Durable Object migration-tag consistency against what is already live, and resolution of every declared binding. Repo authors cannot write to that decision. Limits: acceptance certifies deployability, not correctness; and deploy.yml wraps this in a 3-attempt retry that swallows two Cloudflare 'internal_server'/code-10001 failures before the edge is allowed to go red."
+      },
+      "evidence": [
+        "package.json:30",
+        ".github/workflows/deploy.yml:199-225",
+        ".github/workflows/preview.yml:246"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#sentry-upload-sourcemaps",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "tools/sentry-upload-sourcemaps.ts, which shells out to `sentry-cli sourcemaps upload --validate` — but only after two unconditional `process.exit(0)` bail-outs",
+        "actorCanWrite": null,
+        "argument": "The script exits 0 when `.wrangler/sentry-bundle/index.js` is absent and exits 0 again when any of SENTRY_AUTH_TOKEN / SENTRY_ORG / SENTRY_PROJECT / release is unset; the deploy workflow adds a third skip-and-`exit 0` guard around it. On the one path where it can fail, what it asserts is that observability artifacts uploaded and their sourcemaps are well-formed — nothing about the code that was deployed."
+      },
+      "evidence": [
+        "package.json:31",
+        "tools/sentry-upload-sourcemaps.ts:17-29",
+        "tools/sentry-upload-sourcemaps.ts:50-57",
+        ".github/workflows/deploy.yml:242-248"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#build-client-web",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the esbuild binary's exit code",
+        "actorCanWrite": false,
+        "argument": "esbuild resolves every import from packages/worker/client/entry.tsx and parses the tree; an unresolved module or syntax error is a non-zero exit that the authors cannot argue with. It is on the pipeline path: nx `test-e2e` dependsOn `build-client`, and the CI E2E job runs `npm run test:e2e:run`. Limit — esbuild does no type checking, so the assertion is 'this bundles', not 'this is correct'; the type axis is the separate tsc edge."
+      },
+      "evidence": [
+        "package.json:32",
+        "packages/worker/project.json (target build-client-web / test-e2e dependsOn)",
+        ".github/workflows/validate.yml:172-173"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#build-client",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "delegation to `build:client:web` — terminal producer is the esbuild binary's exit code",
+        "actorCanWrite": false,
+        "argument": "Pure one-hop alias; descending, the signal is esbuild's. Reached in CI two ways: nx `test-e2e` dependsOn `build-client`, and Playwright's webServer command (`preview:e2e`) runs `nx run worker:build-client` before booting the server. Same limit as its target: bundling succeeds or fails, which says nothing about behavior or types."
+      },
+      "evidence": [
+        "package.json:33",
+        "package.json:51",
+        "packages/worker/project.json (build-client, test-e2e dependsOn)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/mock-servers/cloudflare/wrangler.jsonc#wrangler-jsonc",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "the repo-authored mock Cloudflare API Worker this config boots and deploys (packages/mock-servers/cloudflare/src/*.ts)",
+        "actorCanWrite": true,
+        "argument": "This deploy config's function is to install an in-repo fake of a third-party API into the two environments where behavior is judged: node-unit tests boot it through test-support/cloudflare-mock-server.ts (cloudflare-email.node.test.ts, artifacts-mock-cloudflare.node.test.ts), and preview.yml deploys every packages/mock-servers/*/wrangler.jsonc and then rewrites the preview app worker's CLOUDFLARE_API_BASE_URL and CLOUDFLARE_API_TOKEN to point at it. So every signal that appears to traverse the Cloudflare API in tests and in preview is produced by code the same authors write — the oracle sits inside the boundary. The only externally produced part is wrangler/Cloudflare accepting this config, which asserts nothing about the product."
+      },
+      "evidence": [
+        "packages/mock-servers/cloudflare/wrangler.jsonc:1-20",
+        "packages/worker/src/test-support/cloudflare-mock-server.ts:9",
+        "packages/worker/src/app/email/cloudflare-email.node.test.ts:5",
+        ".github/workflows/preview.yml:167-203"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/backup-control-plane/wrangler.jsonc#wrangler-jsonc",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "author-set `vars` inside the same file that carries the gate — ENABLE_PRODUCTION_D1_BACKUPS, BACKUP_BENCHMARK_APPROVED, TRUSTED_RESTORE_BASELINE_SHA256",
+        "actorCanWrite": true,
+        "argument": "As a gate, this file conditions the DR backup/restore schedules on two string vars the authors typed ('Both must be exactly \"true\" for any schedule to run'), with the supporting evidence recorded as a prose comment ('The blocking export benchmark passed 2026-07-23') that nothing re-executes; the restore baseline hash is likewise hand-computed and stored in the file it guards. The claim and the check are the same write. The file's *deployability* is separately and genuinely checked by `backup:build` (`wrangler deploy --dry-run`), which is the node that should carry that anchored credit — counting it again here would double-count one external signal."
+      },
+      "evidence": [
+        "packages/backup-control-plane/wrangler.jsonc:31-42",
+        "packages/backup-control-plane/wrangler.jsonc:47-51",
+        "package.json:35",
+        ".github/workflows/validate.yml:64-66"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/backup-control-plane/vitest.config.ts#vitest-config-ts",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — no script, nx target, or CI step invokes this config, so it emits no signal at all",
+        "actorCanWrite": null,
+        "argument": "Traced every caller: the root vitest.config.ts lists only ./vitest.node.config.ts, ./vitest.workers.config.ts and ./vitest.mcp-e2e.config.ts, and CI runs `vitest run --project node-unit|workers-unit|mcp-e2e` through that root config; the package's own `\"test\": \"vitest run *.node.test.ts\"` is never called (no `-w`/`--workspaces` invocation exists in the repo). This edge is therefore unreachable and can never turn a pipeline red. The vacuousness is unreachability, not weakness — and no coverage is lost, because the 16 packages/backup-control-plane/*.node.test.ts files are already swept by the root node-unit project's `**/*.node.test.ts` include and run in the CI Node job."
+      },
+      "evidence": [
+        "packages/backup-control-plane/vitest.config.ts:1-8",
+        "packages/backup-control-plane/package.json:5-7",
+        "vitest.config.ts:11-15",
+        "vitest.node.config.ts:48",
+        ".github/workflows/validate.yml:103-104"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/worker/wrangler.jsonc#wrangler-jsonc",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "workerd/miniflare at test time (the vitest-pool-workers pool reads this exact file) and the Cloudflare deploy API at deploy time",
+        "actorCanWrite": false,
+        "argument": "Two external readers decide whether this config is valid, and neither is writable by the authors: vitest.workers.config.ts hands this file (environment 'test') to @cloudflare/vitest-pool-workers, so a malformed config or a DO binding naming a nonexistent class fails the CI Workers job outright; and tools/ci/production-resources.ts reads it as the base for the generated production config that deploy.yml uploads, where Cloudflare rejects inconsistent DO migration tags and unresolvable bindings. Limits worth stating: `remoteBindings: false` means the test-time validation is against local emulation, so production-only declarations (queues, vectorize, AI, worker_loaders, and the `sentry-otlp-traces` destination the file's own comment says 'must exist in the target account before deploy') are unverified until the real deploy runs; and every literal in `vars` — Stripe price id, sample rate, DR account ids — is an author-set constant nothing checks."
+      },
+      "evidence": [
+        "packages/worker/wrangler.jsonc:15-93",
+        "packages/worker/wrangler.jsonc:110-126",
+        "vitest.workers.config.ts:14-22",
+        "tools/ci/production-resources.ts:56",
+        "tools/ci/production-resources.ts:239"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish-mcp-registry.yml#26-checkout",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6.0.2 talking to the GitHub git endpoint",
+        "actorCanWrite": null,
+        "argument": "Source acquisition. It can fail on a network or permissions problem, but it asserts nothing whatsoever about the correctness of the code it fetches — there is no property of the artifact that this step could find wrong."
+      },
+      "evidence": [
+        ".github/workflows/publish-mcp-registry.yml:26-27"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish-mcp-registry.yml#29-install-mcp-publisher",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "curl piped to tar, pulling a prebuilt release binary from the modelcontextprotocol/registry GitHub releases CDN",
+        "actorCanWrite": null,
+        "argument": "Tool acquisition. `set -euo pipefail` plus `curl -fsSL` means a failed download fails the step, and the producer (GitHub's CDN) is outside the write boundary — but what it asserts is that a download succeeded, not any property of this repo. Worth flagging structurally: the URL is `/releases/latest/` with no version pin and no checksum, so the binary that executes the publish is not fixed by this commit."
+      },
+      "evidence": [
+        ".github/workflows/publish-mcp-registry.yml:29-34"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish-mcp-registry.yml#36-authenticate-with-github-oidc",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "GitHub's OIDC issuer plus the MCP registry's token exchange",
+        "actorCanWrite": null,
+        "argument": "Genuinely external — the registry decides whether this workflow's OIDC token proves ownership of the io.github.kentcdodds namespace, and the repo cannot forge that. But what it establishes is identity, not correctness: no property of the codebase is being asserted, so it is a precondition step in the publish path rather than a check. (This is the borderline call in the sample; the publish step downstream is where the external validation of an artifact actually lands.)"
+      },
+      "evidence": [
+        ".github/workflows/publish-mcp-registry.yml:36-37"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish-mcp-registry.yml#39-publish",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the MCP registry service, which validates server.json against its published schema, checks OIDC-proven namespace ownership, and rejects duplicate versions",
+        "actorCanWrite": false,
+        "argument": "`mcp-publisher publish` succeeds only if a third-party service accepts the manifest; the repo cannot write to that validator, so a malformed or non-owned server.json produces a non-zero exit no one here controls. Three limits: the workflow triggers only on push-to-main filtered to `server.json` and itself (plus workflow_dispatch), so it never gates a PR merge and cannot block a bad change from landing; the registry validates the manifest, not that https://heykody.dev/mcp actually serves a working MCP server; and the client doing the exchange is the unpinned `latest` binary fetched in the previous step, whose source is not in this repo."
+      },
+      "evidence": [
+        ".github/workflows/publish-mcp-registry.yml:3-10",
+        ".github/workflows/publish-mcp-registry.yml:39-40",
+        "server.json:1-19"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/validate.yml#39-checkout",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6.0.2 talking to the GitHub git endpoint",
+        "actorCanWrite": null,
+        "argument": "Source acquisition for the Static job. The `fetch-depth: 0` here is a genuine enabling condition for a real check downstream — the migrations:check step needs an unshallow history so migration immutability compares against the true PR merge base — but this step itself asserts nothing about the artifact."
+      },
+      "evidence": [
+        ".github/workflows/validate.yml:39-45",
+        ".github/workflows/validate.yml:72-80"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/validate.yml#47-setup",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the composite action .github/actions/setup-validate — descending: actions/setup-node@v6, actions/cache, `npm ci`, `cp packages/worker/.env.example packages/worker/.env`, optional Playwright browser install, optional `npm run migrate:local`",
+        "actorCanWrite": null,
+        "argument": "Descended rather than classifying the wrapper: every child is environment preparation, and none observes a property of the change under review. The one falsifiable assertion in the chain is `npm ci`'s refusal to install when package.json and package-lock.json disagree — an npm-produced signal about the dependency manifest, incidental to whether the code is correct. Nothing here can go red because the code is wrong."
+      },
+      "evidence": [
+        ".github/workflows/validate.yml:47-48",
+        ".github/actions/setup-validate/action.yml:21-53"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/validate.yml#52-format",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the oxfmt binary in `--check` mode; its exit code is a deterministic function of the file bytes against the printer",
+        "actorCanWrite": false,
+        "argument": "`npm run format:check` runs `oxfmt --check`, which reports and fails rather than rewriting, so the edge is falsifiable and the verdict comes from a third-party formatter the authors cannot argue with. Limits: it asserts formatting conformance only, never behavior; and .oxfmtrc.json — including `ignorePatterns` that exempt e.g. packages/worker/public/client-entry.js and worker-configuration.d.ts — is authored inside the boundary, so the actor chooses *what* is checked even though it cannot choose the outcome for a checked file. The `if: ${{ !cancelled() }}` guard keeps siblings running after a failure; it does not stop this step from failing the job."
+      },
+      "evidence": [
+        "package.json:43",
+        ".github/workflows/validate.yml:52-54",
+        ".oxfmtrc.json:22-38"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/validate.yml#56-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the oxlint binary's exit code over the repo's source tree",
+        "actorCanWrite": false,
+        "argument": "Deterministic static analysis by an external engine; a violation is a non-zero exit that no amount of authorship changes. Limit, and it is a real one here: the rule corpus is partly inside the write boundary — .oxlintrc.json extends the third-party @epic-web/config/oxlint-config.json (which I could not enumerate: node_modules is absent from the read-only clone) plus tools/oxlint/oxlint-rules.json, three repo-authored custom rules set to 'error' and implemented by a repo-authored JS plugin (./local-plugin.js). The engine decides, but which properties count as errors is a choice the actor makes."
+      },
+      "evidence": [
+        "package.json:40",
+        ".github/workflows/validate.yml:56-58",
+        ".oxlintrc.json:1-7",
+        "tools/oxlint/oxlint-rules.json:1-8"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/validate.yml#60-typecheck",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the TypeScript compiler (tsc), twice: `tsc -b packages/worker/tsconfig-client.json packages/worker/tsconfig-worker-typecheck.json --noEmit` and `tsc --noEmit -p packages/backup-control-plane/tsconfig.json`",
+        "actorCanWrite": false,
+        "argument": "The cleanest anchored edge in this sample: deterministic analysis of the artifact by a compiler outside the write boundary, under a strict-inheriting config (backup-control-plane sets strict: true; the worker config extends @epic-web/config/typescript with noUnusedLocals/noUnusedParameters/noFallthroughCasesInSwitch). Limits worth naming: tsconfig-worker-typecheck.json excludes `**/*.test.ts`, `**/*.spec.ts` and `./src/test-support/**`, so the test code — precisely the code that authors the oracles — is never typechecked by this edge; and skipLibCheck is on for the backup plane."
+      },
+      "evidence": [
+        "package.json:53",
+        ".github/workflows/validate.yml:60-62",
+        "packages/worker/tsconfig-worker.json:41-53",
+        "packages/backup-control-plane/tsconfig.json:1-13"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/validate.yml#64-backup-build",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "wrangler's config validator and bundler running `deploy --dry-run` over packages/backup-control-plane",
+        "actorCanWrite": false,
+        "argument": "wrangler parses the config against its schema and bundles worker.ts plus both Workflow entrypoints; a broken import, a bad DO/Workflow class reference, or a schema-invalid config is a non-zero exit produced by a third-party tool. Limits: `--dry-run` never contacts the Cloudflare API, so the account-side reality of the R2 bucket, the workflow names, and the token scopes is unverified here; and it asserts the control plane *builds*, not that any backup or restore is correct."
+      },
+      "evidence": [
+        "package.json:35",
+        ".github/workflows/validate.yml:64-66",
+        "packages/backup-control-plane/wrangler.jsonc:1-30"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "playwright.config.ts#playwright-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real Chromium browser (Playwright) driving a real workerd runtime — webServer boots `npm run preview:e2e`, which builds the client, applies D1 migrations into .wrangler/state/e2e, and starts `wrangler dev --local` with CLOUDFLARE_ENV=test",
+        "actorCanWrite": false,
+        "argument": "Execution genuinely decides: the assertions are DOM observations of what the server actually rendered and what the local SQLite-backed D1 actually stored (e2e/smoke.spec.ts drives a login round-trip and an SPA navigation, asserting URLs and rendered roles), and this suite is on the merge path — the E2E job runs `npm run test:e2e:run` and is a required input of the `validate` aggregate. Limits, and they matter here: the oracle is co-authored — the same authors wrote the app and the expectations, so both can drift together and stay green; the runtime is local workerd plus a local D1 file, not the Cloudflare edge; the wrangler `test` env substitutes `MOCK_*` OAuth client ids so social-login round-trips are served by an in-worker mock rather than a real provider; and `retries: 2` in CI means a flaky edge must fail three times before the job turns red. On the credit side, `forbidOnly: !!process.env.CI` closes the `.only` silent-shrink hole."
+      },
+      "evidence": [
+        "playwright.config.ts:9-30",
+        "package.json:51",
+        "package.json:62",
+        ".github/workflows/validate.yml:172-173",
+        ".github/workflows/validate.yml:175-194",
+        "packages/worker/wrangler.jsonc:541-548",
+        "e2e/smoke.spec.ts:5-40"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "vitest.config.ts#vitest-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the vitest runtime across three substrates: plain Node (node-unit), real workerd via @cloudflare/vitest-pool-workers (workers-unit), and a real `wrangler dev` server driven through a real OAuth + MCP handshake (mcp-e2e)",
+        "actorCanWrite": false,
+        "argument": "The runner decides pass/fail and the authors cannot overrule an exception or a failed assertion; all three projects are on the merge path — the CI Node, Workers and MCP jobs each run `vitest run --project <name>` through this root config. Two limits belong on the record. First, the oracle: implementation and assertions are co-authored, so this proves 'the code does what the tests say', not that the tests say the right thing. Second, and specific to this repo, the substrate for the largest suite is itself repo-authored — vitest.node.config.ts aliases `cloudflare:workers` and `@sentry/cloudflare` to hand-written stubs in packages/worker/src/test-support/, so for the 373 `.node.test.ts` files the platform under test is a fake the actor maintains; workers-unit is stronger (real workerd) but runs with `remoteBindings: false`, so KV/D1/R2/DO are miniflare-simulated rather than the real Cloudflare services."
+      },
+      "evidence": [
+        "vitest.config.ts:5-17",
+        "vitest.node.config.ts:30-45",
+        "vitest.workers.config.ts:14-22",
+        "vitest.mcp-e2e.config.ts:5-22",
+        "packages/worker/src/test-support/cloudflare-workers-stub.ts:1-33",
+        ".github/workflows/validate.yml:103-104",
+        ".github/workflows/validate.yml:129-130",
+        ".github/workflows/validate.yml:150-151"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 11,
+    "selfReferential": 2,
+    "unknown": 0,
+    "notACheck": 12,
+    "ratio": 0.8461538461538461
+  },
+  "economics": {
+    "nodesTotal": 122,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 4483,
+    "tokensOut": 6490,
+    "tokensEstimated": true,
+    "wallClockMs": 570438
+  }
+}

@@ -1,0 +1,38 @@
+<!-- @keelCard group="Type" name="Provenance: mono vs sans" subtitle="Mono is quoted from the world; sans is Keel talking" height="260" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-5); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--k-space-6); margin-bottom: var(--k-space-5); }
+  .col p { font-size: var(--k-fs-sm); color: var(--k-ink-1); max-width: none; margin: 0 0 var(--k-space-2); }
+  .col .k-mono { color: var(--k-ink-0); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+  <div class="split">
+    <div class="col">
+      <p class="k-eyebrow">Mono — quoted</p>
+      <p class="k-mono">.github/workflows/test.yml</p>
+      <p class="k-mono">bun test --coverage</p>
+      <p class="k-mono">exit 0</p>
+      <p class="k-mono">self_referential</p>
+      <p class="k-mono">a3f91c2</p>
+    </div>
+    <div class="col">
+      <p class="k-eyebrow">Sans — Keel talking</p>
+      <p>The signal is the test runner's exit code.</p>
+      <p>The fork point could not be traced.</p>
+      <p>Produced inside the write boundary.</p>
+      <p>Excluded from the denominator.</p>
+      <p>Confidence 0.31 on an anchored verdict.</p>
+    </div>
+  </div>
+  <p class="note">
+    The single most useful rule in the system. Anything Keel did not write is set in
+    mono; anything Keel is asserting is set in sans. A reader separates evidence from
+    claim before reading a word — which is the same distinction the product is about.
+    Applies in prose too: <span class="k-mono">unknown</span> inside a sentence stays mono.
+  </p>
+</body></html>

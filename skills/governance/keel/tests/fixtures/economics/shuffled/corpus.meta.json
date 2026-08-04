@@ -1,0 +1,5 @@
+{
+  "label": "synthetic re-run of the declining corpus in a different order",
+  "synthetic": true,
+  "note": "The same six targets, re-run in the order 04, 01, 06, 03, 05, 02. Per-target cost moves a great deal; per-target ratios hold within 0.05."
+}

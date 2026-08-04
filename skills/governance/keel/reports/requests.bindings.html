@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>keel route — requests</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Keel — design tokens. THE canonical source. There is no second copy.
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Every Keel surface reads these: the report artifact (inlined by render.ts),
+   the marketing site, the agents page, and the governance docs. `site/` gets a
+   byte-identical copy written by `make site-tokens`; `make design-audit`
+   executes a diff and exits non-zero if it has drifted. That check is anchored
+   under Keel's own definition — the signal is a diff exit code, not an
+   assertion this repo also writes.
+
+   WHY ONE FILE AND NOT FIVE. Systems this size usually split color/type/space
+   into separate files behind an @import entry point. Keel cannot: the report
+   must open from file:// with zero external requests, so `render.ts` inlines
+   this text verbatim into a <style> block. One file is one read. The section
+   rules below carry the structure the file split would have carried.
+
+   NAMESPACE. Every token is `--k-*`. Keel's output gets embedded in other
+   people's pages and pasted into other people's docs; an unprefixed `--accent`
+   would collide and silently restyle someone else's surface.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* ═══ CANVAS ══════════════════════════════════════════════════════════════
+     Dark, because Keel is an instrument, not a document. Elevation is
+     expressed as a background step plus a hairline — never a shadow. On a
+     #07090c canvas a shadow is a smudge: it costs paint and reads as nothing.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-bg-0: #07090c;          /* page */
+  --k-bg-1: #0c1015;          /* raised: cards, code blocks, table headers */
+  --k-bg-2: #11161d;          /* nested / hover */
+  --k-bg-3: #171d26;          /* active / selected row */
+
+  --k-line: #1b2027;          /* hairline — the default separator */
+  --k-line-strong: #2a323c;   /* emphasis rule, focused input */
+
+  /* ═══ INK ═════════════════════════════════════════════════════════════════
+     Four steps. --k-ink-3 is BELOW the 4.5:1 text threshold on --k-bg-0 by
+     design; it is for borders, disabled glyphs, and decorative rules. Never
+     set body copy in it. The other three clear 4.5:1 on bg-0 and bg-1.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-ink-0: #e8edf2;         /* primary text        ~16:1 on bg-0 */
+  --k-ink-1: #b6c0cb;         /* secondary text      ~10:1 */
+  --k-ink-2: #8b97a5;         /* tertiary / meta      ~6:1 */
+  --k-ink-3: #5b6774;         /* NON-TEXT ONLY        ~2.6:1 */
+
+  /* ═══ KEEL'S OWN VOICE ════════════════════════════════════════════════════
+     One accent, used surgically: links, the emphasized clause in a headline,
+     Keel's own annotations. It is a HUE RESERVED FOR THE NARRATOR — it never
+     encodes a verdict, and no verdict color is ever used for chrome. Mixing
+     the two is how a tool starts congratulating itself in green.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-accent: #7dd3fc;
+  --k-accent-hover: #b6e6ff;
+  --k-accent-line: rgba(125, 211, 252, 0.30);   /* link underline at rest */
+  --k-accent-wash: rgba(125, 211, 252, 0.10);   /* callout fill */
+
+  /* ═══ VERDICTS ════════════════════════════════════════════════════════════
+     Exactly four, matching `GroundingClass` in schemas/keel.ts. The schema is
+     frozen; so is this list. Adding a fifth swatch here without a schema
+     change means someone is inventing a class in CSS.
+
+       anchored          the producer is outside the write boundary
+       self_referential  it is inside
+       unknown           the fork point could not be traced — FAILS CLOSED
+       not_a_check       asserts nothing; excluded from the denominator
+
+     `not_a_check` is deliberately the least attractive swatch in the file. It
+     is the one shoppable class — misfiling a real check there shrinks the
+     denominator and inflates the score — so it gets inert slate and, per
+     `.k-verdict`, a dashed border rather than a solid one. It should never
+     look like a place you want your nodes to land.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-anchored: #4ade80;
+  --k-self-referential: #f87171;
+  --k-unknown: #fbbf24;
+  --k-not-a-check: #94a3b8;
+
+  /* Tints for chip fills and graph marks. Kept as explicit rgba rather than
+     color-mix() so the report renders identically in older embedded viewers
+     (email clients, IDE previews) that never see a modern engine. */
+  --k-anchored-wash: rgba(74, 222, 128, 0.10);
+  --k-self-referential-wash: rgba(248, 113, 113, 0.10);
+  --k-unknown-wash: rgba(251, 191, 36, 0.10);
+  --k-not-a-check-wash: rgba(148, 163, 184, 0.08);
+
+  /* Confidence smell — an `anchored` verdict asserted with confidence < 0.5.
+     Aliased to --k-unknown on purpose: the visual claim is "this is closer to
+     unknown than its color suggests". A separate hue would imply a fifth
+     class, and there is no fifth class. */
+  --k-smell: var(--k-unknown);
+
+  /* ═══ TYPE ════════════════════════════════════════════════════════════════
+     NO WEBFONTS. Not a preference — an invariant. The report must open from
+     file://, survive being emailed, and issue zero external requests, which
+     rules out every hosted face. System stacks are the honest answer; a
+     bundled base64 face would add ~80KB to an artifact whose whole argument
+     is that it depends on nothing.
+
+     The two families carry a PROVENANCE distinction, and this is the rule
+     most worth keeping: MONO IS QUOTED FROM THE WORLD, SANS IS KEEL TALKING.
+     Node names, file paths, commands, exit codes, class names, hashes — mono,
+     because Keel did not write them. Prose, headings, arguments, and
+     annotations — sans, because Keel did. A reader can tell claim from
+     evidence at a glance without reading a word.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 Inter, system-ui, sans-serif;
+  --k-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo,
+                 "Cascadia Mono", Consolas, monospace;
+
+  --k-fs-ratio: clamp(64px, 13vw, 128px);   /* the grounding ratio, and only it */
+  --k-fs-display: clamp(30px, 5.2vw, 46px); /* page hero */
+  --k-fs-h1: 24px;
+  --k-fs-h2: 19px;
+  --k-fs-h3: 16px;
+  --k-fs-lede: 19px;
+  --k-fs-body: 16px;
+  --k-fs-ui: 15px;                          /* dense report UI */
+  --k-fs-sm: 14px;
+  --k-fs-xs: 12.5px;
+  --k-fs-micro: 11px;                       /* eyebrows, table headers */
+
+  --k-lh-ratio: 0.9;
+  --k-lh-tight: 1.18;
+  --k-lh-snug: 1.35;
+  --k-lh-body: 1.65;
+
+  /* Three weights. There is no 700: on a near-black canvas heavy strokes
+     bloom, and the halation costs more legibility than the emphasis buys. */
+  --k-fw-regular: 400;
+  --k-fw-medium: 500;
+  --k-fw-semibold: 600;
+
+  --k-track-ratio: -0.045em;
+  --k-track-display: -0.022em;
+  --k-track-tight: -0.01em;
+  --k-track-normal: 0;
+  --k-track-eyebrow: 0.18em;   /* uppercase section labels */
+  --k-track-brand: 0.22em;     /* the wordmark only */
+
+  /* ═══ SPACE ═══════════════════════════════════════════════════════════════
+     4px grid. Measures are capped tight: a verdict list read at 1400px wide
+     loses the row it started on, and this artifact is read row by row.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-space-0: 0;
+  --k-space-1: 4px;
+  --k-space-2: 8px;
+  --k-space-3: 12px;
+  --k-space-4: 16px;
+  --k-space-5: 20px;
+  --k-space-6: 24px;
+  --k-space-8: 32px;
+  --k-space-10: 40px;
+  --k-space-12: 48px;
+  --k-space-16: 64px;
+  --k-space-20: 80px;
+  --k-space-24: 96px;
+
+  --k-measure-read: 760px;     /* prose column — site, docs */
+  --k-measure-report: 1080px;  /* report shell: graph + verdict table */
+  --k-measure-prose: 62ch;     /* lede / paragraph wrap */
+
+  /* ═══ RADIUS ══════════════════════════════════════════════════════════════
+     Small. Keel's surfaces are cells, rows, and records — the vocabulary of a
+     ledger. Generous rounding reads as consumer-soft and undersells that the
+     numbers on screen are accounting, not a dashboard.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-r-xs: 3px;
+  --k-r-sm: 4px;
+  --k-r-md: 6px;
+  --k-r-lg: 8px;
+  --k-r-xl: 12px;
+  --k-r-pill: 999px;           /* tags and class chips only */
+
+  /* ═══ MOTION ══════════════════════════════════════════════════════════════
+     Fast and flat. Instruments settle; they do not perform. No overshoot, no
+     bounce, nothing above 200ms. Motion here exists to preserve object
+     continuity across a state change, never to draw attention to one.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-ease: cubic-bezier(0.2, 0, 0.38, 1);
+  --k-dur-fast: 90ms;
+  --k-dur-base: 160ms;
+
+  /* ═══ GRAPH MARKS ═════════════════════════════════════════════════════════
+     The node graph is one mark per node. SQUARES, not circles: a circle in a
+     verification UI reads as a status dot, and a status dot is exactly the
+     unaccountable green light Keel exists to criticize. A square reads as a
+     cell in a ledger. Sized to stay legible at 200 nodes.
+     ─────────────────────────────────────────────────────────────────────── */
+  --k-mark: 10px;
+  --k-mark-gap: 3px;
+  --k-mark-r: 2px;
+  --k-mark-stroke: 1.5px;      /* smell ring on an anchored mark */
+
+  /* ═══ FOCUS ═══════════════════════════════════════════════════════════════
+     Two-stop ring: a bg-colored inset so the accent never touches the element
+     edge, then the accent. Visible on every surface step without a per-context
+     override. */
+  --k-focus-ring: 0 0 0 2px var(--k-bg-0), 0 0 0 4px var(--k-accent);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Keel — element defaults and component classes. Requires tokens.css.
+   ═══════════════════════════════════════════════════════════════════════════
+
+   WHY CSS CLASSES AND NOT COMPONENTS. Keel's surfaces are static HTML emitted
+   as strings by `render.ts`, plus two hand-written pages. There is no runtime,
+   no build step, and no framework to hang a component API on — so the
+   component contract is a class name plus a documented markup shape. See
+   `README.md` in this directory for the per-component usage brief.
+
+   Every value below is a var(). A literal hex, px, or ms in this file is a
+   bug, and `make design-audit` fails on one. The two exceptions are marked
+   inline with `audit-ok:` and carry a reason.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Reset, kept to what actually bites ─────────────────────────────────── */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--k-bg-0);
+  color: var(--k-ink-0);
+  font-family: var(--k-font-sans);
+  font-size: var(--k-fs-body);
+  line-height: var(--k-lh-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+  font-weight: var(--k-fw-semibold);
+  line-height: var(--k-lh-snug);
+  letter-spacing: var(--k-track-tight);
+  color: var(--k-ink-0);
+}
+
+p { margin: 0 0 var(--k-space-4); max-width: var(--k-measure-prose); }
+
+a {
+  color: var(--k-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--k-accent-line);
+  transition: color var(--k-dur-fast) var(--k-ease),
+              border-color var(--k-dur-fast) var(--k-ease);
+}
+a:hover { color: var(--k-accent-hover); border-bottom-color: var(--k-accent); }
+
+code, kbd, samp, pre { font-family: var(--k-font-mono); }
+
+::selection { background: var(--k-accent-wash); color: var(--k-ink-0); }
+
+:focus-visible { outline: none; box-shadow: var(--k-focus-ring); border-radius: var(--k-r-sm); }
+
+/* Motion is never load-bearing here, so honouring the preference costs
+   nothing and removes every transition and the one animated element. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+
+.k-page   { max-width: var(--k-measure-read);   margin: 0 auto; padding: var(--k-space-20) var(--k-space-6) var(--k-space-24); }
+.k-report { max-width: var(--k-measure-report); margin: 0 auto; padding: var(--k-space-12) var(--k-space-6) var(--k-space-20); }
+
+.k-rule { border: 0; border-top: 1px solid var(--k-line); margin: var(--k-space-16) 0; }
+
+/* ── Type ───────────────────────────────────────────────────────────────── */
+
+/* Uppercase section label. Sentence-case everywhere else — these are the only
+   shouted words in the system, and they are structural, not emphatic. */
+.k-eyebrow {
+  margin: 0 0 var(--k-space-5);
+  font-size: var(--k-fs-micro);
+  font-weight: var(--k-fw-medium);
+  letter-spacing: var(--k-track-eyebrow);
+  text-transform: uppercase;
+  color: var(--k-ink-2);
+}
+
+.k-wordmark {
+  font-size: var(--k-fs-sm);
+  font-weight: var(--k-fw-medium);
+  letter-spacing: var(--k-track-brand);
+  text-transform: uppercase;
+  color: var(--k-ink-2);
+}
+
+.k-display {
+  font-size: var(--k-fs-display);
+  line-height: var(--k-lh-tight);
+  letter-spacing: var(--k-track-display);
+  font-weight: var(--k-fw-semibold);
+}
+/* The one emphasized clause in a headline. Accent = Keel's own voice. */
+.k-display em { font-style: normal; color: var(--k-accent); }
+
+.k-lede {
+  font-size: var(--k-fs-lede);
+  color: var(--k-ink-2);
+  max-width: var(--k-measure-prose);
+}
+
+.k-meta { font-size: var(--k-fs-xs); color: var(--k-ink-2); }
+
+/* Anything quoted from the target: paths, node names, commands, hashes. */
+.k-mono { font-family: var(--k-font-mono); font-size: 0.92em; } /* audit-ok: relative to inherited size, not a fixed step */
+
+/* ── Surfaces ───────────────────────────────────────────────────────────── */
+
+.k-card {
+  background: var(--k-bg-1);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  padding: var(--k-space-5);
+}
+
+.k-code {
+  display: block;
+  background: var(--k-bg-1);
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r-lg);
+  padding: var(--k-space-4) var(--k-space-5);
+  font-size: var(--k-fs-ui);
+  overflow-x: auto;
+}
+.k-code--cmd::before { content: "$ "; color: var(--k-ink-2); }
+
+.k-callout {
+  margin: 0 0 var(--k-space-6);
+  padding: var(--k-space-4) var(--k-space-5);
+  background: var(--k-bg-1);
+  border-left: 2px solid var(--k-accent);
+  font-size: var(--k-fs-lede);
+  line-height: var(--k-lh-snug);
+}
+
+/* ── Verdict classes ────────────────────────────────────────────────────────
+   `.k-class` renders a GroundingClass name. The name is ALWAYS the schema
+   spelling in mono — `self_referential`, never "Self-Referential". The class
+   is an identifier from the data model, not a label we get to prettify, and
+   re-spelling it in prose breaks the reader's ability to grep the JSON.
+
+   Drive the variant with data-class so invalid values render unstyled and
+   loudly wrong rather than silently defaulting to something plausible.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.k-class {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-space-1);
+  padding: var(--k-space-1) var(--k-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--k-r-sm);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+  line-height: var(--k-lh-snug);
+  white-space: nowrap;
+}
+
+.k-class[data-class="anchored"]         { color: var(--k-anchored);         background: var(--k-anchored-wash); }
+.k-class[data-class="self_referential"] { color: var(--k-self-referential); background: var(--k-self-referential-wash); }
+.k-class[data-class="unknown"]          { color: var(--k-unknown);          background: var(--k-unknown-wash); }
+
+/* Dashed, because this class is EXCLUDED FROM THE DENOMINATOR. The border
+   style is the reader's cue that the node left the accounting entirely — the
+   one place a verdict changes what the ratio is computed over, so it is the
+   one place the chip stops looking like the others. */
+.k-class[data-class="not_a_check"] {
+  color: var(--k-not-a-check);
+  background: var(--k-not-a-check-wash);
+  border-color: var(--k-ink-3);
+  border-style: dashed;
+}
+
+/* Confidence smell: `anchored` asserted below 0.5. High confidence with thin
+   evidence is the pattern worth catching, so it gets a ring rather than a
+   footnote. */
+.k-class[data-smell] { box-shadow: inset 0 0 0 var(--k-mark-stroke) var(--k-smell); }
+
+/* ── Verdict row ────────────────────────────────────────────────────────────
+   A verdict without its argument is the unaccountable green check Keel exists
+   to criticize, so the markup contract is: every `.k-verdict` contains a
+   `.k-argument`. The rule below makes a violation visible in the artifact
+   itself during development, and `make design-audit` fails the build on one.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.k-verdict {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) auto;
+  gap: var(--k-space-2) var(--k-space-4);
+  padding: var(--k-space-4) 0;
+  border-bottom: 1px solid var(--k-line);
+}
+
+.k-verdict__name   { font-family: var(--k-font-mono); font-size: var(--k-fs-ui); color: var(--k-ink-0); word-break: break-word; }
+.k-verdict__source { grid-column: 1; font-family: var(--k-font-mono); font-size: var(--k-fs-xs); color: var(--k-ink-2); }
+.k-verdict__class  { grid-column: 2; grid-row: 1; justify-self: end; }
+
+/* The evidence. Sans, because this is Keel reasoning — not quoted material. */
+.k-argument {
+  grid-column: 1 / -1;
+  margin: 0;
+  max-width: var(--k-measure-prose);
+  font-size: var(--k-fs-sm);
+  color: var(--k-ink-1);
+}
+
+.k-verdict:not(:has(.k-argument))::after {
+  content: "missing write-boundary argument — a class without its causal path is not a verdict";
+  grid-column: 1 / -1;
+  padding: var(--k-space-2) var(--k-space-3);
+  border-radius: var(--k-r-sm);
+  background: var(--k-self-referential-wash);
+  color: var(--k-self-referential);
+  font-size: var(--k-fs-xs);
+}
+
+/* ── Grounding ratio ────────────────────────────────────────────────────────
+   NEVER render `.k-ratio__value` without `.k-ratio__counts`. A ratio with a
+   hidden denominator is the exact move this tool was built to expose, and it
+   is trivially inflated by shopping nodes into `not_a_check`. The counts row
+   prints `not_a_check` BESIDE the ratio, visibly outside the fraction.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.k-ratio { margin: 0 0 var(--k-space-8); }
+
+.k-ratio__value {
+  display: block;
+  font-size: var(--k-fs-ratio);
+  line-height: var(--k-lh-ratio);
+  letter-spacing: var(--k-track-ratio);
+  font-weight: var(--k-fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--k-ink-0);
+}
+
+.k-ratio__formula { margin: var(--k-space-3) 0 var(--k-space-4); font-family: var(--k-font-mono); font-size: var(--k-fs-xs); color: var(--k-ink-2); }
+
+.k-ratio__counts { display: flex; flex-wrap: wrap; gap: var(--k-space-2) var(--k-space-5); align-items: center; font-size: var(--k-fs-sm); }
+.k-ratio__count { display: inline-flex; align-items: baseline; gap: var(--k-space-2); font-variant-numeric: tabular-nums; color: var(--k-ink-1); }
+
+/* Set off with a leading rule: everything after it is outside the fraction. */
+.k-ratio__count--excluded {
+  padding-left: var(--k-space-5);
+  border-left: 1px solid var(--k-line);
+  color: var(--k-ink-2);
+}
+
+/* Composition bar. Segment widths are set inline by the renderer from the
+   real counts — no minimum width, because a class with two nodes must look
+   like a class with two nodes. */
+.k-meter { display: flex; height: var(--k-space-2); border-radius: var(--k-r-pill); overflow: hidden; background: var(--k-bg-2); margin: var(--k-space-4) 0; }
+.k-meter__seg[data-class="anchored"]         { background: var(--k-anchored); }
+.k-meter__seg[data-class="self_referential"] { background: var(--k-self-referential); }
+.k-meter__seg[data-class="unknown"]          { background: var(--k-unknown); }
+.k-meter__seg[data-class="not_a_check"]      { background: var(--k-not-a-check); opacity: 0.45; }
+
+/* ── Node graph ─────────────────────────────────────────────────────────────
+   One mark per node, squares on a wrapping grid. Squares, not circles: a
+   circle reads as a status dot, and a status dot is the thing being audited.
+   The grid wraps rather than scaling, so 15 nodes and 200 nodes use the same
+   mark size and neither clips.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.k-graph { display: flex; flex-wrap: wrap; gap: var(--k-mark-gap); margin: 0 0 var(--k-space-6); }
+
+.k-mark {
+  width: var(--k-mark);
+  height: var(--k-mark);
+  border-radius: var(--k-mark-r);
+  background: var(--k-ink-3);
+}
+.k-mark[data-class="anchored"]         { background: var(--k-anchored); }
+.k-mark[data-class="self_referential"] { background: var(--k-self-referential); }
+.k-mark[data-class="unknown"]          { background: var(--k-unknown); }
+.k-mark[data-class="not_a_check"]      { background: transparent; box-shadow: inset 0 0 0 1px var(--k-not-a-check); } /* audit-ok: 1px hairline is the smallest renderable inset, not a scale step */
+.k-mark[data-smell]                    { box-shadow: inset 0 0 0 var(--k-mark-stroke) var(--k-smell); }
+
+.k-legend { display: flex; flex-wrap: wrap; gap: var(--k-space-4); font-size: var(--k-fs-xs); color: var(--k-ink-2); }
+.k-legend__item { display: inline-flex; align-items: center; gap: var(--k-space-2); }
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+
+.k-table { width: 100%; border-collapse: collapse; font-size: var(--k-fs-ui); }
+.k-table th {
+  padding: var(--k-space-2) var(--k-space-3) var(--k-space-2) 0;
+  border-bottom: 1px solid var(--k-line-strong);
+  font-size: var(--k-fs-micro);
+  font-weight: var(--k-fw-medium);
+  letter-spacing: var(--k-track-eyebrow);
+  text-transform: uppercase;
+  color: var(--k-ink-2);
+  text-align: left;
+}
+.k-table td { padding: var(--k-space-3) var(--k-space-3) var(--k-space-3) 0; border-bottom: 1px solid var(--k-line); vertical-align: top; color: var(--k-ink-1); }
+.k-table td:first-child { color: var(--k-ink-0); }
+.k-table--num td { font-variant-numeric: tabular-nums; }
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
+
+.k-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-space-2);
+  padding: var(--k-space-2) var(--k-space-4);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r-md);
+  background: var(--k-bg-1);
+  color: var(--k-ink-0);
+  font-family: inherit;
+  font-size: var(--k-fs-sm);
+  font-weight: var(--k-fw-medium);
+  cursor: pointer;
+  transition: background var(--k-dur-fast) var(--k-ease), border-color var(--k-dur-fast) var(--k-ease);
+}
+.k-btn:hover { background: var(--k-bg-2); border-color: var(--k-ink-3); }
+.k-btn--accent { border-color: var(--k-accent-line); color: var(--k-accent); }
+
+.k-tag {
+  display: inline-flex;
+  padding: var(--k-space-1) var(--k-space-3);
+  border-radius: var(--k-r-pill);
+  background: var(--k-bg-2);
+  color: var(--k-ink-2);
+  font-size: var(--k-fs-micro);
+  letter-spacing: var(--k-track-normal);
+}
+
+/* ── Scope note ─────────────────────────────────────────────────────────────
+   MANDATORY on every artifact that prints a grounding ratio. A high ratio
+   reported without it will be read as "well tested", which is a claim Keel
+   does not make and cannot support. It is a component, not a paragraph, so
+   that it cannot be quietly reworded per artifact.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.k-scope {
+  margin: var(--k-space-10) 0 0;
+  padding: var(--k-space-4) var(--k-space-5);
+  border: 1px dashed var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  font-size: var(--k-fs-sm);
+  color: var(--k-ink-2);
+  max-width: var(--k-measure-prose);
+}
+.k-scope strong { color: var(--k-ink-1); font-weight: var(--k-fw-medium); }
+
+/* ── Economics footer ───────────────────────────────────────────────────── */
+
+.k-econ { display: flex; flex-wrap: wrap; gap: var(--k-space-8); margin-top: var(--k-space-8); padding-top: var(--k-space-5); border-top: 1px solid var(--k-line); font-size: var(--k-fs-xs); color: var(--k-ink-2); }
+.k-econ__stat { display: flex; flex-direction: column; gap: var(--k-space-1); }
+.k-econ__value { font-size: var(--k-fs-h3); font-variant-numeric: tabular-nums; color: var(--k-ink-0); }
+
+/* ── Print ──────────────────────────────────────────────────────────────────
+   The report is expected to be emailed, and an emailed artifact gets printed
+   and pasted into decks. Dark-on-paper is unreadable and wastes toner, so the
+   canvas and ink tokens invert while the four verdict hues are DARKENED
+   rather than swapped — the classification must survive the medium, otherwise
+   a printed report and a screen report disagree about what they show.
+   ─────────────────────────────────────────────────────────────────────── */
+
+@media print {
+  :root {
+    --k-bg-0: #ffffff;
+    --k-bg-1: #f7f7f5;
+    --k-bg-2: #eeeeec;
+    --k-bg-3: #e6e6e3;
+    --k-line: #dcdcd7;
+    --k-line-strong: #b9b9b2;
+    --k-ink-0: #14161a;
+    --k-ink-1: #3a4048;
+    --k-ink-2: #626a74;
+    --k-ink-3: #9aa1aa;
+    --k-accent: #0b6ea8;
+    --k-accent-line: rgba(11, 110, 168, 0.35);
+    --k-anchored: #157f3e;
+    --k-self-referential: #b3261e;
+    --k-unknown: #8a5a00;
+    --k-not-a-check: #5f6b78;
+  }
+  body { background: #ffffff; } /* audit-ok: print canvas must be paper-white regardless of theme tokens */
+  .k-verdict, .k-card, .k-scope { break-inside: avoid; }
+  a { border-bottom: none; }
+  a[href^="http"]::after { content: " (" attr(href) ")"; font-size: var(--k-fs-micro); color: var(--k-ink-2); }
+}
+
+
+.k-route__pair { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--k-space-6); }
+.k-route__side { display: flex; flex-direction: column; gap: var(--k-space-1); }
+.k-route__sep { font-size: var(--k-fs-h1); color: var(--k-ink-3); line-height: 1; }
+.k-route__projected { color: var(--k-ink-1); }
+.k-route__none { color: var(--k-ink-2); }
+.k-route__arrow { color: var(--k-ink-3); }
+.k-route__empty { color: var(--k-ink-3); font-family: var(--k-font-mono); }
+.k-route__table { table-layout: fixed; }
+.k-route__table td { padding-right: var(--k-space-4); }
+.k-route__table .k-argument { margin-top: 0; }
+.k-route__col--loop   { width: 24%; }
+.k-route__col--anchor { width: 17%; }
+.k-route__col--why    { width: 48%; }
+.k-route__col--effort { width: 11%; }
+
+</style>
+</head>
+<body>
+<main class="k-report">
+<header>
+  <p class="k-wordmark">Keel</p>
+  <p class="k-eyebrow">keel route</p>
+  <h1 class="k-display">Independence cannot be manufactured<em>, but it can be routed.</em></h1>
+  <p class="k-lede">Every ungrounded verification edge in
+    <span class="k-mono">requests</span>, paired — where a pairing
+    exists — with an <span class="k-mono">anchored</span> producer <em>already
+    present in the same measurement</em>. Nothing here invents an anchor, and
+    nothing here has been applied.</p>
+  <table class="k-table">
+    <tr><th>target</th><td class="k-mono">requests</td></tr>
+    <tr><th>revision</th><td class="k-mono">69f84847045bef7a849cc994a26fe7ba8a169e95</td></tr>
+    <tr><th>source report</th><td class="k-mono">reports/requests.json</td></tr>
+    <tr><th>generated</th><td class="k-mono">2026-07-25T05:20:43.978Z</td></tr>
+    <tr><th>status</th><td class="k-mono">proposed (all 1)</td></tr>
+  </table>
+</header>
+
+<section class="k-ratio">
+  <div class="k-route__pair">
+    <div class="k-route__side">
+      <span class="k-ratio__value">0.92</span>
+      <p class="k-meta">today — measured</p>
+    </div>
+    <span class="k-route__sep">·</span>
+    <div class="k-route__side">
+      <span class="k-ratio__value k-route__projected">0.92</span>
+      <p class="k-meta"><span class="k-tag">projection</span> if applied —
+        0 re-grounded · 0 constructed</p>
+    </div>
+  </div>
+  <p class="k-ratio__formula">anchored / (anchored + self_referential + unknown)</p>
+  <div class="k-meter"><div class="k-meter__seg" data-class="anchored" style="width:91.7%"></div><div class="k-meter__seg" data-class="unknown" style="width:8.3%"></div></div>
+  <div class="k-ratio__counts">
+  <span class="k-ratio__count"><span class="k-class" data-class="anchored">anchored</span> 11</span>
+  <span class="k-ratio__count"><span class="k-class" data-class="self_referential">self_referential</span> 0</span>
+  <span class="k-ratio__count"><span class="k-class" data-class="unknown">unknown</span> 1</span>
+  <span class="k-ratio__count k-ratio__count--excluded">
+    <span class="k-class" data-class="not_a_check">not_a_check</span> 13
+    <span class="k-meta">excluded from the denominator</span>
+  </span>
+</div>
+  <p class="k-callout">The second number is a <strong>projection</strong>: the ratio
+    this target would carry if a human applied every route below and the applied
+    routes measured as anchored on re-measurement. It is arithmetic on a
+    hypothetical. It is not written to any report, it is not fed back into the
+    grounding ratio, and no proposal on this page has been applied. Projected
+    counts, for the same conditional:
+    <span class="k-mono">anchored 11 · self_referential 0 · unknown 1 · not_a_check 13</span>.
+    The delta is two different claims and is reported as two:
+    <strong>0 re-grounded</strong> — an existing check whose
+    signal moves outside the write boundary, the proposition it asserts unchanged —
+    and <strong>0 constructed</strong> — a
+    <span class="k-mono">not_a_check</span> node that becomes a check, entering the
+    denominator as well as the numerator. Only the first repairs something that was
+    already being claimed.</p>
+  <p class="k-scope"><strong>Scope.</strong> Keel measures the shape of
+verification, not its quality. A repo can be 100% anchored with terrible
+tests. Anchoring says the signal comes from outside; it does not say the
+signal is sufficient.</p>
+</section>
+
+<section>
+  <p class="k-eyebrow">Routes — 0 routable · 1 unroutable</p>
+  <p class="k-lede">Existing checks whose signal could come from somewhere they cannot
+    write. Cheapest effort on top. <span class="k-mono">no route</span> is a
+    first-class answer: it means the fix needs a policy decision rather than a
+    rewiring, and it is reported here rather than dropped.</p>
+  <table class="k-table k-route__table">
+    <colgroup>
+      <col class="k-route__col--loop">
+      <col class="k-route__col--anchor">
+      <col class="k-route__col--why">
+      <col class="k-route__col--effort">
+    </colgroup>
+    <thead><tr>
+      <th>what's ungrounded</th>
+      <th>route to</th>
+      <th>why that's anchored</th>
+      <th>effort</th>
+    </tr></thead>
+    <tbody>
+<tr class="k-route__none">
+    <td><div class="k-mono">.github/CODEOWNERS#codeowners</div>
+      <div class="k-meta">review_gate · code owners (CODEOWNERS)</div>
+      <div class="k-meta">today the signal comes from cannot be established from the repository — either a second maintainer's review approval, or nothing at all</div>
+      <div><span class="k-class" data-class="unknown">unknown</span></div></td>
+    <td><span class="k-route__empty">no route</span></td>
+    <td><p class="k-argument">The proposition this file is reaching for is 'a change to .github/workflows/, CODEOWNERS, src/requests/__version__.py, HISTORY.md or pyproject.toml was approved by @nateprewitt or @sigmavirus24, who is not the author'. A producer that asserts that must emit an approval event attributable to a human other than the pushing actor, and it must sit in the merge path. Every anchored node in this report emits something structurally different: build-dists emits the packaging backend's exit code over the checked-out tree; make ci / make test / tox emit CPython's exit status running tests/; pyright, ruff and the pre-commit aggregate emit a static analyser's verdict on the committed bytes; pytest ini-options and the coverage target parameterise or observe those same runs. All of them answer 'does the tree build, type-check, lint and pass its suite' — a claim about the artefact. None of them answers 'did a second, named person consent to this diff' — a claim about who authorised it. Wiring CODEOWNERS to read any of them would attach a human-authorisation edge to a toolchain-correctness signal: the ratio would move and the authorisation claim would remain exactly as ungrounded as it is now, because a green pytest run is fully reachable by the very author CODEOWNERS exists to constrain.</p>
+      <p class="k-meta">why not: This needs a policy decision, not a rewiring. The signal CODEOWNERS wants already exists at GitHub — a code-owner review approval — but whether it gates anything is decided by 'Require review from Code Owners' in branch-protection/ruleset settings, which live in repository configuration outside the tree and are not readable from a clone. Someone with admin rights must (a) decide the rule is on and (b) make that decision auditable from the repository — e.g. by committing the ruleset as a checked-in .github/rulesets/*.json or otherwise exporting protection state into the tree — before any node in this report can carry the proposition. Until that decision is made, `unknown` is the honest class and no anchored producer here can stand in for it.</p></td>
+    <td><span class="k-route__empty">—</span></td>
+  </tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <p class="k-eyebrow">Construct — not yet.</p>
+  <p class="k-lede">A route makes a check read a signal from outside itself. It does
+    not pair that check with a counter-metric, name who arbitrates when the pair
+    disagrees, or set a cadence at which the route is re-audited. Those three
+    fields are declared in <span class="k-mono">schemas/route.ts</span> and are
+    filled by <span class="k-mono">keel construct</span>, which is not built.
+    The columns are empty by construction, not by omission.</p>
+  <table class="k-table">
+    <thead><tr>
+      <th>route</th>
+      <th>pairedWith</th>
+      <th>arbitratedBy</th>
+      <th>auditEvery</th>
+    </tr></thead>
+    <tbody>
+<tr><td colspan="4" class="k-meta">no routes on this run</td></tr>
+    </tbody>
+  </table>
+</section>
+
+
+
+<footer class="k-econ">
+  <div class="k-econ__stat"><span class="k-econ__value">1</span><span>ungrounded edges considered</span></div>
+  <div class="k-econ__stat"><span class="k-econ__value">0</span><span>routable</span></div>
+  <div class="k-econ__stat"><span class="k-econ__value">1</span><span>unroutable</span></div>
+  <div class="k-econ__stat"><span class="k-econ__value">11</span><span>anchored producers available</span></div>
+</footer>
+</main>
+</body>
+</html>

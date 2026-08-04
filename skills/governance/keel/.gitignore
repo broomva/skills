@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# corpus scratch — clones and per-run state, never committed
+.keel-corpus/
+.keel-probes/
+.keel-probes-*/
