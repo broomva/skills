@@ -1,0 +1,88 @@
+{
+  "target": "keel",
+  "revision": "44f7e8d6cbdfaee7d0e4ff281d59a236ecf0c747",
+  "generatedAt": "2026-07-25T05:12:33.411Z",
+  "sourceReport": "reports/keel.json",
+  "bindings": [
+    {
+      "loop": "package.json#test",
+      "from": "self_referential",
+      "anchoredOn": ".github/workflows/portability.yml#25-scan-committed-files-for-absolute-home-paths",
+      "argument": "The execution axis of `bun test` is already honest — the Bun runtime's exit code, not any prose in the repo, decides pass or fail. What is ungrounded is the merge-time edge: at this revision no workflow invokes it, so the signal a reviewer actually reads is the `- [ ] bun test` box in the PR template, a field the same author sets. The `paths` job takes its verdict from a GitHub-hosted ubuntu-latest runner that checks out the PR's tree with none of the author's tooling present and reports the process exit status through the checks API; a contributor can edit the command and the tests but cannot write the exit code that runner observes, nor the status GitHub publishes from it. Hosting the suite in that job moves the merge-time fork point from a checkbox the author ticks to a runtime verdict on a machine the author does not control. Limit that this route does not fix and that belongs on the record: the assertions are authored in-repo alongside the implementation, so a green run shows the code does what the tests say, not that the tests say the right thing.",
+      "status": "proposed",
+      "change": "add `oven-sh/setup-bun@v2` + a `bun test` step to the GitHub-hosted ubuntu-latest job at .github/workflows/portability.yml:19-26, which already checks out the PR tree on a fresh runner",
+      "effort": "wiring"
+    },
+    {
+      "loop": ".github/workflows/l3-stability.yml#125-set-final-status",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "This is the one edge in the job that can turn the check red, but it is a wrapper: it exits 1 exactly when compute-lambda returned non-zero over the repo's own asserted constants. Descending it lands on the same unmeasured parameters, and no candidate in this report emits a stability signal for it to read instead.",
+      "status": "proposed",
+      "noRouteReason": "Inherits the parameter-referent decision from the compute step, and adds a repository-administration one: `gh api .../branches/main/protection` returns 404, so this red X blocks no merge today. Making it blocking means a human enabling branch protection and naming required checks, and GitHub's protection API is not a node in this report — proposing it as the anchor would be inventing one."
+    },
+    {
+      "loop": ".github/workflows/l3-stability.yml#52-compute-lambda-rcs-stability-budget",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "The arithmetic executes honestly; what is ungrounded is every input to it. gamma, rho, eta, beta, tau and nu are hand-declared constants in .control/rcs-parameters.toml, a file inside the PR's own tree and itself a trigger path for this workflow. No candidate in this report measures any of those quantities, so none can supply the operands the inequality needs.",
+      "status": "proposed",
+      "noRouteReason": "The required decision is where the RCS parameters get an external referent: either measure them from observed system behaviour, or freeze them in a human-signed registry outside the tree the PR can edit. Both are choices about what the numbers mean and who may set them — precisely the anchor-registry decision the roadmap reserves for a human — and an agent that wired the gate onto some other anchored exit code would leave the constants exactly as asserted."
+    },
+    {
+      "loop": ".github/workflows/l3-stability.yml#68-run-l3-rate-gate",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "The counted channel is the repository's own commit history, which is the actor's writes, and the comparison threshold tau_a plus the [gates.l3_paths] pattern list come from an in-repo TOML the same PR may edit. No anchored candidate observes commit rate or supplies a threshold from outside the tree, so there is no producer here to read instead.",
+      "status": "proposed",
+      "noRouteReason": "Requires deciding whether a governance-change rate limit has any referent outside the repo that generates the commits, and who owns the window and path list. The step's second defect — `set +e` then `exit 0`, with `Set final status` reading only the compute step, so this edge cannot fail the job — is a one-line config fix, but applying it alone would turn an actor-authored comparison into a blocking one and raise the anchored count without grounding anything, so it is deliberately not proposed as a route."
+    },
+    {
+      "loop": ".github/workflows/l3-stability.yml#83-comment-on-pr",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "This step's own success means only that the GitHub API accepted a comment body; the verdict inside that body is computed by the same job from constants in the PR's own tree. Piping an anchored producer's status into the text would change what gets published without changing what the step itself asserts, and no candidate here produces a merge recommendation to relay.",
+      "status": "proposed",
+      "noRouteReason": "The decision is editorial and human: whether a bot comment may print 'composite system unstable — do not merge' and 'All gates pass' when its evidence is numbers the PR author typed. The honest fix is to narrow the verdict text to what its inputs support, which is a choice about the claim, not about where a signal comes from."
+    },
+    {
+      "loop": "Makefile#bstack-check",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "Every anchored producer in this report emits a verdict about something else: whether tracked bytes contain machine-specific paths, whether governed HTML/CSS carries raw literals, whether GitHub accepted a Pages artifact. None of them emits any signal about whether the primitive contract holds, so none can carry this check's proposition.",
+      "status": "proposed",
+      "noRouteReason": "Two decisions are required and neither is a rewiring. First, supply chain: BSTACK is resolved at run time by scanning $HOME and two sibling roots with no lockfile or vendored copy — pinning or vendoring the scanner is a policy choice about dependencies, not a route onto an existing producer. Second, and larger: the gate compares CLAUDE.md, AGENTS.md and .control/policy.yaml against grep patterns, so 'the contract holds' has no referent outside the markdown that declares it; giving it one means re-specifying what the gate asserts (that each declared mechanism actually fires), which is a human decision about the claim. Relocating the same scan onto the anchored portability runner would change the executor and not the comparison — the report already records exactly that outcome for bstack-l3-trust, which does run on that runner and stayed self_referential."
+    },
+    {
+      "loop": "Makefile#bstack-l3-trust",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "The pack prints 'L3 trust gates passed — governance change is structurally valid' on the strength of one child that compares two markdown files. No anchored producer in this report emits a signal about structural validity of a governance change, and attaching one that emits something else — portability-check, say — would make the pack run a second real scan while the sentence it prints stayed exactly as unearned.",
+      "status": "proposed",
+      "noRouteReason": "Needs a scope decision by a human: whether the pack may keep narrating a two-gate verdict while G-L3-2 is deliberately not run, or must narrow its printed claim to what its single child established. Note also that this target already executes on the anchored GitHub runner via portability.yml:79, and the report records that this moved the executor without moving the fork point — so there is no remaining routing move to make here."
+    },
+    {
+      "loop": "Makefile#bstack-primitive-lint",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "The proposition here is that AGENTS.md's P-N sections carry four literal headings and match a table in CLAUDE.md. The two in-repo scanners that are anchored, portability-check and design-audit, are the same shape but assert about committed path strings and about design tokens; their exit codes say nothing about primitive documentation, so reading either one would add a passing signal without asserting this claim.",
+      "status": "proposed",
+      "noRouteReason": "Requires a decision about what the gate should assert, not about where its signal comes from. Both operands and the rule list (REQUIRED_SECTIONS, HOOK_ENFORCED, MECHANISM_ONLY) are edited by the same governance PR the gate polices; the only way out is a human choosing that a documented primitive must be checked against executed behaviour — that the hook it names is registered and fires — which is a re-specification, and the producer for it does not exist in this report yet."
+    },
+    {
+      "loop": "Makefile#bstack-rule-of-three",
+      "from": "self_referential",
+      "anchoredOn": null,
+      "argument": "The claim is that a promoted primitive recurred three or more times. Nothing in this report counts instances of anything: the anchored producers emit a path scan, a token scan, a sync-mode ink check and a Pages deployment status. No candidate can be read as evidence for a recurrence count.",
+      "status": "proposed",
+      "noRouteReason": "Two policy decisions sit ahead of any wiring. The gate currently exits on a missing-file precondition because research/entities/pattern/bstack-engine.md does not exist, so someone must first decide whether a ledger belongs in a repo that promotes no primitives. If it lands, the deeper decision remains: whether a count the promoter writes into a markdown cell can ever be evidence for their own promotion. That is a question about what counts as proof, and an agent moving wires cannot answer it."
+    }
+  ],
+  "summary": {
+    "currentRatio": 0.35714285714285715,
+    "projectedRatio": 0.42857142857142855,
+    "routable": 1,
+    "unroutable": 8
+  },
+  "warnings": []
+}

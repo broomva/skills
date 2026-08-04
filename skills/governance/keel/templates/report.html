@@ -1,0 +1,640 @@
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     Keel — report template. Consumed by ../scripts/render.ts.
+
+     This file is MARKUP ONLY. Every block below is emitted verbatim with its
+     {{SLOT}} placeholders substituted; render.ts contains no HTML string
+     literals for the same reason the design system is a stylesheet and not a
+     component library — the markup has to be readable, diffable, and gated.
+
+     `make design-audit` reads this file (skills/keel/templates/**/*.html is a
+     governed glob), so the invariants are checked HERE rather than trusted:
+     no raw hex, no raw px, no `data-class` outside the frozen GroundingClass,
+     no `.k-ratio__value` without `.k-ratio__counts` and `.k-scope`, and no
+     `.k-verdict` without its `.k-argument`.
+
+     Block syntax: <!--@block name --> ... <!--@endblock -->. Blocks are flat,
+     never nested. Slots are {{ESCAPED}} or {{{RAW}}}; render.ts throws on an
+     unfilled slot, so a typo here fails the run instead of shipping a `{{...}}`
+     into the artifact.
+
+     A <!--@note ... --> inside a block is stripped from the output — it is
+     addressed to whoever reads THIS file, including the auditor. Ordinary
+     comments are emitted verbatim, which is why `<!-- KEEL:CURVE -->` (the
+     contract with the curve unit) is not written as a note.
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+
+<!--@block document -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{{STYLES}}}
+</style>
+</head>
+<body>
+<main class="k-report">
+{{{BODY}}}
+</main>
+</body>
+</html>
+<!--@endblock -->
+
+
+<!-- ── Header ───────────────────────────────────────────────────────────── -->
+<!--@block header -->
+<header>
+  <p class="k-wordmark">Keel</p>
+  <h1 class="k-display">Grounding report<em>.</em></h1>
+  <p class="k-lede">Every verification edge in <span class="k-mono">{{TARGET}}</span>,
+     classified by who produces the signal and whether the actor being verified
+     can write to that producer.</p>
+  <table class="k-table">
+    <tr><th>target</th><td class="k-mono">{{TARGET}}</td></tr>
+    <tr><th>revision</th><td class="k-mono">{{REVISION}}</td></tr>
+    <tr><th>generated</th><td class="k-mono">{{GENERATED}}</td></tr>
+  </table>
+</header>
+<!--@endblock -->
+
+
+<!-- ── The headline number ───────────────────────────────────────────────────
+     Rule 4 of the design contract: `.k-ratio__value` never ships without
+     `.k-ratio__counts`, and `not_a_check` is printed BESIDE the fraction using
+     `.k-ratio__count--excluded` rather than folded into it. The meter carries
+     the three denominator classes only, for the same reason.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block ratio -->
+<div class="k-ratio">
+  <span class="k-ratio__value">{{VALUE}}</span>
+  <p class="k-ratio__formula">anchored / (anchored + self_referential + unknown) = {{ANCHORED}} / {{DENOMINATOR}}</p>
+  <div class="k-meter">
+{{{METER}}}
+  </div>
+  <div class="k-ratio__counts">
+{{{COUNTS}}}
+  </div>
+</div>
+<!--@endblock -->
+
+<!--@block meter-seg -->
+    <div class="k-meter__seg" data-class="{{CLASS}}" style="width:{{WIDTH}}%"></div>
+<!--@endblock -->
+
+<!--@block count -->
+    <span class="k-ratio__count"><span class="k-class" data-class="{{CLASS}}">{{CLASS}}</span> {{N}}</span>
+<!--@endblock -->
+
+<!--@block count-excluded -->
+    <span class="k-ratio__count k-ratio__count--excluded">
+      <span class="k-class" data-class="not_a_check">not_a_check</span> {{N}}
+      <span class="k-meta">excluded from the denominator</span>
+    </span>
+<!--@endblock -->
+
+
+<!-- ── The two states that are NOT a ratio ───────────────────────────────────
+     "unverified" and "unreadable" have to look different. A target with no
+     gathered edges has no ratio to report, and a target whose every judged
+     edge landed in `not_a_check` has an empty denominator — printing 0.00 for
+     either would be a fabricated number, and 0.00 is the worst possible lie
+     here because it reads as a measurement.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block nothing-gathered -->
+<div class="k-card kr-section">
+  <p class="k-eyebrow">Nothing gathered</p>
+  <p>No verification edge was gathered from this target, so there is no ratio
+     to report. This is not a score of zero: a zero would be a claim that
+     nothing here is anchored. Nothing was read.</p>
+  <p class="k-meta">Check that the target path is a repository the gatherer can
+     read, and that it contains a surface the gatherer knows how to open.</p>
+</div>
+<!--@endblock -->
+
+<!--@block no-denominator -->
+<div class="k-card">
+  <p class="k-eyebrow">No denominator</p>
+  <p>{{JUDGED}} node(s) were judged and every one of them landed in
+     <span class="k-mono">not_a_check</span>, which is excluded from the ratio.
+     The denominator is empty, so there is no ratio to report — printing 0.00
+     would state a measurement that was never taken.</p>
+  <p class="k-meta">`not_a_check` is the one shoppable class. A run that lands
+     entirely there is the shape that inflates a score, so it is called out
+     rather than smoothed into a number.</p>
+</div>
+<!--@endblock -->
+
+
+<!-- ── The ε-audit counter-metric ────────────────────────────────────────────
+     SKILL.md §4: "The probe library's agreement rate is Keel's own
+     counter-metric. Report it. A system that measures groundedness while
+     refusing to measure its own is telling you something." This is where it
+     gets reported.
+
+     Three rules govern these blocks, and they are the same three that govern
+     the ratio above:
+
+       1. The number never travels alone — `agreed / compared` prints as
+          absolute counts, and the rate sits beside them rather than replacing
+          them. A bare `0.97` is the same defect here as a bare grounding
+          ratio.
+       2. Coverage prints beside it. Auditing 0% of the library is how you
+          never find a disagreement, so the fraction that WAS audited is
+          stated, not implied by the agreement number's denominator.
+       3. Zero audited nodes is not a rate. It renders `audit-none`, never
+          `1.00` — exactly the refusal `nothing-gathered` makes above, for
+          exactly the same reason: an absence of evidence must not render as
+          evidence.
+
+     Independence is deliberately NOT claimed. A probe audited on the very node
+     it was minted from is comparing a generalization against its own source,
+     and `Report` carries no `mintedFrom`, so the renderer cannot separate
+     those comparisons from the rest. It reports `agreed / compared` and says
+     what that is.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block audit -->
+<div class="k-card kr-section">
+  <!--@note The label says "agreement", NOT "probe library agreement". The
+       denominator is every well-formed comparison in the report, and an audit
+       may legally sit on an agent-decided verdict, so naming the headline after
+       the probe library would describe a population it does not measure. When
+       the two populations differ, `audit-nonprobe` prints the probe-only figure
+       beside it — the specific claim SKILL.md §4 asks for, stated where it is
+       actually true rather than borrowed by a title. -->
+  <p class="k-eyebrow">ε-audit — agreement</p>
+  <p class="kr-audit__figure">
+    <span class="kr-audit__count">{{AGREED}} / {{COMPARED}}</span>
+    <span class="kr-audit__rate">rate {{RATE}}</span>
+  </p>
+  <p class="kr-audit__formula">agreed / compared = {{AGREED}} / {{COMPARED}} · {{DISAGREED}} disagreement(s)</p>
+{{{DISAGREEMENT}}}
+{{{COVERAGE}}}
+{{{NONPROBE}}}
+{{{MALFORMED}}}
+  <p class="k-meta kr-audit__note">A comparison is one cached verdict re-decided agentically
+     with the cached class hidden, then checked against it. Counts print with
+     the rate for the reason the grounding ratio prints with its denominator:
+     the same rate over one comparison and over eighty are different claims,
+     and a rate alone rewards auditing less. This is
+     not described as independent — a probe audited on the node it was minted
+     from is measured against its own source, and this report does not carry
+     <span class="k-mono">mintedFrom</span>, so nothing here can tell those
+     comparisons apart from the rest.</p>
+</div>
+<!--@endblock -->
+
+<!-- The zero state, and it is a state rather than a number. Same mechanism and
+     same wording as `nothing-gathered`: the run that audited nothing has not
+     earned a rate, and `1.00` over zero comparisons is the worst available
+     lie because it reads as a perfect score. -->
+<!--@block audit-none -->
+<div class="k-card kr-section">
+  <p class="k-eyebrow">ε-audit — not run</p>
+  <p>No verdict in this report carries a readable <span class="k-mono">audit</span>
+     block, so nothing was re-decided and there is no agreement rate to report.
+     This is not agreement, and it is not full agreement either: a rate over
+     zero comparisons would state a measurement that was never taken.
+     (&ldquo;Readable&rdquo; is load-bearing: a block can be present and state no
+     comparison, and this state covers that too — see below if so.)</p>
+  <p class="k-meta">This run carries <span class="k-mono">{{PROBE_DECIDED}}</span>
+     probe-decided verdict(s), none of them contributing a readable comparison.
+     (&ldquo;Readable&rdquo; rather than &ldquo;audited&rdquo;, because a block
+     can arrive and state nothing — if any did, they are counted below.) Audit
+     coverage is itself shoppable — audit none of the library and no
+     disagreement can ever be found — so the absence is printed here rather
+     than left to be inferred from a missing section.</p>
+{{{MALFORMED}}}
+</div>
+<!--@endblock -->
+
+<!-- An `audit` block that arrived unreadable — no re-decided class, or `agreed`
+     that is not a boolean. It is NOT counted as agreement (that would let a
+     verdict assert its own audit passed) and NOT counted as a disagreement
+     (that would claim a comparison no verdict can be shown for). It is excluded
+     from the denominator and named here, because a comparison that cannot be
+     read is not evidence — the same fail-closed move classify.ts makes when it
+     drops a probe verdict claiming `unknown`. -->
+<!--@block audit-malformed -->
+  <!--@note This list must stay in step with `auditIsWellFormed` in render.ts.
+       An artifact describing a check narrower than the one it ran is the same
+       defect as a ratio printed without its denominator. -->
+  <p class="kr-audit-alert"><strong>{{N}} audit block(s) could not be
+     read.</strong> A block states a comparison only when it names a re-decided
+     class from the frozen schema, carries an <span class="k-mono">agreed</span>
+     that is a real boolean, records a non-empty
+     <span class="k-mono">at</span>, and does not contradict itself —
+     <span class="k-mono">agreed</span> has to match whether the re-decided
+     class differs from the one the verdict carries. These fail one of those,
+     so they are excluded from the agreement denominator rather than counted as
+     agreement or as disagreement: an unreadable comparison is not evidence, and
+     neither column would be true. Fix the producer — this is a defect in
+     whatever wrote the report, not a finding about the target.</p>
+<!--@endblock -->
+
+<!--@block audit-coverage -->
+  <p class="kr-line">Audit coverage — <span class="k-mono">{{AUDITED}}</span> of
+     <span class="k-mono">{{PROBE_DECIDED}}</span> probe-decided verdict(s)
+     audited (<span class="k-mono">{{PCT}}%</span>). Coverage is shoppable the
+     way the ratio is: audit fewer of them and the agreement rate has fewer
+     chances to fall.</p>
+<!--@endblock -->
+
+<!--@block audit-coverage-none -->
+  <p class="kr-line">Audit coverage — this report carries no probe-decided
+     verdict, so there is no probe population to sample and no coverage
+     fraction to print. A percentage over an empty population would be a
+     fabricated number.</p>
+<!--@endblock -->
+
+<!-- Rendered only when the two populations differ. The headline is agreement
+     over EVERY well-formed comparison; SKILL.md §4's counter-metric is
+     specifically the PROBE library's agreement. When a report mixes the two,
+     printing only the pooled figure would let a run of agreeing agent audits
+     carry a disagreeing probe library — so the probe-only number is printed
+     here, next to the pooled one, and neither is allowed to stand in for the
+     other. -->
+<!--@block audit-nonprobe -->
+  <p class="kr-line"><span class="k-mono">{{N}}</span> of those comparison(s)
+     sit on verdicts that were not probe-decided. They count in the pooled
+     agreement above because they are comparisons, and they sit outside the
+     coverage fraction, which is over the probe-decided population the ε-audit
+     samples. Probe-decided verdicts alone:
+     <span class="k-mono">{{PROBE_AGREED}} / {{PROBE_COMPARED}}</span>{{PROBE_RATE}} —
+     that is the probe library's own agreement, and it is the number
+     <span class="k-mono">SKILL.md</span> §4 names.</p>
+<!--@endblock -->
+
+<!-- The same disclosure when the probe population contributed NO comparison at
+     all: the pooled number is then entirely agent-vs-agent, and calling any part
+     of it the probe library's agreement would be inventing a measurement. -->
+<!--@block audit-nonprobe-only -->
+  <p class="kr-line">All <span class="k-mono">{{N}}</span> comparison(s) sit on
+     verdicts that were not probe-decided, so the figure above says nothing
+     about the probe library: no probe verdict was re-decided, and there is no
+     probe-library agreement to report.</p>
+<!--@endblock -->
+
+<!-- A disagreement is the most informative thing this stage can produce: a
+     probe that over-matches mis-classifies silently and cheaply forever, and
+     stage 4 exists to catch exactly that. So it is loud here and loud on the
+     verdict, never a footnote. -->
+<!--@block audit-disagreement -->
+  <p class="kr-audit-alert"><strong>{{N}} disagreement(s) recorded.</strong> On
+     each of these the ε-audit did not record agreement: the agent's
+     re-decision differs from the class the cached verdict carries. This is the
+     finding the stage exists to produce, so it is printed here and marked on
+     every affected verdict below rather than left to be counted by hand.</p>
+<!--@endblock -->
+
+
+<!-- ── Coverage ──────────────────────────────────────────────────────────────
+     Labelled "coverage (judged)": `Report.nodes` carries the nodes that were
+     judged, so calling this coverage-of-gathered would overclaim the surface.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block coverage -->
+<div>
+  <p class="k-eyebrow">Coverage (judged)</p>
+  <table class="k-table k-table--num">
+    <thead><tr><th>node kind</th><th>judged</th></tr></thead>
+    <tbody>
+{{{ROWS}}}
+    </tbody>
+  </table>
+  <p class="k-meta">Nodes by kind, over the {{JUDGED}} node(s) carried in this
+     report. Surfaces the gatherer cannot read are absent here rather than
+     counted as <span class="k-mono">unknown</span>, which makes non-coverage
+     Keel's own shoppable class — so it is stated, not implied.</p>
+</div>
+<!--@endblock -->
+
+<!--@block coverage-row -->
+      <tr><td class="k-mono">{{KIND}}</td><td>{{N}}</td></tr>
+<!--@endblock -->
+
+
+<!-- ── Disclosures ───────────────────────────────────────────────────────── -->
+<!--@block disclosure -->
+<p class="k-callout">{{{TEXT}}}</p>
+<!--@endblock -->
+
+
+<!-- ── Node graph ────────────────────────────────────────────────────────────
+     One square per node on a wrapping grid. Squares, not circles: a circle in
+     a verification UI reads as a status dot, and the status dot is the thing
+     being audited. The grid wraps rather than scaling, so 15 nodes and 200
+     nodes share a mark size and neither clips.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block graph -->
+<section class="kr-section">
+  <p class="k-eyebrow">Node graph — {{COUNT}} node(s), in gather order</p>
+  <div class="k-graph">
+{{{MARKS}}}
+  </div>
+  <div class="k-legend">
+{{{LEGEND}}}
+  </div>
+  <p class="k-meta">{{SMELL_NOTE}}</p>
+</section>
+<!--@endblock -->
+
+<!--@block mark -->
+    <span class="k-mark" data-class="{{CLASS}}"{{{SMELL}}} title="{{TITLE}}"></span>
+<!--@endblock -->
+
+<!--@block mark-unjudged -->
+    <span class="k-mark" title="{{TITLE}}"></span>
+<!--@endblock -->
+
+<!--@block legend-item -->
+    <span class="k-legend__item"><span class="k-mark" data-class="{{CLASS}}"></span> {{CLASS}} {{N}}</span>
+<!--@endblock -->
+
+<!--@block legend-item-unjudged -->
+    <span class="k-legend__item"><span class="k-mark"></span> no verdict {{N}}</span>
+<!--@endblock -->
+
+<!-- A legend entry with no swatch, for a population the legend has to account
+     for but the grid does not draw (orphan verdicts) or draws without a colour
+     (a class the frozen schema does not define). The class items above count
+     the marks actually drawn, so legend and picture reconcile; these items say
+     out loud what sits outside that sum instead of quietly widening it. -->
+<!--@block legend-item-aside -->
+    <span class="k-legend__item">{{TEXT}}</span>
+<!--@endblock -->
+
+
+<!-- ── The scope note. Verbatim, never paraphrased. ──────────────────────── -->
+<!--@block scope -->
+<p class="k-scope"><strong>Scope.</strong> Keel measures the shape of
+verification, not its quality. A repo can be 100% anchored with terrible
+tests. Anchoring says the signal comes from outside; it does not say the
+signal is sufficient.</p>
+<!--@endblock -->
+
+
+<!-- ── Verdicts ──────────────────────────────────────────────────────────────
+     Rule 3: no verdict without its argument. `writeBoundary.argument` is the
+     deliverable — a class shown without its causal path is exactly the
+     unaccountable green check Keel exists to criticize — so it sits directly
+     under the node name, not behind a disclosure.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block verdict-section -->
+<section class="kr-section">
+  <p class="k-eyebrow">{{LABEL}} — {{N}}</p>
+  <p class="k-meta">{{NOTE}}</p>
+{{{VERDICTS}}}
+</section>
+<!--@endblock -->
+
+<!--@block verdict -->
+  <div class="k-verdict">
+    <div class="k-verdict__name k-mono">{{NAME}}</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="{{CLASS}}"{{{SMELL}}}>{{CLASS}}</span></span>
+    <div class="k-verdict__source k-mono">{{SOURCE}} · {{KIND}}</div>
+    <p class="k-argument">{{ARGUMENT}}</p>
+    <p class="kr-line">producer <span class="k-mono">{{PRODUCER}}</span> — actor can write to it: <span class="k-mono">{{ACTOR_CAN_WRITE}}</span></p>
+    <ul class="kr-ev">
+{{{EVIDENCE}}}
+    </ul>
+    <p class="kr-line">decided by <span class="k-mono">{{DECIDED_BY}}</span>{{{PROBE}}} · confidence <span class="k-mono">{{CONFIDENCE}}</span>{{{SMELL_NOTE}}}</p>
+{{{AUDIT}}}
+  </div>
+<!--@endblock -->
+
+<!-- A verdict that arrived WITHOUT its write-boundary argument. The `.k-argument`
+     element is omitted rather than emitted empty: `keel.css` keys its defect
+     banner on `:not(:has(.k-argument))`, so rendering a blank paragraph would
+     satisfy the selector and hide exactly the failure the design system exists
+     to surface.
+
+     The audit hatch below is an `@note`, which render.ts strips from the
+     output. That is deliberate and it is the whole point of the mechanism:
+     THIS BLOCK is a specimen of the defect state and design-audit must not
+     fail on it, but a rendered row whose argument is genuinely missing is not
+     a specimen — it is the defect — and stamping the hatch onto it would make
+     `make design-audit` wave through the exact failure it is there to catch.
+     The rendered row carries `data-missing-argument` instead: inert to CSS
+     (the banner keys on `:has()`, not on the attribute), legible in the
+     source, and carrying no exemption. -->
+<!--@block verdict-defect -->
+  <div class="k-verdict" data-missing-argument>
+    <!--@note data-specimen-defect — audit hatch, template-only; see above. -->
+    <div class="k-verdict__name k-mono">{{NAME}}</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="{{CLASS}}"{{{SMELL}}}>{{CLASS}}</span></span>
+    <div class="k-verdict__source k-mono">{{SOURCE}} · {{KIND}}</div>
+    <p class="kr-line">producer <span class="k-mono">{{PRODUCER}}</span> — actor can write to it: <span class="k-mono">{{ACTOR_CAN_WRITE}}</span></p>
+    <ul class="kr-ev">
+{{{EVIDENCE}}}
+    </ul>
+    <p class="kr-line">decided by <span class="k-mono">{{DECIDED_BY}}</span>{{{PROBE}}} · confidence <span class="k-mono">{{CONFIDENCE}}</span>{{{SMELL_NOTE}}}</p>
+{{{AUDIT}}}
+  </div>
+<!--@endblock -->
+
+<!-- ── The per-verdict ε-audit note ──────────────────────────────────────────
+     Shown only on a verdict that carries an `audit` block. The agreed variant
+     is one quiet line; the disagreed variant is the loudest element on the
+     page after the ratio itself. That asymmetry is the point — a probe that
+     silently mis-classifies forever is the failure stage 4 exists to catch, so
+     the run that catches one must not bury it at the same weight as the
+     ninety-nine that found nothing.
+
+     `data-audit-disagreed` is inert to CSS and legible in the source, in the
+     same spirit as `data-missing-argument` above: an attribute a reader (or a
+     grep, or a downstream gate) can key on without the styling depending on
+     it.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block verdict-audit -->
+    <p class="kr-line">ε-audit <span class="k-mono">{{AT}}</span> — agent re-decided
+       <span class="k-class" data-class="{{AGENT_CLASS}}">{{AGENT_CLASS}}</span>, agreed</p>
+<!--@endblock -->
+
+<!--@block verdict-audit-disagreed -->
+    <p class="kr-line kr-audit-alert" data-audit-disagreed><strong>ε-audit disagreement.</strong>
+       The agent re-decided this node
+       <span class="k-class" data-class="{{AGENT_CLASS}}">{{AGENT_CLASS}}</span>;
+       the verdict carries <span class="k-class" data-class="{{CLASS}}">{{CLASS}}</span>,
+       and that is the class the ratio counted. Recorded
+       <span class="k-mono">{{AT}}</span>. One of the two is wrong.</p>
+<!--@endblock -->
+
+<!-- No slots: there is nothing trustworthy in the block to interpolate. Printing
+     a garbage `agentClass` back out would dress unreadable input as a finding. -->
+<!--@block verdict-audit-malformed -->
+    <!--@note Like `audit-malformed`, this must stay in step with
+         `auditIsWellFormed`. It deliberately does NOT name which of the four
+         conditions failed: the renderer knows, but printing "no re-decided
+         class" on a record that has one and contradicts itself instead
+         misdiagnoses the producer, and a wrong diagnosis is worse than a
+         general one. The summary card lists the four; this row says which
+         verdict. -->
+    <p class="kr-line kr-audit-alert" data-audit-malformed><strong>ε-audit block
+       unreadable.</strong> This verdict carries an <span class="k-mono">audit</span>
+       that does not state a comparison — it fails one of the four conditions
+       listed with the summary above. It counts as neither agreement nor
+       disagreement and is excluded from the rate.</p>
+<!--@endblock -->
+
+<!--@block evidence-item -->
+      <li>{{TEXT}}</li>
+<!--@endblock -->
+
+<!--@block evidence-empty -->
+      <li class="kr-missing">no evidence cited</li>
+<!--@endblock -->
+
+<!--@block probe-id -->
+ (<span class="k-mono">{{ID}}</span>)
+<!--@endblock -->
+
+<!--@block smell-note -->
+ · <span class="kr-smell">confidence below {{THRESHOLD}} on an anchored verdict</span>
+<!--@endblock -->
+
+
+<!-- ── Crystallization curve ─────────────────────────────────────────────────
+     The marker line below is the fixed insertion point between this renderer
+     and the curve unit. It is emitted whether or not a curve exists; when no
+     curve is available the marker stands alone and nothing is drawn.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block curve-slot -->
+<section class="kr-section">
+  <!-- KEEL:CURVE -->
+{{{CURVE}}}
+</section>
+<!--@endblock -->
+
+<!--@block curve -->
+  <p class="k-eyebrow">Crystallization curve</p>
+  <div class="kr-curve">
+{{{SVG}}}
+  </div>
+<!--@endblock -->
+
+<!--@block curve-rejected -->
+  <p class="k-eyebrow">Crystallization curve</p>
+  <p class="k-meta">A curve was found at <span class="k-mono">{{PATH}}</span>
+     but was not inlined: it references something off-origin, and this artifact
+     issues zero external requests. Rendering it would trade the invariant for
+     a picture.</p>
+<!--@endblock -->
+
+
+<!-- ── Economics ─────────────────────────────────────────────────────────────
+     No silent caps: where nodesSampled differs from nodesTotal, both are
+     printed and the gap is named. Where token counts are estimates, the label
+     says "estimated".
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block econ -->
+<section class="kr-section">
+  <p class="k-eyebrow">Run economics</p>
+  <div class="k-econ">
+{{{STATS}}}
+  </div>
+  <p class="k-meta">{{NOTE}}</p>
+</section>
+<!--@endblock -->
+
+<!--@block econ-stat -->
+    <div class="k-econ__stat">
+      <span class="k-econ__value">{{VALUE}}</span>
+      <span>{{LABEL}}</span>
+    </div>
+<!--@endblock -->
+
+
+<!-- ── Renderer-local layout ─────────────────────────────────────────────────
+     `kr-*`, not `k-*`: these are report-layout helpers, not design-system
+     components, and the namespace says so. No colour, no size, no radius that
+     is not already a token — every value below is a var() from tokens.css.
+     Proposed for promotion into keel.css in the PR body rather than written
+     there, because design/ is not this unit's to edit.
+     ─────────────────────────────────────────────────────────────────────── -->
+<!--@block layout-css -->
+.kr-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--k-space-12);
+  align-items: start;
+  margin: var(--k-space-12) 0 0;
+}
+@media (max-width: 760px) {
+  .kr-split { grid-template-columns: minmax(0, 1fr); gap: var(--k-space-8); }
+}
+.kr-section { margin: var(--k-space-16) 0 0; }
+.kr-line {
+  grid-column: 1 / -1;
+  margin: 0;
+  max-width: var(--k-measure-prose);
+  font-size: var(--k-fs-xs);
+  color: var(--k-ink-2);
+}
+.kr-ev {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: var(--k-measure-prose);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+  color: var(--k-ink-2);
+  line-height: var(--k-lh-snug);
+}
+.kr-ev li { margin-top: var(--k-space-1); word-break: break-word; }
+.kr-ev li::before { content: "· "; color: var(--k-ink-3); }
+.kr-missing { color: var(--k-self-referential); }
+.kr-smell { color: var(--k-smell); }
+/* `.kr-line` is authored for the verdict grid, where `margin: 0` is right and
+   the row spacing comes from the grid. Inside the ε-audit card there is no
+   grid, so the coverage line would butt straight into the note beneath it. */
+.k-card .kr-line { margin: var(--k-space-3) 0 0; }
+.kr-audit__note {
+  margin: var(--k-space-5) 0 0;
+  max-width: var(--k-measure-prose);
+  line-height: var(--k-lh-snug);
+}
+.kr-audit__figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--k-space-3);
+  margin: var(--k-space-2) 0 var(--k-space-1);
+}
+.kr-audit__count {
+  font-size: var(--k-fs-h2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--k-track-tight);
+  color: var(--k-ink-0);
+}
+.kr-audit__rate {
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--k-ink-2);
+}
+.kr-audit__formula {
+  margin: 0 0 var(--k-space-3);
+  font-family: var(--k-font-mono);
+  font-size: var(--k-fs-xs);
+  color: var(--k-ink-2);
+}
+.kr-audit-alert {
+  margin: var(--k-space-3) 0;
+  padding: var(--k-space-3) var(--k-space-4);
+  border-left: var(--k-space-1) solid var(--k-self-referential);
+  border-radius: 0 var(--k-r-md) var(--k-r-md) 0;
+  background: var(--k-self-referential-wash);
+  max-width: var(--k-measure-prose);
+  font-size: var(--k-fs-sm);
+  color: var(--k-ink-1);
+}
+.kr-audit-alert strong {
+  color: var(--k-self-referential);
+  font-weight: var(--k-fw-semibold);
+}
+.kr-curve { overflow-x: auto; }
+.kr-curve svg { max-width: 100%; height: auto; }
+<!--@endblock -->

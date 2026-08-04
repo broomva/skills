@@ -1,0 +1,595 @@
+{
+  "target": "requests",
+  "revision": "69f84847045bef7a849cc994a26fe7ba8a169e95",
+  "generatedAt": "2026-07-25T03:13:36.804Z",
+  "nodes": [
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "exclude: 'docs/|ext/'\n\nrepos:\n- repo: https://github.com/pre-commit/pre-commit-hooks\n  rev: v6.0.0\n  hooks:\n  - id: check-case-conflict\n  - id: check-merge-conflict\n  - id: check-toml\n  - id: check-yaml\n  - id: end-of-file-fixer\n  - id: mixed-line-ending\n    args: [--fix=auto]\n  - id: trailing-whitespace\n- repo: https://github.com/astral-sh/ruff-pre-commit\n  rev: v0.15.21\n  hooks:\n    - id: ruff-check\n      args: [--fix]\n    - id: ruff-format\n      exclude: tests/test_lowlevel.py\n"
+    },
+    {
+      "id": "Makefile#init",
+      "kind": "script",
+      "name": "init",
+      "source": "Makefile:2",
+      "raw": "init:\n\tpython -m pip install -r requirements-dev.txt"
+    },
+    {
+      "id": "Makefile#test",
+      "kind": "script",
+      "name": "test",
+      "source": "Makefile:4",
+      "raw": "test:\n\tpython -m pytest tests"
+    },
+    {
+      "id": "Makefile#ci",
+      "kind": "script",
+      "name": "ci",
+      "source": "Makefile:7",
+      "raw": "ci:\n\tpython -m pytest tests --junitxml=report.xml"
+    },
+    {
+      "id": "Makefile#test-readme",
+      "kind": "script",
+      "name": "test-readme",
+      "source": "Makefile:10",
+      "raw": "test-readme:\n\tpython setup.py check --restructuredtext --strict && ([ $$? -eq 0 ] && echo \"README.rst and HISTORY.rst ok\") || echo \"Invalid markup in README.rst or HISTORY.rst!\""
+    },
+    {
+      "id": "Makefile#coverage",
+      "kind": "script",
+      "name": "coverage",
+      "source": "Makefile:13",
+      "raw": "coverage:\n\tpython -m pytest --cov-config .coveragerc --verbose --cov-report term --cov-report xml --cov=src/requests tests"
+    },
+    {
+      "id": "Makefile#publish",
+      "kind": "script",
+      "name": "publish",
+      "source": "Makefile:20",
+      "raw": "publish: .publishenv\n\t.publishenv/bin/python -m build\n\t.publishenv/bin/python -m twine upload --skip-existing dist/*\n\trm -fr build dist .egg requests.egg-info"
+    },
+    {
+      "id": "Makefile#docs",
+      "kind": "script",
+      "name": "docs",
+      "source": "Makefile:25",
+      "raw": "docs:\n\tcd docs && make html\n\t@echo \"\\033[95m\\n\\nBuild successful! View the docs homepage at docs/_build/html/index.html.\\n\\033[0m\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "pyproject.toml:86",
+      "raw": "[tool.ruff]\ntarget-version = \"py310\"\nsrc = [\"src/requests\", \"tests\"]\nexclude = [\"docs/\", \"ext/\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:91",
+      "raw": "[tool.ruff.lint]\nselect = [\n    \"E\",      # pycodestyle errors\n    \"W\",      # pycodestyle warnings\n    \"F\",      # pyflakes\n    \"I\",      # isort\n    \"UP\",     # pyupgrade\n    \"T10\",    # flake8-debugger (replaces debug-statements hook)\n]\nignore = [\"E203\", \"E501\", \"UP031\"]\nper-file-ignores = {\"src/requests/__init__.py\" = [\"E402\", \"F401\"], \"src/requests/compat.py\" = [\"E402\", \"F401\"], \"tests/compat.py\" = [\"F401\"]}"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-isort",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.isort])",
+      "source": "pyproject.toml:103",
+      "raw": "[tool.ruff.lint.isort]\nknown-first-party = [\"requests\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-format",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.format])",
+      "source": "pyproject.toml:106",
+      "raw": "[tool.ruff.format]\n# Use black-compatible formatting\nquote-style = \"double\"\nindent-style = \"space\""
+    },
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:111",
+      "raw": "[tool.pytest.ini_options]\naddopts = \"--doctest-modules\"\ndoctest_optionflags = \"NORMALIZE_WHITESPACE ELLIPSIS\"\nminversion = \"6.2\"\ntestpaths = [\"tests\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:118",
+      "raw": "[tool.pyright]\ninclude = [\"src/requests\"]\ntypeCheckingMode = \"strict\"\n# linting rules unrelated to type checking\nreportPrivateUsage = false\nreportPrivateImportUsage = false\nreportUnnecessaryIsInstance = false\nreportUnusedImport = false  # duplicate of Ruff's F401 rule"
+    },
+    {
+      "id": "tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/conftest.py",
+      "raw": "try:\n    from http.server import HTTPServer, SimpleHTTPRequestHandler\nexcept ImportError:\n    from BaseHTTPServer import HTTPServer\n    from SimpleHTTPServer import SimpleHTTPRequestHandler\n\nimport ssl\nimport threading\n\nimport pytest\n\nfrom requests.compat import urljoin\n\n\ndef prepare_url(value):\n    # Issue #1483: Make sure the URL always has a trailing slash\n    httpbin_url = value.url.rstrip(\"/\") + \"/\"\n\n    def inner(*suffix):\n        return urljoin(httpbin_url, \"/\".join(suffix))\n\n    return inner\n\n\n@pytest.fixture(autouse=True)\ndef clean_proxy_environ(monkeypatch):\n    \"\"\"Remove proxy related environment variables for every test.\"\"\"\n    proxy_vars = (\"http_proxy\", \"https_proxy\", \"no_proxy\", \"ftp_proxy\", \"all_proxy\")\n    for var in proxy_vars:\n        monkeypatch.delenv(var, raising=False)\n        monkeypatch.delenv(var.upper(), raising=False)\n\n\n@pytest.fixture\ndef httpbin(httpbin):\n    return prepare_url(httpbin)\n\n\n@pytest.fixture\ndef httpbin_secure(httpbin_secure):\n    return prepare_url(httpbin_secure)\n\n\n@pytest.fixture\ndef nosan_server(tmp_path_factory):\n    # delay importing until the fixture in order to make it possible\n    # to deselect the test via command-line when trustme is not available\n    import trustme\n\n    tmpdir = tmp_path_factory.mktemp(\"certs\")\n    ca = trustme.CA()\n    # only commonName, no subjectAltName\n    server_cert = ca.issue_cert(common_name=\"localhost\")\n    ca_bundle = str(tmpdir / \"ca.pem\")\n    ca.cert_pem.write_to_path(ca_bundle)\n\n    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)\n    server_cert.configure_cert(context)\n    server = HTTPServer((\"localhost\", 0), SimpleHTTPRequestHandler)\n    server.socket = context.wrap_socket(server.socket, server_side=True)\n    server_thread = threading.Thread(target=server.serve_forever)\n    server_thread.start()\n\n    yield \"localhost\", server.server_address[1], ca_bundle\n\n    server.shutdown()\n    server_thread.join()\n"
+    },
+    {
+      "id": "tests/certs/valid/server/Makefile#server-key",
+      "kind": "script",
+      "name": "server.key",
+      "source": "tests/certs/valid/server/Makefile:3",
+      "raw": "server.key:\n\topenssl genrsa -out $@ 2048"
+    },
+    {
+      "id": "tests/certs/valid/server/Makefile#server-csr",
+      "kind": "script",
+      "name": "server.csr",
+      "source": "tests/certs/valid/server/Makefile:6",
+      "raw": "server.csr: server.key\n\topenssl req -key $< -config cert.cnf -new -out $@"
+    },
+    {
+      "id": "tests/certs/valid/server/Makefile#server-pem",
+      "kind": "script",
+      "name": "server.pem",
+      "source": "tests/certs/valid/server/Makefile:9",
+      "raw": "server.pem: server.csr\n\topenssl x509 -req -CA ../ca/ca.crt -CAkey ../ca/ca-private.key -in server.csr -outform PEM -out server.pem -extfile cert.cnf -extensions v3_ca -days 7200 -CAcreateserial\n\topenssl x509 -in ../ca/ca.crt -outform PEM >> $@"
+    },
+    {
+      "id": ".github/CODEOWNERS#codeowners",
+      "kind": "review_gate",
+      "name": "code owners (CODEOWNERS)",
+      "source": ".github/CODEOWNERS",
+      "raw": "# Restrict all files related to deploying to\n# require lead maintainer approval.\n\n.github/workflows/            @nateprewitt @sigmavirus24\n.github/CODEOWNERS            @nateprewitt @sigmavirus24\nsrc/requests/__version__.py   @nateprewitt @sigmavirus24\nHISTORY.md                    @nateprewitt @sigmavirus24\npyproject.toml                @nateprewitt @sigmavirus24\n"
+    },
+    {
+      "id": ".github/workflows/publish.yml#25-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout repository",
+      "source": ".github/workflows/publish.yml:25",
+      "raw": "      - name: \"Checkout repository\"\n        uses: \"actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\" # v7.0.0\n        with:\n          persist-credentials: false",
+      "hints": {
+        "action": "\"actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0\" # v7.0.0"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#30-setup-python",
+      "kind": "ci_step",
+      "name": "Setup Python",
+      "source": ".github/workflows/publish.yml:30",
+      "raw": "      - name: \"Setup Python\"\n        uses: \"actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1\" # v6.3.0\n        with:\n          python-version: \"3.x\"",
+      "hints": {
+        "action": "\"actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1\" # v6.3.0"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#35-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/publish.yml:35",
+      "raw": "      - name: \"Install dependencies\"\n        run: python -m pip install build==1.4.0"
+    },
+    {
+      "id": ".github/workflows/publish.yml#38-build-dists",
+      "kind": "ci_step",
+      "name": "Build dists",
+      "source": ".github/workflows/publish.yml:38",
+      "raw": "      - name: \"Build dists\"\n        run: |\n          SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \\\n          python -m build"
+    },
+    {
+      "id": ".github/workflows/publish.yml#43-upload-dists",
+      "kind": "ci_step",
+      "name": "Upload dists",
+      "source": ".github/workflows/publish.yml:43",
+      "raw": "      - name: \"Upload dists\"\n        uses: \"actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f\"\n        id: upload-artifact\n        with:\n          name: \"dist\"\n          path: \"dist/\"\n          if-no-files-found: error\n          retention-days: 5",
+      "hints": {
+        "action": "\"actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f\""
+      }
+    },
+    {
+      "id": "tox.ini#tox-ini",
+      "kind": "test_target",
+      "name": "pytest config (tox.ini)",
+      "source": "tox.ini",
+      "raw": "[tox]\nenvlist = py{310,311,312,313,314}-{default, use_chardet_on_py3}\n\n[testenv]\ndeps = -rrequirements-dev.txt\nextras =\n    security\n    socks\ncommands =\n    pytest {posargs:tests}\n\n[testenv:default]\n\n[testenv:use_chardet_on_py3]\nextras =\n    security\n    socks\n    use_chardet_on_py3\n"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "Makefile#init",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": "Makefile#publish",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a release/upload command handing a already-built artefact to a package registry",
+        "actorCanWrite": null,
+        "argument": "The step's entire effect is promotion: it takes distributions an earlier step produced and uploads them to an index (PyPI, npm, crates.io, a container registry, a GitHub release). It evaluates nothing about the artefact — a failure means the upload was rejected (duplicate version, bad credentials, registry outage), not that the code is wrong. Whatever verification exists lives in the job's `needs:` / environment condition, which is a different edge, so this one must not enter the ratio in either direction."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:50-51"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "artifact-publish-upload"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#25-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#30-setup-python",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#35-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#38-build-dists",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the language's build/packaging backend executing over the checked-out tree, and its process exit code",
+        "actorCanWrite": false,
+        "argument": "The step shells out to a build or packaging command (python -m build, poetry/hatch/flit build, cargo build, go build, dotnet build, mvn package) which compiles or assembles the committed source. The verdict is computed by that toolchain from the tree: malformed metadata, an unresolvable dependency specifier, a type/compile error, or a layout that does not resolve all produce a non-zero exit, and an author cannot make an unbuildable tree report success without changing the tree. Documented limit: a green build proves the artefact compiles and packages, not that it behaves correctly — it says nothing about runtime semantics."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:47-49"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "probe",
+      "probeId": "packaging-build-invocation"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#43-upload-dists",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions artifact transport action (upload-artifact / download-artifact) moving files between jobs",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to move a file the pipeline itself produced from one job to another. Nothing about the repository is evaluated: with `if-no-files-found: error` the worst it can report is that an earlier step in the same run did not leave the file it claimed to leave, which is a fact about the plumbing, not about whether the code is correct. Whatever assertion exists in such a job is made by the step that produced the artifact or the step that consumes it, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of an artifact upload/download action with no command of its own"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "probe",
+      "probeId": "ci-artifact-transport"
+    },
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the `pre-commit` process exit code in the Lint workflow, which is the aggregate of pinned third-party hook binaries (pre-commit-hooks v6.0.0, ruff v0.15.21) run over the committed tree",
+        "actorCanWrite": false,
+        "argument": "This hook list is not inert declaration: .github/workflows/lint.yml:21-24 installs a pinned pre-commit==4.6.0 and runs `pre-commit run --show-diff-on-failure --all-files` on every push and pull_request, so each hook here executes against the checked-out source and a non-zero hook exit fails the job. ruff-check and ruff-format carry `--fix`/rewrite semantics, but under pre-commit a hook that MODIFIES a file is reported as a failure (file hashes change), so an unformatted or lint-violating file cannot report clean without being changed. The hook implementations are fetched from external repos at pinned revs, so an author cannot alter what check-yaml or ruff decides without moving the pin. Limit: the rev pins and the exclude regex ('docs/|ext/') live in this file inside the write boundary, so the SCOPE of enforcement is author-controlled even though each verdict is computed outside it."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml:5",
+        ".pre-commit-config.yaml:16-21",
+        ".github/workflows/lint.yml:21-24"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#test",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code — CPython executing tests/ and returning non-zero on a failed assertion, error or collection failure",
+        "actorCanWrite": false,
+        "argument": "The recipe body is a direct `python -m pytest tests` invocation, so the target's exit status IS the interpreter's verdict on running the committed test modules against src/requests; a failing assertion or an import error cannot be talked into green without editing the code or the tests. Two limits that must travel with this: (1) the ORACLE is inside the write boundary — the same maintainers author src/requests and tests/, so a green run proves the code does what these tests say, not that the tests say the right thing; (2) this particular target is NOT the one CI invokes — .github/workflows/run-tests.yml:37-39 runs `make ci`, so `make test` gates no merge on its own and its value is developer-local execution."
+      },
+      "evidence": [
+        "Makefile:4-5",
+        ".github/workflows/run-tests.yml:37-39"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#ci",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code produced by CPython executing the tests/ suite inside the GitHub Actions runner",
+        "actorCanWrite": false,
+        "argument": "`make ci` is `python -m pytest tests --junitxml=report.xml`, and it is the command every test job in run-tests.yml actually runs (lines 37-39, 59-61, 81-83) across a 3-OS x 8-interpreter matrix plus the no-chardet and urllib3-1.x jobs, on push and pull_request. The pass/fail signal is the interpreter's exit status while executing real code — requests' suite drives a live pytest-httpbin server and real TLS sockets, so failures come from actual socket/HTTP behaviour, not from a recorded claim. The `--junitxml` file is only a report artefact; nothing gates on its contents. Limit: execution is anchored, the oracle is not — implementation and assertions are co-authored in this repo, so drift in both directions stays green."
+      },
+      "evidence": [
+        "Makefile:7-8",
+        ".github/workflows/run-tests.yml:37-39",
+        ".github/workflows/run-tests.yml:59-61",
+        ".github/workflows/run-tests.yml:81-83",
+        "requirements-dev.txt (pytest-httpbin==2.1.0, trustme)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#test-readme",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`echo` — the recipe's last command in every branch, so the shell always hands make a zero exit status",
+        "actorCanWrite": false,
+        "argument": "The body is `python setup.py check --restructuredtext --strict && ([ $$? -eq 0 ] && echo ok) || echo \"Invalid markup ...\"`. If setup.py check exits non-zero the `&&` short-circuits and control falls to `|| echo \"Invalid markup...\"`, which succeeds — so the recipe's exit status is 0 whether the markup is valid or broken, and the only evidence of failure is a line of stdout nobody reads. A signal that cannot vary carries no information, which is what disqualifies it as a check rather than anything about the producer. Compounding it: the message names README.rst/HISTORY.rst, which no longer exist (README.md, HISTORY.md), and no workflow invokes this target."
+      },
+      "evidence": [
+        "Makefile:10-11",
+        "README.md",
+        "HISTORY.md"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#coverage",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code (with coverage.py tracing attached) — CPython executing tests/ and coverage.py recording which lines the interpreter actually reached",
+        "actorCanWrite": false,
+        "argument": "The recipe runs the real suite under coverage; the target's exit status is pytest's verdict on executing the committed tests, and the coverage numbers themselves are derived from the interpreter's line-execution trace, which no one in the repo authors. Limits, all load-bearing here: (1) .coveragerc declares only `omit`, no `fail_under`, so the coverage measurement itself gates NOTHING — it prints a table and writes coverage.xml and the only failure path is a test failing; (2) coverage measures reach, not correctness; (3) no workflow invokes `make coverage`, so this edge blocks no merge — CI runs `make ci` instead."
+      },
+      "evidence": [
+        "Makefile:13-14",
+        ".coveragerc:1-2",
+        ".github/workflows/run-tests.yml:37-39"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#docs",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "sphinx-build, invoked through docs/Makefile's html target, writing HTML into docs/_build",
+        "actorCanWrite": false,
+        "argument": "This target generates a documentation artefact; it asserts nothing about whether requests behaves correctly. SPHINXOPTS is empty in docs/Makefile:5, so sphinx runs without `-W` and its usual findings — broken cross-references, stale autodoc targets, missing toctree entries — are warnings that still exit 0. Nothing downstream consumes the output either: Read the Docs builds from .readthedocs.yaml with its own sphinx invocation rather than this recipe, and no workflow calls `make docs`. Filed here as generation/provisioning rather than `unknown` because the code path is fully readable, not because it was hard to judge."
+      },
+      "evidence": [
+        "Makefile:25-27",
+        "docs/Makefile:5",
+        ".readthedocs.yaml:14-17"
+      ],
+      "confidence": 0.62,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary (pinned at ruff-pre-commit v0.15.21) parsing the committed source under this configuration, and its exit status inside the Lint job",
+        "actorCanWrite": false,
+        "argument": "This table is not inert: ruff-check and ruff-format read it on every `pre-commit run --all-files` in .github/workflows/lint.yml:21-24, and target-version/src/exclude change which files are analysed and which pyupgrade rewrites apply — so a py310-incompatible construct in src/requests produces a non-zero ruff exit that an author cannot argue away without changing the file. Limit, and it is the sharp one for a config node: the analysis is executed outside the write boundary but the SCOPE is declared inside it — widening `exclude` (already 'docs/', 'ext/') silently shrinks what the gate can ever see, and this table is one of the paths that does that."
+      },
+      "evidence": [
+        "pyproject.toml:86-90",
+        ".pre-commit-config.yaml:16-21",
+        ".github/workflows/lint.yml:21-24"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "ruff's exit code — a pinned external analyser deciding, from the source text, whether a selected rule (E/W/F/I/UP/T10) is violated",
+        "actorCanWrite": false,
+        "argument": "The `select` list here is what ruff-check enforces when pre-commit runs it over --all-files in lint.yml on every push and PR; pyflakes F catches undefined names and unused imports, T10 catches a forgotten breakpoint()/pdb.set_trace(). The verdict for a given file is computed by the pinned ruff binary from the committed bytes, so a violating file cannot report clean without being edited. Limit: `ignore` and `per-file-ignores` sit in this same table inside the write boundary — the author chooses which rules exist, and only then does an outside process decide whether they hold."
+      },
+      "evidence": [
+        "pyproject.toml:91-102",
+        ".pre-commit-config.yaml:18-19",
+        ".github/workflows/lint.yml:21-24"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-isort",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "ruff's isort (I) rule evaluation inside the pinned ruff binary, surfaced as a pre-commit hook failure",
+        "actorCanWrite": false,
+        "argument": "`known-first-party = [\"requests\"]` parameterises the I rules that .github/workflows/lint.yml runs through ruff-check; with it, an import block ordered wrongly relative to first-party/third-party grouping is rewritten by `--fix`, pre-commit sees a modified file and fails the job. The decision about whether a given file's imports are correctly grouped is made by ruff executing over the file, not by any claim in the repo. Limit: this is a one-line scoping declaration for a rule enforced elsewhere, so it contributes almost nothing on its own — its anchoring is entirely borrowed from the ruff-check invocation, and I have kept confidence low to say so."
+      },
+      "evidence": [
+        "pyproject.toml:103-104",
+        ".pre-commit-config.yaml:18-19",
+        ".github/workflows/lint.yml:21-24"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-format",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "ruff format's rewriter, which restyles source text to double quotes and space indentation",
+        "actorCanWrite": false,
+        "argument": "This table selects a style dialect (quote-style, indent-style) for a REWRITER. Nothing about correctness is asserted by either value: any program is equally valid with either quote character, and swapping them changes no behaviour the interpreter can observe. The pass/fail edge that exists in this repo lives in the pre-commit invocation (a formatter rewrite becomes a hook failure) and is credited there under .pre-commit-config.yaml — counting this table again would credit the same gate twice while the table itself asserts nothing."
+      },
+      "evidence": [
+        "pyproject.toml:106-109",
+        ".pre-commit-config.yaml:20-21"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest collector/runner inside CPython, which this table configures — testpaths decides what is collected and --doctest-modules makes docstring examples executable assertions",
+        "actorCanWrite": false,
+        "argument": "Every `make ci` run in the CI matrix loads this table, so it directly determines what the interpreter executes and therefore what the exit code reflects. `addopts = \"--doctest-modules\"` is a genuine widening of the executed oracle: examples written in docstrings are run and their printed output compared to the literal transcript, so a documented example that stops matching real behaviour fails the suite. Limits: `testpaths = [\"tests\"]` is author-controlled scope — narrowing it silently shrinks what the anchored runner can ever see — and the doctest transcripts are still authored in-repo alongside the code they document."
+      },
+      "evidence": [
+        "pyproject.toml:111-116",
+        "Makefile:7-8",
+        ".github/workflows/run-tests.yml:37-39"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright type checker's process exit code — deterministic static analysis of src/requests under `typeCheckingMode = \"strict\"`",
+        "actorCanWrite": false,
+        "argument": "This table is the operative configuration for `python -m pyright src/requests/` at .github/workflows/typecheck.yml:31-32, which runs on every push and pull_request against Python 3.10 and 3.14. Strict mode makes pyright report unknown/partially-unknown types, so an unannotated or type-incoherent change produces a non-zero exit computed by the checker from the source and the installed stubs — nothing an author can assert their way past without changing the code or loosening this table. Limit: the four `report*: false` suppressions and the `include` list are declared here, inside the write boundary, so the strictness that gets enforced is author-chosen; the verdict under that choice is not."
+      },
+      "evidence": [
+        "pyproject.toml:118-125",
+        ".github/workflows/typecheck.yml:31-32",
+        ".github/workflows/typecheck.yml:3"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "pytest fixture functions — an httpbin URL helper, a monkeypatch that clears proxy env vars, and a threaded TLS HTTPServer built from a trustme CA",
+        "actorCanWrite": false,
+        "argument": "There is not one assertion in this file: every top-level definition is a fixture that PROVISIONS the environment the real tests run in (a live local HTTP server, a no-SAN certificate, a clean proxy environment). It cannot pass or fail a claim about requests' behaviour; a broken fixture surfaces as an error in whichever test consumes it, and that test's edge is the one already credited under `make ci`. Worth recording rather than dismissing: this provisioning is exactly what makes the pytest edge strong here — a genuine TLS handshake against a real socket is what the runtime gets to decide — but the assertion lives in tests/*.py, not here."
+      },
+      "evidence": [
+        "tests/conftest.py",
+        "requirements-dev.txt (pytest-httpbin, trustme)"
+      ],
+      "confidence": 0.68,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/certs/valid/server/Makefile#server-key",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`openssl genrsa`, generating a 2048-bit RSA private key file",
+        "actorCanWrite": false,
+        "argument": "The recipe creates a test fixture — a key file — and evaluates no property of requests. Key generation succeeds for any tree state, so its exit code carries no information about the code under test; it is provisioning for the TLS fixtures the suite consumes, and the assertions that use those fixtures live in tests/ under the pytest edge."
+      },
+      "evidence": [
+        "tests/certs/valid/server/Makefile:3-4"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/certs/valid/server/Makefile#server-csr",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`openssl req`, emitting a certificate signing request from the generated key and cert.cnf",
+        "actorCanWrite": false,
+        "argument": "A CSR-generation step in a test-fixture directory. It transforms one fixture file into another and asserts nothing about requests' behaviour; a non-zero exit here would mean openssl or cert.cnf is broken, not that the library is wrong."
+      },
+      "evidence": [
+        "tests/certs/valid/server/Makefile:6-7"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/certs/valid/server/Makefile#server-pem",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`openssl x509 -req`, signing the CSR with the checked-in test CA key and concatenating the CA cert into the bundle",
+        "actorCanWrite": false,
+        "argument": "This mints the server certificate the TLS tests present; it is fixture construction, not verification. The signing operation succeeds regardless of anything in src/requests, so the recipe's exit code says nothing about the library. Note it is fixture MATERIAL for an anchored edge — the actual verification is a real TLS handshake performed inside the pytest run — but the material itself asserts nothing."
+      },
+      "evidence": [
+        "tests/certs/valid/server/Makefile:9-11"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/CODEOWNERS#codeowners",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "cannot be established from the repository — either a second maintainer's review approval, or nothing at all",
+        "actorCanWrite": null,
+        "argument": "The file declares that changes to .github/workflows/, CODEOWNERS, __version__.py, HISTORY.md and pyproject.toml belong to two named maintainers, but a CODEOWNERS file only blocks a merge when branch protection has 'Require review from Code Owners' switched on, and that setting lives in GitHub repository configuration that is not in the tree and cannot be read from a clone. So the fork point is untraceable: if protection is on, the producer is a second human's approval outside the PR author's write boundary; if it is off, the file is documentation and produces no signal at all. Failing closed rather than guessing anchored, per the rule for checks whose implementation lives outside the repo."
+      },
+      "evidence": [
+        ".github/CODEOWNERS:4-8"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tox.ini#tox-ini",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code inside each tox-managed virtualenv — CPython 3.10-3.14 executing tests/ against a freshly installed requests plus its security/socks extras",
+        "actorCanWrite": false,
+        "argument": "`commands = pytest {posargs:tests}` is a direct runner invocation, and tox additionally builds and installs the package into an isolated env before running it, so packaging mistakes (a module missing from the sdist, an unsatisfiable extra) surface as failures too. The verdict is the interpreter's, not a claim the repo makes about itself. Limits: the oracle is co-authored with the implementation as always; and nothing in .github/workflows invokes tox — every CI job shells `make` then `make ci` — so this envlist gates no merge and its 3.10-3.14 matrix is duplicated, not enforced, by run-tests.yml."
+      },
+      "evidence": [
+        "tox.ini:1-9",
+        ".github/workflows/run-tests.yml:33-39"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 11,
+    "selfReferential": 0,
+    "unknown": 1,
+    "notACheck": 13,
+    "ratio": 0.9166666666666666
+  },
+  "economics": {
+    "nodesTotal": 106,
+    "nodesSampled": 25,
+    "decidedByProbe": 7,
+    "decidedByAgent": 18,
+    "probesMinted": 2,
+    "probeLibrarySize": 19,
+    "tokensIn": 2479,
+    "tokensOut": 4775,
+    "tokensEstimated": true,
+    "wallClockMs": 418864
+  }
+}

@@ -1,0 +1,47 @@
+<!-- @keelCard group="Color" name="Verdict classes" subtitle="Four, matching the frozen schema" height="270" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-5); }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--k-space-3); margin-bottom: var(--k-space-5); }
+  .sw { height: var(--k-space-12); border-radius: var(--k-r-md); margin-bottom: var(--k-space-2); }
+  .hex { font-family: var(--k-font-mono); font-size: var(--k-fs-micro); color: var(--k-ink-2); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+  <div class="grid">
+    <div>
+      <div class="sw" style="background: var(--k-anchored)"></div>
+      <span class="k-class" data-class="anchored">anchored</span>
+      <div class="hex">#4ade80</div>
+    </div>
+    <div>
+      <div class="sw" style="background: var(--k-self-referential)"></div>
+      <span class="k-class" data-class="self_referential">self_referential</span>
+      <div class="hex">#f87171</div>
+    </div>
+    <div>
+      <div class="sw" style="background: var(--k-unknown)"></div>
+      <span class="k-class" data-class="unknown">unknown</span>
+      <div class="hex">#fbbf24</div>
+    </div>
+    <div>
+      <div class="sw" style="background: var(--k-not-a-check); opacity: .45"></div>
+      <span class="k-class" data-class="not_a_check">not_a_check</span>
+      <div class="hex">#94a3b8</div>
+    </div>
+  </div>
+  <p class="note">
+    Classification, never status. <span class="k-mono">not_a_check</span> is the least
+    attractive swatch on purpose and its chip is dashed — it is the one class excluded
+    from the denominator, so it must never look like somewhere you want nodes to land.
+    Below: the confidence smell, an <span class="k-mono">anchored</span> verdict
+    asserted under 0.5, ringed in the <span class="k-mono">unknown</span> hue.
+  </p>
+  <p style="margin: var(--k-space-3) 0 0">
+    <span class="k-class" data-class="anchored" data-smell>anchored</span>
+    <span class="hex" style="margin-left: var(--k-space-2)">confidence 0.31</span>
+  </p>
+</body></html>

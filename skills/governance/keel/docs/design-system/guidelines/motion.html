@@ -1,0 +1,29 @@
+<!-- @keelCard group="Foundations" name="Motion" subtitle="Measurement, not delight — hover the swatches" height="200" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-5); }
+  .demos { display: flex; gap: var(--k-space-4); margin-bottom: var(--k-space-5); }
+  .demo { flex: 1; padding: var(--k-space-4); background: var(--k-bg-1); border: 1px solid var(--k-line); border-radius: var(--k-r-lg); cursor: default; }
+  .demo b { display: block; font-family: var(--k-font-mono); font-size: var(--k-fs-micro); font-weight: var(--k-fw-regular); color: var(--k-ink-2); margin-bottom: var(--k-space-2); }
+  .fast { transition: background var(--k-dur-fast) var(--k-ease), border-color var(--k-dur-fast) var(--k-ease); }
+  .fast:hover { background: var(--k-bg-2); border-color: var(--k-ink-3); }
+  .base { transition: background var(--k-dur-base) var(--k-ease), border-color var(--k-dur-base) var(--k-ease); }
+  .base:hover { background: var(--k-bg-3); border-color: var(--k-accent-line); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+  <div class="demos">
+    <div class="demo fast"><b>--k-dur-fast · 90ms</b>State feedback: hover, focus, press.</div>
+    <div class="demo base"><b>--k-dur-base · 160ms</b>Anything that moves or reveals.</div>
+    <div class="demo"><b>--k-ease</b>cubic-bezier(.2, 0, .38, 1) — decelerating, no overshoot.</div>
+  </div>
+  <p class="note">
+    Nothing animates on load, nothing bounces, nothing exceeds 200ms. Motion preserves
+    object continuity across a state change; it never draws attention to one.
+    <span class="k-mono">prefers-reduced-motion</span> removes all of it — which costs
+    nothing, because none of it is load-bearing.
+  </p>
+</body></html>

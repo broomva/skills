@@ -1,0 +1,417 @@
+{
+  "target": "https://github.com/broomva/keel",
+  "revision": "ad47c37008cd1f3d12430ff1a45e943d84913f32",
+  "generatedAt": "2026-07-25T00:18:08.295Z",
+  "nodes": [
+    {
+      "id": "Makefile#help",
+      "kind": "script",
+      "name": "help",
+      "source": "Makefile:40",
+      "raw": "help: ## Show available targets\n\t@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \\\n\t  | awk 'BEGIN{FS=\":.*?## \"}{printf \"  \\033[36m%-24s\\033[0m %s\\n\", $$1, $$2}'"
+    },
+    {
+      "id": "Makefile#doctor",
+      "kind": "script",
+      "name": "doctor",
+      "source": "Makefile:44",
+      "raw": "doctor: ## bstack primitive-contract compliance report (needs bstack; always exits 0)\n\t$(REQUIRE_BSTACK)\n\t@bash \"$(BSTACK)/scripts/doctor.sh\""
+    },
+    {
+      "id": "Makefile#bstack-check",
+      "kind": "script",
+      "name": "bstack-check",
+      "source": "Makefile:48",
+      "raw": "bstack-check: ## Harness validation — doctor in strict mode (needs bstack; non-zero on gap)\n\t$(REQUIRE_BSTACK)\n\t@bash \"$(BSTACK)/scripts/doctor.sh\" --strict"
+    },
+    {
+      "id": "Makefile#portability-check",
+      "kind": "script",
+      "name": "portability-check",
+      "source": "Makefile:52",
+      "raw": "portability-check: ## Fail if any committed file hardcodes a machine-specific path\n\t@bash scripts/portability-check.sh"
+    },
+    {
+      "id": "Makefile#design-audit",
+      "kind": "script",
+      "name": "design-audit",
+      "source": "Makefile:55",
+      "raw": "design-audit: ## Design-system adherence gate (raw literals, token drift, schema/CSS agreement)\n\t@python3 scripts/design-audit.py"
+    },
+    {
+      "id": "Makefile#design-sync",
+      "kind": "script",
+      "name": "design-sync",
+      "source": "Makefile:58",
+      "raw": "design-sync: ## Rewrite the site/ token copies from skills/keel/design/ (canonical)\n\t@python3 scripts/design-audit.py --fix-sync"
+    },
+    {
+      "id": "Makefile#janitor",
+      "kind": "script",
+      "name": "janitor",
+      "source": "Makefile:61",
+      "raw": "janitor: ## P8 — dry-run branch/worktree cleanup\n\t@bash scripts/branch-janitor.sh"
+    },
+    {
+      "id": "Makefile#janitor-apply",
+      "kind": "script",
+      "name": "janitor-apply",
+      "source": "Makefile:64",
+      "raw": "janitor-apply: ## P8 — apply branch/worktree cleanup\n\t@bash scripts/branch-janitor.sh --apply"
+    },
+    {
+      "id": "Makefile#bstack-primitive-lint",
+      "kind": "script",
+      "name": "bstack-primitive-lint",
+      "source": "Makefile:67",
+      "raw": "bstack-primitive-lint: ## G-L3-1 — every P-N has What/How/Why/Invariant + a CLAUDE.md row\n\t@python3 scripts/bstack-primitive-lint.py"
+    },
+    {
+      "id": "Makefile#bstack-rule-of-three",
+      "kind": "script",
+      "name": "bstack-rule-of-three",
+      "source": "Makefile:70",
+      "raw": "bstack-rule-of-three: ## G-L3-2 — rule-of-three ledger evidence (not applicable here, see note)\n\t@python3 scripts/bstack-rule-of-three.py"
+    },
+    {
+      "id": "Makefile#bstack-l3-trust",
+      "kind": "script",
+      "name": "bstack-l3-trust",
+      "source": "Makefile:94",
+      "raw": "bstack-l3-trust: bstack-primitive-lint ## L3 trust-gate pack (G-L3-1; G-L3-2 scoped out — see note)\n\t@echo \"[bstack-l3-trust] G-L3-1 primitive-lint passed.\"\n\t@echo \"[bstack-l3-trust] G-L3-2 rule-of-three not run: no primitives are promoted in this repo.\"\n\t@echo \"[bstack-l3-trust] L3 trust gates passed — governance change is structurally valid.\""
+    },
+    {
+      "id": "package.json#test",
+      "kind": "script",
+      "name": "test",
+      "source": "package.json",
+      "raw": "\"test\": \"bun test\""
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#31-checkout-pr-head",
+      "kind": "ci_step",
+      "name": "Checkout PR head",
+      "source": ".github/workflows/l3-stability.yml:31",
+      "raw": "      - name: Checkout PR head\n        uses: actions/checkout@v4\n        with:\n          fetch-depth: 50",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#36-set-up-python-3-11",
+      "kind": "ci_step",
+      "name": "Set up Python 3.11",
+      "source": ".github/workflows/l3-stability.yml:36",
+      "raw": "      - name: Set up Python 3.11\n        uses: actions/setup-python@v5\n        with:\n          python-version: '3.11'",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#32-actions-deploy-pages-v4",
+      "kind": "ci_step",
+      "name": "actions/deploy-pages@v4",
+      "source": ".github/workflows/pages.yml:32",
+      "raw": "      - id: deployment\n        uses: actions/deploy-pages@v4",
+      "hints": {
+        "action": "actions/deploy-pages@v4"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "Makefile#help",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "grep -hE over $(MAKEFILE_LIST) piped to awk, which reformats the `## ` doc-comments into a listing",
+        "actorCanWrite": true,
+        "argument": "The target's entire output is the Makefile's own `## ` comments re-printed by awk, so the only thing the pipeline can report is text a contributor typed two lines above. Nothing about the repository's behaviour is compared against anything, and the exit status is awk's formatting status, so no state of the world can flip it."
+      },
+      "evidence": [
+        "Makefile:40-42 — `@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk ... printf`",
+        "No comparison, no threshold, no assertion in the recipe body",
+        "Not referenced by any workflow in .github/workflows/"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#doctor",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "bash running $(BSTACK)/scripts/doctor.sh in non-strict mode — an audit report printer whose exit code is a literal `exit 0`",
+        "actorCanWrite": true,
+        "argument": "I ran `make doctor` on this tree: doctor.sh printed \"100/102 passed, 2 gap(s)\" and the target still exited 0, because doctor.sh only reaches its `exit 1` under `--strict` (line 1440) and otherwise falls through to an unconditional `exit 0` (line 1445). The signal therefore cannot vary with the repo's compliance — a gapful workspace and a clean one emit the identical exit code, so nothing downstream can read a verdict off it."
+      },
+      "evidence": [
+        "Makefile:44-46 — `doctor: ## ... always exits 0` then `@bash \"$(BSTACK)/scripts/doctor.sh\"`",
+        "MEASURED: `bash ~/.claude/skills/bstack/scripts/doctor.sh` -> exit 0 with 2 `[gap]` lines present in output",
+        "~/.claude/skills/bstack/scripts/doctor.sh:1439-1445 — `# Strict mode: exit non-zero if any gap (CI usage)` ... `exit 1` inside the STRICT guard; bare `exit 0` at 1445",
+        "REQUIRE_BSTACK (Makefile:24-34) can exit 1, but only on the tool being absent — an environment fact, not a claim about this repo"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-check",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "bash running doctor.sh --strict from an unpinned copy under $HOME (~/.claude/skills/bstack → ~/.agents/skills/bstack), reading this workspace's own governance files and state stamps",
+        "actorCanWrite": true,
+        "argument": "Makefile:16-22 selects the producer by scanning four writable roots and taking the first hit — no pin, no checksum, no vendored copy — and on this machine every hit is a plain directory inside the actor's own home that the same agent operating this repo can edit, with nothing in the repo that would record the edit. The gaps it counts are likewise reads of files the actor writes (governance markdown, wired-hook entries, `.control/leverage-state.json` staleness at doctor.sh:1278), so both the rule and the evidence sit on the actor's side of the boundary."
+      },
+      "evidence": [
+        "Makefile:48-50 — `@bash \"$(BSTACK)/scripts/doctor.sh\" --strict`",
+        "Makefile:16-22 — BSTACK discovered at run time across $HOME/.claude/skills/bstack, $HOME/.agents/skills/bstack, $HOME/.local/share/bstack, $(CURDIR)/.bstack; no version pin or integrity check; all three roots present on this machine",
+        "MEASURED: `doctor.sh --strict` -> exit 1 with 2 gaps, 100 [ok]",
+        "MEASURED [ok] sample: 'CLAUDE.md', 'AGENTS.md', 'primitive count header reads Twenty/20', 'P1 row present' ... 'P8 row present' — prose-presence assertions",
+        "doctor.sh:135,148,156,197,272,477,488 — gap() calls keyed on missing files, missing table rows, missing markdown sections, missing YAML blocks",
+        ".github/workflows/portability.yml:79 — the only bstack-adjacent CI step runs with BSTACK deliberately emptied",
+        "grounding-classes.md:28 — 'A status field the actor sets, gating on that field | The claim and the check are the same write.'"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#portability-check",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bash + grep -nE scanning the actual bytes of every file in `git ls-files`, with the script's `fail` flag driving `exit 1`",
+        "actorCanWrite": false,
+        "argument": "I appended `/Users/<someone>/secret/path` to README.md and the target went from exit 0 to exit 1, naming README.md:73; removing it restored exit 0. The signal is grep's match against committed bytes, so a contributor who commits a machine-specific path cannot make the scan report clean without editing scripts/portability-check.sh itself — and in the CI lane the scan runs on a fresh ubuntu-latest checkout with none of the author's tooling present. Documented limit: the oracle (which paths count, and the is_exempt list at lines 40-46 covering docs/handoffs/*, docs/decisions/* and the script itself) is authored inside the write boundary, so quietly widening an exemption shrinks what gets scanned without turning the gate red."
+      },
+      "evidence": [
+        "Makefile:52-53 — `@bash scripts/portability-check.sh`",
+        "MEASURED (negative control): appended `/Users/<someone>/...` to README.md -> exit 1, output `README.md:73 absolute home path: /Users/<someone>` + `[portability] FAIL`; restored -> exit 0",
+        "scripts/portability-check.sh:69-70 — `grep -nE '/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+'` over `git ls-files` output",
+        "scripts/portability-check.sh:86-94 — `if [ \"$fail\" -ne 0 ]; then ... exit 1`",
+        ".github/workflows/portability.yml:19-26 — job `paths` on ubuntu-latest, step `run: bash scripts/portability-check.sh`; the step's exit code is the job conclusion",
+        "LIMIT: scripts/portability-check.sh:40-46 is_exempt() — exemption list is in-repo and author-editable"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#design-audit",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "python3 executing design-audit.py — regex scans and byte comparisons over the real governed files, returning 1 from main() when the failures list is non-empty",
+        "actorCanWrite": false,
+        "argument": "I injected `.x{color:#abcdef}` into a <style> block in site/index.html and the target flipped from exit 0 to exit 1, reporting `site/index.html:19 raw hex color`; reverting restored exit 0 over 14 governed files. The exit code comes from the interpreter reading the files on disk, so someone adding a raw literal cannot make the scan report clean without editing scripts/design-audit.py. Documented limits: the rules are authored in-repo, checks 1-2 carry an `audit-ok:` per-line escape hatch (line 133), check 3's expected bytes can be regenerated wholesale by `make design-sync` — the --update-snapshots shape, where the oracle is manufactured by the thing under test — and no workflow invokes this target, so it blocks only a human ticking the PR-template box."
+      },
+      "evidence": [
+        "Makefile:55-56 — `@python3 scripts/design-audit.py`",
+        "MEASURED (negative control): injected raw hex into site/index.html -> exit 1, `design-audit: 1 violation(s)` / `site/index.html:19 raw hex color`; reverted -> exit 0, `design-audit: 14 governed file(s) clean.`",
+        "scripts/design-audit.py:388-399 — `if failures: ... return 1` else `return 0`; `raise SystemExit(main())` at 403",
+        "scripts/design-audit.py:131-153 (check_literals), 269-307 (check_verdict_classes parses the frozen GroundingClass union out of skills/keel/schemas/keel.ts), 355-363 (check_emoji)",
+        "LIMIT — escape hatch: scripts/design-audit.py:133-134 `if \"audit-ok:\" in line: continue`",
+        "LIMIT — regenerable oracle: scripts/design-audit.py:156-179 check_sync compares site/ copies to skills/keel/design/, and Makefile:58-59 `design-sync` rewrites exactly those copies",
+        "LIMIT — not in the pipeline path: grep of .github/workflows/ finds no design-audit invocation; only .github/PULL_REQUEST_TEMPLATE.md:18 references it as a checkbox"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#design-sync",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "python3 running design-audit.py --fix-sync; in fix mode check_sync only writes, but check_brand_marks still validates every hex in the canonical SVGs against --k-ink-0/--k-accent read out of tokens.css, and main() returns 1 if that appends a failure",
+        "actorCanWrite": false,
+        "argument": "The residual falsifiable path is real: an off-palette hex in skills/keel/design/mark.svg, or a missing canonical mark, makes check_brand_marks append to failures and `--fix-sync` returns 1 (line 377), and that comparison is python reading token values out of tokens.css rather than any value this target writes. Heavy documented limit, and the reason confidence is only 0.5: everything else the target does is mutation — it overwrites the site/ copies and derives the -on-light variants, which is precisely the expected output that design-audit checks 3 and 8 later compare against, so running it manufactures the agreement rather than testing it. Only the ink-validation half can go red; the sync half passes by construction. Not filed not_a_check because 'a formatter that only rewrites' is factually false here — it does execute one falsifiable assertion."
+      },
+      "evidence": [
+        "Makefile:58-59 — `@python3 scripts/design-audit.py --fix-sync`",
+        "scripts/design-audit.py:374-377 — `if \"--fix-sync\" in sys.argv: check_brand_marks(fix=True); check_sync(fix=True); return 0 if not failures else 1`",
+        "scripts/design-audit.py:246-251 — the hex-vs-token loop runs in fix mode too and appends a failure for any ink that is not --k-ink-0 / --k-accent",
+        "scripts/design-audit.py:167-172 — in fix mode check_sync calls `dst.write_bytes(want)` and never appends a failure",
+        "scripts/design-audit.py:371-373 — the author's own note: '--fix-sync is a fixer, not a gate'",
+        "SMELL: low confidence recorded deliberately — the dominant effect is writing the files that Makefile#design-audit later compares"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#janitor",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git plumbing (merge-base --is-ancestor, commit-tree + cherry) over origin/main, printing `[dry-run drop]` lines; the script then reaches an unconditional `exit 0`",
+        "actorCanWrite": true,
+        "argument": "The target answers a housekeeping question — which local branches have already landed in origin/main and which worktrees are orphaned — and prints the list. Whether it finds twenty stale branches or none, control reaches `exit 0` at branch-janitor.sh:214, so no finding can turn the target red. Nothing here asserts that the repository's code is correct; the git state it reads is also state this repo pushes, so even the input is author-written."
+      },
+      "evidence": [
+        "Makefile:61-62 — `@bash scripts/branch-janitor.sh` (no --apply, so APPLY=0)",
+        "scripts/branch-janitor.sh:168-170 — dry-run branch prints `[dry-run drop]` and continues",
+        "scripts/branch-janitor.sh:206-214 — summary block then unconditional `exit 0`",
+        "MEASURED shell semantics: `set -euo pipefail; APPLY=1; [ \"$APPLY\" = \"0\" ] && echo ...; exit 0` -> exit 0 (the trailing test does not trip set -e)",
+        "scripts/branch-janitor.sh:9-15 — documented as cleanup tooling, `--dry-run by default (safe)`"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#janitor-apply",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git branch -D and git worktree remove --force executed by branch-janitor.sh --apply; the script exits 0 unconditionally",
+        "actorCanWrite": true,
+        "argument": "This target performs deletions rather than reporting a property: it removes squash-merged branches and prunes dead worktrees, then falls through to `exit 0` at line 214 whether it dropped ten branches or zero. A delete failure is swallowed into a `[skip] ... (delete failed)` message (line 166) rather than a non-zero status, so there is no proposition the exit code could falsify. Mutation, not assertion."
+      },
+      "evidence": [
+        "Makefile:64-65 — `@bash scripts/branch-janitor.sh --apply`",
+        "scripts/branch-janitor.sh:161-167 — `git branch -D` on success prints `[drop]`; on failure prints `[skip] ... (delete failed)` and continues",
+        "scripts/branch-janitor.sh:189-193 — `git worktree remove --force` inside the APPLY branch",
+        "scripts/branch-janitor.sh:203 — `git worktree prune 2>/dev/null || true`",
+        "scripts/branch-janitor.sh:214 — `exit 0`"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-primitive-lint",
+      "class": "self_referential",
+      "confidence": 0.7,
+      "writeBoundary": {
+        "producer": "python3 executing scripts/bstack-primitive-lint.py; the exit code is the interpreter's, but every byte it reads is two in-repo markdown files",
+        "actorCanWrite": true,
+        "argument": "The script opens only AGENTS.md and CLAUDE.md and compares them to each other: each `### P-N` section must contain the literal strings `**What**/**How**/**Why**/**Invariant**`, each must have a `| P-N |` row in CLAUDE.md's table, and the spelled-out count word in CLAUDE.md's header must equal the number of sections. Both operands AND the rule list itself (REQUIRED_SECTIONS, HOOK_ENFORCED, MECHANISM_ONLY at lines 33-40) are edited by the same governance PR this gate is policing, so the way to green is to type 'Twenty' or paste an empty `**What**` heading — no executed behaviour and no outside party is consulted. Execution is honest and the signal genuinely varies (I mutated a scratch copy's header word and it printed FAIL and returned 1), but what varies is agreement between two pieces of paperwork the author owns."
+      },
+      "evidence": [
+        "Makefile:67-68 — `bstack-primitive-lint: @python3 scripts/bstack-primitive-lint.py`",
+        "scripts/bstack-primitive-lint.py:30-34 — AGENTS_MD / CLAUDE_MD are the only inputs; REQUIRED_SECTIONS is a literal tuple of markdown bold strings",
+        "scripts/bstack-primitive-lint.py:131-152 — table-row cross-check and 'header says N / AGENTS.md has M' count check",
+        "scripts/bstack-primitive-lint.py:167-172 — return 1 on any error, return 0 otherwise (falsifiable, not vacuous)",
+        "Empirical (repo HEAD): exit 0 — 'Primitives found 20 / table 20 / header 20', 4 warnings",
+        "Empirical falsifiability: copied AGENTS.md+CLAUDE.md+script to a scratch tree, changed 'Twenty irreducible'→'Nineteen irreducible' → '[ERROR] CLAUDE.md header says 19 ... but AGENTS.md has 20' → FAIL",
+        "Reaches CI transitively via .github/workflows/portability.yml `gates` job (`make BSTACK= bstack-l3-trust`)",
+        "skills/keel/references/grounding-classes.md:26 — 'A doc validated against another doc | Paperwork against paperwork'"
+      ],
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-rule-of-three",
+      "class": "self_referential",
+      "confidence": 0.6,
+      "writeBoundary": {
+        "producer": "python3 executing scripts/bstack-rule-of-three.py — but in this repo the exit code comes from a missing-file precondition guard (line 149), never from the audit itself",
+        "actorCanWrite": true,
+        "argument": "Its intended oracle is AGENTS.md's `### P-N:` titles matched against a ledger table in research/entities/pattern/bstack-engine.md, and 'this pattern recurred 3+ times' is established by regexing a string like '30+ instances' out of a markdown cell — the promoter authors both the promotion and the evidence for it, so the claim and its check are the same write. Today the ledger path does not exist at all, so main() returns 1 before parsing anything and no target or workflow consumes the result (bstack-l3-trust deliberately drops it, Makefile:73-93). I weighed not_a_check on the grounds that a permanently red signal carries no information, but the fork point here is fully traceable and sits inside the write boundary, and the node would still be paperwork-vs-paperwork the day the ledger lands — dropping it out of the denominator would raise Keel's own ratio on a technicality, which is the shoppable move, not the honest one."
+      },
+      "evidence": [
+        "Makefile:70-71 — `bstack-rule-of-three: @python3 scripts/bstack-rule-of-three.py`",
+        "scripts/bstack-rule-of-three.py:29-30 — inputs are AGENTS.md and research/entities/pattern/bstack-engine.md, both in-repo markdown",
+        "scripts/bstack-rule-of-three.py:102-118 — has_three_or_more_instances() regexes 'N+' / 'N instances' / 'meets rule-of-three' out of a table cell the promoter typed",
+        "scripts/bstack-rule-of-three.py:148-150 — `if not BSTACK_ENGINE.exists(): return 1`",
+        "Empirical: `python3 scripts/bstack-rule-of-three.py` → '[FAIL] <repo>/research/entities/pattern/bstack-engine.md not found', exit=1",
+        "`ls research/entities/pattern/` → No such file or directory (the whole research/ tree is absent)",
+        "Makefile:73-93 — documented scope-out; the target is not a prerequisite of bstack-l3-trust and appears in no workflow (.github/workflows/ = l3-stability.yml, pages.yml, portability.yml)"
+      ],
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-l3-trust",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "python3 regex comparing AGENTS.md against CLAUDE.md, both in this repo",
+        "actorCanWrite": true,
+        "argument": "The target body is three `@echo` lines, so all of its force comes from the make prerequisite `bstack-primitive-lint`, which runs the in-repo `scripts/bstack-primitive-lint.py`; that script regexes AGENTS.md for `### P-N` sections and CLAUDE.md for matching table rows and a spelled-out count, and fails only when those two documents disagree with each other. Both documents and the linter's expectations are written by the same authors in the same commit."
+      },
+      "evidence": [
+        "Makefile:94-97 — prerequisite `bstack-primitive-lint`, recipe is three `@echo` lines only",
+        "Make semantics: a non-zero prerequisite aborts the target, so the exit code is entirely the child's",
+        "Child verdict: Makefile#bstack-primitive-lint = self_referential (AGENTS.md vs CLAUDE.md)",
+        ".github/workflows/portability.yml — `gates` job step 'L3 trust gate: run: make BSTACK= bstack-l3-trust' (job conclusion depends on it)",
+        "Empirical: `make BSTACK= bstack-l3-trust` → child OK, then the three echoes, exit 0",
+        "skills/keel/references/grounding-classes.md:41-43 — 'Do not classify the wrapper; descend'"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#test",
+      "class": "self_referential",
+      "confidence": 0.68,
+      "writeBoundary": {
+        "producer": "the Bun test-runner process — a thrown expect() failure inside bun:test sets the process exit code",
+        "actorCanWrite": true,
+        "argument": "`bun test` compiles and runs tests/grounding-ratio.test.ts, which imports the real groundingRatio() from skills/keel/schemas/keel.ts and compares its COMPUTED output (0.5 with and without not_a_check entries, notACheck=2, empty input → 0) rather than echoing a constant; the runtime decides pass/fail and no prose in the repo talks a failed assertion into a zero exit. Two limits belong on the record and neither is the execution axis: (1) the oracle — that not_a_check leaves the denominator and unknown fails closed — was authored in this same repo alongside the implementation, so a green run proves the code does what the test says, not that the test says the right thing; (2) nothing runs this at merge time — .github/workflows/ holds only l3-stability.yml, pages.yml and portability.yml, and test.yml is still only a plan — so the merge-time surrogate is a hand-ticked `- [ ] bun test` box in the PR template, which is a status field the author sets."
+      },
+      "evidence": [
+        "package.json — \"test\": \"bun test\"",
+        "tests/grounding-ratio.test.ts:15 — imports groundingRatio from ../schemas/keel.ts (real implementation, not a fixture)",
+        "tests/grounding-ratio.test.ts:30-41 — asserts with_.ratio === without.ratio and === 0.5, both computed by the function under test",
+        "Empirical: `bun test` → '3 pass, 0 fail, 7 expect() calls', exit=0",
+        "`ls .github/workflows/` → l3-stability.yml, pages.yml, portability.yml — no lane executes bun test",
+        "docs/plans/w1-e-tests-ci.md:36 — .github/workflows/test.yml is planned, not present",
+        ".github/PULL_REQUEST_TEMPLATE.md:17 — '- [ ] `bun test`' self-attested checkbox",
+        "skills/keel/references/grounding-classes.md:68-81 — the execution-vs-oracle limit"
+      ],
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#31-checkout-pr-head",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v4 fetching the PR head tree from GitHub's git server",
+        "actorCanWrite": null,
+        "argument": "The step materializes the working tree (fetch-depth: 50) and writes no pass/fail claim about the code — nothing later in the job branches on its result other than by not existing. Its only failure mode is transport/credential failure, which reports on the runner's network, not on whether the change under review is correct."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml:31-34 — `uses: actions/checkout@v4` with `fetch-depth: 50`",
+        "No step in the job reads an output of this step; `Set final status` (l3-stability.yml:125-133) reads only `steps.compute.outputs.status`"
+      ],
+      "confidence": 0.86,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#36-set-up-python-3-11",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/setup-python@v5 installing a CPython 3.11 toolchain onto the runner",
+        "actorCanWrite": null,
+        "argument": "This is environment provisioning: it puts a python3 with tomllib on PATH so that compute-lambda.sh and l3-rate-gate.sh can parse TOML (both exit 4 / degrade without Python >= 3.11). It emits no verdict about the repository; the assertions live downstream in the steps that run those scripts."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml:36-39 — `uses: actions/setup-python@v5`, python-version 3.11",
+        "~/.claude/skills/bstack/scripts/compute-lambda.sh — 'exit 4 — python3 or tomllib unavailable (Python >= 3.11 required)'"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#32-actions-deploy-pages-v4",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "GitHub's Pages deployment service — the action polls the deployment it created and fails the job on a rejected or timed-out deployment",
+        "actorCanWrite": false,
+        "argument": "The verdict is not authored by the action's JavaScript; it is the status GitHub's Pages infrastructure returns for the artifact uploaded by the preceding upload-pages-artifact step, and this repo's authors have no write path into that service's response — they can trigger a deployment, not decide its outcome. A broken or oversized artifact produces a failure the repo cannot argue with."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:32-33 — `- id: deployment / uses: actions/deploy-pages@v4`",
+        ".github/workflows/pages.yml:22-24 — `environment: github-pages` with `url: ${{ steps.deployment.outputs.page_url }}`, i.e. the URL is produced by the service, not authored in-repo",
+        ".github/workflows/pages.yml:11-14 — `id-token: write` for the OIDC exchange the Pages service verifies",
+        "No post-deploy fetch/smoke step exists in the workflow"
+      ],
+      "confidence": 0.74,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 4,
+    "selfReferential": 5,
+    "unknown": 0,
+    "notACheck": 6,
+    "ratio": 0.4444444444444444
+  },
+  "economics": {
+    "nodesTotal": 32,
+    "nodesSampled": 15,
+    "decidedByProbe": 0,
+    "decidedByAgent": 15,
+    "probesMinted": 0,
+    "probeLibrarySize": 0,
+    "tokensIn": 486000,
+    "tokensOut": 128500,
+    "tokensEstimated": true,
+    "wallClockMs": 679179
+  }
+}

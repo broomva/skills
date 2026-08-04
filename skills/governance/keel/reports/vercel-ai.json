@@ -1,0 +1,615 @@
+{
+  "target": "vercel-ai",
+  "revision": "e29788dd545f8bf2300db0885658e639b4fd91bd",
+  "generatedAt": "2026-07-25T02:26:49.454Z",
+  "nodes": [
+    {
+      "id": "tools/analyze-downloads/package.json#analyze-versions",
+      "kind": "script",
+      "name": "analyze-versions",
+      "source": "tools/analyze-downloads/package.json",
+      "raw": "\"analyze-versions\": \"tsx src/analyze-versions.ts\""
+    },
+    {
+      "id": "tools/analyze-downloads/package.json#analyze-providers",
+      "kind": "script",
+      "name": "analyze-providers",
+      "source": "tools/analyze-downloads/package.json",
+      "raw": "\"analyze-providers\": \"tsx src/analyze-providers.ts\""
+    },
+    {
+      "id": "tools/analyze-downloads/package.json#analyze-market",
+      "kind": "script",
+      "name": "analyze-market",
+      "source": "tools/analyze-downloads/package.json",
+      "raw": "\"analyze-market\": \"tsx src/analyze-market.ts\""
+    },
+    {
+      "id": "tools/analyze-downloads/package.json#analyze-ui-frameworks",
+      "kind": "script",
+      "name": "analyze-ui-frameworks",
+      "source": "tools/analyze-downloads/package.json",
+      "raw": "\"analyze-ui-frameworks\": \"tsx src/analyze-ui-frameworks.ts\""
+    },
+    {
+      "id": "tools/generate-llms-txt/package.json#generate-llms-txt",
+      "kind": "script",
+      "name": "generate-llms-txt",
+      "source": "tools/generate-llms-txt/package.json",
+      "raw": "\"generate-llms-txt\": \"tsx src/generate-llms-txt.ts\""
+    },
+    {
+      "id": "tools/konsistent-provider/package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "tools/konsistent-provider/package.json",
+      "raw": "\"build\": \"konsistent-convention emit\""
+    },
+    {
+      "id": "tools/konsistent-provider/package.json#type-check",
+      "kind": "script",
+      "name": "type-check",
+      "source": "tools/konsistent-provider/package.json",
+      "raw": "\"type-check\": \"tsc --noEmit\""
+    },
+    {
+      "id": "package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "package.json",
+      "raw": "\"build\": \"turbo build --concurrency 16\""
+    },
+    {
+      "id": "examples/ai-functions/vitest.config.js#vitest-config-js",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.js)",
+      "source": "examples/ai-functions/vitest.config.js",
+      "raw": "import { defineConfig } from 'vite';\n\n// https://vitejs.dev/config/\nexport default defineConfig({\n  test: {\n    environment: 'node',\n    include: ['**/*.test.ts', '**/*.test.tsx'],\n  },\n});\n"
+    },
+    {
+      "id": "packages/vue/vitest.config.js#vitest-config-js",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.js)",
+      "source": "packages/vue/vitest.config.js",
+      "raw": "import vue from '@vitejs/plugin-vue';\nimport { defineConfig } from 'vitest/config';\n\n// https://vitejs.dev/config/\nexport default defineConfig({\n  plugins: [vue()],\n  test: {\n    environment: 'jsdom',\n    include: ['src/**/*.ui.test.ts', 'src/**/*.ui.test.tsx'],\n    setupFiles: ['./src/vitest-setup.ts'],\n  },\n});\n"
+    },
+    {
+      "id": "packages/angular/vitest.config.ts#vitest-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.ts)",
+      "source": "packages/angular/vitest.config.ts",
+      "raw": "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    environment: 'jsdom',\n    include: ['src/lib/**/*.test.ts'],\n  },\n});\n"
+    },
+    {
+      "id": "packages/devtools/playwright.config.ts#playwright-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (playwright.config.ts)",
+      "source": "packages/devtools/playwright.config.ts",
+      "raw": "import { defineConfig, devices } from '@playwright/test';\n\nconst port = 14983;\nconst baseURL = `http://localhost:${port}`;\n\nexport default defineConfig({\n  testDir: './tests/e2e',\n  fullyParallel: false,\n  workers: 1,\n  reporter: 'list',\n  use: {\n    ...devices['Desktop Chrome'],\n    baseURL,\n  },\n  webServer: {\n    command: `AI_SDK_DEVTOOLS_PORT=${port} pnpm tsx src/viewer/server.ts`,\n    url: baseURL,\n    reuseExistingServer: false,\n  },\n});\n"
+    },
+    {
+      "id": "packages/ai/vitest.config.js#vitest-config-js",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.js)",
+      "source": "packages/ai/vitest.config.js",
+      "raw": "import { readFileSync } from 'node:fs';\nimport { defineConfig } from 'vitest/config';\n\nconst version = JSON.parse(\n  readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),\n).version;\n\nexport function createVitestConfig(environment) {\n  return defineConfig({\n    define: {\n      __PACKAGE_VERSION__: JSON.stringify(version),\n    },\n    test: {\n      environment,\n      include: ['**/*.test.ts{,x}'],\n      exclude: [\n        '**/*.ui.test.ts{,x}',\n        '**/*.e2e.test.ts{,x}',\n        '**/node_modules/**',\n      ],\n      typecheck: {\n        enabled: true,\n      },\n    },\n  });\n}\n"
+    },
+    {
+      "id": "packages/rsc/playwright.config.ts#playwright-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (playwright.config.ts)",
+      "source": "packages/rsc/playwright.config.ts",
+      "raw": "import { devices, type PlaywrightTestConfig } from '@playwright/test';\nconst PORT = process.env.PORT || 3000;\nconst baseURL = `http://localhost:${PORT}`;\n\n/**\n * See https://playwright.dev/docs/test-configuration.\n */\nconst config: PlaywrightTestConfig = {\n  testDir: './tests/e2e/spec',\n  snapshotPathTemplate: './tests/e2e/__snapshots__/{testFilePath}/{arg}{ext}',\n  timeout: 20_000,\n  expect: {\n    timeout: 10_000,\n  },\n  fullyParallel: false,\n  workers: 3,\n  retries: 2,\n  reporter: process.env.CI\n    ? [['github'], ['json', { outputFile: 'test-results.json' }]]\n    : 'list',\n  projects: [\n    {\n      name: 'chromium',\n      use: devices['Desktop Chrome'],\n    },\n  ],\n  use: {\n    baseURL,\n    trace: 'retain-on-failure',\n    userAgent: 'playwright-test bot',\n  },\n  webServer: {\n    cwd: './tests/e2e/next-server',\n    command: 'pnpm run dev',\n    url: baseURL,\n    timeout: 120 * 1000,\n    reuseExistingServer: false,\n  },\n};\n\nexport default config;\n"
+    },
+    {
+      "id": "packages/react/vitest.config.js#vitest-config-js",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.js)",
+      "source": "packages/react/vitest.config.js",
+      "raw": "import react from '@vitejs/plugin-react';\nimport { defineConfig } from 'vitest/config';\n\n// https://vitejs.dev/config/\nexport default defineConfig({\n  plugins: [react()],\n  test: {\n    environment: 'jsdom',\n    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],\n    setupFiles: ['./src/vitest-setup.ts'],\n  },\n});\n"
+    },
+    {
+      "id": "packages/codemod/vitest.config.ts#vitest-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.ts)",
+      "source": "packages/codemod/vitest.config.ts",
+      "raw": "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    environment: 'node',\n    exclude: ['dist/**', 'node_modules/**'],\n    // Codemod tests do CPU-heavy TypeScript syntax validation and can exceed\n    // Vitest's default 5s timeout on saturated CI runners, especially in the\n    // Node 24 matrix where the root test job runs many packages concurrently.\n    // See https://github.com/vercel/ai/issues/15255.\n    maxWorkers: process.env.CI ? 2 : undefined,\n    testTimeout: process.env.CI ? 30_000 : 5_000,\n  },\n});\n"
+    },
+    {
+      "id": ".github/workflows/ai-provider-api-changes.yml#15-actions-create-github-app-token-bcd2ba49218906704ab6c1aa796996da409d3eb1-v3-2-0",
+      "kind": "ci_step",
+      "name": "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0",
+      "source": ".github/workflows/ai-provider-api-changes.yml:15",
+      "raw": "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n        id: app-token\n        with:\n          app-id: ${{ vars.VERCEL_AI_SDK_GITHUB_APP_CLIENT_ID }}\n          private-key: ${{ secrets.VERCEL_AI_SDK_GITHUB_APP_PRIVATE_KEY_PKCS8 }}",
+      "hints": {
+        "action": "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0"
+      }
+    },
+    {
+      "id": ".github/workflows/ai-provider-api-changes.yml#21-create-issues",
+      "kind": "ci_step",
+      "name": "Create issues",
+      "source": ".github/workflows/ai-provider-api-changes.yml:21",
+      "raw": "      - name: Create issues\n        uses: octokit/request-action@b91aabaa861c777dcdb14e2387e30eddf04619ae # v3.0.0\n        with:\n          route: POST /repos/{owner}/{repo}/issues\n          owner: vercel\n          repo: ai\n          title: |\n            🤖 Provider API update - ${{ github.event.client_payload.release.tag_name }}\n          body: |\n            |\n            ${{ github.event.client_payload.release.body }}\n\n            ${{ github.event.client_payload.release.html_url }}\n          labels: '[\"maintenance\"]'\n        env:\n          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}",
+      "hints": {
+        "action": "octokit/request-action@b91aabaa861c777dcdb14e2387e30eddf04619ae # v3.0.0"
+      }
+    },
+    {
+      "id": ".github/workflows/slack-workflow-failure-notification.yml#31-send-slack-notification",
+      "kind": "ci_step",
+      "name": "Send Slack notification",
+      "source": ".github/workflows/slack-workflow-failure-notification.yml:31",
+      "raw": "      - name: Send Slack notification\n        run: |\n          payload=$(jq -n \\\n            --arg channel_id \"$CHANNEL_ID\" \\\n            --arg workflow_name \"$WORKFLOW_NAME\" \\\n            --arg workflow_url \"$WORKFLOW_URL\" \\\n            '{channel_id: $channel_id, workflow_name: $workflow_name, workflow_url: $workflow_url}')\n\n          curl \"$SLACK_WORKFLOW_FAILURE_URL\" -X POST -H \"Content-Type: application/json\" -d \"$payload\"\n        env:\n          SLACK_WORKFLOW_FAILURE_URL: ${{ secrets.SLACK_WORKFLOW_FAILURE_URL }}\n          CHANNEL_ID: 'C050WU03V3N'\n          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}\n          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}"
+    },
+    {
+      "id": ".github/workflows/update-model-settings.yml#44-configure-git",
+      "kind": "ci_step",
+      "name": "Configure Git",
+      "source": ".github/workflows/update-model-settings.yml:44",
+      "raw": "      - name: Configure Git\n        run: |\n          git config --global user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\n          git config --global user.name \"github-actions[bot]\""
+    },
+    {
+      "id": ".github/workflows/update-model-settings.yml#49-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout Repository",
+      "source": ".github/workflows/update-model-settings.yml:49",
+      "raw": "      - name: Checkout Repository\n        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2\n        with:\n          ref: ${{ matrix.target-branch }}\n          fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/update-model-settings.yml#55-setup-pnpm",
+      "kind": "ci_step",
+      "name": "Setup pnpm",
+      "source": ".github/workflows/update-model-settings.yml:55",
+      "raw": "      - name: Setup pnpm\n        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5",
+      "hints": {
+        "action": "pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5"
+      }
+    },
+    {
+      "id": ".github/workflows/update-model-settings.yml#58-setup-node-js-22",
+      "kind": "ci_step",
+      "name": "Setup Node.js 22",
+      "source": ".github/workflows/update-model-settings.yml:58",
+      "raw": "      - name: Setup Node.js 22\n        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0\n        with:\n          node-version: 22\n          cache: 'pnpm'",
+      "hints": {
+        "action": "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0"
+      }
+    },
+    {
+      "id": ".github/workflows/update-model-settings.yml#64-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install Dependencies",
+      "source": ".github/workflows/update-model-settings.yml:64",
+      "raw": "      - name: Install Dependencies\n        run: pnpm install --frozen-lockfile"
+    },
+    {
+      "id": "apps/docs/vercel.json#vercel-json",
+      "kind": "deploy_gate",
+      "name": "deploy config (vercel.json)",
+      "source": "apps/docs/vercel.json",
+      "raw": "{\n  \"$schema\": \"https://openapi.vercel.sh/vercel.json\",\n  \"buildCommand\": \"pnpm build:site\"\n}\n"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/update-model-settings.yml#49-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/update-model-settings.yml#58-setup-node-js-22",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": "tools/analyze-downloads/package.json#analyze-versions",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a tsx-run reporting script that GETs npm registry download counts and prints a console.table",
+        "actorCanWrite": null,
+        "argument": "src/analyze-versions.ts fetches https://api.npmjs.org/versions/ai/last-week, buckets the counts by major.minor and prints a table; there is no comparison, threshold or expectation anywhere in the file, so its exit status varies with network reachability and never with any property of the committed tree. No workflow, turbo task or root script invokes it (grep of .github/workflows finds no 'analyze-' reference), so nothing consumes whatever it prints."
+      },
+      "evidence": [
+        "tools/analyze-downloads/src/analyze-versions.ts:44-60 (fetch + console.table, no assertion)",
+        "tools/analyze-downloads/package.json (no test/check script; package name 'analyze-downloads' absent from turbo.json tasks)",
+        "grep -rn 'analyze-' .github/workflows/ -> no match"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tools/analyze-downloads/package.json#analyze-providers",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a tsx-run reporting script that GETs npm registry download counts for provider packages and prints a console.table",
+        "actorCanWrite": null,
+        "argument": "src/analyze-providers.ts pulls weekly download counts per provider package and tabulates week-over-week deltas; every failure path is swallowed by a `catch (err) { console.error('Error:', err) }` at line 131, so even a total network outage leaves the process exiting zero. It asserts nothing about the repository and no workflow or turbo task invokes it."
+      },
+      "evidence": [
+        "tools/analyze-downloads/src/analyze-providers.ts:129-131 (console.table then catch/console.error)",
+        "grep -rn 'analyze-' .github/workflows/ -> no match"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tools/analyze-downloads/package.json#analyze-market",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a tsx-run reporting script that GETs npm registry download counts for competing SDKs and prints a console.table",
+        "actorCanWrite": null,
+        "argument": "src/analyze-market.ts fetches last-week and previous-week download counts for a hard-coded package list and prints market-share rows; the whole body is wrapped in a try/catch that logs and returns (line 141), so nothing it observes can turn into a non-zero exit. It states a market fact, not a claim about the code, and no workflow or turbo task runs it."
+      },
+      "evidence": [
+        "tools/analyze-downloads/src/analyze-market.ts:139-141 (console.table then catch/console.error)",
+        "grep -rn 'analyze-' .github/workflows/ -> no match"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tools/analyze-downloads/package.json#analyze-ui-frameworks",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a tsx-run reporting script that GETs npm registry download counts for UI framework packages and prints a console.table",
+        "actorCanWrite": null,
+        "argument": "src/analyze-ui-frameworks.ts fetches download stats for react/vue/svelte/angular adapter packages and tabulates them, catching every error at line 107. Nothing in the file compares an observed value to an expected one, so the step can neither pass nor fail in any informative sense; it is a reporting tool that no pipeline consumes."
+      },
+      "evidence": [
+        "tools/analyze-downloads/src/analyze-ui-frameworks.ts:102-107 (console.table then catch/console.error)",
+        "grep -rn 'analyze-' .github/workflows/ -> no match"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tools/generate-llms-txt/package.json#generate-llms-txt",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a tsx generator that reads the content/ docs tree and writes llms.txt",
+        "actorCanWrite": null,
+        "argument": "src/generate-llms-txt.ts walks the docs directory with readdir/readFile, concatenates the markdown and calls writeFile('llms.txt'); the only non-zero exit is process.exit(1) inside the IO catch at line 89, which reports that a file could not be read or written, not that the documentation is wrong. It produces an artifact rather than a verdict, and no workflow invokes it."
+      },
+      "evidence": [
+        "tools/generate-llms-txt/src/generate-llms-txt.ts:3 (readdir/readFile/writeFile), :86 (writeFile('llms.txt')), :88-89 (catch -> process.exit(1))",
+        "grep -rn 'generate-llms-txt' .github/workflows/ -> no match"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tools/konsistent-provider/package.json#build",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "the `konsistent-convention` CLI from the third-party @konsistent/convention package, executing on the runner",
+        "actorCanWrite": null,
+        "argument": "This step IS on the merge-gating path: ci.yml:62 runs `pnpm konsistent`, which is `turbo run konsistent:validate konsistent:check`, and both of those tasks declare `dependsOn: [\"konsistent-provider#build\"]` (turbo.json:102-108), so a non-zero exit here reddens the required 'Code Consistency' job. What I cannot establish is what the exit code means: `konsistent-convention emit` is a binary from @konsistent/convention ^1.0.0-beta, which is not vendored in the tree and which I cannot descend into from this clone, so I cannot tell whether it validates the conventions declared in src/index.ts (a real property of committed source) or merely serialises them to dist/conventions.json (pure generation). Guessing either way would be inventing the fork point."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:62 (run: pnpm konsistent)",
+        "package.json:31 (konsistent: turbo run konsistent:validate konsistent:check)",
+        "turbo.json:102-108 (//#konsistent:check and //#konsistent:validate dependsOn konsistent-provider#build)",
+        "tools/konsistent-provider/package.json dependencies: @konsistent/convention ^1.0.0-beta (implementation not in tree)"
+      ],
+      "confidence": 0.62,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tools/konsistent-provider/package.json#type-check",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the TypeScript compiler — but nothing in the repository's pipelines invokes it for this package",
+        "actorCanWrite": null,
+        "argument": "`tsc --noEmit` would be an anchored producer if it ran: the compiler decides the exit code from the committed sources and no assertion can talk it out of a type error. It does not run. The only type-checking job is ci.yml:129 `pnpm run type-check:full` = `tsc --build tsconfig.with-examples.json`, whose reference graph resolves through tsconfig.json's 69 project references, and none of them points at tools/konsistent-provider; no workflow runs `turbo type-check` either. An edge no pipeline path consumes carries no information into any gate, which is why it is filed here rather than as an anchored check — the same reasoning as a step guarded by `|| true`."
+      },
+      "evidence": [
+        "tools/konsistent-provider/package.json scripts.type-check = 'tsc --noEmit'",
+        ".github/workflows/ci.yml:129 (pnpm run type-check:full -> tsc --build tsconfig.with-examples.json)",
+        "tsconfig.json references (69 entries, none under tools/)",
+        "grep -rn 'type-check' .github/workflows/ -> only ci.yml:129"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#build",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "turbo, whose exit code is the maximum over ~70 per-package build commands (tsup/esbuild, vite build, next build, konsistent-convention emit, ...)",
+        "actorCanWrite": null,
+        "argument": "This is an aggregate wrapper, and the rule for aggregates is to descend rather than classify the wrapper. Descending does not resolve it: the children are heterogeneous, several are third-party generators I already could not trace (konsistent-convention emit), and the dominant child, tsup, drives esbuild, which strips types without checking them — so a green `turbo build` does not even mean the tree type-checks. Its one pipeline caller is release.yml:122 (`pnpm clean && pnpm build`) in the snapshot-publish branch, not the merge gate. I can name the producer but not establish, uniformly across the children, whether the signal reports a property of the committed source or only that artifacts were emitted."
+      },
+      "evidence": [
+        "package.json:4 (build: turbo build --concurrency 16)",
+        ".github/workflows/release.yml:122 (pnpm clean && pnpm build, snapshot path only)",
+        "turbo.json tasks.build (dependsOn ^build; fans out over all workspace packages)",
+        "packages/*/package.json build scripts = 'tsup --tsconfig tsconfig.build.json' (esbuild-based, no type checking)"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "examples/ai-functions/vitest.config.js#vitest-config-js",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a vitest config that no pipeline path loads",
+        "actorCanWrite": null,
+        "argument": "The config selects `**/*.test.ts{,x}` under the node environment, but nothing runs vitest for this package: examples/ai-functions/package.json declares no `test` script at all (only `test:e2e:all`, `test:file`, `type-check`), and both root aggregates that CI does run — `test` and `test:ci` (package.json:16-17) — carry `--filter=!@example/*`. The one CI job that enters this directory, load-time_matrix, runs `pnpm tsx src/benchmark/load-time.ts`, not vitest. So no exit code produced under this config ever reaches a gate."
+      },
+      "evidence": [
+        "examples/ai-functions/package.json scripts (no 'test' key)",
+        "package.json:16-17 (test and test:ci both --filter=!@example/*)",
+        ".github/workflows/ci.yml load-time_matrix step 'Measure and check load time' (working-directory: examples/ai-functions, runs tsx src/benchmark/load-time.ts)"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/vue/vitest.config.js#vitest-config-js",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the vitest process exit code, decided by a jsdom-hosted runtime executing the committed Vue component tests",
+        "actorCanWrite": false,
+        "argument": "ci.yml:313 runs `pnpm test:ci` = `turbo test --filter=!@example/* --filter=!ai --filter=!@ai-sdk/codemod --only`, which reaches @ai-sdk/vue's `test` script = `vitest --config vitest.config.js --run`; this file is the config that script names, so its `include` glob and jsdom environment determine which assertions execute and the runner's exit code fails the 'Test' job, which the branch-protection aggregate job `test` (ci.yml:511-520) hard-depends on. DOCUMENTED LIMIT, on two axes: the include glob `src/**/*.ui.test.ts{,x}` is authored inside the write boundary, so narrowing it silences tests without any runtime noticing, and the assertions themselves are co-authored with the implementation — the execution axis is what is anchored here, not the oracle."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:313 (run: pnpm test:ci)",
+        "package.json:17 (test:ci turbo filter chain; @ai-sdk/vue not excluded)",
+        "packages/vue/package.json scripts.test = 'vitest --config vitest.config.js --run'",
+        ".github/workflows/ci.yml:511-520 (required aggregate job 'test' needs test_matrix)"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/angular/vitest.config.ts#vitest-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the vitest process exit code, decided by a jsdom-hosted runtime executing the committed Angular tests",
+        "actorCanWrite": false,
+        "argument": "Same causal path as the Vue config: ci.yml:313 `pnpm test:ci` fans out through turbo to @ai-sdk/angular's `test` = `vitest --config vitest.config.ts --run`, and this file supplies the environment and the `src/lib/**/*.test.ts` include set the runner uses; a thrown assertion makes the interpreter exit non-zero and reddens the Test job feeding the required aggregate. DOCUMENTED LIMIT: execution is decided outside the authors' reach, but the include glob and the expectations are both committed artefacts, so this measures that the code does what the tests say, not that the tests say the right thing."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:313 (run: pnpm test:ci)",
+        "packages/angular/package.json scripts.test = 'vitest --config vitest.config.ts --run'",
+        "packages/angular/vitest.config.ts (environment jsdom, include src/lib/**/*.test.ts)"
+      ],
+      "confidence": 0.76,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/devtools/playwright.config.ts#playwright-config-ts",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a Playwright config that no pipeline path loads",
+        "actorCanWrite": null,
+        "argument": "The config is real — it boots `pnpm tsx src/viewer/server.ts` on port 14983 and drives Desktop Chrome against it — but the only script that loads it is @ai-sdk/devtools' `test:e2e`, and `test:e2e` is not a turbo task (turbo.json declares `test`, `test:e2e:ci`, not `test:e2e`) and appears in exactly one workflow step, ci.yml:448, which is pinned to `working-directory: packages/rsc`. The package's own `test` script resolves to `test:unit` (vitest.node.config.js), so the turbo test fan-out never touches this file. Nothing it could report reaches a gate."
+      },
+      "evidence": [
+        "packages/devtools/package.json scripts.test = 'pnpm test:unit'; scripts.test:e2e = 'pnpm build:client && playwright test'",
+        ".github/workflows/ci.yml:445-448 ('Run RSC e2e tests', working-directory: packages/rsc, run: pnpm test:e2e)",
+        "turbo.json tasks (test, test:e2e:ci — no test:e2e)"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/ai/vitest.config.js#vitest-config-js",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the vitest process exit code for the core `ai` package, plus vitest's typecheck pass, both decided by execution over the committed sources",
+        "actorCanWrite": false,
+        "argument": "This file exports createVitestConfig(environment); vitest.node.config.js and vitest.edge.config.js are two-line files that call it, and ci.yml:479-480 runs `pnpm test:node --shard` and `pnpm test:edge --shard` inside packages/ai across a 3-Node x 4-shard matrix. So the include/exclude sets and `typecheck: { enabled: true }` declared here decide what the runtime executes and whether the tsc pass runs, and the resulting exit code reddens the 'Test AI' jobs. The typecheck flag is the strongest part: it puts a compiler, not an assertion, in the path. DOCUMENTED LIMIT: the exclusion list (`**/*.ui.test.ts{,x}`, `**/*.e2e.test.ts{,x}`) is author-controlled, and the assertions are co-authored with the implementation, so the anchoring is on execution, not on the specification."
+      },
+      "evidence": [
+        "packages/ai/vitest.node.config.js and vitest.edge.config.js (import { createVitestConfig } from './vitest.config.js')",
+        ".github/workflows/ci.yml:475-480 (test_ai_matrix: pnpm test:node --shard / pnpm test:edge --shard)",
+        "packages/ai/vitest.config.js typecheck.enabled = true"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/rsc/playwright.config.ts#playwright-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Chromium driven by Playwright against a real Next.js dev server, with the browser's observed DOM deciding pass/fail",
+        "actorCanWrite": false,
+        "argument": "ci.yml:445-448 runs `pnpm test:e2e` with `working-directory: packages/rsc`, which is `playwright test` reading this config; the config boots `pnpm run dev` in tests/e2e/next-server, waits on http://localhost:3000 with `reuseExistingServer: false`, and the specs then click through the page and assert on rendered text (tests/e2e/spec/streamable.e2e.test.ts). The verdict comes from a browser observing a server process, neither of which an author can persuade — a broken stream renders wrong text and the run goes red. TWO DOCUMENTED LIMITS: `retries: 2` means only consistently-failing behaviour reddens the job, and the whole step is guarded by `if: steps.rsc-e2e.outputs.run == 'true'`, a git-diff-derived flag, so on PRs that do not touch packages/rsc this edge does not execute at all."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:445-448 (Run RSC e2e tests, working-directory packages/rsc, pnpm test:e2e)",
+        "packages/rsc/package.json scripts.test:e2e = 'playwright test'",
+        "packages/rsc/playwright.config.ts (webServer command 'pnpm run dev', retries: 2, reuseExistingServer: false)",
+        "packages/rsc/tests/e2e/spec/streamable.e2e.test.ts:3-10 (page.goto + expect(logs).toHaveText)",
+        ".github/workflows/ci.yml:400-415 ('Detect RSC e2e changes' sets run=true/false from git diff)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/react/vitest.config.js#vitest-config-js",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the vitest process exit code, decided by a jsdom-hosted runtime executing the committed React hook tests",
+        "actorCanWrite": false,
+        "argument": "ci.yml:313 `pnpm test:ci` reaches @ai-sdk/react (it is not in the exclusion filters) and runs its `test` script `vitest --config vitest.config.js --run`, which loads this file; the jsdom environment, the `src/**/*.test.ts{,x}` include and the `./src/vitest-setup.ts` setup file it declares determine what executes, and the runner's exit code propagates into the Test job that the required aggregate `test` job depends on. DOCUMENTED LIMIT: the setup file and the assertions live inside the same repository as the implementation, so what is anchored is that the runtime honestly decided pass/fail, not that the expectations are correct."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:313 (run: pnpm test:ci)",
+        "package.json:17 (test:ci filters exclude only @example/*, ai, @ai-sdk/codemod)",
+        "packages/react/package.json scripts.test = 'vitest --config vitest.config.js --run'",
+        "packages/react/vitest.config.js (environment jsdom, setupFiles ./src/vitest-setup.ts)"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "packages/codemod/vitest.config.ts#vitest-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the vitest process exit code, decided by executing each codemod transformer over its input fixture and comparing the produced text to the committed output fixture",
+        "actorCanWrite": false,
+        "argument": "ci.yml:507 names this file directly — `pnpm exec vitest --config vitest.config.ts --run --shard ${{ matrix.shard }}` in packages/codemod across a 3-Node x 4-shard matrix, and that job is one of the `needs` of the required aggregate `test` job (ci.yml:511-520). The transform actually runs (test-utils.ts applyTransform) and the comparison is `expect(actualOutput).toBe(expectedOutput)`, so the interpreter decides. DOCUMENTED LIMIT, and it is the sharp one: the expected output is a committed golden file that `pnpm test:update` (`UPDATE_SNAPSHOT=true vitest -u --run`) rewrites from the transformer's own output — test-utils.ts:156-165 branches on that env var and writes the fixture instead of asserting. CI does not set UPDATE_SNAPSHOT, so the comparison genuinely executes, but the oracle was authored by the thing under test and can be re-authored by one documented command. Execution anchored; specification inside the boundary."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:507 (pnpm exec vitest --config vitest.config.ts --run --shard)",
+        ".github/workflows/ci.yml:511-520 (aggregate 'test' job needs test_codemod_matrix)",
+        "packages/codemod/src/test/test-utils.ts:150-168 (applyTransform, UPDATE_SNAPSHOT branch, expect(actualOutput).toBe(expectedOutput))",
+        "packages/codemod/package.json scripts.test:update = 'UPDATE_SNAPSHOT=true vitest -u --run'"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ai-provider-api-changes.yml#15-actions-create-github-app-token-bcd2ba49218906704ab6c1aa796996da409d3eb1-v3-2-0",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "GitHub's app-token endpoint, minting an installation token from an app id and a private key",
+        "actorCanWrite": null,
+        "argument": "The step exchanges `vars.VERCEL_AI_SDK_GITHUB_APP_CLIENT_ID` and a PKCS8 private key for a short-lived token published as `steps.app-token.outputs.token`. It exists so the next step can authenticate; nothing about the repository is read or evaluated, and a failure here means the credential is wrong or GitHub is down, not that the code is. Whatever this workflow does is done by the step that consumes the token."
+      },
+      "evidence": [
+        ".github/workflows/ai-provider-api-changes.yml:15-19 (uses actions/create-github-app-token, id: app-token)",
+        ".github/workflows/ai-provider-api-changes.yml:35 (GITHUB_TOKEN: ${{ steps.app-token.outputs.token }})"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ai-provider-api-changes.yml#21-create-issues",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the GitHub Issues REST endpoint, called via octokit/request-action",
+        "actorCanWrite": null,
+        "argument": "On a `repository_dispatch` of type ai-provider-api-change the step POSTs /repos/vercel/ai/issues with a title and body copied verbatim out of `github.event.client_payload.release`. It files a maintenance to-do; it evaluates nothing, compares nothing, and its failure would mean the API call was rejected. The workflow is not triggered by a pull request and gates no merge — it is an inbox, not a verdict."
+      },
+      "evidence": [
+        ".github/workflows/ai-provider-api-changes.yml:5-7 (on: repository_dispatch)",
+        ".github/workflows/ai-provider-api-changes.yml:21-34 (route: POST /repos/{owner}/{repo}/issues, body from client_payload)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/slack-workflow-failure-notification.yml#31-send-slack-notification",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "curl POSTing a jq-built JSON payload to a Slack webhook URL held in secrets",
+        "actorCanWrite": null,
+        "argument": "The step is a transport for a verdict already reached elsewhere: the job only runs at all under `if: github.event.workflow_run.conclusion == 'failure'`, and the payload is just the failed workflow's name and html_url. It re-states someone else's result and makes no claim of its own. It also cannot report a problem — `curl` is invoked without `-f`, so an HTTP 4xx/5xx from Slack still exits zero, meaning even the delivery is unverified."
+      },
+      "evidence": [
+        ".github/workflows/slack-workflow-failure-notification.yml:20-29 (job-level if: conclusion == 'failure')",
+        ".github/workflows/slack-workflow-failure-notification.yml:31-45 (curl \"$SLACK_WORKFLOW_FAILURE_URL\" -X POST, no -f/--fail)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/update-model-settings.yml#44-configure-git",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git writing two keys into the runner's global config file",
+        "actorCanWrite": null,
+        "argument": "`git config --global user.email/user.name` sets the identity later commits in this job will carry. It reads nothing from the repository and evaluates nothing about it; the only way it exits non-zero is if the runner's HOME is unwritable. The assertions in this workflow, such as they are, live in the generate and diff steps that follow."
+      },
+      "evidence": [
+        ".github/workflows/update-model-settings.yml:44-48 (git config --global user.email / user.name)",
+        ".github/workflows/update-model-settings.yml:114-125 ('Create branch and push as signed commit' — the consumer of that identity)"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/update-model-settings.yml#55-setup-pnpm",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the pnpm/action-setup action, installing the pnpm binary named by package.json's packageManager field onto the runner",
+        "actorCanWrite": null,
+        "argument": "The step body is a bare `uses:` with no `with:` block and no command; its whole effect is to put a package manager on PATH so subsequent steps have one. Nothing about the committed tree is evaluated and a failure means the toolchain could not be installed. Every assertion in this job comes later, from the commands pnpm goes on to run."
+      },
+      "evidence": [
+        ".github/workflows/update-model-settings.yml:55-56 (uses: pnpm/action-setup@fc06bc1... with no inputs)",
+        "package.json packageManager = 'pnpm@10.33.4'"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/update-model-settings.yml#64-install-dependencies",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "pnpm's resolver comparing the committed pnpm-lock.yaml against the committed package.json manifests, and refusing to proceed on a mismatch",
+        "actorCanWrite": false,
+        "argument": "`--frozen-lockfile` is what makes this different from a plain install: pnpm will not refresh a stale lock, it exits non-zero, so the step is a genuine falsifiable assertion about two committed files agreeing — an author who edits a dependency and forgets to regenerate the lock cannot make this pass without changing the tree. The producer is the resolver executing, not anyone's claim. The exit code gates the rest of the job: the 'Generate model settings' and PR-creation steps below only run if this succeeds. DOCUMENTED LIMIT: what is anchored is manifest/lock agreement and registry reachability, nothing about whether the code works; and this instance sits in a scheduled bot workflow, so it gates that workflow's PR creation rather than a merge (the same command in ci.yml is the merge-gating instance)."
+      },
+      "evidence": [
+        ".github/workflows/update-model-settings.yml:64-65 (run: pnpm install --frozen-lockfile)",
+        ".github/workflows/update-model-settings.yml:67-71 ('Generate model settings' runs after it)",
+        ".github/workflows/ci.yml:31, :57, :100, :126 (same frozen install on the merge-gating path)"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "apps/docs/vercel.json#vercel-json",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Vercel's build infrastructure executing `pnpm build:site` (sync-content -> fumadocs-mdx -> next build) on the deployment runner",
+        "actorCanWrite": false,
+        "argument": "The file's only substantive key sets the command Vercel runs to produce the deployment, and Vercel promotes a deployment only when that command exits zero — so the promotion condition is the Next.js compiler's verdict on the committed docs tree, produced on infrastructure the repository's authors do not write to. A broken MDX import or a type error surfaced by next build cannot be argued into a successful deploy. TWO LIMITS, and they are why confidence is low rather than the class being upgraded: the signal says only that the site builds, nothing about whether the docs are correct; and this tree contains no evidence about whether the resulting deployment is required for a merge, so the strength of the gate is asserted from Vercel's platform behaviour rather than from anything I could read here."
+      },
+      "evidence": [
+        "apps/docs/vercel.json (buildCommand: pnpm build:site)",
+        "apps/docs/package.json scripts.build:site = 'pnpm sync-content && fumadocs-mdx && next build'",
+        ".github/workflows/ci.yml:179 (separate merge-gating docs job: pnpm --filter ai-sdk-docs validate:site)"
+      ],
+      "confidence": 0.45,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 8,
+    "selfReferential": 0,
+    "unknown": 2,
+    "notACheck": 15,
+    "ratio": 0.8
+  },
+  "economics": {
+    "nodesTotal": 1014,
+    "nodesSampled": 25,
+    "decidedByProbe": 2,
+    "decidedByAgent": 23,
+    "probesMinted": 3,
+    "probeLibrarySize": 8,
+    "tokensIn": 3243,
+    "tokensOut": 7000,
+    "tokensEstimated": true,
+    "wallClockMs": 2646476
+  }
+}

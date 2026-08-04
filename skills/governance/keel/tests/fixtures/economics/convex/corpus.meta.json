@@ -1,0 +1,5 @@
+{
+  "label": "synthetic convex-decay corpus (6 runs)",
+  "synthetic": true,
+  "note": "Steep-then-plateau decay: cost per node falls 9000 -> 80. The ordinary-least-squares fit through these points passes below zero, so this fixture exists to hold the line that curve.ts WITHHOLDS such a fit instead of drawing a negative estimated token count. No number here was measured."
+}

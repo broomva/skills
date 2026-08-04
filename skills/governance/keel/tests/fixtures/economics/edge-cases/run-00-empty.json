@@ -1,0 +1,26 @@
+{
+  "target": "synthetic/edge-empty",
+  "revision": "synthetic-edge-empty-rev",
+  "generatedAt": "2026-07-24T09:00:00.000Z",
+  "nodes": [],
+  "verdicts": [],
+  "grounding": {
+    "anchored": 0,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 0,
+    "ratio": 0
+  },
+  "economics": {
+    "nodesTotal": 0,
+    "nodesSampled": 0,
+    "decidedByProbe": 0,
+    "decidedByAgent": 0,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 0,
+    "tokensOut": 0,
+    "tokensEstimated": true,
+    "wallClockMs": 12000
+  }
+}

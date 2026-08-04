@@ -1,0 +1,5 @@
+{
+  "label": "synthetic edge cases (3 runs)",
+  "synthetic": true,
+  "note": "One run gathered nothing, one judged 12 of 48. Two usable points, so no trend may be claimed."
+}

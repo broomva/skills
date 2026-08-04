@@ -1,0 +1,379 @@
+{
+  "generatedAt": "2026-07-26T20:32:05.267Z",
+  "corpusFile": "corpus-agentic.json",
+  "nodeCap": 25,
+  "nodeCapDeclared": 25,
+  "corpusOrder": [
+    "karaoke-gen",
+    "kody",
+    "binius64",
+    "xorq",
+    "aspect-cli",
+    "wvlet"
+  ],
+  "runOrder": [
+    "karaoke-gen",
+    "kody",
+    "binius64",
+    "xorq",
+    "aspect-cli",
+    "wvlet"
+  ],
+  "entries": [
+    {
+      "name": "karaoke-gen",
+      "url": "https://github.com/nomadkaraoke/karaoke-gen.git",
+      "revision": "c94abbf7f44c8465d78a19379260670b38c8ea36",
+      "status": "ok",
+      "runIndex": 0,
+      "recordedAt": "2026-07-26T18:51:29.366Z",
+      "ratio": 1,
+      "anchored": 11,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 14,
+      "nodesTotal": 280,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "cap": 25,
+      "capped": true,
+      "coverageGathered": {
+        "ci_step": 226,
+        "test_target": 8,
+        "script": 45,
+        "deploy_gate": 1
+      },
+      "coverageJudged": {
+        "ci_step": 8,
+        "test_target": 8,
+        "script": 8,
+        "deploy_gate": 1
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 280,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 2,
+        "tokensIn": 5921,
+        "tokensOut": 6515,
+        "tokensEstimated": true,
+        "wallClockMs": 735762
+      },
+      "timing": {
+        "cloneMs": 93525,
+        "gatherMs": 56,
+        "probeMs": 0,
+        "recordMs": 1,
+        "judgmentMs": 642180
+      },
+      "warnings": [
+        "probe dispatch disabled (pass --classify to enable); every node is pending"
+      ]
+    },
+    {
+      "name": "kody",
+      "url": "https://github.com/kentcdodds/kody.git",
+      "revision": "ca183641ebe63bf7582305aabd470fab75ace14f",
+      "status": "ok",
+      "runIndex": 1,
+      "recordedAt": "2026-07-26T19:01:00.445Z",
+      "ratio": 0.8461538461538461,
+      "anchored": 11,
+      "selfReferential": 2,
+      "unknown": 0,
+      "notACheck": 12,
+      "nodesTotal": 122,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "cap": 25,
+      "capped": true,
+      "coverageGathered": {
+        "script": 47,
+        "deploy_gate": 3,
+        "test_target": 3,
+        "ci_step": 69
+      },
+      "coverageJudged": {
+        "script": 9,
+        "deploy_gate": 3,
+        "test_target": 3,
+        "ci_step": 10
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 122,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 2,
+        "tokensIn": 4483,
+        "tokensOut": 6490,
+        "tokensEstimated": true,
+        "wallClockMs": 570438
+      },
+      "timing": {
+        "cloneMs": 7381,
+        "gatherMs": 24,
+        "probeMs": 0,
+        "recordMs": 2,
+        "judgmentMs": 563031
+      },
+      "warnings": [
+        "probe dispatch disabled (pass --classify to enable); every node is pending"
+      ]
+    },
+    {
+      "name": "binius64",
+      "url": "https://github.com/binius-zk/binius64.git",
+      "revision": "4891fc9b74ca0d21ba5545aeaf0e325dbc76c7fb",
+      "status": "ok",
+      "runIndex": 2,
+      "recordedAt": "2026-07-26T19:45:05.867Z",
+      "ratio": 0.9090909090909091,
+      "anchored": 10,
+      "selfReferential": 0,
+      "unknown": 1,
+      "notACheck": 14,
+      "nodesTotal": 37,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "cap": 25,
+      "capped": true,
+      "coverageGathered": {
+        "review_gate": 1,
+        "ci_step": 36
+      },
+      "coverageJudged": {
+        "review_gate": 1,
+        "ci_step": 24
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 37,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 2,
+        "tokensIn": 2228,
+        "tokensOut": 5510,
+        "tokensEstimated": true,
+        "wallClockMs": 2645262
+      },
+      "timing": {
+        "cloneMs": 1957,
+        "gatherMs": 19,
+        "probeMs": 0,
+        "recordMs": 1,
+        "judgmentMs": 2643285
+      },
+      "warnings": [
+        "probe dispatch disabled (pass --classify to enable); every node is pending"
+      ]
+    },
+    {
+      "name": "xorq",
+      "url": "https://github.com/xorq-labs/xorq.git",
+      "revision": "22f03a65e67805bd1521784384656a79a4148123",
+      "status": "ok",
+      "runIndex": 3,
+      "recordedAt": "2026-07-26T20:09:09.236Z",
+      "ratio": 1,
+      "anchored": 17,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 8,
+      "nodesTotal": 240,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "cap": 25,
+      "capped": true,
+      "coverageGathered": {
+        "ci_step": 216,
+        "test_target": 23,
+        "review_gate": 1
+      },
+      "coverageJudged": {
+        "ci_step": 12,
+        "test_target": 12,
+        "review_gate": 1
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 240,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 2,
+        "tokensIn": 9394,
+        "tokensOut": 8780,
+        "tokensEstimated": true,
+        "wallClockMs": 1443298
+      },
+      "timing": {
+        "cloneMs": 42938,
+        "gatherMs": 10,
+        "probeMs": 0,
+        "recordMs": 1,
+        "judgmentMs": 1400349
+      },
+      "warnings": [
+        "probe dispatch disabled (pass --classify to enable); every node is pending"
+      ]
+    },
+    {
+      "name": "aspect-cli",
+      "url": "https://github.com/aspect-build/aspect-cli.git",
+      "revision": "2cb4fec13701722e027ee49c32f6b3873a4ff74d",
+      "status": "ok",
+      "runIndex": 4,
+      "recordedAt": "2026-07-26T20:23:17.744Z",
+      "ratio": 1,
+      "anchored": 10,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 15,
+      "nodesTotal": 187,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "cap": 25,
+      "capped": true,
+      "coverageGathered": {
+        "ci_step": 187
+      },
+      "coverageJudged": {
+        "ci_step": 25
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 187,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 2,
+        "tokensIn": 5039,
+        "tokensOut": 5709,
+        "tokensEstimated": true,
+        "wallClockMs": 848423
+      },
+      "timing": {
+        "cloneMs": 48922,
+        "gatherMs": 5,
+        "probeMs": 0,
+        "recordMs": 1,
+        "judgmentMs": 799495
+      },
+      "warnings": [
+        "probe dispatch disabled (pass --classify to enable); every node is pending"
+      ]
+    },
+    {
+      "name": "wvlet",
+      "url": "https://github.com/wvlet/wvlet.git",
+      "revision": "90751f91a666b0c83816625d7ab2b1c96490ef5b",
+      "status": "ok",
+      "runIndex": 5,
+      "recordedAt": "2026-07-26T20:32:05.266Z",
+      "ratio": 0.9230769230769231,
+      "anchored": 12,
+      "selfReferential": 1,
+      "unknown": 0,
+      "notACheck": 12,
+      "nodesTotal": 261,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "cap": 25,
+      "capped": true,
+      "coverageGathered": {
+        "script": 50,
+        "test_target": 2,
+        "ci_step": 209
+      },
+      "coverageJudged": {
+        "script": 11,
+        "test_target": 2,
+        "ci_step": 12
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 261,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 2,
+        "tokensIn": 2654,
+        "tokensOut": 6203,
+        "tokensEstimated": true,
+        "wallClockMs": 527446
+      },
+      "timing": {
+        "cloneMs": 4566,
+        "gatherMs": 12,
+        "probeMs": 0,
+        "recordMs": 1,
+        "judgmentMs": 522867
+      },
+      "warnings": [
+        "probe dispatch disabled (pass --classify to enable); every node is pending"
+      ]
+    }
+  ],
+  "totals": {
+    "targetsDeclared": 6,
+    "targetsMeasured": 6,
+    "targetsUnjudged": 0,
+    "targetsPartial": 0,
+    "targetsNothingGathered": 0,
+    "targetsFailed": 0,
+    "anchored": 71,
+    "selfReferential": 3,
+    "unknown": 1,
+    "notACheck": 75,
+    "nodesTotal": 1127,
+    "nodesSampled": 150,
+    "nodesJudged": 150,
+    "nodesUnjudged": 0,
+    "ratioPooled": 0.9466666666666667,
+    "ratioMeanOfTargets": 0.9463869463869464
+  },
+  "repeatability": [],
+  "notes": [
+    "A ratio never travels alone: read it with the anchored count and the coverage beside it. A 1.0 over one edge and a 0.7 over fifty are different claims.",
+    "coverageJudged counts the nodes that were JUDGED, not the whole gathered surface. coverageGathered is the surface the gatherer could see. Surfaces the gatherer cannot read at all are absent from both — that is Keel's own shoppable class, and it is why nodesTotal is printed.",
+    "unknown counts AGAINST the ratio. not_a_check is excluded from it entirely, which is what makes not_a_check shoppable and worth auditing.",
+    "Keel measures the SHAPE of verification, not its quality. A repo can be 100% anchored with terrible tests. A high ratio is not \"well tested\".",
+    "entries accumulate across runs and are keyed by name: running with a SUBSET corpus file adds to this summary rather than replacing it, so entries may name targets absent from the current corpusOrder. Totals are computed over the entries, not over the current corpus file.",
+    "partial:true means some sampled node carries no verdict, and judgedFraction says how much of the sample the ratio actually rests on. A ratio of 1.000 at judgedFraction 0.06 is a claim about two edges, not about a repository. totals.targetsMeasured counts only targets with at least one judged node; targets recorded with none are counted under targetsUnjudged and contribute nothing to any aggregate.",
+    "A target that gathered zero nodes, and a target where not one sampled node carries a verdict, both get NO reports/<name>.json — a Report must carry a GroundingRatio, groundingRatio([]) is 0, and publishing 0.000 (the worst possible score) about a surface nobody could read or nobody judged is a category error, not a result. The first appears here as status \"nothing_gathered\" with ratio null; the second as a recorded entry with ratio null, nodesJudged 0 and a place in totals.targetsUnjudged. Resume keys off those entries rather than off a report file.",
+    "tokensEstimated is true everywhere: a skill inside an agent session has no API for its own usage. Estimate = ceil(chars/4) over the printed judgment payload and the verdicts file.",
+    "COST CAVEAT, read before plotting anything. economics.wallClockMs and timing.judgmentMs span `next` -> `record`, which is agent-and-operator wall time: they include coffee breaks, context switches and anything else that happened between the two commands, so they are an UPPER BOUND on machine cost and not a measurement of it. Only timing.{cloneMs,gatherMs,probeMs,recordMs} are directly measured. tokensIn likewise counts only the printed payload — the payload invites the agent to read the clone for context, and those reads are uncounted and systematically larger on probe-poor early targets, a bias pointing the same way as any crystallization effect. For a cost-vs-library-size curve, prefer decidedByProbe/nodesJudged (probe share) and tokensIn as the y-axis; use wall clock only as a loose ceiling, and never as the headline.",
+    "repeatability.agreement is AGENT-ONLY by construction: probes are deterministic scripts that reproduce their own verdicts exactly, so counting them as \"independent re-judgment\" inflates the number toward 1.0 as the library grows, for reasons unrelated to judgment stability. probeAgreement / mixedAgreement / pooledAgreement are reported beside it for audit, and pooledAgreement is NOT the stability claim.",
+    "nodeCap is DERIVED FROM THE ENTRIES — the cap in force for the most recently recorded one — not from the command that last wrote this file. An entry proves its cap either by carrying it or, for entries written before that field existed, by being truncated: a capped sample is exactly as large as the cap that capped it. An untruncated sample proves only that the cap was at least that large, so it says nothing. nodeCapDeclared is what the corpus file asked for, and each entry carries the cap its own sample was drawn under.",
+    "corpusFile and nodeCapDeclared describe the corpus file THIS WRITE used. Entries accumulate across runs and across corpus files, so an entry may have been recorded from a file other than the one named here; corpusOrder is the current file's target list, and any entry outside it came from an earlier one."
+  ]
+}

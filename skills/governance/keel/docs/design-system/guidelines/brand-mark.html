@@ -1,0 +1,52 @@
+<!-- @keelCard group="Brand" name="The mark" subtitle="A keel blade cutting the waterline" height="380" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-6); }
+  .row { display: flex; align-items: flex-end; gap: var(--k-space-8); flex-wrap: wrap; margin-bottom: var(--k-space-6); }
+  .spec { display: flex; flex-direction: column; gap: var(--k-space-2); align-items: flex-start; }
+  .spec img { display: block; border-radius: var(--k-r-sm); }
+  .spec b { font-family: var(--k-font-mono); font-size: var(--k-fs-micro); font-weight: var(--k-fw-regular); color: var(--k-ink-2); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+  .no { color: var(--k-self-referential); }
+</style></head>
+<body>
+
+  <div class="row">
+    <div class="spec"><img src="../../../skills/keel/design/mark.png" height="120" alt="Keel mark" /><b>mark.png &middot; primary</b></div>
+    <div class="spec"><img src="../../../skills/keel/design/icon.png" height="80" alt="" /><b>icon.png &middot; OG / social</b></div>
+    <div class="spec"><img src="../../../skills/keel/design/mark-compact.png" width="48" alt="" /><b>compact &middot; 48</b></div>
+    <div class="spec"><img src="../../../skills/keel/design/mark-compact.png" width="32" alt="" /><b>32</b></div>
+    <div class="spec"><img src="../../../skills/keel/design/mark-compact.png" width="16" alt="" /><b>16</b></div>
+  </div>
+
+  <p class="note">
+    A faceted keel blade cutting down through a lit waterline: the pale portion
+    rides above the surface, the luminous portion is the part doing the structural
+    work below it, where you cannot see it. The mark carries its own near-black
+    canvas, so it composites onto surfaces Keel does not control without needing a
+    paper variant.
+  </p>
+
+  <p class="note" style="margin-top: var(--k-space-4)">
+    <strong style="color: var(--k-ink-1)">Rules.</strong>
+    Below 32px use <span class="k-mono">mark-compact.png</span> — a zoomed crop, not
+    a scaled copy, because the full composition thins to a sliver. Clear space is
+    half the mark's height on every side. Place it only on dark surfaces; it has no
+    light variant and its glow disappears on paper.
+    <span class="no">Never</span> stretch, rotate, recolor, or re-render it at a
+    different angle.
+  </p>
+
+  <p class="note" style="margin-top: var(--k-space-4)">
+    <strong style="color: var(--k-ink-1)">Why this breaks the surface rules.</strong>
+    The mark uses glow, gradient, and faceted shading, all of which
+    <span class="k-mono">keel.css</span> forbids on UI surfaces. That is deliberate
+    and bounded: the emblem is a rendered object, the interface is not. Nothing in
+    the product chrome may borrow this treatment — the moment a card or a button
+    grows a glow, the exception has leaked.
+  </p>
+
+</body></html>

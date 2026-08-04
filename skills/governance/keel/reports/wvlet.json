@@ -1,0 +1,619 @@
+{
+  "target": "wvlet",
+  "revision": "90751f91a666b0c83816625d7ab2b1c96490ef5b",
+  "generatedAt": "2026-07-26T20:32:05.266Z",
+  "nodes": [
+    {
+      "id": "highlightjs-wvlet/package.json#test",
+      "kind": "script",
+      "name": "test",
+      "source": "highlightjs-wvlet/package.json",
+      "raw": "\"test\": \"mocha test --reporter spec\""
+    },
+    {
+      "id": "highlightjs-wvlet/package.json#mocha",
+      "kind": "script",
+      "name": "mocha",
+      "source": "highlightjs-wvlet/package.json",
+      "raw": "\"mocha\": \"mocha test/markup --reporter spec\""
+    },
+    {
+      "id": "highlightjs-wvlet/package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "highlightjs-wvlet/package.json",
+      "raw": "\"build\": \"node build.js\""
+    },
+    {
+      "id": "sdks/cli-node/package.json#build-scalajs",
+      "kind": "script",
+      "name": "build:scalajs",
+      "source": "sdks/cli-node/package.json",
+      "raw": "\"build:scalajs\": \"cd ../.. && ./sbt cliCoreJS/fullLinkJS\""
+    },
+    {
+      "id": "sdks/cli-node/package.json#build-scalajs-dev",
+      "kind": "script",
+      "name": "build:scalajs:dev",
+      "source": "sdks/cli-node/package.json",
+      "raw": "\"build:scalajs:dev\": \"cd ../.. && ./sbt cliCoreJS/fastLinkJS\""
+    },
+    {
+      "id": "sdks/cli-node/package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "sdks/cli-node/package.json",
+      "raw": "\"build\": \"pnpm run build:scalajs\""
+    },
+    {
+      "id": "sdks/cli-node/package.json#prepublishonly",
+      "kind": "script",
+      "name": "prepublishOnly",
+      "source": "sdks/cli-node/package.json",
+      "raw": "\"prepublishOnly\": \"pnpm run build\""
+    },
+    {
+      "id": "sdks/typescript/package.json#build-scalajs",
+      "kind": "script",
+      "name": "build:scalajs",
+      "source": "sdks/typescript/package.json",
+      "raw": "\"build:scalajs\": \"cd ../.. && ./sbt sdkJs/fastLinkJS\""
+    },
+    {
+      "id": "sdks/typescript/package.json#build-scalajs-release",
+      "kind": "script",
+      "name": "build:scalajs:release",
+      "source": "sdks/typescript/package.json",
+      "raw": "\"build:scalajs:release\": \"cd ../.. && ./sbt sdkJs/fullLinkJS\""
+    },
+    {
+      "id": "sdks/typescript/package.json#build-ts",
+      "kind": "script",
+      "name": "build:ts",
+      "source": "sdks/typescript/package.json",
+      "raw": "\"build:ts\": \"node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc\""
+    },
+    {
+      "id": "sdks/typescript/package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "sdks/typescript/package.json",
+      "raw": "\"build\": \"pnpm run build:scalajs && pnpm run build:ts\""
+    },
+    {
+      "id": "sdks/typescript/vitest.config.ts#vitest-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (vitest.config.ts)",
+      "source": "sdks/typescript/vitest.config.ts",
+      "raw": "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    globals: true,\n    environment: 'node',\n  },\n});"
+    },
+    {
+      "id": "prismjs-wvlet/jest.config.js#jest-config-js",
+      "kind": "test_target",
+      "name": "test runner config (jest.config.js)",
+      "source": "prismjs-wvlet/jest.config.js",
+      "raw": "module.exports = {\n  testEnvironment: 'node',\n  testMatch: [\n    '**/test/**/*.test.js'\n  ],\n  collectCoverage: true,\n  coverageDirectory: 'coverage',\n  collectCoverageFrom: [\n    'components/**/*.js',\n    '!**/node_modules/**',\n    '!**/dist/**'\n  ]\n};"
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#31-actions-checkout-v7",
+      "kind": "ci_step",
+      "name": "actions/checkout@v7",
+      "source": ".github/workflows/vscode-extension.yml:31",
+      "raw": "      - uses: actions/checkout@v7",
+      "hints": {
+        "action": "actions/checkout@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#32-dorny-paths-filter-v4",
+      "kind": "ci_step",
+      "name": "dorny/paths-filter@v4",
+      "source": ".github/workflows/vscode-extension.yml:32",
+      "raw": "      - uses: dorny/paths-filter@v4\n        if: ${{ !startsWith(github.ref, 'refs/tags/') }}\n        id: filter\n        with:\n          filters: |\n            vscode:\n              - 'vscode-wvlet/**'\n              - 'package.json'\n              - 'pnpm-lock.yaml'\n              - 'pnpm-workspace.yaml'\n              - '.github/workflows/vscode-extension.yml'",
+      "hints": {
+        "action": "dorny/paths-filter@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#51-actions-checkout-v7",
+      "kind": "ci_step",
+      "name": "actions/checkout@v7",
+      "source": ".github/workflows/vscode-extension.yml:51",
+      "raw": "    - uses: actions/checkout@v7",
+      "hints": {
+        "action": "actions/checkout@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#53-set-up-java",
+      "kind": "ci_step",
+      "name": "Set up Java",
+      "source": ".github/workflows/vscode-extension.yml:53",
+      "raw": "    - name: Set up Java\n      uses: actions/setup-java@v5\n      with:\n        distribution: 'temurin'\n        java-version: '25'\n        cache: sbt",
+      "hints": {
+        "action": "actions/setup-java@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#60-pnpm-action-setup-v6",
+      "kind": "ci_step",
+      "name": "pnpm/action-setup@v6",
+      "source": ".github/workflows/vscode-extension.yml:60",
+      "raw": "    - uses: pnpm/action-setup@v6",
+      "hints": {
+        "action": "pnpm/action-setup@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#62-setup-node-js",
+      "kind": "ci_step",
+      "name": "Setup Node.js",
+      "source": ".github/workflows/vscode-extension.yml:62",
+      "raw": "    - name: Setup Node.js\n      uses: actions/setup-node@v7\n      with:\n        node-version: '22'\n        cache: 'pnpm'\n        cache-dependency-path: pnpm-lock.yaml",
+      "hints": {
+        "action": "actions/setup-node@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#72-build-scala-js-compiler-bundle",
+      "kind": "ci_step",
+      "name": "Build Scala.js compiler bundle",
+      "source": ".github/workflows/vscode-extension.yml:72",
+      "raw": "    - name: Build Scala.js compiler bundle\n      run: ./sbt \"sdkJs/fastLinkJS\""
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#75-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/vscode-extension.yml:75",
+      "raw": "    - name: Install dependencies\n      run: pnpm install --frozen-lockfile"
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#78-package-extension",
+      "kind": "ci_step",
+      "name": "Package extension",
+      "source": ".github/workflows/vscode-extension.yml:78",
+      "raw": "    - name: Package extension\n      run: pnpm run build-vscode-extension"
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#84-smoke-test-packaged-extension",
+      "kind": "ci_step",
+      "name": "Smoke test packaged extension",
+      "source": ".github/workflows/vscode-extension.yml:84",
+      "raw": "    - name: Smoke test packaged extension\n      run: |\n        VSIX=$(ls vscode-wvlet/*.vsix)\n        rm -rf /tmp/vsix-smoke && mkdir -p /tmp/vsix-smoke\n        unzip -q \"$VSIX\" -d /tmp/vsix-smoke\n        node vscode-wvlet/scripts/lsp-smoke.mjs /tmp/vsix-smoke/extension/out/server.js"
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#91-upload-vsix-artifact",
+      "kind": "ci_step",
+      "name": "Upload VSIX artifact",
+      "source": ".github/workflows/vscode-extension.yml:91",
+      "raw": "    - name: Upload VSIX artifact\n      uses: actions/upload-artifact@v7\n      with:\n        name: vscode-extension\n        path: vscode-wvlet/*.vsix\n        retention-days: 30",
+      "hints": {
+        "action": "actions/upload-artifact@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/vscode-extension.yml#105-plan-marketplace-release",
+      "kind": "ci_step",
+      "name": "Plan Marketplace release",
+      "source": ".github/workflows/vscode-extension.yml:105",
+      "raw": "    - name: Plan Marketplace release\n      if: github.event.inputs.publish == 'true' || startsWith(github.ref, 'refs/tags/v')\n      id: release_plan\n      run: |\n        VERSION=$(node -p \"require('./vscode-wvlet/package.json').version\")\n        PUBLISH=true\n        TYPE=stable\n        if [ \"${{ github.event_name }}\" = \"workflow_dispatch\" ]; then\n          PATCH=$(echo \"$VERSION\" | cut -d'.' -f3)\n          if [ \"$PATCH\" != \"0\" ]; then\n            TYPE=pre-release\n          fi\n        else\n          TAG=\"${GITHUB_REF#refs/tags/v}\"\n          BASE=\"${TAG%%-*}\"\n          if [ \"$BASE\" != \"$VERSION\" ]; then\n            echo \"::error::Release tag v${TAG} does not match vscode-wvlet/package.json version ${VERSION}. Bump the extension version in the release commit.\"\n            exit 1\n          fi\n          if [ \"$TAG\" != \"$BASE\" ]; then\n            TYPE=pre-release\n          fi\n        fi\n        PUBLISHED=$(curl -sf \"https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery\" \\\n          -H \"Content-Type: application/json\" -H \"Accept: application/json;api-version=3.0-preview.1\" \\\n          -d '{\"filters\":[{\"criteria\":[{\"filterType\":7,\"value\":\"wvlet.wvlet\"}]}],\"flags\":1}' \\\n          | jq -r --arg v \"$VERSION\" '[.results[0].extensions[0].versions[].version] | contains([$v])' || echo \"unknown\")\n        if [ \"$PUBLISHED\" = \"true\" ]; then\n          echo \"::notice::wvlet.wvlet ${VERSION} is already on the Marketplace; skipping publish.\"\n          PUBLISH=false\n        fi\n        echo \"publish=$PUBLISH\" >> \"$GITHUB_OUTPUT\"\n        echo \"type=$TYPE\" >> \"$GITHUB_OUTPUT\"\n        echo \"Release plan: publish=$PUBLISH type=$TYPE version=$VERSION\""
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "highlightjs-wvlet/package.json#test",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "mocha 11 running under Node in CI (highlightjs.yml 'Run tests', npm-publish.yml:227), asserting against the real filesystem",
+        "actorCanWrite": false,
+        "argument": "`mocha test` is non-recursive, so it executes only test/index.js — the repo keeps a second `mocha` script precisely because test/markup is not picked up here, and CI invokes both as separate steps. The Node runtime genuinely decides the exit code, so the execution axis is anchored; the limit is that the oracle is four existence assertions plus two regexes over the language definition's own source (`/export default function/`, `/hljs/`), so a semantically broken grammar passes as long as dist/ was built and the file still says `export default function`."
+      },
+      "evidence": [
+        "highlightjs-wvlet/package.json:7",
+        "highlightjs-wvlet/test/index.js:8,14,15,21,22,28,29",
+        ".github/workflows/highlightjs.yml:50",
+        ".github/workflows/npm-publish.yml:227"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "highlightjs-wvlet/package.json#mocha",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "highlight.js 11 (pinned third-party devDependency) tokenizing the built dist/wvlet.js bundle inside mocha; CI runs it at highlightjs.yml:53 and npm-publish.yml:230",
+        "actorCanWrite": false,
+        "argument": "The signal comes from a third-party highlighter actually parsing the shipped UMD bundle — the repo cannot make hljs.highlightAuto return 'wvlet' by assertion, so execution is anchored. The limit is severe and worth naming: the committed golden file basic.expect.txt IS read into `expected` at test/markup/index.js:23 and then never compared to anything (the test says so inline, 'For now, just check that highlighting produces output'); the surviving oracle is three substring regexes for hljs-keyword/string/comment plus one auto-detect equality. A golden file exists in the tree but does not gate."
+      },
+      "evidence": [
+        "highlightjs-wvlet/package.json:8",
+        "highlightjs-wvlet/test/markup/index.js:23,33,34,35,43",
+        "highlightjs-wvlet/test/markup/wvlet/basic.expect.txt",
+        ".github/workflows/highlightjs.yml:53"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "highlightjs-wvlet/package.json#build",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "node build.js — a string-concatenation step that wraps src/languages/wvlet.js in a UMD prologue and writes dist/wvlet.js and dist/wvlet.min.js",
+        "actorCanWrite": true,
+        "argument": "build.js never parses, imports, or executes the JavaScript it wraps; its 'minifier' is a chain of regex replacements. Its only failure mode is a filesystem error, so a syntactically broken language definition builds clean and exits 0. The step emits an artifact and asserts nothing about correctness — the assertions live downstream in the mocha markup test and the workflow's 'Verify dist files' step. Named as vacuous, not filed here because it was hard to trace."
+      },
+      "evidence": [
+        "highlightjs-wvlet/package.json:9",
+        "highlightjs-wvlet/build.js",
+        ".github/workflows/highlightjs.yml:47,56"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/cli-node/package.json#build-scalajs",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Scala 3 compiler and Scala.js linker invoked by ./sbt cliCoreJS/fullLinkJS (toolchain fetched by sbt/coursier, not resident in the repo)",
+        "actorCanWrite": false,
+        "argument": "A compiler is the canonical anchored producer: type errors and unresolved link references fail deterministically and cannot be argued with. This script is on a real pipeline path — `build` (which npm runs via prepublishOnly during `npm publish` at npm-publish.yml:143) resolves to exactly this command, and CI also runs the same sbt task directly at npm-publish.yml:120. The limit: fullLinkJS compiles and links, it runs no test, so it proves the CLI bundle builds, not that it compiles wvlet correctly."
+      },
+      "evidence": [
+        "sdks/cli-node/package.json:10",
+        ".github/workflows/npm-publish.yml:120",
+        ".github/workflows/npm-publish.yml:143"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/cli-node/package.json#build-scalajs-dev",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Scala.js linker via ./sbt cliCoreJS/fastLinkJS — but nothing invokes it",
+        "actorCanWrite": false,
+        "argument": "The producer would be a compiler, so this is not `unknown` — I traced it fully. It is excluded because a repo-wide grep finds exactly one occurrence of `build:scalajs:dev`, its own definition: no workflow, no publish hook, and no other package script calls it. It gates no merge and no publish, so it is a developer convenience alias, not a verification edge. Note that excluding it lowers rather than inflates the ratio, since crediting it would have added to the numerator."
+      },
+      "evidence": [
+        "sdks/cli-node/package.json:11",
+        "grep -rn 'build:scalajs:dev' . → sdks/cli-node/package.json:11 only"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/cli-node/package.json#build",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "aggregate — descends to `build:scalajs` → ./sbt cliCoreJS/fullLinkJS, i.e. the Scala 3 compiler plus Scala.js linker",
+        "actorCanWrite": false,
+        "argument": "Descended rather than classified as a wrapper: this alias has exactly one child and that child is a compiler invocation outside the write boundary. It is reachable — npm executes it through prepublishOnly on the `npm publish --provenance` step of the publish-cli-node job. Same limit as its child: it establishes that the bundle links, not that it behaves."
+      },
+      "evidence": [
+        "sdks/cli-node/package.json:12",
+        "sdks/cli-node/package.json:10",
+        ".github/workflows/npm-publish.yml:143"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/cli-node/package.json#prepublishonly",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "npm's prepublishOnly lifecycle hook firing on `npm publish`, descending through `build` → `build:scalajs` → Scala 3 compiler / Scala.js linker",
+        "actorCanWrite": false,
+        "argument": "This is a genuine release gate: `npm publish --provenance --access public` runs in sdks/cli-node, so a compile or link failure aborts the publish, and the compiler is not writable by the code being published. Worth stating plainly: this compile is the ONLY gate on the @wvlet/cli publish path — the publish-cli-node job runs no test step at all, so nothing on that path executes the CLI it ships."
+      },
+      "evidence": [
+        "sdks/cli-node/package.json:13",
+        ".github/workflows/npm-publish.yml:89-143 (publish-cli-node job: checkout, java, pnpm, node, sbt cliCoreJS/fullLinkJS, install, version, npm publish — no test step)"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/typescript/package.json#build-scalajs",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Scala 3 compiler / Scala.js linker via ./sbt sdkJs/fastLinkJS — but this entry point is not on any automated path",
+        "actorCanWrite": false,
+        "argument": "Traced, not unresolved: the producer is a compiler. It is excluded because the only caller is `build` (sdks/typescript/package.json:13), and CI deliberately does not use `build` — npm-publish.yml carries an explicit comment that `run build` would re-link with fastLinkJS and clobber the optimized bundle (#1894), so it calls build:ts alone. Both workflows that need this artifact call `./sbt \"sdkJs/fastLinkJS\"` directly; that CI step is the edge that gates (node .github/workflows/vscode-extension.yml#72), not this alias."
+      },
+      "evidence": [
+        "sdks/typescript/package.json:10",
+        ".github/workflows/npm-publish.yml:60-63 (comment: build:ts only — `run build` would re-link with fastLinkJS)",
+        ".github/workflows/typescript-test.yml:42",
+        ".github/workflows/vscode-extension.yml:73"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/typescript/package.json#build-scalajs-release",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Scala.js linker via ./sbt sdkJs/fullLinkJS — reachable only from `build:release`, which nothing invokes",
+        "actorCanWrite": false,
+        "argument": "The producer is a compiler and fully traced, so this is not `unknown`. Its single caller is `build:release` (sdks/typescript/package.json:14), and a repo-wide grep shows `build:release` is referenced nowhere — no workflow, no lifecycle hook. The release workflow runs `./sbt \"sdkJs/fullLinkJS\"` directly at npm-publish.yml:55; that direct step is the gating edge, this script alias is not."
+      },
+      "evidence": [
+        "sdks/typescript/package.json:11",
+        "sdks/typescript/package.json:14",
+        ".github/workflows/npm-publish.yml:55"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/typescript/package.json#build-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the TypeScript compiler (tsc 6.x) with strict: true, run in CI at npm-publish.yml:63 and again as `tsc` at typescript-test.yml:55",
+        "actorCanWrite": false,
+        "argument": "tsc is a deterministic analysis of the artifact itself — the rubric's clearly-anchored case — and a type error fails the publish job before `npm publish` runs. Limits to name: tsconfig.json includes only src/**/* and explicitly excludes tests, and skipLibCheck is true, so the hand-written types/main.d.ts describing the Scala.js bundle is checked shallowly; the rm of dist/ before compiling asserts nothing."
+      },
+      "evidence": [
+        "sdks/typescript/package.json:12",
+        "sdks/typescript/tsconfig.json (strict: true, include src/**/*, exclude tests, skipLibCheck true)",
+        ".github/workflows/npm-publish.yml:63",
+        ".github/workflows/typescript-test.yml:48,55"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/typescript/package.json#build",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "aggregate of two compilers (Scala.js linker, then tsc) — but no automated path invokes it",
+        "actorCanWrite": false,
+        "argument": "I descended: both children are compilers, so the shape would be anchored if it ran. It does not. npm-publish.yml explicitly avoids `run build` (it would overwrite the fullLinkJS bundle with a fastLinkJS one, #1894) and typescript-test.yml calls lint / test:ci / tsc individually. The only reference outside the package manifest is a human runbook step in sdks/typescript/PUBLISHING.md:49. An alias a person may type is not an edge that blocks a merge."
+      },
+      "evidence": [
+        "sdks/typescript/package.json:13",
+        ".github/workflows/npm-publish.yml:60-63",
+        ".github/workflows/typescript-test.yml:44-58",
+        "sdks/typescript/PUBLISHING.md:49"
+      ],
+      "confidence": 0.68,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "sdks/typescript/vitest.config.ts#vitest-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "vitest 4 running in a Node environment, executing the Scala.js-linked compiler bundle (lib/main.js) and src/index.ts; run in CI as `test:ci` at typescript-test.yml:51 and npm-publish.yml:67",
+        "actorCanWrite": false,
+        "argument": "The config is on the pipeline path and the Node runtime decides pass/fail against a real compiled artifact — execution is anchored. The oracle is not: compiler.test.ts asserts repo-authored substrings over the generated SQL (`expect(sql).toContain('select name, email')`) and no query engine ever runs that SQL, while corpus.test.ts asserts only that every LSP API returns valid JSON, never throws, and stays under 2s, stating outright that it does not assert on diagnostic contents. So this path proves the SDK does not crash and emits SQL-shaped text, not that the SQL is right. The config also sets no coverage thresholds and no include filter (vitest defaults pick up tests/*.test.ts)."
+      },
+      "evidence": [
+        "sdks/typescript/vitest.config.ts",
+        "sdks/typescript/tests/compiler.test.ts:9,10,17,18,25",
+        "sdks/typescript/tests/corpus.test.ts:17-24,36-38",
+        ".github/workflows/typescript-test.yml:51",
+        ".github/workflows/npm-publish.yml:67"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "prismjs-wvlet/jest.config.js#jest-config-js",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "jest 30 executing Prism.tokenize (third-party prismjs) against components/prism-wvlet.js; run in CI at prismjs.yml:51 and npm-publish.yml:175",
+        "actorCanWrite": false,
+        "argument": "testMatch '**/test/**/*.test.js' reaches test/prism-wvlet.test.js, and the workflow's `pnpm --filter @wvlet/prismjs-wvlet test` makes it a merge-blocking edge; Prism's tokenizer, not the repo, produces the token stream the assertions read. Two limits: the assertions (token counts, `expect(numberTokens.length).toBe(5)`) were authored alongside the grammar, and collectCoverage is true with NO coverageThreshold key — coverage is computed and written to coverage/ where nothing reads it, so that half of the config cannot fail."
+      },
+      "evidence": [
+        "prismjs-wvlet/jest.config.js:3-12 (collectCoverage true, no coverageThreshold)",
+        "prismjs-wvlet/test/prism-wvlet.test.js:6-46",
+        ".github/workflows/prismjs.yml:50-51",
+        ".github/workflows/npm-publish.yml:175"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#31-actions-checkout-v7",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v7 on the GitHub-hosted runner, fetching the commit from GitHub's git servers",
+        "actorCanWrite": false,
+        "argument": "Source acquisition for the `changes` job. It can fail on infrastructure, but it makes no claim about the code it fetches — nothing about this step varies with whether the commit is correct. Excluded as a setup step, not because it was hard to trace."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:31"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#32-dorny-paths-filter-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "dorny/paths-filter@v4 diffing changed paths against a filter list committed in the workflow, emitting a boolean output",
+        "actorCanWrite": true,
+        "argument": "This is routing, not verification: it emits `vscode: true|false` to decide whether the build job runs, and asserts nothing about correctness. It deserves a note rather than a class of its own, because it decides whether the one real gate in this workflow (the VSIX LSP smoke test) executes at all, and its filter list is inside the write boundary. Concretely, the list covers vscode-wvlet/**, package.json, the lockfiles and this workflow — but NOT sdks/typescript/** or the Scala sources that produce the compiler bundle the extension embeds, so a compiler change that kills the language server skips the smoke test and the skipped job reports neutral."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:32-43",
+        ".github/workflows/vscode-extension.yml:46-48 (build job `if: needs.changes.outputs.vscode == 'true'`)",
+        "vscode-wvlet/esbuild.js:14-17 (server bundles ../sdks/typescript/lib/main.js)"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#51-actions-checkout-v7",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v7 on the GitHub-hosted runner for the `build` job",
+        "actorCanWrite": false,
+        "argument": "Source acquisition for the build job. Its success says the runner obtained the tree, nothing about the tree's correctness. Excluded as a setup step."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:51"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#53-set-up-java",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/setup-java@v5 installing Temurin JDK 25 from Adoptium and restoring the sbt cache",
+        "actorCanWrite": false,
+        "argument": "Toolchain provisioning. It pulls a real external JDK — the download is outside the write boundary — but the step asserts nothing about wvlet's code; it only makes the later compile possible. Excluded as environment setup."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:53-58"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#60-pnpm-action-setup-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "pnpm/action-setup@v6 installing the pnpm binary named by the root package.json packageManager field",
+        "actorCanWrite": false,
+        "argument": "Package-manager provisioning. No assertion about the repository's correctness is produced; the step only makes `pnpm install` runnable. Excluded as environment setup."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:60",
+        "package.json:5 (packageManager pnpm@10.7.1)"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#62-setup-node-js",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/setup-node@v7 installing Node 22 and restoring the pnpm store cache keyed on pnpm-lock.yaml",
+        "actorCanWrite": false,
+        "argument": "Runtime provisioning. It fixes the Node version the later checks execute under but makes no claim about the code. Excluded as environment setup."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:62-67"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#72-build-scala-js-compiler-bundle",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Scala 3 compiler and Scala.js linker driven by ./sbt sdkJs/fastLinkJS on the runner",
+        "actorCanWrite": false,
+        "argument": "This is the CI edge that actually gates — a type error or an unresolved link reference in the Scala sources fails the job here, and no amount of assertion changes what the compiler emits. Limit: fastLinkJS compiles and links only; it executes no test, so it establishes that the compiler bundle is well-typed and reachable, not that it produces correct SQL."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:72-73",
+        ".github/workflows/typescript-test.yml:42"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#75-install-dependencies",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "pnpm's resolver checking pnpm-lock.yaml against every workspace manifest, plus integrity-hash verification of tarballs served by the npm registry",
+        "actorCanWrite": false,
+        "argument": "`--frozen-lockfile` turns installation into a falsifiable assertion: the job fails if the committed lockfile has drifted from the package.json manifests, and the tarball contents are adjudicated by registry-published integrity hashes the committer cannot rewrite. Narrow limit, stated plainly: it verifies dependency-graph consistency and supply-chain integrity, and says nothing whatsoever about wvlet's own code. Read without the flag this would be pure setup; the flag is what makes it a check."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:75-76",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#78-package-extension",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "node esbuild.js (bundling src/extension.ts and src/server.ts) followed by `vsce package --no-dependencies`, via pnpm --filter wvlet run package",
+        "actorCanWrite": false,
+        "argument": "Real failure modes decided outside the write boundary: esbuild.js hard-exits 1 if sdks/typescript/lib/main.js is absent (a guard added after 2026.1.0 shipped a silently dead language server), esbuild fails on unresolved imports and syntax errors, and vsce validates the extension manifest before producing the VSIX. The limit is sharp — esbuild transpiles without type-checking and there is no tsc anywhere in vscode-wvlet's scripts, so TypeScript type errors package and ship."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:78-79",
+        "package.json:11 (build-vscode-extension → pnpm --filter wvlet run package)",
+        "vscode-wvlet/package.json (compile: node esbuild.js; package: pnpm run compile && vsce package)",
+        "vscode-wvlet/esbuild.js:17-23"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#84-smoke-test-packaged-extension",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a separate `node` process running the unzipped VSIX's out/server.js and answering real LSP requests over stdio; the exit code comes from that server's actual protocol responses",
+        "actorCanWrite": false,
+        "argument": "The strongest edge in this sample. It unzips the shipped artifact and drives it — initialize, textDocument/definition, textDocument/hover — so the producer is the packaged extension itself under the same protocol an editor uses, and failure modes include unexpected server exit and a 60s timeout that no assertion can suppress. The oracle's limit: the expected values (definition resolving to line 0, hover containing 'long') are authored in-repo, and hover's type comes from the wvlet compiler itself, so this proves packaging integrity strongly and type inference only as far as the compiler's own agreement with a repo-authored string."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:84-89",
+        "vscode-wvlet/scripts/lsp-smoke.mjs:86-89,109,117",
+        "vscode-wvlet/scripts/lsp-smoke.mjs:31-40 (unexpected-exit and 60s timeout failures)"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#91-upload-vsix-artifact",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-artifact@v7 copying vscode-wvlet/*.vsix into GitHub's artifact store",
+        "actorCanWrite": false,
+        "argument": "Artifact retention. It moves a file and asserts nothing about it; nothing downstream in this workflow reads the uploaded artifact back to verify it. Excluded as a publishing/retention step."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:91-96"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/vscode-extension.yml#105-plan-marketplace-release",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "a bash string comparison between the pushed git tag and the version field in vscode-wvlet/package.json — both written by the same releaser in the same release act",
+        "actorCanWrite": true,
+        "argument": "The one failing assertion here (`[ \"$BASE\" != \"$VERSION\" ] → exit 1`) adjudicates two artifacts that are both inside the write boundary: the maintainer authors the tag and authors the version string, and nothing outside the repo says which is right. It catches transposition mistakes, but a releaser who bumps both consistently to a version whose contents are wrong is not caught — the claim and the check are the same hand. The step does query the VS Code Marketplace, which is genuinely external, but that query only routes (sets publish=true|false) and cannot fail the job: `curl -sf ... || echo \"unknown\"` swallows an outage and leaves PUBLISH=true. Also note the `if:` guard means this never runs on pull requests."
+      },
+      "evidence": [
+        ".github/workflows/vscode-extension.yml:105-107 (if: inputs.publish or refs/tags/v)",
+        ".github/workflows/vscode-extension.yml:118-121 (tag-vs-package.json mismatch → exit 1)",
+        ".github/workflows/vscode-extension.yml:126-130 (marketplace query with || echo \"unknown\")"
+      ],
+      "confidence": 0.68,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 12,
+    "selfReferential": 1,
+    "unknown": 0,
+    "notACheck": 12,
+    "ratio": 0.9230769230769231
+  },
+  "economics": {
+    "nodesTotal": 261,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 2654,
+    "tokensOut": 6203,
+    "tokensEstimated": true,
+    "wallClockMs": 527446
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "target": "requests",
+  "revision": "69f84847045bef7a849cc994a26fe7ba8a169e95",
+  "generatedAt": "2026-07-25T05:20:43.978Z",
+  "sourceReport": "reports/requests.json",
+  "bindings": [
+    {
+      "loop": ".github/CODEOWNERS#codeowners",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "The proposition this file is reaching for is 'a change to .github/workflows/, CODEOWNERS, src/requests/__version__.py, HISTORY.md or pyproject.toml was approved by @nateprewitt or @sigmavirus24, who is not the author'. A producer that asserts that must emit an approval event attributable to a human other than the pushing actor, and it must sit in the merge path. Every anchored node in this report emits something structurally different: build-dists emits the packaging backend's exit code over the checked-out tree; make ci / make test / tox emit CPython's exit status running tests/; pyright, ruff and the pre-commit aggregate emit a static analyser's verdict on the committed bytes; pytest ini-options and the coverage target parameterise or observe those same runs. All of them answer 'does the tree build, type-check, lint and pass its suite' — a claim about the artefact. None of them answers 'did a second, named person consent to this diff' — a claim about who authorised it. Wiring CODEOWNERS to read any of them would attach a human-authorisation edge to a toolchain-correctness signal: the ratio would move and the authorisation claim would remain exactly as ungrounded as it is now, because a green pytest run is fully reachable by the very author CODEOWNERS exists to constrain.",
+      "status": "proposed",
+      "noRouteReason": "This needs a policy decision, not a rewiring. The signal CODEOWNERS wants already exists at GitHub — a code-owner review approval — but whether it gates anything is decided by 'Require review from Code Owners' in branch-protection/ruleset settings, which live in repository configuration outside the tree and are not readable from a clone. Someone with admin rights must (a) decide the rule is on and (b) make that decision auditable from the repository — e.g. by committing the ruleset as a checked-in .github/rulesets/*.json or otherwise exporting protection state into the tree — before any node in this report can carry the proposition. Until that decision is made, `unknown` is the honest class and no anchored producer here can stand in for it."
+    }
+  ],
+  "summary": {
+    "currentRatio": 0.9166666666666666,
+    "projectedRatio": 0.9166666666666666,
+    "routable": 0,
+    "unroutable": 1
+  },
+  "warnings": []
+}

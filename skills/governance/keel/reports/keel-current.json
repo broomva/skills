@@ -1,0 +1,1011 @@
+{
+  "target": "keel",
+  "revision": "ec00242c384a1ecd0439baf47adb3bea97da22c1",
+  "generatedAt": "2026-07-25T22:21:07.165663Z",
+  "nodes": [
+    {
+      "id": "video/package.json#studio",
+      "kind": "script",
+      "name": "studio",
+      "source": "video/package.json",
+      "raw": "\"studio\": \"remotion studio\""
+    },
+    {
+      "id": "video/package.json#render",
+      "kind": "script",
+      "name": "render",
+      "source": "video/package.json",
+      "raw": "\"render\": \"remotion render KeelExplainer out/keel-explainer.mp4\""
+    },
+    {
+      "id": "video/package.json#render-pitch",
+      "kind": "script",
+      "name": "render:pitch",
+      "source": "video/package.json",
+      "raw": "\"render:pitch\": \"remotion render KeelPitch out/keel-pitch-60.mp4\""
+    },
+    {
+      "id": "video/package.json#still",
+      "kind": "script",
+      "name": "still",
+      "source": "video/package.json",
+      "raw": "\"still\": \"remotion still KeelExplainer out/still.png\""
+    },
+    {
+      "id": "Makefile#help",
+      "kind": "script",
+      "name": "help",
+      "source": "Makefile:40",
+      "raw": "help: ## Show available targets\n\t@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \\\n\t  | awk 'BEGIN{FS=\":.*?## \"}{printf \"  \\033[36m%-24s\\033[0m %s\\n\", $$1, $$2}'"
+    },
+    {
+      "id": "Makefile#doctor",
+      "kind": "script",
+      "name": "doctor",
+      "source": "Makefile:44",
+      "raw": "doctor: ## bstack primitive-contract compliance report (needs bstack; always exits 0)\n\t$(REQUIRE_BSTACK)\n\t@bash \"$(BSTACK)/scripts/doctor.sh\""
+    },
+    {
+      "id": "Makefile#bstack-check",
+      "kind": "script",
+      "name": "bstack-check",
+      "source": "Makefile:48",
+      "raw": "bstack-check: ## Harness validation \u2014 doctor in strict mode (needs bstack; non-zero on gap)\n\t$(REQUIRE_BSTACK)\n\t@bash \"$(BSTACK)/scripts/doctor.sh\" --strict"
+    },
+    {
+      "id": "Makefile#portability-check",
+      "kind": "script",
+      "name": "portability-check",
+      "source": "Makefile:52",
+      "raw": "portability-check: ## Fail if any committed file hardcodes a machine-specific path\n\t@bash scripts/portability-check.sh"
+    },
+    {
+      "id": "Makefile#design-audit",
+      "kind": "script",
+      "name": "design-audit",
+      "source": "Makefile:55",
+      "raw": "design-audit: ## Design-system adherence gate (raw literals, token drift, schema/CSS agreement)\n\t@python3 scripts/design-audit.py"
+    },
+    {
+      "id": "Makefile#design-sync",
+      "kind": "script",
+      "name": "design-sync",
+      "source": "Makefile:58",
+      "raw": "design-sync: ## Rewrite the site/ token copies from skills/keel/design/ (canonical)\n\t@python3 scripts/design-audit.py --fix-sync"
+    },
+    {
+      "id": "Makefile#janitor",
+      "kind": "script",
+      "name": "janitor",
+      "source": "Makefile:61",
+      "raw": "janitor: ## P8 \u2014 dry-run branch/worktree cleanup\n\t@bash scripts/branch-janitor.sh"
+    },
+    {
+      "id": "Makefile#janitor-apply",
+      "kind": "script",
+      "name": "janitor-apply",
+      "source": "Makefile:64",
+      "raw": "janitor-apply: ## P8 \u2014 apply branch/worktree cleanup\n\t@bash scripts/branch-janitor.sh --apply"
+    },
+    {
+      "id": "Makefile#bstack-primitive-lint",
+      "kind": "script",
+      "name": "bstack-primitive-lint",
+      "source": "Makefile:67",
+      "raw": "bstack-primitive-lint: ## G-L3-1 \u2014 every P-N has What/How/Why/Invariant + a CLAUDE.md row\n\t@python3 scripts/bstack-primitive-lint.py"
+    },
+    {
+      "id": "Makefile#bstack-rule-of-three",
+      "kind": "script",
+      "name": "bstack-rule-of-three",
+      "source": "Makefile:70",
+      "raw": "bstack-rule-of-three: ## G-L3-2 \u2014 rule-of-three ledger evidence (not applicable here, see note)\n\t@python3 scripts/bstack-rule-of-three.py"
+    },
+    {
+      "id": "Makefile#bstack-l3-trust",
+      "kind": "script",
+      "name": "bstack-l3-trust",
+      "source": "Makefile:94",
+      "raw": "bstack-l3-trust: bstack-primitive-lint ## L3 trust-gate pack (G-L3-1; G-L3-2 scoped out \u2014 see note)\n\t@echo \"[bstack-l3-trust] G-L3-1 primitive-lint passed.\"\n\t@echo \"[bstack-l3-trust] G-L3-2 rule-of-three not run: no primitives are promoted in this repo.\"\n\t@echo \"[bstack-l3-trust] L3 trust gates passed \u2014 governance change is structurally valid.\""
+    },
+    {
+      "id": "package.json#test",
+      "kind": "script",
+      "name": "test",
+      "source": "package.json",
+      "raw": "\"test\": \"bun test\""
+    },
+    {
+      "id": "package.json#typecheck",
+      "kind": "script",
+      "name": "typecheck",
+      "source": "package.json",
+      "raw": "\"typecheck\": \"tsc --noEmit\""
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#31-checkout-pr-head",
+      "kind": "ci_step",
+      "name": "Checkout PR head",
+      "source": ".github/workflows/l3-stability.yml:31",
+      "raw": "      - name: Checkout PR head\n        uses: actions/checkout@v4\n        with:\n          fetch-depth: 50",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#36-set-up-python-3-11",
+      "kind": "ci_step",
+      "name": "Set up Python 3.11",
+      "source": ".github/workflows/l3-stability.yml:36",
+      "raw": "      - name: Set up Python 3.11\n        uses: actions/setup-python@v5\n        with:\n          python-version: '3.11'",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#41-install-bstack-skill-snapshot",
+      "kind": "ci_step",
+      "name": "Install bstack (skill snapshot)",
+      "source": ".github/workflows/l3-stability.yml:41",
+      "raw": "      - name: Install bstack (skill snapshot)\n        run: |\n          # Resolve bstack \u2014 for repos that have it vendored or use the GitHub fetch.\n          if [ -d \".agents/skills/bstack\" ]; then\n            BSTACK=\".agents/skills/bstack\"\n          else\n            git clone --depth 1 https://github.com/broomva/bstack.git /tmp/bstack\n            BSTACK=/tmp/bstack\n          fi\n          echo \"BSTACK=$BSTACK\" >> $GITHUB_ENV"
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#52-compute-lambda-rcs-stability-budget",
+      "kind": "ci_step",
+      "name": "Compute lambda (RCS stability budget)",
+      "source": ".github/workflows/l3-stability.yml:52",
+      "raw": "      - name: Compute lambda (RCS stability budget)\n        id: compute\n        run: |\n          set +e\n          out=$(bash $BSTACK/scripts/compute-lambda.sh --human)\n          status=$?\n          echo \"$out\"\n          {\n            echo \"result<<EOF\"\n            echo \"$out\"\n            echo \"EOF\"\n            echo \"status=$status\"\n          } >> $GITHUB_OUTPUT\n          # Always continue so the comment step runs; final exit is below\n          exit 0"
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#68-run-l3-rate-gate",
+      "kind": "ci_step",
+      "name": "Run L3 rate gate",
+      "source": ".github/workflows/l3-stability.yml:68",
+      "raw": "      - name: Run L3 rate gate\n        id: rate\n        run: |\n          set +e\n          out=$(BROOMVA_WORKSPACE=\"$PWD\" bash $BSTACK/scripts/l3-rate-gate.sh)\n          status=$?\n          echo \"$out\"\n          {\n            echo \"result<<EOF\"\n            echo \"$out\"\n            echo \"EOF\"\n            echo \"status=$status\"\n          } >> $GITHUB_OUTPUT\n          exit 0"
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#83-comment-on-pr",
+      "kind": "ci_step",
+      "name": "Comment on PR",
+      "source": ".github/workflows/l3-stability.yml:83",
+      "raw": "      - name: Comment on PR\n        if: github.event.pull_request != null\n        uses: actions/github-script@v7\n        with:\n          script: |\n            const compute = `${{ steps.compute.outputs.result }}`;\n            const rate    = `${{ steps.rate.outputs.result }}`;\n            const computeStatus = `${{ steps.compute.outputs.status }}`;\n            const rateStatus    = `${{ steps.rate.outputs.status }}`;\n\n            const verdict =\n              computeStatus !== \"0\"\n                ? \"\ud83d\udd34 **lambda_i <= 0** \u2014 composite system unstable; do not merge\"\n                : rateStatus !== \"0\"\n                  ? \"\ud83d\udfe1 **L3 rate exceeded** \u2014 RCS stability budget assumes <= 1 governance commit per tau_a_3 window\"\n                  : \"\ud83d\udfe2 **All gates pass** \u2014 composite stable, rate within budget\";\n\n            const body = [\n              \"## L3 stability gate report\",\n              \"\",\n              verdict,\n              \"\",\n              \"### Per-level lambda (compute-lambda.sh)\",\n              \"```\",\n              compute,\n              \"```\",\n              \"\",\n              \"### L3 rate gate (l3-rate-gate.sh)\",\n              \"```\",\n              rate,\n              \"```\",\n              \"\",\n              \"<sub>bstack Gate G2 \u2014 see `.github/workflows/l3-stability.yml`. RCS background: https://github.com/broomva/bstack/blob/main/references/primitives.md</sub>\",\n            ].join(\"\\n\");\n\n            await github.rest.issues.createComment({\n              issue_number: context.issue.number,\n              owner: context.repo.owner,\n              repo: context.repo.repo,\n              body\n            });",
+      "hints": {
+        "action": "actions/github-script@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/l3-stability.yml#125-set-final-status",
+      "kind": "ci_step",
+      "name": "Set final status",
+      "source": ".github/workflows/l3-stability.yml:125",
+      "raw": "      - name: Set final status\n        run: |\n          # Fail the check if lambda <= 0 (unstable) \u2014 this is the gate.\n          # L3 rate exceeded is informational (passes here; pre-commit blocks locally).\n          if [ \"${{ steps.compute.outputs.status }}\" != \"0\" ]; then\n            echo \"FAIL: lambda_i <= 0; composite unstable\"\n            exit 1\n          fi\n          echo \"OK: all lambda_i > 0\""
+    },
+    {
+      "id": ".github/workflows/pages.yml#27-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/pages.yml:27",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#28-actions-configure-pages-v5",
+      "kind": "ci_step",
+      "name": "actions/configure-pages@v5",
+      "source": ".github/workflows/pages.yml:28",
+      "raw": "      - uses: actions/configure-pages@v5",
+      "hints": {
+        "action": "actions/configure-pages@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#29-actions-upload-pages-artifact-v3",
+      "kind": "ci_step",
+      "name": "actions/upload-pages-artifact@v3",
+      "source": ".github/workflows/pages.yml:29",
+      "raw": "      - uses: actions/upload-pages-artifact@v3\n        with:\n          path: site",
+      "hints": {
+        "action": "actions/upload-pages-artifact@v3"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#32-actions-deploy-pages-v4",
+      "kind": "ci_step",
+      "name": "actions/deploy-pages@v4",
+      "source": ".github/workflows/pages.yml:32",
+      "raw": "      - id: deployment\n        uses: actions/deploy-pages@v4",
+      "hints": {
+        "action": "actions/deploy-pages@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/test.yml#63-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/test.yml:63",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/test.yml#65-oven-sh-setup-bun-v2",
+      "kind": "ci_step",
+      "name": "oven-sh/setup-bun@v2",
+      "source": ".github/workflows/test.yml:65",
+      "raw": "      - uses: oven-sh/setup-bun@v2\n        with:\n          bun-version: latest",
+      "hints": {
+        "action": "oven-sh/setup-bun@v2"
+      }
+    },
+    {
+      "id": ".github/workflows/test.yml#69-install-toolchain-baseline",
+      "kind": "ci_step",
+      "name": "Install toolchain baseline",
+      "source": ".github/workflows/test.yml:69",
+      "raw": "      - name: Install toolchain baseline\n        run: bun install --frozen-lockfile"
+    },
+    {
+      "id": ".github/workflows/test.yml#82-bun-test",
+      "kind": "ci_step",
+      "name": "bun test",
+      "source": ".github/workflows/test.yml:82",
+      "raw": "      - name: bun test\n        run: bun run test"
+    },
+    {
+      "id": ".github/workflows/test.yml#85-tsc-noemit",
+      "kind": "ci_step",
+      "name": "tsc --noEmit",
+      "source": ".github/workflows/test.yml:85",
+      "raw": "      - name: tsc --noEmit\n        run: bun run typecheck"
+    },
+    {
+      "id": ".github/workflows/test.yml#93-design-adherence-gate",
+      "kind": "ci_step",
+      "name": "design adherence gate",
+      "source": ".github/workflows/test.yml:93",
+      "raw": "      - name: design adherence gate\n        if: matrix.os == 'ubuntu-latest'\n        run: make design-audit"
+    },
+    {
+      "id": ".github/workflows/test.yml#100-fixture-recomputes",
+      "kind": "ci_step",
+      "name": "fixture recomputes",
+      "source": ".github/workflows/test.yml:100",
+      "raw": "      - name: fixture recomputes\n        if: matrix.os == 'ubuntu-latest'\n        run: |\n          bun -e '\n            import { groundingRatio } from \"./skills/keel/schemas/keel.ts\";\n            const r = await Bun.file(\"tests/fixtures/report.sample.json\").json();\n            const g = groundingRatio(r.verdicts);\n            if (JSON.stringify(g) !== JSON.stringify(r.grounding)) {\n              throw new Error(\"stored grounding disagrees with a recomputation\");\n            }\n            const naked = r.verdicts.filter((v) => !v.writeBoundary?.argument?.trim());\n            if (naked.length) {\n              throw new Error(naked.length + \" verdict(s) carry no argument \u2014 a class without its causal path is an unaccountable green check\");\n            }\n            console.log(\"fixture OK \u2014 ratio\", g.ratio.toFixed(4), \"over\", r.verdicts.length, \"verdicts\");\n          '"
+    },
+    {
+      "id": ".github/workflows/test.yml#140-self-measurement-is-current",
+      "kind": "ci_step",
+      "name": "self-measurement is current",
+      "source": ".github/workflows/test.yml:140",
+      "raw": "      - name: self-measurement is current\n        if: matrix.os == 'ubuntu-latest'\n        run: |\n          bun skills/keel/scripts/gather.ts . --json > /tmp/keel-nodes-now.json\n          bun -e '\n            const tally = (ns) => ns.reduce((m, n) => {\n              const k = `${n.source.split(\":\")[0]}|${n.kind}|${n.name}`;\n              return m.set(k, (m.get(k) ?? 0) + 1);\n            }, new Map());\n            const now = tally(await Bun.file(\"/tmp/keel-nodes-now.json\").json());\n            const report = await Bun.file(\"reports/keel-current.json\").json();\n            const then = tally(report.nodes);\n            const drift = [];\n            for (const k of new Set([...now.keys(), ...then.keys()])) {\n              const a = now.get(k) ?? 0, b = then.get(k) ?? 0;\n              if (a !== b) drift.push(`  ${a > b ? \"+\" : \"-\"} ${k}  (measured ${b}, now ${a})`);\n            }\n            if (drift.length) {\n              for (const d of drift.sort()) console.error(d);\n              throw new Error(\n                `the verification surface changed since reports/keel-current.json was measured ` +\n                  `at ${report.revision.slice(0, 7)} \u2014 ${drift.length} edge(s) differ. Re-measure ` +\n                  `with keel and commit the report, or move the baseline deliberately.`,\n              );\n            }\n            const total = [...then.values()].reduce((a, b) => a + b, 0);\n            console.log(`self-measurement current \u2014 ${total} edges, unchanged since ${report.revision.slice(0, 7)}`);\n          '"
+    },
+    {
+      "id": ".github/workflows/portability.yml#23-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/portability.yml:23",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/portability.yml#25-scan-committed-files-for-absolute-home-paths",
+      "kind": "ci_step",
+      "name": "Scan committed files for absolute home paths",
+      "source": ".github/workflows/portability.yml:25",
+      "raw": "      - name: Scan committed files for absolute home paths\n        run: bash scripts/portability-check.sh"
+    },
+    {
+      "id": ".github/workflows/portability.yml#32-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/portability.yml:32",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/portability.yml#37-run-each-hook-with-an-empty-payload",
+      "kind": "ci_step",
+      "name": "Run each hook with an empty payload",
+      "source": ".github/workflows/portability.yml:37",
+      "raw": "      - name: Run each hook with an empty payload\n        run: |\n          set -euo pipefail\n          for hook in \\\n            scripts/skill-freshness-hook.sh \\\n            scripts/conversation-bridge-hook.sh \\\n            scripts/knowledge-catalog-refresh-hook.sh \\\n            scripts/role-x-intake-hook.sh \\\n            scripts/role-x-coverage-hook.sh \\\n            scripts/auth-preflight-hook.sh \\\n          ; do\n            printf '{}' | bash \"$hook\" >/dev/null 2>&1 \\\n              || { echo \"FAIL: $hook exited non-zero on a bare clone\"; exit 1; }\n            echo \"ok: $hook\"\n          done"
+    },
+    {
+      "id": ".github/workflows/portability.yml#57-control-gate-blocks-and-allows-correctly",
+      "kind": "ci_step",
+      "name": "Control gate blocks and allows correctly",
+      "source": ".github/workflows/portability.yml:57",
+      "raw": "      - name: Control gate blocks and allows correctly\n        run: |\n          set -euo pipefail\n          run_gate() { printf '%s' \"$1\" | bash scripts/control-gate-hook.sh >/dev/null 2>&1; echo $?; }\n\n          blocked=$(run_gate '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"}}')\n          [ \"$blocked\" = \"2\" ] || { echo \"FAIL: force-push not blocked (exit $blocked)\"; exit 1; }\n          echo \"ok: force-push blocked\"\n\n          allowed=$(run_gate '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"}}')\n          [ \"$allowed\" = \"0\" ] || { echo \"FAIL: ordinary push blocked (exit $allowed)\"; exit 1; }\n          echo \"ok: ordinary push allowed\""
+    },
+    {
+      "id": ".github/workflows/portability.yml#74-actions-checkout-v4",
+      "kind": "ci_step",
+      "name": "actions/checkout@v4",
+      "source": ".github/workflows/portability.yml:74",
+      "raw": "      - uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/portability.yml#78-l3-trust-gate",
+      "kind": "ci_step",
+      "name": "L3 trust gate",
+      "source": ".github/workflows/portability.yml:78",
+      "raw": "      - name: L3 trust gate\n        run: make BSTACK= bstack-l3-trust"
+    },
+    {
+      "id": ".github/workflows/portability.yml#81-pre-commit-hook-degrades-without-bstack",
+      "kind": "ci_step",
+      "name": "Pre-commit hook degrades without bstack",
+      "source": ".github/workflows/portability.yml:81",
+      "raw": "      - name: Pre-commit hook degrades without bstack\n        run: bash .githooks/pre-commit"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "video/package.json#studio",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Remotion dev server process, which runs until interrupted",
+        "actorCanWrite": false,
+        "argument": "A long-running interactive development server. It has no terminal state, so it cannot report pass or fail about anything. Same shape as the framework-dev-server-script probe."
+      },
+      "evidence": [
+        "video/package.json: \"studio\": \"remotion studio\""
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "video/package.json#render",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Remotion/esbuild toolchain writing an output file",
+        "actorCanWrite": false,
+        "argument": "The command exists to produce keel-explainer.mp4. Its exit status is consumed by nothing \u2014 no workflow invokes it and no other target depends on it \u2014 and success means \"it rendered\", never that any property of the repository holds. Closest shape in the library is artifact-publish-upload (not_a_check), not packaging-build-invocation, which is anchored only where a build acts AS A GATE. Named vacuousness: a broken composition would be caught by a human watching the video, not by this edge."
+      },
+      "evidence": [
+        "video/package.json",
+        "no workflow references video/ (grep over .github/workflows)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "video/package.json#render-pitch",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Remotion/esbuild toolchain writing an output file",
+        "actorCanWrite": false,
+        "argument": "The command exists to produce keel-pitch-60.mp4. Its exit status is consumed by nothing \u2014 no workflow invokes it and no other target depends on it \u2014 and success means \"it rendered\", never that any property of the repository holds. Closest shape in the library is artifact-publish-upload (not_a_check), not packaging-build-invocation, which is anchored only where a build acts AS A GATE. Named vacuousness: a broken composition would be caught by a human watching the video, not by this edge."
+      },
+      "evidence": [
+        "video/package.json",
+        "no workflow references video/ (grep over .github/workflows)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "video/package.json#still",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Remotion/esbuild toolchain writing an output file",
+        "actorCanWrite": false,
+        "argument": "The command exists to produce still.png. Its exit status is consumed by nothing \u2014 no workflow invokes it and no other target depends on it \u2014 and success means \"it rendered\", never that any property of the repository holds. Closest shape in the library is artifact-publish-upload (not_a_check), not packaging-build-invocation, which is anchored only where a build acts AS A GATE. Named vacuousness: a broken composition would be caught by a human watching the video, not by this edge."
+      },
+      "evidence": [
+        "video/package.json",
+        "no workflow references video/ (grep over .github/workflows)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#help",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "grep -hE over $(MAKEFILE_LIST) piped to awk, reformatting the ## doc-comments",
+        "actorCanWrite": false,
+        "argument": "The output is the Makefile's own `## ` comments re-printed. Nothing about the repository is compared against anything, and the exit status is awk's formatting status, so no state of the world can flip it."
+      },
+      "evidence": [
+        "Makefile: help target body is a grep|awk pipeline over MAKEFILE_LIST"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#doctor",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "bstack doctor.sh, which the target documents as always exiting 0",
+        "actorCanWrite": false,
+        "argument": "The target's own doc-comment reads \"always exits 0\". A signal that cannot vary carries no information, so this is not_a_check by falsifiability rather than by content \u2014 the report it prints may be useful to a human, but no state of the world turns this red."
+      },
+      "evidence": [
+        "Makefile: \"doctor: ## bstack primitive-contract compliance report (needs bstack; always exits 0)\""
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-check",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "bstack doctor.sh --strict comparing AGENTS.md against CLAUDE.md",
+        "actorCanWrite": true,
+        "argument": "The oracle is paperwork against paperwork: the checks are of the form \"a `### P-N` section exists in AGENTS.md\" and \"a matching `| P-N |` row exists in CLAUDE.md\". Both files are in the tree of the PR being verified, so the way to make the gate green is to type the row. The runtime honestly produces the exit code, but the actor authored both sides of the comparison."
+      },
+      "evidence": [
+        "Makefile: bstack-check runs doctor.sh --strict",
+        "CLAUDE.md and AGENTS.md are both author-written"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#portability-check",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bash + grep -nE scanning the actual bytes of every file in `git ls-files`, with the script's fail flag driving exit 1",
+        "actorCanWrite": false,
+        "argument": "The signal is grep matching committed bytes, so a contributor who commits a machine-specific path cannot make the scan report clean without editing scripts/portability-check.sh itself. The same script runs in portability.yml on a fresh ubuntu-latest checkout with none of the author's tooling present, and that job is now a REQUIRED status check, so a non-zero exit blocks the merge. Documented limit: the oracle (which paths count, and the 80-file exemption list) is authored in-repo."
+      },
+      "evidence": [
+        "Makefile: portability-check -> scripts/portability-check.sh",
+        ".github/workflows/portability.yml:25 runs the same script",
+        "ruleset 19744979 requires \"no machine-specific paths\""
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#design-audit",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "python3 executing design-audit.py \u2014 regex scans and byte comparisons over the real governed files, returning 1 when the failures list is non-empty",
+        "actorCanWrite": false,
+        "argument": "The exit code comes from the interpreter reading files on disk, so someone adding a raw literal cannot make the scan report clean without editing scripts/design-audit.py. test.yml:93 invokes THIS target, and test (ubuntu-latest) is a required check, so this is the edge that blocks the merge rather than a target that could have. Documented limits: the rules are authored in-repo and checks 1-2 carry an `audit-ok:` per-line escape hatch."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:93 \"run: make design-audit\"",
+        "ruleset 19744979 requires \"test (ubuntu-latest)\"",
+        "observed: 15 governed file(s) clean"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#design-sync",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "design-audit.py --fix-sync, which rewrites site/ token copies in place",
+        "actorCanWrite": false,
+        "argument": "A rewriter, not an assertion \u2014 it makes the files agree rather than reporting whether they did. Same shape as a formatter that only rewrites. The checking counterpart is `make design-audit`, classified separately."
+      },
+      "evidence": [
+        "Makefile: design-sync -> design-audit.py --fix-sync"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#janitor",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git plumbing (merge-base --is-ancestor, commit-tree + cherry) over origin/main",
+        "actorCanWrite": false,
+        "argument": "The target answers a housekeeping question (dry-run) \u2014 which local branches already landed and which worktrees are orphaned \u2014 and prints the list. Control reaches an unconditional exit 0 at branch-janitor.sh:214, so no finding can turn it red. Nothing here asserts the repository is correct."
+      },
+      "evidence": [
+        "scripts/branch-janitor.sh:214 unconditional exit 0"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#janitor-apply",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git plumbing (merge-base --is-ancestor, commit-tree + cherry) over origin/main",
+        "actorCanWrite": false,
+        "argument": "The target answers a housekeeping question (--apply) \u2014 which local branches already landed and which worktrees are orphaned \u2014 and prints the list. Control reaches an unconditional exit 0 at branch-janitor.sh:214, so no finding can turn it red. Nothing here asserts the repository is correct."
+      },
+      "evidence": [
+        "scripts/branch-janitor.sh:214 unconditional exit 0"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-primitive-lint",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "python3 bstack-primitive-lint.py comparing AGENTS.md section structure against CLAUDE.md table rows",
+        "actorCanWrite": true,
+        "argument": "The script opens only AGENTS.md and CLAUDE.md and compares them to each other: every `### P-N` must carry the literal strings **What**/**How**/**Why**/**Invariant**, and each must have a `| P-N |` row. Both documents sit in the tree the gate is verifying, so the fix for a red is always \"write the missing prose\". Doc validated against doc."
+      },
+      "evidence": [
+        "scripts/bstack-primitive-lint.py reads AGENTS.md and CLAUDE.md only"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-rule-of-three",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "python3 bstack-rule-of-three.py regexing a ledger table in research/entities/",
+        "actorCanWrite": true,
+        "argument": "\"This pattern recurred 3+ times\" is established by matching a string a human typed into a ledger markdown file. The evidence and the claim are the same write. Additionally inert here: the Makefile documents that Keel promotes no primitives, so the ledger does not exist and the script fails on a missing file rather than on a real violation \u2014 which is why bstack-l3-trust deliberately does not wire it."
+      },
+      "evidence": [
+        "Makefile comment block: \"G-L3-2 rule-of-three not run: no primitives are promoted in this repo\""
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "Makefile#bstack-l3-trust",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "an aggregate of one child, bstack-primitive-lint, plus three echo lines",
+        "actorCanWrite": true,
+        "argument": "A green aggregate: do not classify the wrapper, descend. Its only real child is bstack-primitive-lint, whose signal is AGENTS.md compared against CLAUDE.md \u2014 the same two files a governance PR edits. The three `@echo` lines cannot fail. So the aggregate is exactly as grounded as its one self-referential child."
+      },
+      "evidence": [
+        "Makefile: bstack-l3-trust: bstack-primitive-lint, then three @echo lines"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#test",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Bun test-runner process executing 297 tests on a runner the PR author does not control \u2014 reached THROUGH this declaration",
+        "actorCanWrite": false,
+        "argument": "Routed since ec00242. test.yml:82 now runs `bun run test` rather than a second copy of `bun test`, so this declaration IS the command the required check executes: the runtime decides the exit code and a red blocks the merge. Before the route the same two commands lived in two places and only the workflow copy gated anything, which made this node a statement of intent \u2014 the corpus classified it self_referential at 44f7e8d6 for exactly that reason. THE DOCUMENTED LIMIT is unchanged and is the honest one: only the EXECUTION axis is anchored. The oracle is authored in-repo beside the implementation, so a green run proves the code does what these tests say, not that they say the right thing."
+      },
+      "evidence": [
+        "package.json: \"test\": \"bun test\"",
+        ".github/workflows/test.yml:82-83 \u2014 run: bun run test",
+        "ruleset 19744979 requires test (ubuntu-latest) and test (macos-latest)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "package.json#typecheck",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the TypeScript compiler analysing the tree \u2014 reached THROUGH this declaration",
+        "actorCanWrite": false,
+        "argument": "Routed since ec00242: test.yml:85 runs `bun run typecheck`, so the declared script is the edge the required check executes. A type error is decided by tsc reading the source and cannot be argued into a zero exit. Limit: it checks type consistency, not behaviour, and the annotations are authored in-repo \u2014 an internally consistent wrong type still passes."
+      },
+      "evidence": [
+        "package.json: \"typecheck\": \"tsc --noEmit\"",
+        ".github/workflows/test.yml:85-86 \u2014 run: bun run typecheck"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#31-checkout-pr-head",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action provisioning the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning: it places code or a toolchain on the runner. It can fail on infrastructure, but it asserts nothing about whether the repository is correct."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml \u2014 actions/checkout@v4"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#36-set-up-python-3-11",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/setup-python@v5 action provisioning the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning: it places code or a toolchain on the runner. It can fail on infrastructure, but it asserts nothing about whether the repository is correct."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml \u2014 actions/setup-python@v5"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#41-install-bstack-skill-snapshot",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git clone of https://github.com/broomva/bstack.git at whatever main points to",
+        "actorCanWrite": false,
+        "argument": "Provisioning \u2014 it fetches a dependency and exports BSTACK. It asserts nothing about this repository. Worth recording though it does not change the class: the clone is pinned to a mutable third-party HEAD and the enclosing job holds pull-requests: write, so a compromise upstream executes here. That is a supply-chain finding, not a grounding one."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml:44-48 \u2014 git clone --depth 1, no ref or SHA",
+        ".github/workflows/l3-stability.yml:27-29 \u2014 permissions: pull-requests: write"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#52-compute-lambda-rcs-stability-budget",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a bstack shell script whose status is captured into a step output, followed by an unconditional `exit 0`",
+        "actorCanWrite": false,
+        "argument": "The Compute lambda step ends in a literal unconditional `exit 0` \u2014 `set +e` captures the real status into $GITHUB_OUTPUT and the step then always succeeds. A step that cannot vary asserts nothing, so it is not_a_check by falsifiability even though its captured value is meaningful downstream. The edge that CAN fail is \"Set final status\", classified separately. NOTE: the corpus judged this self_referential at 44f7e8d6, reasoning from the author-written constants; the `exit 0` is the more decisive structural fact and it moves the node OUT of the denominator, which is the shoppable direction \u2014 recorded here explicitly rather than silently."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml \u2014 Compute lambda step body ends \"exit 0\""
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#68-run-l3-rate-gate",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a bstack shell script whose status is captured into a step output, followed by an unconditional `exit 0`",
+        "actorCanWrite": false,
+        "argument": "The Run L3 rate gate step ends in a literal unconditional `exit 0` \u2014 `set +e` captures the real status into $GITHUB_OUTPUT and the step then always succeeds. A step that cannot vary asserts nothing, so it is not_a_check by falsifiability even though its captured value is meaningful downstream. The edge that CAN fail is \"Set final status\", classified separately. NOTE: the corpus judged this self_referential at 44f7e8d6, reasoning from the author-written constants; the `exit 0` is the more decisive structural fact and it moves the node OUT of the denominator, which is the shoppable direction \u2014 recorded here explicitly rather than silently."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml \u2014 Run L3 rate gate step body ends \"exit 0\""
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#83-comment-on-pr",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "actions/github-script rendering a verdict string built from this job's own step outputs",
+        "actorCanWrite": true,
+        "argument": "The step posts an authoritative-looking merge recommendation (\"composite system unstable; do not merge\" / \"All gates pass\") that a human reviewer may act on. Both the claim and its evidence are authored by this one job from constants in .control/rcs-parameters.toml \u2014 a file inside the PR's own tree, and itself one of the paths that triggers this workflow. The claim and the check are the same write."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml:83-123",
+        ".control/rcs-parameters.toml is in-tree and is a trigger path"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/l3-stability.yml#125-set-final-status",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "the shell comparing steps.compute.outputs.status against \"0\"",
+        "actorCanWrite": true,
+        "argument": "This is the only edge in the job that can turn red, so it is the gate \u2014 but descending it lands on the same actor-authored constants: exit 1 fires iff lambda_i <= 0 for numbers the PR author may edit in the same commit. Additionally it gates nothing today: this workflow is not among the required status checks, and it triggers only on governance paths."
+      },
+      "evidence": [
+        ".github/workflows/l3-stability.yml:125-133",
+        "ruleset 19744979 does not list any l3-stability check"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#27-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action provisioning the deploy job",
+        "actorCanWrite": false,
+        "argument": "Provisioning for a deployment job. Asserts nothing about correctness."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml \u2014 actions/checkout@v4"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#28-actions-configure-pages-v5",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/configure-pages@v5 action provisioning the deploy job",
+        "actorCanWrite": false,
+        "argument": "Provisioning for a deployment job. Asserts nothing about correctness."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml \u2014 actions/configure-pages@v5"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#29-actions-upload-pages-artifact-v3",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-pages-artifact packaging site/ into a Pages artifact",
+        "actorCanWrite": false,
+        "argument": "It ships an already-built directory. Same shape as artifact-publish-upload: transport, not assertion. Nothing about site/ is verified by uploading it."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:29-31 \u2014 path: site"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#32-actions-deploy-pages-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/deploy-pages publishing the artifact to GitHub Pages",
+        "actorCanWrite": false,
+        "argument": "A deployment. It runs on push to main \u2014 after the merge \u2014 so it gates nothing, and success means \"the bytes were published\", not that they are right. The honest check on the deployed site is fetching its content, which this repo has done by hand but does not wire here."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml \u2014 on: push branches [main]"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#63-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action provisioning the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning. It places the source or the toolchain on a fresh runner; it makes no claim about the code."
+      },
+      "evidence": [
+        ".github/workflows/test.yml \u2014 actions/checkout@v4"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#65-oven-sh-setup-bun-v2",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the oven-sh/setup-bun@v2 action provisioning the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning. It places the source or the toolchain on a fresh runner; it makes no claim about the code."
+      },
+      "evidence": [
+        ".github/workflows/test.yml \u2014 oven-sh/setup-bun@v2"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#69-install-toolchain-baseline",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Bun's resolver comparing bun.lock against package.json and refusing to proceed on a mismatch",
+        "actorCanWrite": false,
+        "argument": "`--frozen-lockfile` is what separates this from a plain install: the resolver will not refresh a stale lock, it exits non-zero, so the step is a falsifiable assertion that two committed files agree. An author who edits a dependency and forgets to regenerate the lock cannot make this pass without changing the tree. It runs in a required check, so the red blocks the merge. Documented limit: what is anchored is manifest/lock agreement and registry reachability \u2014 nothing about whether the code works."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:69-70 \u2014 run: bun install --frozen-lockfile",
+        "ruleset 19744979 requires test (ubuntu-latest) and test (macos-latest)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#82-bun-test",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Bun test-runner process \u2014 a failed expect() sets the process exit code, on a runner the PR author does not control",
+        "actorCanWrite": false,
+        "argument": "The runtime decides pass or fail by executing 297 tests, and no prose in the repo talks a failed assertion into a zero exit. This is now the edge that blocks the merge: it runs on a fresh ubuntu and macOS runner and both legs are REQUIRED status checks under ruleset 19744979, so a non-zero exit cannot be merged past. THE DOCUMENTED LIMIT, and it is the honest one: only the EXECUTION axis is anchored. The oracle is authored in-repo alongside the implementation, so a green run proves the code does what these tests say \u2014 not that the tests say the right thing."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:82-83 \u2014 run: bun run test",
+        "ruleset 19744979 required_status_checks: test (ubuntu-latest), test (macos-latest)",
+        "observed: 297 tests, 296 pass / 1 skip / 0 fail"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#85-tsc-noemit",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the TypeScript compiler performing deterministic analysis of the tree",
+        "actorCanWrite": false,
+        "argument": "A type error is decided by tsc reading the source; it cannot be argued out of a non-zero exit. Runs in both required legs, so it gates the merge. Documented limit: it checks type consistency, not behaviour \u2014 and the types are authored in-repo, so a wrong annotation that is internally consistent still passes."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:85-86 \u2014 run: bun run typecheck"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#93-design-adherence-gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "python3 executing design-audit.py over the real governed files, exit 1 on any failure",
+        "actorCanWrite": false,
+        "argument": "Executed analysis of bytes on disk on a fresh runner, inside a required check. Mutation-proven in this repo's history: injecting a raw hex literal into a <style> block flipped the target red and reverting restored green. Documented limit: the rules and the `audit-ok:` escape hatch are authored in-repo, so the SCOPE oracle sits inside the write boundary even though the measurement does not."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:93-95 \u2014 if ubuntu, run: make design-audit"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#100-fixture-recomputes",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a Bun one-liner recomputing groundingRatio() from the fixture's own verdicts and throwing on disagreement",
+        "actorCanWrite": false,
+        "argument": "The step recomputes the ratio from the stored verdicts and throws if the stored `grounding` block disagrees, and separately throws if any verdict carries no `writeBoundary.argument`. Both are executed comparisons whose exit code the runtime decides \u2014 a fixture edited into disagreeing with itself turns this red. It runs in a required check. Limit: it verifies internal consistency of the fixture, not that any verdict in it is correct."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:100-113"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#140-self-measurement-is-current",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bun re-running gather.ts at HEAD and comparing the edge set against the committed report, throwing on any difference",
+        "actorCanWrite": false,
+        "argument": "gather is deterministic and the runtime decides the exit code, so a PR that adds or removes a verification edge cannot leave reports/keel-current.json describing a tree that no longer exists \u2014 which is exactly what happened to the published 0.357, stale by 21 commits while asserting a defect that had been fixed. The oracle is a committed file the PR may change, and that is the property rather than a hole: it can be moved, but not silently. Runs inside a required check. THE LIMIT, and it must be stated: this proves COVERAGE is current, never that any VERDICT is. Classification is agentic and CI has no agent; a probe-only run emitting a ratio over whatever the cache decided would be the shoppable move under another name, so this edge deliberately emits no ratio at all."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:140-171",
+        "keyed on (file, kind, name), not Node.id \u2014 ids embed line numbers and would churn",
+        "ruleset 19744979 requires \"test (ubuntu-latest)\""
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#23-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action placing the source on the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning. It asserts nothing about the code it checks out."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml \u2014 uses: actions/checkout@v4"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#25-scan-committed-files-for-absolute-home-paths",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bash + grep scanning committed bytes, with the script driving exit 1",
+        "actorCanWrite": false,
+        "argument": "grep matching real file contents on a clean checkout that has none of the maintainer's tooling \u2014 the runner is outside the write boundary of anything in this repo, so a pass here is an observation rather than a local assertion. \"no machine-specific paths\" is a REQUIRED status check, so a hit blocks the merge. Limit: the exemption list (80 files) is authored in-repo, so the scope is co-authored even though the scan is not."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml:25-26",
+        "ruleset 19744979 requires \"no machine-specific paths\"",
+        "observed: scanned 278 tracked files, 80 exempt"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#32-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action placing the source on the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning. It asserts nothing about the code it checks out."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml \u2014 uses: actions/checkout@v4"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#37-run-each-hook-with-an-empty-payload",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bash executing each committed hook with an empty JSON payload; a non-zero exit fails the step under set -euo pipefail",
+        "actorCanWrite": false,
+        "argument": "Six hooks are actually EXECUTED on a bare clone with no skills and no bstack installed, and the shell's exit status decides. A hook that breaks on a machine without the maintainer's environment cannot be talked into passing. Required check, so it blocks the merge."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml:37-55",
+        "ruleset 19744979 requires \"hooks resolve on a bare clone\""
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#57-control-gate-blocks-and-allows-correctly",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bash running control-gate-hook.sh twice and comparing both exit codes",
+        "actorCanWrite": false,
+        "argument": "The strongest edge in this repo, because it asserts BOTH directions: a force-push must exit 2 and an ordinary push must exit 0. Asserting only the block would pass against a hook that denies everything, and the step says so in its own comment. Two executed invocations, two compared exit codes, on a fresh runner, inside a required check."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml:57-72"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#74-actions-checkout-v4",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action placing the source on the runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning. It asserts nothing about the code it checks out."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml \u2014 uses: actions/checkout@v4"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#78-l3-trust-gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "make bstack-l3-trust, which descends to bstack-primitive-lint comparing AGENTS.md against CLAUDE.md",
+        "actorCanWrite": true,
+        "argument": "It runs on a fresh runner inside a required check, so the EXECUTION is independent \u2014 but descend the aggregate and the oracle is doc-against-doc: AGENTS.md sections matched to CLAUDE.md table rows, both authored by whoever opened the PR. Independence of the runner does not rescue an oracle the actor writes; the way to make this green is to type the missing prose."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml:78-79 \u2014 run: make BSTACK= bstack-l3-trust",
+        "Makefile: bstack-l3-trust depends only on bstack-primitive-lint"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/portability.yml#81-pre-commit-hook-degrades-without-bstack",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "bash executing .githooks/pre-commit on a clone with no bstack present",
+        "actorCanWrite": false,
+        "argument": "The hook is really executed in an environment missing its optional dependency, and the shell's exit status decides whether it degraded gracefully. A hook that hard-fails without bstack turns this red, and it is a required check."
+      },
+      "evidence": [
+        ".github/workflows/portability.yml:81-82"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 14,
+    "selfReferential": 7,
+    "unknown": 0,
+    "notACheck": 23,
+    "ratio": 0.6666666666666666
+  },
+  "economics": {
+    "nodesTotal": 44,
+    "nodesSampled": 44,
+    "decidedByProbe": 0,
+    "decidedByAgent": 44,
+    "probesMinted": 0,
+    "probeLibrarySize": 1,
+    "tokensIn": 0,
+    "tokensOut": 0,
+    "tokensEstimated": true,
+    "wallClockMs": 0
+  }
+}

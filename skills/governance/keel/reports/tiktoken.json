@@ -1,0 +1,331 @@
+{
+  "target": "tiktoken",
+  "revision": "08a5f3b2c987ada4fc5aa1f16c643c203fa8acaa",
+  "generatedAt": "2026-07-25T03:06:06.073Z",
+  "nodes": [
+    {
+      "id": ".github/workflows/build_wheels.yml#23-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "source": ".github/workflows/build_wheels.yml:23",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#25-pypa-cibuildwheel-65b8265957fd86372d9689a0acdfd55813970d5d-v3-1-4",
+      "kind": "ci_step",
+      "name": "pypa/cibuildwheel@65b8265957fd86372d9689a0acdfd55813970d5d # v3.1.4",
+      "source": ".github/workflows/build_wheels.yml:25",
+      "raw": "      - uses: pypa/cibuildwheel@65b8265957fd86372d9689a0acdfd55813970d5d # v3.1.4\n        env:\n          CIBW_BUILD: \"cp${{ matrix.python-version}}-*\"\n          CIBW_ENABLE: cpython-freethreading",
+      "hints": {
+        "action": "pypa/cibuildwheel@65b8265957fd86372d9689a0acdfd55813970d5d # v3.1.4"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#30-cibw-wheels-matrix-os-strategy-job-index",
+      "kind": "ci_step",
+      "name": "cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}",
+      "source": ".github/workflows/build_wheels.yml:30",
+      "raw": "      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6\n        with:\n          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}\n          path: ./wheelhouse/*.whl",
+      "hints": {
+        "action": "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#46-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "source": ".github/workflows/build_wheels.yml:46",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#48-build-wheels",
+      "kind": "ci_step",
+      "name": "Build wheels",
+      "source": ".github/workflows/build_wheels.yml:48",
+      "raw": "      - name: Build wheels\n        uses: pypa/cibuildwheel@65b8265957fd86372d9689a0acdfd55813970d5d # v3.1.4\n        env:\n          CIBW_BUILD: \"cp${{ matrix.python-version}}-*\"\n          CIBW_ARCHS: aarch64\n          CIBW_BUILD_VERBOSITY: 3\n          # https://github.com/rust-lang/cargo/issues/10583\n          CIBW_ENVIRONMENT_LINUX: PATH=\"$PATH:$HOME/.cargo/bin\" CARGO_NET_GIT_FETCH_WITH_CLI=true\n          CIBW_ENABLE: cpython-freethreading",
+      "hints": {
+        "action": "pypa/cibuildwheel@65b8265957fd86372d9689a0acdfd55813970d5d # v3.1.4"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#58-cibw-wheels-aarch64-matrix-os-strategy-job-index",
+      "kind": "ci_step",
+      "name": "cibw-wheels-aarch64-${{ matrix.os }}-${{ strategy.job-index }}",
+      "source": ".github/workflows/build_wheels.yml:58",
+      "raw": "      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6\n        with:\n          name: cibw-wheels-aarch64-${{ matrix.os }}-${{ strategy.job-index }}\n          path: ./wheelhouse/*.whl",
+      "hints": {
+        "action": "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#68-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "source": ".github/workflows/build_wheels.yml:68",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#69-install-python",
+      "kind": "ci_step",
+      "name": "Install Python",
+      "source": ".github/workflows/build_wheels.yml:69",
+      "raw": "      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6\n        name: Install Python\n        with:\n          python-version: \"3.9\"",
+      "hints": {
+        "action": "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#73-run-check-manifest",
+      "kind": "ci_step",
+      "name": "Run check-manifest",
+      "source": ".github/workflows/build_wheels.yml:73",
+      "raw": "      - name: Run check-manifest\n        run: |\n          pip install check-manifest\n          check-manifest -v"
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#77-build-sdist",
+      "kind": "ci_step",
+      "name": "Build sdist",
+      "source": ".github/workflows/build_wheels.yml:77",
+      "raw": "      - name: Build sdist\n        run: |\n          pip install --upgrade build\n          python -m build --sdist"
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#81-cibw-wheels-sdist",
+      "kind": "ci_step",
+      "name": "cibw-wheels-sdist",
+      "source": ".github/workflows/build_wheels.yml:81",
+      "raw": "      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6\n        with:\n          name: cibw-wheels-sdist\n          path: ./dist/*.tar.gz",
+      "hints": {
+        "action": "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_wheels.yml#91-merge-artifacts",
+      "kind": "ci_step",
+      "name": "Merge artifacts",
+      "source": ".github/workflows/build_wheels.yml:91",
+      "raw": "     - name: Merge artifacts\n       uses: actions/upload-artifact/merge@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4\n       with:\n         name: cibw-wheels\n         pattern: cibw-wheels-*\n         delete-merged: true",
+      "hints": {
+        "action": "actions/upload-artifact/merge@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#23-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#30-cibw-wheels-matrix-os-strategy-job-index",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions artifact transport action (upload-artifact / download-artifact) moving files between jobs",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to move a file the pipeline itself produced from one job to another. Nothing about the repository is evaluated: with `if-no-files-found: error` the worst it can report is that an earlier step in the same run did not leave the file it claimed to leave, which is a fact about the plumbing, not about whether the code is correct. Whatever assertion exists in such a job is made by the step that produced the artifact or the step that consumes it, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of an artifact upload/download action with no command of its own"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "probe",
+      "probeId": "ci-artifact-transport"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#46-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#58-cibw-wheels-aarch64-matrix-os-strategy-job-index",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions artifact transport action (upload-artifact / download-artifact) moving files between jobs",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to move a file the pipeline itself produced from one job to another. Nothing about the repository is evaluated: with `if-no-files-found: error` the worst it can report is that an earlier step in the same run did not leave the file it claimed to leave, which is a fact about the plumbing, not about whether the code is correct. Whatever assertion exists in such a job is made by the step that produced the artifact or the step that consumes it, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of an artifact upload/download action with no command of its own"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "probe",
+      "probeId": "ci-artifact-transport"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#68-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#69-install-python",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#81-cibw-wheels-sdist",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions artifact transport action (upload-artifact / download-artifact) moving files between jobs",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to move a file the pipeline itself produced from one job to another. Nothing about the repository is evaluated: with `if-no-files-found: error` the worst it can report is that an earlier step in the same run did not leave the file it claimed to leave, which is a fact about the plumbing, not about whether the code is correct. Whatever assertion exists in such a job is made by the step that produced the artifact or the step that consumes it, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of an artifact upload/download action with no command of its own"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "probe",
+      "probeId": "ci-artifact-transport"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#25-pypa-cibuildwheel-65b8265957fd86372d9689a0acdfd55813970d5d-v3-1-4",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the cibuildwheel run: rustc/cargo compiling the PyO3 extension through setuptools-rust, then the pytest process exit code from `pytest {project}/tests` executed against the freshly built wheel in an isolated venv",
+        "actorCanWrite": false,
+        "argument": "The step is not a bare packaging action: pyproject.toml's [tool.cibuildwheel] table sets build-frontend=\"build\" and test-command=\"pytest {project}/tests --import-mode=append\" with before-test=\"pip install pytest hypothesis\", so for each of the 24 matrix cells cibuildwheel compiles src/*.rs into tiktoken._tiktoken (setup.py declares a RustExtension with Binding.PyO3) and then installs the resulting wheel and runs the repo's test suite against it. Both signals are exit codes emitted by toolchains — the Rust compiler and the CPython interpreter running pytest — executing over the committed source; an author cannot make a type-error in the Rust or a failing assertion report clean without changing the source or the pinned cibuildwheel/pyproject config. DOCUMENTED LIMIT (oracle axis): tests/test_*.py are authored by the same maintainers as src/, so execution independence holds while the specification lives inside the write boundary. Second limit: test-skip=\"*-macosx_arm64\" means the arm64 macOS wheels are built but never exercised, so for those cells only the compile signal exists."
+      },
+      "evidence": [
+        ".github/workflows/build_wheels.yml:25",
+        ".github/workflows/build_wheels.yml:19-20 (matrix: 3 OS x 8 python versions)",
+        "pyproject.toml:41 test-command = \"pytest {project}/tests --import-mode=append\"",
+        "pyproject.toml:40 before-test = \"pip install pytest hypothesis\"",
+        "pyproject.toml:38 test-skip = \"*-macosx_arm64\"",
+        "setup.py:6-14 RustExtension(\"tiktoken._tiktoken\", binding=Binding.PyO3)",
+        "tests/test_encoding.py, tests/test_offsets.py, tests/test_pickle.py, tests/test_simple_public.py"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#48-build-wheels",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the same cibuildwheel run on ubuntu-24.04-arm: cargo/rustc compiling the PyO3 extension for aarch64, then the pytest exit code from the configured test-command run against the built wheel",
+        "actorCanWrite": false,
+        "argument": "Identical mechanism to the x86 job, on native arm64 runners: CIBW_ARCHS=aarch64 with the shared [tool.cibuildwheel] config, so the step ends in a compile of src/*.rs plus `pytest {project}/tests` executed against the installed wheel. The pass/fail is an exit code produced by rustc and by CPython running the suite, neither of which an author can write to without changing the committed source or the pinned config. The macOS test-skip does not apply here, so every aarch64 cell that builds also runs the suite. DOCUMENTED LIMIT (oracle axis): the assertions in tests/ were authored alongside the implementation, so the runtime honestly decides pass/fail but the specification came from inside the write boundary."
+      },
+      "evidence": [
+        ".github/workflows/build_wheels.yml:48-56",
+        ".github/workflows/build_wheels.yml:42-43 (os: ubuntu-24.04-arm, 8 python versions)",
+        "pyproject.toml:21-41 [tool.cibuildwheel] test-command/before-test",
+        "setup.py:6-14"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#91-merge-artifacts",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-artifact/merge, a GitHub Actions artifact aggregation action combining artifacts the same workflow run already uploaded",
+        "actorCanWrite": null,
+        "argument": "The step's entire body is a `uses:` of the artifact merge action with a name/pattern/delete-merged config. Its only effect is to fold the cibw-wheels-* bundles that earlier jobs uploaded into a single cibw-wheels bundle; it reads none of the repository's source and evaluates no property of it, so its failure modes are 'no artifact matched the pattern' or 'the artifact API errored' — facts about run plumbing, not about whether tiktoken is correct. The real gate in this job is the `needs: [build_wheels, build_wheels_aarch64, build_sdist]` edge, whose signal is produced by those jobs and is classified where it is emitted, not here. Filing this in the ratio in either direction would credit or penalize the score for a file copy."
+      },
+      "evidence": [
+        ".github/workflows/build_wheels.yml:91-96",
+        ".github/workflows/build_wheels.yml:89 needs: [build_wheels, build_wheels_aarch64, build_sdist]"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#73-run-check-manifest",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the check-manifest process exit code, comparing the sdist that the build backend produces against the file list git reports as tracked",
+        "actorCanWrite": false,
+        "argument": "DELIBERATE RE-JUDGEMENT of a probe verdict — the `unfrozen-dependency-install` probe filed this not_a_check on the strength of the `pip install check-manifest` line, but that line is only the setup; the payload of the step is the second line, `check-manifest -v`, which builds an sdist from the checkout and diffs its contents against `git ls-files`, exiting non-zero when a tracked file is missing from the sdist or an untracked one appears. The two sides of the comparison are produced by two independent processes (setuptools packaging under MANIFEST.in, and git's index) and an author cannot make a stale MANIFEST.in report clean without changing MANIFEST.in or the tracked files themselves. LIMIT: check-manifest is installed unpinned from PyPI at run time, so the exact rule set is not frozen in the repo — the producer is still outside the write boundary (further outside, in fact), but the behaviour can drift between runs without a repo change."
+      },
+      "evidence": [
+        ".github/workflows/build_wheels.yml:73-76",
+        "MANIFEST.in:1-8",
+        "pyproject.toml:17-19 build-backend = setuptools.build_meta"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_wheels.yml#77-build-sdist",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the `python -m build --sdist` exit code — CPython running the setuptools build backend in an isolated environment over the committed pyproject.toml/setup.py/MANIFEST.in",
+        "actorCanWrite": false,
+        "argument": "DELIBERATE RE-JUDGEMENT of a probe verdict — `unfrozen-dependency-install` claimed this as not_a_check because the raw contains `pip install --upgrade build`, but that is the setup line; the step's payload is `python -m build --sdist`, an executed packaging build. (The `packaging-build-invocation` probe, which would have called this anchored, correctly abstained on the same 'pip install' token, so the node was decided by the weaker of two matches.) The exit code is emitted by the interpreter resolving the build-system requires (setuptools>=62.4, wheel, setuptools-rust>=1.5.2) and running the backend against the checkout; malformed metadata or an unresolvable backend requirement fails the step and no author can talk it green. LIMIT, named because it is thin: an sdist build packages sources and does not compile the Rust extension, so this edge asserts that the packaging metadata is well-formed, not that the code works — the compile-and-test signal lives in the cibuildwheel jobs."
+      },
+      "evidence": [
+        ".github/workflows/build_wheels.yml:77-80",
+        "pyproject.toml:17-19 requires = [\"setuptools>=62.4\", \"wheel\", \"setuptools-rust>=1.5.2\"]",
+        "setup.py:1-19"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 4,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 8,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 12,
+    "nodesSampled": 12,
+    "decidedByProbe": 7,
+    "decidedByAgent": 5,
+    "probesMinted": 2,
+    "probeLibrarySize": 17,
+    "tokensIn": 892,
+    "tokensOut": 1987,
+    "tokensEstimated": true,
+    "wallClockMs": 284519
+  }
+}

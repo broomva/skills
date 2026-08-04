@@ -1,0 +1,5 @@
+{
+  "label": "synthetic re-run where one target RATIO moved",
+  "synthetic": true,
+  "note": "Identical to shuffled/ except synthetic/target-03 comes back 0.609 -> 0.261. Exercises the finding branch of the shuffle check: order-dependent verdicts are a probe-generality bug and must be surfaced."
+}

@@ -1,0 +1,619 @@
+{
+  "target": "karaoke-gen",
+  "revision": "c94abbf7f44c8465d78a19379260670b38c8ea36",
+  "generatedAt": "2026-07-26T18:51:29.365Z",
+  "nodes": [
+    {
+      "id": "codecov.yml#codecov-yml",
+      "kind": "ci_step",
+      "name": "coverage gate (codecov.yml)",
+      "source": "codecov.yml",
+      "raw": "# Codecov Configuration\n# Docs: https://docs.codecov.com/docs/codecovyml-reference\n\ncoverage:\n  # Coverage value precision (2 decimal places)\n  precision: 2\n  round: down\n  # Green range starts at 70% (our target)\n  range: \"70...100\"\n  \n  status:\n    # Project-level coverage status check\n    project:\n      default:\n        target: 70%        # Pass if coverage >= 70%\n        threshold: 2%      # Allow 2% drop without failing\n        if_ci_failed: error\n    \n    # Patch coverage (new/changed lines only)\n    patch:\n      default:\n        target: 70%        # New code should also meet 70%\n        threshold: 5%      # More lenient for patches\n        only_pulls: true   # Only run on PRs, not on main branch pushes\n\n# Disable PR comments entirely since we're satisfied with 70%+ coverage\n# Status checks will still appear on the PR\ncomment: false\n\n# Alternative: Uncomment below to only comment when coverage changes\n# comment:\n#   layout: \"diff, flags, files\"\n#   behavior: default\n#   require_changes: true   # Only comment if coverage actually changes\n#   require_base: true      # Require base report to exist\n\n"
+    },
+    {
+      "id": "frontend/jest.config.js#jest-config-js",
+      "kind": "test_target",
+      "name": "test runner config (jest.config.js)",
+      "source": "frontend/jest.config.js",
+      "raw": "const nextJest = require('next/jest')\n\nconst createJestConfig = nextJest({\n  // Provide the path to your Next.js app to load next.config.js and .env files in your test environment\n  dir: './',\n})\n\n// Add any custom config to be passed to Jest\nconst customJestConfig = {\n  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],\n  testEnvironment: 'jest-environment-jsdom',\n  moduleNameMapper: {\n    '^@/(.*)$': '<rootDir>/$1',\n    '^nanoid$': '<rootDir>/node_modules/nanoid/index.cjs',\n  },\n  testMatch: [\n    '**/__tests__/**/*.test.[jt]s?(x)',\n  ],\n  testPathIgnorePatterns: [\n    '/node_modules/',\n    '/e2e/',  // E2E tests run via Playwright, not Jest\n  ],\n  // Allow Jest to transform ESM packages (next-intl uses ESM exports)\n  transformIgnorePatterns: [\n    '/node_modules/(?!(next-intl|use-intl)/)',\n  ],\n  collectCoverageFrom: [\n    'components/**/*.{js,jsx,ts,tsx}',\n    'lib/**/*.{js,jsx,ts,tsx}',\n    'app/**/*.{js,jsx,ts,tsx}',\n    '!**/*.d.ts',\n    '!**/node_modules/**',\n    '!**/.next/**',\n    '!**/out/**',\n  ],\n}\n\n// createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async\n// We must override transformIgnorePatterns AFTER next/jest generates its config,\n// because next/jest's defaults would otherwise re-add next-intl to the ignore list.\nmodule.exports = async () => {\n  const jestConfig = await createJestConfig(customJestConfig)()\n  jestConfig.transformIgnorePatterns = [\n    '/node_modules/(?!(next-intl|use-intl|@formatjs|intl-messageformat)/)',\n  ]\n  return jestConfig\n}\n\n"
+    },
+    {
+      "id": "frontend/package.json#prebuild",
+      "kind": "script",
+      "name": "prebuild",
+      "source": "frontend/package.json",
+      "raw": "\"prebuild\": \"node scripts/write-version.mjs\""
+    },
+    {
+      "id": "frontend/package.json#build",
+      "kind": "script",
+      "name": "build",
+      "source": "frontend/package.json",
+      "raw": "\"build\": \"next build && node scripts/spa-redirect-404.js\""
+    },
+    {
+      "id": "frontend/package.json#dev",
+      "kind": "script",
+      "name": "dev",
+      "source": "frontend/package.json",
+      "raw": "\"dev\": \"next dev\""
+    },
+    {
+      "id": "frontend/package.json#dev-with-lyrics",
+      "kind": "script",
+      "name": "dev:with-lyrics",
+      "source": "frontend/package.json",
+      "raw": "\"dev:with-lyrics\": \"concurrently -n karaoke,lyrics -c blue,green \"npm run dev\" \"npm run dev:lyrics\"\""
+    },
+    {
+      "id": "frontend/package.json#dev-lyrics",
+      "kind": "script",
+      "name": "dev:lyrics",
+      "source": "frontend/package.json",
+      "raw": "\"dev:lyrics\": \"cd ../lyrics_transcriber_temp/lyrics_transcriber/frontend && npm run dev\""
+    },
+    {
+      "id": "frontend/package.json#lint",
+      "kind": "script",
+      "name": "lint",
+      "source": "frontend/package.json",
+      "raw": "\"lint\": \"eslint .\""
+    },
+    {
+      "id": "frontend/package.json#start",
+      "kind": "script",
+      "name": "start",
+      "source": "frontend/package.json",
+      "raw": "\"start\": \"next start\""
+    },
+    {
+      "id": "frontend/package.json#test",
+      "kind": "script",
+      "name": "test",
+      "source": "frontend/package.json",
+      "raw": "\"test\": \"jest --watch\""
+    },
+    {
+      "id": "frontend/playwright.config.ts#playwright-config-ts",
+      "kind": "test_target",
+      "name": "test runner config (playwright.config.ts)",
+      "source": "frontend/playwright.config.ts",
+      "raw": "import { defineConfig, devices } from '@playwright/test';\nimport * as fs from 'fs';\nimport * as path from 'path';\n\n// Load .env.local file if it exists (for KARAOKE_ACCESS_TOKEN)\nconst envLocalPath = path.join(__dirname, '.env.local');\nif (fs.existsSync(envLocalPath)) {\n  const envContent = fs.readFileSync(envLocalPath, 'utf-8');\n  for (const line of envContent.split('\\n')) {\n    const trimmed = line.trim();\n    if (trimmed && !trimmed.startsWith('#')) {\n      const [key, ...valueParts] = trimmed.split('=');\n      const value = valueParts.join('=');\n      if (key && value && !process.env[key]) {\n        process.env[key] = value;\n      }\n    }\n  }\n}\n\n// Generate a stable port per worktree directory to avoid cross-worktree conflicts.\n// Each worktree gets a unique port in the 3100-3199 range based on a hash of __dirname.\n// Override with E2E_PORT env var, e.g.: E2E_PORT=3001 npx playwright test\nconst DEFAULT_PORT = (() => {\n  const dir = __dirname;\n  let hash = 0;\n  for (let i = 0; i < dir.length; i++) {\n    hash = ((hash << 5) - hash + dir.charCodeAt(i)) | 0;\n  }\n  return 3100 + (Math.abs(hash) % 100); // 3100-3199\n})();\nconst PORT = process.env.E2E_PORT || String(DEFAULT_PORT);\n// Use 127.0.0.1 instead of localhost to avoid IPv6 resolution issues on macOS.\n// localhost resolves to ::1 (IPv6) first, but Next.js dev server may not accept\n// IPv6 connections, causing Playwright's webServer health check to hang.\nconst BASE_URL = `http://127.0.0.1:${PORT}`;\n\n/**\n * Playwright configuration for karaoke-gen frontend E2E tests.\n *\n * DEFAULT: Runs regression tests with mocked API (CI-safe, offline).\n * Tests run against the local dev server with mocked API responses.\n *\n * Port configuration:\n *   E2E_PORT=3001 npx playwright test  # Run on custom port\n *\n * For production tests: use playwright.production.config.ts\n * For fixture recording: use playwright.record.config.ts\n */\nexport default defineConfig({\n  testDir: './e2e/regression',\n\n  // Run tests in parallel for faster CI\n  fullyParallel: true,\n\n  // Fail the build on CI if you accidentally left test.only in the source code\n  forbidOnly: !!process.env.CI,\n\n  // Retry on CI only\n  retries: process.env.CI ? 2 : 0,\n\n  // Single worker for now to avoid conflicts with real backend\n  workers: 1,\n\n  // Reporter to use\n  reporter: [\n    ['html', { open: 'never' }],\n    ['list'],\n  ],\n\n  // Shared settings for all tests\n  use: {\n    // Base URL for the local dev server (configurable via E2E_PORT)\n    baseURL: BASE_URL,\n\n    // Collect trace on failure for debugging\n    trace: 'on-first-retry',\n\n    // Screenshot on failure\n    screenshot: 'only-on-failure',\n\n    // Video recording (set to 'on' to always record, 'on-first-retry' for failures only)\n    video: 'on',\n\n    // Increase timeout for real API calls\n    actionTimeout: 30000,\n\n    // Log network requests\n    extraHTTPHeaders: {\n      'x-playwright-test': 'true',\n    },\n  },\n\n  // Longer timeout for tests hitting real backend\n  timeout: 120000, // 2 minutes per test\n\n  // Expect timeout for assertions\n  expect: {\n    timeout: 30000, // 30 seconds for expects\n  },\n\n  // Configure projects (browsers)\n  // Regression tests only use Chromium for CI speed\n  // Mobile tests set their own viewport sizes within tests\n  projects: [\n    {\n      name: 'chromium',\n      use: { ...devices['Desktop Chrome'] },\n    },\n  ],\n\n  // Run local dev server before starting tests\n  webServer: {\n    command: `npm run dev -- -p ${PORT}`,\n    url: BASE_URL,\n    reuseExistingServer: !process.env.CI,\n    timeout: 120000,\n  },\n});\n"
+    },
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:169",
+      "raw": "[tool.pytest.ini_options]\ntestpaths = [\"tests/unit\", \"tests/integration\", \"backend/tests\"]\npython_files = [\"test_*.py\"]\naddopts = [\n    \"--asyncio-mode=auto\",\n    \"-v\",\n    \"--tb=short\",\n]\nmarkers = [\n    \"slow: marks tests as slow (deselect with '-m \\\"not slow\\\"')\",\n    \"integration: marks tests as integration tests\",\n    \"asyncio: mark test as async\",\n    \"emulator: marks tests requiring GCP emulators\",\n]\nfilterwarnings = [\n    \"ignore::DeprecationWarning\",\n    \"ignore:'audioop' is deprecated:DeprecationWarning\",\n    \"ignore::RuntimeWarning\",\n    \"ignore::UserWarning\",\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "pyproject.toml:190",
+      "raw": "[tool.coverage.run]\n# Exclude lyrics_transcriber subpackage from coverage since it was a separate vendored package\n# with its own test suite - including it in karaoke_gen coverage would unfairly lower the percentage\nomit = [\n    \"karaoke_gen/lyrics_transcriber/*\",\n]"
+    },
+    {
+      "id": "tests/unit/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/unit/conftest.py",
+      "raw": "import os\nimport pytest\nimport tempfile\nimport logging\nfrom unittest.mock import MagicMock\nfrom karaoke_gen.karaoke_gen import KaraokePrep\nfrom karaoke_gen.style_loader import (\n    DEFAULT_INTRO_STYLE,\n    DEFAULT_END_STYLE,\n    DEFAULT_KARAOKE_STYLE,\n    DEFAULT_CDG_STYLE,\n)\nimport inspect\n\n@pytest.fixture\ndef mock_logger():\n    \"\"\"Return a mock logger for testing.\"\"\"\n    return MagicMock(spec=logging.Logger)\n\n@pytest.fixture\ndef mock_ffmpeg():\n    \"\"\"Return a mock for os.system to avoid executing ffmpeg commands.\"\"\"\n    return MagicMock()\n\n@pytest.fixture\ndef temp_dir():\n    \"\"\"Create a temporary directory for test files.\"\"\"\n    with tempfile.TemporaryDirectory() as temp_dir:\n        yield temp_dir\n\n@pytest.fixture\ndef complete_theme():\n    \"\"\"\n    Return a complete theme with all required sections and fields.\n\n    This is the standard fixture for testing code that requires themes.\n    Use this instead of relying on DEFAULT_* constants with fallback logic.\n    \"\"\"\n    return {\n        \"intro\": DEFAULT_INTRO_STYLE.copy(),\n        \"end\": DEFAULT_END_STYLE.copy(),\n        \"karaoke\": DEFAULT_KARAOKE_STYLE.copy(),\n        \"cdg\": DEFAULT_CDG_STYLE.copy(),\n    }\n\n@pytest.fixture\ndef basic_karaoke_gen(mock_logger, mock_ffmpeg, temp_dir):\n    \"\"\"Return a basic KaraokePrep instance for testing.\"\"\"\n    with MagicMock() as mock_os_system:\n        # Create a KaraokePrep instance with required artist/title and a mock logger\n        karaoke_gen = KaraokePrep(\n            logger=mock_logger,\n            artist=\"Test Artist\",\n            title=\"Test Title\",\n            output_dir=temp_dir,\n        )\n        \n        # Replace the ffmpeg_base_command with a mock\n        karaoke_gen.ffmpeg_base_command = \"mock_ffmpeg\"\n        \n        # Mock os.system to avoid executing commands\n        karaoke_gen._os_system = mock_os_system\n        \n        yield karaoke_gen\n\ndef pytest_collection_modifyitems(items):\n    \"\"\"Mark async tests with asyncio marker.\"\"\"\n    for item in items:\n        if inspect.iscoroutinefunction(item.obj):\n            item.add_marker(pytest.mark.asyncio)\n"
+    },
+    {
+      "id": "tests/unit/test_instrumental_review/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/unit/test_instrumental_review/conftest.py",
+      "raw": "\"\"\"\nTest fixtures for instrumental_review tests.\n\nThis module provides pytest fixtures that generate test audio files\nprogrammatically using pydub. This avoids the need for static test\naudio files in the repository.\n\"\"\"\n\nimport os\nimport math\nimport tempfile\nfrom pathlib import Path\nfrom typing import Generator\n\nimport pytest\nfrom pydub import AudioSegment\nfrom pydub.generators import Sine, WhiteNoise\n\n\n@pytest.fixture\ndef temp_dir() -> Generator[str, None, None]:\n    \"\"\"Create a temporary directory for test files.\"\"\"\n    with tempfile.TemporaryDirectory() as temp_dir:\n        yield temp_dir\n\n\n@pytest.fixture\ndef silent_audio_path(temp_dir: str) -> str:\n    \"\"\"\n    Create a silent audio file (10 seconds).\n    \n    This represents backing vocals with no audible content.\n    \"\"\"\n    duration_ms = 10000  # 10 seconds\n    \n    # Create silent audio\n    audio = AudioSegment.silent(duration=duration_ms, frame_rate=44100)\n    \n    # Save to file\n    output_path = os.path.join(temp_dir, \"silent_backing_vocals.flac\")\n    audio.export(output_path, format=\"flac\")\n    \n    return output_path\n\n\n@pytest.fixture\ndef loud_audio_path(temp_dir: str) -> str:\n    \"\"\"\n    Create an audio file with consistent audible content (10 seconds).\n    \n    This represents backing vocals with clear, continuous content.\n    \"\"\"\n    duration_ms = 10000  # 10 seconds\n    \n    # Create a sine wave tone\n    tone = Sine(440).to_audio_segment(duration=duration_ms)\n    \n    # Reduce volume to -10dB\n    tone = tone - 10\n    \n    # Save to file\n    output_path = os.path.join(temp_dir, \"loud_backing_vocals.flac\")\n    tone.export(output_path, format=\"flac\")\n    \n    return output_path\n\n\n@pytest.fixture\ndef mixed_audio_path(temp_dir: str) -> str:\n    \"\"\"\n    Create an audio file with alternating silent and audible sections.\n    \n    Pattern: 2s silent, 3s audible, 2s silent, 3s audible = 10s total\n    \n    This represents backing vocals with some good sections and some\n    sections that might need muting.\n    \"\"\"\n    # Create segments\n    silence1 = AudioSegment.silent(duration=2000, frame_rate=44100)  # 2s\n    tone1 = Sine(440).to_audio_segment(duration=3000) - 15  # 3s at -15dB\n    silence2 = AudioSegment.silent(duration=2000, frame_rate=44100)  # 2s\n    tone2 = Sine(880).to_audio_segment(duration=3000) - 15  # 3s at -15dB\n    \n    # Combine\n    audio = silence1 + tone1 + silence2 + tone2\n    \n    # Save to file\n    output_path = os.path.join(temp_dir, \"mixed_backing_vocals.flac\")\n    audio.export(output_path, format=\"flac\")\n    \n    return output_path\n\n\n@pytest.fixture\ndef quiet_audio_path(temp_dir: str) -> str:\n    \"\"\"\n    Create an audio file with very quiet content (below -40dB threshold).\n    \n    This represents backing vocals that technically have content but\n    are quiet enough to be considered silent.\n    \"\"\"\n    duration_ms = 10000  # 10 seconds\n    \n    # Create a very quiet sine wave (-50dB)\n    tone = Sine(440).to_audio_segment(duration=duration_ms)\n    tone = tone - 50  # Very quiet\n    \n    # Save to file\n    output_path = os.path.join(temp_dir, \"quiet_backing_vocals.flac\")\n    tone.export(output_path, format=\"flac\")\n    \n    return output_path\n\n\n@pytest.fixture\ndef clean_instrumental_path(temp_dir: str) -> str:\n    \"\"\"\n    Create a clean instrumental audio file.\n    \n    This is used for testing the audio editor.\n    \"\"\"\n    duration_ms = 10000  # 10 seconds\n    \n    # Create a chord-like sound (multiple frequencies)\n    tone1 = Sine(220).to_audio_segment(duration=duration_ms) - 12  # A\n    tone2 = Sine(277).to_audio_segment(duration=duration_ms) - 12  # C#\n    tone3 = Sine(330).to_audio_segment(duration=duration_ms) - 12  # E\n    \n    # Mix the tones\n    chord = tone1.overlay(tone2).overlay(tone3)\n    \n    # Save to file\n    output_path = os.path.join(temp_dir, \"clean_instrumental.flac\")\n    chord.export(output_path, format=\"flac\")\n    \n    return output_path\n\n\n@pytest.fixture\ndef backing_vocals_with_issues_path(temp_dir: str) -> str:\n    \"\"\"\n    Crea"
+    },
+    {
+      "id": "backend/pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "backend/pyproject.toml:1",
+      "raw": "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\npython_files = [\"test_*.py\"]\npython_classes = [\"Test*\"]\npython_functions = [\"test_*\"]\naddopts = [\n    \"-v\",\n    \"--tb=short\",\n    \"--strict-markers\",\n    \"-ra\",\n]\n\nmarkers = [\n    \"slow: marks tests as slow (deselect with '-m \\\"not slow\\\"')\",\n    \"integration: marks tests as integration tests requiring live service\",\n]\n\n# Timeout for slow tests (in seconds)\ntimeout = 300"
+    },
+    {
+      "id": "backend/pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "backend/pyproject.toml:21",
+      "raw": "[tool.coverage.run]\nsource = [\"backend\"]\nomit = [\"*/tests/*\", \"*/test_*\"]"
+    },
+    {
+      "id": "backend/pyproject.toml#tool-coverage-report",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.report])",
+      "source": "backend/pyproject.toml:25",
+      "raw": "[tool.coverage.report]\nprecision = 2\nshow_missing = true\nskip_covered = false"
+    },
+    {
+      "id": "backend/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "backend/tests/conftest.py",
+      "raw": "\"\"\"\nShared pytest fixtures for backend tests.\n\nProvides common mocks and test utilities across all test modules.\n\nNOTE: Module-level mocks are NOT applied here to allow emulator tests to work.\nIndividual tests must mock dependencies as needed.\n\"\"\"\n# IMPORTANT: Set environment variables FIRST, before ANY imports that might\n# trigger backend module loading and Settings singleton creation.\nimport os\n\n# Set up test environment variables BEFORE importing any backend modules\n# This must happen before Settings is instantiated, which occurs on first import\nif 'FIRESTORE_EMULATOR_HOST' not in os.environ:\n    os.environ.setdefault('ADMIN_TOKENS', 'test-admin-token')\n    os.environ.setdefault('GOOGLE_CLOUD_PROJECT', 'test-project')\n    os.environ.setdefault('GCS_BUCKET_NAME', 'test-bucket')\n    os.environ.setdefault('FIRESTORE_COLLECTION', 'jobs')\n    os.environ.setdefault('ENVIRONMENT', 'test')\n\nimport pytest\nfrom unittest.mock import Mock, MagicMock, AsyncMock, patch\nfrom datetime import datetime, UTC\nfrom fastapi.testclient import TestClient\n\n\n# Mock google.auth.default AND firestore for unit tests if not using emulator\n# This prevents DefaultCredentialsError and FirestoreClient initialization during imports\nif 'FIRESTORE_EMULATOR_HOST' not in os.environ:\n    from unittest.mock import MagicMock\n    \n    # Mock google.auth.default - prevents credential errors\n    try:\n        import google.auth\n        mock_credentials = MagicMock()\n        mock_credentials.token = 'fake-token'\n        mock_credentials.valid = True\n        mock_credentials.universe_domain = 'googleapis.com'  # Required by google-cloud-storage\n        mock_credentials.project_id = 'test-project'\n        google.auth.default = MagicMock(return_value=(mock_credentials, 'test-project'))\n    except ImportError:\n        # If google.auth not installed, that's ok for some tests\n        pass\n    \n    # Mock google.cloud.firestore.Client - prevents Firestore initialization\n    # This is CRITICAL: when AuthService is instantiated, it creates FirestoreService\n    # which tries to create a real Firestore client. The client returns MagicMocks\n    # which fail when used as enum values (e.g., UserType).\n    try:\n        import google.cloud.firestore as firestore_module\n        \n        # Create a mock client that returns proper values for get_token\n        mock_firestore_client = MagicMock()\n        mock_collection = MagicMock()\n        mock_doc = MagicMock()\n        mock_snapshot = MagicMock()\n        \n        # For auth token lookups, return None (token not found in Firestore)\n        # This forces validation to use admin tokens from environment\n        mock_snapshot.exists = False\n        mock_snapshot.to_dict.return_value = None\n        mock_doc.get.return_value = mock_snapshot\n        mock_collection.document.return_value = mock_doc\n        mock_firestore_client.collection.return_value = mock_collection\n        \n        # Replace the Client class\n        original_client = firestore_module.Client\n        firestore_module.Client = MagicMock(return_value=mock_firestore_client)\n    except ImportError:\n        pass\n    \n    # Mock google.cloud.storage.Client - prevents GCS initialization\n    try:\n        import google.cloud.storage as storage_module\n        mock_storage_client = MagicMock()\n        mock_bucket = MagicMock()\n        mock_storage_client.bucket.return_value = mock_bucket\n        storage_module.Client = MagicMock(return_value=mock_storage_client)\n    except ImportError:\n        pass\n\nfrom backend.models.job import Job, JobStatus, JobCreate\n\n\n@pytest.fixture(autouse=True)\ndef mock_auth_dependency(request):\n    \"\"\"Mock the require_auth dependency for all tests using FastAPI's dependency override system.\"\"\"\n    # Skip for emulator tests and integration tests which use real auth\n    test_path = str(request.fspath)\n    if 'emulator' in test_path or 'integration' in test_path:\n        yield\n        return\n\n    # Skip for service-only unit tests that don't need the FastAPI app\n  "
+    },
+    {
+      "id": "backend/tests/emulator/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "backend/tests/emulator/conftest.py",
+      "raw": "\"\"\"\nFixtures for emulator integration tests.\n\nThese tests use REAL Firestore and GCS emulators, so we DON'T mock google.cloud modules.\nRun with: scripts/run-emulator-tests.sh\n\"\"\"\nimport pytest\nimport os\nimport requests\nfrom unittest.mock import AsyncMock, patch\n\n\ndef emulators_running() -> bool:\n    \"\"\"Check if GCP emulators are running.\"\"\"\n    try:\n        # Check Firestore emulator\n        requests.get(\"http://127.0.0.1:8080\", timeout=1)\n        # Check GCS emulator\n        requests.get(\"http://127.0.0.1:4443\", timeout=1)\n        return True\n    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):\n        return False\n\n\n# Skip all tests in this module if emulators aren't running\npytestmark = pytest.mark.skipif(\n    not emulators_running(),\n    reason=\"GCP emulators not running. Start with: scripts/start-emulators.sh\"\n)\n\n# Set emulator environment variables (use 127.0.0.1 to force IPv4)\nos.environ[\"FIRESTORE_EMULATOR_HOST\"] = \"127.0.0.1:8080\"\nos.environ[\"STORAGE_EMULATOR_HOST\"] = \"http://127.0.0.1:4443\"\nos.environ[\"GOOGLE_CLOUD_PROJECT\"] = \"test-project\"\nos.environ[\"GCS_BUCKET_NAME\"] = \"test-bucket\"\nos.environ[\"FIRESTORE_COLLECTION\"] = \"test-jobs\"\nos.environ[\"ENVIRONMENT\"] = \"test\"\nos.environ[\"ADMIN_TOKENS\"] = \"test-admin-token\"\n\n# Only import app if emulators are running\nif emulators_running():\n    from unittest.mock import Mock\n\n    # Mock theme service BEFORE importing app to ensure all jobs get theme_id=\"nomad\"\n    _mock_theme_service = Mock()\n    _mock_theme_service.get_default_theme_id.return_value = \"nomad\"\n    _mock_theme_service.get_theme.return_value = None\n\n    # Apply patch at module load time (before app imports the service)\n    _theme_patches = [\n        patch(\"backend.services.theme_service.get_theme_service\", return_value=_mock_theme_service),\n        patch(\"backend.api.routes.audio_search.get_theme_service\", return_value=_mock_theme_service),\n        patch(\"backend.api.routes.file_upload.get_theme_service\", return_value=_mock_theme_service),\n        patch(\"backend.api.routes.users.get_theme_service\", return_value=_mock_theme_service),\n        patch(\"backend.api.routes.jobs.get_theme_service\", return_value=_mock_theme_service),\n    ]\n    for p in _theme_patches:\n        p.start()\n\n    from fastapi.testclient import TestClient\n    from backend.main import app\nelse:\n    TestClient = None\n    app = None\n\n\n@pytest.fixture(scope=\"session\", autouse=True)\ndef setup_gcs_bucket():\n    \"\"\"Create GCS bucket in emulator before all tests.\"\"\"\n    try:\n        response = requests.post(\n            \"http://127.0.0.1:4443/storage/v1/b\",\n            json={\"name\": \"test-bucket\"},\n            params={\"project\": \"test-project\"},\n            timeout=5\n        )\n        if response.status_code in [200, 409]:\n            print(\"✅ GCS bucket 'test-bucket' ready in emulator\")\n    except Exception as e:\n        print(f\"⚠️  GCS bucket setup failed: {e}\")\n    yield\n\n\n@pytest.fixture(scope=\"session\")\ndef mock_worker_service():\n    \"\"\"Mock worker service to prevent background tasks.\"\"\"\n    with patch(\"backend.api.routes.jobs.worker_service\") as mock:\n        mock.trigger_audio_worker = AsyncMock(return_value=True)\n        mock.trigger_lyrics_worker = AsyncMock(return_value=True)\n        mock.trigger_screens_worker = AsyncMock(return_value=True)\n        mock.trigger_video_worker = AsyncMock(return_value=True)\n        yield mock\n\n\n@pytest.fixture(scope=\"session\")\ndef client(mock_worker_service):\n    \"\"\"Create FastAPI test client with mocked workers.\n\n    Theme service is mocked at module load time (see above).\n    \"\"\"\n    with patch(\"backend.api.routes.file_upload.worker_service\", mock_worker_service):\n        return TestClient(app)\n\n\n@pytest.fixture\ndef auth_headers():\n    \"\"\"Auth headers for testing.\"\"\"\n    return {\"Authorization\": \"Bearer test-admin-token\"}\n\n"
+    },
+    {
+      "id": ".github/workflows/build-encoding-worker-image.yml#41-checkout",
+      "kind": "ci_step",
+      "name": "Checkout",
+      "source": ".github/workflows/build-encoding-worker-image.yml:41",
+      "raw": "      - name: Checkout\n        uses: actions/checkout@v4",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/build-encoding-worker-image.yml#44-authenticate-to-google-cloud-workload-identity",
+      "kind": "ci_step",
+      "name": "Authenticate to Google Cloud (Workload Identity)",
+      "source": ".github/workflows/build-encoding-worker-image.yml:44",
+      "raw": "      - name: Authenticate to Google Cloud (Workload Identity)\n        uses: google-github-actions/auth@v2\n        with:\n          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}\n          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}",
+      "hints": {
+        "action": "google-github-actions/auth@v2"
+      }
+    },
+    {
+      "id": ".github/workflows/build-encoding-worker-image.yml#50-set-up-cloud-sdk",
+      "kind": "ci_step",
+      "name": "Set up Cloud SDK",
+      "source": ".github/workflows/build-encoding-worker-image.yml:50",
+      "raw": "      - name: Set up Cloud SDK\n        uses: google-github-actions/setup-gcloud@v2\n        with:\n          version: \"latest\"",
+      "hints": {
+        "action": "google-github-actions/setup-gcloud@v2"
+      }
+    },
+    {
+      "id": ".github/workflows/build-encoding-worker-image.yml#55-install-packer",
+      "kind": "ci_step",
+      "name": "Install Packer",
+      "source": ".github/workflows/build-encoding-worker-image.yml:55",
+      "raw": "      - name: Install Packer\n        run: |\n          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg\n          echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main\" | sudo tee /etc/apt/sources.list.d/hashicorp.list\n          sudo apt-get update && sudo apt-get install -y packer"
+    },
+    {
+      "id": "wrangler.toml#wrangler-toml",
+      "kind": "deploy_gate",
+      "name": "deploy config (wrangler.toml)",
+      "source": "wrangler.toml",
+      "raw": "name = \"karaoke-gen\"\npages_build_output_dir = \"frontend/out\"\n"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "codecov.yml#codecov-yml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Codecov's server-side project/patch status, comparing a coverage.xml that pytest-cov produced while the Python runtime executed tests/unit",
+        "actorCanWrite": false,
+        "argument": "The number being compared is measured by the interpreter actually executing lines during `poetry run pytest tests/unit/ --cov=karaoke_gen --cov-report=xml` (ci.yml:400), so the producer sits outside the write boundary — but it measures REACH, not correctness: 70% of lines executed says nothing about whether any assertion is right. Three actor-authored knobs sit on top of it — the 70% target and the 2%/5% slack in this file, the `omit` list in pyproject.toml:190 that removes karaoke_gen/lyrics_transcriber/* from the denominator, and the fact that Codecov reads a report uploaded by the repo's own CI job rather than measuring anything itself. Its blocking power is also unverifiable from the repo: `ci-gate` (ci.yml:732), the job the repo calls its required check, does not list Codecov among the results it refuses on; the coverage gate that provably blocks is the inline `--cov-fail-under=69`, which is one point below the target written here."
+      },
+      "evidence": [
+        "codecov.yml:15-17",
+        "codecov.yml:22-23",
+        ".github/workflows/ci.yml:400",
+        ".github/workflows/ci.yml:403-408",
+        "pyproject.toml:190-195",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/jest.config.js#jest-config-js",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Jest process exit code from `npm run test:ci` (jest --ci --coverage --maxWorkers=2) in the frontend-unit-tests job",
+        "actorCanWrite": false,
+        "argument": "jsdom really instantiates the components and hooks under frontend/__tests__/, frontend/hooks/__tests__/ and frontend/lib/__tests__/, and the Jest runtime decides pass/fail; frontend-unit-tests is one of the results `ci-gate` exits 1 on, so this edge genuinely blocks a merge. The deep limit applies and should not be laundered: the same authors wrote the components and the assertions, so execution independence holds but the specification was authored inside the write boundary. Note also that `collectCoverageFrom` is configured while no `coverageThreshold` is — the frontend coverage number is collected and uploaded as an artifact, and gates nothing."
+      },
+      "evidence": [
+        "frontend/jest.config.js:9-40",
+        "frontend/package.json:15",
+        ".github/workflows/ci.yml:113-142",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#prebuild",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a node process that writes frontend/public/version.json",
+        "actorCanWrite": true,
+        "argument": "write-version.mjs only emits a build marker — a SHA taken from NEXT_PUBLIC_COMMIT_SHA / CF_PAGES_COMMIT_SHA / GITHUB_SHA / `git rev-parse HEAD` / the literal string 'dev' — plus a timestamp. It evaluates nothing and has no outcome that distinguishes correct code from incorrect code, so it is vacuous as a check. Worth naming rather than laundering: the file it produces is a self-reported build marker that the running frontend later fetches to decide whether a bundle is stale, which is a signal the deployer wrote; the staleness check downstream is the self-referential edge, not this generator."
+      },
+      "evidence": [
+        "frontend/package.json:6",
+        "frontend/scripts/write-version.mjs:1-46"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#build",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Next.js compiler/bundler and static-export prerender invoked by `next build`, run by the frontend-build job",
+        "actorCanWrite": false,
+        "argument": "`next build` fails on syntax errors, unresolved imports and prerender crashes under `output: 'export'`, and that verdict comes from the toolchain, not from anything the repo asserts; frontend-build is one of the results `ci-gate` refuses to pass on. Two limits must be named: `typescript.ignoreBuildErrors: true` in next.config.mjs:34-35 explicitly disables type checking during the build and no `tsc --noEmit` step exists anywhere in ci.yml, so this proves 'it compiles and prerenders', not 'it typechecks'; and the second half of the command, `node scripts/spa-redirect-404.js`, is a documented no-op that only console.logs, so it contributes nothing to the exit code."
+      },
+      "evidence": [
+        "frontend/package.json:7",
+        "frontend/next.config.mjs:32-36",
+        "frontend/scripts/spa-redirect-404.js:1-13",
+        ".github/workflows/ci.yml:306-325",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#dev",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Next.js development server process",
+        "actorCanWrite": true,
+        "argument": "`next dev` starts a long-lived HTTP server for a human to look at; it does not terminate, produces no pass/fail exit code, and asserts nothing about correctness. It is referenced only as Playwright's `webServer.command` (playwright.config.ts:132-137), where the assertion comes from the browser tests, not from the server having started."
+      },
+      "evidence": [
+        "frontend/package.json:8",
+        "frontend/playwright.config.ts:132-137"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#dev-with-lyrics",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "two concurrently-supervised development server processes (`npm run dev` and `npm run dev:lyrics`)",
+        "actorCanWrite": true,
+        "argument": "This is a developer convenience wrapper that launches the karaoke dev server and the lyrics-transcriber dev server side by side under `concurrently`. Neither child terminates, so no exit code is ever produced for anything to gate on, and no CI job or Makefile target invokes it. It asserts nothing about correctness."
+      },
+      "evidence": [
+        "frontend/package.json:9",
+        "frontend/package.json:8",
+        "frontend/package.json:10"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#dev-lyrics",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Vite/Next development server in lyrics_transcriber_temp/lyrics_transcriber/frontend",
+        "actorCanWrite": true,
+        "argument": "It `cd`s into the vendored lyrics_transcriber frontend (the directory does exist in the tree) and starts that package's dev server. Same shape as the other dev targets: a non-terminating server for interactive work, no exit code, no assertion, and no pipeline reference."
+      },
+      "evidence": [
+        "frontend/package.json:10",
+        "lyrics_transcriber_temp/lyrics_transcriber/frontend"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ESLint engine's exit code (`eslint .`), run by the frontend-lint job",
+        "actorCanWrite": false,
+        "argument": "ESLint performs deterministic static analysis of the source and exits non-zero on any error-severity violation; the repo cannot argue its way past a `react-hooks/rules-of-hooks` failure, and there is no `--fix`, so this is a check rather than a rewriter. frontend-lint is in `ci-gate`'s results array, so it blocks merges. The limit: the rule set is authored inside the write boundary — eslint.config.mjs extends next/core-web-vitals, promotes rules-of-hooks to error, and demotes `react-hooks/exhaustive-deps` to `warn`, which means stale-closure bugs are reported but cannot fail the job."
+      },
+      "evidence": [
+        "frontend/package.json:11",
+        "frontend/eslint.config.mjs:12-31",
+        ".github/workflows/ci.yml:70-90",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#start",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the Next.js production server process",
+        "actorCanWrite": true,
+        "argument": "`next start` serves an already-built app; serving is not verification and the process does not terminate with a verdict. It is also unreachable for this project's production output, since next.config.mjs sets `output: 'export'` when NODE_ENV=production and the deploy path uploads the static `frontend/out` directory to Cloudflare Pages instead of running a server."
+      },
+      "evidence": [
+        "frontend/package.json:12",
+        "frontend/next.config.mjs:32",
+        ".github/workflows/ci.yml:988-993"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/package.json#test",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "an interactive Jest watch loop that never exits",
+        "actorCanWrite": null,
+        "argument": "`jest --watch` is bound to the conventional `npm test` entry point but runs in watch mode: it blocks on a keypress prompt and never terminates, so no exit code is ever emitted and there is no signal that can vary. That is a structural non-check, not merely an out-of-path one — and nothing invokes it either: CI runs `npm run test:ci` (ci.yml:134) and `make test-frontend` runs `npm run test:unit` (Makefile:96). The falsifiable frontend unit edge is the `test:ci` script, classified separately via jest.config.js."
+      },
+      "evidence": [
+        "frontend/package.json:13",
+        "frontend/package.json:14-15",
+        ".github/workflows/ci.yml:134",
+        "Makefile:96"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "frontend/playwright.config.ts#playwright-config-ts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Playwright runner's exit code, driving a real Chromium against a real Next.js dev server on 127.0.0.1",
+        "actorCanWrite": false,
+        "argument": "A browser actually renders the app and the runner decides pass/fail — no assertion about the DOM survives the element not being there. Only part of this config is in the merge-blocking path, and the distinction matters: frontend-e2e-smoke runs `npx playwright test smoke.spec.ts` against this default config and IS in `ci-gate`'s results array, while frontend-e2e-full (the other 17 specs in e2e/regression) requires an `e2e` label and the gate comments that it is deliberately not enforced. Three limits: the backend is not present at all — `setupApiFixtures` intercepts every API call and replays repo-authored fixtures, so the contract being verified is the repo's model of its own API; the server under test is `npm run dev`, not the `output: 'export'` bundle that actually ships; and `retries: 2` on CI means a test that only passes on retry still reports green."
+      },
+      "evidence": [
+        "frontend/playwright.config.ts:71-137",
+        "frontend/e2e/regression/smoke.spec.ts:1-20",
+        "frontend/e2e/fixtures/test-helper.ts:60-80",
+        ".github/workflows/ci.yml:144-178",
+        ".github/workflows/ci.yml:180-236",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code for `poetry run pytest tests/unit/` and `poetry run pytest tests/integration/`, which resolve this file as their configfile",
+        "actorCanWrite": false,
+        "argument": "Both suites this stanza configures are invoked directly by CI and both are in `ci-gate`'s results array, so the edge really blocks a merge; the CPython runtime decides pass/fail and an exception in karaoke_gen cannot be argued into a pass. The deep limit holds — the assertions under tests/unit were written by the same authors as karaoke_gen, so execution is independent but the oracle is not. One structural note on this config specifically: `filterwarnings` silences DeprecationWarning, RuntimeWarning and UserWarning wholesale, so warnings can never escalate into failures here."
+      },
+      "evidence": [
+        "pyproject.toml:169-189",
+        ".github/workflows/ci.yml:398-400",
+        ".github/workflows/ci.yml:472-474",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-run",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "none — this is a coverage.py scope declaration, not a process that emits a verdict",
+        "actorCanWrite": null,
+        "argument": "The stanza contains a single `omit` list and no threshold, no fail-under and no assertion; it cannot pass or fail, so it is structurally incapable of being a check. It must not be laundered silently, though: by omitting karaoke_gen/lyrics_transcriber/* it removes a whole subpackage from the denominator of the coverage number that both `--cov-fail-under=69` (ci.yml:400) and the Codecov 70% target read, and that exclusion is authored by the same actor the gate is measuring. The check is those gates; this is a knob on them."
+      },
+      "evidence": [
+        "pyproject.toml:190-195",
+        ".github/workflows/ci.yml:400",
+        "codecov.yml:15-16"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/unit/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code for `poetry run pytest tests/unit/ --cov-fail-under=69` in the package-unit-tests job",
+        "actorCanWrite": false,
+        "argument": "These fixtures feed a suite that CI actually runs and that `ci-gate` refuses to pass on, and the runtime — not a claim — decides whether KaraokePrep raises. The limit is sharper here than for a plain test file: `mock_ffmpeg`, `mock_logger` and `basic_karaoke_gen` replace os.system and the ffmpeg invocation with MagicMocks, so no external encoder is ever contacted; the suite verifies karaoke_gen against the repo's own model of its collaborators, and the assertions were co-authored with the implementation. Execution is anchored, the oracle and the simulated world are both inside the boundary."
+      },
+      "evidence": [
+        "tests/unit/conftest.py:1-60",
+        ".github/workflows/ci.yml:398-400",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/unit/test_instrumental_review/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code for tests/unit/test_instrumental_review/, running AudioAnalyzer over FLAC files pydub/ffmpeg actually encoded",
+        "actorCanWrite": false,
+        "argument": "This is the most grounded fixture set in the sample: instead of mocking, it synthesizes real audio with pydub's Sine/WhiteNoise generators, exports genuine FLAC through ffmpeg, and lets the analyzer measure real dBFS — so the pass/fail comes from signal processing the test cannot fake, inside a suite CI runs and `ci-gate` enforces. The limit remains the oracle: the expected segment boundaries and the -40 dB threshold in the assertions were chosen by the same authors as karaoke_gen.instrumental_review, so a shared misconception about what 'audible' means would keep the suite green."
+      },
+      "evidence": [
+        "tests/unit/test_instrumental_review/conftest.py:1-140",
+        "tests/unit/test_instrumental_review/test_analyzer.py:1-30",
+        ".github/workflows/ci.yml:398-400"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "backend/pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code for `poetry run pytest backend/tests/ --ignore=backend/tests/emulator` (backend-unit-tests) and `pytest backend/tests/emulator/` (via scripts/run-emulator-tests.sh)",
+        "actorCanWrite": false,
+        "argument": "Because CI passes `backend/tests/` explicitly, pytest walks up from that directory and resolves backend/pyproject.toml as the configfile, so this stanza — not the root one — governs those runs; both jobs are in `ci-gate`'s results array. The runtime decides the verdict, and `--strict-markers` even makes an unregistered marker a hard error rather than a silent skip. Deep limit as everywhere else: the FastAPI route assertions were authored alongside the routes."
+      },
+      "evidence": [
+        "backend/pyproject.toml:1-19",
+        ".github/workflows/ci.yml:592-600",
+        ".github/workflows/ci.yml:697-699",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "backend/pyproject.toml#tool-coverage-run",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "none — a coverage.py source/omit declaration with no threshold and no invocation",
+        "actorCanWrite": null,
+        "argument": "The stanza declares what coverage would measure if coverage were measured; it has no fail-under and cannot produce an outcome. And it is inert in practice: `--cov` appears exactly once in ci.yml (line 400, for the karaoke_gen package), so neither backend-unit-tests nor scripts/run-emulator-tests.sh ever collects backend coverage — the backend-emulator-tests job even uploads `backend/htmlcov/` as an artifact that nothing in the pipeline generates. There is no signal here to classify."
+      },
+      "evidence": [
+        "backend/pyproject.toml:21-23",
+        ".github/workflows/ci.yml:592-600",
+        ".github/workflows/ci.yml:697-705",
+        "scripts/run-emulator-tests.sh:56"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "backend/pyproject.toml#tool-coverage-report",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "none — three coverage.py report-formatting keys (precision, show_missing, skip_covered)",
+        "actorCanWrite": null,
+        "argument": "These keys control how a coverage report is printed; they set no target, gate nothing, and have no pass/fail outcome under any input. As with the sibling `[tool.coverage.run]` stanza, no pipeline step collects backend coverage at all, so the report they format is never produced."
+      },
+      "evidence": [
+        "backend/pyproject.toml:25-28",
+        ".github/workflows/ci.yml:592-600"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "backend/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code for the backend-unit-tests job, executing FastAPI routes through TestClient",
+        "actorCanWrite": false,
+        "argument": "The suite is executed by CI and enforced by `ci-gate`, and the runtime genuinely decides whether a route raises or returns the wrong shape. The limit is unusually large and must be stated: this conftest replaces google.auth.default, google.cloud.firestore.Client and google.cloud.storage.Client with MagicMocks at import time and installs an autouse override of the `require_auth` dependency, so for every non-emulator, non-integration test the datastore, the object store and the authentication layer are all repo-authored simulations. Execution is outside the write boundary; the world the code is verified against is entirely inside it, and the auth path is bypassed rather than exercised."
+      },
+      "evidence": [
+        "backend/tests/conftest.py:30-96",
+        ".github/workflows/ci.yml:592-600",
+        ".github/workflows/ci.yml:732-760"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "backend/tests/emulator/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest exit code for backend/tests/emulator/, running against a real gcloud Firestore emulator on :8080 and a real fsouza/fake-gcs-server container on :4443",
+        "actorCanWrite": false,
+        "argument": "Unlike the unit conftest, this one deliberately does NOT mock google.cloud — the collaborators are a Google-shipped emulator binary and a third-party Docker image whose semantics the repo does not author, so a wrong Firestore query genuinely fails. The degradation to watch is the module-level `pytestmark = skipif(not emulators_running())`: if the probes at :8080/:4443 do not answer, every test in the directory silently skips and pytest exits 0, which reads as green. In CI that is guarded, because scripts/run-emulator-tests.sh runs under `set -e` and start-emulators.sh polls readiness and exits 1 after 30s/10s — so an emulator that never came up fails the job before pytest is reached. The residual limits: worker_service and theme_service are still patched, and locally (no readiness guard) the same suite passes by skipping."
+      },
+      "evidence": [
+        "backend/tests/emulator/conftest.py:13-30",
+        "scripts/run-emulator-tests.sh:5-17",
+        "scripts/start-emulators.sh:63-100",
+        ".github/workflows/ci.yml:697-699"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build-encoding-worker-image.yml#41-checkout",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the actions/checkout@v4 action fetching the repository onto the runner",
+        "actorCanWrite": false,
+        "argument": "Checkout is provisioning: it makes the source available and asserts nothing about whether that source is correct. Its only failure mode is an infrastructure or token problem. It also gates no merge — this workflow triggers solely on push to main under `paths: infrastructure/packer/**` and on workflow_dispatch, so it runs after the merge decision has already been made."
+      },
+      "evidence": [
+        ".github/workflows/build-encoding-worker-image.yml:41-42",
+        ".github/workflows/build-encoding-worker-image.yml:16-21"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build-encoding-worker-image.yml#44-authenticate-to-google-cloud-workload-identity",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "Google's STS exchanging the runner's OIDC token for service-account credentials",
+        "actorCanWrite": false,
+        "argument": "The token exchange is performed by a party the repo cannot write to, but what it establishes is that the workload-identity federation and the two secrets are configured — a precondition for the later `packer build`, not a statement about the artifact's correctness. A failure here means the GCP binding is broken, never that the code is wrong. Like the rest of this workflow it runs only post-merge on infrastructure/packer/** pushes."
+      },
+      "evidence": [
+        ".github/workflows/build-encoding-worker-image.yml:44-48",
+        ".github/workflows/build-encoding-worker-image.yml:36-38"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build-encoding-worker-image.yml#50-set-up-cloud-sdk",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the setup-gcloud action installing the Cloud SDK onto the runner",
+        "actorCanWrite": false,
+        "argument": "Tool installation. It puts `gcloud` on PATH for the later image-listing step and evaluates nothing about the repository; pinning `version: \"latest\"` means it does not even assert a reproducible toolchain. Nothing about this step can distinguish a correct commit from a broken one."
+      },
+      "evidence": [
+        ".github/workflows/build-encoding-worker-image.yml:50-53",
+        ".github/workflows/build-encoding-worker-image.yml:79-89"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build-encoding-worker-image.yml#55-install-packer",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "apt-get installing the packer package from HashiCorp's Debian repository",
+        "actorCanWrite": false,
+        "argument": "Environment provisioning for the steps that follow; the apt transaction's exit code says whether a binary was installed, not whether the repository's Packer template or code is correct. The verification edges in this workflow are the later `packer validate` and `packer build` steps, which do evaluate the template — this one only makes them runnable."
+      },
+      "evidence": [
+        ".github/workflows/build-encoding-worker-image.yml:55-59",
+        ".github/workflows/build-encoding-worker-image.yml:65-77"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "wrangler.toml#wrangler-toml",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "none — two static declarations (`name`, `pages_build_output_dir`), no command and no condition",
+        "actorCanWrite": null,
+        "argument": "The file states where built output lives and what the Pages project is called; it contains no build command, no precondition and nothing that can evaluate to pass or fail, so it cannot gate a deploy. The traceable deploy path does not even consult it: deploy-frontend runs cloudflare/wrangler-action with `command: pages deploy frontend/out --project-name=karaoke-gen --branch=main`, supplying both values on the command line. Residual I could not close: if a Cloudflare Pages Git integration also builds this project, that build's configuration lives in Cloudflare's dashboard rather than in the repo — but that would be a separate edge, not this declaration."
+      },
+      "evidence": [
+        "wrangler.toml:1-2",
+        ".github/workflows/ci.yml:988-993",
+        ".github/workflows/ci.yml:1008-1015"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 11,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 14,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 280,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 5921,
+    "tokensOut": 6515,
+    "tokensEstimated": true,
+    "wallClockMs": 735762
+  }
+}

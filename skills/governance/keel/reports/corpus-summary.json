@@ -1,0 +1,867 @@
+{
+  "generatedAt": "2026-07-25T03:59:42.265Z",
+  "corpusFile": "corpus.json",
+  "nodeCap": 40,
+  "corpusOrder": [
+    "keel",
+    "anthropic-sdk-python",
+    "openai-python",
+    "vercel-ai",
+    "aider",
+    "browser-use",
+    "mcp-python-sdk",
+    "simonw-llm",
+    "tiktoken",
+    "requests",
+    "flask",
+    "sinatra",
+    "commander-js",
+    "anthropic-quickstarts",
+    "anthropic-courses"
+  ],
+  "runOrder": [
+    "keel",
+    "anthropic-sdk-python",
+    "openai-python",
+    "vercel-ai",
+    "aider",
+    "browser-use",
+    "mcp-python-sdk",
+    "simonw-llm",
+    "tiktoken",
+    "requests",
+    "flask",
+    "sinatra",
+    "commander-js",
+    "anthropic-quickstarts",
+    "anthropic-courses"
+  ],
+  "entries": [
+    {
+      "name": "keel",
+      "url": "https://github.com/broomva/keel.git",
+      "revision": "44f7e8d6cbdfaee7d0e4ff281d59a236ecf0c747",
+      "status": "ok",
+      "runIndex": 0,
+      "recordedAt": "2026-07-25T01:28:17.000Z",
+      "ratio": 0.35714285714285715,
+      "anchored": 5,
+      "selfReferential": 9,
+      "unknown": 0,
+      "notACheck": 11,
+      "nodesTotal": 32,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "script": 13,
+        "ci_step": 19
+      },
+      "coverageJudged": {
+        "script": 12,
+        "ci_step": 13
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 32,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 0,
+        "probeLibrarySize": 0,
+        "tokensIn": 2927,
+        "tokensOut": 9511,
+        "tokensEstimated": true,
+        "wallClockMs": 1849
+      },
+      "timing": {
+        "cloneMs": 1380,
+        "gatherMs": 16,
+        "probeMs": 217,
+        "recordMs": 3,
+        "judgmentMs": 233
+      },
+      "warnings": []
+    },
+    {
+      "name": "anthropic-sdk-python",
+      "url": "https://github.com/anthropics/anthropic-sdk-python.git",
+      "revision": "60c64fba5c2bf340567f627328e57cf0196b868f",
+      "status": "ok",
+      "runIndex": 1,
+      "recordedAt": "2026-07-25T01:35:15.175Z",
+      "ratio": 0.6666666666666666,
+      "anchored": 8,
+      "selfReferential": 2,
+      "unknown": 2,
+      "notACheck": 13,
+      "nodesTotal": 41,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "test_target": 2,
+        "ci_step": 38,
+        "review_gate": 1
+      },
+      "coverageJudged": {
+        "test_target": 2,
+        "ci_step": 22,
+        "review_gate": 1
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 41,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 3,
+        "probeLibrarySize": 3,
+        "tokensIn": 3990,
+        "tokensOut": 5233,
+        "tokensEstimated": true,
+        "wallClockMs": 395067
+      },
+      "timing": {
+        "cloneMs": 1916,
+        "gatherMs": 23,
+        "probeMs": 115,
+        "recordMs": 1,
+        "judgmentMs": 393012
+      },
+      "warnings": []
+    },
+    {
+      "name": "openai-python",
+      "url": "https://github.com/openai/openai-python.git",
+      "revision": "d4c151d92ba713e56518a4483d3b7918dd1be838",
+      "status": "ok",
+      "runIndex": 2,
+      "recordedAt": "2026-07-25T01:42:13.605Z",
+      "ratio": 0.7692307692307693,
+      "anchored": 10,
+      "selfReferential": 2,
+      "unknown": 1,
+      "notACheck": 12,
+      "nodesTotal": 95,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "test_target": 2,
+        "ci_step": 92,
+        "review_gate": 1
+      },
+      "coverageJudged": {
+        "test_target": 2,
+        "ci_step": 22,
+        "review_gate": 1
+      },
+      "probeShare": 0.16,
+      "economics": {
+        "nodesTotal": 95,
+        "nodesSampled": 25,
+        "decidedByProbe": 4,
+        "decidedByAgent": 21,
+        "probesMinted": 2,
+        "probeLibrarySize": 5,
+        "tokensIn": 5036,
+        "tokensOut": 4913,
+        "tokensEstimated": true,
+        "wallClockMs": 385324
+      },
+      "timing": {
+        "cloneMs": 29871,
+        "gatherMs": 23,
+        "probeMs": 107,
+        "recordMs": 3,
+        "judgmentMs": 355320
+      },
+      "warnings": []
+    },
+    {
+      "name": "vercel-ai",
+      "url": "https://github.com/vercel/ai.git",
+      "revision": "e29788dd545f8bf2300db0885658e639b4fd91bd",
+      "status": "ok",
+      "runIndex": 3,
+      "recordedAt": "2026-07-25T02:26:49.455Z",
+      "ratio": 0.8,
+      "anchored": 8,
+      "selfReferential": 0,
+      "unknown": 2,
+      "notACheck": 15,
+      "nodesTotal": 1014,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "script": 849,
+        "test_target": 8,
+        "ci_step": 156,
+        "deploy_gate": 1
+      },
+      "coverageJudged": {
+        "script": 8,
+        "test_target": 8,
+        "ci_step": 8,
+        "deploy_gate": 1
+      },
+      "probeShare": 0.08,
+      "economics": {
+        "nodesTotal": 1014,
+        "nodesSampled": 25,
+        "decidedByProbe": 2,
+        "decidedByAgent": 23,
+        "probesMinted": 3,
+        "probeLibrarySize": 8,
+        "tokensIn": 3243,
+        "tokensOut": 7000,
+        "tokensEstimated": true,
+        "wallClockMs": 2646476
+      },
+      "timing": {
+        "cloneMs": 1739193,
+        "gatherMs": 287,
+        "probeMs": 278,
+        "recordMs": 2,
+        "judgmentMs": 906716
+      },
+      "warnings": []
+    },
+    {
+      "name": "aider",
+      "url": "https://github.com/Aider-AI/aider.git",
+      "revision": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "status": "ok",
+      "runIndex": 4,
+      "recordedAt": "2026-07-25T02:36:32.282Z",
+      "ratio": 1,
+      "anchored": 7,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 18,
+      "nodesTotal": 62,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "test_target": 1,
+        "review_gate": 1,
+        "ci_step": 60
+      },
+      "coverageJudged": {
+        "test_target": 1,
+        "review_gate": 1,
+        "ci_step": 23
+      },
+      "probeShare": 0.56,
+      "economics": {
+        "nodesTotal": 62,
+        "nodesSampled": 25,
+        "decidedByProbe": 14,
+        "decidedByAgent": 11,
+        "probesMinted": 2,
+        "probeLibrarySize": 10,
+        "tokensIn": 1459,
+        "tokensOut": 3641,
+        "tokensEstimated": true,
+        "wallClockMs": 531836
+      },
+      "timing": {
+        "cloneMs": 114218,
+        "gatherMs": 10,
+        "probeMs": 107,
+        "recordMs": 5,
+        "judgmentMs": 417496
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "browser-use",
+      "url": "https://github.com/browser-use/browser-use.git",
+      "revision": "b909fbfba0ae42790f8402dd3daecc8f265be246",
+      "status": "ok",
+      "runIndex": 5,
+      "recordedAt": "2026-07-25T02:46:11.683Z",
+      "ratio": 1,
+      "anchored": 7,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 18,
+      "nodesTotal": 104,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "review_gate": 1,
+        "ci_step": 101,
+        "test_target": 2
+      },
+      "coverageJudged": {
+        "review_gate": 1,
+        "ci_step": 22,
+        "test_target": 2
+      },
+      "probeShare": 0.32,
+      "economics": {
+        "nodesTotal": 104,
+        "nodesSampled": 25,
+        "decidedByProbe": 8,
+        "decidedByAgent": 17,
+        "probesMinted": 2,
+        "probeLibrarySize": 12,
+        "tokensIn": 4501,
+        "tokensOut": 4939,
+        "tokensEstimated": true,
+        "wallClockMs": 543632
+      },
+      "timing": {
+        "cloneMs": 50643,
+        "gatherMs": 13,
+        "probeMs": 138,
+        "recordMs": 4,
+        "judgmentMs": 492834
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "mcp-python-sdk",
+      "url": "https://github.com/modelcontextprotocol/python-sdk.git",
+      "revision": "00a70148bcd39b40ee0b0745e0b468eac0a44efb",
+      "status": "ok",
+      "runIndex": 6,
+      "recordedAt": "2026-07-25T02:55:11.585Z",
+      "ratio": 1,
+      "anchored": 15,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 10,
+      "nodesTotal": 121,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "review_gate": 1,
+        "ci_step": 112,
+        "test_target": 8
+      },
+      "coverageJudged": {
+        "review_gate": 1,
+        "ci_step": 16,
+        "test_target": 8
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 121,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 1,
+        "probeLibrarySize": 13,
+        "tokensIn": 7501,
+        "tokensOut": 7309,
+        "tokensEstimated": true,
+        "wallClockMs": 503738
+      },
+      "timing": {
+        "cloneMs": 10314,
+        "gatherMs": 29,
+        "probeMs": 257,
+        "recordMs": 5,
+        "judgmentMs": 493133
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "simonw-llm",
+      "url": "https://github.com/simonw/llm.git",
+      "revision": "0392226e6630746ef51ffd309c2bee6a5f72b58e",
+      "status": "ok",
+      "runIndex": 7,
+      "recordedAt": "2026-07-25T03:00:47.827Z",
+      "ratio": 0.75,
+      "anchored": 3,
+      "selfReferential": 1,
+      "unknown": 0,
+      "notACheck": 21,
+      "nodesTotal": 38,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "test_target": 2,
+        "script": 2,
+        "ci_step": 34
+      },
+      "coverageJudged": {
+        "test_target": 2,
+        "script": 2,
+        "ci_step": 21
+      },
+      "probeShare": 0.56,
+      "economics": {
+        "nodesTotal": 38,
+        "nodesSampled": 25,
+        "decidedByProbe": 14,
+        "decidedByAgent": 11,
+        "probesMinted": 2,
+        "probeLibrarySize": 15,
+        "tokensIn": 2088,
+        "tokensOut": 2644,
+        "tokensEstimated": true,
+        "wallClockMs": 293889
+      },
+      "timing": {
+        "cloneMs": 1428,
+        "gatherMs": 14,
+        "probeMs": 187,
+        "recordMs": 2,
+        "judgmentMs": 292258
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "tiktoken",
+      "url": "https://github.com/openai/tiktoken.git",
+      "revision": "08a5f3b2c987ada4fc5aa1f16c643c203fa8acaa",
+      "status": "ok",
+      "runIndex": 8,
+      "recordedAt": "2026-07-25T03:06:06.074Z",
+      "ratio": 1,
+      "anchored": 4,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 8,
+      "nodesTotal": 12,
+      "nodesSampled": 12,
+      "nodesJudged": 12,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": false,
+      "coverageGathered": {
+        "ci_step": 12
+      },
+      "coverageJudged": {
+        "ci_step": 12
+      },
+      "probeShare": 0.5833333333333334,
+      "economics": {
+        "nodesTotal": 12,
+        "nodesSampled": 12,
+        "decidedByProbe": 7,
+        "decidedByAgent": 5,
+        "probesMinted": 2,
+        "probeLibrarySize": 17,
+        "tokensIn": 892,
+        "tokensOut": 1987,
+        "tokensEstimated": true,
+        "wallClockMs": 284519
+      },
+      "timing": {
+        "cloneMs": 836,
+        "gatherMs": 2,
+        "probeMs": 94,
+        "recordMs": 2,
+        "judgmentMs": 283585
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts",
+        ".github/workflows/build_wheels.yml#73-run-check-manifest: judged by both probe and agent — the agent verdict is recorded",
+        ".github/workflows/build_wheels.yml#77-build-sdist: judged by both probe and agent — the agent verdict is recorded"
+      ]
+    },
+    {
+      "name": "requests",
+      "url": "https://github.com/psf/requests.git",
+      "revision": "69f84847045bef7a849cc994a26fe7ba8a169e95",
+      "status": "ok",
+      "runIndex": 9,
+      "recordedAt": "2026-07-25T03:13:36.805Z",
+      "ratio": 0.9166666666666666,
+      "anchored": 11,
+      "selfReferential": 0,
+      "unknown": 1,
+      "notACheck": 13,
+      "nodesTotal": 106,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "review_gate": 2,
+        "script": 57,
+        "ci_step": 44,
+        "test_target": 3
+      },
+      "coverageJudged": {
+        "review_gate": 2,
+        "script": 10,
+        "ci_step": 10,
+        "test_target": 3
+      },
+      "probeShare": 0.28,
+      "economics": {
+        "nodesTotal": 106,
+        "nodesSampled": 25,
+        "decidedByProbe": 7,
+        "decidedByAgent": 18,
+        "probesMinted": 2,
+        "probeLibrarySize": 19,
+        "tokensIn": 2479,
+        "tokensOut": 4775,
+        "tokensEstimated": true,
+        "wallClockMs": 418864
+      },
+      "timing": {
+        "cloneMs": 2759,
+        "gatherMs": 5,
+        "probeMs": 143,
+        "recordMs": 2,
+        "judgmentMs": 415955
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "flask",
+      "url": "https://github.com/pallets/flask.git",
+      "revision": "36e4a824f340fdee7ed50937ba8e7f6bc7d17f81",
+      "status": "ok",
+      "runIndex": 10,
+      "recordedAt": "2026-07-25T03:33:58.632Z",
+      "ratio": 1,
+      "anchored": 15,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 10,
+      "nodesTotal": 59,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "review_gate": 1,
+        "test_target": 17,
+        "ci_step": 40,
+        "script": 1
+      },
+      "coverageJudged": {
+        "review_gate": 1,
+        "test_target": 11,
+        "ci_step": 12,
+        "script": 1
+      },
+      "probeShare": 0,
+      "economics": {
+        "nodesTotal": 59,
+        "nodesSampled": 25,
+        "decidedByProbe": 0,
+        "decidedByAgent": 25,
+        "probesMinted": 3,
+        "probeLibrarySize": 22,
+        "tokensIn": 2808,
+        "tokensOut": 7404,
+        "tokensEstimated": true,
+        "wallClockMs": 512752
+      },
+      "timing": {
+        "cloneMs": 1873,
+        "gatherMs": 35,
+        "probeMs": 422,
+        "recordMs": 11,
+        "judgmentMs": 510411
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "sinatra",
+      "url": "https://github.com/sinatra/sinatra.git",
+      "revision": "cb22afd7902b566b6eaba6c4ea89739494a65d12",
+      "status": "ok",
+      "runIndex": 11,
+      "recordedAt": "2026-07-25T03:41:47.774Z",
+      "ratio": 0.875,
+      "anchored": 7,
+      "selfReferential": 0,
+      "unknown": 1,
+      "notACheck": 17,
+      "nodesTotal": 59,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "test_target": 2,
+        "script": 31,
+        "ci_step": 25,
+        "review_gate": 1
+      },
+      "coverageJudged": {
+        "test_target": 2,
+        "script": 11,
+        "ci_step": 11,
+        "review_gate": 1
+      },
+      "probeShare": 0.28,
+      "economics": {
+        "nodesTotal": 59,
+        "nodesSampled": 25,
+        "decidedByProbe": 7,
+        "decidedByAgent": 18,
+        "probesMinted": 1,
+        "probeLibrarySize": 23,
+        "tokensIn": 1747,
+        "tokensOut": 4890,
+        "tokensEstimated": true,
+        "wallClockMs": 423691
+      },
+      "timing": {
+        "cloneMs": 1539,
+        "gatherMs": 10,
+        "probeMs": 261,
+        "recordMs": 18,
+        "judgmentMs": 421863
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "commander-js",
+      "url": "https://github.com/tj/commander.js.git",
+      "revision": "ba6d13ddb4243e5913367734f8c159089ffe7834",
+      "status": "ok",
+      "runIndex": 12,
+      "recordedAt": "2026-07-25T03:48:59.995Z",
+      "ratio": 1,
+      "anchored": 12,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 9,
+      "nodesTotal": 21,
+      "nodesSampled": 21,
+      "nodesJudged": 21,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": false,
+      "coverageGathered": {
+        "script": 11,
+        "ci_step": 10
+      },
+      "coverageJudged": {
+        "script": 11,
+        "ci_step": 10
+      },
+      "probeShare": 0.19047619047619047,
+      "economics": {
+        "nodesTotal": 21,
+        "nodesSampled": 21,
+        "decidedByProbe": 4,
+        "decidedByAgent": 17,
+        "probesMinted": 3,
+        "probeLibrarySize": 26,
+        "tokensIn": 1506,
+        "tokensOut": 5131,
+        "tokensEstimated": true,
+        "wallClockMs": 393405
+      },
+      "timing": {
+        "cloneMs": 1273,
+        "gatherMs": 5,
+        "probeMs": 107,
+        "recordMs": 2,
+        "judgmentMs": 392018
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "anthropic-quickstarts",
+      "url": "https://github.com/anthropics/anthropic-quickstarts.git",
+      "revision": "370e18d4a20ff5fd4bc1a6bf11d5105b2383977c",
+      "status": "ok",
+      "runIndex": 13,
+      "recordedAt": "2026-07-25T03:58:05.194Z",
+      "ratio": 1,
+      "anchored": 10,
+      "selfReferential": 0,
+      "unknown": 0,
+      "notACheck": 15,
+      "nodesTotal": 62,
+      "nodesSampled": 25,
+      "nodesJudged": 25,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": 1,
+      "capped": true,
+      "coverageGathered": {
+        "script": 20,
+        "review_gate": 1,
+        "ci_step": 36,
+        "test_target": 5
+      },
+      "coverageJudged": {
+        "script": 9,
+        "review_gate": 1,
+        "ci_step": 10,
+        "test_target": 5
+      },
+      "probeShare": 0.24,
+      "economics": {
+        "nodesTotal": 62,
+        "nodesSampled": 25,
+        "decidedByProbe": 6,
+        "decidedByAgent": 19,
+        "probesMinted": 3,
+        "probeLibrarySize": 29,
+        "tokensIn": 2612,
+        "tokensOut": 5144,
+        "tokensEstimated": true,
+        "wallClockMs": 510257
+      },
+      "timing": {
+        "cloneMs": 16506,
+        "gatherMs": 7,
+        "probeMs": 108,
+        "recordMs": 1,
+        "judgmentMs": 493635
+      },
+      "warnings": [
+        "probe \"frozen-dependency-install\" v1 at .keel-probes-corpus/frozen-dependency-install.v1.ts is shadowed by v2 at .keel-probes-corpus/frozen-dependency-install.v2.ts"
+      ]
+    },
+    {
+      "name": "anthropic-courses",
+      "url": "https://github.com/anthropics/courses.git",
+      "revision": "f4dbb137d7b02dddaf3cc73e32e20a702d3b5e77",
+      "status": "nothing_gathered",
+      "runIndex": 14,
+      "recordedAt": "2026-07-25T03:59:42.183Z",
+      "ratio": null,
+      "anchored": null,
+      "selfReferential": null,
+      "unknown": null,
+      "notACheck": null,
+      "nodesTotal": 0,
+      "nodesSampled": 0,
+      "nodesJudged": 0,
+      "nodesUnjudged": 0,
+      "partial": false,
+      "judgedFraction": null,
+      "capped": false,
+      "coverageGathered": {},
+      "coverageJudged": {},
+      "probeShare": null,
+      "economics": {
+        "nodesTotal": 0,
+        "nodesSampled": 0,
+        "decidedByProbe": 0,
+        "decidedByAgent": 0,
+        "probesMinted": 0,
+        "probeLibrarySize": 29,
+        "tokensIn": 0,
+        "tokensOut": 0,
+        "tokensEstimated": true,
+        "wallClockMs": 63315
+      },
+      "warnings": [
+        "gatherer found no verification surfaces it can read — this is non-coverage, not a grounding claim",
+        "no reports/<name>.json exists for this target ON PURPOSE: every ratio a Report could carry here would be a claim nobody can defend"
+      ]
+    }
+  ],
+  "totals": {
+    "targetsDeclared": 15,
+    "targetsMeasured": 14,
+    "targetsUnjudged": 0,
+    "targetsPartial": 0,
+    "targetsNothingGathered": 1,
+    "targetsFailed": 0,
+    "anchored": 122,
+    "selfReferential": 14,
+    "unknown": 7,
+    "notACheck": 190,
+    "nodesTotal": 1826,
+    "nodesSampled": 333,
+    "nodesJudged": 333,
+    "nodesUnjudged": 0,
+    "ratioPooled": 0.8531468531468531,
+    "ratioMeanOfTargets": 0.8667647828362114
+  },
+  "repeatability": [
+    {
+      "name": "tiktoken",
+      "comparedAt": "2026-07-25T03:58:11.014Z",
+      "comparedNodes": 0,
+      "agreed": 0,
+      "agreement": null,
+      "probeComparedNodes": 7,
+      "probeAgreed": 7,
+      "probeAgreement": 1,
+      "mixedComparedNodes": 3,
+      "mixedAgreed": 3,
+      "mixedAgreement": 1,
+      "pooledComparedNodes": 10,
+      "pooledAgreed": 10,
+      "pooledAgreement": 1,
+      "disagreements": []
+    }
+  ],
+  "notes": [
+    "A ratio never travels alone: read it with the anchored count and the coverage beside it. A 1.0 over one edge and a 0.7 over fifty are different claims.",
+    "coverageJudged counts the nodes that were JUDGED, not the whole gathered surface. coverageGathered is the surface the gatherer could see. Surfaces the gatherer cannot read at all are absent from both — that is Keel's own shoppable class, and it is why nodesTotal is printed.",
+    "unknown counts AGAINST the ratio. not_a_check is excluded from it entirely, which is what makes not_a_check shoppable and worth auditing.",
+    "Keel measures the SHAPE of verification, not its quality. A repo can be 100% anchored with terrible tests. A high ratio is not \"well tested\".",
+    "entries accumulate across runs and are keyed by name: running with a SUBSET corpus file adds to this summary rather than replacing it, so entries may name targets absent from the current corpusOrder. Totals are computed over the entries, not over the current corpus file.",
+    "partial:true means some sampled node carries no verdict, and judgedFraction says how much of the sample the ratio actually rests on. A ratio of 1.000 at judgedFraction 0.06 is a claim about two edges, not about a repository. totals.targetsMeasured counts only targets with at least one judged node; targets recorded with none are counted under targetsUnjudged and contribute nothing to any aggregate.",
+    "A target that gathered zero nodes, and a target where not one sampled node carries a verdict, both get NO reports/<name>.json — a Report must carry a GroundingRatio, groundingRatio([]) is 0, and publishing 0.000 (the worst possible score) about a surface nobody could read or nobody judged is a category error, not a result. The first appears here as status \"nothing_gathered\" with ratio null; the second as a recorded entry with ratio null, nodesJudged 0 and a place in totals.targetsUnjudged. Resume keys off those entries rather than off a report file.",
+    "tokensEstimated is true everywhere: a skill inside an agent session has no API for its own usage. Estimate = ceil(chars/4) over the printed judgment payload and the verdicts file.",
+    "COST CAVEAT, read before plotting anything. economics.wallClockMs and timing.judgmentMs span `next` -> `record`, which is agent-and-operator wall time: they include coffee breaks, context switches and anything else that happened between the two commands, so they are an UPPER BOUND on machine cost and not a measurement of it. Only timing.{cloneMs,gatherMs,probeMs,recordMs} are directly measured. tokensIn likewise counts only the printed payload — the payload invites the agent to read the clone for context, and those reads are uncounted and systematically larger on probe-poor early targets, a bias pointing the same way as any crystallization effect. For a cost-vs-library-size curve, prefer decidedByProbe/nodesJudged (probe share) and tokensIn as the y-axis; use wall clock only as a loose ceiling, and never as the headline.",
+    "repeatability.agreement is AGENT-ONLY by construction: probes are deterministic scripts that reproduce their own verdicts exactly, so counting them as \"independent re-judgment\" inflates the number toward 1.0 as the library grows, for reasons unrelated to judgment stability. probeAgreement / mixedAgreement / pooledAgreement are reported beside it for audit, and pooledAgreement is NOT the stability claim."
+  ]
+}

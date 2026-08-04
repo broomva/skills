@@ -1,0 +1,241 @@
+{
+  "schema": "keel.gather-coverage.v1",
+  "target": "/tmp/kc/aspect-cli",
+  "nodesGathered": 187,
+  "unread": [
+    {
+      "path": ".buildkite",
+      "kind": "dir",
+      "tool": "Buildkite"
+    },
+    {
+      "path": "tools/lint/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "tools/gazelle/BUILD",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "tools/format/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "tools/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/starbuf-derive/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/axl-docgen/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/example-tui/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/build-event-stream/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/aspect-cli/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/basil/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/aspect-telemetry/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/axl-lsp/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/aspect-launcher/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/axl-proto/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/axl-types/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/bazelrc/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/galvanize/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/axl-runtime/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/starbuf-types/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "crates/pty-multiplex/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "exclude/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/lint/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/deliverable/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/cache-diff/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/cache-diff/MODULE.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/py_runnable/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/py_runnable/MODULE.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/slow_build/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/test_states/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/large_bes/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "examples/large_bes/MODULE.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/platforms/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/proto/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/proto/MODULE.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/patches/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/rust/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/release/homebrew/tests/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/release/homebrew/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/release/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "bazel/BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "BUILD.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    },
+    {
+      "path": "MODULE.bazel",
+      "kind": "file",
+      "tool": "Bazel"
+    }
+  ],
+  "silent": [
+    {
+      "path": ".gitlab-ci.yml",
+      "parser": "workflow-steps"
+    }
+  ],
+  "blind": [
+    {
+      "path": "crates/aspect-cli/src/builtins/aspect/private/lib",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    },
+    {
+      "path": "crates/aspect-cli/src/builtins/aspect/private/feature",
+      "by": "walk",
+      "reason": "walk depth limit (6) reached — nothing at or below this path was visited"
+    }
+  ],
+  "note": "A ratio computed over the nodes this gatherer could read says nothing about the surfaces listed here. A repo whose real verification lives in an unread surface reads exactly like a repo with no verification at all, and that ambiguity — not a low score — is the failure this list exists to prevent. These paths carry no verdict and no class: an unread surface produces no node, so there is nothing to classify. Read them by hand, or teach gather.ts to read them, before quoting the number."
+}

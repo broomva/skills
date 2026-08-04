@@ -1,0 +1,620 @@
+{
+  "target": "binius64",
+  "revision": "4891fc9b74ca0d21ba5545aeaf0e325dbc76c7fb",
+  "generatedAt": "2026-07-26T19:45:05.866Z",
+  "nodes": [
+    {
+      "id": "CODEOWNERS#codeowners",
+      "kind": "review_gate",
+      "name": "code owners (CODEOWNERS)",
+      "source": "CODEOWNERS",
+      "raw": "*   @jimpo\n"
+    },
+    {
+      "id": ".github/workflows/docs.yml#22-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout Repository",
+      "source": ".github/workflows/docs.yml:22",
+      "raw": "      - name: Checkout Repository\n        uses: actions/checkout@v7",
+      "hints": {
+        "action": "actions/checkout@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/docs.yml#25-setup-rust",
+      "kind": "ci_step",
+      "name": "Setup Rust",
+      "source": ".github/workflows/docs.yml:25",
+      "raw": "      - name: Setup Rust\n        uses: actions-rust-lang/setup-rust-toolchain@v1",
+      "hints": {
+        "action": "actions-rust-lang/setup-rust-toolchain@v1"
+      }
+    },
+    {
+      "id": ".github/workflows/docs.yml#28-build-documentation",
+      "kind": "ci_step",
+      "name": "Build Documentation",
+      "source": ".github/workflows/docs.yml:28",
+      "raw": "      - name: Build Documentation\n        run: |\n          cargo doc --no-deps --all-features\n          # Create redirect to main crate (binius_core) - using relative path for GitHub Pages compatibility\n          echo '<html><head><meta http-equiv=\"refresh\" content=\"0; url=binius_core/\"></head><body>Redirecting to <a href=\"binius_core/\">binius_core</a></body></html>' > target/doc/index.html\n        env:\n          RUSTFLAGS: \"-C target-cpu=native\""
+    },
+    {
+      "id": ".github/workflows/docs.yml#36-upload-documentation-artifact",
+      "kind": "ci_step",
+      "name": "Upload Documentation Artifact",
+      "source": ".github/workflows/docs.yml:36",
+      "raw": "      - name: Upload Documentation Artifact\n        uses: actions/upload-pages-artifact@v5\n        with:\n          path: \"target/doc\"",
+      "hints": {
+        "action": "actions/upload-pages-artifact@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/docs.yml#49-deploy-to-github-pages",
+      "kind": "ci_step",
+      "name": "Deploy to GitHub Pages",
+      "source": ".github/workflows/docs.yml:49",
+      "raw": "      - name: Deploy to GitHub Pages\n        id: deployment\n        uses: actions/deploy-pages@v5",
+      "hints": {
+        "action": "actions/deploy-pages@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#25-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout Repository",
+      "source": ".github/workflows/ci.yml:25",
+      "raw": "      - name: Checkout Repository\n        uses: actions/checkout@v7",
+      "hints": {
+        "action": "actions/checkout@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#27-setup-python",
+      "kind": "ci_step",
+      "name": "Setup Python",
+      "source": ".github/workflows/ci.yml:27",
+      "raw": "      - name: Setup Python\n        uses: actions/setup-python@v7\n        with:\n          python-version: \"3.13\"",
+      "hints": {
+        "action": "actions/setup-python@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#31-install-prek",
+      "kind": "ci_step",
+      "name": "Install prek",
+      "source": ".github/workflows/ci.yml:31",
+      "raw": "      - name: Install prek\n        run: cargo install prek --version 0.4.4 --locked"
+    },
+    {
+      "id": ".github/workflows/ci.yml#33-check-copyright",
+      "kind": "ci_step",
+      "name": "Check copyright",
+      "source": ".github/workflows/ci.yml:33",
+      "raw": "      - name: Check copyright\n        run: prek run copyright --all-files"
+    },
+    {
+      "id": ".github/workflows/ci.yml#35-check-typos",
+      "kind": "ci_step",
+      "name": "Check typos",
+      "source": ".github/workflows/ci.yml:35",
+      "raw": "      - name: Check typos\n        run: prek run typos --all-files"
+    },
+    {
+      "id": ".github/workflows/ci.yml#37-setup-rust",
+      "kind": "ci_step",
+      "name": "Setup Rust",
+      "source": ".github/workflows/ci.yml:37",
+      "raw": "      - name: Setup Rust\n        uses: ./.github/actions/setup-rust\n        with:\n          components: rustfmt",
+      "hints": {
+        "action": "./.github/actions/setup-rust"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#41-install-nightly-toolchain-for-rustfmt",
+      "kind": "ci_step",
+      "name": "Install nightly toolchain for rustfmt",
+      "source": ".github/workflows/ci.yml:41",
+      "raw": "      - name: Install nightly toolchain for rustfmt\n        run: rustup toolchain install nightly-2026-07-01 --component rustfmt"
+    },
+    {
+      "id": ".github/workflows/ci.yml#43-check-rustfmt",
+      "kind": "ci_step",
+      "name": "Check rustfmt",
+      "source": ".github/workflows/ci.yml:43",
+      "raw": "      - name: Check rustfmt\n        run: prek run rustfmt --all-files"
+    },
+    {
+      "id": ".github/workflows/ci.yml#76-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout Repository",
+      "source": ".github/workflows/ci.yml:76",
+      "raw": "      - name: Checkout Repository\n        uses: actions/checkout@v7",
+      "hints": {
+        "action": "actions/checkout@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#78-setup-rust",
+      "kind": "ci_step",
+      "name": "Setup Rust",
+      "source": ".github/workflows/ci.yml:78",
+      "raw": "      - name: Setup Rust\n        uses: ./.github/actions/setup-rust\n        with:\n          components: clippy",
+      "hints": {
+        "action": "./.github/actions/setup-rust"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#82-install-cargo-nextest",
+      "kind": "ci_step",
+      "name": "Install cargo-nextest",
+      "source": ".github/workflows/ci.yml:82",
+      "raw": "      - name: Install cargo-nextest\n        uses: taiki-e/install-action@v2\n        with:\n          tool: cargo-nextest",
+      "hints": {
+        "action": "taiki-e/install-action@v2"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#86-install-lld",
+      "kind": "ci_step",
+      "name": "Install lld",
+      "source": ".github/workflows/ci.yml:86",
+      "raw": "      - name: Install lld\n        run: sudo apt-get update -qq && sudo apt-get install -y lld"
+    },
+    {
+      "id": ".github/workflows/ci.yml#92-compile",
+      "kind": "ci_step",
+      "name": "Compile",
+      "source": ".github/workflows/ci.yml:92",
+      "raw": "      - name: Compile\n        run: cargo build --workspace --lib --bins --tests --examples"
+    },
+    {
+      "id": ".github/workflows/ci.yml#94-run-platform-diagnostics",
+      "kind": "ci_step",
+      "name": "Run platform diagnostics",
+      "source": ".github/workflows/ci.yml:94",
+      "raw": "      - name: Run platform diagnostics\n        run: cargo test -p binius-utils --features platform-diagnostics test_platform_diagnostics -- --nocapture"
+    },
+    {
+      "id": ".github/workflows/ci.yml#96-run-clippy",
+      "kind": "ci_step",
+      "name": "Run clippy",
+      "source": ".github/workflows/ci.yml:96",
+      "raw": "      - name: Run clippy\n        run: cargo clippy --workspace --all-targets -- -D warnings"
+    },
+    {
+      "id": ".github/workflows/ci.yml#98-run-tests",
+      "kind": "ci_step",
+      "name": "Run tests",
+      "source": ".github/workflows/ci.yml:98",
+      "raw": "      - name: Run tests\n        run: cargo nextest run --workspace --no-fail-fast ${{ matrix.arch.test_args }}"
+    },
+    {
+      "id": ".github/workflows/ci.yml#101-run-doctests",
+      "kind": "ci_step",
+      "name": "Run doctests",
+      "source": ".github/workflows/ci.yml:101",
+      "raw": "      - name: Run doctests\n        run: cargo test --doc --workspace"
+    },
+    {
+      "id": ".github/workflows/ci.yml#109-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout Repository",
+      "source": ".github/workflows/ci.yml:109",
+      "raw": "      - name: Checkout Repository\n        uses: actions/checkout@v7",
+      "hints": {
+        "action": "actions/checkout@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#111-setup-rust",
+      "kind": "ci_step",
+      "name": "Setup Rust",
+      "source": ".github/workflows/ci.yml:111",
+      "raw": "      - name: Setup Rust\n        uses: ./.github/actions/setup-rust\n        with:\n          target: wasm32-unknown-unknown",
+      "hints": {
+        "action": "./.github/actions/setup-rust"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "CODEOWNERS#codeowners",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "GitHub's pull-request review-approval service, but only if branch protection has 'Require review from Code Owners' enabled — that setting lives in repo settings, not in the tree",
+        "actorCanWrite": null,
+        "argument": "CODEOWNERS (`* @jimpo`) is a routing declaration: on its own it requests a reviewer and blocks nothing. Whether an approval actually gates the merge is decided by branch-protection configuration that is not present in the clone, so the fork point cannot be established; the `merge_group:` trigger at .github/workflows/ci.yml:7 proves a merge queue exists but says nothing about code-owner enforcement, and with a single owner the gate is unsatisfiable-or-bypassed on that owner's own PRs. Fails closed as unknown rather than being upgraded to anchored on the assumption that a human approval is required."
+      },
+      "evidence": [
+        "CODEOWNERS:1",
+        ".github/workflows/ci.yml:3-7 (on: pull_request, merge_group)",
+        "git log -1 --format=%an → Thomas Coratger (author differs from the sole code owner; clone is depth-1 so approval history is not inspectable)"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/docs.yml#22-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v7 performing a git clone on the GitHub-hosted runner",
+        "actorCanWrite": false,
+        "argument": "This step materializes the source tree; it makes no assertion about the tree it fetched. Its only failure mode is infrastructure (network, token, ref), which is a statement about the runner rather than about the artifact, so it carries no falsifiable claim about correctness and is excluded from the ratio."
+      },
+      "evidence": [
+        ".github/workflows/docs.yml:22-23"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/docs.yml#25-setup-rust",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions-rust-lang/setup-rust-toolchain@v1 invoking rustup on the runner",
+        "actorCanWrite": false,
+        "argument": "Toolchain provisioning. It installs rustc/cargo so later steps can run; it evaluates nothing about the repository. A failure here means rustup or the network broke, not that the code is wrong."
+      },
+      "evidence": [
+        ".github/workflows/docs.yml:25-26",
+        "rust-toolchain.toml:2 (channel = \"1.97.1\")"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/docs.yml#28-build-documentation",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "rustdoc from the pinned 1.97.1 toolchain; the step's exit code is rustdoc's, and `.cargo/config.toml` sets `rustdocflags = [\"-Dwarnings\", ...]`, so broken intra-doc links and missing crate-level docs become errors",
+        "actorCanWrite": false,
+        "argument": "The producer is a compiler outside the repo's write boundary, deterministically analyzing the actual sources; the run block uses the default `bash -eo pipefail`, so a rustdoc failure fails the step (the trailing `echo > index.html` is inert). Two limits worth stating: it verifies that documentation compiles and that doc links resolve — nothing about runtime behavior — and docs.yml triggers on `push: [main]`, so this edge gates publication after the merge, not the merge itself."
+      },
+      "evidence": [
+        ".github/workflows/docs.yml:28-34",
+        ".github/workflows/docs.yml:3-5 (on: push branches [main])",
+        ".cargo/config.toml:2 (rustdocflags = [\"-Dwarnings\", ...])"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/docs.yml#36-upload-documentation-artifact",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-pages-artifact@v5 tarring target/doc and uploading it to the Actions artifact store",
+        "actorCanWrite": false,
+        "argument": "A transport step: it moves bytes the previous step produced into the Pages artifact store and asserts nothing about them. Failure signals a missing path or a storage error, not a defect in the documented code."
+      },
+      "evidence": [
+        ".github/workflows/docs.yml:36-39"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/docs.yml#49-deploy-to-github-pages",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "GitHub's Pages deployment API — actions/deploy-pages@v5 creates a deployment and polls GitHub for its terminal status; the outcome is GitHub's, not the workflow's",
+        "actorCanWrite": false,
+        "argument": "The success signal is emitted by a third-party service the repo cannot write to: the artifact is either accepted and published at the returned `page_url` or it is not, and no in-repo change can fake that verdict. The limit is that this establishes publication/availability only — it says nothing about whether the published docs (or the library) are correct — and, running on `push: [main]`, it is a post-merge edge."
+      },
+      "evidence": [
+        ".github/workflows/docs.yml:41-51",
+        ".github/workflows/docs.yml:45-47 (environment github-pages, url from steps.deployment.outputs.page_url)"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#25-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v7 performing a git clone on the GitHub-hosted runner",
+        "actorCanWrite": false,
+        "argument": "Provisioning for the `format` job: it fetches the tree that later steps evaluate and asserts nothing itself. The only way it fails is a runner/network/token problem, which is not a claim about the code, so it contributes no falsifiable signal."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:25-26"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#27-setup-python",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/setup-python@v7 installing CPython 3.13 on the runner",
+        "actorCanWrite": false,
+        "argument": "Interpreter provisioning so that the prek `copyright` hook (a Python script) can run later. It evaluates nothing about the repository; a failure is a toolchain-availability event."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:27-30"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#31-install-prek",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "cargo install building prek 0.4.4 from crates.io with a locked lockfile",
+        "actorCanWrite": false,
+        "argument": "Tool provisioning for the three hook-running steps that follow. Compiling a third-party binary asserts nothing about binius64's sources; failure means crates.io or the build environment, not a defect under review."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:31-32"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#33-check-copyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "CPython executing tools/check_copyright_notice.py under prek; the script reads the first line of every git-tracked .rs file under crates/ and returns 1 when any header is missing or malformed",
+        "actorCanWrite": false,
+        "argument": "The verdict is computed by a real execution over real file contents — the interpreter decides the exit code, and the entry has no `--fix`, so the hook fails rather than rewriting (tools/check_copyright_notice.py:159-163). Two limits belong on the record: the rule and the checker both live inside the repo (tools/check_copyright_notice.py:14-16), so the standard being enforced is self-authored and an agent could weaken it in the same commit; and the property verified is header hygiene, not behavior."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:33-34",
+        "prek.toml:8-15 (entry = \"python tools/check_copyright_notice.py\")",
+        "tools/check_copyright_notice.py:143-163 (returns 1 when wrong+missing > 0)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#35-check-typos",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the crate-ci/typos binary pinned at v1.32.0, running its upstream-maintained misspelling dictionary over the tree; typos' exit code is the step's",
+        "actorCanWrite": false,
+        "argument": "The dictionary and the matcher are third-party artifacts fetched at a pinned revision, so the corpus of 'what counts as a typo' is authored outside this repo — the actor can only widen the allowlist (Cargo.toml:106-111 `[workspace.metadata.typos]` extend-words / extend-ignore-re), never manufacture a pass for a genuine hit it has not enumerated. The limit is scope: it verifies spelling in identifiers and prose, nothing about behavior."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:35-36",
+        "prek.toml:49-54 (repo = crate-ci/typos, rev = v1.32.0)",
+        "Cargo.toml:106-111 ([workspace.metadata.typos] allowlist)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#37-setup-rust",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the local composite action .github/actions/setup-rust, which hashes /proc/cpuinfo into a cache key and then delegates to actions-rust-lang/setup-rust-toolchain@v1",
+        "actorCanWrite": false,
+        "argument": "Descending into the composite action shows only provisioning: compute a cache key, install the toolchain plus the rustfmt component. Nothing is asserted about the repository, so the step is outside the ratio even though its exit code is honestly produced."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:37-40",
+        ".github/actions/setup-rust/action.yml:15-38"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#41-install-nightly-toolchain-for-rustfmt",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "rustup installing the nightly-2026-07-01 toolchain with the rustfmt component",
+        "actorCanWrite": false,
+        "argument": "Provisioning for the rustfmt step that follows, which pins the same nightly via prek.toml:22. Installing a toolchain evaluates nothing about the sources; its failure mode is toolchain availability."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:41-42",
+        "prek.toml:22"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#43-check-rustfmt",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "rustfmt from the pinned nightly-2026-07-01 toolchain, invoked by prek as `cargo +nightly-2026-07-01 fmt --check`",
+        "actorCanWrite": false,
+        "argument": "`--check` means the formatter reports a diff and exits non-zero rather than rewriting, so this is a real gate and not the 'formatter that only rewrites' case; the layout decision is made by a third-party binary at a pinned revision that the repository cannot influence beyond the style knobs in .rustfmt.toml. Limit: it verifies formatting conformance only and says nothing about whether the formatted code is correct."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:43-44",
+        "prek.toml:16-25 (entry = \"cargo +nightly-2026-07-01 fmt --check\")",
+        ".rustfmt.toml:1-7"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#76-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v7 performing a git clone on the runner for the rust-checks matrix job",
+        "actorCanWrite": false,
+        "argument": "Source provisioning for the job that carries the compiler, clippy and test steps. It asserts nothing about what it checked out; failure is a runner-level event, not a defect signal."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:76-77"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#78-setup-rust",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the local composite action .github/actions/setup-rust delegating to actions-rust-lang/setup-rust-toolchain@v1 with the clippy component",
+        "actorCanWrite": false,
+        "argument": "Descended into the composite: CPU-feature cache-key computation plus toolchain install. It provisions clippy for the later lint step and makes no claim about the repository itself."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:78-81",
+        ".github/actions/setup-rust/action.yml:23-38"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#82-install-cargo-nextest",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "taiki-e/install-action@v2 downloading the cargo-nextest binary onto the runner",
+        "actorCanWrite": false,
+        "argument": "Test-runner provisioning. The signal it produces is 'the tool is present', which is a fact about the runner, not about binius64; the actual verification happens in the later `Run tests` step."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:82-85"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#86-install-lld",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "apt-get installing the lld linker on the Ubuntu runner",
+        "actorCanWrite": false,
+        "argument": "Build-environment provisioning: RUSTFLAGS at ci.yml:74 links with lld, so this step exists to make the compile fast, not to evaluate anything. Its failure mode is package-mirror availability."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:86-87",
+        ".github/workflows/ci.yml:70-74 (RUSTFLAGS -Clink-arg=-fuse-ld=lld)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#92-compile",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "rustc 1.97.1 (pinned in rust-toolchain.toml) building the whole workspace including tests and examples; the compiler's exit code is the step's",
+        "actorCanWrite": false,
+        "argument": "Type checking, borrow checking, trait resolution and linking are performed by a third-party compiler over the actual sources — no assertion authored in this repo can talk rustc out of a type error. The signal is genuinely external and, on the `pull_request`/`merge_group` triggers, sits directly on the merge path; the limit is that it establishes well-formedness, not correctness."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:92-93",
+        "rust-toolchain.toml:2",
+        ".github/workflows/ci.yml:3-7 (on: pull_request, merge_group)"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#94-run-platform-diagnostics",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the compiled binius-utils test binary executing on the real runner CPU; cargo/libtest turn a panic or a SIGILL into a non-zero exit",
+        "actorCanWrite": false,
+        "argument": "Execution is genuinely external — this is the leg built with `-Ctarget-cpu=native`, and the step's real (if narrow) power is that it crashes if the binary contains instructions the runner cannot execute, which is exactly the cache-poisoning failure the setup-rust action documents at action.yml:18-22. But the assertion content is close to vacuous and must be named: the filter selects only `test_platform_diagnostics` (crates/utils/src/platform_diagnostics.rs:891), whose three assertions are `!is_empty()` on values that all have non-empty fallback constants — `platform` is a `format!(\"{} on {}\")` that can never be empty, `cpu` falls back to `UNKNOWN_CPU`, `target` is the `BUILD_TARGET` env constant — so no data-dependent failure is reachable and only the crash path is falsifiable."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:94-95",
+        "crates/utils/src/platform_diagnostics.rs:889-899 (the selected test)",
+        "crates/utils/src/platform_diagnostics.rs:825-838 + 266-292 (non-empty fallbacks: format!, UNKNOWN_CPU, BUILD_TARGET)",
+        ".github/actions/setup-rust/action.yml:18-22 (illegal-instruction rationale)"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#96-run-clippy",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "cargo-clippy from the pinned toolchain running over `--workspace --all-targets` with `-D warnings`, so any lint hit is a non-zero exit",
+        "actorCanWrite": false,
+        "argument": "The lint set and its analysis are shipped with the Rust toolchain, outside the repository's write boundary, and are evaluated against real MIR/HIR rather than against a claim the repo emitted. The limit to name: the actor can widen what passes — `[workspace.lints.clippy]` already sets `needless_range_loop = allow` (Cargo.toml:101-104) and per-item `#[allow]` attributes work the same way — so the gate's strictness is partially self-authored even though its verdict is not."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:96-97",
+        "Cargo.toml:101-104"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#98-run-tests",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "cargo-nextest executing ~1380 compiled test binaries on the runner; the process exit status decides, and `--no-fail-fast` only defers reporting, it does not mask a failure",
+        "actorCanWrite": false,
+        "argument": "Execution is anchored in the usual way, but here the oracle is unusually strong and largely external: 90 `proptest!` blocks generate inputs the authors never enumerated and assert algebraic identities (crates/field/src/binary_field.rs:744-751 checks `x * x.invert() == ONE`), circuit outputs are cross-checked against independent third-party reference implementations rather than recorded expectations (`sha2`, `sha3`, `blake2`, `blake3`, `ripemd`, `k256`, `rsa` — e.g. crates/circuits/src/sha256/mod.rs:343, crates/circuits/src/keccak/fixed_length.rs:123, crates/circuits/src/ecdsa/scalar_mul.rs:283), there are published-spec known-answer tests (crates/circuits/src/sha256/compress.rs:707 cites RFC 6234 TEST2_1), and prove-then-verify round trips plus ~96 negative/soundness assertions (`is_err()` / `should_panic`) exercise rejection paths. Two honest qualifications: a minority of oracles are self-authored inline `insta` snapshots in the gate-fusion compiler tests (crates/frontend/src/compiler/gate_fusion/tests/awhole.rs), regenerable with `cargo insta accept`, and two of the three matrix legs exclude binius-circuits via `-E 'not package(binius-circuits)'`, so those tests gate on the x86_64 leg only."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:98-99",
+        ".github/workflows/ci.yml:56-67 (matrix test_args exclude binius-circuits on 2 of 3 legs)",
+        "crates/field/src/binary_field.rs:744-751 (proptest field-inverse identity)",
+        "crates/circuits/src/sha256/compress.rs:707-735 (RFC 6234 known-answer test)",
+        "crates/circuits/src/sha256/mod.rs:343 / crates/circuits/src/keccak/fixed_length.rs:123 / crates/circuits/src/ecdsa/scalar_mul.rs:283 (reference-implementation cross-checks)",
+        "crates/prover/src/protocols/intmul/tests.rs:39 (prove_and_verify round trip)",
+        "crates/frontend/src/compiler/gate_fusion/tests/awhole.rs:183 (self-authored insta snapshot oracle)"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#101-run-doctests",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "rustdoc extracting the ~156 fenced examples from doc comments, compiling each as its own crate and running it; the runtime decides pass/fail",
+        "actorCanWrite": false,
+        "argument": "The compiler and the runtime produce the verdict, so the execution axis is outside the write boundary, and doctests catch API drift that ordinary tests miss because the examples are compiled fresh against the public surface. Limits: 53 of the fences are `ignore`/`no_run`/`text`, which are compiled-only or skipped entirely, and only 13 doc examples carry an `assert`, so most of what this step verifies is that documented usage still type-checks."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:101-102",
+        "grep -c '/// ```' crates → 130, '//! ```' → 26, ignore/no_run/text → 53, '/// assert' → 13"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#109-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v7 performing a git clone on the runner for the wasm-vanilla-build job",
+        "actorCanWrite": false,
+        "argument": "Source provisioning for the wasm build job. It makes no assertion about the tree; the check in that job is the `cargo build --target wasm32-unknown-unknown` step that follows."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:109-110",
+        ".github/workflows/ci.yml:115-116"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#111-setup-rust",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the local composite action .github/actions/setup-rust delegating to actions-rust-lang/setup-rust-toolchain@v1 with target wasm32-unknown-unknown",
+        "actorCanWrite": false,
+        "argument": "Descended into the composite: it computes a CPU-scoped cache key and installs the toolchain plus the wasm target. Adding a target asserts nothing about the code; the falsifiable step is the wasm compile that follows it."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:111-114",
+        ".github/actions/setup-rust/action.yml:15-38"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 10,
+    "selfReferential": 0,
+    "unknown": 1,
+    "notACheck": 14,
+    "ratio": 0.9090909090909091
+  },
+  "economics": {
+    "nodesTotal": 37,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 2228,
+    "tokensOut": 5510,
+    "tokensEstimated": true,
+    "wallClockMs": 2645262
+  }
+}

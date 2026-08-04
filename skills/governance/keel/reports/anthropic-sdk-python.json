@@ -1,0 +1,618 @@
+{
+  "target": "anthropic-sdk-python",
+  "revision": "60c64fba5c2bf340567f627328e57cf0196b868f",
+  "generatedAt": "2026-07-25T01:35:15.174Z",
+  "nodes": [
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:136",
+      "raw": "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\naddopts = \"--tb=short -n auto\"\nxfail_strict = true\nasyncio_mode = \"auto\"\nasyncio_default_fixture_loop_scope = \"session\"\nfilterwarnings = [\n  \"error\"\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:149",
+      "raw": "[tool.pyright]\n# this enables practically every flag given by pyright.\n# there are a couple of flags that are still disabled by\n# default in strict mode as they are experimental and niche.\ntypeCheckingMode = \"strict\"\npythonVersion = \"3.9\"\n\nexclude = [\n    \".git\",\n    \"_dev\",\n    \".venv\",\n    \".nox\",\n    \"examples/mcp_tool_runner.py\",  # mcp requires Python 3.10+, lint runs on 3.9\n]\n\nreportImplicitOverride = true\nreportOverlappingOverload = false\n\nreportImportCycles = false\nreportPrivateUsage = false"
+    },
+    {
+      "id": "pyproject.toml#tool-mypy",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.mypy])",
+      "source": "pyproject.toml:170",
+      "raw": "[tool.mypy]\npretty = true\nshow_error_codes = true\n\n# Exclude _files.py because mypy isn't smart enough to apply\n# the correct type narrowing and as this is an internal module\n# it's fine to just use Pyright.\n#\n# We also exclude our `tests` as mypy doesn't always infer\n# types correctly and Pyright will still catch any type errors.\nexclude = [\"src/anthropic/_files.py\", \"_dev/.*.py\", \"tests/.*\", \"examples/mcp_server_weather.py\", \"examples/mcp_tool_runner.py\", \"examples/tools_with_mcp.py\", \"examples/memory/basic.py\", \"src/anthropic/lib/_parse/_transform.py\", \"src/anthropic/lib/tools/_beta_functions.py\"]\n\nstrict_equality = true\nimplicit_reexport = true\ncheck_untyped_defs = true\nno_implicit_optional = true\n\nwarn_return_any = true\nwarn_unreachable = true\nwarn_unused_configs = true\n\n# Turn these options off as it could cause conflicts\n# with the Pyright options.\nwarn_unused_ignores = false\nwarn_redundant_casts = false\n\ndisallow_any_generics = true\ndisallow_untyped_defs = true\ndisallow_untyped_calls = true\ndisallow_subclassing_any = true\ndisallow_incomplete_defs = true\ndisallow_untyped_decorators = true\ncache_fine_grained = true\n\n# By default, mypy reports an error if you assign a value to the result\n# of a function call that doesn't return anything. We do this in our test\n# cases:\n# ```\n# result = ...\n# assert result is None\n# ```\n# Changing this codegen to make mypy happy would increase complexity\n# and would not be worth it.\ndisable_error_code = \"func-returns-value,overload-cannot-match\"\n\n# https://github.com/python/mypy/issues/12162"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "pyproject.toml:229",
+      "raw": "[tool.ruff]\nline-length = 120\noutput-format = \"grouped\"\ntarget-version = \"py38\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-format",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.format])",
+      "source": "pyproject.toml:234",
+      "raw": "[tool.ruff.format]\ndocstring-code-format = true"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:237",
+      "raw": "[tool.ruff.lint]\nselect = [\n  # isort\n  \"I\",\n  # bugbear rules\n  \"B\",\n  # remove unused imports\n  \"F401\",\n  # check for missing future annotations\n  \"FA102\",\n  # bare except statements\n  \"E722\",\n  # unused arguments\n  \"ARG\",\n  # print statements\n  \"T201\",\n  \"T203\",\n  # misuse of typing.TYPE_CHECKING\n  \"TC004\",\n  # import rules\n  \"TID251\",\n]\nignore = [\n  # mutable defaults\n  \"B006\",\n]\nunfixable = [\n  # disable auto fix for print statements\n  \"T201\",\n  \"T203\",\n]\n\nextend-safe-fixes = [\"FA102\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-flake8-tidy-imports-banned-api",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.flake8-tidy-imports.banned-api])",
+      "source": "pyproject.toml:271",
+      "raw": "[tool.ruff.lint.flake8-tidy-imports.banned-api]\n\"functools.lru_cache\".msg = \"This function does not retain type information for the wrapped function's arguments; The `lru_cache` function from `_utils` should be used instead\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-isort",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.isort])",
+      "source": "pyproject.toml:274",
+      "raw": "[tool.ruff.lint.isort]\nlength-sort = true\nlength-sort-straight = true\ncombine-as-imports = true\nextra-standard-library = [\"typing_extensions\"]\nknown-first-party = [\"anthropic\", \"tests\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.per-file-ignores])",
+      "source": "pyproject.toml:281",
+      "raw": "[tool.ruff.lint.per-file-ignores]\n\"bin/**.py\" = [\"T201\", \"T203\"]\n\"scripts/**.py\" = [\"T201\", \"T203\"]\n\"tests/**.py\" = [\"T201\", \"T203\"]\n\"examples/**.py\" = [\"T201\", \"T203\"]"
+    },
+    {
+      "id": "tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/conftest.py",
+      "raw": "# File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.\n\nfrom __future__ import annotations\n\nimport os\nimport logging\nfrom typing import TYPE_CHECKING, Any, Iterator, AsyncIterator\n\nimport httpx\nimport pytest\nimport inline_snapshot\nfrom http_snapshot import SnapshotSerializerOptions\nfrom pytest_asyncio import is_async_test\nfrom http_snapshot.httpx import HttpxSyncSnapshotClient, HttpxAsyncSnapshotClient\n\nfrom anthropic import Anthropic, AsyncAnthropic, DefaultAioHttpClient\nfrom anthropic._utils import is_dict\n\nif TYPE_CHECKING:\n    from _pytest.fixtures import FixtureRequest  # pyright: ignore[reportPrivateImportUsage]\n\npytest.register_assert_rewrite(\"tests.utils\")\n\nlogging.getLogger(\"anthropic\").setLevel(logging.DEBUG)\n\nSNAPSHOT_RESPONSE_HEADERS_EXCLUDE = [\n    \"date\",\n    \"request-id\",\n    \"anthropic-organization-id\",\n    \"x-envoy-upstream-service-time\",\n    \"cf-ray\",\n]\n\nSNAPSHOT_REQUEST_HEADERS_EXCLUDE = [\n    \"x-api-key\",\n]\n\n\n# automatically add `pytest.mark.asyncio()` to all of our async tests\n# so we don't have to add that boilerplate everywhere\ndef pytest_collection_modifyitems(items: list[pytest.Function]) -> None:\n    pytest_asyncio_tests = (item for item in items if is_async_test(item))\n    session_scope_marker = pytest.mark.asyncio(loop_scope=\"session\")\n    for async_test in pytest_asyncio_tests:\n        async_test.add_marker(session_scope_marker, append=False)\n\n    # We skip tests that use both the aiohttp client and respx_mock as respx_mock\n    # doesn't support custom transports.\n    for item in items:\n        if \"async_client\" not in item.fixturenames or \"respx_mock\" not in item.fixturenames:\n            continue\n\n        if not hasattr(item, \"callspec\"):\n            continue\n\n        async_client_param = item.callspec.params.get(\"async_client\")\n        if is_dict(async_client_param) and async_client_param.get(\"http_client\") == \"aiohttp\":\n            item.add_marker(pytest.mark.skip(reason=\"aiohttp client is not compatible with respx_mock\"))\n\n\nbase_url = os.environ.get(\"TEST_API_BASE_URL\", \"http://127.0.0.1:4010\")\n\napi_key = \"my-anthropic-api-key\"\n\n\n@pytest.fixture(scope=\"session\")\ndef client(request: FixtureRequest) -> Iterator[Anthropic]:\n    strict = getattr(request, \"param\", True)\n    if not isinstance(strict, bool):\n        raise TypeError(f\"Unexpected fixture parameter type {type(strict)}, expected {bool}\")\n\n    with Anthropic(base_url=base_url, api_key=api_key, _strict_response_validation=strict) as client:\n        yield client\n\n\n@pytest.fixture\ndef http_snapshot_serializer_options() -> SnapshotSerializerOptions:\n    return SnapshotSerializerOptions(\n        exclude_response_headers=SNAPSHOT_RESPONSE_HEADERS_EXCLUDE,\n        exclude_request_headers=SNAPSHOT_REQUEST_HEADERS_EXCLUDE,\n        include_request=True,\n    )\n\n\n@pytest.fixture(scope=\"function\")\ndef snapshot_client(\n    is_recording: bool,\n    http_snapshot_serializer_options: SnapshotSerializerOptions,\n    http_snapshot: inline_snapshot.Snapshot[Any],\n) -> Iterator[Anthropic]:\n    with HttpxSyncSnapshotClient(\n        http_snapshot, is_recording, serializer_options=http_snapshot_serializer_options\n    ) as snapshot_client:\n        with Anthropic(http_client=snapshot_client, api_key=None if is_recording else api_key) as client:\n            yield client\n\n\n@pytest.fixture(scope=\"function\")\nasync def async_snapshot_client(\n    is_recording: bool,\n    http_snapshot_serializer_options: SnapshotSerializerOptions,\n    http_snapshot: inline_snapshot.Snapshot[Any],\n) -> AsyncIterator[AsyncAnthropic]:\n    async with HttpxAsyncSnapshotClient(\n        http_snapshot, is_recording, serializer_options=http_snapshot_serializer_options\n    ) as snapshot_client:\n        client = AsyncAnthropic(http_client=snapshot_client, api_key=None if is_recording else api_key)\n        yield client\n\n\n@pytest.fixture(scope=\"session\")\nasync def async_client(request: FixtureRequest) -> AsyncIterator[AsyncAnthropic]:\n    param = getattr(request, \"param\","
+    },
+    {
+      "id": ".github/CODEOWNERS#codeowners",
+      "kind": "review_gate",
+      "name": "code owners (CODEOWNERS)",
+      "source": ".github/CODEOWNERS",
+      "raw": "# This file is used to automatically assign reviewers to PRs\n# For more information see: https://help.github.com/en/github/creating-cloning-and-archiving-repositories/about-code-owners\n\n* @anthropics/sdk\n"
+    },
+    {
+      "id": ".github/workflows/create-releases.yml#20-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "source": ".github/workflows/create-releases.yml:20",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/create-releases.yml#22-stainless-api-trigger-release-please-bb6677c5a04578eec1ccfd9e1913b5b78ed64c61-v1-4-0",
+      "kind": "ci_step",
+      "name": "stainless-api/trigger-release-please@bb6677c5a04578eec1ccfd9e1913b5b78ed64c61 # v1.4.0",
+      "source": ".github/workflows/create-releases.yml:22",
+      "raw": "      - uses: stainless-api/trigger-release-please@bb6677c5a04578eec1ccfd9e1913b5b78ed64c61 # v1.4.0\n        id: release\n        with:\n          repo: ${{ github.event.repository.full_name }}\n          stainless-api-key: ${{ secrets.STAINLESS_API_KEY }}",
+      "hints": {
+        "action": "stainless-api/trigger-release-please@bb6677c5a04578eec1ccfd9e1913b5b78ed64c61 # v1.4.0"
+      }
+    },
+    {
+      "id": ".github/workflows/create-releases.yml#28-install-uv",
+      "kind": "ci_step",
+      "name": "Install uv",
+      "source": ".github/workflows/create-releases.yml:28",
+      "raw": "      - name: Install uv\n        if: ${{ steps.release.outputs.releases_created }}\n        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2\n        with:\n          version: '0.9.13'",
+      "hints": {
+        "action": "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2"
+      }
+    },
+    {
+      "id": ".github/workflows/create-releases.yml#34-publish-to-pypi",
+      "kind": "ci_step",
+      "name": "Publish to PyPI",
+      "source": ".github/workflows/create-releases.yml:34",
+      "raw": "      - name: Publish to PyPI\n        if: ${{ steps.release.outputs.releases_created }}\n        run: |\n          bash ./bin/publish-pypi"
+    },
+    {
+      "id": ".github/workflows/claude.yml#28-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout repository",
+      "source": ".github/workflows/claude.yml:28",
+      "raw": "      - name: Checkout repository\n        uses: actions/checkout@v4\n        with:\n          fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/claude.yml#33-configure-git",
+      "kind": "ci_step",
+      "name": "Configure git",
+      "source": ".github/workflows/claude.yml:33",
+      "raw": "      - name: Configure git\n        run: |\n          git config user.name \"claude[bot]\"\n          git config user.email \"209825114+claude[bot]@users.noreply.github.com\""
+    },
+    {
+      "id": ".github/workflows/claude.yml#38-run-claude-code",
+      "kind": "ci_step",
+      "name": "Run Claude Code",
+      "source": ".github/workflows/claude.yml:38",
+      "raw": "      - name: Run Claude Code\n        id: claude\n        uses: anthropics/claude-code-action@v1\n        with:\n          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}\n\n          # Allow Claude to run git commands and push changes\n          allowed_tools: \"Bash(git commit:*),Bash(git push:*),Bash(git merge:*),Bash(git checkout:*),Bash(git add:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git fetch:*),Bash(gh pr:*),Bash(gh issue:*)\"\n\n          # Allow github-actions[bot] to trigger Claude Code Action\n          allowed_bots: \"stainless-app\"\n\n          # This is an optional setting that allows Claude to read CI results on PRs\n          additional_permissions: |\n            actions: read",
+      "hints": {
+        "action": "anthropics/claude-code-action@v1"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#24-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "source": ".github/workflows/ci.yml:24",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#26-install-uv",
+      "kind": "ci_step",
+      "name": "Install uv",
+      "source": ".github/workflows/ci.yml:26",
+      "raw": "      - name: Install uv\n        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2\n        with:\n          version: '0.10.2'",
+      "hints": {
+        "action": "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#31-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/ci.yml:31",
+      "raw": "      - name: Install dependencies\n        run: uv sync --all-extras"
+    },
+    {
+      "id": ".github/workflows/ci.yml#34-run-lints",
+      "kind": "ci_step",
+      "name": "Run lints",
+      "source": ".github/workflows/ci.yml:34",
+      "raw": "      - name: Run lints\n        run: ./scripts/lint"
+    },
+    {
+      "id": ".github/workflows/ci.yml#46-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "source": ".github/workflows/ci.yml:46",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#48-install-uv",
+      "kind": "ci_step",
+      "name": "Install uv",
+      "source": ".github/workflows/ci.yml:48",
+      "raw": "      - name: Install uv\n        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2\n        with:\n          version: '0.10.2'",
+      "hints": {
+        "action": "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2"
+      }
+    },
+    {
+      "id": ".github/workflows/ci.yml#53-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/ci.yml:53",
+      "raw": "      - name: Install dependencies\n        run: uv sync --all-extras"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code, under the settings in this table",
+        "actorCanWrite": false,
+        "argument": "This table parameterises the suite that CI actually runs: .github/workflows/ci.yml:95 runs ./scripts/test, which ends in `uv run --isolated --all-extras pytest` under `set -e`, so the interpreter executing the collected tests decides the job's exit status. `xfail_strict = true` and `filterwarnings = [\"error\"]` widen what that process treats as failure, so a committer cannot make a warning-emitting or unexpectedly-passing test report clean without changing code or this pinned config. DOCUMENTED LIMIT: only the EXECUTION axis is anchored. The oracle is not — scripts/test boots a Steady mock on 127.0.0.1:4010 from the OpenAPI spec URL in .stats.yml, and src/anthropic is generated by Stainless from that same spec, so the counterparty the assertions check against is authored inside the same write boundary as the code."
+      },
+      "evidence": [
+        "pyproject.toml:136",
+        ".github/workflows/ci.yml:94-95",
+        "scripts/test:69 (uv run --isolated --all-extras pytest)",
+        "scripts/mock:11 (grep 'openapi_spec_url' .stats.yml)"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright type-checker process exit code",
+        "actorCanWrite": false,
+        "argument": "`typeCheckingMode = \"strict\"` is consumed by `uv run pyright` at scripts/lint:17, which runs under `set -e` inside the `Run lints` step at .github/workflows/ci.yml:34-35. The non-zero exit comes from pyright performing deterministic static analysis over the committed sources, so an author cannot make a type error report clean without editing the source, adding an explicit ignore comment, or widening the `exclude` list here — all of which are visible diffs."
+      },
+      "evidence": [
+        "pyproject.toml:149",
+        "scripts/lint:17",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-mypy",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the mypy process exit code",
+        "actorCanWrite": false,
+        "argument": "These strictness flags are read by `uv run mypy .` at scripts/lint:20, invoked by the gating `Run lints` step (.github/workflows/ci.yml:34). The signal is mypy's own analysis of the committed tree; nothing the SDK code writes at runtime feeds it. LIMIT worth naming: the `exclude` list here removes tests/, several examples and two library modules from the analysed set, so the assertion covers less of the tree than the table's strictness suggests."
+      },
+      "evidence": [
+        "pyproject.toml:170",
+        "scripts/lint:20",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — this table is inert configuration",
+        "actorCanWrite": null,
+        "argument": "`line-length`, `output-format` and `target-version` emit no pass/fail signal. line-length would only gate through rule E501, which is absent from the `select` list at pyproject.toml:237, and `ruff format` (the only consumer of line-length here) is never invoked by the CI path: scripts/lint runs `ruff check`, `pyright`, `mypy` and an import, and scripts/format is not referenced by any workflow. `output-format = \"grouped\"` only changes how ruff prints. Nothing in this table can cause a job to fail."
+      },
+      "evidence": [
+        "pyproject.toml:229",
+        "pyproject.toml:237 (select list has no E501)",
+        "scripts/lint:1-22",
+        ".github/workflows/ci.yml"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-format",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the ruff formatter, which rewrites files rather than judging them",
+        "actorCanWrite": null,
+        "argument": "`docstring-code-format = true` only alters how `ruff format` rewrites docstring code blocks, and `ruff format` is invoked nowhere in the pipeline path — scripts/lint runs `ruff check` (not `format`), and scripts/format is not called by any workflow in .github/workflows/. A formatter that only rewrites, and is not even run under a --check flag in CI, asserts nothing about correctness."
+      },
+      "evidence": [
+        "pyproject.toml:234",
+        "scripts/lint:9-13",
+        "scripts/format (not referenced by .github/workflows/*)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code over the selected rule families",
+        "actorCanWrite": false,
+        "argument": "This `select` list is the rule set `uv run ruff check .` enforces at scripts/lint:12, under `set -e`, inside the gating `Run lints` step. ruff exits non-zero when the committed source violates one of I / B / F401 / FA102 / E722 / ARG / T201 / T203 / TC004 / TID251; the verdict is produced by the linter binary reading the files, and the CI invocation omits `--fix`, so a violation blocks rather than being silently rewritten. LIMIT: this constrains lint-level style and import hygiene, not behavioural correctness."
+      },
+      "evidence": [
+        "pyproject.toml:237",
+        "scripts/lint:12 (uv run ruff check .)",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-flake8-tidy-imports-banned-api",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code for rule TID251",
+        "actorCanWrite": false,
+        "argument": "TID251 is present in the `select` list at pyproject.toml:237, so this banned-api entry is live: `ruff check .` in scripts/lint exits non-zero if any committed module imports `functools.lru_cache`. The signal is produced by the linter parsing the source, not by anything the library writes at runtime, and the CI step has no --fix and no `|| true`."
+      },
+      "evidence": [
+        "pyproject.toml:271",
+        "pyproject.toml:237 (TID251 selected)",
+        "scripts/lint:12",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-isort",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code for the isort (\"I\") rule family",
+        "actorCanWrite": false,
+        "argument": "\"I\" is selected at pyproject.toml:237, so this table defines the ordering `ruff check .` enforces in the gating lint job; ruff exits non-zero on a mis-sorted import block and CI runs it without --fix. The producer is the linter reading committed files. LIMIT, stated plainly: this is a style constraint only — it can fail, which makes it a check by shape, but it says nothing about behaviour."
+      },
+      "evidence": [
+        "pyproject.toml:274",
+        "pyproject.toml:237 (I selected)",
+        "scripts/lint:12",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — this table only suppresses diagnostics",
+        "actorCanWrite": null,
+        "argument": "Every entry here removes rules T201/T203 (print statements) from bin/, scripts/, tests/ and examples/. A suppression list is monotonically failure-reducing: it can turn a ruff failure into a pass but can never produce a non-zero exit of its own. It asserts nothing about correctness and cannot fail."
+      },
+      "evidence": [
+        "pyproject.toml:281",
+        "scripts/lint:12"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/conftest.py#conftest-py",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "a Steady mock server generated from the OpenAPI spec, plus inline_snapshot recordings of the client's own HTTP traffic",
+        "actorCanWrite": true,
+        "argument": "This conftest defines what the suite compares against. `base_url = os.environ.get(\"TEST_API_BASE_URL\", \"http://127.0.0.1:4010\")` points every `client`/`async_client` fixture at the local Steady mock that scripts/mock boots from `openapi_spec_url` in .stats.yml — the same OpenAPI spec Stainless uses to generate src/anthropic, so the counterparty the assertions verify against is derived from the very artefact under test. The `snapshot_client` / `async_snapshot_client` fixtures go further: they wrap the client in `HttpxSyncSnapshotClient(http_snapshot, is_recording, ...)`, so when `is_recording` is on, the expected request and response payloads are recordings of the client's own traffic — the code authors its own expected output. `pytest_collection_modifyitems` additionally adds `pytest.mark.skip` markers, which can only remove assertions."
+      },
+      "evidence": [
+        "tests/conftest.py:58-60 (base_url / api_key)",
+        "tests/conftest.py:78-92 (snapshot_client, is_recording)",
+        "tests/conftest.py:37-56 (pytest_collection_modifyitems adds skip markers)",
+        "scripts/mock:11",
+        "tests/conftest.py:1 (\"File generated from our OpenAPI spec by Stainless\")"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/CODEOWNERS#codeowners",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "GitHub's branch-protection engine, whose configuration is not in the repository",
+        "actorCanWrite": null,
+        "argument": "The file assigns @anthropics/sdk as owner of every path, and its own header comment says it is 'used to automatically assign reviewers to PRs'. Whether that assignment BLOCKS a merge depends on a 'Require review from Code Owners' branch-protection rule, which lives in GitHub repository settings and is not present anywhere in the clone — so I cannot establish whether this edge gates anything at all, let alone trace its fork point. Even if it does gate, the reviewing team is the same team that owns the generated source, so the direction of the boundary would still need argument rather than assumption."
+      },
+      "evidence": [
+        ".github/CODEOWNERS:4",
+        "no branch-protection config present in the repository tree"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/create-releases.yml#20-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the checkout action's git clone",
+        "actorCanWrite": null,
+        "argument": "Pure provisioning: it materialises the repository into the runner workspace so later steps have files to act on. It emits no verdict about the code — a failure here means the runner could not fetch, not that anything is wrong with the artefact."
+      },
+      "evidence": [
+        ".github/workflows/create-releases.yml:20"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/create-releases.yml#22-stainless-api-trigger-release-please-bb6677c5a04578eec1ccfd9e1913b5b78ed64c61-v1-4-0",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "the stainless-api/trigger-release-please action, whose implementation is not in this repository",
+        "actorCanWrite": null,
+        "argument": "The step's exit code gates the whole production-release job and its `releases_created` output gates the PyPI publish at line 35, but the action's body lives in another repository — pinned by SHA, yet not vendored here, so I cannot descend into it to see whether it validates anything (version consistency, changelog, tag state) or merely calls an API. I will not guess a class for a wrapper I cannot open. Compounding it: the operator of that API, Stainless, is also the generator of the source it would be releasing (tests/conftest.py:1, .stats.yml), so even the direction of the write boundary is not clean."
+      },
+      "evidence": [
+        ".github/workflows/create-releases.yml:22-26",
+        ".github/workflows/create-releases.yml:29,35 (steps.release.outputs.releases_created gates later steps)",
+        "action implementation not present in the clone"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/create-releases.yml#28-install-uv",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the setup-uv action installing a toolchain binary",
+        "actorCanWrite": null,
+        "argument": "Provisioning of the uv runtime at a pinned version so later steps can build and publish. It installs; it evaluates nothing about the repository's contents, and it is additionally gated behind `if: steps.release.outputs.releases_created` so it often does not run at all."
+      },
+      "evidence": [
+        ".github/workflows/create-releases.yml:28-32"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/create-releases.yml#34-publish-to-pypi",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the uv build backend's exit code and PyPI's upload response",
+        "actorCanWrite": false,
+        "argument": "`bash ./bin/publish-pypi` runs under `set -eux` and does `uv build` then `uv publish`. Two signals come from outside the committers' write path: the packaging backend either produces a valid sdist/wheel from the committed tree or exits non-zero, and the PyPI upload endpoint accepts or rejects the artefact (a duplicate version, a malformed metadata block or a bad token yields an HTTP error that fails the job). Neither the SDK source nor the workflow can declare that upload successful. LIMIT, and it is a large one: the assertion is confined to 'this tree packages and the registry accepted it' — it says nothing about whether the released code behaves correctly."
+      },
+      "evidence": [
+        ".github/workflows/create-releases.yml:34-37",
+        "bin/publish-pypi:3-9 (set -eux; uv build; uv publish)"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/claude.yml#28-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the checkout action's git clone",
+        "actorCanWrite": null,
+        "argument": "Provisioning only — it fetches the repository (with fetch-depth: 0 so the agent step has history). No property of the code is evaluated and no verdict is emitted."
+      },
+      "evidence": [
+        ".github/workflows/claude.yml:28-31"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/claude.yml#33-configure-git",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git config writing two local identity values",
+        "actorCanWrite": null,
+        "argument": "It sets user.name and user.email so the agent's later commits are attributable. Setting an identity is environment setup; it reads nothing about the repository and can only fail if git itself is missing."
+      },
+      "evidence": [
+        ".github/workflows/claude.yml:33-36"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/claude.yml#38-run-claude-code",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "a large language model invoked through anthropics/claude-code-action",
+        "actorCanWrite": true,
+        "argument": "The step hands the checked-out repository to an LLM and lets it answer @claude mentions on issues, PRs and reviews. Any assessment it renders is produced by the same class of system that produces the code under discussion, and here the coupling is literal rather than analogical: the job holds `contents: write` and `pull-requests: write`, and `allowed_tools` explicitly permits `git commit`, `git push`, `git merge` and `gh pr`, so the reviewer can write into the branch whose state it is reporting on. It is also mention-triggered (workflow `if:` at line 15-19), so it is not on the merge path at all."
+      },
+      "evidence": [
+        ".github/workflows/claude.yml:38-52",
+        ".github/workflows/claude.yml:21-26 (contents: write, pull-requests: write)",
+        ".github/workflows/claude.yml:15-19 (triggered by @claude mention, not by merge)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#24-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the checkout action's git clone",
+        "actorCanWrite": null,
+        "argument": "First step of the lint job: it materialises the tree for the steps that follow. Provisioning emits no correctness signal — the check in this job is `Run lints` at line 34."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:24",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#26-install-uv",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the setup-uv action installing a toolchain binary",
+        "actorCanWrite": null,
+        "argument": "Installs uv 0.10.2 on the runner so `uv sync` and `uv run` work in later steps. It provisions a runtime and evaluates nothing about the repository."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:26-29"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#31-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "uv's dependency resolver populating a virtualenv",
+        "actorCanWrite": null,
+        "argument": "`uv sync --all-extras` carries neither `--locked` nor `--frozen`, so uv will re-resolve and UPDATE uv.lock when it is stale rather than erroring — the step therefore does not assert lockfile consistency, and there is no later step that diffs the lockfile. What remains is environment provisioning for the `Run lints` step that follows."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:31-32",
+        ".github/workflows/ci.yml:34-35"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#34-run-lints",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the exit codes of ruff, pyright, mypy and the CPython interpreter, aggregated by `set -e`",
+        "actorCanWrite": false,
+        "argument": "I descended into ./scripts/lint: it sets `set -e` and then runs `uv run ruff check .`, `uv run pyright`, `uv run mypy .` and `uv run python -c 'import anthropic'`. Every one of those exit codes is produced by a separate process performing deterministic analysis of — or in the last case actually importing — the committed source, and the first non-zero one terminates the script and fails the job. An author cannot make a type error, a lint violation or an import-time exception report clean without changing the source or the pinned tool config in pyproject.toml. The `import anthropic` line is the strongest of the four: the interpreter really executes module initialisation. Noted, not class-changing: the job's `if:` at ci.yml:22 skips it for same-repo pull_request events, but the same commits run it on push."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:34-35",
+        "scripts/lint:3 (set -e)",
+        "scripts/lint:12,17,20,23",
+        ".github/workflows/ci.yml:22 (job if:)"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#46-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6-0-2",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the checkout action's git clone",
+        "actorCanWrite": null,
+        "argument": "First step of the build job — it fetches the tree so `uv build` at line 57 has something to package. Provisioning; it emits no verdict about the code."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:46",
+        ".github/workflows/ci.yml:56-57"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#48-install-uv",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the setup-uv action installing a toolchain binary",
+        "actorCanWrite": null,
+        "argument": "Installs the uv runtime on the build job's runner. Toolchain provisioning; nothing about the repository's contents is evaluated here."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:48-51"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci.yml#53-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "uv's dependency resolver populating a virtualenv",
+        "actorCanWrite": null,
+        "argument": "Same shape as the lint job's install: `uv sync --all-extras` with no `--locked`/`--frozen`, so it will silently refresh a stale uv.lock instead of failing, and no subsequent step compares the lockfile. It provisions the environment for `uv build` at line 57; the assertion in this job lives there, not here."
+      },
+      "evidence": [
+        ".github/workflows/ci.yml:53-54",
+        ".github/workflows/ci.yml:56-57"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 8,
+    "selfReferential": 2,
+    "unknown": 2,
+    "notACheck": 13,
+    "ratio": 0.6666666666666666
+  },
+  "economics": {
+    "nodesTotal": 41,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 3,
+    "probeLibrarySize": 3,
+    "tokensIn": 3990,
+    "tokensOut": 5233,
+    "tokensEstimated": true,
+    "wallClockMs": 395067
+  }
+}

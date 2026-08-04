@@ -1,0 +1,23 @@
+{
+  "target": "sinatra",
+  "revision": "cb22afd7902b566b6eaba6c4ea89739494a65d12",
+  "generatedAt": "2026-07-25T05:21:51.905Z",
+  "sourceReport": "reports/sinatra.json",
+  "bindings": [
+    {
+      "loop": ".github/workflows/CODEOWNERS#codeowners",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "The proposition this node tries to assert is 'a designated code owner reviewed and approved this change before it merged'. Every anchored producer in this report asserts a different proposition: the three release.yml steps assert 'the gemspec builds and the built .gem installs' (RubyGems exit codes on a v* tag push), and the four rspec/rake nodes assert 'the committed specs pass against the committed lib' (Ruby runtime exit codes on the PR path). Neither family emits any signal about who looked at the diff, so wiring the review gate onto one of them would move the ratio without grounding the claim. There is additionally no producer of review evidence anywhere in the measured tree: the artifact that would have to exist is a GitHub branch-protection approval record, and by the source verdict's own reasoning that record lives outside the clone and outside what this report measured.",
+      "status": "proposed",
+      "noRouteReason": "Not a rewiring — two human policy decisions, neither of which an agent may make. (1) Is this gate meant to be enforced at all? The file sits at .github/workflows/CODEOWNERS, which GitHub never parses; making it live means relocating it to the repo root, .github/, or docs/ AND enabling 'Require review from Code Owners' in branch protection, both changes to repository configuration that is not in the tree and not in this report. (2) Even once enforced, whether @sinatra/team-sinatra reviewing a fellow maintainer's PR is a producer outside the write boundary is a judgement about the org's composition, not a wire that can be moved. Until a human settles both, unknown is the honest verdict and it correctly fails closed."
+    }
+  ],
+  "summary": {
+    "currentRatio": 0.875,
+    "projectedRatio": 0.875,
+    "routable": 0,
+    "unroutable": 1
+  },
+  "warnings": []
+}
