@@ -173,6 +173,51 @@ answered with 30 entries this parser could not read. `swept` counts survivors of
 normalization, so it collapsed exactly like the `stores.length` gate it
 replaced; a `dropped` count now tells the two apart.
 
+### Fixed — round 6 (BLOCKER): a universal asserted over twelve products
+
+Six rounds found symptoms. This one found the disease.
+
+`--count` defaults to **12**, against result sets that are routinely 25–31, and
+every brand claim was an unqualified universal over that window:
+
+```text
+$ d1 basket --budget 100000 --brand ALPIN leche
+Nothing D1 returned for these terms is ALPIN.
+
+$ d1 basket --budget 100000 --brand ALPIN --count 30 leche
+  leche                $ 4.400    $ 10.150   +$ 5.750
+```
+
+ALPIN is in stock at $ 10.150 — at product 13. **Twelve of twelve real brands
+tried against a real store produced a false sentence at default flags.**
+
+The module already owns the fix and applies it everywhere else — `scopeOf`,
+`sweepCaveat`, `footerFor`, `renderSearch`'s "not across all N": *a categorical
+claim never outruns its look.* `renderComparison` called none of them, which is
+precisely why this survived six rounds of review looking for contradictions
+*between* sentences. It was one sentence, wrong on its own.
+
+```text
+Nothing among the 12 products looked at for these terms is ALPIN —
+D1 matched 29. Raise --count to widen the look.
+Not counted — nothing of ALPIN among the 12 looked at, for: leche.
+Each price is the best among the 12 products fetched for its term, not
+across all of D1 — raise --count to widen it.
+```
+
+A complete look drops the qualifier rather than hedging forever.
+
+**Second arm, same defect:** `brandLine` filtered the category sweep's
+candidates by brand and discarded the rest, so a brand only the *sweep* carried
+— in stock at `Price: 0`, the exact VTEX shape gotcha 12 describes — reproduced
+the round-5 blocker one hop over. `sweepBrands` is kept now and unioned into the
+evidence.
+
+**And `d1 stores near` returned exit 3** — "the answer is genuinely none",
+documented CLI-wide as never worth retrying — for an answer this parser could
+not read, while the prose beside it explicitly refused to call it an empty
+neighbourhood. Extracted as `storesExit`; unreadable is 1.
+
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 
 The review's own summary: the pinning is much stronger — 42 of 51 mutations
