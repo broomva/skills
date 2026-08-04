@@ -348,3 +348,37 @@ describe("day numbering", () => {
     expect(() => hoursOn(store, 8)).toThrow(D1Error);
   });
 });
+
+describe("the short-page rule stands on its own [BRO-2067]", () => {
+  test("a short page ends the sweep even when the registry reports no total", async () => {
+    // The `paging.total` check masked this one: with a total present, 299 of
+    // 299 already ended the sweep, so deleting the short-page rule changed
+    // nothing. Without a total — the bare-array shape — only the short page can
+    // end it, and its absence sent nine more requests and called the result a
+    // cap.
+    const asked: number[] = [];
+    const impl = (async (url: string) => {
+      const page = Number(new URL(String(url)).searchParams.get("page") ?? "1");
+      asked.push(page);
+      const items = page === 1 ? fullPage("p", 1) : page === 2 ? [point("z", 9)] : [];
+      return new Response(JSON.stringify(items), { status: 200 });
+    }) as unknown as typeof fetch;
+    const r = await nearbyStores(new D1Client({ fetchImpl: impl }), AT, { limit: 300 });
+    expect(r.swept).toBe(PAGE_SIZE + 1);
+    expect(r.stopped).toBe("registry-empty");
+    // Stopped at page 2, not page 10.
+    expect(asked).toEqual([1, 2]);
+  });
+});
+
+describe("renderStores keys its empty branch on the SWEEP [BRO-2067]", () => {
+  test("points fetched and all dropped is not 'the registry's answer'", () => {
+    // That claim is about the registry. When every point was fetched and then
+    // discarded by `normalize`, it is a claim about this parser instead.
+    const swept = renderStores({ stores: [], swept: 3, stopped: "registry-empty" }, AT);
+    expect(swept).not.toContain("not a survey of the neighbourhood");
+
+    const genuinely = renderStores({ stores: [], swept: 0, stopped: "registry-empty" }, AT);
+    expect(genuinely).toContain("not a survey of the neighbourhood");
+  });
+});

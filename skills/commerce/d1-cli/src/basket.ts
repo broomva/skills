@@ -857,24 +857,7 @@ export async function compareBaskets(
   // `fillToBudget` maps them 1:1, so position is the reliable join. Asserted
   // rather than assumed, because a silent length mismatch would reintroduce the
   // same class of defect through a different door.
-  if (base.lines.length !== terms.length || alt.lines.length !== terms.length) {
-    throw new D1Error(
-      `Basket comparison expected one line per term (${terms.length}), got ${base.lines.length} and ${alt.lines.length}. This is a bug in d1-cli.`,
-    );
-  }
-
-  const rows: BasketComparison[] = terms.map((term, i) => {
-    const bl = base.lines[i];
-    const al = alt.lines[i];
-    const both = bl && al && isFilled(bl.status) && isFilled(al.status);
-    return {
-      term,
-      base: bl,
-      alt: al,
-      delta:
-        both && bl.price !== undefined && al.price !== undefined ? al.price - bl.price : undefined,
-    };
-  });
+  const rows = pairRows(terms, base, alt);
 
   const shared = rows.filter((r) => r.delta !== undefined);
   const baseTotal = sum(shared.map((r) => r.base?.price ?? 0));
@@ -928,6 +911,44 @@ export async function compareBaskets(
       ? brandsIn(base.lines).slice(0, 12)
       : undefined,
   };
+}
+
+/**
+ * Join the two baskets, by POSITION.
+ *
+ * Exported so the join itself is testable — the length guard below is
+ * unreachable from `compareBaskets` today and a mutation deleting it therefore
+ * survived the whole suite.
+ *
+ * A Map keyed on the term is last-wins, so `d1 basket --brand X leche leche`
+ * silently discarded the first line of each basket, including filled,
+ * money-spending ones. `buildBasket` emits exactly one line per input term in
+ * order and `fillToBudget` maps them 1:1, so position is the reliable join —
+ * asserted rather than assumed, because a silent length mismatch would
+ * reintroduce the same defect through a different door.
+ */
+export function pairRows(
+  terms: readonly string[],
+  base: BasketPlan,
+  alt: BasketPlan,
+): BasketComparison[] {
+  if (base.lines.length !== terms.length || alt.lines.length !== terms.length) {
+    throw new D1Error(
+      `Basket comparison expected one line per term (${terms.length}), got ${base.lines.length} and ${alt.lines.length}. This is a bug in d1-cli.`,
+    );
+  }
+  return terms.map((term, i) => {
+    const bl = base.lines[i];
+    const al = alt.lines[i];
+    const both = bl && al && isFilled(bl.status) && isFilled(al.status);
+    return {
+      term,
+      base: bl,
+      alt: al,
+      delta:
+        both && bl.price !== undefined && al.price !== undefined ? al.price - bl.price : undefined,
+    };
+  });
 }
 
 /** Distinct brands among the products a basket actually chose, for a typo hint. */

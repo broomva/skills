@@ -9,13 +9,14 @@ import {
   linePrice,
   normalizeBrand,
   packPrices,
+  pairRows,
   parseBudget,
 } from "../src/basket.ts";
-import { basketExit, basketOptions, comparisonExit } from "../src/cli.ts";
+import { basketExit, basketOptions, basketTerms, comparisonExit } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
 import type { Measure } from "../src/measure.ts";
 import { renderBasket, renderComparison } from "../src/present.ts";
-import { type Product, UsageError } from "../src/types.ts";
+import { D1Error, type Product, UsageError } from "../src/types.ts";
 
 function product(
   skuId: string,
@@ -1908,6 +1909,22 @@ describe("the comparison survives the inputs a shopper actually types [BRO-2079]
       sweep: [],
     });
 
+  test("a repeated term whose lines DIFFER is not collapsed to the last one", async () => {
+    // The earlier version of this test used a budget both lines fitted, so the
+    // two lines were identical and a last-wins Map produced exactly the same
+    // answer as positional pairing — the mutation reintroducing the Map
+    // survived. The lines have to DIFFER for the join to be observable.
+    //
+    // Budget fits ONE 3.000 line: line 1 fills, line 2 goes over budget. Under
+    // a term-keyed Map both rows show line 2, and the filled line disappears.
+    const c = await compareBaskets(stub(), ["arroz", "arroz"], 400_000, { brand: "LATTI" });
+    expect(c.base.lines.map((l) => l.status)).toEqual(["filled", "over-budget"]);
+    expect(c.rows[0]?.base?.status).toBe("filled");
+    expect(c.rows[1]?.base?.status).toBe("over-budget");
+    // The money the basket actually spent is still visible in the comparison.
+    expect(c.base.total).toBe(300_000);
+  });
+
   test("a REPEATED term does not erase the lines before it", async () => {
     // `byTerm` was a last-wins Map keyed on the term, so every row for a
     // repeated term showed the LAST line and every earlier one vanished —
@@ -2062,5 +2079,99 @@ describe("onlyAlt is asserted in BOTH polarities [BRO-2079]", () => {
     };
     const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
     expect(out).toContain("only LATTI could fill: leche");
+  });
+});
+
+describe("pairRows joins by position [BRO-2079]", () => {
+  const plan = (statuses: Array<"filled" | "over-budget">, price = 100_000) => ({
+    budget: 1_000_000,
+    total: 0,
+    remaining: 0,
+    lines: statuses.map((status, i) => line({ term: "x", status, price: price + i })),
+  });
+
+  test("two lines for the same term stay two rows", () => {
+    // A Map keyed on the term collapses them to one, and the row that survives
+    // is the LAST — so a filled line vanishes behind an unfilled one.
+    const rows = pairRows(["x", "x"], plan(["filled", "over-budget"]), plan(["filled", "filled"]));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.base?.status).toBe("filled");
+    expect(rows[1]?.base?.status).toBe("over-budget");
+    // Row 0 is comparable, row 1 is not — which a collapsed join cannot express.
+    expect(rows[0]?.delta).toBeDefined();
+    expect(rows[1]?.delta).toBeUndefined();
+  });
+
+  test("a length mismatch is refused rather than silently mis-joined", () => {
+    // Unreachable from `compareBaskets` today, which is exactly why the guard
+    // needs its own test: a mutation deleting it survived the whole suite.
+    expect(() => pairRows(["x", "y"], plan(["filled"]), plan(["filled", "filled"]))).toThrow(
+      D1Error,
+    );
+    expect(() => pairRows(["x"], plan(["filled"]), plan(["filled", "filled"]))).toThrow(D1Error);
+  });
+
+  test("matching lengths pass", () => {
+    expect(pairRows(["x"], plan(["filled"]), plan(["filled"]))).toHaveLength(1);
+  });
+});
+
+describe("basketTerms [BRO-2079]", () => {
+  test("a whitespace-only term is dropped, not searched for", () => {
+    // `.filter(Boolean)` kept "   ", which searched D1 for whitespace and then
+    // rendered a nameless comparison row.
+    expect(basketTerms(["basket", "arroz", "   ", "leche", ""])).toEqual(["arroz", "leche"]);
+  });
+
+  test("the command word itself is never a term", () => {
+    expect(basketTerms(["basket"])).toEqual([]);
+  });
+});
+
+describe("terms neither basket filled are disclosed [BRO-2079]", () => {
+  test("a row of two dashes gets a sentence beside it", async () => {
+    // Otherwise the reader sees "leche — —" and is left to guess, which is the
+    // one thing this output exists not to do.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "CAVIAR", { price: 900_000, brand: "OTRA" })],
+        sku: sourceSku("1", "CAVIAR"),
+        sweep: [],
+      }),
+      ["caviar"],
+      100_000,
+      { brand: "LATTI" },
+    );
+    expect(c.neither).toEqual(["caviar"]);
+    const out = renderComparison(c);
+    expect(out).toContain("Neither basket filled: caviar");
+    expect(out).toContain("that is not about LATTI");
+  });
+});
+
+describe("renderBasket handles the new status [BRO-2079]", () => {
+  test("a no-brand-match line is explained, not called a bug", async () => {
+    // `reasonFor` had no arm for it, so it fell to the default: "this line names
+    // no product, which is a bug in whatever built this plan" — while the line
+    // named the product it had just rejected. Latent today because `--brand`
+    // renders via `renderComparison`, which is why it needs its own test.
+    const plan = fillToBudget(
+      [
+        line({
+          term: "arroz",
+          status: "no-brand-match",
+          price: undefined,
+          substituteSweep: true,
+          swept: 2,
+          categoryTotal: 140,
+        }),
+      ],
+      1_000_000,
+    );
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).toContain("nothing of that brand");
+    expect(out).not.toContain("is a bug in whatever built this plan");
+    // And the sweep caveat still rides along.
+    expect(out).toContain("only 2 of 140 in that category were searched");
   });
 });

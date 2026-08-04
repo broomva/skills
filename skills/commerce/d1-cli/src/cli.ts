@@ -254,6 +254,17 @@ export function basketOptions(
  * `orderForDisplay` and `loginFollowUp` exist. Inline, a mutation swapping
  * `alt` for `base` survived the whole suite.
  */
+/**
+ * The shopping-list terms from a `d1 basket` argv.
+ *
+ * `.filter(Boolean)` keeps `"   "`, which searched D1 for whitespace and then
+ * rendered a nameless comparison row. Extracted so the filter is testable
+ * without a network stub.
+ */
+export function basketTerms(positional: readonly string[]): string[] {
+  return positional.slice(1).filter((t) => t.trim().length > 0);
+}
+
 export function comparisonExit(cmp: CrossBasket): number {
   return basketExit(cmp.alt.lines);
 }
@@ -574,9 +585,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "basket": {
-      // `.filter(Boolean)` keeps "   ", which searched for whitespace and then
-      // rendered a nameless comparison row.
-      const terms = positional.slice(1).filter((t) => t.trim().length > 0);
+      const terms = basketTerms(positional);
       if (!terms.length) {
         throw new UsageError(
           "Usage: d1 basket --budget <pesos> <term> [term ...] [--count N] [--lat --lng]",
