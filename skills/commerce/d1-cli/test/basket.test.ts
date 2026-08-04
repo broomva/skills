@@ -2839,19 +2839,46 @@ describe("a brand claim never outruns its look [BRO-2079 round 6]", () => {
     expect(out).toContain("best among the 12 products fetched for its term, not across all of D1");
   });
 
-  test("the narrowest look wins when terms differ", async () => {
-    // A claim spanning several terms is only as wide as its narrowest.
-    const plan = (looked: number, matched: number) =>
-      fillToBudget(
-        [line({ term: "x", status: "no-brand-match", price: undefined, looked, matched })],
-        1_000,
-      );
-    const wide = plan(30, 40).lines[0] as BasketLine;
-    const tight = plan(5, 40).lines[0] as BasketLine;
-    const c = await compareBaskets(narrow(12, 29), ["leche"], 100_000_000, { brand: "LATTI" });
-    // Sanity on the helper via the real path, then the multi-line case.
-    expect(c.partial?.looked).toBe(12);
-    expect([wide, tight].filter((l) => l.matched > (l.looked ?? 0))).toHaveLength(2);
+  test("the NARROWEST look wins when terms differ", async () => {
+    // A claim spanning several terms is only as wide as its narrowest, and
+    // reporting the widest would overstate the look on exactly the term the
+    // reader most needs warned about. The earlier version never built a
+    // two-term plan at all, so taking the widest passed.
+    let searches = 0;
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("1", "P0")), { status: 200 });
+      }
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        const isSweep =
+          u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+          "";
+        if (isSweep) {
+          return new Response(JSON.stringify({ products: [], recordsFiltered: 0 }), {
+            status: 200,
+          });
+        }
+        searches++;
+        // Term 1 gets a WIDE page (20 of 40); term 2 a NARROW one (5 of 40).
+        const n = searches % 2 === 1 ? 20 : 5;
+        const products = Array.from({ length: n }, (_, i) =>
+          wire(String(i + 1), `P${i}`, { price: 3_000 + i, brand: "OTRA" }),
+        );
+        return new Response(JSON.stringify({ products, recordsFiltered: 40 }), { status: 200 });
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const c = await compareBaskets(
+      new D1Client({ fetchImpl: impl }),
+      ["wide", "tight"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines.map((l) => l.looked)).toEqual([20, 5]);
+    expect(c.partial).toEqual({ looked: 5, matched: 40 });
+    expect(renderComparison(c)).toContain("Nothing among the 5 products looked at");
   });
 
   test("a brand only the SWEEP returned still counts as returned", async () => {
