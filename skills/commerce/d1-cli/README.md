@@ -429,7 +429,7 @@ d1 basket --budget 30000 arroz leche aceite huevos --lat 4.75068 --lng=-74.03532
 Takes a shopping list of **terms**, not SKUs, resolves each to the best value at
 your store, and fits what it can:
 
-```
+```text
   1075    ARROZ ECONÓMICO 2000 GRS                 $ 5.550  $ 2.775/kg
           for "arroz" · best of 10 compared
   892     LECHE ENTERA BOLSA UHT LATTI 900 ML      $ 3.090  $ 3.433/L
@@ -464,9 +464,21 @@ substitute result claim "nothing in this category is in stock" while concealing
 that it had seen 3 products of 140.
 
 A term whose every match is out of stock falls through to `substitute`, and the
-replacement is **named in the line** rather than swapped in quietly. Exit `3`
-means nothing fit — never `1`, because a budget that buys none of your list does
-not become affordable on a retry.
+replacement is **named in the line** rather than swapped in quietly — including
+when the replacement itself costs more than the budget has left, where the line
+names it instead of pricing your term with a product it never mentions.
+
+Three outcomes, not two. If the replacement lookup itself cannot be reached, the
+line says **`unknown, not empty`** rather than claiming nothing is in stock — a
+failed request is a statement about the network, not about the shelf — and the
+command exits `1`, which invites a retry. Exit `3` means the look succeeded and
+nothing fit; a budget that buys none of your list does not become affordable on
+a retry, so those two must not share a code.
+
+Claims about a category carry the sweep behind them: `only N of M in that
+category were searched`. The sweep reads one page, capped at 50, of a category
+that may hold hundreds, so a bare "nothing in its category is in stock" would be
+a universal over a sample.
 
 ## Roadmap
 

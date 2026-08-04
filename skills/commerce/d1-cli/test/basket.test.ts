@@ -843,7 +843,8 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
     expect(l?.status).toBe("filled-by-substitute");
     expect(l?.product?.skuId).toBe("738");
     expect(l?.replaces?.skuId).toBe("192");
-    // `rankedCount`, not the 22-product pool: one alternative was rankable.
+    // Buyable candidates, not the 22-product pool and not `rankedCount` — the
+    // price filter rejects more than the availability filter does.
     expect(l?.compared).toBe(1);
     expect(l?.substituteSweep).toBe(true);
 
@@ -1281,5 +1282,38 @@ describe("an over-budget replacement is still named", () => {
     const out = renderBasket(plan, { regionId: "v2.ABC" });
     expect(out).toContain("would cost");
     expect(out).not.toContain("replacement");
+  });
+});
+
+describe("the pack-price disclosure does not overclaim about D1's data", () => {
+  test("it blames incomparable measures, not missing sizes, when sizes exist", async () => {
+    // "D1 publishes no size for any of these" is a claim about the DATA. If
+    // sizes were published and only a comparable measure was missing, that
+    // claim is contradicted by the very payload it describes.
+    const plan = await buildBasket(
+      fakeClient({
+        // One kg product and one unit product, each the only one of its
+        // measure, so no measure is dominant enough to compare within.
+        search: [wire("a", "COSA POR KILO", { price: 5000, unit: "Gr", value: "500" })],
+      }),
+      ["cosa"],
+      10_000_000,
+    );
+    // A single sized product IS comparable, so this must NOT be a pack-price pick.
+    expect(plan.lines[0]?.byPackPrice).toBe(false);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).not.toContain("chosen on pack price");
+  });
+
+  test("a genuinely sizeless set still says D1 published no size", async () => {
+    const plan = await buildBasket(
+      fakeClient({ search: [wire("a", "COSA SIN PUM", { price: 5000 })] }),
+      ["cosa"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.byPackPrice).toBe(true);
+    expect(plan.lines[0]?.anySized).toBe(false);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain(
+      "D1 publishes no size for any of these",
+    );
   });
 });

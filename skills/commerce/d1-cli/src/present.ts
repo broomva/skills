@@ -460,7 +460,11 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
       // The one path where the CLI knowingly ranks on pack price. Presenting it
       // identically to a value-ranked line is the "cheapest pack is the worst
       // buy" error this whole feature exists to prevent.
-      out.push("          chosen on pack price — D1 publishes no size for any of these");
+      out.push(
+        l.anySized
+          ? "          chosen on pack price — no two of these are measured the same way"
+          : "          chosen on pack price — D1 publishes no size for any of these",
+      );
     }
     if (l.replaces) {
       out.push(
@@ -471,30 +475,16 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
   }
 
   if (!filled.length) {
-    // "Nothing fits this budget" is an affordability claim. When every lookup
-    // failed there is no evidence for it — the basket is empty because D1 did
-    // not answer, not because the money was short — and asserting it four lines
-    // above the "unknown, not empty" reasons contradicts them.
-    // "Nothing fits this budget" is an AFFORDABILITY claim, so it may only be
-    // made when something was actually rejected on price. Keying it on "every
-    // line is unreachable" fixed one case of four: a mix of unreachable and
-    // no-match, or an all-out-of-stock basket, still blamed the budget — with
-    // the contradicting reasons printed directly underneath.
-    // An unanswered lookup OUTRANKS an affordability claim. Keying on
-    // over-budget first meant a basket with one dear line and one unreachable
-    // one blamed the budget — while the same run exited 1, "D1 could not be
-    // reached, a retry may help". Two outputs of one invocation disagreeing
-    // about why the basket is empty is worse than either being vague.
-    // COMPOSED, not prioritised. Picking one sentence by priority made the
-    // headline false for whichever lines the other condition described: a
-    // basket with one dear line and one unanswered lookup said "nothing could
-    // be checked" directly above a line whose price was known and rejected.
-    // One clause per condition actually present says something true of all of
-    // them.
+    // Composed from one clause per condition PRESENT, never a single sentence
+    // picked by priority.
     //
-    // Each clause names a CONDITION rather than "others", which reads as a
-    // contrast with lines that did go in — of which there are none here — and
-    // has no antecedent at all when only one condition is present.
+    // The headline is a causal claim, and four earlier attempts each made it
+    // false for whichever lines the losing condition described: blaming the
+    // budget over an unanswered lookup (while the same run exited 1, "D1 could
+    // not be reached"), then blaming the lookup over lines whose price was
+    // known and rejected. Each clause names a condition rather than "others",
+    // which reads as a contrast with lines that went in — of which there are
+    // none here.
     const has = (st: LineStatus) => plan.lines.some((l) => l.status === st);
     const why: string[] = [];
     if (has("replacement-unknown")) why.push("D1 did not answer");
@@ -631,6 +621,10 @@ function reasonFor(l: BasketLine): string {
         ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}`
         : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
     case "nothing-in-stock":
+      // "returned", not "carries". The look is one search page plus a bounded
+      // category sweep, so a claim about what D1 STOCKS is wider than the
+      // evidence; a claim about what it RETURNED is exactly as wide as it.
+      //
       // Only claim a category was searched when one actually was. A line
       // downgraded for having no usable price never reached `findSubstitutes`,
       // and saying "its category had no replacement" invents a lookup.
@@ -638,11 +632,11 @@ function reasonFor(l: BasketLine): string {
         return "D1 publishes no price for this at your store, so it cannot go in a basket";
       }
       if (l.inStock === undefined) {
-        return "nothing D1 carries for this is in stock here, and its category was not reported on";
+        return "nothing D1 returned for this is in stock here, and its category was not reported on";
       }
       return l.inStock
-        ? `nothing D1 carries for this is in stock here; ${l.inStock} in its category are, but none is priced at your store${sweepCaveat(l)}`
-        : `nothing D1 carries for this is in stock here, and nothing in the part of its category that was searched is either${sweepCaveat(l)}`;
+        ? `nothing D1 returned for this is in stock here; ${l.inStock} in its category are, but none is priced at your store${sweepCaveat(l)}`
+        : `nothing D1 returned for this is in stock here, and nothing in the part of its category that was searched is either${sweepCaveat(l)}`;
     case "replacement-unknown":
       // Never "nothing is in stock". That claim would be asserted from a
       // request that failed, which is a statement about the network dressed up

@@ -69,8 +69,10 @@ export interface BasketLine {
   compared: number;
   /** How many D1 reported for the term, which may exceed `compared`. */
   matched: number;
-  /** The pick was made on PACK price because nothing published a size. */
+  /** The pick was made on PACK price, because no comparable measure existed. */
   byPackPrice?: boolean;
+  /** Whether any candidate published a size — the disclosure must not overclaim. */
+  anySized?: boolean;
   /** `compared` counts a category sweep, not the search page for this term. */
   substituteSweep?: boolean;
   /**
@@ -122,6 +124,8 @@ export interface Choice {
    * winner is the error unit pricing exists to prevent.
    */
   byPackPrice: boolean;
+  /** Whether ANY eligible product published a size, for an honest disclosure. */
+  anySized?: boolean;
 }
 
 /**
@@ -180,8 +184,14 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
       .sort((a, b) => (a.unitPrice ?? 0) - (b.unitPrice ?? 0) || a.skuId.localeCompare(b.skuId))[0];
     if (product) return { product, compared: comparable.length, byPackPrice: false };
   }
-  // Nothing in the set publishes a size. Pack price is the only axis left, and
-  // `byPackPrice` makes the caller say so.
+  // No comparable measure. Pack price is the only axis left, and `byPackPrice`
+  // makes the caller say so.
+  //
+  // `sized` is computed separately from the measure census above, which needs
+  // BOTH a size and a unit price. Deriving the disclosure from that census
+  // would let it print "D1 publishes no size for any of these" about a set
+  // where D1 published sizes and only the unit prices were missing — a claim
+  // about the data that the data contradicts.
   const product = eligible
     .slice()
     .sort(
@@ -189,7 +199,10 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
         (pickOffer(a.offers)?.price ?? 0) - (pickOffer(b.offers)?.price ?? 0) ||
         a.skuId.localeCompare(b.skuId),
     )[0];
-  return product ? { product, compared: eligible.length, byPackPrice: true } : undefined;
+  const sized = eligible.some((p) => p.size !== undefined);
+  return product
+    ? { product, compared: eligible.length, byPackPrice: true, anySized: sized }
+    : undefined;
 }
 
 /** Price of a chosen product, as a basket line costs it. */
@@ -365,6 +378,7 @@ export async function buildBasket(
         compared: best.compared,
         matched,
         byPackPrice: best.byPackPrice,
+        anySized: best.anySized,
       });
       continue;
     }
