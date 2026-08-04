@@ -39,8 +39,8 @@ actually weighed WOULD have fitted, and names the command that shows them:
 
 ```text
 leche — would cost $ 3.090, which does not fit in what is left. 3 cheaper
-matches for this term would fit — run `d1 search "leche" --sort per-unit` to
-choose one
+matches for this term would fit — run `d1 search 'leche' --available --sort
+per-unit` to choose one
 ```
 
 It reports and stops. Re-picking the cheapest that fits is the tempting fix and

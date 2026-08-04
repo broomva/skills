@@ -309,8 +309,9 @@ function redactAt(value: unknown, node: PathNode | undefined): unknown {
     // scalar was expected, an array where an object was, an object where an
     // array was — is withheld whole, so neither its keys, its depth, nor its
     // length is published. All three are live risks for a payload nobody has
-    // ever observed, and an earlier version leaked the length of the first and
-    // the key names of the third.
+    // ever observed. Measured across this release's own revisions: the first
+    // was closed a commit earlier, and the second and third both still leaked
+    // — a length and a set of key names respectively — until this.
     if (!node) return "[redacted]";
     if (Array.isArray(value)) {
       const each = node.each;

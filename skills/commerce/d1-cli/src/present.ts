@@ -655,13 +655,14 @@ const SKU_ID = /^\d+$/;
  *
  * An earlier version of this comment claimed these were the FIRST lines in this
  * file to interpolate data into something a reader — or an agent, since every
- * command here has a `--json` twin — may run. That was false when written:
- * `renderSubstitutes` had been printing `d1 cart add <skuId>` with only
- * `sanitize` applied, and `test/present.test.ts` says so in as many words. Both
- * sites are gated now, which is what the claim should have prompted rather than
- * concealed.
+ * command here has a `--json` twin — may run. That was false when written, and
+ * the search for what else it was false about turned up two more sites:
+ * `renderSubstitutes` printing `d1 cart add <skuId>` with only `sanitize`
+ * applied (`test/present.test.ts` had said so all along), and `cli.ts` printing
+ * a `--auth-token` follow-up with nothing applied at all. All three are gated
+ * now. The claim was worth more as a question than it was as a fact.
  */
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   return `'${sanitize(s).replace(/'/g, "'\\''")}'`;
 }
 
