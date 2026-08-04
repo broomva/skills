@@ -598,6 +598,19 @@ Mechanically this is `d1 substitute` with a brand constraint instead of a stock
 one — it reuses the same ranker. The term's own search page is tried first; only
 a page with nothing of the brand reaches the category sweep.
 
+Two different failures are reported as two different sentences, because they
+are two different facts:
+
+```text
+D1 returned COPELIA for these terms, but nothing of it can be bought at this store.
+Nothing D1 returned for these terms is ZZNOSUCH.
+```
+
+The first is the common case and the one a single "not found" message got
+wrong: D1 lists the brand and prices it at `0` for your store (gotcha 12).
+Every line also carries `pageBrands` in `--json` — the distinct brands D1
+returned for that term — which is what the hint is computed from.
+
 ## Roadmap
 
 - Reorder from a past order (`d1 reorder <id>`) — buildable from order detail

@@ -127,6 +127,52 @@ Live defects fixed in round 4:
 - The comparison table no longer truncates a label, so the name in the table is
   the name in the sentence below it.
 
+### Fixed — round 5 (BLOCKER): the guard was deleting the evidence, not the lie
+
+Live, against real D1:
+
+```text
+$ d1 basket --budget 50000 --brand COPELIA --count 50 leche
+Nothing D1 returned for these terms is COPELIA.
+```
+
+D1 had returned `COCADA LECHE PANELA COPELIA 23GR` at `Price: 0,
+AvailableQuantity: 0`. `no-brand-match` means nothing of the brand was
+**buyable**; the headline asserted D1 had returned **none of it**.
+
+Round 4 had filtered the requested brand out of the hint list so the
+contradiction could not be seen, and called that filter load-bearing — "if the
+requested brand appears here the headline above it is false, and no hint is
+worth printing a lie for". The premise was right and the conclusion inverted:
+it deleted the evidence and kept the claim. Round 4's own `pageBrands` change
+then put the disproof in the same object, so `--json` shipped `COPELIA` in
+`pageBrands` beside a headline denying it.
+
+The claim is conditioned on the evidence now. Two sentences, both true:
+
+```text
+D1 returned COPELIA for these terms, but nothing of it can be bought at this store.
+Brands it did return: ALPIN, BESTIES, COCUK, COPELIA, HORNEADITOS, LATTI, MUUU,
+NATURAL FEELING, OZMO, TRADICIÓN 1915.
+```
+
+The exclusion is gone and the list is complete — which is also the more useful
+hint, since the requested brand's presence is exactly what a shopper needs to
+see.
+
+**The property test had recorded this defect and exempted it.** Its reachability
+guard correctly reported rule #1 as unfirable; round 4 wrote down the reason
+("production excludes the requested brand — which is the behaviour") and marked
+the rule `regressionOnly`. That reason *was* the bug. The rule is live again,
+and the enumeration gained the axis the defect lived on: whether the **page**
+carried the requested brand, which deriving `pageBrands` from the line's own
+brand had pinned to a single value.
+
+Also: `renderStores` said "that is the registry's answer" when the registry had
+answered with 30 entries this parser could not read. `swept` counts survivors of
+normalization, so it collapsed exactly like the `stores.length` gate it
+replaced; a `dropped` count now tells the two apart.
+
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 
 The review's own summary: the pinning is much stronger — 42 of 51 mutations
