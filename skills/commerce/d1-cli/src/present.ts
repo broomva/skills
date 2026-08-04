@@ -475,10 +475,19 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     // failed there is no evidence for it — the basket is empty because D1 did
     // not answer, not because the money was short — and asserting it four lines
     // above the "unknown, not empty" reasons contradicts them.
+    // "Nothing fits this budget" is an AFFORDABILITY claim, so it may only be
+    // made when something was actually rejected on price. Keying it on "every
+    // line is unreachable" fixed one case of four: a mix of unreachable and
+    // no-match, or an all-out-of-stock basket, still blamed the budget — with
+    // the contradicting reasons printed directly underneath.
+    const rejectedOnPrice = plan.lines.some((l) => l.status === "over-budget");
+    const anyUnreachable = plan.lines.some((l) => l.status === "replacement-unknown");
     out.push(
-      plan.lines.length && plan.lines.every((l) => l.status === "replacement-unknown")
-        ? "  Nothing could be checked — D1 did not answer for any of these."
-        : "  Nothing fits this budget.",
+      rejectedOnPrice
+        ? "  Nothing fits this budget."
+        : anyUnreachable
+          ? "  Nothing could be checked — D1 did not answer for some of these."
+          : "  Nothing here could go in the basket. The reasons are below.",
     );
   }
 
@@ -505,11 +514,7 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     );
   }
   out.push("");
-  out.push(
-    filled.some((l) => l.byPackPrice)
-      ? "Each line is the best among the products fetched for its term, not across all of D1 — by value where D1 publishes a size, by pack price where it does not. Raise --count to widen it."
-      : "Each line is the best value among the products fetched for its term, not across all of D1. Raise --count to widen it.",
-  );
+  out.push(footerFor(filled));
   return out.join("\n");
 }
 
@@ -532,6 +537,30 @@ function scopeOf(l: BasketLine): string {
   return l.matched > l.compared
     ? `best of ${l.compared} compared, of ${l.matched} D1 matched`
     : `best of ${l.compared} compared`;
+}
+
+/**
+ * What the basket as a whole is claiming about how its lines were picked.
+ *
+ * Three different mechanisms can be in play at once, and one sentence cannot
+ * cover them: value ranking, the pack-price fallback, and a substitute chosen
+ * by similarity from a DIFFERENT category page. The old single sentence said
+ * "best value among the products fetched for its term", which was false for the
+ * last two.
+ */
+function footerFor(filled: readonly BasketLine[]): string {
+  const parts = [
+    "Each line is the best among the products fetched for its term, not across all of D1",
+  ];
+  if (filled.some((l) => l.byPackPrice)) {
+    parts.push("by pack price where D1 publishes no size");
+  }
+  if (filled.some((l) => l.substituteSweep)) {
+    parts.push(
+      "except a replacement, which is the closest match from its category rather than for the term you typed",
+    );
+  }
+  return `${parts.join(" — ")}. Raise --count to widen it.`;
 }
 
 /** Why a term did not make the basket, in the reader's terms rather than the enum's. */

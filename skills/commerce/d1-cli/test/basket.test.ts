@@ -402,7 +402,8 @@ describe("a filled line always has a price", () => {
     const out = renderBasket(plan, { regionId: "v2.ABC" });
     const body = out.slice(0, out.indexOf("0 of 1 lines"));
     expect(body).not.toContain("$ 0");
-    expect(body).toContain("Nothing fits this budget.");
+    // Not "Nothing fits this budget" — nothing was rejected on PRICE here.
+    expect(body).toContain("could go in the basket");
   });
 });
 
@@ -569,7 +570,7 @@ describe("a filled line with no product is not billed", () => {
     expect(plan.total).toBe(0);
     const out = renderBasket(plan, { regionId: "v2.ABC" });
     expect(out).toContain("0 of 1 lines");
-    expect(out).toContain("Nothing fits this budget.");
+    expect(out).toContain("could go in the basket");
     expect(out).not.toContain("$ 5.550");
   });
 });
@@ -690,27 +691,74 @@ describe("buildBasket", () => {
     expect(plan.lines[0]?.compared).toBe(0);
   });
 
-  test("an out-of-stock term falls through to a substitute, and names it", async () => {
-    const plan = await buildBasket(
-      fakeClient({
-        search: [wire("192", "PAN ARTESANAL", { available: false, price: 4000 })],
-        sku: [
-          {
-            productId: "192",
-            productName: "PAN ARTESANAL",
-            categories: ["/Panadería/Integral/"],
-            items: wire("192", "PAN ARTESANAL", { available: false, price: 4000 }).items,
-          },
-        ],
-      }),
-      ["pan"],
-      10_000_000,
-    );
-    // The sweep uses the same stubbed search, which returns the out-of-stock
-    // source only, so there is no replacement — but the line must say that
-    // truthfully rather than claiming the term matched nothing.
-    expect(["nothing-in-stock", "replacement-unknown"]).toContain(plan.lines[0]?.status);
-    expect(plan.lines[0]?.status).not.toBe("no-match");
+  test("an out-of-stock term reaches the substitute lookup at all", async () => {
+    // Asserts the REQUEST, not the outcome. The previous version accepted
+    // either of the only two statuses its own fixture could produce, so it was
+    // a tautology: deleting the entire substitute path left it passing.
+    const seen: string[] = [];
+    const impl = (async (url: string) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("192", "PAN ARTESANAL INTEGRAL")), {
+          status: 200,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          products: [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })],
+          recordsFiltered: 1,
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const plan = await buildBasket(new D1Client({ fetchImpl: impl }), ["pan"], 10_000_000);
+    // It asked D1 about the SOURCE SKU — that is the fallback firing.
+    expect(seen.some((u) => u.includes("catalog_system") && u.includes("192"))).toBe(true);
+    expect(plan.lines[0]?.status).toBe("nothing-in-stock");
+    expect(plan.lines[0]?.substituteSweep).toBe(true);
+  });
+
+  test("the substitute source is the best MATCH, not the cheapest per unit", async () => {
+    // The page used to be re-sorted by unit price before `products[0]` was
+    // taken as the source, so a shopper asking for rice whose rice was sold out
+    // got replacements swept from the category of whatever was cheapest per
+    // kilo — and the line read "replaces SAL REFINADA".
+    const asked: string[] = [];
+    const impl = (async (url: string) => {
+      const u = String(url);
+      if (u.includes("catalog_system")) {
+        asked.push(u);
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          products: [
+            wire("100", "ARROZ ESTÁNDAR 1000 GRS", {
+              available: false,
+              price: 5000,
+              unit: "Gr",
+              value: "1000",
+            }),
+            wire("200", "SAL REFINADA 3000 GRS", {
+              available: false,
+              price: 2000,
+              unit: "Gr",
+              value: "3000",
+            }),
+          ],
+          recordsFiltered: 2,
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    await buildBasket(new D1Client({ fetchImpl: impl }), ["arroz"], 10_000_000);
+    // Relevance order puts the rice first; per-unit order would put the salt
+    // first at $666/kg against the rice's $5.000/kg.
+    expect(asked[0]).toContain("skuId%3A100");
+    expect(asked[0]).not.toContain("skuId%3A200");
   });
 
   test("a replacement lookup that FAILS is unknown, not empty — and exits 1", async () => {
@@ -832,7 +880,12 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
     expect(plan.total).toBe(0);
   });
 
-  test("a sizeless replacement is not called best value", async () => {
+  test("a replacement is never described as the best value for the term", async () => {
+    // It is not chosen by value and not chosen from the term's own results — it
+    // is the closest match in a category. Saying "best value among the products
+    // fetched for its term" is false twice, and "chosen on pack price" (an
+    // earlier attempt at this) misnames the mechanism a third way: substitutes
+    // are ranked by name similarity and price PROXIMITY, never by pack price.
     const plan = await buildBasket(
       fakeClient({
         search: outOfStockTerm,
@@ -843,10 +896,10 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
       10_000_000,
     );
     expect(plan.lines[0]?.status).toBe("filled-by-substitute");
-    expect(plan.lines[0]?.byPackPrice).toBe(true);
+    expect(plan.lines[0]?.byPackPrice).toBeUndefined();
     const out = renderBasket(plan, { regionId: "v2.ABC" });
-    expect(out).toContain("chosen on pack price");
-    expect(out).not.toContain("Each line is the best value");
+    expect(out).not.toContain("chosen on pack price");
+    expect(out).toContain("closest match from its category");
   });
 
   test("an empty category says so without a sweep-vs-search number mix", async () => {
@@ -885,7 +938,45 @@ describe("renderBasket defends itself against a hand-built plan", () => {
       },
       { regionId: "v2.ABC" },
     );
-    expect(out).toContain("Nothing fits this budget.");
+    expect(out).toContain("could go in the basket");
     expect(out).toContain("0 of 1 lines");
+  });
+});
+
+describe("a budget must be the number that was typed", () => {
+  test("one too large to represent exactly is refused", () => {
+    // Past MAX_SAFE_INTEGER/100 the conversion to hundredths loses integer
+    // precision, so the ceiling enforced is not the one asked for — silently
+    // becoming a different plausible number is what this parser exists to stop.
+    expect(parseBudget(90_071_992_547_409)).toBe(9_007_199_254_740_900);
+    expect(() => parseBudget(90_071_992_547_410)).toThrow(/too large/);
+    expect(() => parseBudget("999.999.999.999.999.999")).toThrow(/too large/);
+    // A trillion pesos is still fine — the bound refuses nothing realistic.
+    expect(parseBudget(1_000_000_000_000)).toBe(100_000_000_000_000);
+  });
+});
+
+describe("a replacement is skipped when it cannot be bought", () => {
+  test("and the PRICED runner-up is used instead", async () => {
+    // `findSubstitutes` slices to `limit` before returning, so asking for one
+    // and then skipping unpriced candidates skipped the only candidate there
+    // was — the fix was inert and a buyable runner-up was reported as an empty
+    // category.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })],
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        sweep: [
+          // Ranks first, in stock, but D1 publishes no offer for it here.
+          wire("500", "PAN INTEGRAL SIN OFERTA", { price: 0, unit: "Gr", value: "500" }),
+          wire("738", "TOSTADA INTEGRAL", { price: 1950, unit: "Gr", value: "150" }),
+        ],
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("filled-by-substitute");
+    expect(plan.lines[0]?.product?.skuId).toBe("738");
+    expect(plan.total).toBe(195_000);
   });
 });

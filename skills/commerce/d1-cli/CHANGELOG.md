@@ -125,9 +125,38 @@ enters it is not fixing it.
   exit-code call re-spelled the `FILLED` set as a literal; and "Nothing fits
   this budget" was asserted even when nothing had been checked.
 
-**387 tests, twelve of which drive `buildBasket` against a stubbed D1** — the
-substitute path among them, which no test had ever entered. All eleven
-previously-surviving mutations now die.
+**390 tests, thirteen of which drive `buildBasket` against a stubbed D1** — the
+substitute path among them, which no test had ever entered.
+
+### And a THIRD pass, because two of the round-2 fixes did not do anything
+
+Scored 5/10. Rounds went 3 → 4 → 5, and the recurring shape is the one this
+project already names: fixing in one place opens a hole beside it.
+
+- **The "skip an unbuyable replacement" fix was inert.** `findSubstitutes`
+  slices to `limit` *before* returning, and the caller asked for `limit: 1` —
+  so skipping the unpriced top candidate skipped the only candidate there was,
+  and a buyable runner-up was still reported as an empty category. The list is
+  requested unbounded now.
+- **The substitute source was the cheapest-per-unit product, not the best
+  match.** The page was re-sorted by unit price before `products[0]` was taken
+  as the source, so a shopper whose rice was sold out got replacements swept
+  from the category of whatever was cheapest per kilo — the line read "replaces
+  SAL REFINADA" for a term that was never about salt. The sort is gone;
+  `chooseBest` finds its own minimum and never needed it.
+- **`byPackPrice` on a substitute line misnamed the mechanism.** Substitutes are
+  ranked by name similarity and price *proximity*, never by pack price, and the
+  note's "D1 publishes no size for any of these" quantified over a set from a
+  predicate that read one product. Removed; the footer now states all three
+  mechanisms separately instead of one sentence that was false for two of them.
+- **"Nothing fits this budget" was fixed for one case of four.** It is an
+  affordability claim, so it is now made only when a line was actually rejected
+  on price.
+- Two more claims in this file were false and are corrected above: "all eleven
+  previously-surviving mutations now die" (two did not), and "twelve tests drive
+  `buildBasket`" (eleven did). A fourth vacuous test — an out-of-stock term
+  "falls through to a substitute" whose only assertion was a tautology over its
+  own fixture — was replaced with one that asserts the REQUEST was made.
 
 ## [0.6.0] — 2026-08-03
 

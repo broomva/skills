@@ -317,10 +317,15 @@ export async function buildBasket(
   const chosen: BasketLine[] = [];
 
   for (const term of terms) {
+    // Deliberately UNSORTED. `chooseBest` finds the minimum itself, so sorting
+    // here bought nothing — and it reordered the page, after which
+    // `page.products[0]` was the cheapest-per-unit product rather than the
+    // best-matching one. A shopper asking for "arroz" whose rice was sold out
+    // then had replacements swept from the category of whatever happened to be
+    // cheapest per kilo on the page, and the line read "replaces SAL REFINADA".
     const page = await search(client, {
       query: term,
       count: opts.count,
-      sort: "per-unit",
       regionId: opts.regionId,
       salesChannel,
     });
@@ -386,10 +391,12 @@ export async function buildBasket(
       compared: replacement.compared,
       matched,
       substituteSweep: true,
-      // A substitute is ranked by name similarity and price proximity, which
-      // cannot use unit price when nothing publishes a size. Saying "best
-      // value" about that line would be false twice over.
-      byPackPrice: replacement.product.unitPrice === undefined,
+      // `byPackPrice` is deliberately NOT set here. A substitute is ranked by
+      // name similarity and price proximity — never by pack price — so the
+      // "chosen on pack price" note would misname the mechanism, and its
+      // "D1 publishes no size for any of these" reads over a whole set while
+      // the predicate looked at one product. The line already says it came from
+      // a category sweep and names what it replaces; the footer covers the rest.
     });
   }
 
@@ -426,7 +433,11 @@ async function bestSubstitute(
       regionId: opts.regionId,
       salesChannel,
       count: opts.count,
-      limit: 1,
+      // Unbounded, NOT 1. `findSubstitutes` slices to `limit` before returning,
+      // so asking for one and then skipping unpriced candidates skipped the
+      // only candidate there was — the "offer an unbuyable replacement" fix was
+      // inert, and a priced runner-up was reported as an empty category.
+      limit: Number.POSITIVE_INFINITY,
     });
     // `rankedCount`, not `poolProducts`: the pool is every SKU swept from the
     // category INCLUDING the out-of-stock source, and reporting it claims a
