@@ -158,6 +158,35 @@ project already names: fixing in one place opens a hole beside it.
   "falls through to a substitute" whose only assertion was a tautology over its
   own fixture — was replaced with one that asserts the REQUEST was made.
 
+### A FOURTH pass — no blockers left, three claims the output still could not support
+
+Scored 6/10. The arc across four rounds was 3 → 4 → 5 → 6, and every round found
+that a previous round's fix was incomplete, inert, or unpinned.
+
+- **A substitute line counted candidates it had rejected as unbuyable.**
+  `rankedCount` counts everything past the availability filter, but the price
+  filter added in round 3 rejects more — so a line read "best of 4 in its
+  category" for the only buyable one of four. That is this module's own stated
+  invariant ("after dropping the unavailable, the unpriced") broken on the one
+  path that did not enforce it.
+- **"Nothing fits this budget" outranked an unanswered lookup.** A basket with
+  one dear line and one unreachable one blamed the budget while the same run
+  exited `1` — "D1 could not be reached, a retry may help". One invocation, two
+  outputs, disagreeing about why the basket was empty.
+- **The footer's pack-price clause had zero coverage in either polarity.** It
+  could be deleted, inverted, or replaced with nonsense on a green suite — while
+  a code comment justified dropping a different disclosure on the grounds that
+  "the footer covers the rest".
+
+Also: the summary billed `plan.total` while the body rendered only lines with a
+product; the `nothing-in-stock` reason claimed "its category had no replacement"
+for lines that never reached a category lookup; and an all-replacement basket
+called the exception a rule.
+
+**398 tests.** The fifth inert test was replaced: its distinguishing assertion
+was unreachable, because the string it checked for is only ever produced for
+filled lines and the fixture's line was not one.
+
 ## [0.6.0] — 2026-08-03
 
 ### Fixed — a multipack's unit price, measured before it was encoded

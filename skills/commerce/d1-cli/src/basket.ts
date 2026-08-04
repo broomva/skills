@@ -439,10 +439,18 @@ async function bestSubstitute(
       // inert, and a priced runner-up was reported as an empty category.
       limit: Number.POSITIVE_INFINITY,
     });
-    // `rankedCount`, not `poolProducts`: the pool is every SKU swept from the
-    // category INCLUDING the out-of-stock source, and reporting it claims a
-    // choice between 40 where one alternative existed.
-    const compared = result.rankedCount;
+    // Counts only what could actually be BOUGHT.
+    //
+    // `poolProducts` is the whole swept category including the out-of-stock
+    // source — reporting it claimed a choice between 40 where one alternative
+    // existed. `rankedCount` was the next attempt and is still wrong here,
+    // because it counts everything that survived the AVAILABILITY filter while
+    // the price filter below rejects more: a line could say "best of 4 in its
+    // category" for the only buyable one of four, which is this module's own
+    // stated invariant ("after dropping the unavailable, the unpriced") broken
+    // on the one path that did not enforce it.
+    const buyable = result.candidates.filter((c) => linePrice(c.product) !== undefined);
+    const compared = buyable.length;
     // `rankSubstitutes` filters on availability only, never on price. VTEX
     // reports `Price: 0` ("no offer in this region") alongside a positive
     // AvailableQuantity, so a rankable candidate can carry no price at all —
@@ -450,9 +458,7 @@ async function bestSubstitute(
     // "its category had no replacement" while the line still carried the
     // product it had just found. A candidate that cannot be bought is not a
     // replacement.
-    const top: Candidate | undefined = result.candidates.find(
-      (c) => linePrice(c.product) !== undefined,
-    );
+    const top: Candidate | undefined = buyable[0];
     if (!top) return { outcome: "none", compared };
     return { outcome: "found", product: top.product, compared };
   } catch {

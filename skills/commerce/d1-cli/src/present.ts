@@ -13,7 +13,7 @@
 import { type BasketLine, type BasketPlan, FILLED } from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
-import { discountPercent, formatCOP } from "./money.ts";
+import { discountPercent, formatCOP, sum } from "./money.ts";
 import type { SubstituteResult } from "./substitute.ts";
 import type {
   Cart,
@@ -480,20 +480,33 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     // line is unreachable" fixed one case of four: a mix of unreachable and
     // no-match, or an all-out-of-stock basket, still blamed the budget — with
     // the contradicting reasons printed directly underneath.
-    const rejectedOnPrice = plan.lines.some((l) => l.status === "over-budget");
+    // An unanswered lookup OUTRANKS an affordability claim. Keying on
+    // over-budget first meant a basket with one dear line and one unreachable
+    // one blamed the budget — while the same run exited 1, "D1 could not be
+    // reached, a retry may help". Two outputs of one invocation disagreeing
+    // about why the basket is empty is worse than either being vague.
     const anyUnreachable = plan.lines.some((l) => l.status === "replacement-unknown");
+    const rejectedOnPrice = plan.lines.some((l) => l.status === "over-budget");
     out.push(
-      rejectedOnPrice
-        ? "  Nothing fits this budget."
-        : anyUnreachable
-          ? "  Nothing could be checked — D1 did not answer for some of these."
-          : "  Nothing here could go in the basket. The reasons are below.",
+      anyUnreachable
+        ? "  Nothing could be checked — D1 did not answer for some of these."
+        : rejectedOnPrice
+          ? "  Nothing fits this budget."
+          : plan.lines.length
+            ? "  Nothing here could go in the basket. The reasons are below."
+            : "  Nothing was asked for.",
     );
   }
 
   out.push("");
+  // Billed from the lines actually RENDERED, not from `plan.total`. A plan
+  // built by hand — which is how this function is called from tests and from
+  // `--json` consumers — could otherwise show zero rows and still charge for
+  // one, which is the same body-and-summary disagreement in the other
+  // direction.
+  const shown = sum(filled.map((l) => l.price ?? 0));
   out.push(
-    `${filled.length} of ${plan.lines.length} lines · ${formatCOP(plan.total)} of ${formatCOP(plan.budget)} · ${formatCOP(plan.remaining)} left`,
+    `${filled.length} of ${plan.lines.length} lines · ${formatCOP(shown)} of ${formatCOP(plan.budget)} · ${formatCOP(plan.budget - shown)} left`,
   );
   // The ceiling is stated, not implied. A reader who assumed best-effort would
   // otherwise read a short basket as "that is all D1 sells".
@@ -549,13 +562,18 @@ function scopeOf(l: BasketLine): string {
  * last two.
  */
 function footerFor(filled: readonly BasketLine[]): string {
+  const substitutes = filled.filter((l) => l.substituteSweep).length;
+  // When EVERY line is a replacement, "the products fetched for its term" is
+  // false for the whole basket and the exception swallows the rule.
   const parts = [
-    "Each line is the best among the products fetched for its term, not across all of D1",
+    substitutes === filled.length && filled.length
+      ? "Every line here is a replacement — the closest match from its category, not a product fetched for the term you typed"
+      : "Each line is the best among the products fetched for its term, not across all of D1",
   ];
   if (filled.some((l) => l.byPackPrice)) {
     parts.push("by pack price where D1 publishes no size");
   }
-  if (filled.some((l) => l.substituteSweep)) {
+  if (substitutes && substitutes !== filled.length) {
     parts.push(
       "except a replacement, which is the closest match from its category rather than for the term you typed",
     );
@@ -569,7 +587,12 @@ function reasonFor(l: BasketLine): string {
     case "over-budget":
       return `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
     case "nothing-in-stock":
-      return `nothing D1 carries for this is in stock here, and its category had no replacement (${l.compared} compared)`;
+      // Only claim a category was searched when one actually was. A line
+      // downgraded for having no usable price never reached `findSubstitutes`,
+      // and saying "its category had no replacement" invents a lookup.
+      return l.substituteSweep
+        ? `nothing D1 carries for this is in stock here, and its category had no replacement that can be bought (${l.compared} compared)`
+        : "D1 publishes no price for this at your store, so it cannot go in a basket";
     case "replacement-unknown":
       // Never "nothing is in stock". That claim would be asserted from a
       // request that failed, which is a statement about the network dressed up
@@ -578,6 +601,10 @@ function reasonFor(l: BasketLine): string {
     case "no-match":
       return "D1 returned nothing for this term";
     default:
-      return "not included";
+      // Reached only by a filled line carrying no product, which `fillToBudget`
+      // makes impossible — so if a reader ever sees this, the plan was built by
+      // hand and is malformed. Say that rather than "not included", which reads
+      // like a shopping outcome.
+      return "not included — this line names no product, which is a bug in whatever built this plan";
   }
 }

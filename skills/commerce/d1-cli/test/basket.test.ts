@@ -493,7 +493,6 @@ describe("a pack-price pick says so", () => {
     );
     const out = renderBasket(plan, { regionId: "v2.ABC" });
     expect(out).toContain("chosen on pack price");
-    expect(out).not.toContain("Each line is the best value");
   });
 });
 
@@ -902,24 +901,31 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
     expect(out).toContain("closest match from its category");
   });
 
-  test("an empty category says so without a sweep-vs-search number mix", async () => {
-    const plan = await buildBasket(
-      fakeClient({
-        search: outOfStockTerm,
-        searchTotal: 12,
-        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
-        sweep: [wire("x", "TODO AGOTADO", { available: false, price: 3000 })],
-        sweepTotal: 140,
-      }),
-      ["pan"],
-      10_000_000,
+  test("an empty category is reported as swept, not as a term with no matches", () => {
+    // The previous version asserted `not.toContain("of 12 D1 matched")`, which
+    // is unreachable: a `nothing-in-stock` line renders through `reasonFor`,
+    // and `scopeOf` — the only producer of "D1 matched" — runs for FILLED lines
+    // only. So it could not fail for the mix it was named for, and its other
+    // two assertions were byte-identical to the test above it.
+    const plan = fillToBudget(
+      [
+        line({
+          term: "pan",
+          status: "nothing-in-stock",
+          product: undefined,
+          compared: 39,
+          matched: 12,
+          substituteSweep: true,
+        }),
+      ],
+      1_000_000,
     );
-    const l = plan.lines[0];
-    expect(l?.status).toBe("nothing-in-stock");
-    // The count is the sweep's, so it must be labelled as such rather than held
-    // against `matched` (12) — which would print a denominator below it.
-    expect(l?.substituteSweep).toBe(true);
-    expect(renderBasket(plan, { regionId: "v2.ABC" })).not.toContain("of 12 D1 matched");
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    // The count is the SWEEP's, so the sentence must say "in its category" —
+    // never hold 39 against the term's own 12.
+    expect(out).toContain("its category had no replacement");
+    expect(out).toContain("39 compared");
+    expect(out).not.toContain("12");
   });
 });
 
@@ -978,5 +984,132 @@ describe("a replacement is skipped when it cannot be bought", () => {
     expect(plan.lines[0]?.status).toBe("filled-by-substitute");
     expect(plan.lines[0]?.product?.skuId).toBe("738");
     expect(plan.total).toBe(195_000);
+  });
+});
+
+describe("the footer names every mechanism actually in play", () => {
+  const valued = line({
+    term: "arroz",
+    price: 555_000,
+    product: product("1075", "ARROZ 2000 GRS", 555_000, { measure: "kg", amount: 2 }),
+  });
+  const packPriced = line({
+    term: "cosa",
+    price: 190_000,
+    product: product("x", "COSA SIN PUM", 190_000),
+    byPackPrice: true,
+  });
+  const swapped = line({
+    term: "pan",
+    price: 195_000,
+    status: "filled-by-substitute",
+    product: product("738", "TOSTADA", 195_000, { measure: "kg", amount: 0.15 }),
+    replaces: product("192", "PAN ARTESANAL", 400_000, { available: false }),
+    substituteSweep: true,
+  });
+  const foot = (...ls: BasketLine[]) => {
+    const out = renderBasket(fillToBudget(ls, 10_000_000), { regionId: "v2.ABC" });
+    return out.slice(
+      out.lastIndexOf("Each line") === -1
+        ? out.lastIndexOf("Every line")
+        : out.lastIndexOf("Each line"),
+    );
+  };
+
+  test("value only — no pack-price clause, no replacement clause", () => {
+    const f = foot(valued);
+    expect(f).not.toContain("pack price");
+    expect(f).not.toContain("replacement");
+  });
+
+  test("a pack-price line adds its clause, and only then", () => {
+    // Round 4 proved this clause had zero coverage in EITHER polarity, so it
+    // could be deleted, inverted, or replaced with nonsense, all with a green
+    // suite — while a code comment justified dropping another disclosure on the
+    // grounds that "the footer covers the rest".
+    expect(foot(packPriced)).toContain("by pack price where D1 publishes no size");
+    expect(foot(valued)).not.toContain("by pack price");
+  });
+
+  test("a mixed basket names the replacement as an exception", () => {
+    const f = foot(valued, swapped);
+    expect(f).toContain("except a replacement");
+  });
+
+  test("an all-replacement basket does not call the exception a rule", () => {
+    // "Each line is the best among the products fetched for its term … except a
+    // replacement" is false for 100% of a basket where every line IS one.
+    const f = foot(swapped);
+    expect(f).toContain("Every line here is a replacement");
+    expect(f).not.toContain("except a replacement");
+  });
+});
+
+describe("an unanswered lookup outranks an affordability claim", () => {
+  test("a mixed empty basket does not blame the budget", () => {
+    // The prose and the exit code are two outputs of one invocation. Blaming
+    // the budget while exiting 1 ("D1 could not be reached, a retry may help")
+    // tells one reader to raise the budget and another to retry.
+    const plan = fillToBudget(
+      [
+        line({ term: "arroz", price: 900_000 }),
+        line({ term: "pan", status: "replacement-unknown", product: undefined }),
+      ],
+      10_000,
+    );
+    const out = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(out).not.toContain("Nothing fits this budget");
+    expect(out).toContain("did not answer");
+    expect(basketExit(plan.lines)).toBe(1);
+  });
+
+  test("a purely unaffordable basket still blames the budget", () => {
+    const plan = fillToBudget([line({ term: "arroz", price: 900_000 })], 10_000);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain("Nothing fits this budget");
+  });
+});
+
+describe("a substitute line counts only what could be bought", () => {
+  test("candidates with no price are not part of 'best of N'", async () => {
+    // `rankedCount` counts everything past the AVAILABILITY filter, but the
+    // price filter rejects more — so the line said "best of 4 in its category"
+    // for the only buyable one of four, which is this module's own stated
+    // invariant broken on the one path that did not enforce it.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })],
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        sweep: [
+          wire("500", "PAN ARTESANAL INTEGRAL BIS", { price: 0 }),
+          wire("501", "PAN ARTESANAL SIN OFERTA", { price: 0 }),
+          wire("738", "TOSTADA INTEGRAL", { price: 1950, unit: "Gr", value: "150" }),
+        ],
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("filled-by-substitute");
+    expect(plan.lines[0]?.product?.skuId).toBe("738");
+    // One buyable candidate — not three.
+    expect(plan.lines[0]?.compared).toBe(1);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain("best of 1 in its category");
+  });
+});
+
+describe("the summary bills what the body shows", () => {
+  test("a hand-built plan cannot charge for a line it does not render", () => {
+    const out = renderBasket(
+      {
+        budget: 1_000_000,
+        lines: [line({ term: "arroz", price: 555_000, product: undefined })],
+        total: 555_000,
+        remaining: 445_000,
+      },
+      { regionId: "v2.ABC" },
+    );
+    expect(out).toContain("0 of 1 lines");
+    // The count was fixed in an earlier round; the money was not.
+    expect(out).not.toContain("$ 5.550");
+    expect(out).toContain("$ 0 of $ 10.000");
   });
 });
