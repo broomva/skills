@@ -371,6 +371,25 @@ describe("the short-page rule stands on its own [BRO-2067]", () => {
   });
 });
 
+describe("the page-10 ceiling stands on its own [BRO-2067]", () => {
+  test("ten FULL pages with no reported total is the cap", () => {
+    // With `paging.total` present the total check fires first, so the page-10
+    // branch is only reachable when the registry reports no total — the
+    // bare-array shape. Without this the branch is unfalsifiable: deleting it
+    // left the whole suite green.
+    return (async () => {
+      const impl = (async (url: string) => {
+        const page = Number(new URL(String(url)).searchParams.get("page") ?? "1");
+        return new Response(JSON.stringify(fullPage(`p${page}-`, page)), { status: 200 });
+      }) as unknown as typeof fetch;
+      const r = await nearbyStores(new D1Client({ fetchImpl: impl }), AT, { limit: 9_999 });
+      expect(r.swept).toBe(MAX_REACHABLE);
+      expect(r.registryTotal).toBeUndefined();
+      expect(r.stopped).toBe("cap");
+    })();
+  });
+});
+
 describe("renderStores keys its empty branch on the SWEEP [BRO-2067]", () => {
   test("points fetched and all dropped is not 'the registry's answer'", () => {
     // That claim is about the registry. When every point was fetched and then
