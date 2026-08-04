@@ -207,6 +207,26 @@ today's operative rule — `"kg" < "L" < "unit"` alphabetically as well, so
 deleting the table changes no current outcome; it earns its place against a
 fourth measure, and now says so instead of calling itself "the whole point".
 
+### A SIXTH pass — the basket was making category-wide claims from one page
+
+All four round-5 fixes verified. One MAJOR left, and it cited this project's own
+standard against it. `d1 substitute` prints *"that category holds 140 products —
+only 3 were compared"* on both its empty and non-empty paths, and SKILL.md sets
+the rule for exactly that sentence: a negative over a partial sweep needs the
+caveat **more** than a positive does. A basket line made the same categorical
+claims — "nothing in its category is either", "best of 2 in its category" — and
+dropped the denominator, because the sweep's `poolProducts`/`poolTotal` were
+discarded before the line was built. The sweep reads ONE page capped at 50 of a
+category that may hold hundreds, so those were universals over a sample.
+
+Both sentences now carry *"only N of M in that category were searched"* when the
+look was partial, and say nothing when it was complete.
+
+**404 tests.** Across six rounds the score went 3 → 4 → 5 → 6 → 6 → 6, and the
+recurring finding was never the same defect twice: it was that the *previous
+round's fix* was inert, unpinned, or had quietly deleted something. Four of the
+six rounds found a test that could not fail.
+
 ## [0.6.0] — 2026-08-03
 
 ### Fixed — a multipack's unit price, measured before it was encoded

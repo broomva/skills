@@ -10,7 +10,7 @@
  * rather than shown as zero.
  */
 
-import { type BasketLine, type BasketPlan, FILLED } from "./basket.ts";
+import { type BasketLine, type BasketPlan, FILLED, type LineStatus } from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP, sum } from "./money.ts";
@@ -491,18 +491,26 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     // be checked" directly above a line whose price was known and rejected.
     // One clause per condition actually present says something true of all of
     // them.
+    //
+    // Each clause names a CONDITION rather than "others", which reads as a
+    // contrast with lines that did go in — of which there are none here — and
+    // has no antecedent at all when only one condition is present.
+    const has = (st: LineStatus) => plan.lines.some((l) => l.status === st);
     const why: string[] = [];
-    if (plan.lines.some((l) => l.status === "replacement-unknown")) {
-      why.push("D1 did not answer for some of these");
-    }
-    if (plan.lines.some((l) => l.status === "over-budget")) why.push("others did not fit");
-    if (plan.lines.some((l) => l.status === "nothing-in-stock"))
-      why.push("others are not in stock");
-    if (plan.lines.some((l) => l.status === "no-match")) why.push("others matched nothing");
+    if (has("replacement-unknown")) why.push("D1 did not answer");
+    if (has("over-budget")) why.push("the budget was short");
+    if (has("nothing-in-stock")) why.push("some are not in stock");
+    if (has("no-match")) why.push("some matched nothing");
+    // Three cases, not two. "Nothing was asked for" is only true of an EMPTY
+    // list; a plan carrying lines whose statuses match none of the reasons
+    // above still asked for something, and saying otherwise is false about the
+    // one thing the reader can see for themselves.
     out.push(
       why.length
-        ? `  Nothing could go in the basket — ${why.join(", ")}.`
-        : "  Nothing could go in the basket.",
+        ? `  Nothing could go in the basket — ${why.join("; ")}.`
+        : plan.lines.length
+          ? "  Nothing could go in the basket."
+          : "  Nothing was asked for.",
     );
   }
 
@@ -554,7 +562,7 @@ function scopeOf(l: BasketLine): string {
   // them was meaningless and, when the sweep was larger, silently suppressed
   // the denominator exactly where the look had drifted furthest from what the
   // shopper typed. So that line says which population it is talking about.
-  if (l.substituteSweep) return `best of ${l.compared} in its category`;
+  if (l.substituteSweep) return `best of ${l.compared} in its category${sweepCaveat(l)}`;
   return l.matched > l.compared
     ? `best of ${l.compared} compared, of ${l.matched} D1 matched`
     : `best of ${l.compared} compared`;
@@ -589,6 +597,22 @@ function footerFor(filled: readonly BasketLine[]): string {
   return `${parts.join(" — ")}. Raise --count to widen it.`;
 }
 
+/**
+ * How partial the category sweep was, when it was partial.
+ *
+ * A categorical claim about a category — "nothing in it is in stock", "this is
+ * the best of it" — is only as wide as the sweep behind it, and the sweep reads
+ * ONE page capped at 50. `d1 substitute` states this on both its empty and
+ * non-empty paths, and SKILL.md sets the rule: a negative over a partial sweep
+ * needs the caveat more than a positive does, not less. The basket said neither
+ * until this existed.
+ */
+function sweepCaveat(l: BasketLine): string {
+  const { swept, categoryTotal } = l;
+  if (!swept || !categoryTotal || categoryTotal <= swept) return "";
+  return ` — only ${swept} of ${categoryTotal} in that category were searched`;
+}
+
 /** Why a term did not make the basket, in the reader's terms rather than the enum's. */
 function reasonFor(l: BasketLine): string {
   switch (l.status) {
@@ -601,9 +625,12 @@ function reasonFor(l: BasketLine): string {
       if (!l.substituteSweep) {
         return "D1 publishes no price for this at your store, so it cannot go in a basket";
       }
+      if (l.inStock === undefined) {
+        return "nothing D1 carries for this is in stock here, and its category was not reported on";
+      }
       return l.inStock
-        ? `nothing D1 carries for this is in stock here; ${l.inStock} in its category are, but none is priced at your store`
-        : "nothing D1 carries for this is in stock here, and nothing in its category is either";
+        ? `nothing D1 carries for this is in stock here; ${l.inStock} in its category are, but none is priced at your store${sweepCaveat(l)}`
+        : `nothing D1 carries for this is in stock here, and nothing in the part of its category that was searched is either${sweepCaveat(l)}`;
     case "replacement-unknown":
       // Never "nothing is in stock". That claim would be asserted from a
       // request that failed, which is a statement about the network dressed up

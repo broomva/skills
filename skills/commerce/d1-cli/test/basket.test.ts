@@ -327,7 +327,7 @@ describe("renderBasket", () => {
 
   test("says plainly when nothing fit at all", () => {
     const none = fillToBudget([line({ term: "arroz", price: 555_000 })], 10_000);
-    expect(renderBasket(none)).toContain("Nothing could go in the basket — others did not fit.");
+    expect(renderBasket(none)).toContain("Nothing could go in the basket — the budget was short.");
   });
 
   test("names a substitute rather than swapping it in quietly", () => {
@@ -952,7 +952,11 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
     // Must vary with the shelf, not collapse to zero.
     expect(l?.compared).toBe(3);
     expect(l?.inStock).toBe(3);
-    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain("3 in its category");
+    const rendered = renderBasket(plan, { regionId: "v2.ABC" });
+    expect(rendered).toContain("3 in its category");
+    // The sweep read 3 products of a category D1 says holds 140. `d1
+    // substitute` says so on this exact sentence; the basket must too.
+    expect(rendered).toContain("only 3 of 140 in that category were searched");
   });
 
   test("a truly empty category says so, rather than counting nothing", async () => {
@@ -966,8 +970,10 @@ describe("buildBasket — the substitute path, exercised end to end", () => {
       10_000_000,
     );
     expect(plan.lines[0]?.inStock).toBe(0);
+    // "nothing in its category" would be a universal over one page of a
+    // category that may hold hundreds. It is hedged to what was searched.
     expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain(
-      "nothing in its category is either",
+      "nothing in the part of its category that was searched is either",
     );
   });
 
@@ -1131,8 +1137,8 @@ describe("an unanswered lookup outranks an affordability claim", () => {
   test("a purely unaffordable basket still says so", () => {
     const plan = fillToBudget([line({ term: "arroz", price: 900_000 })], 10_000);
     const out = renderBasket(plan, { regionId: "v2.ABC" });
-    expect(out).toContain("did not fit");
-    expect(out).not.toContain("did not answer");
+    expect(out).toContain("the budget was short");
+    expect(out).not.toContain("D1 did not answer");
   });
 
   test("a mixed basket names BOTH reasons, rather than picking one", () => {
@@ -1147,8 +1153,8 @@ describe("an unanswered lookup outranks an affordability claim", () => {
       10_000,
     );
     const out = renderBasket(plan, { regionId: "v2.ABC" });
-    expect(out).toContain("D1 did not answer for some of these");
-    expect(out).toContain("others did not fit");
+    expect(out).toContain("D1 did not answer");
+    expect(out).toContain("the budget was short");
   });
 });
 
@@ -1194,5 +1200,49 @@ describe("the summary bills what the body shows", () => {
     // The count was fixed in an earlier round; the money was not.
     expect(out).not.toContain("$ 5.550");
     expect(out).toContain("$ 0 of $ 10.000");
+  });
+});
+
+describe("a categorical claim is only as wide as the sweep behind it", () => {
+  const term = [wire("192", "PAN ARTESANAL INTEGRAL", { available: false, price: 4000 })];
+
+  test("a filled replacement discloses how partial the look was", async () => {
+    // `scopeOf` printed "best of 2 in its category" with no denominator, while
+    // an ordinary line printed "best of 20 compared, of 29 D1 matched". Same
+    // command, two standards.
+    const plan = await buildBasket(
+      fakeClient({
+        search: term,
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        sweep: [
+          wire("738", "TOSTADA INTEGRAL", { price: 1950, unit: "Gr", value: "150" }),
+          wire("739", "TOSTADA OTRA", { price: 2500, unit: "Gr", value: "150" }),
+        ],
+        sweepTotal: 140,
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("filled-by-substitute");
+    expect(plan.lines[0]?.categoryTotal).toBe(140);
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).toContain(
+      "only 2 of 140 in that category were searched",
+    );
+  });
+
+  test("a complete sweep claims no partiality it does not have", async () => {
+    // When the page held the whole category there is nothing to disclose, and
+    // adding the caveat anyway would be its own false statement.
+    const plan = await buildBasket(
+      fakeClient({
+        search: term,
+        sku: sourceSku("192", "PAN ARTESANAL INTEGRAL"),
+        sweep: [wire("738", "TOSTADA INTEGRAL", { price: 1950, unit: "Gr", value: "150" })],
+        sweepTotal: 1,
+      }),
+      ["pan"],
+      10_000_000,
+    );
+    expect(renderBasket(plan, { regionId: "v2.ABC" })).not.toContain("were searched");
   });
 });

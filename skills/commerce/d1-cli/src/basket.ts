@@ -58,7 +58,14 @@ export interface BasketLine {
    * its category was used instead. Named, never applied silently.
    */
   replaces?: Product;
-  /** How many products this line actually chose between. */
+  /**
+   * How many products this line chose between.
+   *
+   * Two readings, by path, and `--json` consumers need both stated: on a filled
+   * line it is the set actually weighed; on an EMPTY category sweep nothing was
+   * weighable, so it reports how wide the look was instead — the alternative
+   * was a structural zero that could not vary with the shelf.
+   */
   compared: number;
   /** How many D1 reported for the term, which may exceed `compared`. */
   matched: number;
@@ -71,6 +78,10 @@ export interface BasketLine {
    * carry no price here. Separates an empty shelf from an unpriced one.
    */
   inStock?: number;
+  /** Distinct products fetched from the category, when one was swept. */
+  swept?: number;
+  /** Products that category holds. Above `swept` means the look was partial. */
+  categoryTotal?: number;
 }
 
 export interface BasketPlan {
@@ -388,6 +399,8 @@ export async function buildBasket(
         product: source,
         compared: replacement.compared,
         inStock: replacement.inStock,
+        swept: replacement.swept,
+        categoryTotal: replacement.categoryTotal,
         matched,
         // The count came from the CATEGORY sweep, not this term's own search,
         // so it must be labelled as such here too — `compared` can otherwise
@@ -403,6 +416,8 @@ export async function buildBasket(
       price: linePrice(replacement.product),
       replaces: source,
       compared: replacement.compared,
+      swept: replacement.swept,
+      categoryTotal: replacement.categoryTotal,
       matched,
       substituteSweep: true,
       // `byPackPrice` is deliberately NOT set here. A substitute is ranked by
@@ -419,15 +434,23 @@ export async function buildBasket(
 
 type SubstituteOutcome =
   /** `compared` is how many could have been BOUGHT — the real choice. */
-  | { outcome: "found"; product: Product; compared: number }
+  | ({ outcome: "found"; product: Product; compared: number } & SweepScope)
   /**
    * `compared` is how WIDE the look was, not how many were buyable — on this
    * path that is zero by construction, and reporting it deleted the disclosure.
    * `inStock` separates "the category is empty" from "four were in stock and
    * none is priced at your store".
    */
-  | { outcome: "none"; compared: number; inStock: number }
+  | ({ outcome: "none"; compared: number; inStock: number } & SweepScope)
   | { outcome: "unreachable" };
+
+/** How partial the category sweep was, carried so the output can disclose it. */
+interface SweepScope {
+  /** Distinct products actually fetched from the category. */
+  swept: number;
+  /** Products D1 says that category holds. Above `swept` means a partial look. */
+  categoryTotal: number;
+}
 
 /**
  * First ranked in-stock replacement for a product.
@@ -472,6 +495,11 @@ async function bestSubstitute(
     // on the one path that did not enforce it.
     const buyable = result.candidates.filter((c) => linePrice(c.product) !== undefined);
     const compared = buyable.length;
+    // The sweep reads ONE page, capped at 50, of a category that may hold
+    // hundreds. `d1 substitute` already says so on both its empty and non-empty
+    // paths; a basket line making the same categorical claim needs the caveat
+    // just as much. SKILL.md states this rule for exactly this sentence.
+    const scope: SweepScope = { swept: result.poolProducts, categoryTotal: result.poolTotal };
     // `rankSubstitutes` filters on availability only, never on price. VTEX
     // reports `Price: 0` ("no offer in this region") alongside a positive
     // AvailableQuantity, so a rankable candidate can carry no price at all —
@@ -485,8 +513,15 @@ async function bestSubstitute(
     // across an empty category, 140 sold-out SKUs, and four in-stock products
     // with no regional offer. A conclusion drawn from a look the sentence says
     // was zero wide also reads as self-refuting.
-    if (!top) return { outcome: "none", compared: result.rankedCount, inStock: result.rankedCount };
-    return { outcome: "found", product: top.product, compared };
+    if (!top) {
+      return {
+        outcome: "none",
+        compared: result.rankedCount,
+        inStock: result.rankedCount,
+        ...scope,
+      };
+    }
+    return { outcome: "found", product: top.product, compared, ...scope };
   } catch {
     return { outcome: "unreachable" };
   }
