@@ -48,6 +48,10 @@ export const ALLOWED_ENDPOINT_PATTERNS: readonly RegExp[] = [
   /^\/api\/catalog_system\/pub\/products\/search$/,
   // location
   /^\/api\/checkout\/pub\/regions$/,
+  // Store locator. A READ of D1's own pickup-point registry — public shop
+  // addresses and opening hours, nothing customer-scoped. Not a collection
+  // channel: no simulation has ever offered `pickup-in-point`.
+  /^\/api\/checkout\/pub\/pickup-points$/,
   // cart — builds and prices a basket; none of these settle it
   /^\/api\/checkout\/pub\/orderForm$/,
   // Read a specific cart — how the saved address book is reached, since
@@ -82,6 +86,7 @@ export const ALLOWED_ENDPOINT_SHAPES: readonly string[] = [
   "/api/catalog_system/pub/category/tree/{}",
   "/api/catalog_system/pub/products/search",
   "/api/checkout/pub/regions",
+  "/api/checkout/pub/pickup-points",
   "/api/checkout/pub/orderForm",
   "/api/checkout/pub/orderForm/{}",
   "/api/checkout/pub/orderForm/{}/items",
@@ -124,6 +129,18 @@ const QUERY_GUARDS: ReadonlyArray<{
     path: /^\/api\/catalog_system\/pub\/products\/search$/,
     // Exactly a SKU lookup. `sc` is the sales channel, always a small integer.
     params: { fq: /^skuId:\d+$/, sc: /^\d+$/ },
+  },
+  {
+    path: /^\/api\/checkout\/pub\/pickup-points$/,
+    // `geoCoordinates` is `lon;lat` — semicolon, longitude first, as `regions`
+    // requires and as `region.ts` explains at length. `count` is deliberately
+    // NOT admitted: the endpoint accepts it, ignores it, and still returns 30,
+    // so allowing it would let a caller believe it had asked for something.
+    params: {
+      geoCoordinates: /^-?\d+(\.\d+)?;-?\d+(\.\d+)?$/,
+      countryCode: /^[A-Z]{3}$/,
+      page: /^\d{1,2}$/,
+    },
   },
 ];
 

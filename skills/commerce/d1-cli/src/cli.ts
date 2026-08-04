@@ -47,6 +47,7 @@ import {
   renderRegion,
   renderSearch,
   renderShipping,
+  renderStores,
   renderSubstitutes,
   shellQuote,
 } from "./present.ts";
@@ -61,6 +62,7 @@ import {
   validateAccessKey,
   whoami,
 } from "./session.ts";
+import { MAX_REACHABLE, nearbyStores, vtexDay } from "./stores.ts";
 import { type SubstituteOptions, findSubstitutes } from "./substitute.ts";
 import { D1Error, DEFAULT_SALES_CHANNEL, type LatLng, UsageError } from "./types.ts";
 
@@ -391,6 +393,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
 
   Location  (availability and price are per-store — set this first)
     d1 region --lat --lng      resolve and remember your delivery point
+    d1 stores near             D1 shops near a point [--lat --lng --limit]
+                               (locations only — D1 does not offer collection)
 
   Basket
     d1 cart                    show the current cart
@@ -607,6 +611,34 @@ async function main(argv: string[]): Promise<number> {
     }
 
     // -- location ----------------------------------------------------------
+    case "stores": {
+      // `near` is the only subcommand, and it is required rather than optional
+      // so that `d1 stores <something-else>` is a usage error today instead of
+      // silently meaning "near" and then changing meaning later.
+      const sub = positional[1];
+      if (sub !== "near") {
+        throw new UsageError("Usage: d1 stores near --lat <lat> --lng <lng> [--limit N]");
+      }
+      const at = pointFrom(flags, stored?.region);
+      if (!at) {
+        throw new UsageError("Usage: d1 stores near --lat <lat> --lng <lng> [--limit N]");
+      }
+      const limit = num(flags.limit);
+      if (flags.limit !== undefined && (limit === undefined || limit < 1)) {
+        throw new UsageError("--limit must be a positive whole number.");
+      }
+      const result = await nearbyStores(client, at, { limit });
+      console.log(
+        asJson
+          ? json({ ...result, at, maxReachable: MAX_REACHABLE, collection: false })
+          : renderStores(result, at, vtexDay(new Date().getDay())),
+      );
+      // Exit 3 when the registry knows of nothing here — the same "asked, and
+      // the answer is genuinely empty" code the basket uses, distinct from a
+      // usage error (2) and from success with results (0).
+      return result.stores.length ? 0 : 3;
+    }
+
     case "region": {
       const at = pointFrom(flags, stored?.region);
       if (!at) throw new UsageError("Usage: d1 region --lat <lat> --lng <lng>");
