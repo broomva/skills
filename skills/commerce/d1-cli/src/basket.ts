@@ -40,6 +40,8 @@ export type LineStatus =
   | "nothing-in-stock"
   /** The replacement lookup itself failed, so stock here is UNKNOWN, not empty. */
   | "replacement-unknown"
+  /** D1 sells this, but nothing of the requested BRAND — a constraint, not a shortage. */
+  | "no-brand-match"
   | "no-match";
 
 /** The two statuses that put a product in the basket and spend money. */
@@ -169,10 +171,15 @@ export interface Choice {
  */
 const MEASURE_RANK: Record<string, number> = { kg: 0, L: 1, unit: 2 };
 
-export function chooseBest(products: readonly Product[]): Choice | undefined {
+export function chooseBest(products: readonly Product[], brand?: string): Choice | undefined {
+  const want = normalizeBrand(brand);
   const eligible = products.filter((p) => {
     const o = pickOffer(p.offers);
-    return o?.available === true && priced(o);
+    if (!(o?.available === true && priced(o))) return false;
+    // Filtered BEFORE the measure census below, so the dominant measure is
+    // decided within the brand. Filtering after would let products the shopper
+    // has excluded pick the axis the remaining ones are ranked on.
+    return want === undefined || normalizeBrand(p.brand) === want;
   });
   if (!eligible.length) return undefined;
 
@@ -257,6 +264,20 @@ export function chooseBest(products: readonly Product[]): Choice | undefined {
  * a fit that cannot be bought — the "a price of 0 is not free" defect, which has
  * now been re-entered from three different directions in this codebase.
  */
+/**
+ * A brand, comparably.
+ *
+ * Case and surrounding whitespace are noise — D1 writes `LATTI`, a shopper
+ * writes `Latti` — but inner punctuation is not, so nothing else is stripped.
+ * A blank yields undefined, so `--brand ""` cannot become a filter that matches
+ * only the products whose brand is also blank.
+ */
+export function normalizeBrand(brand?: string): string | undefined {
+  if (typeof brand !== "string") return undefined;
+  const t = brand.trim().replace(/\s+/g, " ").toUpperCase();
+  return t.length ? t : undefined;
+}
+
 export function packPrices(products: readonly Product[]): readonly PriceHundredths[] {
   const out: PriceHundredths[] = [];
   for (const p of products) {
@@ -434,6 +455,14 @@ export interface BasketOptions {
   salesChannel?: string;
   /** Products to fetch per term. Capped upstream at 50. */
   count?: number;
+  /**
+   * Restrict every line to one brand.
+   *
+   * The constraint is the BRAND rather than availability, which is the only
+   * thing separating this from the substitute path — so it reuses the same
+   * ranker rather than growing a second one.
+   */
+  brand?: string;
 }
 
 /**
@@ -469,7 +498,17 @@ export async function buildBasket(
     });
     const matched = page.total;
 
-    const best = chooseBest(page.products);
+    // With a brand constraint, the term's own page is tried first — cheap, and
+    // it is where a same-brand product usually is. Only when the page holds
+    // none does the category sweep run, which is the ticket's own design: the
+    // constraint is the brand rather than availability, so it reuses the
+    // ranker rather than growing a second one.
+    const best = chooseBest(page.products, opts.brand);
+    if (!best && normalizeBrand(opts.brand) !== undefined) {
+      const line = await brandLine(client, term, page, matched, opts, salesChannel);
+      chosen.push(line);
+      continue;
+    }
     if (best) {
       chosen.push({
         term,
@@ -589,6 +628,74 @@ interface SweepScope {
  * A failure still does not discard the lines already resolved. It surfaces as
  * `replacement-unknown`, which says what actually happened.
  */
+/**
+ * A line for a term whose own search page holds nothing of the wanted brand.
+ *
+ * Falls through to the category sweep and keeps the best-ranked candidate that
+ * matches — substitution with a BRAND constraint instead of a stock one, which
+ * is exactly what BRO-2079 asked for and why it reuses `findSubstitutes`.
+ *
+ * A failure to look is reported as `replacement-unknown`, never as "that brand
+ * is not sold here": a request that did not answer is a statement about the
+ * network, not about the shelf. Same rule as the stock path.
+ */
+async function brandLine(
+  client: D1Client,
+  term: string,
+  page: { products: readonly Product[] },
+  matched: number,
+  opts: BasketOptions,
+  salesChannel: string,
+): Promise<BasketLine> {
+  const want = normalizeBrand(opts.brand);
+  const source = page.products[0];
+  if (!source) {
+    return { term, status: "no-match", compared: 0, matched };
+  }
+  try {
+    const result = await findSubstitutes(client, source.skuId, {
+      regionId: opts.regionId,
+      salesChannel,
+      count: opts.count,
+      limit: Number.POSITIVE_INFINITY,
+    });
+    const buyable = result.candidates.filter(
+      (c) => linePrice(c.product) !== undefined && normalizeBrand(c.product.brand) === want,
+    );
+    const top = buyable[0];
+    if (!top) {
+      return {
+        term,
+        status: "no-brand-match",
+        product: source,
+        // How wide the look was. On this path the brand-matching count is zero
+        // by construction, so reporting it would be the structural-zero defect
+        // the stock path already learned about.
+        compared: result.rankedCount,
+        swept: result.poolProducts,
+        categoryTotal: result.poolTotal,
+        matched,
+        substituteSweep: true,
+      };
+    }
+    return {
+      term,
+      status: "filled-by-substitute",
+      product: top.product,
+      price: linePrice(top.product),
+      replaces: source,
+      compared: buyable.length,
+      swept: result.poolProducts,
+      categoryTotal: result.poolTotal,
+      matched,
+      substituteSweep: true,
+      alternatives: packPrices(buyable.slice(1).map((c) => c.product)),
+    };
+  } catch {
+    return { term, status: "replacement-unknown", product: source, compared: 0, matched };
+  }
+}
+
 async function bestSubstitute(
   client: D1Client,
   source: Product,
@@ -658,4 +765,118 @@ async function bestSubstitute(
   } catch {
     return { outcome: "unreachable" };
   }
+}
+
+/** One term, priced both ways. */
+export interface BasketComparison {
+  term: string;
+  base?: BasketLine;
+  alt?: BasketLine;
+  /** Set only when BOTH sides filled: `alt.price - base.price`. */
+  delta?: PriceHundredths;
+}
+
+export interface CrossBasket {
+  /** The brand asked for, as typed. */
+  brand: string;
+  base: BasketPlan;
+  alt: BasketPlan;
+  rows: BasketComparison[];
+  /**
+   * The comparison, over the terms BOTH baskets filled — and nothing else.
+   *
+   * This is the whole reason the type is not two totals side by side. A
+   * brand-constrained basket routinely fills fewer lines, and subtracting its
+   * total from the unconstrained one then reports the missing lines as a
+   * saving: drop the two most expensive terms and the "store brand" looks
+   * dramatically cheaper, because it did not buy them.
+   */
+  comparable: {
+    terms: number;
+    baseTotal: PriceHundredths;
+    altTotal: PriceHundredths;
+    delta: PriceHundredths;
+  };
+  /** Terms the base basket filled and the branded one could not. */
+  onlyBase: string[];
+  /** Terms the branded basket filled and the base one could not. */
+  onlyAlt: string[];
+  /**
+   * Brands actually seen while searching, when the requested one matched
+   * nothing anywhere. A typo is otherwise indistinguishable from a brand D1
+   * does not carry, and both render as an empty basket.
+   */
+  brandsSeen?: string[];
+}
+
+/**
+ * The same shopping list, priced twice: as the best value D1 has, and
+ * restricted to one brand.
+ *
+ * Both runs are fit to the same budget, so the comparison is between two
+ * baskets a person could actually have bought, not between one real basket and
+ * a hypothetical one that overspends.
+ */
+export async function compareBaskets(
+  client: D1Client,
+  terms: readonly string[],
+  budget: PriceHundredths,
+  opts: BasketOptions & { brand: string },
+): Promise<CrossBasket> {
+  const want = normalizeBrand(opts.brand);
+  if (want === undefined) {
+    throw new UsageError("--brand needs a brand name, for example --brand LATTI.");
+  }
+  const base = await buildBasket(client, terms, budget, { ...opts, brand: undefined });
+  const alt = await buildBasket(client, terms, budget, opts);
+
+  const byTerm = (plan: BasketPlan) => new Map(plan.lines.map((l) => [l.term, l]));
+  const b = byTerm(base);
+  const a = byTerm(alt);
+
+  const rows: BasketComparison[] = terms.map((term) => {
+    const bl = b.get(term);
+    const al = a.get(term);
+    const both = bl && al && isFilled(bl.status) && isFilled(al.status);
+    return {
+      term,
+      base: bl,
+      alt: al,
+      delta:
+        both && bl.price !== undefined && al.price !== undefined ? al.price - bl.price : undefined,
+    };
+  });
+
+  const shared = rows.filter((r) => r.delta !== undefined);
+  const baseTotal = sum(shared.map((r) => r.base?.price ?? 0));
+  const altTotal = sum(shared.map((r) => r.alt?.price ?? 0));
+
+  const filled = (l: BasketLine | undefined) => l !== undefined && isFilled(l.status);
+  return {
+    brand: opts.brand,
+    base,
+    alt,
+    rows,
+    comparable: {
+      terms: shared.length,
+      baseTotal,
+      altTotal,
+      delta: altTotal - baseTotal,
+    },
+    onlyBase: rows.filter((r) => filled(r.base) && !filled(r.alt)).map((r) => r.term),
+    onlyAlt: rows.filter((r) => filled(r.alt) && !filled(r.base)).map((r) => r.term),
+    brandsSeen: alt.lines.every((l) => !isFilled(l.status))
+      ? brandsIn(base.lines).slice(0, 12)
+      : undefined,
+  };
+}
+
+/** Distinct brands among the products a basket actually chose, for a typo hint. */
+function brandsIn(lines: readonly BasketLine[]): string[] {
+  const seen = new Set<string>();
+  for (const l of lines) {
+    const b = l.product?.brand?.trim();
+    if (b) seen.add(b);
+  }
+  return [...seen].sort((x, y) => x.localeCompare(y));
 }

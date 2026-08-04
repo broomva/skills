@@ -10,7 +10,14 @@
  * rather than shown as zero.
  */
 
-import { type BasketLine, type BasketPlan, FILLED, type LineStatus } from "./basket.ts";
+import {
+  type BasketComparison,
+  type BasketLine,
+  type BasketPlan,
+  type CrossBasket,
+  FILLED,
+  type LineStatus,
+} from "./basket.ts";
 import { bestOffer, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP, sum } from "./money.ts";
@@ -782,4 +789,76 @@ function fmtKm(km: number): string {
 
 function fmtCoord(at: LatLng): string {
   return `${at.lat}, ${at.lng}`;
+}
+
+/**
+ * The same list, priced two ways.
+ *
+ * The rule this render exists to enforce: **the headline delta is computed over
+ * the terms BOTH baskets filled, and nothing else.** A brand-constrained basket
+ * routinely fills fewer lines, and differencing the two totals then reports the
+ * lines it could not fill as a saving — drop the two dearest terms and any
+ * brand looks cheap, because it did not buy them. The unfilled terms are named
+ * separately, where they read as a gap rather than a discount.
+ */
+export function renderComparison(c: CrossBasket): string {
+  const out: string[] = [];
+  const brand = sanitize(c.brand);
+
+  if (c.brandsSeen) {
+    out.push(`Nothing D1 returned for these terms is ${brand}.`);
+    if (c.brandsSeen.length) {
+      out.push(`Brands it did return: ${c.brandsSeen.map(sanitize).join(", ")}.`);
+    }
+    out.push("");
+  }
+
+  for (const r of c.rows) {
+    const basePart = priceCell(r.base);
+    const altPart = priceCell(r.alt);
+    out.push(`  ${pad(sanitize(r.term), 18)} ${basePart}   ${altPart}${deltaCell(r)}`);
+  }
+
+  out.push("");
+  const { terms, baseTotal, altTotal, delta } = c.comparable;
+  if (terms === 0) {
+    // No shared line means there is no comparison to report. Printing a delta
+    // of zero here would read as "the same price", which is the opposite of
+    // what happened.
+    out.push(
+      `No term was filled by both baskets, so there is nothing to compare — ${brand} is not an alternative for any line above.`,
+    );
+  } else {
+    const dir = delta === 0 ? "the same as" : delta > 0 ? "more than" : "less than";
+    out.push(
+      `Over the ${terms} ${terms === 1 ? "term" : "terms"} BOTH filled: ${formatCOP(baseTotal)} best-value vs ${formatCOP(altTotal)} in ${brand} — ${formatCOP(Math.abs(delta))} ${dir} best value.`,
+    );
+  }
+
+  // Named, not netted. These are the lines that make a naive total-vs-total
+  // comparison a lie.
+  if (c.onlyBase.length) {
+    out.push(
+      `Not counted — no ${brand} for: ${c.onlyBase.map(sanitize).join(", ")}. Their cost is in neither number above.`,
+    );
+  }
+  if (c.onlyAlt.length) {
+    out.push(`Not counted — only ${brand} could fill: ${c.onlyAlt.map(sanitize).join(", ")}.`);
+  }
+  out.push(`Both baskets were fit to the same budget, so each is one a shopper could have bought.`);
+  return out.join("\n");
+}
+
+/** A price, or why there is not one, in a fixed-width cell. */
+function priceCell(l: BasketLine | undefined): string {
+  if (!l || !FILLED.includes(l.status) || l.price === undefined) {
+    return "—".padStart(9);
+  }
+  return formatCOP(l.price).padStart(9);
+}
+
+function deltaCell(r: BasketComparison): string {
+  if (r.delta === undefined) return "";
+  if (r.delta === 0) return "   same";
+  return r.delta > 0 ? `   +${formatCOP(r.delta)}` : `   -${formatCOP(Math.abs(r.delta))}`;
 }

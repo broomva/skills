@@ -3,22 +3,24 @@ import {
   type BasketLine,
   buildBasket,
   chooseBest,
+  compareBaskets,
   fillToBudget,
   linePrice,
+  normalizeBrand,
   packPrices,
   parseBudget,
 } from "../src/basket.ts";
 import { basketExit, basketOptions } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
 import type { Measure } from "../src/measure.ts";
-import { renderBasket } from "../src/present.ts";
-import type { Product } from "../src/types.ts";
+import { renderBasket, renderComparison } from "../src/present.ts";
+import { type Product, UsageError } from "../src/types.ts";
 
 function product(
   skuId: string,
   name: string,
   price: number,
-  opts: { available?: boolean; measure?: Measure; amount?: number } = {},
+  opts: { available?: boolean; measure?: Measure; amount?: number; brand?: string } = {},
 ): Product {
   const { available = true, measure, amount } = opts;
   const size = measure && amount ? { measure, amount } : undefined;
@@ -26,7 +28,7 @@ function product(
     productId: skuId,
     skuId,
     name,
-    brand: "",
+    brand: opts.brand ?? "",
     linkText: "",
     categories: [],
     offers: [
@@ -589,11 +591,12 @@ interface WireOpts {
   price?: number;
   unit?: string;
   value?: string;
+  brand?: string;
 }
 const wire = (id: string, name: string, o: WireOpts = {}) => ({
   productId: id,
   productName: name,
-  brand: "D1",
+  brand: o.brand ?? "D1",
   linkText: id,
   categories: ["/Despensa/Granos/"],
   properties: o.unit
@@ -1613,5 +1616,255 @@ describe("an alternative must be a real price [BRO-2086]", () => {
       1_000_000,
     );
     expect(plan.lines[0]?.affordableAlternatives).toBe(1);
+  });
+});
+
+describe("normalizeBrand [BRO-2079]", () => {
+  test("case and outer whitespace are noise; inner punctuation is not", () => {
+    expect(normalizeBrand("Latti")).toBe("LATTI");
+    expect(normalizeBrand("  latti  ")).toBe("LATTI");
+    expect(normalizeBrand("santa   maria")).toBe("SANTA MARIA");
+    // NOT stripped: two different brands could differ only by a hyphen or dot,
+    // and collapsing them would silently price the wrong one.
+    expect(normalizeBrand("d-1")).toBe("D-1");
+  });
+
+  test("a blank is undefined, not a filter matching blank-branded products", () => {
+    // `--brand ""` reaching the filter as `""` would match exactly the products
+    // whose brand D1 left empty — a real subset, and never what was asked for.
+    expect(normalizeBrand("")).toBeUndefined();
+    expect(normalizeBrand("   ")).toBeUndefined();
+    expect(normalizeBrand(undefined)).toBeUndefined();
+  });
+});
+
+describe("chooseBest with a brand constraint [BRO-2079]", () => {
+  test("it picks the best value WITHIN the brand, not the best value overall", () => {
+    const pick = chooseBest(
+      [
+        product("cheap", "ARROZ OTRO 1KG", 3_000, { measure: "kg", amount: 1, brand: "OTRA" }),
+        product("want", "ARROZ LATTI 1KG", 5_000, { measure: "kg", amount: 1, brand: "LATTI" }),
+      ],
+      "LATTI",
+    );
+    expect(pick?.product.skuId).toBe("want");
+    // And the excluded product is not counted as something this line weighed.
+    expect(pick?.compared).toBe(1);
+  });
+
+  test("the brand filter runs BEFORE the measure census", () => {
+    // Two sold-out-of-brand bottles measured in `unit` would otherwise make
+    // `unit` the dominant measure for a set whose only real contest is between
+    // the two LATTI litres — the same insertion-order defect the measure
+    // tie-break exists for, entered through the brand door.
+    const pick = chooseBest(
+      [
+        product("b1", "BOTELLA A", 100_000, { measure: "unit", amount: 1, brand: "OTRA" }),
+        product("b2", "BOTELLA B", 100_000, { measure: "unit", amount: 1, brand: "OTRA" }),
+        product("oil3", "ACEITE LATTI 3000 ML", 2_050_000, {
+          measure: "L",
+          amount: 3,
+          brand: "LATTI",
+        }),
+        product("oil9", "ACEITE LATTI 900 ML", 695_000, {
+          measure: "L",
+          amount: 0.9,
+          brand: "LATTI",
+        }),
+      ],
+      "LATTI",
+    );
+    expect(pick?.product.skuId).toBe("oil3");
+    expect(pick?.byPackPrice).toBe(false);
+  });
+
+  test("case does not have to match what D1 typed", () => {
+    const pick = chooseBest(
+      [product("a", "X", 1_000, { measure: "kg", amount: 1, brand: "LATTI" })],
+      "latti",
+    );
+    expect(pick?.product.skuId).toBe("a");
+  });
+
+  test("no product of the brand yields undefined, not the next best thing", () => {
+    expect(
+      chooseBest([product("a", "X", 1_000, { measure: "kg", amount: 1, brand: "OTRA" })], "LATTI"),
+    ).toBeUndefined();
+  });
+
+  test("without a brand it behaves exactly as before", () => {
+    const products = [
+      product("a", "ARROZ 1KG", 5_000, { measure: "kg", amount: 1, brand: "OTRA" }),
+      product("b", "ARROZ 2KG", 8_000, { measure: "kg", amount: 2, brand: "LATTI" }),
+    ];
+    expect(chooseBest(products)?.product.skuId).toBe("b");
+    expect(chooseBest(products, undefined)?.product.skuId).toBe("b");
+    expect(chooseBest(products, "  ")?.product.skuId).toBe("b");
+  });
+});
+
+describe("compareBaskets [BRO-2079]", () => {
+  const twoTerms = () =>
+    fakeClient({
+      search: [
+        wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+        wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" }),
+      ],
+    });
+
+  test("the delta is over terms BOTH filled — never a total-minus-total", async () => {
+    // THE defect this feature exists to avoid. `arroz` fills in both baskets;
+    // `caviar` fills only in the base one, because nothing of the brand matches
+    // and the category sweep finds nothing either. Differencing the two plan
+    // totals would report caviar's whole price as a saving, and the branded
+    // basket would look dramatically cheaper for not having bought it.
+    const client = fakeClient({
+      search: [
+        wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+        wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" }),
+      ],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [],
+    });
+    const c = await compareBaskets(client, ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(c.comparable.terms).toBe(1);
+    expect(c.comparable.baseTotal).toBe(300_000);
+    expect(c.comparable.altTotal).toBe(500_000);
+    expect(c.comparable.delta).toBe(200_000);
+  });
+
+  test("a term only one basket could fill is NAMED, not netted", async () => {
+    const client = fakeClient({
+      search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [],
+    });
+    const c = await compareBaskets(client, ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(c.onlyBase).toEqual(["arroz"]);
+    expect(c.onlyAlt).toEqual([]);
+    // Nothing shared means nothing to compare, and the totals say so by being
+    // zero over zero terms rather than by reporting a saving.
+    expect(c.comparable.terms).toBe(0);
+    expect(c.comparable.delta).toBe(0);
+  });
+
+  test("a brand that matches nothing anywhere offers the brands that DID appear", async () => {
+    // An empty branded basket is the same output for a typo and for a brand D1
+    // genuinely does not carry. The hint separates them.
+    const client = fakeClient({
+      search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "MARCA REAL" })],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [],
+    });
+    const c = await compareBaskets(client, ["arroz"], 100_000_000, { brand: "TYPOO" });
+    expect(c.brandsSeen).toEqual(["MARCA REAL"]);
+  });
+
+  test("no hint is offered when the brand DID fill something", async () => {
+    const c = await compareBaskets(twoTerms(), ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(c.brandsSeen).toBeUndefined();
+  });
+
+  test("both baskets are fit to the SAME budget", async () => {
+    // Or the comparison is between one basket a shopper could buy and one they
+    // could not, which is not a comparison.
+    const c = await compareBaskets(twoTerms(), ["arroz"], 400_000, { brand: "LATTI" });
+    expect(c.base.budget).toBe(400_000);
+    expect(c.alt.budget).toBe(400_000);
+    // Base fits its 3.000 pick; the 5.000 LATTI does not fit 4.000.
+    expect(c.base.lines[0]?.status).toBe("filled");
+    expect(c.alt.lines[0]?.status).toBe("over-budget");
+    expect(c.comparable.terms).toBe(0);
+  });
+
+  test("a blank brand is a usage error, not a filter that quietly matches nothing", async () => {
+    await expect(compareBaskets(twoTerms(), ["arroz"], 100_000, { brand: "   " })).rejects.toThrow(
+      UsageError,
+    );
+  });
+
+  test("the branded basket reaches the category sweep when the page has none", async () => {
+    // BRO-2079's stated design: substitution with a BRAND constraint instead of
+    // a stock one, reusing `findSubstitutes` rather than growing a second
+    // ranker. The page holds no LATTI; the sweep does.
+    const client = fakeClient({
+      search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [wire("9", "ARROZ LATTI PREMIUM", { price: 7_000, brand: "LATTI" })],
+      sweepTotal: 140,
+    });
+    const c = await compareBaskets(client, ["arroz"], 100_000_000, { brand: "LATTI" });
+    const line = c.alt.lines[0];
+    expect(line?.status).toBe("filled-by-substitute");
+    expect(line?.product?.name).toBe("ARROZ LATTI PREMIUM");
+    expect(line?.replaces?.skuId).toBe("1");
+  });
+
+  test("a sweep with no product of the brand is `no-brand-match`, not out of stock", async () => {
+    // "D1 has none of this brand" and "D1 has none of this in stock" are
+    // different facts, and only one of them is about the shelf.
+    const client = fakeClient({
+      search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+      sku: sourceSku("1", "ARROZ BARATO"),
+      sweep: [wire("9", "ARROZ OTRA MAS", { price: 7_000, brand: "TERCERA" })],
+      sweepTotal: 140,
+    });
+    const c = await compareBaskets(client, ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(c.alt.lines[0]?.status).toBe("no-brand-match");
+  });
+
+  test("a failed lookup is unknown, never 'that brand is not sold here'", async () => {
+    const client = fakeClient({
+      search: [wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" })],
+      skuThrows: true,
+    });
+    const c = await compareBaskets(client, ["arroz"], 100_000_000, { brand: "LATTI" });
+    expect(c.alt.lines[0]?.status).toBe("replacement-unknown");
+  });
+});
+
+describe("renderComparison [BRO-2079]", () => {
+  const build = async (brand: string, sweep: unknown[] = []) =>
+    compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ BARATO", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ARROZ LATTI", { price: 5_000, brand: "LATTI" }),
+        ],
+        sku: sourceSku("1", "ARROZ BARATO"),
+        sweep,
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand },
+    );
+
+  test("it reports the delta over the shared terms, and says so", async () => {
+    const out = renderComparison(await build("LATTI"));
+    expect(out).toContain("Over the 1 term BOTH filled");
+    expect(out).toContain("$ 2.000 more than best value");
+  });
+
+  test("with nothing shared it refuses to report a delta at all", async () => {
+    // A delta of zero here would read as "the same price", which is the
+    // opposite of what happened.
+    const out = renderComparison(await build("TYPOO"));
+    expect(out).toContain("nothing to compare");
+    expect(out).not.toContain("BOTH filled");
+    expect(out).not.toContain("the same as best value");
+  });
+
+  test("unfilled terms are named as a gap, not folded into the number", async () => {
+    const out = renderComparison(await build("TYPOO"));
+    expect(out).toContain("Their cost is in neither number above");
+  });
+
+  test("it names the brands that did appear when the ask matched none", async () => {
+    expect(renderComparison(await build("TYPOO"))).toContain("Brands it did return");
+  });
+
+  test("it states that both baskets respected the same budget", async () => {
+    expect(renderComparison(await build("LATTI"))).toContain("same budget");
   });
 });

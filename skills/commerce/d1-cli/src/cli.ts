@@ -15,7 +15,9 @@ import {
   type BasketLine,
   type BasketOptions,
   buildBasket,
+  compareBaskets,
   isFilled,
+  normalizeBrand,
   parseBudget,
 } from "./basket.ts";
 import {
@@ -42,6 +44,7 @@ import {
   renderBasket,
   renderCart,
   renderCategories,
+  renderComparison,
   renderFacets,
   renderOrders,
   renderRegion,
@@ -381,6 +384,8 @@ const HELP = `d1 — Tiendas D1 (Colombia) from the command line
                                and any warning label gained or lost. Proposes
                                only — it never touches your cart.
     d1 basket --budget <cop> <term> [term ...]      [--lat --lng --count]
+                               add --brand <name> to price the same list
+                               in one brand and compare the two
                                build a shopping list to a spending target, by
                                VALUE rather than pack price. The budget is a
                                hard ceiling; every term it could not fit is
@@ -564,8 +569,27 @@ async function main(argv: string[]): Promise<number> {
       // is really the caller's typo.
       const budget = parseBudget(flags.budget);
       countFlag(flags.count);
+      const brand = str(flags.brand);
+      // Validated here, before the network, for the same reason the budget is:
+      // `--brand` with no value parses as boolean true, and letting that reach
+      // `compareBaskets` would spend two full basket builds to raise a usage
+      // error the caller could have been told about for free.
+      if (flags.brand !== undefined && normalizeBrand(brand) === undefined) {
+        throw new UsageError("--brand needs a brand name, for example --brand LATTI.");
+      }
       const region = await regionFor(pointFrom(flags, stored?.region));
-      const plan = await buildBasket(client, terms, budget, basketOptions(flags, region, channel));
+      const opts = basketOptions(flags, region, channel);
+
+      if (brand !== undefined) {
+        const cmp = await compareBaskets(client, terms, budget, { ...opts, brand });
+        console.log(asJson ? json({ ...cmp, regionId: region?.id }) : renderComparison(cmp));
+        // Exit on the BRANDED basket, which is the one that was asked about.
+        // Reporting the unconstrained basket's success would say "found it"
+        // about a question nobody asked.
+        return basketExit(cmp.alt.lines);
+      }
+
+      const plan = await buildBasket(client, terms, budget, opts);
       console.log(
         asJson
           ? json({ ...plan, regionId: region?.id })
