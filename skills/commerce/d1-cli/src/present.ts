@@ -794,7 +794,13 @@ function scopeLine(r: StoresResult): string {
       // Hedged when the registry did not report a total. Stopping on `limit`
       // after a page that happened to hold exactly the limit proves nothing
       // about what lies beyond it, and "holds more" is an assertion.
-      return r.registryTotal !== undefined && r.registryTotal > r.swept
+      // An exact remainder needs a total that is a TOTAL. `stores.ts` refuses to
+      // treat `registryTotal` as one at exactly MAX_REACHABLE — 300 at both
+      // Bogotá and Medellín is too round to be a coincidence — and then this
+      // turned the same number into "the registry holds 270 more further out".
+      return r.registryTotal !== undefined &&
+        r.registryTotal < MAX_REACHABLE &&
+        r.registryTotal > r.swept
         ? `${reach} — the registry holds ${r.registryTotal - r.swept} more further out`
         : `${reach} — the registry may hold more further out`;
   }
@@ -831,10 +837,16 @@ export function renderComparison(c: CrossBasket): string {
     out.push("");
   }
 
+  // The label is NEVER truncated here. `pad` cut at 17 characters, so
+  // "aceite de oliva (#2)" rendered as "aceite de oliva (…" — two
+  // indistinguishable rows, while the buckets below named "(#2)" precisely. The
+  // column widens to fit instead, because the whole point of the label is that
+  // the reader can match it to the sentence underneath.
+  const width = Math.max(18, ...c.rows.map((r) => sanitize(r.term).length));
   for (const r of c.rows) {
     const basePart = priceCell(r.base);
     const altPart = priceCell(r.alt);
-    out.push(`  ${pad(sanitize(r.term), 18)} ${basePart}   ${altPart}${deltaCell(r)}`);
+    out.push(`  ${sanitize(r.term).padEnd(width)} ${basePart}   ${altPart}${deltaCell(r)}`);
   }
 
   out.push("");
@@ -850,11 +862,17 @@ export function renderComparison(c: CrossBasket): string {
     // busts the budget while the branded one fits. The output then said the
     // brand was not an alternative to anything, directly above the line saying
     // it was the only thing that could fill the term.
-    out.push(
-      c.onlyAlt.length
-        ? `No term was filled by BOTH baskets, so there is no price to compare — though ${brand} filled ${c.onlyAlt.length} the best-value basket could not.`
-        : `No term was filled by both baskets, so there is nothing to compare — ${brand} is not an alternative for any line above.`,
-    );
+    // States what happened, and stops.
+    //
+    // Three rounds each conditioned the old "…is not an alternative for any
+    // line above" clause on one more bucket and each left another open —
+    // `onlyAlt`, then `altOverBudget`, then `altUnknown`, the last of which
+    // asserted a fact about D1's shelf from a lookup that never answered. The
+    // clause was an INFERENCE from state this sentence does not inspect, and
+    // every fix was another guess at which states it holds for. The buckets
+    // below already say, precisely, what happened to each term; this line no
+    // longer competes with them.
+    out.push("No term was filled by both baskets, so there is no price to compare.");
   } else {
     const dir = delta === 0 ? "the same as" : delta > 0 ? "more than" : "less than";
     out.push(
@@ -884,8 +902,17 @@ export function renderComparison(c: CrossBasket): string {
     out.push(`Not counted — only ${brand} could fill: ${c.onlyAlt.map(sanitize).join(", ")}.`);
   }
   if (c.neither.length) {
+    // No "that is not about <brand>" clause. It was false whenever the branded
+    // line's own status was `no-brand-match` — the brand WAS looked for and
+    // missing — and it then sat four lines under a header saying exactly that.
+    //
+    // Third instance of one shape in this file: a clause that INFERS a cause
+    // from state the sentence does not inspect. Each of the previous two was
+    // fixed by conditioning it on one more field, and each left another arm
+    // open. Stating the fact and pointing at where the reason lives cannot be
+    // wrong in any state.
     out.push(
-      `Neither basket filled: ${c.neither.map(sanitize).join(", ")} — that is not about ${brand}. Run the same list without --brand for the reason.`,
+      `Neither basket filled: ${c.neither.map(sanitize).join(", ")}. Run the same list without --brand for the reason.`,
     );
   }
   out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");

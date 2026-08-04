@@ -261,8 +261,14 @@ describe("renderStores", () => {
     // limit proves nothing about what lies beyond it.
     expect(renderStores(result(), AT, 1)).toContain("may hold more further out");
     // WITH a total, the number is known and stated exactly.
+    expect(renderStores(result({ registryTotal: 115 }), AT, 1)).toContain(
+      "the registry holds 85 more further out",
+    );
+    // At exactly the ceiling it is not a total at all — `stores.ts` refuses to
+    // call it exhaustion for that reason, so this must not turn it into an
+    // exact remainder either. 300 is what Bogotá and Medellín both report.
     expect(renderStores(result({ registryTotal: 300 }), AT, 1)).toContain(
-      "the registry holds 270 more further out",
+      "may hold more further out",
     );
     expect(renderStores(result({ stopped: "registry-empty" }), AT, 1)).toContain(
       "that is every point the registry returns here",

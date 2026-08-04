@@ -914,10 +914,16 @@ export async function compareBaskets(
     // these terms is LATTI" four lines above "that is not about LATTI". So at
     // least one line must be `no-brand-match` — the only status that means the
     // brand was searched for and missing.
+    // EVERY line must have looked for the brand and missed.
+    //
+    // Three rounds narrowed this and each left one arm open, so it is now the
+    // strictest reading there is: `no-match` means D1 returned nothing at all
+    // for the term, which says nothing whatever about the brand, and mixing it
+    // in let a two-term list print "Nothing D1 returned for these terms is
+    // LATTI" about a list where LATTI was never the reason.
     brandsSeen:
-      alt.lines.some((l) => l.status === "no-brand-match") &&
-      alt.lines.every((l) => l.status === "no-brand-match" || l.status === "no-match")
-        ? brandsIn(base.lines).slice(0, 12)
+      alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
+        ? brandsIn(base.lines, want).slice(0, 12)
         : undefined,
   };
 }
@@ -945,16 +951,26 @@ export async function compareBaskets(
  * name, which are mutually exclusive claims. A label that is unique per row
  * makes them separate lines about separate rows.
  */
-export function rowLabel(terms: readonly string[], i: number): string {
-  const term = terms[i] ?? "";
-  let total = 0;
-  let ordinal = 0;
-  for (let k = 0; k < terms.length; k++) {
-    if (terms[k] !== term) continue;
-    total++;
-    if (k <= i) ordinal++;
-  }
-  return total > 1 ? `${term} (#${ordinal})` : term;
+export function rowLabels(terms: readonly string[]): string[] {
+  const count = new Map<string, number>();
+  for (const t of terms) count.set(t, (count.get(t) ?? 0) + 1);
+
+  const seen = new Map<string, number>();
+  const labels = terms.map((term) => {
+    if ((count.get(term) ?? 0) < 2) return term;
+    const n = (seen.get(term) ?? 0) + 1;
+    seen.set(term, n);
+    return `${term} (#${n})`;
+  });
+
+  // Verified, not assumed. Any suffix scheme that leaves unique terms bare can
+  // collide: a list containing both `aceite` (twice) and the literal string
+  // `aceite (#1)` produces that label twice, and the two rows then land in two
+  // mutually exclusive buckets under one name — the very defect the labels
+  // exist to prevent. The row index cannot collide, so falling back to it is
+  // the only construction that is right for every input.
+  if (new Set(labels).size === labels.length) return labels;
+  return terms.map((term, i) => `${i + 1}. ${term}`);
 }
 
 export function pairRows(
@@ -967,8 +983,9 @@ export function pairRows(
       `Basket comparison expected one line per term (${terms.length}), got ${base.lines.length} and ${alt.lines.length}. This is a bug in d1-cli.`,
     );
   }
+  const labels = rowLabels(terms);
   return terms.map((_term, i) => {
-    const term = rowLabel(terms, i);
+    const term = labels[i] as string;
     const bl = base.lines[i];
     const al = alt.lines[i];
     const both = bl && al && isFilled(bl.status) && isFilled(al.status);
@@ -982,12 +999,23 @@ export function pairRows(
   });
 }
 
-/** Distinct brands among the products a basket actually chose, for a typo hint. */
-function brandsIn(lines: readonly BasketLine[]): string[] {
+/**
+ * Distinct brands among the products a basket actually CHOSE, for a typo hint.
+ *
+ * Filled lines only. An unfilled line still carries `product: source` — the
+ * thing it rejected — so reading every line printed "Brands it did return:
+ * LATTI" directly under "Nothing D1 returned for these terms is LATTI",
+ * sourcing the contradiction from a product the basket had refused.
+ *
+ * The requested brand is excluded outright. If it appears in this list the
+ * headline above it is false, and no hint is worth printing a lie for.
+ */
+function brandsIn(lines: readonly BasketLine[], exclude?: string): string[] {
   const seen = new Set<string>();
   for (const l of lines) {
+    if (!isFilled(l.status)) continue;
     const b = l.product?.brand?.trim();
-    if (b) seen.add(b);
+    if (b && normalizeBrand(b) !== exclude) seen.add(b);
   }
   return [...seen].sort((x, y) => x.localeCompare(y));
 }

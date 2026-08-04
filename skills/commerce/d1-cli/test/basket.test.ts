@@ -11,7 +11,7 @@ import {
   packPrices,
   pairRows,
   parseBudget,
-  rowLabel,
+  rowLabels,
 } from "../src/basket.ts";
 import { basketExit, basketOptions, basketTerms, comparisonExit } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
@@ -1853,9 +1853,11 @@ describe("renderComparison [BRO-2079]", () => {
     // A delta of zero here would read as "the same price", which is the
     // opposite of what happened.
     const out = renderComparison(await build("TYPOO"));
-    expect(out).toContain("nothing to compare");
+    expect(out).toContain("no price to compare");
     expect(out).not.toContain("BOTH filled");
     expect(out).not.toContain("the same as best value");
+    // And it no longer INFERS anything about the brand from that state.
+    expect(out).not.toContain("not an alternative");
   });
 
   test("unfilled terms are named as a gap, not folded into the number", async () => {
@@ -2146,7 +2148,11 @@ describe("terms neither basket filled are disclosed [BRO-2079]", () => {
     expect(c.neither).toEqual(["caviar"]);
     const out = renderComparison(c);
     expect(out).toContain("Neither basket filled: caviar");
-    expect(out).toContain("that is not about LATTI");
+    expect(out).toContain("Run the same list without --brand for the reason");
+    // No causal claim: when the branded line's own status is `no-brand-match`
+    // the failure IS about the brand, and the clause that said otherwise sat
+    // four lines under a header saying exactly that.
+    expect(out).not.toContain("not about LATTI");
   });
 });
 
@@ -2220,8 +2226,11 @@ describe("the comparison never contradicts itself [BRO-2079 round 2]", () => {
       await compareBaskets(inverted(), ["aceite"], 1_500_000, { brand: "LATTI" }),
     );
     expect(out).toContain("only LATTI could fill: aceite");
-    expect(out).not.toContain("is not an alternative for any line above");
-    expect(out).toContain("though LATTI filled 1 the best-value basket could not");
+    // The summary states what happened and stops; the buckets say the rest.
+    // Three rounds each conditioned an "…is not an alternative" clause on one
+    // more bucket and each left another open, so the clause is gone.
+    expect(out).not.toContain("not an alternative");
+    expect(out).toContain("No term was filled by both baskets, so there is no price to compare.");
   });
 
   test("a term D1 knows nothing about does not trigger the brands hint", async () => {
@@ -2246,32 +2255,62 @@ describe("the comparison never contradicts itself [BRO-2079 round 2]", () => {
     // One `aceite` row filled in base, the other unfilled in both. Bare term
     // labels printed "no LATTI for: aceite" AND "Neither basket filled: aceite"
     // — mutually exclusive claims about the same name.
-    const c = await compareBaskets(inverted(), ["aceite", "aceite"], 2_500_000, { brand: "LATTI" });
-    const labels = [
-      ...c.onlyBase,
-      ...c.altOverBudget,
-      ...c.altUnknown,
-      ...c.altNoMatch,
-      ...c.onlyAlt,
-      ...c.neither,
-    ];
-    expect(new Set(labels).size).toBe(labels.length);
-    for (const l of labels) expect(l).toMatch(/^aceite \(#[12]\)$/);
+    // Budget fits ONE branded pick, so the two identical terms land in
+    // DIFFERENT buckets. The earlier version used a budget that produced one
+    // label in one bucket, so `new Set(labels).size === labels.length` was
+    // `1 === 1` and could not fail — the very check it was written to make.
+    const c = await compareBaskets(inverted(), ["aceite", "aceite"], 1_500_000, { brand: "LATTI" });
+    const buckets = [c.onlyBase, c.altOverBudget, c.altUnknown, c.altNoMatch, c.onlyAlt, c.neither];
+    const labels = buckets.flat();
+    // Both rows are accounted for, and in two DIFFERENT buckets — which is the
+    // shape that made the old bare-term labels contradict each other.
+    expect(labels).toHaveLength(2);
+    expect(buckets.filter((b) => b.length).length).toBe(2);
+    expect(new Set(labels).size).toBe(2);
+    expect([...labels].sort()).toEqual(["aceite (#1)", "aceite (#2)"]);
   });
 });
 
-describe("rowLabel [BRO-2079]", () => {
-  test("a unique term keeps its own name", () => {
-    expect(rowLabel(["arroz", "leche"], 0)).toBe("arroz");
-    expect(rowLabel(["arroz", "leche"], 1)).toBe("leche");
+describe("rowLabels [BRO-2079]", () => {
+  test("unique terms keep their own names", () => {
+    expect(rowLabels(["arroz", "leche"])).toEqual(["arroz", "leche"]);
   });
 
   test("a repeated term is numbered in the order it was typed", () => {
-    expect(rowLabel(["arroz", "arroz"], 0)).toBe("arroz (#1)");
-    expect(rowLabel(["arroz", "arroz"], 1)).toBe("arroz (#2)");
-    // Only the repeated one is numbered.
-    expect(rowLabel(["arroz", "leche", "arroz"], 1)).toBe("leche");
-    expect(rowLabel(["arroz", "leche", "arroz"], 2)).toBe("arroz (#2)");
+    expect(rowLabels(["arroz", "arroz"])).toEqual(["arroz (#1)", "arroz (#2)"]);
+    expect(rowLabels(["arroz", "leche", "arroz"])).toEqual(["arroz (#1)", "leche", "arroz (#2)"]);
+  });
+
+  test("a term that already looks like a label cannot collide with one", () => {
+    // The suffix scheme collides when a bare unique term happens to equal a
+    // generated label: `aceite` twice plus the literal `aceite (#1)` produced
+    // that string twice, and the two rows then landed in two mutually exclusive
+    // buckets under one name. Detected and escalated to row indices, which
+    // cannot collide.
+    const labels = rowLabels(["aceite (#1)", "aceite", "aceite"]);
+    expect(new Set(labels).size).toBe(3);
+    expect(labels).toEqual(["1. aceite (#1)", "2. aceite", "3. aceite"]);
+  });
+
+  test("labels are unique for every input shape thrown at them", () => {
+    const cases: string[][] = [
+      [],
+      ["a"],
+      ["a", "a"],
+      ["a", "A"],
+      ["a", "a ", " a"],
+      ["a (#1)", "a", "a"],
+      ["1. a", "a", "a"],
+      ["ñ", "ñ", "日本", "日本"],
+      Array.from({ length: 50 }, () => "x"),
+      ["x".repeat(300), "x".repeat(300)],
+      ["a (#2)", "a (#1)", "a", "a"],
+    ];
+    for (const terms of cases) {
+      const labels = rowLabels(terms);
+      expect(labels).toHaveLength(terms.length);
+      expect(new Set(labels).size).toBe(terms.length);
+    }
   });
 });
 
@@ -2384,5 +2423,94 @@ describe("altNoMatch is computed AND rendered [BRO-2079]", () => {
     const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
     expect(out).toContain("D1 returned nothing at all for: leche");
     expect(out).toContain("Their cost is in neither number above");
+  });
+});
+
+describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", () => {
+  test("one filled line suppresses it, however many others missed", async () => {
+    // Round 2 tested only the `some(...)` half of its own gate, so deleting the
+    // `every(...)` conjunct left the suite green while a basket that had just
+    // priced a LATTI product printed "Nothing D1 returned for these terms is
+    // LATTI" above the table showing it.
+    let searches = 0;
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("1", "ARROZ OTRA")), { status: 200 });
+      }
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        const isSweep =
+          u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+          "";
+        if (isSweep) {
+          return new Response(JSON.stringify({ products: [], recordsFiltered: 0 }), {
+            status: 200,
+          });
+        }
+        searches++;
+        // Odd calls are "leche" (has LATTI), even are "arroz" (does not).
+        const products =
+          searches % 2 === 1
+            ? [wire("2", "LECHE LATTI", { price: 5_000, brand: "LATTI" })]
+            : [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })];
+        return new Response(JSON.stringify({ products, recordsFiltered: products.length }), {
+          status: 200,
+        });
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const c = await compareBaskets(
+      new D1Client({ fetchImpl: impl }),
+      ["leche", "arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines.some((l) => isFilled(l.status))).toBe(true);
+    expect(c.alt.lines.some((l) => l.status === "no-brand-match")).toBe(true);
+    // A line found the brand, so the headline must not claim none did.
+    expect(c.brandsSeen).toBeUndefined();
+    expect(renderComparison(c)).not.toContain("Nothing D1 returned for these terms is LATTI");
+  });
+
+  test("the header IS printed when every line missed (positive polarity)", async () => {
+    // Asserted only in the negative before, so deleting the header entirely
+    // left the suite green.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "ARROZ OTRA"),
+        sweep: [],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("no-brand-match");
+    const out = renderComparison(c);
+    expect(out).toContain("Nothing D1 returned for these terms is LATTI");
+    expect(out).toContain("Brands it did return: OTRA");
+  });
+
+  test("the hint never names the brand that was asked for", async () => {
+    // `brandsIn` read EVERY base line, and an unfilled line carries the product
+    // it rejected — so a rejected LATTI product put LATTI in the list directly
+    // under "Nothing D1 returned for these terms is LATTI".
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" }),
+          wire("2", "ARROZ LATTI AGOTADO", { price: 4_000, brand: "LATTI", available: false }),
+        ],
+        sku: sourceSku("1", "ARROZ OTRA"),
+        sweep: [],
+        sweepTotal: 140,
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(c.brandsSeen).not.toContain("LATTI");
   });
 });
