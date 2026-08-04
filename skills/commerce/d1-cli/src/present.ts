@@ -290,10 +290,16 @@ export function renderSubstitutes(r: SubstituteResult): string {
   // after everything has printed — erasing this very sentence, which is the
   // one that tells the reader nothing was bought. Verbatim the attack the
   // docstring on `sanitize` names.
+  //
+  // Control characters were only half of it. The id is decimal per
+  // `assertSkuId`, and anything else in a printed command is a second command
+  // waiting for someone — or some agent — to paste it. Gated like the
+  // `d1 substitute` line, rather than left as the one site that is not.
+  const takeSku = r.candidates[0].product.skuId;
   lines.push(
-    `Nothing was added to your cart. To take one:  d1 cart add ${sanitize(
-      r.candidates[0].product.skuId,
-    )}`,
+    SKU_ID.test(takeSku)
+      ? `Nothing was added to your cart. To take one:  d1 cart add ${takeSku}`
+      : "Nothing was added to your cart.",
   );
   return lines.join("\n");
 }
@@ -603,6 +609,63 @@ function sweepCaveat(l: BasketLine): string {
   return ` — only ${swept} of ${categoryTotal} in that category were searched`;
 }
 
+/**
+ * What else would have fitted, when anything would have.
+ *
+ * Reports, and stops. The line's product is the best value of its set or the
+ * closest match from a category; a cheaper one is by definition neither, so
+ * choosing it here would be the silent auto-substitution the whole skill is
+ * built to refuse. Naming the count and the command hands the judgement to the
+ * person — the same shape as `d1 substitute` itself.
+ *
+ * The wording stays inside the sweep. On a replacement line this sentence sits
+ * directly after `— only 2 of 140 in that category were searched`, so it says
+ * "of those searched" rather than making a claim about the category entire.
+ */
+function alternativesNote(l: BasketLine): string {
+  const n = l.affordableAlternatives ?? 0;
+  if (n <= 0) return "";
+  if (l.replaces) {
+    const s = n === 1 ? "replacement" : "replacements";
+    const said = `. ${n} cheaper ${s} of those searched would fit`;
+    // The id comes off VTEX, not off the shopper. `catalog.ts` already refuses
+    // to put an unvalidated one in an `fq` filter, for the reason stated there:
+    // a value slot that is really a grammar does not narrow the question, it
+    // rewrites it. A printed command is another such grammar.
+    return SKU_ID.test(l.replaces.skuId)
+      ? `${said} — run \`d1 substitute ${l.replaces.skuId}\` to choose one`
+      : said;
+  }
+  const s = n === 1 ? "match" : "matches";
+  // `--available` matters: the count came from products that are in stock AND
+  // priced, and a bare `d1 search` lists the rest too. Without it the shopper is
+  // told "3 would fit" and handed a command that shows a different population.
+  return `. ${n} cheaper ${s} for this term would fit — run \`d1 search ${shellQuote(l.term)} --available --sort per-unit\` to choose one`;
+}
+
+/** A SKU id is digits. Anything else is not an id and does not go in a command. */
+const SKU_ID = /^\d+$/;
+
+/**
+ * Quote a value so a printed command stays ONE command.
+ *
+ * `sanitize` only removes control characters, so a term containing a double
+ * quote closed the string and appended a second command. Single quotes have
+ * exactly one escape in POSIX sh, and this is it.
+ *
+ * An earlier version of this comment claimed these were the FIRST lines in this
+ * file to interpolate data into something a reader — or an agent, since every
+ * command here has a `--json` twin — may run. That was false when written, and
+ * the search for what else it was false about turned up two more sites:
+ * `renderSubstitutes` printing `d1 cart add <skuId>` with only `sanitize`
+ * applied (`test/present.test.ts` had said so all along), and `cli.ts` printing
+ * a `--auth-token` follow-up with nothing applied at all. All three are gated
+ * now. The claim was worth more as a question than it was as a fact.
+ */
+export function shellQuote(s: string): string {
+  return `'${sanitize(s).replace(/'/g, "'\\''")}'`;
+}
+
 /** Why a term did not make the basket, in the reader's terms rather than the enum's. */
 function reasonFor(l: BasketLine): string {
   switch (l.status) {
@@ -618,8 +681,8 @@ function reasonFor(l: BasketLine): string {
       // "Named, never applied silently", and the filled row honours that; this
       // row did not.
       return l.replaces
-        ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}`
-        : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left`;
+        ? `D1 cannot supply this, and the closest replacement it has — ${sanitize(l.product?.name ?? "")} — would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${sweepCaveat(l)}${alternativesNote(l)}`
+        : `would cost ${formatCOP(l.price ?? 0)}, which does not fit in what is left${alternativesNote(l)}`;
     case "nothing-in-stock":
       // "returned", not "carries". The look is one search page plus a bounded
       // category sweep, so a claim about what D1 STOCKS is wider than the

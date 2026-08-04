@@ -3,6 +3,166 @@
 All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
+## [0.8.0] — 2026-08-04
+
+### Changed — `d1 order` redacts by ALLOWLIST, and the customer's name no longer prints
+
+`redactOrder` named the sensitive keys and printed everything else. That is an
+allowlist by omission: any PII key the author did not anticipate printed in
+full, and nobody has ever seen a real D1 order, so the list was a guess about
+the contents of an unopened envelope. `test/safety.test.ts` was rewritten to
+remove exactly this shape for endpoints; it survived here.
+
+Inverted. Each printable field is now named by its full dotted path — so
+`items[].name` prints and `clientProfileData.name` would not — and anything
+unrecognised is redacted. A container with no printable descendant is withheld
+whole rather than walked, so neither its keys nor its length is published:
+redacting `geoCoordinates` element-by-element still announced there were
+exactly two of them, and the length of a value is part of the value.
+
+**This is a behaviour change.** `clientProfileData` is now withheld entirely,
+including `firstName`, which used to print. A test asserted that it did — the
+blocklist's failure mode written down as a promise. Nothing in that object is
+needed to answer "where is my order?". `--raw` still prints the full payload.
+
+The path list is derived from VTEX's documented OMS order schema, not from an
+observed D1 order, so it is expected to be incomplete. Being wrong now means
+over-redacting, which is the recoverable direction; a blocklist's wrong guess
+costs the customer their national ID. BRO-2077 stays open for the one real
+payload that would confirm the useful fields are reachable, and for the
+`totalValue` unit claim it was always paired with.
+
+### Added — an over-budget basket line says what else would have fitted
+
+When a line does not fit, the basket now reports how many of the runners-up it
+actually weighed WOULD have fitted, and names the command that shows them:
+
+```text
+leche — would cost $ 3.090, which does not fit in what is left. 3 cheaper
+matches for this term would fit — run `d1 search 'leche' --available --sort
+per-unit` to choose one
+```
+
+It reports and stops. Re-picking the cheapest that fits is the tempting fix and
+the wrong one: the line's product is the best VALUE of its set or the CLOSEST
+match from a category, and a cheaper one is neither. Swapping it in silently is
+the auto-substitution BRO-2076 exists to forbid — "the tostada the CLI ranks
+first for `PAN ARTESANAL INTEGRAL` is not bread". Option 1 of the three shapes
+BRO-2086 set out; a mutation that implements option 2 as the default now fails
+five tests.
+
+Anything that fits is necessarily cheaper than what was refused —
+`spent + price > budget >= spent + alt` gives `alt < price` — so "cheaper" is
+arithmetic rather than an assumption. On a replacement line the sentence sits
+inside the sweep's own `only N of M in that category were searched` caveat and
+says "of those searched", so it never claims more than the look behind it.
+
+### Fixed — what the cross-model review round 1 found (6/10, below the gate)
+
+Three of these are defects in *this release's own additions*, found after CI was
+green and 420 tests passed.
+
+- **The basket contradicted itself in one screen.** `affordableAlternatives` was
+  counted inside the fill loop, against the money left at the moment a line was
+  refused — but lines *after* it keep spending. A basket could print
+  `$ 1.000 left` and, one line below, "1 cheaper match would fit" about a
+  $ 3.000 product. Settled after the loop against the final `remaining`. The
+  arithmetic that makes "cheaper" true survives and tightens, because
+  `remaining <= budget - spent_at_refusal < price`.
+- **The allowlist failed OPEN on a forged path.** Paths were built by string
+  concatenation, so a key's own characters were indistinguishable from a nesting
+  boundary: a payload with a root key literally named `shippingData.address.city`
+  matched and printed. Matching is now segment-by-segment through a tree, so one
+  key is one segment and nothing can be forged by naming. This was the single
+  direction the change exists to close.
+- **A printed command could become two commands.** `alternativesNote` was the
+  first place in `present.ts` to interpolate data into something a reader — or an
+  agent, since every command has a `--json` twin — may run, and `sanitize` only
+  strips control characters. A term containing `"` closed the string. Terms are
+  single-quoted with POSIX escaping; a `skuId`, which arrives from VTEX rather
+  than the shopper, must match `/^\d+$/` or the command clause is dropped. The
+  repo already owned this lesson: `assertSkuId` exists because "a value slot that
+  is really a grammar does not narrow the question, it rewrites it".
+- A container arriving where a scalar was documented is now withheld whole
+  (every leaf path was also registered as its own ancestor, so such a value was
+  walked and published its keys and length).
+- A `__proto__` key is redacted in place rather than silently vanishing.
+- The suggested search carries `--available`, so it shows the same population
+  the count was drawn from.
+- A `nothing-in-stock` downgrade drops `alternatives`.
+- **Two vacuous tests**, both written this release. The order fixture had
+  single-element arrays, so "`items[].name` matches at any index" was asserted
+  nowhere and a mutation collapsing only index 0 stayed green. And an
+  `alternatives` assertion of `toEqual([])` was satisfied by the feature being
+  deleted entirely.
+
+### Fixed — what round 2 found: both headline fixes were incomplete at an adjacent edge
+
+Round 2 confirmed all twelve round-1 fixes execute and are pinned — reverting
+any one of them takes a *named* test red. It then found that two of them were
+right and not finished, which is this repo's own recorded pattern for
+edge-dense files.
+
+- **The allowlist was still forgeable, by a key literally named `[]`.** The
+  synthetic array marker lived in the same map as real JSON keys, so a payload
+  shaped `{"items": {"[]": {...}}}` matched the marker and walked into the
+  element subtree — printing `name`, `ean` and `id` on the DEFAULT path of the
+  privacy feature this release exists to deliver, while the source comment and
+  the entry above both asserted that "nothing can be forged by naming". The
+  marker now lives in its own field, and traversal is gated on the container's
+  actual KIND. That closes two more leaks in the same stroke: an array where an
+  object was expected published its length, and an object where an array was
+  expected published its key names. A bare array at the root is now withheld
+  whole rather than mapped element-by-element, which stops publishing its
+  length too.
+- **The command-quoting fix had a second site, and its own docstring denied
+  it.** `renderSubstitutes` prints `d1 cart add <skuId>` with only `sanitize`
+  applied — control characters stripped, `;` and `|` and backticks left. The new
+  `shellQuote` docstring claimed `alternativesNote` was "the first place in this
+  file to interpolate data into something a reader may run", which was false when
+  written and contradicted by a comment already in `test/present.test.ts`. Both
+  sites are gated on `/^\d+$/` now, and the false claim is corrected in place
+  rather than deleted, because what it should have prompted is the fix.
+- The affordability filter had no lower bound, so `0`, a negative price and
+  `-Infinity` all counted as "would fit" — the "a price of 0 is not free"
+  defect, re-entered from a third direction.
+
+**Known and deliberate:** two over-budget lines each report against the same
+remaining money. Each sentence is true and scoped to its own term, and hedging
+every line would cost more clarity than the ambiguity costs. Recorded rather
+than silently accepted.
+
+### Measured — `Envío D1 Express` is not reachable through the storefront API
+
+BRO-2080 asked for measurement before design. Seven delivery points across five
+cities, each resolving to a different D1 store-seller, **no simulation returned
+more than one** shipping SLA, and every SLA returned was the scheduled one
+(`Entrega Programada`, or `Envio Programado` in Barranquilla). Six of the seven
+returned exactly one; Bogotá centro returned none, a seller with no delivery
+coverage rather than a second option hiding. Never express, at any coordinate,
+on any sales channel — so this is not a coverage gap at one address.
+
+The mechanism is named in D1's own storefront config:
+`"activeForDeliveryMethods": {"express": true, "programado": true}`, attached to
+homepage *blocks* — banners, shelves, and a `ChangeShippingOption` control that
+is `{"desktop": false, "app": true, "mobile": true}`. So `express` is a
+client-side rendering mode selected in the app, gating which blocks appear, and
+the fulfilment behind it is not served by the VTEX storefront checkout this CLI
+speaks to. No storefront API path mentions coverage, shipping or delivery.
+
+Recorded rather than designed against. See gotcha 13.
+
+### Verified — the inconsistent-PUM population is still exactly one product
+
+A fresh census of all 1,599 products (32 requests) re-ran the BRO-2081
+measurement. Among unit-measured multipacks, 91 of 92 declare a `Valor de
+Medida` matching their pack count; the one exception is still SKU 778
+(`PAÑO REUTILIZABLE 30X30 RENDY 25 UND`, `Valor=1` against 25 units), and it
+still publishes no description, so there is still no evidence to act on. Among
+weight/volume multipacks the split is 37 pack-total to 1 per-item, which is the
+same direction that refuted BRO-2081's premise. BRO-2082 stays open as a
+watch item, not a defect.
+
 ## [0.7.0] — 2026-08-03
 
 ### Added — `d1 basket --budget`, which fits a shopping list to what you can spend

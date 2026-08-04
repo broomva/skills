@@ -322,6 +322,47 @@ and, worse, it *compares*: an early build of `d1 substitute` printed
 `catalog.ts` is the single predicate for this, no unit price is derived from a
 non-price, and both renderers show `—` instead.
 
+### 13. `Envío D1 Express` is a rendering mode, not a shipping option
+
+D1's own header offers two delivery methods and the storefront API only ever
+answers with one. Measured across seven delivery points in five cities — each
+resolving to a *different* store-seller — **no simulation ever returned more
+than one SLA**, and every SLA returned was the scheduled one. Six of the seven
+points returned exactly one; Bogotá centro returned none at all, which is a
+seller with no delivery coverage rather than a second option hiding:
+
+| point | seller | SLAs | name |
+|---|---|---|---|
+| Bogotá (Suba) | `d1cnb12165cc` | 1 | Entrega Programada |
+| Bogotá (Chapinero) | `d1bon11808cc` | 1 | Entrega Programada |
+| Bogotá (centro) | `d1sib12522cc` | 0 | — |
+| Medellín (El Poblado) | `d1ats12109cc` | 1 | Entrega Programada |
+| Cali | `d1val12490cc` | 1 | Entrega Programada |
+| Barranquilla | `d1baq12341cc` | 1 | Envio Programado |
+| Bucaramanga | `d1san12437cc` | 1 | Entrega Programada |
+
+Sales channels 1–4 return identical results; channel 3 now 500s on simulation.
+So this is not a coverage gap at one address — express is absent everywhere.
+
+The mechanism is in D1's own storefront config, attached to homepage *blocks*:
+
+```json
+{"activeForDeliveryMethods": {"express": true, "programado": true}}
+```
+
+It appears on banners and shelves — including one banner set to
+`{"express": true, "programado": false}` — and on a `ChangeShippingOption`
+control marked `{"desktop": false, "app": true, "mobile": true}`. So `express`
+is a **client-side mode**, chosen in the app, that switches which storefront
+blocks render. The fulfilment behind it is not served by the VTEX storefront
+checkout this CLI speaks to, and no storefront API path mentions coverage,
+shipping or delivery at all.
+
+Do not model an express quote from this surface. Anything it produced would be
+a confidently wrong shipping estimate — the same class of error as the per-line
+shipping share in gotcha 7. Reaching it, if it is worth reaching, means
+starting from the mobile app's own traffic, which is a different arc.
+
 ## What the public API will not give you
 
 - **Saved addresses and profile records.** `dataentities/AD` and `dataentities/CL`
@@ -391,10 +432,23 @@ saves produced mode `666`.
 No VTEX admin `appKey`/`appToken` is read anywhere. Sign-in uses a one-time
 emailed code; password authentication is intentionally not implemented.
 
-`d1 order <id>` **redacts by default**. VTEX's order-detail payload carries the
-customer's national ID, phone, full delivery address and the card's first/last
-digits — none of it needed to answer "where is my order?", all of it otherwise
-landing in a terminal, a shell history, or an agent's context. `--raw` opts in.
+`d1 order <id>` **redacts by default, by allowlist**. VTEX's order-detail
+payload carries the customer's national ID, phone, full delivery address and the
+card's first/last digits — none of it needed to answer "where is my order?", all
+of it otherwise landing in a terminal, a shell history, or an agent's context.
+
+The allowlist direction is the point. This was a list of *sensitive* keys, which
+is an allowlist by omission: anything the author had not anticipated printed in
+full, and no real D1 order has ever been observed, so that list was a guess
+about an unopened envelope. Now each printable field is named by its full dotted
+path (`items[].name` prints; `clientProfileData.name` would not), anything
+unrecognised is redacted, and a container holding nothing printable is withheld
+whole so neither its keys nor its length leaks. `--raw` opts in.
+
+The list is derived from VTEX's documented OMS schema rather than a real
+payload, so expect it to be incomplete — in the direction of showing too little.
+That costs a reader one `--raw`; the other direction costs the customer their
+national ID.
 
 Override the config location with `D1_CONFIG_DIR`.
 
@@ -485,5 +539,7 @@ a universal over a sample.
 - Cross-basket comparison ("what would this cost in store brands"), which is
   substitution with a brand constraint rather than a stock one.
 - Pickup points (`public.favoritePickup` appears in D1's session whitelist).
+- Express delivery, only from the mobile app's traffic — the storefront API has
+  been measured and does not carry it (gotcha 13).
 - Coupon application (`orderForm/{id}/coupons` is present but unexercised).
 - Address-string → coordinate resolution, so `--lat/--lng` becomes optional.

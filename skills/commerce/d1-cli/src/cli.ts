@@ -48,6 +48,7 @@ import {
   renderSearch,
   renderShipping,
   renderSubstitutes,
+  shellQuote,
 } from "./present.ts";
 import { deliverable, primarySeller, resolveRegion } from "./region.ts";
 import {
@@ -225,6 +226,20 @@ export function basketOptions(
  * transient D1 outage meant its shopping list was definitively unbuyable. An
  * empty answer and an unanswered question are not the same result.
  */
+/**
+ * The "now run this" line printed after a one-time code is sent.
+ *
+ * Extracted so the QUOTING is testable. Inline it was reachable only by
+ * spawning the CLI with a stubbed VTEX ID endpoint, which is why it sat
+ * unquoted through every prior review: `authToken` comes off D1's response and
+ * `email` off the command line, neither had even `sanitize` applied, and the
+ * line is prefixed "Finish with:" — a literal instruction to run it, in the one
+ * flow where an agent is most likely to paste the follow-up unread.
+ */
+export function loginFollowUp(email: string, authToken: string): string {
+  return `A one-time code is on its way to ${email}. Finish with:\n  d1 login --email ${shellQuote(email)} --auth-token ${shellQuote(authToken)} --code <code>`;
+}
+
 export function basketExit(lines: readonly BasketLine[]): number {
   if (lines.some((l) => isFilled(l.status))) return 0;
   if (lines.some((l) => l.status === "replacement-unknown")) return 1;
@@ -966,7 +981,7 @@ async function main(argv: string[]): Promise<number> {
 
       if (!code) {
         await sendAccessKey(client, authToken, email);
-        const msg = `A one-time code is on its way to ${email}. Finish with:\n  d1 login --email ${email} --auth-token ${authToken} --code <code>`;
+        const msg = loginFollowUp(email, authToken);
         console.log(asJson ? json({ sent: true, email, authToken }) : msg);
         return 0;
       }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { encodeFacetPath } from "../src/catalog.ts";
-import { D1Client } from "../src/client.ts";
+import { D1Client, USER_AGENT } from "../src/client.ts";
 import {
   ALLOWED_ENDPOINT_PATTERNS,
   ALLOWED_ENDPOINT_SHAPES,
@@ -271,5 +271,31 @@ describe("the session cookie cannot leave D1's origin", () => {
     const { impl, seen } = spy();
     await new D1Client({ fetchImpl: impl }).request("/api/checkout/pub/regions");
     expect(seen[0]).toStartWith("https://www.d1.com.co/api/checkout/pub/regions");
+  });
+});
+
+describe("the user agent names the version this actually is", () => {
+  test("it tracks package.json rather than a literal that drifts", async () => {
+    // It was a literal, and it said 0.1.0 while the package said 0.7.0 — seven
+    // releases of telling D1 something confident and false. Bound to the
+    // manifest here so the next bump cannot silently leave it behind.
+    const pkg = (await import("../package.json")) as unknown as { default: { version: string } };
+    expect(USER_AGENT).toContain(`d1-cli/${pkg.default.version}`);
+    expect(USER_AGENT).not.toContain("0.1.0");
+  });
+
+  test("it is the header actually sent, not merely a constant", async () => {
+    // The constant being right proves nothing about the request. This is the
+    // same lesson `orderForDisplay` taught: a well-tested value that nothing
+    // binds to the wire is a value nobody sends.
+    let sent = "";
+    const c = new D1Client({
+      fetchImpl: (async (_u: string, init: RequestInit) => {
+        sent = new Headers(init?.headers).get("user-agent") ?? "";
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    await c.request("/api/io/_v/api/intelligent-search/product_search", { query: { query: "x" } });
+    expect(sent).toBe(USER_AGENT);
   });
 });
