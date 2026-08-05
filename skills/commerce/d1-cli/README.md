@@ -575,10 +575,10 @@ that may hold hundreds, so a bare "nothing in its category is in stock" would be
 a universal over a sample.
 
 > **Not shipped.** This lives on `kg/d1-brand-compare` and has not passed its
-> review gate: seven cross-model rounds each found a sentence that was false
-> against live D1, the last of them a regression introduced by the round before.
-> The root cause is in the section below and is worth reading before picking it
-> up. Tracked on BRO-2079.
+> review gate: eight cross-model rounds each found a sentence that was false
+> against live D1, and rounds 7 and 8 each found a defect the round before had
+> introduced. The root cause is in the section below and is worth reading before
+> picking it up. Tracked on BRO-2079.
 
 ## Comparing a basket across brands
 
@@ -614,8 +614,29 @@ Nothing D1 returned for these terms is ZZNOSUCH.
 
 The first is the common case and the one a single "not found" message got
 wrong: D1 lists the brand and prices it at `0` for your store (gotcha 12).
-Every line also carries `pageBrands` in `--json` — the distinct brands D1
-returned for that term — which is what the hint is computed from.
+
+**Each sentence names the population it is about**, which is the whole of round
+8. There are two: the terms' own search pages, and the category sweep that runs
+only when a page holds nothing of the brand. Every line carries `pageBrands` in
+`--json` and, where a sweep ran, `sweepBrands`; `brandReturnedIn` says which of
+the two the requested brand was found in. The evidence list under the headline
+is the **page** — merging the sweep into it once put nineteen brands under a
+label where D1 had returned six — so a claim reading from both populations
+printed above a list reading from one produced two sentences that disagreed:
+
+```text
+D1 returned LATTI for these terms, but nothing of it can be bought at this store.
+Brands it did return: OTRA.
+```
+
+Hence `in the category around these terms` as a distinct wording, and
+`Brands on these terms' own pages` as a label that cannot be read as the
+complete answer to the sentence above it.
+
+And no claim outruns its look. `--count` defaults to 12 against result sets that
+are routinely 25–31, so every categorical sentence here carries its own
+denominator whenever the look was partial — headline, evidence list, and the
+per-term cause line alike.
 
 ## Roadmap
 

@@ -220,6 +220,72 @@ for a different question whose consumer unions it separately.
   not be driven without the network; a stubbed global `fetch` through `main`
   takes twenty lines.
 
+### Fixed — round 8: the claim and its evidence were two populations under one label
+
+Round 7's fixes had never been reviewed. Two were live-false, and both tests
+that should have caught them could not fire.
+
+**A claim drawn from page-OR-sweep, printed above a list drawn from the page.**
+Round 7 was right to narrow the evidence list to the term pages — unioning the
+category sweep in put nineteen brands under a label where D1 had returned six.
+But the headline kept reading both populations, so with the brand in the sweep
+only and a complete look:
+
+```text
+D1 returned LATTI for these terms, but nothing of it can be bought at this store.
+Brands it did return: OTRA.
+```
+
+Two sentences that read as answers to one question, disagreeing. This is round
+5's blocker — a claim beside its own refuting evidence — reproduced one hop
+over, which is the **third** time this arc has moved that defect rather than
+removed it. `brandReturnedUnbuyable` carries provenance now
+(`brandReturnedIn: "page" | "sweep"`) and the sentence names where it found the
+brand; the list's label names its own population too, so neither can be read as
+the complete answer to the other. *One label, one population* had been applied
+to the list and not to the claim.
+
+**And the unbuyable claim outran its look.** "nothing of it can be bought at
+this store" is a universal, and `--count` defaults to 12 against result sets of
+25–31. Round 6 removed exactly this shape from the other headline arm and never
+touched this one — it was round 5's sentence, and each round only re-read what
+it had just changed. Both arms carry their denominator now, as does the
+per-term cause line beneath them.
+
+**Both tests that existed to catch these could not.**
+
+- `crossOf` re-derived `brandReturnedUnbuyable` by hand while `brandsSeen`
+  called production's `brandsIn`. Production learned to read `sweepBrands` in
+  round 6; the copy never did — so the sweep-only state was unreachable in all
+  98 enumerated states and perfectly reachable live. That is round 4's own
+  finding, *a mirror of the code under test tests the mirror*, on the one field
+  round 4 did not convert. Both derived fields call production now, and so does
+  `partial`.
+- **`partial` was never set anywhere in the enumeration.** Zero occurrences, so
+  `c.partial` was `undefined` in every state and each sentence with a scoped
+  variant was checked in one polarity only. Round 6's entire fix was unprotected
+  by the property test written to protect it.
+
+The enumeration gains both axes — 98 states to 392 — one generator replaces
+three copies of the nested loop (updating three of four call sites is how an
+axis goes missing), and the coverage assertion names its markers instead of
+counting them: `expect(seen.size).toBe(10)` could not tell nine-and-a-typo from
+ten.
+
+Eight mutations, 8 killed. The first pass killed 7: reverting the per-term cause
+line to `found but not buyable here` survived, because the scope check read the
+headline alone. It reads every unqualified universal the render can print now.
+
+**What was and was not observed live.** Rounds 5–7's cases all render correctly
+against live D1 at the Bogotá test point — COPELIA at `--count 50`, ALPIN at
+default, ZZNOSUCH across two terms. The round-8 defect reproduces against the
+round-7 source through a driven fixture, and both halves of its precondition are
+live and independent: sweep-only brands exist (`DULCRALIGHT`, `COOLTIVO` and
+`EL ESTIO` fill `sal` from the category, none of them on its page) and unpriced
+brands exist (COPELIA, gotcha 12). The **conjunction** — a sweep-only brand with
+nothing of it priced — did not occur across twelve terms at that store, so it is
+rarer than rounds 5–7's defects, every one of which reproduced at default flags.
+
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 
 The review's own summary: the pinning is much stronger — 42 of 51 mutations
