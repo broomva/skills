@@ -1893,7 +1893,7 @@ describe("renderComparison [BRO-2079]", () => {
   });
 
   test("it names the brands that did appear when the ask matched none", async () => {
-    expect(renderComparison(await build("TYPOO"))).toContain("Brands it did return");
+    expect(renderComparison(await build("TYPOO"))).toContain("Brands on these terms' own pages");
   });
 
   test("it states that both baskets respected the same budget", async () => {
@@ -2518,7 +2518,7 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     expect(c.alt.lines[0]?.status).toBe("no-brand-match");
     const out = renderComparison(c);
     expect(out).toContain("Nothing D1 returned for these terms is LATTI");
-    expect(out).toContain("Brands it did return: OTRA");
+    expect(out).toContain("Brands on these terms' own pages: OTRA");
   });
 
   test("a brand D1 returned but cannot sell is reported as exactly that", async () => {
@@ -2553,7 +2553,7 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     // contradiction by filtering LATTI out of the list rather than correcting
     // the claim. Live: `--brand COPELIA leche` returns COCADA LECHE PANELA
     // COPELIA at Price 0.
-    expect(c.brandReturnedUnbuyable).toBe(true);
+    expect(c.brandReturnedIn).toBe("page");
     expect(c.brandsSeen).toContain("LATTI");
     const out = renderComparison(c);
     expect(out).toContain("D1 returned LATTI for these terms, but nothing of it can be bought");
@@ -2573,7 +2573,7 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
       100_000_000,
       { brand: "LATTI" },
     );
-    expect(c.brandReturnedUnbuyable).toBe(false);
+    expect(c.brandReturnedIn).toBeUndefined();
     const out = renderComparison(c);
     expect(out).toContain("Nothing D1 returned for these terms is LATTI");
     expect(out).not.toContain("cannot be bought");
@@ -2776,9 +2776,10 @@ describe("the returned-brand evidence spans BOTH runs [BRO-2079 round 5]", () =>
     expect(c.base.lines[0]?.pageBrands).toEqual(["OTRA"]);
     expect(c.alt.lines[0]?.pageBrands).toEqual(["LATTI", "OTRA"]);
     expect(c.alt.lines[0]?.status).toBe("no-brand-match");
-    // ...and that is still evidence D1 returned it.
-    expect(c.brandReturnedUnbuyable).toBe(true);
-    expect(renderComparison(c)).toContain("but nothing of it can be bought");
+    // ...and that is still evidence D1 returned it, on the PAGE — so the
+    // evidence list below the headline corroborates it.
+    expect(c.brandReturnedIn).toBe("page");
+    expect(renderComparison(c)).toContain("for these terms, but nothing of it can be bought");
   });
 });
 
@@ -2915,12 +2916,23 @@ describe("a brand claim never outruns its look [BRO-2079 round 6]", () => {
     expect(c.alt.lines[0]?.status).toBe("no-brand-match");
     expect(c.alt.lines[0]?.sweepBrands).toContain("LATTI");
     expect(c.partial).toEqual({ looked: 1, matched: 29 });
-    expect(c.brandReturnedUnbuyable).toBe(true);
+    // The SWEEP, not the page — and that distinction is the whole of round 8.
+    expect(c.brandReturnedIn).toBe("sweep");
     const out = renderComparison(c);
-    // "Found but unbuyable" outranks "not among the N looked at": it is the
-    // stronger and more specific fact, and both cannot head the same output.
-    expect(out).toContain("but nothing of it can be bought");
+    // "Found but unbuyable" still outranks "not among the N looked at": it is
+    // the stronger and more specific fact, and both cannot head the same output.
+    expect(out).toContain("but nothing of it the look reached can be bought");
     expect(out).not.toContain("Nothing among the");
+    // ...but it carries its own denominator. Round 8: this assertion used to
+    // read `not.toContain("Nothing among the")` and nothing else, which pinned
+    // an UNQUALIFIED universal — "nothing of it can be bought at this store"
+    // asserted over a look of one product of twenty-nine. Round 6 removed
+    // exactly that sentence shape from the other headline arm and never touched
+    // this one, so the suite was holding the defect in place.
+    expect(out).toContain("the look covered 1 of the 29 D1 matched");
+    // ...and it names the population it found the brand in, so it cannot
+    // compete with the page-scoped evidence list underneath it.
+    expect(out).toContain("in the category around these terms");
   });
 });
 
@@ -2950,7 +2962,7 @@ describe("one label, one population [BRO-2079 round 7]", () => {
     // ...but not for this sentence.
     expect(c.brandsSeen).toEqual(["ALBAR"]);
     const out = renderComparison(c);
-    expect(out).toContain("Brands it did return: ALBAR.");
+    expect(out).toContain("Brands on these terms' own pages: ALBAR.");
     expect(out).not.toContain("RIOPAILA");
     expect(out).not.toContain("SPLENDA");
   });
@@ -2973,7 +2985,7 @@ describe("one label, one population [BRO-2079 round 7]", () => {
     );
     const out = renderComparison(c);
     expect(out).toContain("Brands among the 1 looked at: LATTI.");
-    expect(out).not.toContain("Brands it did return");
+    expect(out).not.toContain("Brands on these terms' own pages");
   });
 
   test("the per-term cause reads the same evidence as the headline", async () => {
@@ -2994,7 +3006,7 @@ describe("one label, one population [BRO-2079 round 7]", () => {
       100_000_000,
       { brand: "NF" },
     );
-    expect(c.brandReturnedUnbuyable).toBe(true);
+    expect(c.brandReturnedIn).toBe("page");
     const out = renderComparison(c);
     expect(out).toContain("NF found but not buyable here, for: leche");
     expect(out).not.toContain("no NF for: leche");

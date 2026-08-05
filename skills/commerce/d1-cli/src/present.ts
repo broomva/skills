@@ -857,9 +857,25 @@ export function renderComparison(c: CrossBasket): string {
     // twelve products while ALPIN sat in stock at product 13. `scopeOf`,
     // `sweepCaveat` and `footerFor` hold this line everywhere else in the
     // module; this render called none of them.
+    // WHERE the brand was found, named. A boolean here reproduced the round-5
+    // blocker one hop over: with the brand only in the category sweep and a
+    // complete look, "D1 returned LATTI for these terms" printed directly above
+    // "Brands it did return: OTRA." — the list being the page alone, which is
+    // round 7's own correct fix. Two sentences answering what reads as one
+    // question, with opposite answers. One label, one population applies to the
+    // claim as well as to the list.
+    const seenIn =
+      c.brandReturnedIn === "sweep" ? "in the category around these terms" : "for these terms";
+    // ...and the negative half never outruns the look. This arm was round 5's
+    // and round 6 never touched it, so "nothing of it can be bought at this
+    // store" stayed a universal over `--count` products — twelve of twenty-nine
+    // at the default, the exact disease round 6 was about.
+    const unbuyable = c.partial
+      ? `but nothing of it the look reached can be bought at this store — the look covered ${c.partial.looked} of the ${c.partial.matched} D1 matched. Raise --count to widen it.`
+      : "but nothing of it can be bought at this store.";
     out.push(
-      c.brandReturnedUnbuyable
-        ? `D1 returned ${brand} for these terms, but nothing of it can be bought at this store.`
+      c.brandReturnedIn
+        ? `D1 returned ${brand} ${seenIn}, ${unbuyable}`
         : c.partial
           ? `Nothing among the ${c.partial.looked} products looked at for these terms is ${brand} — D1 matched ${c.partial.matched}. Raise --count to widen the look.`
           : `Nothing D1 returned for these terms is ${brand}.`,
@@ -876,9 +892,14 @@ export function renderComparison(c: CrossBasket): string {
       // `leche` it named one brand of the eleven D1 returns, under a label that
       // reads as the complete set — the exact "typo or absent brand?" confusion
       // the hint exists to remove.
+      // The label NAMES its population. "Brands it did return" reads as the
+      // complete answer to the question the headline above it just answered,
+      // and when the brand came from the category sweep the two disagreed. The
+      // list is the term pages and says so, so no reading of it competes with a
+      // sentence about the category.
       const label = c.partial
         ? `Brands among the ${c.partial.looked} looked at`
-        : "Brands it did return";
+        : "Brands on these terms' own pages";
       out.push(
         `${label}: ${shown.map(sanitize).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`,
       );
@@ -938,13 +959,18 @@ export function renderComparison(c: CrossBasket): string {
   // makes the same claim and was equally unqualified — it printed
   // "no RED FLAG for: aceite" about a term whose RED FLAG product was on the
   // page one `--count` wider, at $ 8.900.
-  // Reads `brandReturnedUnbuyable` too, because it names a CAUSE and that is
+  // Reads `brandReturnedIn` too, because it names a CAUSE and that is
   // the cause. It printed "no NATURAL FEELING for: leche" six lines under
   // "D1 returned NATURAL FEELING ... but nothing of it can be bought" — the
   // round-5 contradiction, reintroduced in the bucket whose whole design rule
   // is that a term is named by why it is missing.
-  const notFound = c.brandReturnedUnbuyable
-    ? `${brand} found but not buyable here, for`
+  // Carries the headline's scope too, for the same reason the headline needed
+  // it: "found but not buyable here" is a universal over whatever `--count`
+  // happened to fetch.
+  const notFound = c.brandReturnedIn
+    ? c.partial
+      ? `${brand} found but nothing of it the look reached is buyable, for`
+      : `${brand} found but not buyable here, for`
     : c.partial
       ? `nothing of ${brand} among the ${c.partial.looked} looked at, for`
       : `no ${brand} for`;

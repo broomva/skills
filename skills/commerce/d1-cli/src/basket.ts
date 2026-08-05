@@ -880,7 +880,8 @@ export interface CrossBasket {
    */
   brandsSeen?: string[];
   /**
-   * The requested brand WAS returned by D1 — it just cannot be bought here.
+   * The requested brand WAS returned — and WHERE, because that decides which
+   * sentence is true.
    *
    * `no-brand-match` means nothing of the brand was BUYABLE, and the headline
    * said D1 had returned nothing of it. Live: `--brand COPELIA leche` returns
@@ -889,10 +890,26 @@ export interface CrossBasket {
    *
    * The first fix filtered the brand out of the hint list so the contradiction
    * could not be seen, and called that filter load-bearing. It was deleting the
-   * evidence and keeping the claim. The claim is conditioned on the evidence
-   * now, the list is complete, and the true sentence is the more useful one.
+   * evidence and keeping the claim. The claim is conditioned on the evidence now.
+   *
+   * This carries PROVENANCE rather than a boolean because a boolean reproduced
+   * the round-5 blocker one hop over. Round 7 correctly made {@link brandsSeen}
+   * the page alone — merging the category sweep in put nineteen brands under a
+   * label where D1 had returned six — but left this claim reading from the page
+   * AND the sweep. With the brand only in the sweep and a complete look, the
+   * output was:
+   *
+   * ```text
+   * D1 returned LATTI for these terms, but nothing of it can be bought at this store.
+   * Brands it did return: OTRA.
+   * ```
+   *
+   * Two sentences answering what reads as one question, with opposite answers.
+   * "One label, one population" has to hold for the CLAIM as well as the list,
+   * so the render names the population it found the brand in and the two
+   * sentences stop competing.
    */
-  brandReturnedUnbuyable?: boolean;
+  brandReturnedIn?: "page" | "sweep";
 }
 
 /**
@@ -941,12 +958,8 @@ export async function compareBaskets(
   const brandMissed = alt.lines.length > 0 && alt.lines.every((l) => l.status === "no-brand-match");
   // ...and whether D1 returned it at all, which is a different question and the
   // one the headline was answering wrongly.
-  const returned = new Set(
-    [...base.lines, ...alt.lines]
-      .flatMap((l) => [...(l.pageBrands ?? []), ...(l.sweepBrands ?? [])])
-      .map((x) => normalizeBrand(x))
-      .filter((x): x is string => x !== undefined),
-  );
+  //
+  const returnedIn = brandReturnedIn([...base.lines, ...alt.lines], opts.brand);
 
   return {
     brand: opts.brand,
@@ -1008,7 +1021,7 @@ export async function compareBaskets(
     // in let a two-term list print "Nothing D1 returned for these terms is
     // LATTI" about a list where LATTI was never the reason.
     brandsSeen: brandMissed ? brandsIn([...base.lines, ...alt.lines]) : undefined,
-    brandReturnedUnbuyable: brandMissed ? returned.has(want) : undefined,
+    brandReturnedIn: brandMissed ? returnedIn : undefined,
   };
 }
 
@@ -1108,7 +1121,7 @@ export function brandsIn(lines: readonly BasketLine[]): string[] {
     // other thirteen were sweetener brands swept from one product's category,
     // and the look was COMPLETE, so no qualifier even applied. The sweep IS
     // evidence, but for a different question ({@link
-    // CrossBasket.brandReturnedUnbuyable}), whose consumer unions it separately.
+    // CrossBasket.brandReturnedIn}), whose consumer reads it separately.
     // One label, one population.
     for (const raw of l.pageBrands ?? []) {
       const b = raw.trim();
@@ -1119,13 +1132,39 @@ export function brandsIn(lines: readonly BasketLine[]): string[] {
 }
 
 /**
+ * Whether D1 returned the requested brand — and in WHICH population.
+ *
+ * Exported for the same reason {@link brandsIn} is: `test/contradiction.test.ts`
+ * must call this rather than re-derive it. It re-derived the union inline, and
+ * when the sweep was added to production the mirror did not follow — so no
+ * enumerated state ever had a sweep-only brand, and the contradiction that
+ * caused went unseen through two review rounds. A mirror of the code under test
+ * tests the mirror; that is round 4's finding, and this is the field it missed.
+ *
+ * The PAGE wins when both carry the brand, because {@link CrossBasket.brandsSeen}
+ * is the page alone: a page hit is the one the rendered evidence list can
+ * actually corroborate.
+ */
+export function brandReturnedIn(
+  lines: readonly BasketLine[],
+  brand: string,
+): "page" | "sweep" | undefined {
+  const want = normalizeBrand(brand);
+  if (want === undefined) return undefined;
+  const has = (pick: (l: BasketLine) => readonly string[] | undefined) =>
+    lines.some((l) => (pick(l) ?? []).some((x) => normalizeBrand(x) === want));
+  if (has((l) => l.pageBrands)) return "page";
+  return has((l) => l.sweepBrands) ? "sweep" : undefined;
+}
+
+/**
  * The narrowest look any term got, when some term saw less than D1 matched.
  *
  * Reported so a negative brand claim can name its own denominator. The whole
  * point of `--count` is that it moves this number, and a sentence that does not
  * mention it is a universal over whatever the default happened to be.
  */
-function partialLook(
+export function partialLook(
   lines: readonly BasketLine[],
 ): { looked: number; matched: number } | undefined {
   // SUMMED across terms, not the narrowest term's own pair.
