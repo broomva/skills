@@ -331,14 +331,25 @@ describe("no two sentences the comparison prints can contradict each other", () 
     // universal over twelve products. The suite pinned it: the one test
     // covering that state asserted `not.toContain("Nothing among the")` and
     // nothing about the denominator.
+    // EVERY unqualified universal this render can print, not just the headline.
+    // The first pass of this test checked the headline alone, and a mutation
+    // reverting the per-term cause line to `found but not buyable here` — the
+    // same universal, four lines lower — survived the whole suite. Six rounds
+    // of this arc were spent discovering that fixing one sentence leaves the
+    // next one open, so the check is over the set.
+    const UNSCOPED = [
+      /but nothing of it can be bought at this store\./,
+      /found but not buyable here,/,
+      /Nothing D1 returned for these terms is/,
+    ];
     const unscoped: string[] = [];
     for (const { label, out } of everyState()) {
-      if (!/the look covered \d+ of the \d+ D1 matched/.test(out)) {
-        // A complete look needs no qualifier; only scoped states are checked.
-        if (!/Raise --count/.test(out)) continue;
-      }
-      if (/but nothing of it can be bought at this store\./.test(out)) {
-        unscoped.push(`${label}: unqualified universal beside a partial look\n${out}\n`);
+      // A complete look needs no qualifier; only partial states are checked.
+      if (!/Raise --count/.test(out)) continue;
+      for (const u of UNSCOPED) {
+        if (u.test(out)) {
+          unscoped.push(`${label}: unqualified universal ${u} beside a partial look\n${out}\n`);
+        }
       }
     }
     expect(unscoped).toEqual([]);
