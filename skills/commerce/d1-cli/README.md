@@ -574,12 +574,75 @@ category were searched`. The sweep reads one page, capped at 50, of a category
 that may hold hundreds, so a bare "nothing in its category is in stock" would be
 a universal over a sample.
 
+> **Not shipped.** This lives on `kg/d1-brand-compare` and has not passed its
+> review gate: eight cross-model rounds each found a sentence that was false
+> against live D1, and rounds 7 and 8 each found a defect the round before had
+> introduced. The root cause is in the section below and is worth reading before
+> picking it up. Tracked on BRO-2079.
+
+## Comparing a basket across brands
+
+```bash
+d1 basket --budget 40000 arroz leche huevos --brand LATTI --lat 4.75068 --lng -74.03532
+```
+
+Prices the same list twice — once as the best value D1 has, once restricted to
+one brand — and reports the difference.
+
+**The delta covers only the terms both baskets filled.** A brand-constrained
+basket routinely fills fewer lines, and differencing the two totals would report
+those missing lines as a saving: drop the two dearest terms and any brand looks
+cheap, because it did not buy them. Terms only one side could fill are named
+below the number instead, where they read as a gap.
+
+Both baskets are fit to the same budget, so each is one a shopper could have
+bought. A brand that matches nothing lists the brands that *did* appear, because
+an empty result otherwise looks the same for a typo and for a brand D1 does not
+carry.
+
+Mechanically this is `d1 substitute` with a brand constraint instead of a stock
+one — it reuses the same ranker. The term's own search page is tried first; only
+a page with nothing of the brand reaches the category sweep.
+
+Two different failures are reported as two different sentences, because they
+are two different facts:
+
+```text
+D1 returned COPELIA for these terms, but nothing of it can be bought at this store.
+Nothing D1 returned for these terms is ZZNOSUCH.
+```
+
+The first is the common case and the one a single "not found" message got
+wrong: D1 lists the brand and prices it at `0` for your store (gotcha 12).
+
+**Each sentence names the population it is about**, which is the whole of round
+8. There are two: the terms' own search pages, and the category sweep that runs
+only when a page holds nothing of the brand. Every line carries `pageBrands` in
+`--json` and, where a sweep ran, `sweepBrands`; `brandReturnedIn` says which of
+the two the requested brand was found in. The evidence list under the headline
+is the **page** — merging the sweep into it once put nineteen brands under a
+label where D1 had returned six — so a claim reading from both populations
+printed above a list reading from one produced two sentences that disagreed:
+
+```text
+D1 returned LATTI for these terms, but nothing of it can be bought at this store.
+Brands it did return: OTRA.
+```
+
+Hence `in the category around these terms` as a distinct wording, and
+`Brands on these terms' own pages` as a label that cannot be read as the
+complete answer to the sentence above it.
+
+And no claim outruns its look. `--count` defaults to 12 against result sets that
+are routinely 25–31, so every categorical sentence here carries its own
+denominator whenever the look was partial — headline, evidence list, and the
+per-term cause line alike.
+
 ## Roadmap
 
-- Cross-basket comparison ("what would this cost in store brands"), which is
-  substitution with a brand constraint rather than a stock one. Built and held
-  back — see BRO-2079; its output kept making categorical claims wider than the
-  `--count` window behind them.
+- Cross-basket comparison — built on `kg/d1-brand-compare`, held back. Its
+  output kept making categorical claims wider than the `--count` window behind
+  them; see BRO-2079.
 - Reorder from a past order (`d1 reorder <id>`) — buildable from order detail
   into a cart with no new endpoint, and the one thing D1's own account UI
   advertises. Blocked only on having a completed order to build it against.
