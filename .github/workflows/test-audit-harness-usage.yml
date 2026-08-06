@@ -1,0 +1,37 @@
+name: test-audit-harness-usage
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/audit-harness-usage/**'
+      - '.github/workflows/test-audit-harness-usage.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/audit-harness-usage/**'
+      - '.github/workflows/test-audit-harness-usage.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-audit-harness-usage-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/tooling/audit-harness-usage
+
+jobs:
+  test:
+    name: pytest-and-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependency
+        run: pip install 'pytest>=8,<9'
+      - name: Tests
+        run: python -m pytest tests/ -q
+      - name: Offline smoke
+        run: python scripts/audit_harness_usage.py --provider cursor --days 1 --format json > /dev/null

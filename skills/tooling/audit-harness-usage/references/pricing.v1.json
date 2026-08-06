@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-08-05",
+  "currency": "USD",
+  "unit": "per_1m_tokens",
+  "provenance": {
+    "models": "https://models.dev/api.json",
+    "openai": "https://openai.com/api/pricing/",
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "google": "https://ai.google.dev/gemini-api/docs/pricing",
+    "cursor": "https://docs.cursor.com/account/pricing"
+  },
+  "models": {
+    "gpt-5": {
+      "provider": "codex",
+      "aliases": ["^gpt-5(?:$|-[0-3](?:$|-))"],
+      "input": 1.25,
+      "cache_read": 0.125,
+      "output": 10.0
+    },
+    "gpt-5.4": {
+      "provider": "codex",
+      "aliases": ["^gpt-5\\.4(?:$|-[0-9]{4})"],
+      "input": 2.5,
+      "cache_read": 0.25,
+      "output": 15.0,
+      "long_context": {"threshold": 272000, "input": 5.0, "cache_read": 0.5, "output": 22.5}
+    },
+    "gpt-5.4-mini": {
+      "provider": "codex",
+      "aliases": ["^gpt-5\\.4-mini"],
+      "input": 0.75,
+      "cache_read": 0.075,
+      "output": 4.5
+    },
+    "gpt-5.5": {
+      "provider": "codex",
+      "aliases": ["^gpt-5\\.5(?:$|-[0-9]{4})"],
+      "input": 5.0,
+      "cache_read": 0.5,
+      "output": 30.0,
+      "long_context": {"threshold": 272000, "input": 10.0, "cache_read": 1.0, "output": 45.0}
+    },
+    "gpt-5.6-sol": {
+      "provider": "codex",
+      "aliases": ["^gpt-5\\.6-sol"],
+      "input": 5.0,
+      "cache_read": 0.5,
+      "cache_write": 6.25,
+      "output": 30.0,
+      "long_context": {"threshold": 272000, "input": 10.0, "cache_read": 1.0, "cache_write": 12.5, "output": 45.0}
+    },
+    "gpt-5.6-terra": {
+      "provider": "codex",
+      "aliases": ["^gpt-5\\.6-terra"],
+      "input": 2.0,
+      "cache_read": 0.2,
+      "cache_write": 2.5,
+      "output": 12.0,
+      "long_context": {"threshold": 272000, "input": 4.0, "cache_read": 0.4, "cache_write": 5.0, "output": 18.0}
+    },
+    "claude-haiku-4.5": {
+      "provider": "claude",
+      "aliases": ["^claude-haiku-4[-.]5", "^claude-haiku-4-5"],
+      "input": 1.0,
+      "cache_read": 0.1,
+      "cache_write": 1.25,
+      "cache_write_1h": 2.0,
+      "output": 5.0
+    },
+    "claude-sonnet-4.5": {
+      "provider": "claude",
+      "aliases": ["^claude-sonnet-4[-.]5"],
+      "input": 3.0,
+      "cache_read": 0.3,
+      "cache_write": 3.75,
+      "cache_write_1h": 6.0,
+      "output": 15.0
+    },
+    "claude-sonnet-4.6": {
+      "provider": "claude",
+      "aliases": ["^claude-sonnet-4[-.]6", "^claude-sonnet-4-6"],
+      "input": 3.0,
+      "cache_read": 0.3,
+      "cache_write": 3.75,
+      "cache_write_1h": 6.0,
+      "output": 15.0
+    },
+    "claude-opus-4.5+": {
+      "provider": "claude",
+      "aliases": ["^claude-opus-4[-.](?:5|6|7|8)", "^claude-opus-4-(?:5|6|7|8)"],
+      "input": 5.0,
+      "cache_read": 0.5,
+      "cache_write": 6.25,
+      "cache_write_1h": 10.0,
+      "output": 25.0
+    },
+    "claude-sonnet-5": {
+      "provider": "claude",
+      "aliases": ["^claude-sonnet-5(?:$|[-.])"],
+      "input": 2.0,
+      "cache_read": 0.2,
+      "cache_write": 2.5,
+      "cache_write_1h": 4.0,
+      "output": 10.0
+    },
+    "claude-opus-5": {
+      "provider": "claude",
+      "aliases": ["^claude-opus-5(?:$|[-.])"],
+      "input": 5.0,
+      "cache_read": 0.5,
+      "cache_write": 6.25,
+      "cache_write_1h": 10.0,
+      "output": 25.0
+    },
+    "gemini-2.5-pro": {
+      "provider": "gemini",
+      "aliases": ["^gemini-2\\.5-pro"],
+      "input": 1.25,
+      "cache_read": 0.125,
+      "output": 10.0,
+      "long_context": {"threshold": 200000, "input": 2.5, "cache_read": 0.25, "output": 15.0}
+    },
+    "gemini-2.5-flash": {
+      "provider": "gemini",
+      "aliases": ["^gemini-2\\.5-flash(?:$|-(?!lite))"],
+      "input": 0.3,
+      "cache_read": 0.03,
+      "output": 2.5
+    },
+    "gemini-2.5-flash-lite": {
+      "provider": "gemini",
+      "aliases": ["^gemini-2\\.5-flash-lite"],
+      "input": 0.1,
+      "cache_read": 0.01,
+      "output": 0.4
+    },
+    "gemini-3-flash-preview": {
+      "provider": "gemini",
+      "aliases": ["^gemini-3-flash-preview"],
+      "input": 0.5,
+      "cache_read": 0.05,
+      "output": 3.0
+    },
+    "gemini-3-pro-preview": {
+      "provider": "gemini",
+      "aliases": ["^gemini-3-pro-preview"],
+      "input": 2.0,
+      "cache_read": 0.2,
+      "output": 12.0,
+      "long_context": {"threshold": 200000, "input": 4.0, "cache_read": 0.4, "output": 18.0}
+    }
+  }
+}

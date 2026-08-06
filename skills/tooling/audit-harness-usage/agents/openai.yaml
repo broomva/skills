@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Harness Usage"
+  short_description: "Report agent tokens, costs, quotas, and opportunities"
+  default_prompt: "Use $audit-harness-usage to create a self-contained HTML report of token usage, estimated costs, Antigravity quota windows, insights, and improvement opportunities across my local agent harnesses."
