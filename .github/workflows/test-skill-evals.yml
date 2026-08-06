@@ -271,3 +271,118 @@ jobs:
             exit 1
           fi
           echo "provenance gate held (exit $rc)"
+
+  # =====================================================================
+  # LIVE fixtures — fetched from a release asset, because 20 MB of recorded model
+  # output per sweep does not belong in a PUBLIC repo's permanent history (BRO-2030).
+  #
+  # A SEPARATE JOB, not extra steps in `test`, for one reason: it is the only job with
+  # a network dependency, and mixing it into the matrix would make a release-asset
+  # outage look like a Python-3.11-vs-3.12 problem.
+  #
+  # WHAT IT ASSERTS, and why it is not "exit 0". The recorded sweep's own verdict is
+  # FAIL for six of seven skills — that is the finding the fixtures exist to carry. So
+  # requiring exit 0 would be requiring the fixtures to lie. What is required instead is
+  # that they grade to EXACTLY the pinned aggregates in BASELINE.json: 343 graded
+  # trials and every pass count. That makes this job a regression lock on both sides —
+  # a description edit turns the fixtures stale and replay goes RED before the baseline
+  # is reached, and a change in the harness's grading moves a number and is caught here.
+  #
+  # IT NEVER SKIPS. A missing asset, a checksum mismatch, a wrong file count and a
+  # moved number all FAIL, loudly, with the operator's next command in the message. A
+  # replay job that shrugs at a missing asset reports green having graded nothing, which
+  # is the exact vacuity this whole arc has been closing.
+  live-replay:
+    name: live fixtures (fetched asset, ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dev deps
+        run: pip install -r tests/skill_evals/requirements-dev.txt
+
+      - name: Manifest and baseline are present and agree
+        run: |
+          set -e
+          python3 - <<'PY'
+          import json, pathlib
+          live = pathlib.Path("tests/skill_evals/fixtures/live")
+          man = json.loads((live / "MANIFEST.json").read_text())
+          base = json.loads((live / "BASELINE.json").read_text())
+          for k in ("asset", "sha256", "url", "release_tag", "files"):
+              assert man.get(k), f"MANIFEST.json carries no {k!r}"
+          missing = set(man["skills"]) ^ set(base["skills"])
+          assert not missing, f"MANIFEST and BASELINE disagree on skills: {sorted(missing)}"
+          print(f"asset {man['asset']}  sha256 {man['sha256'][:16]}…  "
+                f"{man['files']} files  {len(man['skills'])} skills")
+          print(f"baseline pins {base['graded_trials_total']} graded trials")
+          PY
+
+      - name: FETCH the fixture asset (fails loudly when absent or mismatched)
+        run: |
+          set -e
+          python3 scripts/skill_evals/fixture_pack.py fetch
+
+      - name: Extracted tree matches the manifest
+        run: python3 scripts/skill_evals/fixture_pack.py verify
+
+      # The fixtures are PUBLIC when published, and the scrub that made them
+      # publishable is a blocklist that fails open. Re-running both gates on every PR
+      # is how a rule ADDED later gets applied to an asset published earlier — the only
+      # mechanism by which the blocklist's fail-open polarity ever gets narrower.
+      - name: Fetched fixtures are scrub-clean
+        run: python3 scripts/skill_evals/scrub.py tests/skill_evals/fixtures/live --check
+
+      - name: Independent audit of the fetched fixtures
+        run: python3 scripts/skill_evals/fixture_audit.py tests/skill_evals/fixtures/live
+
+      - name: GRADED REPLAY — 343 live trials against the pinned baseline
+        run: python3 scripts/skill_evals/fixture_pack.py baseline
+
+      # The other half of the regression lock, asserted end-to-end rather than trusted:
+      # editing a description must turn these fixtures STALE. Without this, "replay is
+      # bound to the artifact" is a property of the code with no test over the LIVE set.
+      - name: MUTATION PROOF — an edited description makes the live fixtures STALE
+        run: |
+          set -e
+          skill_md=$(find skills -type f -path '*/handoff/SKILL.md' | head -1)
+          [ -n "$skill_md" ] || { echo "::error::handoff/SKILL.md not found"; exit 1; }
+          cp "$skill_md" /tmp/handoff-SKILL.md.orig
+          python3 - "$skill_md" <<'PY'
+          import re, sys
+          p = sys.argv[1]
+          s = open(p).read()
+          # Append to the frontmatter description so its sha256 changes and nothing else
+          # about the file's structure does.
+          s2 = re.sub(r"^(description:.*)$", r"\1 MUTATED-FOR-PROOF",
+                      s, count=1, flags=re.M)
+          assert s2 != s, "description line not found — the mutation did nothing"
+          open(p, "w").write(s2)
+          PY
+          set +e
+          out=$(python3 scripts/skill_evals/runner.py --skill handoff \
+            --replay tests/skill_evals/fixtures/live/handoff --trials 3 \
+            --allow-errors --threshold 0.0 2>&1)
+          rc=$?
+          set -e
+          cp /tmp/handoff-SKILL.md.orig "$skill_md"
+          echo "$out" | tail -20
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::replay exited 0 against an EDITED description — the live"
+            echo "::error::fixtures are decoupled from the artifact under test"
+            exit 1
+          fi
+          case "$out" in
+            *"recorded against a different"*|*"STALE"*|*"fixtures unusable"*) : ;;
+            *) echo "::error::failed, but not for the artifact-binding reason"; exit 1 ;;
+          esac
+          echo "artifact binding held over the LIVE set (exit $rc)"

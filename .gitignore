@@ -10,3 +10,16 @@ dist/
 # Python bytecode (never vendor compiled artifacts)
 __pycache__/
 *.pyc
+
+# Recorded live eval fixtures (BRO-2030). ~20 MB of model transcripts per sweep, and
+# git history is forever on a PUBLIC repo — a fixture pushed once stays reachable by
+# SHA even after the branch is deleted. They live in a GitHub release asset instead,
+# pinned by checksum in tests/skill_evals/fixtures/live/MANIFEST.json and fetched by
+# `scripts/skill_evals/fixture_pack.py fetch`.
+#
+# NOTE: that asset is PUBLICLY DOWNLOADABLE. This rule buys revocability and repo
+# weight, NOT secrecy. Scrubbing is still mandatory — see scripts/skill_evals/scrub.py.
+tests/skill_evals/fixtures/live/*
+!tests/skill_evals/fixtures/live/README.md
+!tests/skill_evals/fixtures/live/MANIFEST.json
+!tests/skill_evals/fixtures/live/BASELINE.json
