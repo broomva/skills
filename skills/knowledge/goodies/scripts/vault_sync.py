@@ -119,6 +119,7 @@ def scaffold_repo_if_missing(repo_path: Path):
   --font-mono: 'JetBrains Mono', monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 body { background-color: var(--bg-main); color: var(--text-main); font-family: var(--font-body); min-height: 100vh; }
 .app-background { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
 .glow-orb { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.25; }
@@ -307,7 +308,22 @@ jobs:
     # Scaffolding README.md
     readme_md = repo_path / "README.md"
     if not readme_md.exists():
-        readme_md.write_text("# Goodies 💎\n\nA curated, publicly hosted vault of high-value design inspiration, developer tools, UI components, and software resources.\n")
+        readme_md.write_text("# Goodies 💎\n\n[![GitHub Pages Deployment](https://github.com/broomva/goodies/actions/workflows/deploy.yml/badge.svg)](https://github.com/broomva/goodies/actions/workflows/deploy.yml)\n[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)\n\nA curated, publicly hosted vault of high-value design inspiration, developer tools, UI component libraries, research papers, and software resources.\n\n🌐 **Live Site**: [https://broomva.github.io/goodies/](https://broomva.github.io/goodies/)\n\n## ⚡ Overview\n\n**Goodies** is a static web application built with vanilla CSS glassmorphism aesthetics and Fuse.js client-side search. It acts as the public distribution channel for web resources curated and indexed by **bstack** AI agents.\n")
+
+    # Scaffolding LICENSE
+    license_file = repo_path / "LICENSE"
+    if not license_file.exists():
+        license_file.write_text("MIT License\n\nCopyright (c) 2026 Broomva\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n")
+
+    # Scaffolding CONTRIBUTING.md
+    contributing_md = repo_path / "CONTRIBUTING.md"
+    if not contributing_md.exists():
+        contributing_md.write_text("# Contributing to Goodies 💎\n\nThank you for your interest in contributing to **Goodies**! Submissions are managed via `/goodies add <URL>` or manual PRs.\n")
+
+    # Scaffolding .gitignore
+    gitignore = repo_path / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(".DS_Store\nThumbs.db\n.idea/\n.vscode/\nnode_modules/\n__pycache__/\n")
 
     # Initialize Git repository if not initialized
     if not (repo_path / ".git").exists():
@@ -385,6 +401,23 @@ def sync_vault_repo(repo_path: Path, new_item: Dict[str, Any] = None, push: bool
     # 6. Git commit & push if requested
     if push:
         try:
+            # Sync GitHub repository metadata if gh CLI is available
+            try:
+                subprocess.run([
+                    "gh", "repo", "edit", "--description",
+                    "Curated, publicly hosted vault of high-value design inspiration, developer tools, UI components, and software resources.",
+                    "--homepage", "https://broomva.github.io/goodies/",
+                    "--add-topic", "curation",
+                    "--add-topic", "design-inspiration",
+                    "--add-topic", "developer-tools",
+                    "--add-topic", "ui-components",
+                    "--add-topic", "knowledge-graph",
+                    "--add-topic", "bstack",
+                    "--add-topic", "design-system"
+                ], cwd=repo_path, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
             subprocess.run(["git", "add", "."], cwd=repo_path, check=True)
             msg = f"feat(vault): add/update item '{new_item['title'] if new_item else 'sync'}'"
             subprocess.run(["git", "commit", "-m", msg], cwd=repo_path, check=True)

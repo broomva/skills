@@ -44,16 +44,19 @@ It is a **bstack composition skill**: it fires `/checkit` research, P6 bookkeepi
    - Construct Vault Item JSON conforming to schema specification.
    - Execute schema validation tests (`scripts/vault_schema.py`).
 
-5. **Sync to Public Repository (`scripts/vault_sync.py`)**
+5. **Sync & Publish (`scripts/vault_sync.py`)**
    - Write individual record to `data/items/<slug>.json`.
    - Merge into consolidated `data/vault.json` database.
-   - Regenerate client-side search index.
+   - Regenerate client-side search index (`data/search-index.json`).
+   - Scaffold missing OSS standards (`LICENSE`, `CONTRIBUTING.md`, `.gitignore`, enhanced `README.md` with badges & live links).
+   - Enforce CSS `[hidden] { display: none !important; }` rule to guarantee modal backdrops stay hidden on load.
+   - Sync GitHub repository metadata (`description`, `homepage`, `topics`) via `gh repo edit`.
    - Commit & push to public repository (e.g. `goodies`), triggering GitHub Pages auto-deploy.
 
 ## Deterministic Scripts & Core Tools
 
 - `scripts/vault_schema.py`: Validates item JSON schemas and manages dynamic category taxonomy resolution.
-- `scripts/vault_sync.py`: Merges vault items, updates aggregate DB, generates Fuse search indices, and handles Git sync.
+- `scripts/vault_sync.py`: Merges vault items, updates aggregate DB, scaffolds OSS files, syncs GH repo metadata, generates Fuse search indices, and handles Git sync.
 - `scripts/vault_ingest.py`: Orchestrates URL ingestion, `/checkit` extraction, metadata scraping, and item construction.
 
 ## Anti-Rationalization
