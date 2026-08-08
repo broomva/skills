@@ -87,6 +87,7 @@ npx skills add broomva/skills --skill '*'
 | [`ccr`](skills/knowledge/ccr/) | Reversible payload compression — shrink any blob (tool output, log, RAG chunk, file) **before** it enters context, while caching the original locally for byte-exact `retrieve(handle)` on demand. The payload-axis counterpart to `kg`'s retrieval axis. Content-routed deterministic compactors (JSON skeleton / code outline / text head-tail), stdlib-only, no ML |
 | [`colombia-conflict`](skills/knowledge/colombia-conflict/) | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
 | [`comprehend`](skills/knowledge/comprehend/) | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
+| [`goodies`](skills/knowledge/goodies/) | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 
 ### Research — `skills/research/`
