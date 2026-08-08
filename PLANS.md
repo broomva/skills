@@ -93,7 +93,7 @@ Use this file for multi-step work where durable context matters.
 
 - Commands run: pytest, Python 3.12 compile, strict skillify gate, resolver eval,
   isolated bstack test audit, native CLI scans, CodexBar comparison, and P20.
-- Key outputs: 56 tests passed; a live 30-day Claude CodexBar comparison
+- Key outputs: 64 tests passed; a live 30-day Claude CodexBar comparison
   matched tokens and cost exactly with no CodexBar runtime dependency. The
   live Antigravity probe returned four quota windows without identity leakage
   or token/cost fabrication. A self-contained HTML dashboard renders the same

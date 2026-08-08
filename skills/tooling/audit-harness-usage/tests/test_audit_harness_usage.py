@@ -186,6 +186,26 @@ def test_codex_invalid_parent_timestamp_makes_baseline_unresolved(tmp_path):
     assert any("unparseable token timestamp" in warning for warning in report["diagnostics"]["warnings"])
 
 
+def test_codex_invalid_fork_cutoff_makes_baseline_unresolved(tmp_path):
+    parent = tmp_path / "parent.jsonl"
+    child = tmp_path / "child.jsonl"
+    write_jsonl(parent, [
+        {"type": "session_meta", "payload": {"id": "parent"}},
+        token_row("2099-08-05T11:00:00Z", 10, 10, 0, 0),
+    ])
+    write_jsonl(child, [
+        {"type": "session_meta", "payload": {
+            "id": "child", "forked_from_id": "parent", "timestamp": "z",
+        }},
+        {"type": "turn_context", "timestamp": "2099-08-05T11:01:00Z", "payload": {"model": "gpt-5"}},
+        token_row("2099-08-05T11:02:00Z", 10, 10, 0, 0),
+        token_row("2099-08-05T11:03:00Z", 5, 15, 0, 0),
+    ])
+    report = run_scan("codex", tmp_path)
+    assert report["diagnostics"]["codex_unresolved_forks"] == 1
+    assert "codex" not in report["diagnostics"]["fork_prefix_tokens_suppressed"]
+
+
 def test_codex_fractional_counter_is_rejected_visibly(tmp_path):
     path = tmp_path / "trace.jsonl"
     write_jsonl(path, [
@@ -421,6 +441,20 @@ def test_incomplete_custom_rate_is_unpriced(tmp_path):
     card = usage.RateCard(pricing)
     event = usage.UsageEvent("codex", "partial", usage.parse_timestamp(now()), "e", input_uncached=10, output=1)
     assert card.price(event) is None
+
+
+@pytest.mark.parametrize("payload", [[], {}, {"as_of": "2099-01-01"}, {"models": {}}])
+def test_malformed_pricing_shape_raises_value_error(tmp_path, payload):
+    pricing = tmp_path / "pricing.json"
+    pricing.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="pricing file must be an object"):
+        usage.RateCard(pricing)
+
+
+@pytest.mark.parametrize("parser", [usage.parse_claude, usage.parse_gemini, usage.parse_cursor])
+def test_disappeared_trace_file_is_nonfatal(tmp_path, parser):
+    diagnostics = usage.Diagnostics()
+    assert list(parser(tmp_path / "already-rotated.jsonl", diagnostics)) == []
 
 
 def test_unsafe_model_label_is_replaced_before_all_rendering(tmp_path):

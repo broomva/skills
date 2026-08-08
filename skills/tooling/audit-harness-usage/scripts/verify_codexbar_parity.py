@@ -81,11 +81,13 @@ def main() -> int:
             "standalone": native_cost,
             "codexbar": oracle_cost,
             "delta": native_cost - oracle_cost,
+            "match": math.isclose(native_cost, oracle_cost, rel_tol=0, abs_tol=1e-9),
         },
     }
-    receipt["match"] = receipt["tokens"]["delta"] == 0 and math.isclose(
-        native_cost, oracle_cost, rel_tol=0, abs_tol=1e-9
-    )
+    # Lineage parity is a token-accounting assertion. Refreshed CodexBar and
+    # the standalone bundled snapshot can legitimately price the same tokens
+    # differently, so cost parity remains visible but does not fail the oracle.
+    receipt["match"] = receipt["tokens"]["delta"] == 0
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if receipt["match"] else 1
 

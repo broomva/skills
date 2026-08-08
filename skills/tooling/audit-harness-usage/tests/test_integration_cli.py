@@ -33,11 +33,14 @@ def test_combined_cli_report_spans_all_adapters(tmp_path):
 
     cursor = tmp_path / "cursor.json"
     dump(cursor, {"usageEvents": [{"id": "c", "timestamp": 4079140800000, "model": "m", "chargedCents": 1, "tokenUsage": {"inputTokens": 10, "outputTokens": 2, "cacheReadTokens": 0, "cacheWriteTokens": 0, "totalCents": 2}}]})
+    antigravity = tmp_path / "antigravity.json"
+    dump(antigravity, {})
 
     proc = subprocess.run([
         sys.executable, str(SCRIPT), "--days", "36500", "--format", "json",
         "--path", f"codex={codex}", "--path", f"claude={claude}",
         "--path", f"gemini={gemini}", "--path", f"cursor={cursor}",
+        "--path", f"antigravity={antigravity}",
     ], check=True, capture_output=True, text=True)
     report = json.loads(proc.stdout)
     assert {row["provider"] for row in report["by_model"]} == {"codex", "claude", "gemini", "cursor"}
@@ -87,7 +90,7 @@ def test_optional_codexbar_parity_oracle_emits_machine_receipt(tmp_path):
     )
     fake_codexbar.chmod(0o755)
     env = os.environ.copy()
-    env["EXPECTED_COST"] = str(expected_cost)
+    env["EXPECTED_COST"] = str(expected_cost + 1)
     proc = subprocess.run([
         sys.executable, str(PARITY_SCRIPT), "--codex-home", str(tmp_path),
         "--days", "36500", "--codexbar-bin", str(fake_codexbar),
@@ -95,7 +98,8 @@ def test_optional_codexbar_parity_oracle_emits_machine_receipt(tmp_path):
     receipt = json.loads(proc.stdout)
     assert receipt["match"] is True
     assert receipt["tokens"]["delta"] == 0
-    assert receipt["estimated_cost_usd"]["delta"] == 0
+    assert receipt["estimated_cost_usd"]["delta"] == -1
+    assert receipt["estimated_cost_usd"]["match"] is False
 
 
 def test_cli_merges_lineage_codex_with_native_provider_once(tmp_path):
@@ -109,6 +113,8 @@ def test_cli_merges_lineage_codex_with_native_provider_once(tmp_path):
     gemini_root.mkdir()
     cursor = tmp_path / "empty-cursor.json"
     dump(cursor, {"usageEvents": []})
+    antigravity = tmp_path / "empty-antigravity.json"
+    dump(antigravity, {})
     codex = tmp_path / "codex.jsonl"
     dump(codex, {"type": "session_meta", "payload": {"id": "s"}}, jsonl=True)
     with codex.open("a", encoding="utf-8") as handle:
@@ -120,6 +126,7 @@ def test_cli_merges_lineage_codex_with_native_provider_once(tmp_path):
         sys.executable, str(SCRIPT), "--days", "36500", "--format", "json",
         "--path", f"codex={codex}", "--path", f"claude={claude}",
         "--path", f"gemini={gemini_root}", "--path", f"cursor={cursor}",
+        "--path", f"antigravity={antigravity}",
     ], check=True, capture_output=True, text=True)
     report = json.loads(proc.stdout)
     assert report["overall"]["total_tokens"] == 122

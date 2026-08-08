@@ -197,6 +197,14 @@ class RateCard:
     def __init__(self, path: Path):
         self.path = path
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(payload, dict)
+            or "as_of" not in payload
+            or not isinstance(payload.get("models"), dict)
+        ):
+            raise ValueError(
+                f"pricing file must be an object with 'as_of' and 'models': {path}"
+            )
         self.as_of = payload["as_of"]
         self.provenance = payload.get("provenance", {})
         self.models: dict[str, dict[str, Any]] = payload["models"]
@@ -237,6 +245,14 @@ class RateCard:
         return cost / 1_000_000, name
 
 
+def mtime_or_epoch(path: Path) -> float:
+    """Return a trace mtime, degrading safely when a live file disappears."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def iter_jsonl(path: Path, provider: str, diagnostics: Diagnostics) -> Iterator[tuple[int, dict[str, Any]]]:
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -254,7 +270,7 @@ def iter_jsonl(path: Path, provider: str, diagnostics: Diagnostics) -> Iterator[
 
 
 def parse_claude(path: Path, diagnostics: Diagnostics) -> Iterator[UsageEvent]:
-    fallback = path.stat().st_mtime
+    fallback = mtime_or_epoch(path)
     for line_no, row in iter_jsonl(path, "claude", diagnostics):
         if row.get("type") != "assistant":
             continue
@@ -325,7 +341,7 @@ def gemini_event_id(path: Path, message: dict[str, Any], index: int) -> str:
 
 
 def parse_gemini(path: Path, diagnostics: Diagnostics) -> Iterator[UsageEvent]:
-    fallback = path.stat().st_mtime
+    fallback = mtime_or_epoch(path)
     if path.suffix == ".jsonl":
         for line_no, row in iter_jsonl(path, "gemini", diagnostics):
             candidates: list[tuple[int, dict[str, Any]]] = []
@@ -376,7 +392,7 @@ def cursor_records(root: Any) -> Iterable[dict[str, Any]]:
 
 
 def parse_cursor(path: Path, diagnostics: Diagnostics) -> Iterator[UsageEvent]:
-    fallback = path.stat().st_mtime
+    fallback = mtime_or_epoch(path)
     roots: list[Any] = []
     if path.suffix == ".jsonl":
         roots.extend(row for _, row in iter_jsonl(path, "cursor", diagnostics))
@@ -479,7 +495,7 @@ def discover(
                     found.append(path)
             except OSError:
                 continue
-    found = sorted(set(found), key=lambda item: item.stat().st_mtime, reverse=True)
+    found = sorted(set(found), key=mtime_or_epoch, reverse=True)
     return found[:max_files] if max_files else found
 
 

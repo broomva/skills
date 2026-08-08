@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import math
 import re
@@ -56,11 +57,13 @@ class ProbeResult:
     files_discovered: int = 0
 
 
-def _safe_identifier(value: Any, fallback: str) -> str:
+def _opaque_identifier(value: Any, prefix: str) -> str:
+    """Return a stable public identifier without exposing provider text."""
     candidate = str(value or "").strip()
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+ -]{0,95}", candidate):
-        return candidate
-    return fallback
+    if not candidate:
+        return ""
+    digest = hashlib.sha256(candidate.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return f"{prefix}-{digest}"
 
 
 def _fraction(value: Any) -> float | None:
@@ -155,24 +158,25 @@ def parse_quota_summary(payload: Any, source: str = "export") -> tuple[list[dict
         for bucket_index, bucket in enumerate(group["buckets"]):
             if not isinstance(bucket, dict):
                 continue
-            bucket_id = _safe_identifier(bucket.get("bucketId"), "")
-            if not bucket_id:
+            raw_bucket_id = str(bucket.get("bucketId") or "").strip()
+            public_id = _opaque_identifier(raw_bucket_id, "bucket")
+            if not public_id:
                 warnings.append("Ignored an Antigravity quota bucket without a safe id.")
                 continue
             bucket_name = str(bucket.get("displayName") or "")
-            title, minutes = _cadence(bucket_id, bucket_name)
+            title, minutes = _cadence(raw_bucket_id, bucket_name)
             raw_remaining = _remaining_value(bucket)
             remaining = _fraction(raw_remaining)
             if raw_remaining is not None and remaining is None:
-                warnings.append(f"Ignored an invalid Antigravity remaining fraction for {bucket_id}.")
+                warnings.append(f"Ignored an invalid Antigravity remaining fraction for {public_id}.")
             disabled = bucket.get("disabled") is True
             reset_raw = bucket.get("resetTime")
             resets_at = _reset_time(reset_raw)
             if reset_raw is not None and resets_at is None:
-                warnings.append(f"Ignored an invalid Antigravity reset time for {bucket_id}.")
+                warnings.append(f"Ignored an invalid Antigravity reset time for {public_id}.")
             windows.append({
                 "provider": "antigravity",
-                "quota_id": f"antigravity-quota-summary-{bucket_id}",
+                "quota_id": f"antigravity-quota-summary-{public_id}",
                 "family": family,
                 "title": f"{family_title} {title}",
                 "window_minutes": minutes,
@@ -210,8 +214,16 @@ def parse_model_quotas(payload: Any, source: str = "export") -> tuple[list[dict[
         quota = config["quotaInfo"]
         model_or_alias = config.get("modelOrAlias")
         model = model_or_alias.get("model") if isinstance(model_or_alias, dict) else None
-        model_id = _safe_identifier(model, f"model-{index + 1}")
-        label = model_id
+        raw_model = str(model or "").strip()
+        model_id = _opaque_identifier(raw_model, "model") or f"model-{index + 1}"
+        family = _family(raw_model)
+        label = (
+            "Gemini model quota"
+            if family == "gemini"
+            else "Claude/GPT model quota"
+            if family == "claude-gpt"
+            else f"Model quota {index + 1}"
+        )
         raw_remaining = quota.get("remainingFraction")
         remaining = _fraction(raw_remaining)
         if raw_remaining is not None and remaining is None:
@@ -223,7 +235,7 @@ def parse_model_quotas(payload: Any, source: str = "export") -> tuple[list[dict[
         windows.append({
             "provider": "antigravity",
             "quota_id": f"antigravity-model-{model_id}",
-            "family": _family(f"{label} {model_id}"),
+            "family": family,
             "title": label,
             "window_minutes": None,
             "used_fraction": 1 - remaining if remaining is not None else None,

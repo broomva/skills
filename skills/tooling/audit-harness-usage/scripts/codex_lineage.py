@@ -433,9 +433,11 @@ class SnapshotResolver:
         if snapshots is None:
             return False, None
         cutoff_date = parse_time(cutoff)
+        if cutoff_date is None:
+            return False, None
         inherited: Totals | None = None
-        for timestamp, timestamp_date, totals in snapshots:
-            before = timestamp_date <= cutoff_date if timestamp_date is not None and cutoff_date is not None else timestamp <= cutoff
+        for _timestamp, timestamp_date, totals in snapshots:
+            before = timestamp_date <= cutoff_date if timestamp_date is not None else False
             if before:
                 inherited = totals
         return True, inherited

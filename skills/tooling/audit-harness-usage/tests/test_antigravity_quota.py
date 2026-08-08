@@ -87,11 +87,12 @@ def test_invalid_and_disabled_buckets_never_become_known_usage():
 
 def test_consumed_quota_fields_cannot_emit_email_identity_or_free_form_prose():
     email = "private@example.com"
+    bucket_identity = "account-12345-weekly"
     payload = {"groups": [{
         "displayName": email,
         "buckets": [{
-            "bucketId": "weekly",
-            "displayName": email,
+            "bucketId": bucket_identity,
+            "displayName": "Weekly Limit",
             "description": f"Owner {email}",
             "remainingFraction": .5,
         }],
@@ -102,9 +103,11 @@ def test_consumed_quota_fields_cannot_emit_email_identity_or_free_form_prose():
     assert windows[0]["title"] == "Quota weekly"
     assert windows[0]["reset_description"] is None
     assert email not in serialized
+    assert bucket_identity not in serialized
 
 
 def test_user_status_fallback_ignores_account_identity():
+    raw_model = "account.private+claude-sonnet"
     payload = {
         "code": 0,
         "userStatus": {
@@ -112,7 +115,7 @@ def test_user_status_fallback_ignores_account_identity():
             "planStatus": {"planInfo": {"planName": "Pro"}},
             "cascadeModelConfigData": {"clientModelConfigs": [{
                 "label": "Claude Sonnet",
-                "modelOrAlias": {"model": "claude-sonnet"},
+                "modelOrAlias": {"model": raw_model},
                 "quotaInfo": {"remainingFraction": .5, "resetTime": "2025-12-24T10:00:00Z"},
             }]},
         },
@@ -122,6 +125,8 @@ def test_user_status_fallback_ignores_account_identity():
     assert warnings == []
     assert len(windows) == 1
     assert windows[0]["family"] == "claude-gpt"
+    assert windows[0]["title"] == "Claude/GPT model quota"
+    assert raw_model not in serialized
     assert "private@example.com" not in serialized
     assert "planName" not in serialized
 
@@ -139,8 +144,9 @@ def test_export_directory_keeps_newest_snapshot_and_sanitizes_csv_labels(tmp_pat
     os.utime(old, (1, 1))
     os.utime(new, (2, 2))
     result = quota.load_exports([tmp_path])
-    weekly = next(window for window in result.windows if window["quota_id"].endswith("gemini-weekly"))
+    weekly = next(window for window in result.windows if window["remaining_fraction"] == .9)
     assert weekly["remaining_fraction"] == .9
+    assert weekly["title"] == "Quota weekly"
     assert all(not window["title"].startswith(("=", "+", "-", "@")) for window in result.windows)
     assert result.files_discovered == 2
 

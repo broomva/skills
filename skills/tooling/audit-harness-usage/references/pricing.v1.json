@@ -5,7 +5,7 @@
   "unit": "per_1m_tokens",
   "provenance": {
     "models": "https://models.dev/api.json",
-    "openai": "https://openai.com/api/pricing/",
+    "openai": "https://developers.openai.com/api/docs/pricing",
     "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
     "google": "https://ai.google.dev/gemini-api/docs/pricing",
     "cursor": "https://docs.cursor.com/account/pricing"

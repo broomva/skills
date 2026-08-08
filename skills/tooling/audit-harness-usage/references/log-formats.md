@@ -74,7 +74,7 @@ The bundled snapshot represents paid API list price, not the caller's billing
 arrangement. See [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing).
 
 OpenAI cached-input and long-context prices are model-specific. See
-[OpenAI API pricing](https://openai.com/api/pricing/). Cursor says selected
+[OpenAI API pricing](https://developers.openai.com/api/docs/pricing). Cursor says selected
 models consume usage at list API price and exposes token breakdowns in its
 dashboard; see [Cursor pricing](https://docs.cursor.com/account/pricing) and
 [Admin API](https://docs.cursor.com/en/account/teams/admin-api).

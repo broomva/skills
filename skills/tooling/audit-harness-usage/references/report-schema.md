@@ -39,8 +39,8 @@ mechanisms, including `codex-lineage-aware`,
 | Field | Contract |
 |---|---|
 | `estimated_cost_usd` | complete public-rate estimate, otherwise `null` |
-| `estimated_cost_usd_priced_portion` | sum for resolved models only; disclosed lower bound |
-| `pricing_coverage` | `priced_tokens / total_tokens`, 0–1; `null` when an aggregate backend omits enough model detail to prove coverage |
+| `estimated_cost_usd_priced_portion` | sum for fully priced events or buckets only; disclosed lower bound |
+| `pricing_coverage` | tokens in fully priced events or buckets divided by total tokens, 0–1; any nonzero component without a rate leaves that event unpriced, and coverage is `null` when an aggregate backend omits enough detail to prove it |
 | `reported_list_cost_usd` | provider-supplied vendor list cost, currently Cursor |
 | `charged_cost_usd` | provider-supplied metered deduction, currently Cursor |
 
