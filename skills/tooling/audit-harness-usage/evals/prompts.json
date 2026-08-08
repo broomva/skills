@@ -1,0 +1,15 @@
+{
+  "skill": "audit-harness-usage",
+  "version": 1,
+  "cases": [
+    {"prompt": "how does CodexBar calculate token cost?", "should_trigger": true},
+    {"prompt": "compare Claude Code, Codex, Gemini, and Cursor usage for 30 days", "should_trigger": true},
+    {"prompt": "parse this Cursor usage export and show charged versus list cost", "should_trigger": true},
+    {"prompt": "debug the token refresh handler in auth.ts", "should_trigger": false},
+    {"prompt": "does Gemini CLI include Google Antigravity usage?", "should_trigger": true},
+    {"prompt": "show my Antigravity Gemini and Claude/GPT quota windows", "should_trigger": true},
+    {"prompt": "create an HTML dashboard of my agent usage and improvement opportunities", "should_trigger": true},
+    {"prompt": "show my remaining weekly Claude API quota", "should_trigger": false},
+    {"prompt": "review this provider invoice for duplicate charges", "should_trigger": false}
+  ]
+}

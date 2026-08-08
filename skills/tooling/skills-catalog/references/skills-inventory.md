@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 81 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-02.
+> 83 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-05.
 
-## Governance & control — `skills/governance/` (7)
+## Governance & control — `skills/governance/` (8)
 
 | Skill | What it does |
 |---|---|
@@ -12,6 +12,7 @@
 | `cross-review` | bstack P20 — Cross-Model Adversarial Review Gate |
 | `dogfood` | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
+| `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 
 ## Orchestration & autonomy — `skills/orchestration/` (7)
 
@@ -25,15 +26,17 @@
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
 
-## Skill & prompt tooling — `skills/tooling/` (6)
+## Skill & prompt tooling — `skills/tooling/` (7)
 
 | Skill | What it does |
 |---|---|
+| `audit-harness-usage` | Audit Codex, Claude, Gemini, and Cursor token/cost traces plus Antigravity quotas; emit JSON/CSV/text or a self-contained HTML insights dashboard—no CodexBar runtime dependency |
 | `broomva-cli` | CLI for broomva.tech — manage prompts, skills, and context from the terminal |
+| `disambiguate` | Rewrite a requirement so it can only be read one way, with a deterministic ambiguity checker for the mechanical layer |
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 81 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 83 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (6)
 
