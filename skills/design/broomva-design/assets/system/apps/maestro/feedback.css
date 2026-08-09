@@ -1,0 +1,256 @@
+/* ============================================================
+   Feedback — handed to the loop, not fired into a void.
+   The product's thesis is that the loop CLOSES: every piece of
+   work is a noun with a state and a receipt, and the living
+   signal is the Undertow/tidepool — never a progress bar. So
+   feedback is a tracked THREAD you can watch. One of them maestro
+   has already pulled into a live session (Undertow treatment).
+   A right-docked drawer over the dimmed app — an aside to your
+   work, where the stream lives.
+   New classes: .fb-*
+   ============================================================ */
+
+/* Scrim — static dim (never animates opacity, so a frozen clock
+   can't blank it). */
+.fb-scrim {
+  position: fixed; inset: 0; z-index: 80;
+  background: oklch(0.135 0.02 272 / 0.40);
+}
+
+.fb-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 81;
+  width: 452px; max-width: 92vw;
+  background: var(--card); border-left: 1px solid var(--bv-border-15);
+  box-shadow: -24px 0 60px -28px oklch(0.2 0.04 265 / 0.4);
+  display: flex; flex-direction: column; min-height: 0;
+  /* Declare the full sans stack explicitly — the body's inline
+     `ui-sans-serif` has no fallback and silently drops to serif in
+     browsers that don't resolve that bare keyword (e.g. Firefox).
+     Everything inside inherits from here. */
+  font-family: var(--bv-font-sans);
+  color: var(--foreground);
+}
+/* Entrance is additive transform only — resting state is fully
+   visible, so a paused animation clock can never hide it. */
+@media (prefers-reduced-motion: no-preference) {
+  .fb-drawer { animation: fb-slide 0.3s var(--bv-ease-emphasized, cubic-bezier(0.2, 0, 0, 1)); }
+}
+@keyframes fb-slide { from { transform: translateX(28px); } to { transform: none; } }
+
+/* ── Header ──────────────────────────────────────────────── */
+.fb-head { flex-shrink: 0; display: flex; align-items: flex-start; gap: 12px; padding: 18px 18px 14px; border-bottom: 1px solid var(--bv-border-5); }
+.fb-head-glyph {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bv-frost-8); color: var(--bv-blue);
+}
+.fb-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fb-title { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.fb-sub { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.4; }
+.fb-x {
+  flex-shrink: 0; width: 28px; height: 28px; border: none; border-radius: var(--bv-radius-lg);
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+}
+.fb-x:hover { background: var(--bv-frost-8); color: var(--foreground); }
+
+/* ── Body (scrolls) ──────────────────────────────────────── */
+.fb-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+
+/* Composer — calm, the way you talk to maestro everywhere else.
+   No chunky intent cards; the message is the hero. */
+.fb-compose { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 11px; border-bottom: 1px solid var(--bv-border-5); }
+.fb-compose-field {
+  border: 1px solid var(--bv-border-15); border-radius: 14px; background: var(--card);
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: border-color var(--bv-dur-fast) var(--bv-ease-standard), box-shadow var(--bv-dur-fast);
+}
+.fb-compose-field:focus-within { border-color: var(--bv-blue); box-shadow: 0 0 0 3px var(--bv-frost-12); }
+.fb-text {
+  width: 100%; min-height: 92px; resize: none; border: none; background: transparent;
+  color: var(--foreground); font: inherit; font-size: 14px; line-height: 1.55;
+  padding: 13px 14px 4px; outline: none;
+}
+.fb-text::placeholder { color: var(--bv-gray-500); }
+
+/* Composer tray — quiet type pills + send, inside the field */
+.fb-tray { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; }
+.fb-types { display: inline-flex; gap: 2px; }
+.fb-type {
+  height: 26px; padding: 0 10px; border: none; border-radius: 99px;
+  background: transparent; color: var(--muted-foreground); cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard), color var(--bv-dur-fast);
+}
+.fb-type > svg { width: 14px; height: 14px; }
+.fb-type:hover { background: var(--bv-frost-8); color: var(--foreground); }
+.fb-type.is-active { background: var(--bv-frost-12); color: var(--bv-blue); }
+.fb-send {
+  margin-left: auto; flex-shrink: 0;
+  width: 32px; height: 32px; border: none; border-radius: 10px;
+  background: var(--bv-ink); color: var(--bv-white); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard), opacity var(--bv-dur-fast);
+}
+.fb-send:hover { background: var(--bv-ink-hover); }
+.fb-send:disabled { opacity: 0.35; cursor: default; }
+
+/* Attach-context line — a quiet receipt, not a boxed toggle */
+.fb-ctx { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
+.fb-ctx-check {
+  width: 17px; height: 17px; flex-shrink: 0; border-radius: 5px; cursor: pointer;
+  border: 1.5px solid var(--bv-border-15); background: var(--card);
+  display: inline-flex; align-items: center; justify-content: center; color: transparent;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard), border-color var(--bv-dur-fast), color var(--bv-dur-fast);
+}
+.fb-ctx-check.is-on { background: var(--bv-blue); border-color: var(--bv-blue); color: var(--bv-white); }
+.fb-ctx-label { font-size: 12px; color: var(--muted-foreground); }
+.fb-ctx-label code {
+  font-family: var(--bv-font-mono, ui-monospace, monospace); font-size: 12px;
+  color: var(--foreground); background: var(--bv-canvas-soft); padding: 1px 6px; border-radius: 5px;
+}
+
+/* ── Threads — your feedback, tracked like every other noun ── */
+.fb-threads { padding: 14px 14px 22px; display: flex; flex-direction: column; gap: 3px; }
+.fb-threads-head { display: flex; align-items: baseline; gap: 8px; padding: 4px 6px 8px; }
+.fb-threads-label { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.fb-threads-note { font-size: 12px; color: var(--bv-gray-500); margin-left: auto; }
+
+.fb-thread {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 11px 10px; border-radius: 12px; background: transparent;
+  border: none; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+}
+.fb-thread:hover { background: var(--bv-frost-8); }
+.fb-thread-dot { flex-shrink: 0; margin-top: 2px; }
+.fb-thread-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.fb-thread-top { display: flex; align-items: baseline; gap: 8px; }
+.fb-thread-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; line-height: 1.35; }
+.fb-thread-time { flex-shrink: 0; font-size: 12px; color: var(--bv-gray-500); font-variant-numeric: tabular-nums; }
+.fb-thread-meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.fb-thread-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; }
+.fb-thread-status--ship { color: var(--bv-success); }
+.fb-thread-status--triage { color: var(--bv-blue); }
+.fb-thread-status--log { color: var(--muted-foreground); }
+.fb-thread-status--live { color: var(--bv-blue); }
+.fb-thread-detail { font-size: 12px; color: var(--muted-foreground); }
+.fb-thread-detail::before { content: "·"; margin-right: 7px; color: var(--bv-gray-400); }
+
+/* The live thread wears the Undertow — maestro pulled it into a
+   running session. The product's hero signal, applied literally. */
+.fb-thread--live { background: var(--card); border: 1px solid var(--bv-border-5); padding: 12px; margin: 4px 0; }
+.fb-thread--live:hover { background: var(--card); }
+.fb-live-link {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 2px;
+  font-size: 12px; font-weight: 500; color: var(--bv-blue);
+}
+.fb-live-link > svg { width: 13px; height: 13px; }
+
+/* A freshly-sent thread eases in. Additive transform only — never
+   touches opacity, so it can't appear stuck dim under a frozen clock. */
+@media (prefers-reduced-motion: no-preference) {
+  .fb-thread--fresh { animation: fb-thread-in 0.42s var(--bv-ease-standard); }
+}
+@keyframes fb-thread-in {
+  from { transform: translateY(-7px) scale(0.99); }
+  to { transform: none; }
+}
+
+/* ============================================================
+   Autonomy hover-card — the score, unfolded.
+   The sidebar footer holds the product's one true metric in a
+   4px bar. On hover it rises into the full day: every run, the
+   looks as notches, the live one under the tidepool, where the
+   hours went. Fixed-positioned so it escapes the clipped sidebar.
+   ============================================================ */
+.mcc-autonomy { cursor: default; transition: border-color var(--bv-dur-fast) var(--bv-ease-standard), background var(--bv-dur-fast); }
+.mcc-autonomy.is-hovered { border-color: var(--bv-border-15); background: var(--bv-frost-4); }
+
+.autop {
+  position: fixed; z-index: 90; width: 332px;
+  background: var(--card); border: 1px solid var(--bv-border-15);
+  border-radius: var(--bv-radius-xl);
+  box-shadow: 0 18px 48px -18px oklch(0.2 0.04 265 / 0.45), var(--bv-shadow-edge);
+  padding: 15px 16px 13px; display: flex; flex-direction: column; gap: 13px;
+  /* Portaled to <body>, so declare the font stack explicitly (see
+     .fb-drawer note) — bare inherited `ui-sans-serif` can drop to serif. */
+  font-family: var(--bv-font-sans);
+  color: var(--foreground);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .autop { animation: autop-rise 0.2s var(--bv-ease-standard); }
+}
+@keyframes autop-rise { from { transform: translateY(6px); } to { transform: none; } }
+
+.autop-head { display: flex; align-items: flex-start; gap: 10px; }
+.autop-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.autop-label { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.autop-big { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.autop-big small { font-size: 15px; font-weight: 500; color: var(--muted-foreground); margin-left: 1px; }
+.autop-delta {
+  align-self: flex-start; margin-top: 3px;
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px;
+  border-radius: 99px; background: oklch(0.62 0.17 152 / 0.14); color: var(--bv-success);
+  font-size: 12px; font-weight: 600;
+}
+
+/* The day timeline — the 4px bar given room to breathe */
+.autop-tl { display: flex; flex-direction: column; gap: 5px; }
+.autop-track {
+  position: relative; height: 22px; border-radius: 6px;
+  background: var(--bv-canvas-soft); overflow: visible;
+}
+.autop-run {
+  position: absolute; top: 5px; height: 12px; border-radius: 3px;
+  background: var(--bv-blue); opacity: 0.5;
+}
+.autop-run.is-live {
+  opacity: 1; overflow: hidden;
+  background: linear-gradient(160deg, var(--bv-blue) 20%, oklch(0.62 0.18 258 / 0.6) 45%, oklch(0.82 0.09 230) 58%, var(--bv-blue) 82%);
+  background-size: 100% 260%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .autop-run.is-live { animation: autop-tide 3.2s ease-in-out infinite alternate; }
+}
+@keyframes autop-tide { from { background-position: 0 0%; } to { background-position: 0 100%; } }
+.autop-look {
+  position: absolute; top: 1px; width: 1.5px; height: 20px; border-radius: 1px;
+  background: var(--bv-blue-accent);
+}
+.autop-look::after {
+  content: ""; position: absolute; top: -2px; left: -1.25px;
+  width: 4px; height: 4px; border-radius: 99px; background: var(--bv-blue-accent);
+}
+.autop-ticks { display: flex; justify-content: space-between; font-size: 12px; color: var(--bv-gray-500); font-variant-numeric: tabular-nums; }
+
+/* Stat triplet */
+.autop-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+.autop-stat { display: flex; flex-direction: column; gap: 1px; padding-right: 10px; position: relative; }
+.autop-stat + .autop-stat { padding-left: 12px; }
+.autop-stat + .autop-stat::before { content: ""; position: absolute; left: 0; top: 1px; bottom: 1px; width: 1px; background: var(--bv-border-5); }
+.autop-stat-val { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.autop-stat-lab { font-size: 12px; color: var(--muted-foreground); }
+
+/* Where the hours went */
+.autop-where { display: flex; flex-direction: column; gap: 1px; }
+.autop-where-label { font-size: 12px; font-weight: 600; color: var(--muted-foreground); padding: 2px 2px 5px; }
+.autop-row { display: flex; align-items: center; gap: 9px; padding: 5px 2px; }
+.autop-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.autop-row-title { font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autop-row-crumb { font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autop-row-dur { flex-shrink: 0; font-size: 12px; font-weight: 500; color: var(--foreground); font-variant-numeric: tabular-nums; }
+
+.autop-foot {
+  margin-top: 1px; padding-top: 11px; border-top: 1px solid var(--bv-border-5);
+  display: flex; align-items: center; gap: 8px;
+}
+.autop-foot-note { font-size: 12px; color: var(--bv-gray-500); flex: 1; min-width: 0; }
+.autop-link {
+  display: inline-flex; align-items: center; gap: 5px; border: none; background: transparent;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--bv-blue); cursor: pointer; padding: 0;
+}
+.autop-link > svg { width: 13px; height: 13px; }
+.autop-link:hover { text-decoration: underline; }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Broomva Design"
+  short_description: "Apply Broomva across any digital product"
+  default_prompt: "Use $broomva-design to apply the platform-neutral Broomva system to this digital product."

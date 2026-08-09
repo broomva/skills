@@ -1,0 +1,73 @@
+/* ============================================================
+   Broomva — Glass tokens + utilities
+   Glass is EARNED, not ambient. It appears in exactly three
+   places: overlays (dialogs, command palette), the composer,
+   and popovers (menus, tooltips, dropdowns). Cards, panels,
+   sidebars and chrome stay matte. If a surface doesn't float
+   above the page, it doesn't get glass.
+   ============================================================ */
+
+:root {
+  --bv-blur-sm: 6px;
+  --bv-blur-md: 12px;
+  --bv-blur-lg: 22px;
+  --bv-blur-xl: 32px;
+
+  /* Liquid-glass saturation — background colour blooms through the frost.
+     High saturation is what separates "frosted glass" from "dim window". */
+  --glass-sat: 1.8; /* @kind other */
+  --glass-sat-heavy: 2.0; /* @kind other */
+
+  /* Layered glass elevation. A bright top highlight + an inner hairline give
+     the surface its thickness; the wide soft drop shadow makes it float. */
+  --glass-elev:
+    inset 0 1px 0 var(--glass-light-line),
+    inset 0 0 0 1px var(--glass-inner-ring),
+    0 1px 1px oklch(0.30 0.06 262 / 0.06),
+    0 12px 32px oklch(0.30 0.06 262 / 0.16);
+  --glass-elev-heavy:
+    inset 0 1px 0 var(--glass-light-line),
+    inset 0 0 0 1px var(--glass-inner-ring),
+    0 2px 4px oklch(0.30 0.06 262 / 0.08),
+    0 24px 56px oklch(0.30 0.06 262 / 0.22);
+}
+
+/* Popovers, menus, tooltips — light touch.
+   Strong blur + saturation turns whatever is behind into a soft frosted wash;
+   text must NEVER stay legible through a popover. */
+.bv-glass {
+  background: var(--glass-surface);
+  backdrop-filter: blur(var(--bv-blur-lg)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--bv-blur-lg)) saturate(var(--glass-sat));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--bv-radius-xl);
+  box-shadow: var(--glass-elev);
+}
+
+/* Dialogs, command palette — heavier, more present */
+.bv-glass-heavy {
+  background: var(--glass-surface-heavy);
+  backdrop-filter: blur(var(--bv-blur-xl)) saturate(var(--glass-sat-heavy));
+  -webkit-backdrop-filter: blur(var(--bv-blur-xl)) saturate(var(--glass-sat-heavy));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--bv-radius-2xl);
+  box-shadow: var(--glass-elev-heavy);
+}
+
+/* The composer — glass + the signature frosted-blue halo */
+.bv-glass-composer {
+  background: var(--glass-surface-heavy);
+  backdrop-filter: blur(var(--bv-blur-lg)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--bv-blur-lg)) saturate(var(--glass-sat));
+  border-radius: var(--bv-radius-composer);
+  box-shadow:
+    inset 0 1px 0 var(--glass-light-line),
+    var(--bv-shadow-composer);
+}
+
+/* Scrim behind dialogs — blue-black, never gray */
+.bv-scrim {
+  background: oklch(0.14 0.025 270 / 0.45);
+  backdrop-filter: blur(var(--bv-blur-sm));
+  -webkit-backdrop-filter: blur(var(--bv-blur-sm));
+}

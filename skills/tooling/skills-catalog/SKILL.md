@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 83 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 85 agent skills in the broomva/skills monorepo,
   organized into 22 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -22,21 +22,21 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-83 skills across 22 category buckets (mirroring the `skills/<category>/` directory layout):
+85 skills across 22 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
 | Governance & control (`governance`) | 8 | agentic-control-kernel, architecture-design-principles, bstack |
 | Orchestration & autonomy (`orchestration`) | 7 | autonomous, eve-forge, governed-autonomy-loop |
 | Skill & prompt tooling (`tooling`) | 7 | audit-harness-usage, broomva-cli, make-spec |
-| Knowledge & memory (`knowledge`) | 6 | bookkeeping, braindump, colombia-conflict |
+| Knowledge & memory (`knowledge`) | 7 | bookkeeping, braindump, colombia-conflict |
 | Research (`research`) | 2 | checkit, deep-dive-research-orchestrator |
 | Strategy & decisions (`strategy`) | 5 | decision-log, phronesis, pre-mortem |
 | Operating cadence (`cadence`) | 4 | drift-check, morning-briefing, stakeholder-update |
 | Publishing & growth (`publishing`) | 5 | blog-post, content-creation, revenuecast |
 | Video & multimedia (`video`) | 6 | brainrot-for-good, content-engine, creative-review |
 | Audio & music (`audio`) | 2 | livecoding, omnivoice |
-| Design & brand (`design`) | 5 | arcan-glass, brand-icons, design-engineering |
+| Design & brand (`design`) | 6 | arcan-glass, broomva-design, design-engineering |
 | Finance & payments (`finance`) | 4 | finance-substrate, haima, investment-management |
 | Compute infrastructure (`compute`) | 3 | agentic-vps, colab-remote, remote-gpu |
 | Model runtimes (`models`) | 2 | bitnet, heretic-abliteration |

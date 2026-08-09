@@ -1,0 +1,31 @@
+name: test-broomva-design
+
+on:
+  pull_request:
+    paths:
+      - 'skills/design/broomva-design/**'
+      - '.github/workflows/test-broomva-design.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/design/broomva-design/**'
+      - '.github/workflows/test-broomva-design.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-broomva-design-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Verify bundled design-system invariants
+        run: python3 skills/design/broomva-design/scripts/materialize.py verify-source
+      - name: Test safe materialization profiles
+        run: python3 -m unittest discover -s skills/design/broomva-design/tests -v
+      - name: Run clean-target smoke test
+        run: bash skills/design/broomva-design/tests/smoke.sh

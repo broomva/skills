@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broomva Design System</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding-left: 32px; padding-right: 32px; }
+
+  /* ── Sticky header (floating = earns glass) ───────────── */
+  .top {
+    position: sticky; top: 12px; z-index: 50;
+    max-width: 1040px; margin: 12px auto 0;
+    height: 56px; padding: 0 10px 0 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .top img { width: 24px; height: 24px; border-radius: 7px; }
+  .top-title { font-size: 15px; font-weight: 500; }
+  .top-sub { font-size: 13px; color: var(--muted-foreground); }
+  .top-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: var(--bv-radius-lg);
+    border: none; background: transparent; color: var(--bv-gray-700);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+  }
+  .icon-btn:hover { background: var(--bv-frost-8); }
+  .icon-btn svg { width: 18px; height: 18px; }
+
+  /* ── Hero ─────────────────────────────────────────────── */
+  .hero { padding-top: 72px; }
+  .hero h1 { font-size: 44px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; max-width: 20ch; }
+  .hero p { margin-top: 14px; font-size: 17px; line-height: 1.6; color: var(--muted-foreground); max-width: 60ch; text-wrap: pretty; }
+  .hero .credo { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
+    border-radius: var(--bv-radius-full);
+    background: var(--bv-canvas-soft); font-size: 12px; font-weight: 500;
+  }
+
+  /* ── Sections ─────────────────────────────────────────── */
+  section { padding-top: 72px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; }
+  .sec-head h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+  .sec-head span { font-size: 13px; color: var(--muted-foreground); }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--bv-border-5);
+    border-radius: var(--bv-radius-2xl);
+    box-shadow: var(--bv-shadow-edge);
+    padding: 28px;
+  }
+  .panel + .panel { margin-top: 14px; }
+  .panel-label { font-size: 12px; color: var(--muted-foreground); margin-bottom: 16px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+
+  /* Type specimens */
+  .spec { display: grid; grid-template-columns: 130px 1fr; align-items: baseline; gap: 16px; padding: 7px 0; }
+
+  /* Swatches */
+  .swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+  .sw { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+  .sw i { display: block; width: 52px; height: 52px; border-radius: 8px; border: 1px solid var(--bv-border-5); }
+  .sw .mono { font-size: 10px; }
+
+  /* Radii / spacing */
+  .r-demo { background: var(--bv-canvas-soft); border: 1px solid var(--bv-border-15); width: 72px; height: 52px; }
+  .s-demo { background: var(--bv-frost-12); border-radius: 3px; width: 26px; }
+
+  /* Shadows */
+  .sh-stage { background: var(--bv-canvas-soft); border-radius: var(--bv-radius-xl); padding: 28px 22px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .sh { background: var(--card); border-radius: 12px; width: 140px; height: 84px; border: 1px solid var(--bv-border-5); }
+
+  /* Glass stage */
+  .glass-stage { position: relative; border-radius: var(--bv-radius-xl); padding: 26px 22px; overflow: hidden; background: oklch(0.135 0.020 272); display: flex; gap: 16px; flex-wrap: wrap; }
+  .glass-stage .orb { position: absolute; border-radius: 9999px; filter: blur(60px); pointer-events: none; }
+  .glass-stage .bg-text { position: absolute; inset: 0; padding: 12px 16px; color: oklch(0.52 0.02 270); font-size: 13px; line-height: 1.9; user-select: none; }
+  .g { position: relative; width: 200px; height: 120px; padding: 14px; font-size: 13px; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; color: oklch(0.965 0.004 265); }
+  .glass-stage .mono { color: oklch(0.62 0.02 270); }
+
+  /* Buttons */
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-radius: var(--bv-radius-full);
+    font: inherit; font-size: 14px; font-weight: 500;
+    height: 36px; padding: 0 14px;
+    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+    transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+  }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--primary:hover { background: var(--bv-ink-hover); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--secondary:hover { background: var(--bv-frost-4); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .pill--soft:hover { background: var(--bv-frost-8); }
+  .pill--ghost { background: transparent; color: var(--foreground); }
+  .pill--ghost:hover { background: var(--bv-frost-8); }
+  .pill svg { width: 16px; height: 16px; }
+
+  /* Inputs */
+  .input {
+    height: 36px; padding: 0 12px; border-radius: var(--bv-radius-md);
+    border: 1px solid var(--input); background: var(--card);
+    font: inherit; font-size: 14px; color: var(--foreground); outline: none; width: 170px;
+  }
+  .input::placeholder { color: var(--bv-gray-500); }
+  .search {
+    display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+    background: var(--bv-canvas-soft); border-radius: var(--bv-radius-full);
+    color: var(--muted-foreground); width: 190px; font-size: 14px;
+  }
+  .search svg { width: 16px; height: 16px; }
+
+  /* Badges */
+  .badge { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 12px; border-radius: var(--bv-radius-full); background: var(--bv-canvas-soft); font-size: 12px; font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 99px; }
+  .dot--pulse { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 0.45; } 50% { opacity: 1; } }
+
+  /* Cards */
+  .demo-card {
+    background: var(--card); border: 1px solid var(--bv-border-5);
+    border-radius: var(--bv-radius-xl); box-shadow: var(--bv-shadow-edge);
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; width: 190px;
+    transition: box-shadow var(--bv-dur-fast) var(--bv-ease-standard);
+  }
+  .demo-card:hover { box-shadow: var(--bv-shadow-card-hover); }
+  .demo-card-title { font-size: 14px; font-weight: 500; }
+  .demo-card-sub { font-size: 13px; color: var(--muted-foreground); }
+  .demo-card-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+  .glow { position: relative; border-radius: var(--bv-radius-xl); overflow: hidden; isolation: isolate; }
+  .glow::before {
+    content: ""; position: absolute; inset: -50%; z-index: -2;
+    background: conic-gradient(from 0deg, transparent 60%, oklch(0.62 0.18 258 / 0.20) 66%, var(--bv-glow-blue) 74%, var(--bv-glow-indigo) 78%, var(--bv-glow-cyan) 82%, var(--bv-glow-ice) 85%, transparent 89%);
+    animation: spin 2.5s linear infinite;
+  }
+  .glow::after { content: ""; position: absolute; inset: 1.5px; z-index: -1; border-radius: inherit; background: var(--card); }
+  .glow .demo-card { background: transparent; border-color: transparent; box-shadow: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .glow::before { animation: none; } }
+
+  /* Messages */
+  .bubble-user { align-self: flex-end; background: var(--bv-canvas-soft-2); border-radius: 24px 24px 6px 24px; padding: 10px 18px; font-size: 15px; max-width: 75%; }
+  .bubble-asst { font-size: 15px; line-height: 1.5; }
+  .link-pill { display: inline-flex; align-items: center; height: 24px; padding: 0 11px; border-radius: var(--bv-radius-full); background: var(--primary); color: var(--primary-foreground); font-size: 12px; font-weight: 500; vertical-align: middle; }
+  .typing { display: inline-flex; gap: 5px; padding: 10px 14px; background: var(--bv-canvas-soft-2); border-radius: 18px; align-self: flex-start; }
+  .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); animation: b 1.2s ease-in-out infinite both; }
+  .typing span:nth-child(2) { animation-delay: 0.15s; }
+  .typing span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes b { 0%,80%,100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-5px); opacity: 1; } }
+
+  /* Composer */
+  .composer {
+    border-radius: var(--bv-radius-composer); padding: 8px 8px 8px 16px;
+    display: flex; align-items: center; gap: 8px;
+    color: var(--bv-gray-500); font-size: 15px; max-width: 420px;
+  }
+  .send {
+    width: 32px; height: 32px; border-radius: 16px;
+    background: var(--primary); color: var(--primary-foreground);
+    border: none; margin-left: auto; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .send svg { width: 16px; height: 16px; }
+
+  /* Voice */
+  .voice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+
+  /* Why */
+  .why-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px 22px; }
+  .why-item { display: flex; flex-direction: column; gap: 4px; }
+  .why-item b { font-size: 14px; font-weight: 500; }
+  .why-item span { font-size: 13px; line-height: 1.55; color: var(--muted-foreground); text-wrap: pretty; }
+  .voice-grid h3 { font-size: 14px; font-weight: 500; margin-bottom: 12px; }
+  .voice-item { display: flex; gap: 10px; font-size: 14px; line-height: 1.5; padding: 5px 0; }
+  .voice-item .y { color: var(--bv-success); flex-shrink: 0; }
+  .voice-item .n { color: var(--bv-danger); flex-shrink: 0; }
+  .voice-item s { color: var(--muted-foreground); text-decoration-color: oklch(0.56 0.21 27 / 0.5); }
+
+  /* Resources */
+  .res { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .res a {
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--card); border: 1px solid var(--bv-border-5);
+    border-radius: var(--bv-radius-xl); box-shadow: var(--bv-shadow-edge);
+    padding: 18px 20px; text-decoration: none; color: var(--foreground);
+    transition: box-shadow var(--bv-dur-fast) var(--bv-ease-standard);
+  }
+  .res a:hover { box-shadow: var(--bv-shadow-card-hover); }
+  .res b { font-size: 14px; font-weight: 500; }
+  .res span { font-size: 12px; color: var(--muted-foreground); }
+
+  footer { padding-top: 80px; padding-bottom: 48px; }
+  .foot { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted-foreground); }
+  .foot img { width: 18px; height: 18px; border-radius: 5px; }
+
+    @media (max-width: 860px) {
+    .grid-2, .voice-grid, .res, .why-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top bv-glass" data-screen-label="Header">
+  <img src="assets/broomva-blackhole-logo.png" alt="">
+  <span class="top-title">Broomva Design System</span>
+  <span class="top-sub">v1</span>
+  <div class="top-actions">
+    <button class="icon-btn" type="button" id="theme-toggle" aria-label="Toggle theme">
+      <svg id="ic-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg>
+      <svg id="ic-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap hero" data-screen-label="Intro">
+  <h1>Calm, monochrome, on a blue axis</h1>
+  <p>The primitives designed for Mission Control, Broomva's work plane: the work-as-noun model, the plain-voice state vocabulary, the disclosure ladder, and the Undertow live signal. Every black is a barely-perceptible dark blue, and depth cues carry frosted liquid-glass blue. It reads as monochrome until you look. Then everything is faintly, coolly blue.</p>
+  <div class="credo">
+    <span class="chip">Work is the noun</span>
+    <span class="chip">The gate is yours</span>
+    <span class="chip">The Undertow: presence, not progress</span>
+    <span class="chip">Glass is earned, not ambient</span>
+    <span class="chip">Sentence case everywhere</span>
+  </div>
+</div>
+
+<section class="wrap" data-screen-label="Philosophy">
+  <div class="sec-head"><h2>Why</h2><span>autonomy is the moat · control is the engine</span></div>
+  <div class="panel">
+    <div class="panel-label">Broomva orchestrates loops of agentic workflows under structure: control, governance, and bio-inspired principles of metacognition, persistence, stability and flow. The scarce resource is unsupervised hours — how long an agent runs before a human must look. The design language makes that legible and calm.</div>
+    <div class="why-grid">
+      <div class="why-item"><b>The workspace is the substrate</b><span>FS + sh. A folder is work at any scale; frontmatter is the contract. Sessions are the verb — work is the noun.</span></div>
+      <div class="why-item"><b>Chat is a projection</b><span>A session renders the work; it never owns it. The same run appears in a panel, a thread, a handoff page.</span></div>
+      <div class="why-item"><b>The orchestrator is an agent</b><span>A session that schedules sessions: presence in the chrome, a wake log, schedules set in a sentence — never a settings page.</span></div>
+      <div class="why-item"><b>The tick is a prompt</b><span>Every wake has a cause: a worker returning, your message, an interval, a self-set routine. The loop is legible.</span></div>
+      <div class="why-item"><b>The branch is the receipt</b><span>Evidence over claims: run branches, diffstats, judge verdicts. Never fake progress percentages.</span></div>
+      <div class="why-item"><b>The gate is yours</b><span>No loop can auto-Done. The look compresses hours to 90 seconds: what changed · what it decided · what it asks.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" data-screen-label="Type">
+  <div class="sec-head"><h2>Type</h2><span>system stack · 12 / 14 / 16 / 18 / 22 / 24 / 28 · nothing else</span></div>
+  <div class="panel">
+    <div class="spec"><span class="mono">28 / 400 / h1</span><span style="font-size:28px;letter-spacing:-0.01em;">Mission control</span></div>
+    <div class="spec"><span class="mono">24 / 600 / empty state</span><span style="font-size:24px;font-weight:600;">No missions yet</span></div>
+    <div class="spec"><span class="mono">22 / 600 / h2</span><span style="font-size:22px;font-weight:600;">Connected apps</span></div>
+    <div class="spec"><span class="mono">18 / 500 / h3</span><span style="font-size:18px;font-weight:500;">Weekly planning</span></div>
+    <div class="spec"><span class="mono">16 / 400 / body</span><span style="font-size:16px;">Here's your Fri May 22 plan.</span></div>
+    <div class="spec"><span class="mono">14 / 500 / button</span><span style="font-size:14px;font-weight:500;">New mission</span></div>
+    <div class="spec"><span class="mono">12 / 400 / meta</span><span style="font-size:12px;color:var(--muted-foreground);">Updated 2 min ago</span></div>
+  </div>
+  <div class="panel" data-display-font="calsans">
+    <div class="panel-label">CalSans display face. Opt-in for hero and marketing headings only, never app chrome. <code>data-display-font="calsans"</code></div>
+    <span style="font-family:var(--bv-font-heading);font-size:34px;font-weight:600;letter-spacing:-0.02em;">Agents that do real work</span>
+  </div>
+</section>
+
+<section class="wrap" data-screen-label="Color">
+  <div class="sec-head"><h2>Color</h2><span>monochrome on a cool axis · one hue family · color only carries signal</span></div>
+  <div class="panel">
+    <div class="panel-label">Ink and cool grays. Every neutral sits at hue 265 with whisper chroma. The ink replaces #0d0d0d.</div>
+    <div class="swatches">
+      <span class="sw"><i style="background:var(--bv-ink);"></i><span class="mono">ink</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-900);"></i><span class="mono">900</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-800);"></i><span class="mono">800</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-700);"></i><span class="mono">700</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-600);"></i><span class="mono">600</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-500);"></i><span class="mono">500</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-400);"></i><span class="mono">400</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-300);"></i><span class="mono">300</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-200);"></i><span class="mono">200</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-100);"></i><span class="mono">100</span></span>
+      <span class="sw"><i style="background:var(--bv-gray-50);"></i><span class="mono">50</span></span>
+      <span class="sw"><i style="background:var(--bv-canvas-soft);"></i><span class="mono">canvas</span></span>
+    </div>
+  </div>
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="panel">
+      <div class="panel-label">Accents and frost. ai-blue owns focus, hover frost and glow; accent-blue appears only when two accents must coexist.</div>
+      <div class="swatches">
+        <span class="sw"><i style="background:var(--bv-blue);"></i><span class="mono">ai-blue</span></span>
+        <span class="sw"><i style="background:var(--bv-blue-accent);"></i><span class="mono">accent</span></span>
+        <span class="sw"><i style="background:var(--bv-frost-4);"></i><span class="mono">frost-4</span></span>
+        <span class="sw"><i style="background:var(--bv-frost-8);"></i><span class="mono">frost-8</span></span>
+        <span class="sw"><i style="background:var(--bv-frost-12);"></i><span class="mono">frost-12</span></span>
+        <span class="sw"><i style="background:var(--background);outline:2px solid var(--ring);outline-offset:2px;margin:2px;"></i><span class="mono">focus</span></span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Status. The only non-blue hues allowed in chrome. The dot carries the color; the capsule stays gray. Plain voice is canon: Queued · Running · Stuck · Needs you · Done.</div>
+      <div class="row">
+        <span class="badge"><span class="dot" style="background:var(--bv-gray-400);"></span>Queued</span>
+        <span class="badge"><span class="dot dot--pulse" style="background:var(--bv-info);"></span>Running</span>
+        <span class="badge"><span class="dot" style="background:var(--bv-warning);"></span>Stuck</span>
+        <span class="badge"><span class="dot" style="background:var(--bv-blue-accent);"></span>Needs you</span>
+        <span class="badge"><span class="dot" style="background:var(--bv-success);"></span>Done</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" data-screen-label="Depth">
+  <div class="sec-head"><h2>Depth</h2><span>two shadow tiers, all faintly blue · glass in exactly three places</span></div>
+  <div class="panel">
+    <div class="panel-label">Shadows. Edge for cards at rest; the composer halo is the one dramatic cue; glow marks active surfaces.</div>
+    <div class="sh-stage">
+      <span class="col" style="gap:8px;align-items:center;"><span class="sh" style="box-shadow:var(--bv-shadow-edge);"></span><span class="mono">edge</span></span>
+      <span class="col" style="gap:8px;align-items:center;"><span class="sh" style="box-shadow:var(--bv-shadow-card-hover);"></span><span class="mono">card-hover</span></span>
+      <span class="col" style="gap:8px;align-items:center;"><span class="sh" style="box-shadow:var(--bv-shadow-composer);border-radius:28px;"></span><span class="mono">composer halo</span></span>
+      <span class="col" style="gap:8px;align-items:center;"><span class="sh" style="box-shadow:var(--bv-shadow-glow);"></span><span class="mono">glow</span></span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-label">Glass. Only overlays, popovers and the composer. The inner light line is what makes it glass. Cards and chrome stay matte.</div>
+    <div class="glass-stage" data-theme="dark">
+      <span class="orb" style="width:280px;height:280px;left:-60px;top:-110px;background:oklch(0.60 0.12 260 / 0.35);"></span>
+      <span class="orb" style="width:240px;height:240px;right:-50px;bottom:-130px;background:oklch(0.65 0.14 235 / 0.30);"></span>
+      <span class="bg-text">Quick check first: are you on Google or Microsoft? Neither Gmail nor Google Calendar are connected yet. Let me get you set up for both. Connect both apps, then come back and I'll build your plan.</span>
+      <span class="g bv-glass"><span>Popover</span><span class="mono">.bv-glass</span></span>
+      <span class="g bv-glass-heavy"><span>Dialog</span><span class="mono">.bv-glass-heavy</span></span>
+      <span class="g bv-glass-composer"><span>Composer</span><span class="mono">.bv-glass-composer</span></span>
+    </div>
+  </div>
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="panel">
+      <div class="panel-label">Radii ladder. Pills are for buttons and avatars, never cards.</div>
+      <div class="row" style="align-items:flex-end;">
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-chip);"></span><span class="mono">4</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-md);"></span><span class="mono">6</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-lg);"></span><span class="mono">8</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-xl);"></span><span class="mono">12</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-2xl);"></span><span class="mono">16</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-composer);"></span><span class="mono">28</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="r-demo" style="border-radius:var(--bv-radius-full);height:36px;"></span><span class="mono">full</span></span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Spacing. 4px base, nothing in between.</div>
+      <div class="row" style="align-items:flex-end;">
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:4px;"></span><span class="mono">4</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:8px;"></span><span class="mono">8</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:12px;"></span><span class="mono">12</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:16px;"></span><span class="mono">16</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:20px;"></span><span class="mono">20</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:24px;"></span><span class="mono">24</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:32px;"></span><span class="mono">32</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:40px;"></span><span class="mono">40</span></span>
+        <span class="col" style="gap:6px;align-items:center;"><span class="s-demo" style="height:48px;"></span><span class="mono">48</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" data-screen-label="Components">
+  <div class="sec-head"><h2>Components</h2><span>pill buttons · matte cards · frosted-blue hovers · ai-blue focus</span></div>
+  <div class="panel">
+    <div class="panel-label">Buttons. Primary is ink fill; hover lightens one step or frosts blue. No scale, no transform.</div>
+    <div class="row">
+      <button class="pill pill--primary" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>New mission</button>
+      <button class="pill pill--secondary" type="button">Connect</button>
+      <button class="pill pill--soft" type="button">Skip for now</button>
+      <button class="pill pill--ghost" type="button">Cancel</button>
+      <button class="pill pill--primary" type="button" style="background:var(--bv-gray-300);cursor:not-allowed;">Disabled</button>
+    </div>
+  </div>
+  <div class="grid-2" style="margin-top:14px;">
+    <div class="panel">
+      <div class="panel-label">Inputs. Focus ring is ai-blue, applied globally. Tab into the field to see it.</div>
+      <div class="row">
+        <input class="input" placeholder="Prompt">
+        <span class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>Search missions</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Cards. Matte, whisper border, hover to lift. The running card wears the Undertow: pools, tide, and a faint orbit under the surface.</div>
+      <div class="row" style="align-items:flex-start;">
+        <div class="demo-card">
+          <span class="demo-card-title">Reconcile May invoices</span>
+          <span class="demo-card-sub">Bookkeeper</span>
+          <span class="demo-card-status"><span class="dot" style="background:var(--bv-gray-400);"></span>Queued</span>
+        </div>
+        <div class="bv-undertow"><span class="bv-undertow-orbit"></span><div class="demo-card">
+          <span class="demo-card-title">Weekly planning</span>
+          <span class="demo-card-sub">Broomva</span>
+          <span class="demo-card-status"><span class="bv-dot-comet" style="width:13px;height:13px;"><span class="bv-dot-comet-core" style="inset:4px;"></span></span>Running</span>
+        </div></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:14px;">
+    <div class="panel-label">Conversation. User bubbles in cool gray; assistant speaks in plain text; links are ink pills.</div>
+    <div class="col" style="max-width:520px;gap:12px;">
+      <span class="bubble-user">Plan my Friday</span>
+      <span class="bubble-asst">Here's your Fri May 22 plan. Reply <b>Google</b> or <b>Microsoft</b> and I'll take it from there. <span class="link-pill">Open calendar</span></span>
+      <span class="typing"><span></span><span></span><span></span></span>
+      <div class="composer bv-glass-composer">Message Broomva
+        <button class="send" type="button" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" data-screen-label="Voice">
+  <div class="sec-head"><h2>Voice</h2><span>plain language · second person · lead with the verb</span></div>
+  <div class="panel">
+    <div class="voice-grid">
+      <div>
+        <h3>Do</h3>
+        <div class="voice-item"><span class="y">✓</span><span>"Quick check first: are you on Google or Microsoft?"</span></div>
+        <div class="voice-item"><span class="y">✓</span><span>"Connect both apps, then come back and I'll build your plan."</span></div>
+        <div class="voice-item"><span class="y">✓</span><span>"Couldn't reach Gmail. Reconnect to keep going."</span></div>
+        <div class="voice-item"><span class="y">✓</span><span>Needs you · New mission · Mission control</span></div>
+      </div>
+      <div>
+        <h3>Don't</h3>
+        <div class="voice-item"><span class="n">✗</span><s>"Welcome! Let's get started! 🎉"</s></div>
+        <div class="voice-item"><span class="n">✗</span><s>Create New Task · IN REVIEW · Powerful seamless agents</s></div>
+        <div class="voice-item"><span class="n">✗</span><s>Em dashes, emoji in chrome, uppercase eyebrows</s></div>
+        <div class="voice-item"><span class="n">✗</span><s>First person product voice ("I'll help you")</s></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap" data-screen-label="Resources">
+  <div class="sec-head"><h2>Resources</h2><span>everything in this project</span></div>
+  <div class="res">
+    <a href="readme.md"><b>readme.md</b><span>Full spec: foundations, decision log, voice</span></a>
+    <a href="broomva-look-spec.md"><b>broomva-look-spec.md</b><span>Agent-facing visual brief, philosophy and rules</span></a>
+    <a href="styles.css"><b>styles.css</b><span>Token entry point. Link this one file</span></a>
+    <a href="apps/maestro/index.html"><b>Maestro</b><span>The Broomva app: feed / board / list, maestro loop, Undertow</span></a>
+    <a href="guidelines/work-model.html"><b>The work model</b><span>Objects, states, surfaces — work is the noun</span></a>
+    <a href="guidelines/disclosure.html"><b>The disclosure ladder</b><span>Signals, verbs, receipts — folding the substrate</span></a>
+    <a href="guidelines/motion-undertow.html"><b>Live signals</b><span>The Undertow and the dot comet</span></a>
+    <a href="components/core/core.card.html"><b>Core primitives</b><span>Button, Card, Composer, StatusBadge…</span></a>
+    <a href="components/work/work.card.html"><b>Work primitives</b><span>WorkState, LifecycleRail, Receipt, Undertow, RunCard</span></a>
+    <a href="components/forms/forms.card.html"><b>Forms</b><span>Select, Checkbox, Radio, Switch, Textarea, Field</span></a>
+    <a href="components/navigation/navigation.card.html"><b>Navigation</b><span>Tabs and the command palette</span></a>
+    <a href="components/overlays/overlays.card.html"><b>Overlays</b><span>Dialog, Menu, Tooltip, Toast — glass earned</span></a>
+    <a href="templates/app-shell/AppShell.dc.html"><b>App shell template</b><span>The Mission Control scaffold as a starting point</span></a>
+    <a href="templates/landing-page/LandingPage.dc.html"><b>Landing page template</b><span>Dark hero, principles, scoreboard, footer</span></a>
+  </div>
+</section>
+
+<footer class="wrap">
+  <div class="foot">
+    <img src="assets/broomva-blackhole-logo.png" alt="">
+    <span>Broomva Design System. Calm monochrome, blue axis.</span>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    const root = document.documentElement;
+    const btn = document.getElementById("theme-toggle");
+    const sun = document.getElementById("ic-sun");
+    const moon = document.getElementById("ic-moon");
+    const apply = (dark) => {
+      if (dark) root.setAttribute("data-theme", "dark");
+      else root.removeAttribute("data-theme");
+      sun.style.display = dark ? "" : "none";
+      moon.style.display = dark ? "none" : "";
+    };
+    let dark = localStorage.getItem("bv-ds-theme") === "dark";
+    apply(dark);
+    btn.addEventListener("click", () => {
+      dark = !dark;
+      localStorage.setItem("bv-ds-theme", dark ? "dark" : "light");
+      apply(dark);
+    });
+  })();
+</script>
+</body>
+</html>

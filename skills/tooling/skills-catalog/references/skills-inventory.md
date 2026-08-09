@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 83 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-05.
+> 85 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-09.
 
 ## Governance & control — `skills/governance/` (8)
 
@@ -12,6 +12,7 @@
 | `cross-review` | bstack P20 — Cross-Model Adversarial Review Gate |
 | `dogfood` | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
+| `keel` | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 
 ## Orchestration & autonomy — `skills/orchestration/` (7)
@@ -36,9 +37,9 @@
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 83 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 85 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
-## Knowledge & memory — `skills/knowledge/` (6)
+## Knowledge & memory — `skills/knowledge/` (7)
 
 | Skill | What it does |
 |---|---|
@@ -47,6 +48,7 @@
 | `ccr` | Reversible payload compression — shrink any blob before it enters context, while caching the original locally for byte-exact `retrieve(handle)` on demand; the payload-axis counterpart to `kg`'s retrieval axis |
 | `colombia-conflict` | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
 | `comprehend` | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
+| `goodies` | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | `kg` | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 
 ## Research — `skills/research/` (2)
@@ -103,12 +105,13 @@
 | `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 
-## Design & brand — `skills/design/` (5)
+## Design & brand — `skills/design/` (6)
 
 | Skill | What it does |
 |---|---|
 | `arcan-glass` | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | `brand-icons` | Brand icon and visual identity management for BroomVA projects |
+| `broomva-design` | Applies Broomva's platform-neutral blue-axis foundation across digital products, with general web primitives and an optional agentic-work extension |
 | `design-distill` | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill, not a reimplementation |
 | `design-engineering` | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE |
 | `tekton` | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |

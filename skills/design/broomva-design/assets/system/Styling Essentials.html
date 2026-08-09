@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Broomva — Styling Essentials</title>
+<link rel="stylesheet" href="broomva-essentials.css">
+<style>
+  body { padding: 0; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 72px 40px 96px; }
+
+  /* Header */
+  .masthead { margin-bottom: 64px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--bv-text-muted); margin-bottom: 20px;
+  }
+  .kicker .dot { width: 7px; height: 7px; border-radius: 9999px; background: var(--bv-blue); }
+  .masthead h1 { font-size: 44px; letter-spacing: -0.02em; margin-bottom: 16px; }
+  .masthead .lede { font-size: 18px; color: var(--bv-text-body); max-width: 64ch; line-height: 1.55; }
+  .masthead .lede b { font-weight: 500; color: var(--bv-ink); }
+
+  /* Section scaffolding */
+  section { margin-top: 56px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 22px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--bv-border); }
+  .sec-num { font-family: var(--bv-font-mono); font-size: 12px; color: var(--bv-text-muted); }
+  .sec-head h2 { font-size: 20px; font-weight: 500; }
+  .sec-head .note { margin-left: auto; font-size: 13px; color: var(--bv-text-muted); }
+
+  .grid { display: grid; gap: 16px; }
+  .cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+  /* Color swatches */
+  .swatch { border-radius: var(--bv-radius-card); overflow: hidden;
+    border: 1px solid var(--bv-border); box-shadow: var(--bv-shadow-edge); }
+  .swatch .chip { height: 72px; }
+  .swatch .meta { padding: 10px 12px; }
+  .swatch .name { font-size: 13px; font-weight: 500; }
+  .swatch .val { font-family: var(--bv-font-mono); font-size: 11px; color: var(--bv-text-muted);
+    margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .dots { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+  .dotitem { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--bv-text-body); }
+  .dotitem .d { width: 10px; height: 10px; border-radius: 9999px; }
+
+  /* Type */
+  .type-row { display: flex; align-items: baseline; gap: 20px; padding: 12px 0;
+    border-bottom: 1px solid var(--bv-border); }
+  .type-row:last-child { border-bottom: 0; }
+  .type-row .px { font-family: var(--bv-font-mono); font-size: 11px; color: var(--bv-text-muted);
+    width: 48px; flex-shrink: 0; }
+  .type-row .use { margin-left: auto; font-size: 12px; color: var(--bv-text-muted); flex-shrink: 0; }
+
+  /* Radii */
+  .radbox { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .radbox .r { width: 100%; height: 68px; background: var(--bv-frost);
+    border: 1px solid var(--bv-border-strong); }
+  .radbox .lbl { font-size: 12px; color: var(--bv-text-body); text-align: center; }
+  .radbox .lbl b { display: block; font-weight: 500; color: var(--bv-ink); }
+
+  /* Shadow demo */
+  .shadowcard { background: var(--bv-paper); border: 1px solid var(--bv-border);
+    border-radius: var(--bv-radius-card); padding: 22px 20px; min-height: 96px;
+    display: flex; flex-direction: column; justify-content: flex-end; }
+  .shadowcard .t { font-size: 13px; font-weight: 500; }
+  .shadowcard .s { font-size: 12px; color: var(--bv-text-muted); margin-top: 3px; }
+
+  /* Glass demo */
+  .glassstage { position: relative; border-radius: var(--bv-radius-card); overflow: hidden;
+    height: 220px; background:
+      radial-gradient(120% 120% at 20% 10%, oklch(0.60 0.12 260 / 0.18), transparent 55%),
+      radial-gradient(120% 120% at 90% 90%, oklch(0.65 0.14 235 / 0.16), transparent 55%),
+      var(--bv-canvas);
+    border: 1px solid var(--bv-border); display: flex; align-items: center; justify-content: center; }
+  .glasspanel { padding: 20px 24px; width: 260px; }
+  .glasspanel .gt { font-size: 14px; font-weight: 500; }
+  .glasspanel .gs { font-size: 12px; color: var(--bv-text-muted); margin-top: 4px; }
+
+  /* Component sampler */
+  .sampler { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+
+  /* Undertow — the one live signal, at a glance */
+  .undertow { position: relative; width: 120px; height: 120px; }
+  .undertow .pool { position: absolute; inset: 22px; border-radius: 9999px;
+    background: radial-gradient(circle, var(--bv-blue) 0%, transparent 70%);
+    filter: blur(6px); opacity: 0.7; animation: bvBreathe 4.2s var(--bv-ease) infinite; }
+  .undertow .pool.b { inset: 30px; animation-duration: 5.7s; animation-delay: -1.4s;
+    background: radial-gradient(circle, oklch(0.72 0.13 220) 0%, transparent 70%); }
+  .undertow .core { position: absolute; inset: 46px; border-radius: 9999px; background: var(--bv-paper);
+    box-shadow: 0 0 0 1px var(--bv-border-strong), var(--bv-shadow-edge); }
+  @keyframes bvBreathe { 0%,100% { transform: scale(0.9); opacity: 0.55; } 50% { transform: scale(1.08); opacity: 0.85; } }
+  @media (prefers-reduced-motion: reduce) { .undertow .pool { animation: none; } }
+
+  .principle { font-size: 14px; color: var(--bv-text-body); line-height: 1.6; }
+  .principle b { color: var(--bv-ink); font-weight: 500; }
+  ul.plist { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  ul.plist li { display: flex; gap: 12px; font-size: 14px; color: var(--bv-text-body); line-height: 1.5; }
+  ul.plist li .k { flex-shrink: 0; width: 6px; height: 6px; border-radius: 9999px;
+    background: var(--bv-blue); margin-top: 8px; }
+  ul.plist li b { color: var(--bv-ink); font-weight: 500; }
+
+  footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--bv-border);
+    font-size: 13px; color: var(--bv-text-muted); display: flex; gap: 8px; flex-wrap: wrap; }
+  footer code { font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="kicker"><span class="dot"></span> Broomva design system · styling essentials</div>
+    <h1>The look, distilled to what carries it.</h1>
+    <p class="lede">Calm, monochrome design on a blue axis. Every <b>black is a barely-blue ink</b>, every <b>gray is cool</b>, color earns its place, and glass is earned only by floating surfaces. It reads as plain monochrome until you look closely. This page is styled entirely by <b>broomva-essentials.css</b> — the ~30 load-bearing tokens.</p>
+  </div>
+
+  <!-- 01 · COLOR -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Color</h2><span class="note">OKLCH · never #000 · one accent hue</span></div>
+    <div class="grid cols-4">
+      <div class="swatch"><div class="chip" style="background:var(--bv-ink)"></div><div class="meta"><div class="name">Ink</div><div class="val">0.175 0.022 265</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bv-paper); box-shadow: inset 0 0 0 1px var(--bv-border)"></div><div class="meta"><div class="name">Paper</div><div class="val">1 0 0</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bv-canvas)"></div><div class="meta"><div class="name">Canvas soft</div><div class="val">0.966 0.003 265</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bv-blue)"></div><div class="meta"><div class="name">ai-blue</div><div class="val">0.60 0.12 260</div></div></div>
+    </div>
+    <div class="grid cols-3" style="margin-top:16px">
+      <div class="swatch"><div class="chip" style="background:var(--bv-text-muted)"></div><div class="meta"><div class="name">Text muted</div><div class="val">0.50 0.015 265</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bv-frost)"></div><div class="meta"><div class="name">Frost (hover/selected)</div><div class="val">blue / 0.09</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--bv-needs-you)"></div><div class="meta"><div class="name">Needs you</div><div class="val">0.65 0.14 235</div></div></div>
+    </div>
+    <div style="margin-top:24px; padding:18px 20px; background:var(--bv-canvas); border-radius:var(--bv-radius-card); border:1px solid var(--bv-border)">
+      <div style="font-size:13px; color:var(--bv-text-muted); margin-bottom:14px">Status lives on dots and pills only — the only saturated hues in the system.</div>
+      <div class="dots">
+        <span class="dotitem"><span class="d" style="background:var(--bv-text-muted)"></span> Queued</span>
+        <span class="dotitem"><span class="d" style="background:var(--bv-blue)"></span> Running</span>
+        <span class="dotitem"><span class="d" style="background:var(--bv-warning)"></span> Stuck</span>
+        <span class="dotitem"><span class="d" style="background:var(--bv-needs-you)"></span> Needs you</span>
+        <span class="dotitem"><span class="d" style="background:var(--bv-success)"></span> Done</span>
+        <span class="dotitem"><span class="d" style="background:var(--bv-danger)"></span> Failed</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02 · TYPE -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Type</h2><span class="note">System stack · sentence case only</span></div>
+    <div class="type-row"><span class="px">28</span><span style="font-size:28px; font-weight:400; letter-spacing:-0.01em">Autonomy is the moat</span><span class="use">h1 · screen title</span></div>
+    <div class="type-row"><span class="px">22</span><span style="font-size:22px; font-weight:600">The scarce resource is hours</span><span class="use">h2 · section</span></div>
+    <div class="type-row"><span class="px">18</span><span style="font-size:18px; font-weight:500">Setting a schedule is a sentence</span><span class="use">h3</span></div>
+    <div class="type-row"><span class="px">16</span><span style="font-size:16px">Work is the noun; sessions do the work.</span><span class="use">body</span></div>
+    <div class="type-row"><span class="px">14</span><span style="font-size:14px; font-weight:500">Approve · Send back</span><span class="use">buttons · sidebar</span></div>
+    <div class="type-row"><span class="px">12</span><span style="font-size:12px; color:var(--bv-text-muted)">run/4a1c · 3 files · 2m ago</span><span class="use">meta</span></div>
+  </section>
+
+  <!-- 03 · RADII -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Radii</h2><span class="note">Pills for buttons only — never cards</span></div>
+    <div class="grid cols-4">
+      <div class="radbox"><div class="r" style="border-radius:0.375rem"></div><div class="lbl"><b>0.375rem</b>inputs</div></div>
+      <div class="radbox"><div class="r" style="border-radius:0.5rem"></div><div class="lbl"><b>0.5rem</b>rows · icon btn</div></div>
+      <div class="radbox"><div class="r" style="border-radius:0.75rem"></div><div class="lbl"><b>0.75rem</b>cards</div></div>
+      <div class="radbox"><div class="r" style="border-radius:28px"></div><div class="lbl"><b>28px</b>composer</div></div>
+    </div>
+  </section>
+
+  <!-- 04 · SHADOW -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Shadow</h2><span class="note">Three tiers · every one tinted blue</span></div>
+    <div class="grid cols-3">
+      <div class="shadowcard" style="box-shadow:var(--bv-shadow-edge)"><div class="t">Edge</div><div class="s">Cards & rows at rest</div></div>
+      <div class="shadowcard" style="box-shadow:var(--bv-shadow-hover)"><div class="t">Hover lift</div><div class="s">16px diffuse, faintly blue</div></div>
+      <div class="shadowcard" style="box-shadow:var(--bv-shadow-composer)"><div class="t">Composer halo</div><div class="s">The one dramatic depth cue</div></div>
+    </div>
+  </section>
+
+  <!-- 05 · GLASS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Glass</h2><span class="note">Earned by floating surfaces only</span></div>
+    <div class="glassstage">
+      <div class="bv-glass glasspanel">
+        <div class="gt">Command palette</div>
+        <div class="gs">Overlays, popovers & the composer get glass — each with an inner light line. Cards, panels, chrome stay matte.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 · MOTION + COMPONENTS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Motion & building blocks</h2><span class="note">Under 300ms · calm, never bouncy</span></div>
+    <div class="grid cols-2" style="align-items:stretch">
+      <div class="shadowcard" style="box-shadow:var(--bv-shadow-edge); align-items:center; justify-content:center; gap:14px; min-height:200px">
+        <div class="undertow"><span class="pool"></span><span class="pool b"></span><span class="core"></span></div>
+        <div style="text-align:center"><div class="t">The Undertow</div><div class="s">THE running signal — presence, not progress</div></div>
+      </div>
+      <div class="shadowcard" style="box-shadow:var(--bv-shadow-edge); min-height:200px; justify-content:center; gap:18px">
+        <div class="sampler">
+          <button class="bv-btn">Approve</button>
+          <button class="bv-btn bv-btn--ghost">Send back</button>
+        </div>
+        <div class="sampler">
+          <span style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; font-size:12px; border-radius:9999px; background:var(--bv-frost); color:var(--bv-ink)"><span style="width:7px;height:7px;border-radius:9999px;background:var(--bv-blue)"></span> Running</span>
+          <span style="display:inline-flex; align-items:center; height:26px; padding:0 11px; font-size:12px; border-radius:0.25rem; background:var(--bv-canvas); border:1px solid var(--bv-border); font-family:var(--bv-font-mono); color:var(--bv-text-body)">run/4a1c</span>
+        </div>
+        <div class="s" style="align-self:flex-start">Pills · frosted-blue hover · one-step lighten. No scale, no glow.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 07 · PRINCIPLES -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>What must survive</h2></div>
+    <ul class="plist">
+      <li><span class="k"></span><span><b>The ink is blue-black, not black,</b> and every gray sits on the cool axis (hue 265). This alone carries most of the identity.</span></li>
+      <li><span class="k"></span><span><b>Color earns its place</b> — status, the ai-blue interaction layer, live-signal glow. No gradient washes, no colored accent strips.</span></li>
+      <li><span class="k"></span><span><b>Glass is earned</b> by overlays, popovers and the composer, each with an inner light line. Everything else is matte.</span></li>
+      <li><span class="k"></span><span><b>Every shadow carries a hint of blue,</b> in three restrained tiers. The composer halo is the only dramatic depth cue.</span></li>
+      <li><span class="k"></span><span><b>Sentence case, plain voice, calm motion.</b> No uppercase eyebrows, no bouncy entrances, no em dashes in chrome.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Distilled from the full Broomva system.</span>
+    <span>Drop-in: <code>broomva-essentials.css</code> · Agent brief: <code>broomva-look-spec.md</code> · Full spec: <code>readme.md</code></span>
+  </footer>
+
+</div>
+</body>
+</html>

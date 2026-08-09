@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Composer" subtitle="rounded-28 glass + the frosted-blue halo — the one dramatic depth cue" viewport="700x190" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font: inherit; font-size: 14px; font-weight: 500; height: 36px; padding: 0 14px; border: 1px solid transparent; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--primary:hover { background: var(--bv-ink-hover); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--secondary:hover { background: var(--bv-frost-4); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .pill--soft:hover { background: var(--bv-frost-8); }
+  .pill--ghost { background: transparent; color: var(--foreground); }
+  .pill--ghost:hover { background: var(--bv-frost-8); }
+  svg.ic { width: 16px; height: 16px; }
+</style>
+<style>
+body { background: var(--bv-canvas-soft); padding: 36px 48px; }
+.composer { border-radius: 28px; padding: 10px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px; }
+.composer input { border: none; background: transparent; outline: none; font: inherit; font-size: 16px; padding: 8px 10px; color: var(--foreground); min-width: 0; }
+.composer input::placeholder { color: var(--bv-gray-500); }
+.iconbtn { width: 36px; height: 36px; border-radius: 8px; border: none; background: transparent; color: var(--bv-gray-700); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.iconbtn:hover { background: var(--bv-frost-8); }
+.send { width: 36px; height: 36px; border-radius: 18px; background: var(--primary); color: var(--primary-foreground); border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.send:hover { background: var(--bv-ink-hover); }
+</style></head><body>
+<div class="composer bv-glass-composer">
+  <button class="iconbtn"><svg class="ic" style="width:18px;height:18px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+  <input placeholder="Message Broomva" />
+  <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
+</div>
+</body></html>

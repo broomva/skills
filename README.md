@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 81 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 85 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**81 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**85 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -52,6 +52,7 @@ npx skills add broomva/skills --skill '*'
 | [`cross-review`](skills/governance/cross-review/) | bstack P20 — Cross-Model Adversarial Review Gate |
 | [`dogfood`](skills/governance/dogfood/) | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | [`harness-engineering-playbook`](skills/governance/harness-engineering-playbook/) | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture… |
+| [`keel`](skills/governance/keel/) | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | [`unhobble`](skills/governance/unhobble/) | Audit and rightsize a context surface (CLAUDE.md, AGENTS.md, SKILL.md, prompts) against the Claude-5 context-engineering reversals — measures token budget, hard-rule ratio, duplicate sections and contradiction candidates, then adjudicates keep / relocate / delete by whether an independent mechanism already enforces the prose |
 
 ### Orchestration & autonomy — `skills/orchestration/`
@@ -76,7 +77,7 @@ npx skills add broomva/skills --skill '*'
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 83 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 85 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -150,6 +151,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`arcan-glass`](skills/design/arcan-glass/) | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | [`brand-icons`](skills/design/brand-icons/) | Brand icon and visual identity management for BroomVA projects |
+| [`broomva-design`](skills/design/broomva-design/) | Applies Broomva's platform-neutral blue-axis foundation across digital products, with general web primitives and an optional agentic-work extension |
 | [`design-distill`](skills/design/design-distill/) | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill that fires existing tools in sequence rather than reimplementing them |
 | [`design-engineering`](skills/design/design-engineering/) | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE… |
 | [`tekton`](skills/design/tekton/) | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
@@ -237,21 +239,21 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 83 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
+The 85 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
 | Governance & control | `skills/governance/` | 8 |
 | Orchestration & autonomy | `skills/orchestration/` | 7 |
 | Skill & prompt tooling | `skills/tooling/` | 7 |
-| Knowledge & memory | `skills/knowledge/` | 6 |
+| Knowledge & memory | `skills/knowledge/` | 7 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 5 |
 | Operating cadence | `skills/cadence/` | 4 |
 | Publishing & growth | `skills/publishing/` | 5 |
 | Video & multimedia | `skills/video/` | 6 |
 | Audio & music | `skills/audio/` | 2 |
-| Design & brand | `skills/design/` | 5 |
+| Design & brand | `skills/design/` | 6 |
 | Finance & payments | `skills/finance/` | 4 |
 | Compute infrastructure | `skills/compute/` | 3 |
 | Model runtimes | `skills/models/` | 2 |

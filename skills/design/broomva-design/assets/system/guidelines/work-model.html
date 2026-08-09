@@ -1,0 +1,79 @@
+<!doctype html>
+<!-- @dsCard group="Brand" name="The work model" subtitle="The workspace is the substrate · sessions are the verb · keep score in unsupervised hours" viewport="760x640" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 22px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; display: flex; flex-direction: column; gap: 18px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .row { display: flex; gap: 10px; align-items: stretch; }
+
+  .prim { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 10px 13px; border: 1px solid var(--bv-border-15); border-radius: var(--bv-radius-lg); background: var(--card); box-shadow: var(--bv-shadow-edge); }
+  .prim b { font-size: 13px; font-weight: 500; }
+  .prim span { font-size: 11.5px; color: var(--muted-foreground); line-height: 1.45; }
+  .prim.verb { border-color: var(--bv-blue); box-shadow: 0 0 0 1px var(--bv-blue) inset, var(--bv-shadow-edge); }
+  .arrow { align-self: center; font-size: 10.5px; color: var(--muted-foreground); flex-shrink: 0; }
+
+  .fm { margin: 0; padding: 9px 12px; border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-lg); background: var(--bv-canvas-soft); }
+  .fm code { font-family: var(--bv-font-mono); font-size: 10.5px; line-height: 1.5; color: var(--foreground); white-space: pre; display: block; }
+
+  .states { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 12px; border-radius: var(--bv-radius-full); background: var(--bv-canvas-soft); font-size: 12px; font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
+
+  .surfaces { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .surf { border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-xl); background: var(--card); box-shadow: var(--bv-shadow-edge); padding: 11px 13px; display: flex; flex-direction: column; gap: 4px; }
+  .surf b { font-size: 13px; font-weight: 500; }
+  .surf span { font-size: 11.5px; color: var(--muted-foreground); line-height: 1.45; }
+
+  .credo { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.55; max-width: 66ch; margin: 0; }
+  .credo b { color: var(--foreground); font-weight: 500; }
+</style></head><body>
+
+<div>
+  <div class="label" style="margin-bottom:8px;">The primitives. The scarce resource is unsupervised hours — how long an agent runs before a human must look. One primitive pair instead of five object types.</div>
+  <div class="row">
+    <div class="prim"><b>Workspace</b><span>FS + sh. A folder is work at any scale — question, task, project, initiative. Depth is meaning, not schema.</span></div>
+    <span class="arrow">contains</span>
+    <div class="prim"><b>Spec + frontmatter</b><span>The orchestration contract lives in the files: kind, state, owner, budget, gate. Agents read it, agents write it.</span></div>
+    <span class="arrow">solved by</span>
+    <div class="prim verb"><b>Session</b><span>A running agent timeline — events from agent, user, tools. Spawnable by you, the orchestrator, or another session.</span></div>
+  </div>
+</div>
+
+<div class="row" style="gap:14px;">
+  <pre class="fm" style="flex:1;"><code>---
+kind: project        # question · task · routine
+state: running
+owner: maestro
+budget: 8h unsupervised
+gate: human-approve  # none = standing loop
+---</code></pre>
+  <p class="credo" style="flex:1.2; align-self:center;"><b>Standing loops never close:</b> <code style="font-family:var(--bv-font-mono);font-size:11px;">kind: routine</code> folders run on a cadence; the routine is the deliverable. <code style="font-family:var(--bv-font-mono);font-size:11px;">gate: none</code> spends zero human hours — until a run flags something, and only that run asks for a look.</p>
+</div>
+
+<div>
+  <div class="label" style="margin-bottom:8px;">The states. Plain voice is canon; system enums are a developer surface. The dot carries the color; running work wears the tidepool.</div>
+  <div class="states">
+    <span class="badge"><span class="dot" style="background:var(--bv-gray-400);"></span>Queued</span>
+    <span class="badge"><span class="bv-dot-live" style="width:13px;height:13px;"></span>Running</span>
+    <span class="badge"><span class="dot" style="background:var(--bv-warning);"></span>Stuck</span>
+    <span class="badge"><span class="dot" style="background:var(--bv-blue-accent);"></span>Needs you</span>
+    <span class="badge"><span class="dot" style="background:var(--bv-success);"></span>Done</span>
+    <span class="badge"><span class="dot bv-dot--pulse" style="background:var(--bv-info);"></span>Standing</span>
+  </div>
+</div>
+
+<div>
+  <div class="label" style="margin-bottom:8px;">The surfaces. Selection drives both: the plane shows the work inside, the panel shows the contract and the sessions doing it.</div>
+  <div class="surfaces">
+    <div class="surf"><b>Plane</b><span>Feed, board, or list — switchable, same items, attention first. Drill into any folder and the plane scopes to its subtree.</span></div>
+    <div class="surf"><b>Panel — the inspector</b><span>Item → the look (at the gate), chat, activity. Folder → frontmatter + sessions. Routine → frontmatter + runs.</span></div>
+    <div class="surf"><b>Chrome</b><span>One chip for what needs you, one field to start work, the bench (live workers, Undertow), the tick timer. No names, no labels.</span></div>
+  </div>
+</div>
+
+<p class="credo"><b>The gate is yours, and the look is the transaction.</b> Hours of agent work compress to what changed · what it decided · what it asks. No loop can auto-Done; approving is the one human verb. Keep score in unsupervised hours — a notch per human look, never a percentage.</p>
+
+</body></html>

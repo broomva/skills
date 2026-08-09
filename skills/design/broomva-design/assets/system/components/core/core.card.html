@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Core primitives" subtitle="Button · IconButton · Input · Card · StatusBadge · DotComet · Avatar · Composer" viewport="700x300" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 18px 22px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font: inherit; font-size: 14px; font-weight: 500; height: 36px; padding: 0 14px; border: 1px solid transparent; cursor: pointer; }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .iconbtn { width: 36px; height: 36px; border-radius: 8px; border: none; background: var(--bv-frost-8); color: var(--bv-gray-700); display: inline-flex; align-items: center; justify-content: center; }
+  .input { height: 36px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--input); background: var(--card); font: inherit; font-size: 14px; color: var(--foreground); outline: none; width: 150px; }
+  .card { background: var(--card); border: 1px solid var(--bv-border-5); border-radius: 12px; box-shadow: var(--bv-shadow-edge); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; width: 180px; }
+  .badge { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 12px; border-radius: 9999px; background: var(--bv-canvas-soft); font-size: 12px; font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 99px; }
+  .avatar { width: 26px; height: 26px; border-radius: 13px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: 600; }
+  .composer { border-radius: 28px; padding: 8px 8px 8px 16px; display: flex; align-items: center; gap: 8px; flex: 1; max-width: 360px; color: var(--bv-gray-500); font-size: 15px; }
+  .send { width: 32px; height: 32px; border-radius: 16px; background: var(--primary); color: var(--primary-foreground); border: none; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; }
+  svg.ic { width: 16px; height: 16px; }
+</style></head><body>
+<div class="row">
+  <button class="pill pill--primary">New mission</button>
+  <button class="pill pill--secondary">Connect</button>
+  <button class="pill pill--soft">Skip for now</button>
+  <button class="iconbtn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></button>
+  <input class="input" placeholder="Prompt">
+</div>
+<div class="row" style="align-items: flex-start;">
+  <div class="bv-undertow"><span class="bv-undertow-orbit"></span><div class="card">
+    <span style="font-size:14px;font-weight:500;">Weekly planning</span>
+    <span style="font-size:13px;color:var(--muted-foreground);">Broomva</span>
+  </div></div>
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    <div class="row" style="gap:8px;">
+      <span class="badge"><span class="dot" style="background:var(--bv-blue-accent);"></span>Needs you</span>
+      <span class="badge"><span class="bv-dot-comet" style="width:13px;height:13px;"><span class="bv-dot-comet-core" style="inset:4px;"></span></span>Running</span>
+    </div>
+    <div class="row" style="gap:8px;">
+      <span class="avatar" style="background:var(--bv-blue);">B</span>
+      <span class="avatar" style="background:var(--bv-blue-accent);">AD</span>
+      <span class="mono">Avatar — pill radius allowed here only</span>
+    </div>
+  </div>
+</div>
+<div class="row">
+  <div class="composer bv-glass-composer">Message Broomva<button class="send"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg></button></div>
+  <span class="mono">Composer — the one glass + halo surface</span>
+</div>
+</body></html>

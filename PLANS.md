@@ -102,3 +102,43 @@ Use this file for multi-step work where durable context matters.
   P20 are rerun after every backend-contract change.
 - Follow-up tasks: refresh the versioned rate card when provider prices or model
   identifiers change; re-run frozen-corpus parity when CodexBar's lineage rules change.
+
+---
+
+## Broomva design portability refactor
+
+Status: complete
+
+Branch: `feat/broomva-design-skill`
+
+Pull request: `broomva/skills#149`
+
+### Scope
+
+Make `broomva-design` usable across arbitrary digital products without weakening the archived source evidence or the optional agentic-work language.
+
+### Constraints
+
+- Keep the portable `DESIGN.md` platform-neutral.
+- Keep archive-derived artifacts hash-pinned and available through `full`.
+- Treat React/web components as one adapter, not the design system itself.
+- Keep agentic work states, Undertow, receipts, and Maestro opt-in.
+- Preserve overwrite safety, idempotence, local-reference checks, and manifest verification.
+
+### Milestones
+
+- [x] Rewrite the core design contract and skill routing.
+- [x] Add neutral foundation and web profiles plus an agentic-work extension.
+- [x] Add general product-pattern and platform-adaptation references.
+- [x] Expand tests, trigger fixtures, catalogs, and workspace resolver integration.
+- [x] Render and inspect non-agentic examples across themes and viewports.
+- [x] Run forward testing, Cross-Review (P20), and pre-push repository checks.
+
+### Verification
+
+- `python3 skills/design/broomva-design/scripts/materialize.py verify-source`
+- `python3 -m unittest discover -s skills/design/broomva-design/tests -v`
+- `bash skills/design/broomva-design/tests/smoke.sh`
+- `python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/design/broomva-design`
+- Materialize every profile twice and verify it.
+- Interact with and capture non-agentic commerce and content/data examples at 375px, 768px, and 1440px in light and dark themes.

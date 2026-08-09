@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Dark surfaces" subtitle="Deep blue-purple canvas — fully specified, never pure black" viewport="700x190" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { padding: 0; }
+.dark { padding: 20px 24px; background: var(--background); display: flex; gap: 10px; align-items: flex-start; }
+.dark .mono { color: var(--muted-foreground); }
+</style></head><body>
+<div class="dark" data-theme="dark">
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--background);border:1px solid var(--bv-border-5);"></div>
+  <span class="mono" style="font-size:10px;">canvas</span>
+</div>
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--sidebar);border:1px solid var(--bv-border-5);"></div>
+  <span class="mono" style="font-size:10px;">sidebar</span>
+</div>
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--card);border:1px solid var(--bv-border-5);"></div>
+  <span class="mono" style="font-size:10px;">card</span>
+</div>
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--muted);border:1px solid var(--bv-border-5);"></div>
+  <span class="mono" style="font-size:10px;">muted</span>
+</div>
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--bv-canvas-soft-2);border:1px solid var(--bv-border-5);"></div>
+  <span class="mono" style="font-size:10px;">bubble</span>
+</div>
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--accent);border:1px solid var(--bv-border-5);"></div>
+  <span class="mono" style="font-size:10px;">accent</span>
+</div>
+<div class="col" style="gap:5px;align-items:center;">
+  <div style="width:52px;height:52px;border-radius:8px;background:var(--card);box-shadow:var(--bv-shadow-glow);border:1px solid var(--glass-border);"></div>
+  <span class="mono" style="font-size:10px;">glow</span>
+</div>
+<div class="col" style="gap:5px;align-items:flex-start;margin-left:10px;color:var(--foreground);">
+  <span style="font-size:15px;">Text on deep blue</span>
+  <span style="font-size:13px;color:var(--muted-foreground);">Secondary text</span>
+  <span class="mono">oklch(0.135 0.02 272)</span>
+</div>
+</div>
+</body></html>

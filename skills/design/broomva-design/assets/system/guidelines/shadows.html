@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- @dsCard group="Spacing" name="Shadows" subtitle="Two tiers, every shadow faintly blue · the composer halo is the one dramatic cue" viewport="700x210" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { background: var(--bv-canvas-soft); display: flex; gap: 18px; align-items: center; padding: 28px 24px; }
+.sh { background: var(--card); border-radius: 12px; width: 148px; height: 88px; border: 1px solid var(--bv-border-5); }
+</style></head><body>
+<div class="col" style="gap:8px;align-items:center;"><div class="sh" style="box-shadow:var(--bv-shadow-edge);"></div><span class="mono">edge · cards at rest</span></div>
+<div class="col" style="gap:8px;align-items:center;"><div class="sh" style="box-shadow:var(--bv-shadow-card-hover);"></div><span class="mono">card-hover</span></div>
+<div class="col" style="gap:8px;align-items:center;"><div class="sh" style="box-shadow:var(--bv-shadow-composer);border-radius:28px;"></div><span class="mono">composer halo</span></div>
+<div class="col" style="gap:8px;align-items:center;"><div class="sh" style="box-shadow:var(--bv-shadow-glow);"></div><span class="mono">glow · active</span></div>
+</body></html>

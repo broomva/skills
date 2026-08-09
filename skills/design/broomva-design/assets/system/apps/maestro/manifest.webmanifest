@@ -1,0 +1,19 @@
+{
+  "name": "Broomva — Maestro",
+  "short_name": "Broomva",
+  "description": "The maestro loop — chat is the surface, the gate queues over the prompt, the plane holds the work.",
+  "id": "/broomva-maestro",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#040508",
+  "theme_color": "#ffffff",
+  "categories": ["productivity", "developer"],
+  "icons": [
+    { "src": "pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "pwa/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

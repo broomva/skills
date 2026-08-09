@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Font stacks" subtitle="System purity by default · CalSans display is opt-in, hero surfaces only" viewport="700x230" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.pane { display: flex; flex-direction: column; gap: 6px; }
+.big { font-size: 26px; letter-spacing: -0.01em; line-height: 1.2; }
+</style></head><body>
+<div class="pane">
+  <span class="label">App chrome — system stack (default)</span>
+  <span class="big">Ship the impossible</span>
+  <span style="font-size:14px;color:var(--muted-foreground);">ui-sans-serif, -apple-system, system-ui…</span>
+  <span class="mono">--bv-font-sans · --bv-font-heading</span>
+</div>
+<div class="pane" data-display-font="calsans">
+  <span class="label">Hero / marketing — CalSans (opt-in)</span>
+  <span class="big" style="font-family:var(--bv-font-heading);font-weight:600;">Ship the impossible</span>
+  <span style="font-size:14px;color:var(--muted-foreground);">data-display-font="calsans" on the surface root</span>
+  <span class="mono">--bv-font-display · never in app chrome</span>
+</div>
+</body></html>

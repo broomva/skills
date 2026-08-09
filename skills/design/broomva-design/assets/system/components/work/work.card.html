@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- @dsCard group="Components" viewport="700x440" name="Work primitives" subtitle="WorkState · LifecycleRail · Receipt · Undertow · RunCard · AutonomyScoreboard — the load-bearing inventions" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--bv-font-sans); }
+  .pane { background: var(--background); color: var(--foreground); padding: 16px 18px; }
+</style></head><body>
+<div class="pane" id="pane-light"></div>
+<div class="pane" id="pane-dark" data-theme="dark"></div>
+<script type="text/babel">
+const { WorkState, LifecycleRail, Receipt, Undertow, RunCard, AutonomyScoreboard } = window.BroomvaDesignSystem_5727d9;
+function WorkSpec() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <WorkState state="queued" />
+        <WorkState state="running" />
+        <WorkState state="stuck" />
+        <WorkState state="needs-you" variant="chip" />
+        <WorkState state="done" />
+        <WorkState state="standing" />
+      </div>
+      <LifecycleRail stages={[
+        { name: "proposed", state: "passed" },
+        { name: "queued", state: "passed" },
+        { name: "running", state: "current", note: "since 09:14" },
+        { name: "review" },
+        { name: "done" },
+      ]} />
+      <Undertow>
+        <RunCard
+          state="needs-you" agent="claude" duration="3h 40m"
+          title="Ported the billing reducer to event sourcing"
+          asks="approve the schema migration"
+          receipts={[
+            { label: "branch", code: "run/7c2f" },
+            { label: "diff", code: "+214 −38 · 6 files" },
+            { label: "judge", code: "pass · 9/9 checks" },
+          ]}
+          onApprove={() => {}} onSendBack={() => {}}
+        />
+      </Undertow>
+      <AutonomyScoreboard
+        hours="6h 24m" sub="2 looks · longest run 3h 50m"
+        segments={[{ start: 0, width: 34 }, { start: 36, width: 42 }, { start: 80, width: 14, live: true }]}
+        notches={[34, 78]}
+      />
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("pane-light")).render(<WorkSpec />);
+ReactDOM.createRoot(document.getElementById("pane-dark")).render(<WorkSpec />);
+</script>
+</body></html>

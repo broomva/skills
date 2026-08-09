@@ -1,0 +1,91 @@
+/* ============================================================
+   Broomva — Base element styles
+   Semantic defaults for any surface that links styles.css.
+   ============================================================ */
+
+html, body {
+  font-family: var(--bv-font-sans);
+  font-size: var(--bv-text-base);
+  font-weight: var(--bv-weight-regular);
+  color: var(--foreground);
+  background: var(--background);
+  line-height: var(--bv-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, .bv-h1 {
+  font-family: var(--bv-font-heading);
+  font-size: var(--bv-text-h1);
+  font-weight: var(--bv-weight-regular);
+  line-height: var(--bv-leading-tight);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+h2, .bv-h2 {
+  font-family: var(--bv-font-heading);
+  font-size: var(--bv-text-xl);
+  font-weight: var(--bv-weight-semi);
+  line-height: 1.3;
+  margin: 0;
+}
+
+h3, .bv-h3 {
+  font-family: var(--bv-font-heading);
+  font-size: var(--bv-text-lg);
+  font-weight: var(--bv-weight-medium);
+  line-height: 1.3;
+  margin: 0;
+}
+
+p, .bv-body {
+  font-size: var(--bv-text-base);
+  font-weight: var(--bv-weight-regular);
+  line-height: var(--bv-leading-normal);
+  margin: 0;
+}
+
+/* Sentence case. Never uppercase, never tracking-wider. */
+.bv-section-header {
+  font-size: var(--bv-text-sm);
+  font-weight: var(--bv-weight-medium);
+  color: var(--foreground);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.bv-meta,
+.bv-caption {
+  font-size: var(--bv-text-xs);
+  font-weight: var(--bv-weight-regular);
+  color: var(--muted-foreground);
+}
+
+a {
+  color: var(--bv-blue);
+  text-decoration: none;
+  transition: color var(--bv-dur-fast) var(--bv-ease-standard);
+}
+
+code, .bv-code {
+  font-family: var(--bv-font-mono);
+  font-size: 13px;
+  background: var(--muted);
+  padding: 2px 6px;
+  border-radius: var(--bv-radius-chip);
+}
+
+/* Focus ring is ai-blue app-wide — the quiet signature */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--bv-border-15);
+  border-radius: var(--bv-radius-full);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--bv-border-25); }
