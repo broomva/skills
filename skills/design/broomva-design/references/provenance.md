@@ -27,6 +27,25 @@ The archive's own manifest identifies namespace `BroomvaDesignSystem_5727d9`, 31
 - Original readme and look-spec references used by the visual specimens
 - Maestro reference app as full-profile evidence
 
+All 178 files in `assets/system/` remain the hash-pinned curated archive evidence. The `full` profile materializes that tree unchanged alongside the portable contract and extension references.
+
+## Authored portability layer
+
+`assets/portable/` is a deliberately authored adapter, not archive evidence. It separates the reusable brand foundation from the archive's agentic-work examples:
+
+- `broomva-foundation.css` is a standalone, framework-free web expression of the product-neutral contract.
+- `tokens.json` carries the same semantic roles in an OKLCH-first, machine-readable format for native and non-web adapter generation.
+- `styles.css` is the neutral web entrypoint and imports only `broomva-foundation.css`; archived modular tokens stay in the agentic and evidence profiles because their comments and feature tokens encode that source product's work domain.
+- `manifest.json`, `index.js`, and `index.d.ts` expose 22 general React exports across core, forms, navigation, and overlays.
+- `manifest.agentic-work.json` declares the 31 exports and CSS files that the focused extension actually ships, without advertising full-profile cards or templates.
+- Profile-specific component overrides remove archived agentic examples and the `Card.running` dependency from the general web adapter while leaving the archive-derived implementations byte-exact for `agentic-work` and `full`.
+- `adherence.oxlintrc.json` checks public imports, token use, and general component enums without referencing work components.
+- `SHA256SUMS` pins every portability-layer asset independently from the archive-derived inventory.
+
+The materializer owns the boundary: `foundation` is platform-neutral guidance plus a standalone web stylesheet, `web` adds general React primitives, `agentic-work` adds the domain extension, and `full` preserves all source evidence. `essentials` and `tokens` retain their original archive-era path layouts for existing automation; new products should not use those compatibility profiles as neutrality boundaries.
+
+Profile changes are closed-world for owned paths. Verification rejects artifacts left by another Broomva profile, and the explicit `--prune` flag removes only known managed paths. Modified managed files require the separate `--force` authorization.
+
 ## Deliberately excluded
 
 - `design_handoff_maestro/` because it duplicates the canonical tokens, components, font, and logo
@@ -35,8 +54,8 @@ The archive's own manifest identifies namespace `BroomvaDesignSystem_5727d9`, 31
 
 No source TODO or FIXME markers were present. The duplicate tree was confirmed by content hashes, not filenames alone.
 
-The manifest's one duplicate card entry under `design_handoff_maestro/` was removed. All remaining manifest paths, HTML/CSS local references, and the 31-export public `index.js` are checked by `verify-source`.
-`assets/system/SHA256SUMS` also pins every curated asset, so a content change or unregistered file fails the source gate until the inventory is deliberately regenerated and reviewed.
+The manifest's one duplicate card entry under `design_handoff_maestro/` was removed. All remaining manifest paths, HTML/CSS local references, the 22-export general entry point, and the 31-export full entry point are checked by `verify-source`.
+`assets/system/SHA256SUMS` and `assets/portable/SHA256SUMS` pin their respective assets, so a content change or unregistered file fails the source gate until the inventory is deliberately regenerated and reviewed.
 
 ## Known source constraint
 

@@ -2,7 +2,10 @@ skill: broomva-design
 
 should_trigger:
   - "Materialize the Broomva design system into this app."
-  - "Apply Broomva's blue-axis product language and Undertow running state."
+  - "Apply Broomva's blue-axis product language to this ecommerce checkout."
+  - "Use the Broomva foundation for this native mobile settings flow."
+  - "Style this editorial knowledge product with Broomva without making it look agentic."
+  - "Apply Broomva's Undertow running state to this agent orchestration view."
   - "Review this Maestro surface against the Broomva DESIGN.md."
   - "Use the Broomva blackhole mark, tokens, and component library."
 
@@ -10,4 +13,5 @@ should_not_trigger:
   - "Distill a new design system from these competitor screenshots."
   - "Apply Arcan Glass to my existing Next.js application."
   - "Make this unrelated dashboard feel more premium."
+  - "Build a generic ecommerce checkout with no Broomva branding."
   - "Generate an astronomical black hole illustration."

@@ -1,90 +1,105 @@
 ---
 name: broomva-design
-description: Materialize and apply Broomva's calm blue-axis product design system, including its portable DESIGN.md contract, OKLCH tokens, React components, work-state language, templates, and visual specimens. Use when creating or reviewing Broomva interfaces, bringing an app into brand alignment, scaffolding a Broomva design-system bundle, implementing Maestro-like work orchestration UI, or when a request mentions Broomva design, the blackhole mark, Undertow, tidepool, receipts, DESIGN.md, or the Broomva component library.
+description: Materialize and apply Broomva's platform-neutral calm blue-axis design system across digital products. Includes a portable DESIGN.md contract, semantic styling foundations, general React/web primitives, product-pattern and platform-adaptation guidance, and an optional agentic-work extension. Use for Broomva-branded web, native mobile, desktop, commerce, content, analytics, SaaS, internal tools, communication products, design reviews, or when a request mentions Broomva design, the blackhole mark, blue-axis styling, Undertow, receipts, DESIGN.md, or the Broomva component library.
 ---
 
 # Broomva Design
 
-Materialize the Broomva visual system into a project, then use `DESIGN.md` as the agent-readable source of truth. The system is calm, matte, monochrome, and subtly blue: clarity before spectacle, visible work before invented progress.
+Apply one Broomva identity to the product's actual domain. The foundation is calm, matte, blue-axis, and product-neutral. Web components and agentic work patterns are adapters layered above it, never requirements of the brand.
 
 ## Start here
 
 1. Read this skill's `DESIGN.md` before changing UI.
-2. Inspect the target's existing styles, component primitives, and `DESIGN.md`.
-3. Choose a materialization profile. Do not overwrite an incumbent system without an explicit migration request.
-4. Implement through semantic tokens and reusable components.
-5. Validate behavior, accessibility, both themes, and the target viewports.
+2. Inspect the target's platform, existing styles, primitives, accessibility baseline, and incumbent `DESIGN.md`.
+3. Read `references/product-patterns.md` and `references/platform-adaptation.md` for the relevant product and platform.
+4. Choose the smallest materialization profile that provides what the target needs. Do not overwrite an incumbent system without an explicit migration request.
+5. Implement through semantic roles and reusable components, then validate behavior, accessibility, themes, and representative viewports or device classes.
 
-Set `SKILL_DIR` to the directory containing this file, then materialize:
+Set `SKILL_DIR` to the directory containing this file, then materialize the neutral foundation:
 
 ```bash
-python3 "$SKILL_DIR/scripts/materialize.py" materialize . --profile tokens
-python3 "$SKILL_DIR/scripts/materialize.py" verify . --profile tokens
+python3 "$SKILL_DIR/scripts/materialize.py" materialize . --profile foundation
+python3 "$SKILL_DIR/scripts/materialize.py" verify . --profile foundation
 ```
 
 Preview without writing:
 
 ```bash
-python3 "$SKILL_DIR/scripts/materialize.py" materialize . --profile full --dry-run
+python3 "$SKILL_DIR/scripts/materialize.py" materialize . --profile web --dry-run
 ```
 
-The command writes `DESIGN.md` at the target root and the selected bundle under `design-system/broomva/`. Existing differing files cause a failure. Use `--force` only when the user explicitly authorized replacement.
+The command writes `DESIGN.md` at the target root, selected assets under `design-system/broomva/`, and relevant guidance under `design-system/broomva/references/`. Existing differing files cause a failure. Use `--force` only when the user explicitly authorized replacement. When intentionally moving from a broader profile to a smaller one, add `--prune`; the materializer removes only paths owned by another Broomva profile and still protects modified files unless `--force` is also explicit.
 
 ## Choose the profile
 
 | Profile | Materializes | Use when |
 |---|---|---|
-| `essentials` | `DESIGN.md`, one-file CSS essentials, blackhole logo | Adding the visual language to a small or non-React surface |
-| `tokens` | Essentials plus modular tokens, root CSS, Cal Sans + license, manifest, adherence rules | Building or aligning a production app; this is the default |
-| `full` | The complete curated bundle: components, prompt contracts, specimens, guidelines, templates, desktop kit, and Maestro reference app | Developing the system itself or needing exact implementation examples |
+| `foundation` | Portable `DESIGN.md`, machine-readable semantic tokens, standalone CSS, logo, font/license, product patterns, and platform adaptation | Starting any Broomva digital product; this is the default |
+| `web` | Foundation plus a web stylesheet entrypoint, 22 general React exports, prompt contracts, public entry points, manifest, and adherence rules | Building a Broomva web or React product without domain-specific work orchestration |
+| `agentic-work` | Web profile plus Composer, live-signal motion, seven work exports, canonical work states, and agentic composition guidance | Building agent runs, orchestration, human-in-the-loop decisions, or receipt-driven work UI |
+| `full` | Complete curated archive evidence: all 31 exports, specimens, guidelines, templates, desktop kit, browser bundle, and Maestro reference app | Developing or auditing the design system itself; not a default product starter |
+| `essentials` | Legacy `DESIGN.md`, `broomva-essentials.css`, and blackhole logo layout | Existing automation that depends on the original minimal profile |
+| `tokens` | Legacy essentials plus archived modular tokens, motion, root CSS, fonts/license, full manifest, and adherence rules | Existing automation that depends on the original token-profile file layout |
 
-Do not copy the bundled Maestro app into production wholesale. Treat it as design evidence and adapt only the patterns the product actually needs.
+Prefer `foundation` or `web` for new products. The legacy profiles preserve their pre-portability paths and therefore retain source-era vocabulary; they are not the product-neutral boundary. Do not copy the bundled Maestro app or agentic vocabulary into an unrelated product. Extensions never leak upward into the foundation.
 
-## Apply the system
-
-### Preserve the visual thesis
+## Preserve the visual thesis
 
 - Keep application chrome on the system sans stack. Cal Sans is opt-in for marketing and hero display surfaces only.
-- Use blue-axis near-black ink and whisper-chroma cool neutrals. Reserve Resonant AI Blue for focus, links, information, selection, and live signals.
-- Keep cards, panels, sidebars, and chrome matte. Glass is earned by elevation: dialogs, command palette, popovers, tooltips, dropdowns, and the composer.
-- Use the 4px spacing ladder and restrained radii. Cards are `0.75rem`; dialogs are `1rem`; the composer owns the signature `28px` radius. Pills belong to buttons, avatars, and compact status controls, never generic cards.
-- Use Undertow and tidepool as the shared running signal. Motion communicates presence, not percent-complete theater.
+- Use Blue-black ink and whisper-chroma cool neutrals. Reserve Resonant AI Blue for focus, links, information, selection, and rare brand emphasis.
+- Keep cards, panels, sidebars, and chrome matte. Glass is earned by real elevation: dialogs, command palettes, popovers, tooltips, dropdowns, and rare focal controls.
+- Use the 4px spacing ladder and restrained radii. Cards are `0.75rem`; dialogs are `1rem`; pills belong to action buttons, avatars, and compact status controls, never generic cards.
+- Use motion to explain state or spatial change. Preserve meaning under `prefers-reduced-motion`.
+- Let the product domain determine composition and language. Do not turn every Broomva product into an orchestration console.
 
-### Model agentic work honestly
+## Adapt to the product
 
-Use the canonical state vocabulary exactly: `Queued`, `Running`, `Stuck`, `Needs you`, `Done`, `Standing`.
+Start from the product's primary objects and user jobs, then select the matching pattern family:
+
+- commerce and transactions;
+- editorial, knowledge, and media;
+- analytics, monitoring, and operations;
+- onboarding, accounts, and settings;
+- communication and collaboration;
+- agentic work and human intervention.
+
+Read `references/product-patterns.md` for composition guidance. Read `references/platform-adaptation.md` before translating the system to native mobile, desktop, embedded, or constrained surfaces. Preserve semantic roles and interaction quality; do not blindly copy web dimensions to another platform.
+
+## Reuse before inventing
+
+The `web` profile contains 22 general exports across core, forms, navigation, and overlays. The `agentic-work` and `full` profiles expose 31 exports after adding the work extension.
+
+Before creating a new web primitive:
+
+1. Check the selected profile's `manifest.json` for a public export.
+2. Read the matching `components/<category>/<Name>.prompt.md` contract.
+3. Inspect its `.jsx` and `.d.ts` only when implementation detail is necessary.
+4. Import through the profile's public `index.js`, not component internals.
+
+Prompt contracts are compact agent-facing documentation. Load only those relevant to the product task.
+
+## Use the agentic-work extension conditionally
+
+Only load `references/agentic-work.md` when the product actually models autonomous or long-running work. Then use the canonical vocabulary exactly: `Queued`, `Running`, `Stuck`, `Needs you`, `Done`, `Standing`.
 
 - Prefer receipts, decisions, asks, and lifecycle stages over synthetic completion percentages.
 - Use `Needs you` only for a concrete human decision or intervention.
-- Pair every state color with text, iconography, or structure. Color cannot carry meaning alone.
-- Respect `prefers-reduced-motion`; a static live-state treatment must remain legible.
+- Use Undertow and tidepool as shared live signals, with a static reduced-motion treatment.
+- Pair every state color with text, iconography, or structure.
 
-Read `references/product-model.md` when designing work feeds, run details, autonomy views, lifecycle rails, or command surfaces.
+## Agentic design-development loop
 
-### Reuse before inventing
+For each meaningful interface change:
 
-The full bundle contains 31 exports across core, forms, navigation, overlays, and work primitives. Before creating a new primitive:
+1. **Retrieve** — read `DESIGN.md`, the target surface, its styles, and relevant pattern/component contracts.
+2. **Frame** — state the user job, product objects, information hierarchy, platforms or viewports, and reused primitives.
+3. **Implement** — work from semantic roles toward composed components; keep changes surgical.
+4. **Inspect** — render at representative device sizes; for responsive web include `375px`, `768px`, and `1440px`, in light and dark themes where supported.
+5. **Interact** — exercise keyboard or native input, focus, hover where applicable, loading, empty, error, and reduced-motion states.
+6. **Audit** — verify WCAG 2.2 AA contrast, visible focus, appropriate touch targets, semantic structure, and no horizontal overflow.
+7. **Reconcile** — if implementation intentionally changes the system, update `DESIGN.md` and related assets in the same change.
 
-1. Check `assets/system/manifest.json` for the public export.
-2. Read the matching `assets/system/components/<category>/<Name>.prompt.md` contract.
-3. Inspect its `.jsx` and `.d.ts` only when implementation detail is necessary.
-4. Import public components through the system entry point, not component internals.
-
-The prompt contracts are compact agent-facing component documentation. Load only the components relevant to the task.
-
-## Agentic design loop
-
-For each meaningful UI change:
-
-1. **Retrieve** — read `DESIGN.md`, the target route, its styles, and relevant prompt contracts.
-2. **Frame** — state the user job, information hierarchy, target viewports, and reused primitives.
-3. **Implement** — work from semantic tokens toward composed components; keep changes surgical.
-4. **Inspect** — render at `375px`, `768px`, and `1440px`; inspect light and dark themes.
-5. **Interact** — exercise keyboard navigation, focus, hover, loading, empty, error, and reduced-motion states.
-6. **Audit** — verify WCAG 2.2 AA contrast, visible focus, `44px` touch targets where appropriate, semantic HTML, and no horizontal overflow.
-7. **Reconcile** — if the implementation changes the system intentionally, update `DESIGN.md` and token/component assets in the same change.
-
-Use browser automation or screenshots when available. A code-only review is not visual validation.
+Use browser automation, device previews, or screenshots when available. A code-only review is not visual validation.
 
 ## Adherence checks
 
@@ -94,25 +109,27 @@ Run the deterministic source check at any time:
 python3 "$SKILL_DIR/scripts/materialize.py" verify-source
 ```
 
-The `tokens` and `full` profiles include `adherence.oxlintrc.json`, which warns on raw color literals, raw pixel literals, private component imports, invalid component props, and invalid enum values. Integrate it only when the target already uses Oxlint; the materializer does not mutate project lint configuration.
+The `web`, `agentic-work`, and `full` profiles include an Oxlint adherence profile. Integrate it only when the target already uses Oxlint; the materializer does not mutate project lint configuration.
 
 Also audit for:
 
-- raw hex values where a semantic token exists;
-- new spacing/radius values outside the ladder;
+- raw color values where a semantic token exists;
+- new spacing or radius values outside the ladder;
 - ambient glass on non-floating surfaces;
-- generic gradient hero treatments or decorative blobs unrelated to the blackhole/Undertow language;
-- title case, emoji, em dashes, vague status labels, or ornamental eyebrow copy;
+- generic gradient heroes or decorative blobs unrelated to the brand mark;
+- title case, emoji, em dashes, vague labels, or ornamental eyebrow copy;
 - `transition: all`, hover transforms that move layout, or motion without reduced-motion handling;
-- icon-only controls without accessible names.
+- icon-only controls without accessible names;
+- agentic work language appearing in a product that does not model agentic work.
 
 ## Voice
 
-Write plain, precise, second-person product copy. Use sentence case. Prefer a short verb phrase over a branded abstraction. Do not use emoji, em dashes, title case, or decorative eyebrow labels. A receipt says what happened; an ask says what the user must decide.
+Write plain, precise, action-oriented product copy. Use sentence case. Prefer a short verb phrase over a branded abstraction. Do not use emoji, em dashes, title case, or decorative eyebrow labels. Let domain terms come from the product, not from the design system.
 
 ## Boundaries
 
-- Use `broomva-design` for the current Broomva product and work-orchestration language.
+- Use `broomva-design` for any current Broomva-branded digital product.
+- Use the `agentic-work` profile only for orchestration, agent runs, or human-in-the-loop work.
 - Use `arcan-glass` only when the request explicitly targets the older glass-forward Arcan language or its Next.js integration patterns.
 - Use `design-engineering` for general premium design workflows that are not Broomva-branded.
 - Use `design-distill` when extracting a new system from external references rather than applying this one.
@@ -120,9 +137,12 @@ Write plain, precise, second-person product copy. Use sentence case. Prefer a sh
 
 ## Resources
 
-- `DESIGN.md` — canonical portable design contract copied to target roots.
+- `DESIGN.md` — canonical platform-neutral design contract copied to target roots.
 - `scripts/materialize.py` — safe, deterministic materializer and verifier.
-- `references/product-model.md` — work-state semantics and composition guidance.
-- `references/provenance.md` — archive audit, curation decisions, and licensing provenance.
-- `references/dogfood-receipt.md` — rendered light/dark evidence for two independently materialized test designs.
-- `assets/system/` — curated source bundle and visual specimens.
+- `references/product-patterns.md` — composition guidance across common digital-product families.
+- `references/platform-adaptation.md` — rules for web, native mobile, desktop, and constrained surfaces.
+- `references/agentic-work.md` — optional work-state semantics and orchestration composition guidance.
+- `references/provenance.md` — archive audit, portability layer, curation decisions, and licensing provenance.
+- `references/dogfood-receipt.md` — rendered evidence from independently materialized product designs.
+- `assets/portable/` — authored product-neutral foundation and general web adapter metadata.
+- `assets/system/` — hash-pinned curated source bundle and visual specimens.

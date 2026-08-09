@@ -1,0 +1,53 @@
+{
+  "namespace": "BroomvaDesignSystem_5727d9_agentic_work",
+  "profile": "agentic-work",
+  "components": [
+    { "name": "Avatar", "sourcePath": "components/core/Avatar.jsx" },
+    { "name": "Button", "sourcePath": "components/core/Button.jsx" },
+    { "name": "Card", "sourcePath": "components/core/Card.jsx" },
+    { "name": "Composer", "sourcePath": "components/core/Composer.jsx" },
+    { "name": "DotComet", "sourcePath": "components/core/DotComet.jsx" },
+    { "name": "IconButton", "sourcePath": "components/core/IconButton.jsx" },
+    { "name": "Input", "sourcePath": "components/core/Input.jsx" },
+    { "name": "StatusBadge", "sourcePath": "components/core/StatusBadge.jsx" },
+    { "name": "Checkbox", "sourcePath": "components/forms/Checkbox.jsx" },
+    { "name": "Field", "sourcePath": "components/forms/Field.jsx" },
+    { "name": "Radio", "sourcePath": "components/forms/Radio.jsx" },
+    { "name": "Select", "sourcePath": "components/forms/Select.jsx" },
+    { "name": "Switch", "sourcePath": "components/forms/Switch.jsx" },
+    { "name": "Textarea", "sourcePath": "components/forms/Textarea.jsx" },
+    { "name": "CommandPalette", "sourcePath": "components/navigation/CommandPalette.jsx" },
+    { "name": "Segmented", "sourcePath": "components/navigation/Segmented.jsx" },
+    { "name": "Tabs", "sourcePath": "components/navigation/Tabs.jsx" },
+    { "name": "Dialog", "sourcePath": "components/overlays/Dialog.jsx" },
+    { "name": "ConfirmDialog", "sourcePath": "components/overlays/Dialog.jsx" },
+    { "name": "Menu", "sourcePath": "components/overlays/Menu.jsx" },
+    { "name": "MenuItem", "sourcePath": "components/overlays/Menu.jsx" },
+    { "name": "MenuDivider", "sourcePath": "components/overlays/Menu.jsx" },
+    { "name": "Toast", "sourcePath": "components/overlays/Toast.jsx" },
+    { "name": "Tooltip", "sourcePath": "components/overlays/Tooltip.jsx" },
+    { "name": "AutonomyScoreboard", "sourcePath": "components/work/AutonomyScoreboard.jsx" },
+    { "name": "LifecycleRail", "sourcePath": "components/work/LifecycleRail.jsx" },
+    { "name": "Receipt", "sourcePath": "components/work/Receipt.jsx" },
+    { "name": "ReceiptRow", "sourcePath": "components/work/Receipt.jsx" },
+    { "name": "RunCard", "sourcePath": "components/work/RunCard.jsx" },
+    { "name": "Undertow", "sourcePath": "components/work/Undertow.jsx" },
+    { "name": "WorkState", "sourcePath": "components/work/WorkState.jsx" }
+  ],
+  "globalCssPaths": [
+    "tokens/colors.css",
+    "tokens/typography.css",
+    "tokens/spacing.css",
+    "tokens/glass.css",
+    "tokens/motion.css",
+    "tokens/base.css",
+    "styles.css"
+  ],
+  "fonts": [
+    {
+      "family": "CalSans",
+      "files": ["fonts/CalSans-SemiBold.ttf", "fonts/OFL.txt"],
+      "usage": "Optional display face only"
+    }
+  ]
+}

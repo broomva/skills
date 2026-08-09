@@ -111,7 +111,7 @@
 |---|---|
 | `arcan-glass` | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | `brand-icons` | Brand icon and visual identity management for BroomVA projects |
-| `broomva-design` | Materializes Broomva's calm blue-axis product design system, portable DESIGN.md contract, tokens, components, templates, and agentic work language |
+| `broomva-design` | Applies Broomva's platform-neutral blue-axis foundation across digital products, with general web primitives and an optional agentic-work extension |
 | `design-distill` | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill, not a reimplementation |
 | `design-engineering` | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE |
 | `tekton` | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |

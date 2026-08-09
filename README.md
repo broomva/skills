@@ -151,7 +151,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`arcan-glass`](skills/design/arcan-glass/) | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | [`brand-icons`](skills/design/brand-icons/) | Brand icon and visual identity management for BroomVA projects |
-| [`broomva-design`](skills/design/broomva-design/) | Materializes Broomva's calm blue-axis product design system, portable DESIGN.md contract, tokens, components, templates, and agentic work language |
+| [`broomva-design`](skills/design/broomva-design/) | Applies Broomva's platform-neutral blue-axis foundation across digital products, with general web primitives and an optional agentic-work extension |
 | [`design-distill`](skills/design/design-distill/) | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill that fires existing tools in sequence rather than reimplementing them |
 | [`design-engineering`](skills/design/design-engineering/) | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE… |
 | [`tekton`](skills/design/tekton/) | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |

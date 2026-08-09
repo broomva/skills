@@ -1,17 +1,17 @@
-# Product model
+# Agentic-work extension
 
-Load this reference when composing work orchestration, agent runs, lifecycle views, or human-in-the-loop decisions.
+Load this extension only when the product models autonomous or long-running work, agent runs, lifecycle views, or human-in-the-loop decisions. It is not part of the platform-neutral Broomva foundation.
 
 ## The primary object is work
 
-Broomva interfaces show work moving through a system. The UI should answer four questions quickly:
+An agentic Broomva interface should answer four questions quickly:
 
 1. What is happening?
 2. What changed?
 3. What evidence exists?
 4. What, if anything, do you need from me?
 
-Do not substitute a decorative dashboard metric for those answers.
+Do not substitute decorative dashboard metrics for those answers.
 
 ## Canonical states
 
@@ -31,10 +31,10 @@ Keep labels exact so components, copy, and automation share one vocabulary.
 Prefer this order inside a run detail:
 
 1. Outcome or current state
-2. Decided — decisions the system made and why
-3. Asks — choices only the user can make
-4. Receipts — commands, artifacts, checks, links, or observed effects
-5. Lifecycle — passed, current, warning, and upcoming stages
+2. Decided: decisions the system made and why
+3. Asks: choices only the user can make
+4. Receipts: commands, artifacts, checks, links, or observed effects
+5. Lifecycle: passed, current, warning, and upcoming stages
 
 A receipt must describe something observable. It is not a celebratory activity message.
 
@@ -44,9 +44,13 @@ A receipt must describe something observable. It is not a celebratory activity m
 - Use `WorkState` for compact status text; use its chip variant only where spatial grouping helps.
 - Use `Receipt` and `ReceiptRow` for proof, commands, artifacts, and checks.
 - Use `LifecycleRail` for ordered stages, not a fake numeric completion model.
-- Use `AutonomyScoreboard` to summarize operating behavior only when the underlying receipts exist.
-- Use `Composer` for the next instruction or intervention. Its visual prominence should match its role as the human control surface.
+- Use `AutonomyScoreboard` only when the underlying receipts justify the summary.
+- Use `Composer` for the next instruction or intervention when a persistent control surface is central to the product.
 
 ## Human attention
 
-`Needs you` is expensive. Use it only when all autonomous options have been exhausted or when policy requires human judgment. State the decision, the consequences of each option, and the safest default. Never use urgency styling merely to increase engagement.
+`Needs you` is expensive. Use it only when autonomous options are exhausted or policy requires human judgment. State the decision, the consequences of each option, and the safest default. Never use urgency styling merely to increase engagement.
+
+## Extension boundary
+
+Undertow, tidepool, canonical work states, receipts, Maestro patterns, the signature composer, and work-specific components belong here. They may reuse the foundation palette, typography, spacing, glass, and accessibility rules. They must not become mandatory vocabulary or composition rules for commerce, editorial, analytics, settings, communication, or other unrelated products.

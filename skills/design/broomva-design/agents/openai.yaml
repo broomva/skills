@@ -1,4 +1,4 @@
 interface:
   display_name: "Broomva Design"
-  short_description: "Materialize Broomva’s calm blue-axis system"
-  default_prompt: "Use $broomva-design to apply the Broomva design system to this interface."
+  short_description: "Apply Broomva across any digital product"
+  default_prompt: "Use $broomva-design to apply the platform-neutral Broomva system to this digital product."
