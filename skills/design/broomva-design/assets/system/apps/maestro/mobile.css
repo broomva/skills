@@ -1,0 +1,813 @@
+/* Broomva Maestro — mobile + tablet shell.
+   Loaded after concepts.css. The desktop layout (.mcc-fill / .bv-app) is
+   untouched; the mobile shell is its own (.bvm-*) frame that reuses the
+   chat / plane / file-pane components inside a phone-shaped chrome.
+   Chat-first, bottom tab bar, off-canvas drawer, file bottom sheet. */
+
+:root {
+  --bvm-top-h: 52px;
+  --bvm-tabs-h: 56px;
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+/* ── The frame ─────────────────────────────────────────── */
+.bvm {
+  position: fixed; inset: 0;
+  height: 100dvh; width: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--background);
+  color: var(--foreground);
+  overflow: hidden;
+  font-family: var(--bv-font-sans);
+}
+
+/* ── Top bar ───────────────────────────────────────────── */
+.bvm-top {
+  display: flex; align-items: center; gap: 10px;
+  height: calc(var(--bvm-top-h) + var(--sat));
+  padding: var(--sat) calc(12px + var(--sar)) 0 calc(10px + var(--sal));
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 88%, transparent);
+  backdrop-filter: blur(12px) saturate(1.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  flex-shrink: 0; z-index: 4;
+}
+.bvm-iconbtn {
+  width: 38px; height: 38px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; cursor: pointer;
+  border-radius: var(--bv-radius-lg); color: var(--foreground);
+  -webkit-tap-highlight-color: transparent;
+}
+.bvm-iconbtn:active { background: var(--bv-frost-8); }
+.bvm-iconbtn.is-active { background: var(--bv-frost-12); color: var(--foreground); }
+.bvm-top-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.bvm-top-id { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.bvm-top-logo { width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0; object-fit: cover; }
+.bvm-top-titles { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+.bvm-top-title { font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+.bvm-top-sub {
+  font-size: 12px; color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.bvm-top-attn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 11px; flex-shrink: 0;
+  border-radius: var(--bv-radius-full);
+  border: 1px solid var(--bv-border-15);
+  background: var(--bv-frost-8);
+  font-size: 12px; font-weight: 500; color: var(--foreground);
+  cursor: pointer; white-space: nowrap;
+}
+
+/* ── Body — the swappable panes ────────────────────────── */
+.bvm-body { position: relative; min-height: 0; overflow: hidden; display: flex; }
+.bvm-pane { flex: 1 1 100%; min-width: 0; min-height: 0; display: none; flex-direction: column; }
+.bvm[data-tab="chat"]    .bvm-pane--chat,
+.bvm[data-tab="mission"] .bvm-pane--mission { display: flex; }
+.bvm[data-mode="mobile"][data-tab="files"] .bvm-pane--files { display: flex; }
+
+/* Files as a phone pane — browse list + single-doc reader with a back row */
+.bvm-panehead {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px 10px; flex-shrink: 0;
+  border-bottom: 1px solid var(--bv-border-5);
+}
+.bvm-panehead-title { font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bvm-pane-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.bvm-pane-scroll .mcc-doc-inner { padding-left: 18px; padding-right: 18px; }
+.bvm[data-mode="mobile"] .bvm-pane--files .mcc-ftree { border-left: none; overflow-y: auto; padding-bottom: calc(96px + var(--sab)); }
+.bvm[data-mode="mobile"] .bvm-pane-scroll { padding-bottom: calc(90px + var(--sab)); }
+
+/* Panes reuse the desktop component internals at full width */
+.bvm-pane .mcc-chatcol-feed,
+.bvm-pane .mcc-chatcol-foot { max-width: 640px; }
+.bvm-pane .mcc-plane-feed { max-width: none; }
+
+/* ── Floating dock — frosted liquid glass ──────────────── */
+.bvm-dock {
+  --bvm-item-w: 90px;
+  position: fixed; z-index: 18;
+  left: 50%; bottom: calc(16px + var(--sab));
+  transform: translateX(-50%);
+  display: flex; align-items: stretch;
+  height: 60px; padding: 6px;
+  border-radius: 24px;
+  background: color-mix(in oklab, var(--background) 58%, transparent);
+  backdrop-filter: blur(26px) saturate(1.9);
+  -webkit-backdrop-filter: blur(26px) saturate(1.9);
+  border: 1px solid color-mix(in oklab, var(--foreground) 13%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 60%, transparent),
+    inset 0 -1px 2px 0 color-mix(in oklab, var(--foreground) 7%, transparent),
+    0 12px 36px oklch(0.135 0.02 272 / 0.26),
+    0 3px 10px oklch(0.135 0.02 272 / 0.14);
+  isolation: isolate;
+}
+html[data-theme="dark"] .bvm-dock {
+  background: color-mix(in oklab, var(--background) 50%, transparent);
+  border-color: color-mix(in oklab, #fff 14%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 16%, transparent),
+    0 12px 38px oklch(0 0 0 / 0.5),
+    0 3px 10px oklch(0 0 0 / 0.34);
+}
+
+/* the sliding frosted lozenge behind the active tab */
+.bvm-dock-pill {
+  position: absolute; top: 6px; bottom: 6px; left: 6px; z-index: -1;
+  width: var(--bvm-item-w); border-radius: 19px;
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 65%, transparent),
+    inset 0 -1px 1px 0 color-mix(in oklab, var(--foreground) 6%, transparent),
+    0 2px 8px oklch(0.135 0.02 272 / 0.16);
+  transform: translateX(calc(var(--bvm-idx, 0) * var(--bvm-item-w)));
+  transition: transform 0.52s cubic-bezier(0.34, 1.46, 0.46, 1);
+  will-change: transform;
+}
+html[data-theme="dark"] .bvm-dock-pill {
+  background: color-mix(in oklab, #fff 13%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 24%, transparent);
+}
+/* trailing glow — lags the pill so the slide reads as a liquid drag */
+.bvm-dock-glow {
+  position: absolute; top: 50%; left: 6px; z-index: -2;
+  width: var(--bvm-item-w); height: 38px; margin-top: -19px;
+  border-radius: 19px; pointer-events: none;
+  background: radial-gradient(62% 72% at 50% 50%,
+    color-mix(in oklab, var(--bv-blue, #2a6fdb) 70%, transparent), transparent 76%);
+  opacity: 0.42; filter: blur(10px);
+  transform: translateX(calc(var(--bvm-idx, 0) * var(--bvm-item-w)));
+  transition: transform 0.74s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.bvm-tab {
+  width: var(--bvm-item-w);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; border: none; background: transparent; cursor: pointer;
+  color: var(--muted-foreground); font: inherit; font-size: 12px; font-weight: 500;
+  -webkit-tap-highlight-color: transparent; position: relative; transition: color 0.32s ease;
+}
+.bvm-tab svg { width: 21px; height: 21px; }
+.bvm-tab-ico { display: inline-flex; transition: transform 0.5s cubic-bezier(0.34, 1.46, 0.46, 1); }
+.bvm-tab-lbl { transition: opacity 0.3s ease; }
+.bvm-tab.is-active { color: var(--foreground); }
+.bvm-tab.is-active .bvm-tab-ico { transform: translateY(-1px) scale(1.07); }
+.bvm-tab:active .bvm-tab-ico { transform: scale(0.88); }
+.bvm-tab-badge {
+  position: absolute; top: 7px; left: calc(50% + 10px);
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: var(--bv-blue-accent, var(--bv-blue));
+  color: #fff; font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Off-canvas drawer (workspace tree) ────────────────── */
+.bvm-scrim {
+  position: fixed; inset: 0; z-index: 20;
+  background: oklch(0.135 0.02 272 / 0.46);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.22s var(--bv-ease-standard, ease);
+  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+}
+.bvm-drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 21;
+  width: min(82vw, 320px);
+  padding-left: var(--sal);
+  transform: translateX(-101%);
+  transition: transform 0.26s var(--bv-ease-emphasized, cubic-bezier(0.2,0,0,1));
+  box-shadow: 2px 0 40px oklch(0.135 0.02 272 / 0.28);
+  display: flex; flex-direction: column;
+  background: var(--background);
+}
+.bvm[data-drawer="open"] .bvm-scrim { opacity: 1; pointer-events: auto; }
+.bvm[data-drawer="open"] .bvm-drawer { transform: translateX(0); }
+.bvm-drawer .bv-sidebar {
+  width: 100%; height: 100%;
+  padding-top: calc(10px + var(--sat));
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.bvm-drawer .mcc-coldrag { display: none; }
+
+/* ── Touch-friendly tightening of reused components ────── */
+.bvm .mcc-ftree-row { min-height: 40px; }
+.bvm .bv-sb-item { min-height: 40px; }
+.bvm .mcc-gateq-card { padding: 12px 14px; }
+.bvm .bv-pill--sm { height: 34px; padding: 0 14px; }
+.bvm .mcc-prompt-iconbtn { width: 34px; height: 34px; }
+.bvm .mcc-prompt-send { width: 34px; height: 34px; }
+/* The plane's view toggle + chips bar sits flush under the top bar */
+.bvm .mcc-plane-bar { padding: 12px 16px 10px; flex-wrap: nowrap; gap: 10px; }
+/* Filter chips scroll horizontally instead of wrapping under the toggle */
+.bvm .mcc-plane-bar .mc-chips {
+  flex-wrap: nowrap; overflow-x: auto; min-width: 0;
+  scrollbar-width: none; -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch; padding-bottom: 2px;
+}
+.bvm .mcc-plane-bar .mc-chips::-webkit-scrollbar { display: none; }
+.bvm .mcc-plane-bar .mc-chip { flex-shrink: 0; }
+.bvm .mcc-seg { flex-shrink: 0; }
+.bvm .mcc-plane-body { padding: 2px 16px calc(96px + var(--sab)); }
+.bvm .mcc-chatcol-foot { padding: 0 12px calc(88px + var(--sab)); }
+.bvm .mcc-chatcol-feed { padding-left: 14px; padding-right: 14px; }
+
+/* The chat composer rail can overflow horizontally on narrow phones */
+.bvm .mcc-prompt-rail { flex-wrap: wrap; gap: 6px; }
+.bvm .mcc-prompt-rail-left { flex-wrap: wrap; min-width: 0; }
+
+/* ── Tablet — chat persists, secondary pane beside it ──── */
+.bvm[data-mode="tablet"] {
+  grid-template-rows: auto 1fr;
+}
+.bvm[data-mode="tablet"] .bvm-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding-right: calc(84px + var(--sar));
+}
+.bvm[data-mode="tablet"][data-tab="mission"] .bvm-body,
+.bvm[data-mode="tablet"][data-tab="files"]   .bvm-body {
+  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+}
+/* On tablet both chat + secondary render; tabs choose the secondary */
+.bvm[data-mode="tablet"] .bvm-pane--chat { display: flex; }
+.bvm[data-mode="tablet"] .bvm-pane--chat { border-right: 1px solid var(--border); }
+.bvm[data-mode="tablet"][data-tab="chat"] .bvm-pane--chat { border-right: none; }
+.bvm[data-mode="tablet"][data-tab="mission"] .bvm-pane--mission { display: flex; }
+.bvm[data-mode="tablet"][data-tab="files"]   .bvm-pane--files { display: flex; }
+.bvm-pane--files { min-width: 0; min-height: 0; }
+.bvm-pane--files .mcc-ftree { border-left: none; height: 100%; overflow-y: auto; }
+/* Reserve room on the right edge so the floating rail never covers content */
+.bvm[data-mode="tablet"] .bvm-body { padding-right: calc(90px + var(--sar)); }
+/* Tablet — the dock becomes a vertical rail on the right edge */
+.bvm[data-mode="tablet"] .bvm-dock {
+  left: auto; right: calc(12px + var(--sar)); bottom: auto; top: 50%;
+  transform: translateY(-50%);
+  flex-direction: column; align-items: stretch;
+  height: auto; width: 74px; gap: 4px; border-radius: 22px;
+}
+.bvm[data-mode="tablet"] .bvm-tab {
+  width: 100%; height: 58px; border-radius: 17px;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+.bvm[data-mode="tablet"] .bvm-tab.is-active {
+  background: color-mix(in oklab, var(--foreground) 9%, transparent);
+}
+.bvm[data-mode="tablet"] .bvm-dock-pill,
+.bvm[data-mode="tablet"] .bvm-dock-glow { display: none; }
+.bvm[data-mode="tablet"] .bvm-tab-badge { top: 9px; left: calc(50% + 11px); }
+
+/* Tablet: the file sheet is unnecessary — files live in the pane */
+.bvm[data-mode="tablet"] .bvm-sheet,
+.bvm[data-mode="tablet"] .bvm-sheet-scrim { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHONE NAV STRATEGIES — selectable via the Tweaks panel (`nav`):
+     [data-nav="tray"]  · wide anchored glass tab bar (default)
+     [data-nav="top"]   · segmented switcher in the header
+     [data-nav="orbit"] · collapsed glass orb that fans out the surfaces
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Concept A · Tray — the dock made wider, anchored, all 3 surfaces ──── */
+.bvm[data-mode="mobile"][data-nav="tray"] .bvm-dock {
+  --bvm-item-w: 106px;
+  bottom: calc(12px + var(--sab));
+}
+
+/* ── Concept B · Header switcher — bottom belongs to the composer ──────── */
+.bvm-topseg {
+  position: relative; flex: 1; min-width: 0;
+  display: flex; align-items: stretch;
+  height: 38px; padding: 3px; border-radius: 13px;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4); backdrop-filter: blur(10px) saturate(1.4);
+  isolation: isolate;
+}
+.bvm-topseg-pill {
+  position: absolute; top: 3px; bottom: 3px; left: 3px; z-index: -1;
+  width: calc((100% - 6px) / var(--seg-n, 3)); border-radius: 10px;
+  background: var(--background);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 60%, transparent),
+    0 1px 2px oklch(0.135 0.02 272 / 0.16);
+  transform: translateX(calc(var(--seg-idx, 0) * 100%));
+  transition: transform 0.44s cubic-bezier(0.34, 1.42, 0.46, 1);
+}
+html[data-theme="dark"] .bvm-topseg-pill {
+  background: color-mix(in oklab, var(--foreground) 13%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 18%, transparent);
+}
+.bvm-topseg-btn {
+  flex: 1; min-width: 0; position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: none; background: transparent; cursor: pointer; font: inherit;
+  font-size: 12.5px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--muted-foreground); -webkit-tap-highlight-color: transparent;
+  transition: color 0.3s ease;
+}
+.bvm-topseg-btn.is-active { color: var(--foreground); }
+.bvm-topseg-ico { display: inline-flex; }
+.bvm-topseg-ico svg { width: 17px; height: 17px; }
+.bvm-topseg-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bvm-topseg-badge {
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+/* No bottom chrome → the composer and content own the bottom edge */
+.bvm[data-nav="top"] .mcc-chatcol-foot { padding-bottom: calc(14px + var(--sab)); }
+.bvm[data-nav="top"] .mcc-plane-body { padding-bottom: calc(22px + var(--sab)); }
+.bvm[data-nav="top"] .bvm-pane--files .mcc-ftree { padding-bottom: calc(24px + var(--sab)); }
+.bvm[data-nav="top"] .bvm-pane-scroll { padding-bottom: calc(24px + var(--sab)); }
+/* On the narrowest phones the labels would crowd — let the icons carry it */
+@media (max-width: 360px) {
+  .bvm-topseg-lbl { display: none; }
+  .bvm-topseg-ico svg { width: 19px; height: 19px; }
+}
+
+/* ── Concept C · Orbit — a single glass orb that fans out the surfaces ─── */
+.bvm-orbit {
+  position: fixed; z-index: 19;
+  right: calc(16px + var(--sar)); bottom: calc(16px + var(--sab));
+}
+.bvm-orbit-fab {
+  position: relative; width: 58px; height: 58px; border-radius: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid color-mix(in oklab, var(--foreground) 13%, transparent);
+  background: color-mix(in oklab, var(--background) 58%, transparent);
+  -webkit-backdrop-filter: blur(26px) saturate(1.9); backdrop-filter: blur(26px) saturate(1.9);
+  color: var(--foreground); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 60%, transparent),
+    0 12px 36px oklch(0.135 0.02 272 / 0.26),
+    0 3px 10px oklch(0.135 0.02 272 / 0.14);
+  transition: border-radius 0.4s cubic-bezier(0.34, 1.46, 0.46, 1), transform 0.2s ease;
+}
+.bvm-orbit-fab:active { transform: scale(0.93); }
+.bvm[data-orbit="open"] .bvm-orbit-fab { border-radius: 50%; }
+html[data-theme="dark"] .bvm-orbit-fab {
+  background: color-mix(in oklab, var(--background) 50%, transparent);
+  border-color: color-mix(in oklab, #fff 14%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 16%, transparent),
+    0 12px 38px oklch(0 0 0 / 0.5), 0 3px 10px oklch(0 0 0 / 0.34);
+}
+.bvm-orbit-fab-ico { display: inline-flex; transition: transform 0.4s cubic-bezier(0.34, 1.46, 0.46, 1); }
+.bvm-orbit-fab svg { width: 23px; height: 23px; }
+.bvm-orbit-fab .bvm-tab-badge { top: 6px; left: auto; right: 6px; }
+.bvm-orbit-stack {
+  position: absolute; right: 2px; bottom: 70px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+}
+.bvm-orbit-item {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 11px;
+  height: 46px; padding: 0 15px; border-radius: 16px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  background: color-mix(in oklab, var(--background) 64%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.8); backdrop-filter: blur(22px) saturate(1.8);
+  color: var(--foreground); font: inherit; font-size: 14px; font-weight: 600;
+  letter-spacing: -0.01em; white-space: nowrap; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 50%, transparent),
+    0 8px 22px oklch(0.135 0.02 272 / 0.2);
+  opacity: 0; transform: translateY(14px) scale(0.86); pointer-events: none;
+  transform-origin: bottom right;
+  transition: opacity 0.24s ease, transform 0.34s cubic-bezier(0.34, 1.46, 0.46, 1);
+}
+html[data-theme="dark"] .bvm-orbit-item {
+  background: color-mix(in oklab, var(--background) 56%, transparent);
+  border-color: color-mix(in oklab, #fff 13%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 14%, transparent), 0 8px 24px oklch(0 0 0 / 0.46);
+}
+.bvm[data-orbit="open"] .bvm-orbit-item {
+  opacity: 1; transform: translateY(0) scale(1); pointer-events: auto;
+  transition-delay: calc(var(--oi, 0) * 0.05s);
+}
+.bvm-orbit-item.is-active {
+  background: color-mix(in oklab, var(--bv-blue, #2a6fdb) 16%, var(--background));
+  border-color: color-mix(in oklab, var(--bv-blue, #2a6fdb) 38%, transparent);
+}
+.bvm-orbit-item .bvm-orbit-ico { display: inline-flex; }
+.bvm-orbit-item svg { width: 20px; height: 20px; }
+.bvm-orbit-badge {
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.bvm-orbit-scrim {
+  position: fixed; inset: 0; z-index: 18;
+  background: oklch(0.135 0.02 272 / 0.3);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.24s var(--bv-ease-standard, ease);
+  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+}
+.bvm[data-orbit="open"] .bvm-orbit-scrim { opacity: 1; pointer-events: auto; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHONE NAV MODELS (round 2) — fundamentally different interaction models:
+     [data-nav="page"]  · surfaces are swipeable pages + carousel indicator
+     [data-nav="sheet"] · chat is the canvas; Mission/Files rise as sheets
+     [data-nav="menu"]  · header title is a "Chat ▾" popover switcher
+     [data-nav="edge"]  · slim vertical glass rail on the right edge
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.bvm-top { position: relative; }
+
+/* All four free the bottom edge entirely → composer + content own it */
+.bvm[data-nav="page"]  .mcc-chatcol-foot,
+.bvm[data-nav="menu"]  .mcc-chatcol-foot,
+.bvm[data-nav="edge"]  .mcc-chatcol-foot,
+.bvm[data-nav="sheet"] .mcc-chatcol-foot { padding-bottom: calc(14px + var(--sab)); }
+.bvm[data-nav="page"]  .bvm-pane-scroll, .bvm[data-nav="menu"] .bvm-pane-scroll,
+.bvm[data-nav="edge"]  .bvm-pane-scroll, .bvm[data-nav="sheet"] .bvm-pane-scroll,
+.bvm[data-nav="page"]  .bvm-pane--files .mcc-ftree, .bvm[data-nav="menu"] .bvm-pane--files .mcc-ftree,
+.bvm[data-nav="edge"]  .bvm-pane--files .mcc-ftree, .bvm[data-nav="sheet"] .bvm-pane--files .mcc-ftree {
+  padding-bottom: calc(24px + var(--sab));
+}
+
+/* ── Model 01 · Pager — swipeable pages ──────────────────────────────── */
+.bvm[data-nav="page"] .bvm-body {
+  overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory; scroll-behavior: smooth;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+.bvm[data-nav="page"] .bvm-body::-webkit-scrollbar { display: none; }
+.bvm[data-nav="page"] .bvm-pane {
+  display: flex !important; flex: 0 0 100%; width: 100%;
+  scroll-snap-align: start; scroll-snap-stop: always;
+}
+.bvm-pager {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 12px calc(7px); flex-shrink: 0;
+  background: color-mix(in oklab, var(--background) 80%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.bvm-pager-seg {
+  position: relative; display: inline-flex; align-items: center; gap: 0;
+  height: 32px; padding: 0 9px; border-radius: 16px;
+  border: 1px solid transparent; background: color-mix(in oklab, var(--foreground) 6%, transparent);
+  color: var(--muted-foreground); font: inherit; font-size: 13px; font-weight: 600;
+  letter-spacing: -0.01em; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background 0.4s ease, color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+.bvm-pager-ico { display: inline-flex; }
+.bvm-pager-ico svg { width: 17px; height: 17px; }
+.bvm-pager-lbl {
+  max-width: 0; overflow: hidden; opacity: 0; white-space: nowrap;
+  transition: max-width 0.42s cubic-bezier(0.34, 1.3, 0.46, 1), opacity 0.3s ease, margin 0.42s ease;
+}
+.bvm-pager-seg.is-active {
+  background: var(--background); color: var(--foreground);
+  border-color: color-mix(in oklab, var(--foreground) 11%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 55%, transparent), 0 2px 8px oklch(0.135 0.02 272 / 0.14);
+}
+.bvm-pager-seg.is-active .bvm-pager-lbl { max-width: 84px; opacity: 1; margin-left: 7px; }
+html[data-theme="dark"] .bvm-pager-seg.is-active {
+  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 16%, transparent);
+}
+.bvm-pager-badge {
+  position: absolute; top: -3px; right: -3px;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Model 02 · Sheets — chat canvas + pull-up Mission/Files ──────────── */
+.bvm[data-nav="sheet"] .bvm-pane--chat { display: flex !important; }
+/* Header pull triggers */
+.bvm-pulls { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.bvm-pull {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 34px; padding: 0 10px; border-radius: 12px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 9%, transparent);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4); backdrop-filter: blur(10px) saturate(1.4);
+  color: var(--foreground); font: inherit; font-size: 13px; font-weight: 600;
+  letter-spacing: -0.01em; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.15s ease;
+}
+.bvm-pull:active { transform: scale(0.96); }
+.bvm-pull-ico { display: inline-flex; }
+.bvm-pull-ico svg { width: 16px; height: 16px; }
+.bvm-pull-up { display: inline-flex; opacity: 0.5; transform: rotate(180deg); margin-left: -1px; }
+.bvm-pull.is-active {
+  background: color-mix(in oklab, var(--bv-blue, #2a6fdb) 14%, var(--background));
+  border-color: color-mix(in oklab, var(--bv-blue, #2a6fdb) 36%, transparent);
+}
+/* The rising sheet */
+.bvm-sheet-scrim {
+  position: fixed; inset: 0; z-index: 16;
+  background: oklch(0.135 0.02 272 / 0.4);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.3s var(--bv-ease-standard, ease);
+  -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
+}
+.bvm[data-sheet="open"] .bvm-sheet-scrim { opacity: 1; pointer-events: auto; }
+.bvm-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 17;
+  height: 90%; border-radius: 26px 26px 0 0;
+  background: color-mix(in oklab, var(--background) 82%, transparent);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8); backdrop-filter: blur(30px) saturate(1.8);
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  display: flex; flex-direction: column; overflow: hidden;
+  transform: translateY(101%);
+  transition: transform 0.46s cubic-bezier(0.32, 1.18, 0.4, 1);
+  box-shadow: 0 -24px 60px oklch(0.135 0.02 272 / 0.3);
+}
+.bvm[data-sheet="open"] .bvm-sheet { transform: translateY(0); }
+.bvm-sheet-grab { display: flex; justify-content: center; padding: 11px 0 7px; flex-shrink: 0; cursor: grab; }
+.bvm-sheet-bar { width: 42px; height: 5px; border-radius: 3px; background: color-mix(in oklab, var(--foreground) 22%, transparent); }
+.bvm-sheet-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.bvm-sheet-body .bvm-pane { display: flex !important; flex: 1; min-height: 0; }
+.bvm-sheet-body .mcc-plane { border-radius: 0; }
+
+/* ── Model 03 · Menu — header title is a popover switcher ─────────────── */
+.bvm-titlebtn {
+  flex: 1; min-width: 0; max-width: max-content; margin: 0 auto;
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 8px 0 12px; border-radius: 13px;
+  border: 1px solid transparent; background: transparent;
+  color: var(--foreground); font: inherit; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; position: relative;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+.bvm-titlebtn.is-open { background: color-mix(in oklab, var(--foreground) 6%, transparent); border-color: color-mix(in oklab, var(--foreground) 9%, transparent); }
+.bvm-titlebtn-ico { display: inline-flex; color: var(--muted-foreground); }
+.bvm-titlebtn-ico svg { width: 18px; height: 18px; }
+.bvm-titlebtn-txt { font-size: 16px; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; }
+.bvm-titlebtn-chev { display: inline-flex; color: var(--muted-foreground); transition: transform 0.32s cubic-bezier(0.34, 1.4, 0.46, 1); }
+.bvm-titlebtn.is-open .bvm-titlebtn-chev { transform: rotate(180deg); }
+.bvm-titlebtn-badge {
+  position: absolute; top: 4px; right: 24px;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.bvm-navmenu {
+  position: absolute; z-index: 24; top: calc(100% - 4px); left: 50%;
+  width: min(74%, 248px); padding: 7px; border-radius: 18px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: color-mix(in oklab, var(--background) 78%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8); backdrop-filter: blur(28px) saturate(1.8);
+  border: 1px solid color-mix(in oklab, var(--foreground) 11%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 45%, transparent), 0 18px 48px oklch(0.135 0.02 272 / 0.28);
+  transform-origin: top center;
+  transform: translateX(-50%) translateY(-8px) scale(0.94);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.3s cubic-bezier(0.34, 1.42, 0.46, 1);
+}
+.bvm[data-menu="open"] .bvm-navmenu { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0) scale(1); }
+.bvm-navmenu-item {
+  position: relative; display: flex; align-items: center; gap: 11px;
+  height: 44px; padding: 0 12px; border-radius: 12px;
+  border: none; background: transparent; cursor: pointer; font: inherit;
+  font-size: 14.5px; font-weight: 550; color: var(--foreground);
+  -webkit-tap-highlight-color: transparent; text-align: left;
+  transition: background 0.18s ease;
+}
+.bvm-navmenu-item:active { background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+.bvm-navmenu-item.is-active { background: color-mix(in oklab, var(--bv-blue, #2a6fdb) 13%, transparent); font-weight: 650; }
+.bvm-navmenu-ico { display: inline-flex; color: var(--muted-foreground); }
+.bvm-navmenu-item.is-active .bvm-navmenu-ico { color: var(--bv-blue, #2a6fdb); }
+.bvm-navmenu-lbl { flex: 1; min-width: 0; }
+.bvm-navmenu-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bv-blue, #2a6fdb); }
+.bvm-navmenu-badge {
+  min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.bvm-menu-scrim {
+  position: fixed; inset: 0; z-index: 23;
+  background: oklch(0.135 0.02 272 / 0.14); opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.bvm[data-menu="open"] .bvm-menu-scrim { opacity: 1; pointer-events: auto; }
+
+/* ── Model 04 · Edge rail — slim vertical glass rail, right edge ──────── */
+.bvm-edge {
+  --edge-item: 46px; --edge-gap: 6px;
+  position: fixed; z-index: 18;
+  right: calc(8px + var(--sar)); top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: var(--edge-gap);
+  padding: 6px; border-radius: 22px;
+  background: color-mix(in oklab, var(--background) 56%, transparent);
+  -webkit-backdrop-filter: blur(26px) saturate(1.9); backdrop-filter: blur(26px) saturate(1.9);
+  border: 1px solid color-mix(in oklab, var(--foreground) 13%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 55%, transparent),
+    0 14px 38px oklch(0.135 0.02 272 / 0.24), 0 3px 10px oklch(0.135 0.02 272 / 0.14);
+  isolation: isolate;
+}
+html[data-theme="dark"] .bvm-edge {
+  background: color-mix(in oklab, var(--background) 50%, transparent);
+  border-color: color-mix(in oklab, #fff 14%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 15%, transparent), 0 14px 40px oklch(0 0 0 / 0.5);
+}
+.bvm-edge-pill {
+  position: absolute; left: 6px; right: 6px; top: 6px; z-index: -1;
+  height: var(--edge-item); border-radius: 16px;
+  background: color-mix(in oklab, var(--foreground) 10%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 60%, transparent), 0 2px 8px oklch(0.135 0.02 272 / 0.16);
+  transform: translateY(calc(var(--eidx, 0) * (var(--edge-item) + var(--edge-gap))));
+  transition: transform 0.5s cubic-bezier(0.34, 1.46, 0.46, 1);
+}
+html[data-theme="dark"] .bvm-edge-pill { background: color-mix(in oklab, #fff 13%, transparent); }
+.bvm-edge-btn {
+  position: relative; width: var(--edge-item); height: var(--edge-item);
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--muted-foreground); -webkit-tap-highlight-color: transparent;
+  transition: color 0.32s ease, transform 0.4s cubic-bezier(0.34, 1.46, 0.46, 1);
+}
+.bvm-edge-btn svg { width: 22px; height: 22px; }
+.bvm-edge-btn.is-active { color: var(--foreground); }
+.bvm-edge-btn:active { transform: scale(0.88); }
+.bvm-edge-badge {
+  position: absolute; top: 6px; right: 6px;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SHEET-MODEL TRIGGER TREATMENTS ([data-nav="sheet"][data-strig=…]) —
+   how Mission/Files are surfaced over the chat canvas:
+     peek  · thin peeking sheet-cards just above the composer
+     dock  · a slim launcher bar above the composer
+     edge  · vertical pull-tabs on the right edge
+     icons · minimal icon buttons in the header
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Peek — the sheets rest as thin cards you pull up ─────────────────── */
+.bvm[data-nav="sheet"][data-strig="peek"] .bvm-pane--chat { padding-bottom: calc(118px + var(--sab)); }
+.bvm-peek {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 0 10px calc(9px + var(--sab));
+  pointer-events: none;
+}
+.bvm-peek-card {
+  pointer-events: auto; position: relative;
+  display: flex; align-items: center; gap: 10px;
+  height: 48px; padding: 0 14px 0 15px; border-radius: 16px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 11%, transparent);
+  background: color-mix(in oklab, var(--background) 72%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(1.7); backdrop-filter: blur(24px) saturate(1.7);
+  color: var(--foreground); font: inherit; cursor: pointer; text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, #fff 55%, transparent),
+    0 10px 26px oklch(0.135 0.02 272 / 0.16);
+  transition: transform 0.18s ease, background 0.2s ease;
+}
+.bvm-peek-card:active { transform: translateY(1px) scale(0.992); }
+html[data-theme="dark"] .bvm-peek-card {
+  background: color-mix(in oklab, var(--background) 62%, transparent);
+  border-color: color-mix(in oklab, #fff 13%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 13%, transparent), 0 10px 28px oklch(0 0 0 / 0.4);
+}
+.bvm-peek-grab {
+  position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+  width: 30px; height: 3px; border-radius: 2px;
+  background: color-mix(in oklab, var(--foreground) 18%, transparent);
+}
+.bvm-peek-ico { display: inline-flex; color: var(--muted-foreground); }
+.bvm-peek-ico svg { width: 19px; height: 19px; }
+.bvm-peek-lbl { font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+.bvm-peek-hint {
+  font-size: 12px; color: var(--muted-foreground); margin-left: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+}
+.bvm-peek-badge {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.bvm-peek-up { display: inline-flex; color: var(--muted-foreground); transform: rotate(180deg); opacity: 0.55; }
+
+/* ── Dock — a slim launcher bar above the composer ───────────────────── */
+.bvm[data-nav="sheet"][data-strig="dock"] .bvm-pane--chat { padding-bottom: calc(72px + var(--sab)); }
+.bvm-sdock {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
+  display: flex; gap: 8px; padding: 9px 12px calc(10px + var(--sab));
+  background: linear-gradient(to top, color-mix(in oklab, var(--background) 90%, transparent), transparent);
+}
+.bvm-sdock-chip {
+  flex: 1; min-width: 0; position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 46px; border-radius: 15px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 11%, transparent);
+  background: color-mix(in oklab, var(--background) 64%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7);
+  color: var(--foreground); font: inherit; font-size: 14px; font-weight: 600;
+  letter-spacing: -0.01em; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 50%, transparent), 0 6px 18px oklch(0.135 0.02 272 / 0.14);
+  transition: transform 0.15s ease;
+}
+.bvm-sdock-chip:active { transform: scale(0.97); }
+html[data-theme="dark"] .bvm-sdock-chip {
+  background: color-mix(in oklab, var(--background) 56%, transparent);
+  border-color: color-mix(in oklab, #fff 13%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 12%, transparent), 0 6px 18px oklch(0 0 0 / 0.36);
+}
+.bvm-sdock-ico { display: inline-flex; color: var(--muted-foreground); }
+.bvm-sdock-ico svg { width: 19px; height: 19px; }
+.bvm-sdock-badge {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Edge — vertical pull-tabs flush to the right edge ───────────────── */
+.bvm-stabs {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 15;
+  display: flex; flex-direction: column; gap: 12px; align-items: flex-end;
+}
+.bvm-stab {
+  position: relative; display: inline-flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 5px;
+  width: 44px; padding: 13px 0; border-radius: 16px 0 0 16px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent); border-right: none;
+  background: color-mix(in oklab, var(--background) 64%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.8); backdrop-filter: blur(22px) saturate(1.8);
+  color: var(--foreground); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 50%, transparent), -6px 8px 22px oklch(0.135 0.02 272 / 0.18);
+  transition: transform 0.18s ease, padding-right 0.18s ease;
+}
+.bvm-stab:active { transform: translateX(2px); }
+html[data-theme="dark"] .bvm-stab {
+  background: color-mix(in oklab, var(--background) 56%, transparent);
+  border-color: color-mix(in oklab, #fff 13%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, #fff 12%, transparent), -6px 8px 24px oklch(0 0 0 / 0.4);
+}
+.bvm-stab-ico { display: inline-flex; color: var(--muted-foreground); }
+.bvm-stab-ico svg { width: 20px; height: 20px; }
+.bvm-stab-lbl {
+  font-size: 12px; font-weight: 600;
+  writing-mode: vertical-rl; transform: rotate(180deg); line-height: 1;
+  color: var(--muted-foreground);
+}
+.bvm-stab-badge {
+  position: absolute; top: 6px; left: 6px;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ── Icons — minimal icon buttons in the header ──────────────────────── */
+.bvm-sicons { display: flex; align-items: center; gap: 2px; }
+.bvm-sicons-div {
+  width: 1px; height: 20px; margin: 0 4px 0 5px;
+  background: color-mix(in oklab, var(--foreground) 13%, transparent);
+}
+.bvm-sicon { position: relative; color: var(--muted-foreground); }
+.bvm-sicon svg { width: 20px; height: 20px; }
+.bvm-sicon:active { color: var(--foreground); }
+.bvm-sicon.is-active {
+  color: var(--bv-blue, #2a6fdb);
+  background: color-mix(in oklab, var(--bv-blue, #2a6fdb) 12%, transparent);
+}
+.bvm-sicon-badge {
+  position: absolute; top: 4px; right: 3px;
+  min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--bv-blue-accent, var(--bv-blue)); color: #fff;
+  font-size: 8.5px; font-weight: 700; line-height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .bvm-drawer, .bvm-sheet, .bvm-scrim, .bvm-sheet-scrim,
+  .bvm-dock-pill, .bvm-dock-glow, .bvm-tab-ico,
+  .bvm-topseg-pill, .bvm-orbit-fab, .bvm-orbit-fab-ico,
+  .bvm-orbit-item, .bvm-orbit-scrim,
+  .bvm-pager-seg, .bvm-pager-lbl, .bvm-navmenu, .bvm-titlebtn-chev,
+  .bvm-edge-pill, .bvm-edge-btn, .bvm-body { transition: none; scroll-behavior: auto; }
+}

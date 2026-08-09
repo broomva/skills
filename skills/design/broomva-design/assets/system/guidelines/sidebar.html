@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Sidebar items" subtitle="32px rows, rounded-8 · selected = frosted blue, not gray" viewport="700x250" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font: inherit; font-size: 14px; font-weight: 500; height: 36px; padding: 0 14px; border: 1px solid transparent; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--primary:hover { background: var(--bv-ink-hover); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--secondary:hover { background: var(--bv-frost-4); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .pill--soft:hover { background: var(--bv-frost-8); }
+  .pill--ghost { background: transparent; color: var(--foreground); }
+  .pill--ghost:hover { background: var(--bv-frost-8); }
+  svg.ic { width: 16px; height: 16px; }
+</style>
+<style>
+body { background: var(--background); display: flex; gap: 24px; align-items: flex-start; }
+.sb { background: var(--sidebar); border: 1px solid var(--sidebar-border); border-radius: 12px; padding: 10px 8px; width: 210px; display: flex; flex-direction: column; gap: 2px; }
+.item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--foreground); cursor: pointer; }
+.item:hover { background: var(--sidebar-accent); }
+.item.is-active { background: var(--sidebar-accent); font-weight: 500; }
+.badge { margin-left: auto; background: var(--primary); color: var(--primary-foreground); font-size: 10.5px; font-weight: 500; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; }
+.sect { font-size: 11px; color: var(--muted-foreground); padding: 12px 10px 4px; }
+svg.ic { width: 16px; height: 16px; flex-shrink: 0; }
+</style></head><body>
+<div class="sb">
+  <div class="item is-active"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Mission control</div>
+  <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>Store</div>
+  <div class="item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>Settings</div>
+  <div class="sect">Agents</div>
+  <div class="item"><span style="width:16px;height:16px;border-radius:8px;background:var(--bv-blue);display:inline-block;flex-shrink:0;"></span>Broomva<span class="badge">2</span></div>
+  <div class="item"><span style="width:16px;height:16px;border-radius:8px;background:var(--bv-blue-accent);display:inline-block;flex-shrink:0;"></span>Bookkeeper</div>
+</div>
+<div class="col" style="gap:6px;padding-top:8px;">
+  <span class="mono">hover / selected → var(--sidebar-accent)</span>
+  <span class="mono">= frosted ai-blue at 9–14%</span>
+  <span class="mono">badge → ink pill</span>
+</div>
+</body></html>

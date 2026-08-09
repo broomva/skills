@@ -1,0 +1,52 @@
+/* ============================================================
+   Broomva — Typography tokens
+   Default: system-font purity.
+   Optional display face: CalSans SemiBold —
+   opt in per-surface with [data-display-font="calsans"] on a
+   root element, or use --bv-font-display directly.
+   ============================================================ */
+
+@font-face {
+  font-family: "CalSans";
+  src: url("../fonts/CalSans-SemiBold.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bv-font-sans:
+    ui-sans-serif, -apple-system, system-ui, "Segoe UI",
+    Helvetica, Arial, sans-serif;
+  --bv-font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Display face for hero/marketing surfaces only. App chrome
+     stays on the system stack. */
+  --bv-font-display: "CalSans", var(--bv-font-sans);
+
+  /* Headings resolve through this — system by default */
+  --bv-font-heading: var(--bv-font-sans);
+
+  /* ── Tight scale: 12 / 14 / 16 / 18 / 22 / 24 / 28 ──────── */
+  --bv-text-xs:        12px;   /* metadata, timestamps */
+  --bv-text-sm:        14px;   /* buttons, sidebar items */
+  --bv-text-base:      16px;   /* body, chat */
+  --bv-text-lg:        18px;   /* model selector */
+  --bv-text-xl:        22px;
+  --bv-text-2xl:       24px;   /* empty-state title */
+  --bv-text-h1:        28px;   /* main screen titles */
+
+  --bv-weight-regular: 400;
+  --bv-weight-medium:  500;
+  --bv-weight-semi:    600;
+
+  --bv-leading-tight:  1.25;
+  --bv-leading-normal: 1.5;
+  --bv-leading-relaxed: 1.6;
+}
+
+/* Opt-in: CalSans headings (marketing / hero surfaces) */
+[data-display-font="calsans"] {
+  --bv-font-heading: "CalSans", var(--bv-font-sans);
+}

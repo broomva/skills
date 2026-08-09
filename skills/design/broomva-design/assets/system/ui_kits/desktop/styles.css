@@ -1,0 +1,285 @@
+/* Broomva Desktop UI Kit — app-shell styles
+   Built on ../../styles.css tokens. Sets app globals (body overflow hidden). */
+
+@import url("../../styles.css");
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; overflow: hidden; }
+
+/* ── Tweakable blue intensity ───────────────────────────── */
+:root {
+  --bv-blue-mult: 1;
+  --bv-frost-4:  oklch(0.60 0.12 260 / calc(0.05 * var(--bv-blue-mult)));
+  --bv-frost-8:  oklch(0.60 0.12 260 / calc(0.09 * var(--bv-blue-mult)));
+  --bv-frost-12: oklch(0.60 0.12 260 / calc(0.14 * var(--bv-blue-mult)));
+  --bv-shadow-composer:
+    0 4px 4px       oklch(0.45 0.09 260 / calc(0.05 * var(--bv-blue-mult))),
+    0 4px 80px 8px  oklch(0.55 0.12 260 / calc(0.08 * var(--bv-blue-mult))),
+    0 0 1px         oklch(0.20 0.04 265 / 0.65);
+}
+[data-theme="dark"] {
+  --accent:         oklch(0.60 0.12 260 / calc(0.13 * var(--bv-blue-mult)));
+  --sidebar-accent: oklch(0.60 0.12 260 / calc(0.14 * var(--bv-blue-mult)));
+  --bv-shadow-composer:
+    0 4px 8px       oklch(0 0 0 / 0.30),
+    0 4px 64px 8px  oklch(0.60 0.12 260 / calc(0.13 * var(--bv-blue-mult))),
+    0 0 1px         oklch(0.70 0.08 262 / 0.55);
+}
+
+/* ── Glass intensity (tweak) ────────────────────────────── */
+[data-glass="whisper"] .bv-glass-composer {
+  background: var(--card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+[data-glass="medium"] .bv-card {
+  background: color-mix(in oklab, var(--card) 78%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  box-shadow: inset 0 1px 0 var(--glass-light-line), var(--bv-shadow-edge);
+}
+
+/* ── Window shell ───────────────────────────────────────── */
+.bv-app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--bv-w-sidebar) 1fr;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--bv-font-sans);
+  font-size: 14px;
+}
+.bv-main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.bv-shell-row { flex: 1; display: grid; grid-template-columns: 1fr 460px; min-height: 0; }
+.bv-shell-row.no-panel { grid-template-columns: 1fr; }
+
+/* ── Sidebar ────────────────────────────────────────────── */
+.bv-sidebar {
+  background: var(--sidebar);
+  display: flex; flex-direction: column;
+  padding: 10px 8px; gap: 4px;
+  border-right: 1px solid var(--sidebar-border);
+  min-width: 0;
+}
+.bv-ws-switch {
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; border: none; cursor: pointer;
+  font: inherit; color: var(--foreground);
+  padding: 8px 10px; border-radius: var(--bv-radius-lg);
+  margin-bottom: 6px; text-align: left;
+}
+.bv-ws-switch:hover { background: var(--sidebar-accent); }
+.bv-ws-name { font-size: 13px; font-weight: 500; flex: 1; }
+.bv-ws-logo { width: 20px; height: 20px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+
+.bv-sb-item {
+  display: flex; align-items: center; gap: 10px;
+  height: 32px; padding: 0 10px;
+  background: transparent; border: none; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--foreground);
+  border-radius: var(--bv-radius-lg); text-align: left; width: 100%;
+}
+.bv-sb-item:hover { background: var(--sidebar-accent); }
+.bv-sb-item.is-active { background: var(--sidebar-accent); font-weight: 500; }
+.bv-sb-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.bv-sb-section-label { font-size: 11px; color: var(--muted-foreground); padding: 14px 12px 4px; }
+.bv-sb-badge {
+  margin-left: auto;
+  background: var(--primary); color: var(--primary-foreground);
+  font-size: 10.5px; font-weight: 500;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.bv-sb-spacer { flex: 1; }
+.bv-avatar {
+  border-radius: var(--bv-radius-full);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: oklch(1 0 0); font-weight: 600; flex-shrink: 0; user-select: none;
+}
+
+/* ── Top bar ────────────────────────────────────────────── */
+.bv-top-bar {
+  height: var(--bv-h-header);
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  padding: 0 12px 0 24px;
+  font-size: 13px; color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+  background: var(--background); flex-shrink: 0;
+}
+
+/* ── Mission control ────────────────────────────────────── */
+.bv-mc { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 24px 0; overflow: hidden; }
+.bv-mc-controls { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; margin-top: 14px; }
+.bv-search {
+  display: flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 12px;
+  background: var(--bv-canvas-soft); border-radius: var(--bv-radius-full);
+  color: var(--muted-foreground); max-width: 340px;
+}
+.bv-search svg { width: 16px; height: 16px; flex-shrink: 0; }
+.bv-search input {
+  border: none; background: transparent; outline: none;
+  font: inherit; font-size: 14px; color: var(--foreground);
+  flex: 1; min-width: 0;
+}
+.bv-search input::placeholder { color: var(--muted-foreground); }
+
+.bv-tabs { display: flex; gap: 2px; margin-top: 10px; border-bottom: 1px solid var(--border); }
+.bv-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: none; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 500; color: var(--muted-foreground);
+  padding: 10px 14px; position: relative;
+}
+.bv-tab:hover { color: var(--foreground); }
+.bv-tab.is-active { color: var(--foreground); }
+.bv-tab.is-active::after {
+  content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px;
+  height: 1.5px; background: var(--bv-blue);
+}
+.bv-tab-badge {
+  background: var(--primary); color: var(--primary-foreground);
+  font-size: 10.5px; font-weight: 500;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ── Board ──────────────────────────────────────────────── */
+.bv-board {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px;
+  padding: 16px 0; overflow: hidden;
+}
+.bv-col { display: flex; flex-direction: column; min-height: 0; }
+.bv-col-header { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; padding: 6px 8px 10px; }
+.bv-col-count {
+  background: var(--bv-canvas-soft); color: var(--foreground);
+  font-size: 11px; font-weight: 500;
+  width: 20px; height: 20px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.bv-col-body { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; padding-bottom: 12px; }
+
+/* ── Cards ──────────────────────────────────────────────── */
+.bv-card {
+  background: var(--card);
+  border: 1px solid var(--bv-border-5);
+  border-radius: var(--bv-radius-xl);
+  box-shadow: var(--bv-shadow-edge);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  transition: box-shadow var(--bv-dur-fast) var(--bv-ease-standard), border-color var(--bv-dur-fast) var(--bv-ease-standard);
+}
+.bv-card:hover { box-shadow: var(--bv-shadow-card-hover); }
+.bv-card.is-selected { border-color: oklch(0.60 0.12 260 / 0.40); box-shadow: var(--bv-shadow-glow); }
+.bv-card-row { display: flex; align-items: center; gap: 8px; }
+.bv-card-agent { font-size: 13px; font-weight: 500; }
+.bv-card-title { font-size: 14px; font-weight: 500; }
+.bv-card-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+.bv-dot { display: inline-block; width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
+.bv-dot--pulse { animation: bv-pulse 1s ease-in-out infinite; }
+@keyframes bv-pulse { 0%,100% { opacity: 0.45; transform: scale(1); } 50% { opacity: 1; transform: scale(1.08); } }
+
+/* The running treatment is the Undertow (.bv-undertow, in tokens/motion.css):
+   a contained breathing halo on a matte card. The retired border comet
+   (.bv-running-glow) was removed. bv-glow-spin stays as the shared spin
+   keyframe used by the tidepool dot and the dot-comet. */
+@keyframes bv-glow-spin { to { transform: rotate(360deg); } }
+
+/* ── Pills + icon buttons ───────────────────────────────── */
+.bv-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: var(--bv-radius-full);
+  font: inherit; font-size: 14px; font-weight: 500;
+  height: var(--bv-h-btn); padding: 0 14px;
+  border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+}
+.bv-pill svg { width: 16px; height: 16px; }
+.bv-pill--primary { background: var(--primary); color: var(--primary-foreground); }
+.bv-pill--primary:hover { background: var(--bv-ink-hover); }
+.bv-pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+.bv-pill--secondary:hover { background: var(--bv-frost-4); }
+.bv-pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+.bv-pill--soft:hover { background: var(--bv-frost-8); }
+.bv-pill--sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+.bv-icon-btn {
+  width: var(--bv-h-icon); height: var(--bv-h-icon);
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--bv-radius-lg); border: none; background: transparent;
+  color: var(--bv-gray-700); cursor: pointer; flex-shrink: 0;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+}
+.bv-icon-btn:hover { background: var(--bv-frost-8); }
+.bv-icon-btn svg { width: 18px; height: 18px; }
+
+/* ── Chat panel ─────────────────────────────────────────── */
+.bv-chat-panel {
+  background: var(--background);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.bv-chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.bv-chat-header-info { display: flex; align-items: center; gap: 10px; }
+.bv-chat-header-name { font-size: 14px; font-weight: 500; }
+.bv-chat-header-mission { font-size: 12px; color: var(--muted-foreground); }
+.bv-chat-feed { flex: 1; overflow-y: auto; padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 14px; }
+
+.bv-msg { font-size: 15px; line-height: 1.5; }
+.bv-msg--user {
+  align-self: flex-end;
+  background: var(--bv-canvas-soft-2); color: var(--foreground);
+  border-radius: 24px 24px 6px 24px;
+  padding: 10px 18px; max-width: 75%;
+}
+.bv-msg--assistant { color: var(--foreground); max-width: 100%; }
+.bv-msg--assistant b { font-weight: 600; }
+.bv-msg--assistant .bv-link-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 11px;
+  border-radius: var(--bv-radius-full);
+  background: var(--primary); color: var(--primary-foreground);
+  font-size: 12px; font-weight: 500; text-decoration: none;
+  vertical-align: middle; cursor: pointer; border: none; font-family: inherit;
+}
+.bv-msg--assistant .bv-link-pill:hover { opacity: 0.9; }
+
+.bv-typing { display: inline-flex; gap: 5px; padding: 10px 14px; background: var(--bv-canvas-soft-2); border-radius: 18px; align-self: flex-start; }
+.bv-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-foreground); animation: bv-bounce 1.2s ease-in-out infinite both; }
+.bv-typing span:nth-child(2) { animation-delay: 0.15s; }
+.bv-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bv-bounce { 0%,80%,100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-5px); opacity: 1; } }
+
+/* Composer */
+.bv-chat-composer-wrap { padding: 8px 16px 14px; flex-shrink: 0; }
+.bv-composer {
+  border-radius: var(--bv-radius-composer); padding: 10px;
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px;
+}
+.bv-composer-input {
+  border: none; background: transparent; outline: none;
+  font: inherit; font-size: 16px; padding: 8px 10px;
+  color: var(--foreground); min-width: 0;
+}
+.bv-composer-input::placeholder { color: var(--bv-gray-500); }
+.bv-composer-send {
+  width: 36px; height: 36px; border-radius: 18px;
+  background: var(--primary); color: var(--primary-foreground);
+  border: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  transition: background var(--bv-dur-fast) var(--bv-ease-standard);
+}
+.bv-composer-send:hover { background: var(--bv-ink-hover); }
+.bv-composer-send svg { width: 18px; height: 18px; }
+
+/* Empty chat */
+.bv-greeting { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; }
+.bv-greeting-title { font-size: 22px; font-weight: 600; }
+.bv-greeting-sub { font-size: 14px; color: var(--muted-foreground); max-width: 320px; text-align: center; }

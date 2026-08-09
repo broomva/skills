@@ -1,0 +1,13 @@
+skill: broomva-design
+
+should_trigger:
+  - "Materialize the Broomva design system into this app."
+  - "Apply Broomva's blue-axis product language and Undertow running state."
+  - "Review this Maestro surface against the Broomva DESIGN.md."
+  - "Use the Broomva blackhole mark, tokens, and component library."
+
+should_not_trigger:
+  - "Distill a new design system from these competitor screenshots."
+  - "Apply Arcan Glass to my existing Next.js application."
+  - "Make this unrelated dashboard feel more premium."
+  - "Generate an astronomical black hole illustration."

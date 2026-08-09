@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- @dsCard group="Spacing" name="Glass" subtitle="Earned, not ambient — overlays, popovers and the composer only · note the inner light line" viewport="700x250" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { padding: 0; }
+.stage { position: relative; padding: 26px 24px; min-height: 230px; background: var(--background); overflow: hidden; display: flex; gap: 18px; align-items: center; }
+.orb { position: absolute; border-radius: 9999px; filter: blur(60px); pointer-events: none; }
+.txt { position: absolute; inset: 0; padding: 14px 18px; color: var(--muted-foreground); font-size: 13px; line-height: 1.9; user-select: none; }
+.g { position: relative; width: 190px; height: 130px; padding: 14px; font-size: 13px; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+.g .mono { font-size: 10px; }
+</style></head><body>
+<div class="stage" data-theme="dark">
+  <div class="orb" style="width:300px;height:300px;left:-60px;top:-120px;background:oklch(0.60 0.12 260 / 0.35);"></div>
+  <div class="orb" style="width:260px;height:260px;right:-40px;bottom:-140px;background:oklch(0.65 0.14 235 / 0.30);"></div>
+  <div class="txt">Quick check first: are you on Google or Microsoft? Neither Gmail nor Google Calendar are connected yet. Let me get you set up for both. Connect both apps, then come back and I'll build your plan. Here's your Fri May 22 plan. Approve to release the next step.</div>
+  <div class="g bv-glass"><span style="color:var(--foreground);">Popover</span><span class="mono">.bv-glass · blur 16</span></div>
+  <div class="g bv-glass-heavy"><span style="color:var(--foreground);">Dialog</span><span class="mono">.bv-glass-heavy · blur 24</span></div>
+  <div class="g bv-glass-composer"><span style="color:var(--foreground);">Composer</span><span class="mono">.bv-glass-composer · halo</span></div>
+</div>
+</body></html>

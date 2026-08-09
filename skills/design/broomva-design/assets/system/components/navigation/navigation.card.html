@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- @dsCard group="Components" viewport="700x360" name="Navigation" subtitle="Tabs · Segmented · Command palette — light and dark" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--bv-font-sans); }
+  .pane { background: var(--bv-canvas-soft); color: var(--foreground); padding: 16px 18px; }
+</style></head><body>
+<div class="pane" id="pane-light"></div>
+<div class="pane" id="pane-dark" data-theme="dark"></div>
+<script type="text/babel">
+const { Tabs, Segmented, CommandPalette } = window.BroomvaDesignSystem_5727d9;
+const groups = [{
+  label: "Actions",
+  items: [
+    { id: "a", title: "New mission", meta: "Start a work item", kbd: "⌘N" },
+    { id: "b", title: "Open the maestro session", meta: "Why it woke, what it scheduled" },
+  ],
+}];
+function NavSpec() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <Tabs tabs={[{ label: "Feed" }, { label: "Board", count: 7 }, { label: "List" }]} defaultActive={0} />
+        <Segmented value="risk" options={[{ value: "ask", label: "Ask first" }, { value: "risk", label: "Ask on risk" }, { value: "free", label: "Run free" }]} />
+      </div>
+      <CommandPalette query="" groups={groups} activeId="a" />
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("pane-light")).render(<NavSpec />);
+ReactDOM.createRoot(document.getElementById("pane-dark")).render(<NavSpec />);
+</script>
+</body></html>

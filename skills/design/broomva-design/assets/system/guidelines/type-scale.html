@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Type scale" subtitle="12 / 14 / 16 / 18 / 22 / 24 / 28 — nothing else" viewport="700x320" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { display: flex; flex-direction: column; gap: 10px; }
+.spec { display: grid; grid-template-columns: 120px 1fr; align-items: baseline; gap: 16px; }
+</style></head><body>
+<div class="spec"><span class="mono">28 / 400 / h1</span><span style="font-size:28px;letter-spacing:-0.01em;line-height:1.25;">Mission control</span></div>
+<div class="spec"><span class="mono">24 / 600 / empty</span><span style="font-size:24px;font-weight:600;">No missions yet</span></div>
+<div class="spec"><span class="mono">22 / 600 / h2</span><span style="font-size:22px;font-weight:600;">Connected apps</span></div>
+<div class="spec"><span class="mono">18 / 500 / h3</span><span style="font-size:18px;font-weight:500;">Weekly planning</span></div>
+<div class="spec"><span class="mono">16 / 400 / body</span><span style="font-size:16px;">Here's your Fri May 22 plan.</span></div>
+<div class="spec"><span class="mono">14 / 500 / button</span><span style="font-size:14px;font-weight:500;">New mission</span></div>
+<div class="spec"><span class="mono">12 / 400 / meta</span><span style="font-size:12px;color:var(--muted-foreground);">Updated 2 min ago</span></div>
+</body></html>

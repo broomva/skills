@@ -1,0 +1,42 @@
+/* ============================================================
+   Broomva — Spacing, radii, heights, motion
+   A deliberate ladder. The restraint is the point.
+   ============================================================ */
+
+:root {
+  /* ── Radii ──────────────────────────────────────────────── */
+  --bv-radius-chip:     0.25rem;   /* chips/tags */
+  --bv-radius-md:       0.375rem;  /* inputs */
+  --bv-radius-lg:       0.5rem;    /* icon buttons, sidebar rows */
+  --bv-radius-xl:       0.75rem;   /* cards */
+  --bv-radius-2xl:      1rem;      /* large cards, dialogs */
+  --bv-radius-composer: 28px;      /* composer — signature */
+  --bv-radius-full:     9999px;    /* pills, avatars — never cards */
+
+  /* ── Spacing (4px base) ─────────────────────────────────── */
+  --bv-space-1:  4px;
+  --bv-space-2:  8px;
+  --bv-space-3:  12px;
+  --bv-space-4:  16px;
+  --bv-space-5:  20px;
+  --bv-space-6:  24px;
+  --bv-space-8:  32px;
+  --bv-space-10: 40px;
+  --bv-space-12: 48px;
+
+  /* ── Heights / layout ───────────────────────────────────── */
+  --bv-h-icon:    36px;
+  --bv-h-btn:     36px;
+  --bv-h-btn-lg:  44px;
+  --bv-h-header:  52px;
+  --bv-w-sidebar: 200px;
+  --bv-w-chat-max: 768px;
+
+  /* ── Motion ─────────────────────────────────────────────── */
+  --bv-ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1); /* @kind other */
+  --bv-ease-morph:    cubic-bezier(0.4, 0, 0.2, 1);     /* @kind other */
+  --bv-dur-fast:      0.15s;  /* @kind other */
+  --bv-dur-common:    0.2s;   /* @kind other */
+  --bv-dur-slow:      0.35s;  /* @kind other */
+  --bv-dur-morph:     0.5s;   /* @kind other */
+}

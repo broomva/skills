@@ -1,0 +1,12 @@
+/* ============================================================
+   Broomva Design System — root stylesheet
+   Calm, monochrome design on a blue axis.
+   Link this one file to get the full token set + base styles.
+   ============================================================ */
+
+@import url("tokens/colors.css");
+@import url("tokens/typography.css");
+@import url("tokens/spacing.css");
+@import url("tokens/glass.css");
+@import url("tokens/motion.css");
+@import url("tokens/base.css");

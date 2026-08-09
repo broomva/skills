@@ -1,0 +1,197 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   BROOMVA ESSENTIALS — the load-bearing look, distilled
+   ───────────────────────────────────────────────────────────────────────
+   The full Broomva system is 158 tokens. This is the ~30 that carry the
+   identity: barely-blue ink, a cool monochrome scale, one blue accent, a
+   frosted-blue interaction layer, blue-tinted shadows, earned glass.
+
+   Drop this one file into any project to apply the Broomva look wholesale.
+   Everything is OKLCH. There is no pure #000 and no pure-white dark text.
+
+   Keep, always:  the ink is blue-black · every gray is cool (hue 265) ·
+   color earns its place · glass is earned by floating surfaces only ·
+   shadows carry a hint of blue.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Ink & paper ─────────────────────────────────────────────────────
+     The soul of the look. "Black" is a barely-perceptible dark blue. */
+  --bv-ink:          oklch(0.175 0.022 265);   /* text + primary buttons */
+  --bv-ink-hover:    oklch(0.28  0.035 263);   /* primary hover, one step up */
+  --bv-paper:        oklch(1 0 0);             /* flat white canvas */
+  --bv-canvas:       oklch(0.966 0.003 265);   /* cool-gray soft surface / sidebar */
+
+  /* ── Cool grays (hue 265, whisper chroma) — pick from these three ──── */
+  --bv-hover:        oklch(0.945 0.004 265);   /* neutral hover / user bubble */
+  --bv-text-muted:   oklch(0.50  0.015 265);   /* secondary text */
+  --bv-text-body:    oklch(0.38  0.020 265);   /* long-form body text */
+
+  /* ── The blue axis — the only hue, and the interaction layer ───────── */
+  --bv-blue:         oklch(0.60 0.12 260);            /* links · focus · info · glow */
+  --bv-frost:        oklch(0.60 0.12 260 / 0.09);     /* hover / selected fill */
+  --bv-frost-strong: oklch(0.60 0.12 260 / 0.14);     /* pressed */
+
+  /* ── Borders — blue-black at low alpha (a solid border looks wrong) ── */
+  --bv-border:        oklch(0.25 0.04 265 / 0.07);    /* whisper — default divider */
+  --bv-border-strong: oklch(0.25 0.04 265 / 0.16);    /* visible edge — inputs, buttons */
+
+  /* ── Status — the only saturated hues, and only on dots/pills ──────── */
+  --bv-success:   oklch(0.62 0.17 152);
+  --bv-warning:   oklch(0.76 0.15 85);
+  --bv-danger:    oklch(0.56 0.21 27);
+  --bv-needs-you: oklch(0.65 0.14 235);   /* accent-blue — owns "Needs you"; a gate, never red */
+
+  /* ── Shadows — three tiers, every one tinted blue ──────────────────── */
+  --bv-shadow-edge:  0 1px 0 oklch(0.25 0.05 265 / 0.06);            /* cards/rows at rest */
+  --bv-shadow-hover: 0 6px 16px oklch(0.45 0.09 260 / 0.09),          /* lift on hover */
+                     0 1px 0    oklch(0.25 0.05 265 / 0.06);
+  --bv-shadow-composer:                                               /* the one dramatic cue */
+    0 4px 4px      oklch(0.45 0.09 260 / 0.05),
+    0 4px 80px 8px oklch(0.55 0.12 260 / 0.08),
+    0 0 1px        oklch(0.20 0.04 265 / 0.65);
+
+  /* ── Glass — earned by overlays, popovers & the composer ONLY ──────── */
+  --bv-glass-surface:    oklch(0.99 0.003 265 / 0.86);
+  --bv-glass-border:     oklch(0.45 0.06 262 / 0.16);
+  --bv-glass-light-line: oklch(1 0 0 / 0.70);          /* the inner light line = "glass" */
+  --bv-glass-blur:       22px;
+  --bv-glass-sat:        1.8;                           /* saturation is what frosts, not dims */
+
+  /* ── Type — system stack; tight scale 12/14/16/18/22/24/28 ─────────── */
+  --bv-font-sans: ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+  --bv-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  /* weights: 400 default · 500 buttons/headers · 600 empty-state titles only */
+
+  /* ── Radii — a deliberate ladder; pill is for buttons/avatars, never cards */
+  --bv-radius-input:    0.375rem;
+  --bv-radius-row:      0.5rem;
+  --bv-radius-card:     0.75rem;
+  --bv-radius-composer: 28px;      /* signature */
+  --bv-radius-full:     9999px;
+
+  /* ── Motion — under 300ms; calm, never bouncy ──────────────────────── */
+  --bv-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --bv-dur:  0.2s;
+
+  /* ── Semantic aliases (so this file is drop-in for base styling) ───── */
+  --background: var(--bv-paper);
+  --foreground: var(--bv-ink);
+  --primary:    var(--bv-ink);
+  --muted:      var(--bv-canvas);
+  --ring:       var(--bv-blue);   /* focus is ai-blue, never black */
+}
+
+/* ── Dark mode — deep blue-purple, never pure black. Identity-critical. ── */
+[data-theme="dark"] {
+  --bv-ink:          oklch(0.965 0.004 265);   /* text flips light */
+  --bv-ink-hover:    oklch(0.88  0.012 268);
+  --bv-paper:        oklch(0.135 0.020 272);   /* deep blue canvas */
+  --bv-canvas:       oklch(0.165 0.022 272);
+  --bv-hover:        oklch(0.205 0.025 272);
+  --bv-text-muted:   oklch(0.62  0.020 270);
+  --bv-text-body:    oklch(0.78  0.012 268);
+  --bv-frost:        oklch(0.60 0.12 260 / 0.13);
+  --bv-frost-strong: oklch(0.60 0.12 260 / 0.18);
+  --bv-border:        oklch(0.62 0.05 268 / 0.11);
+  --bv-border-strong: oklch(0.62 0.05 268 / 0.18);
+  --bv-shadow-edge:  0 1px 0 oklch(0 0 0 / 0.25);
+  --bv-shadow-hover: 0 6px 16px oklch(0 0 0 / 0.35), 0 0 20px oklch(0.60 0.12 260 / 0.10);
+  --bv-glass-surface:    oklch(0.195 0.026 272 / 0.78);
+  --bv-glass-border:     oklch(0.62 0.06 265 / 0.22);
+  --bv-glass-light-line: oklch(1 0 0 / 0.10);
+  --background: var(--bv-paper);
+  --foreground: var(--bv-ink);
+}
+
+/* ═══ Base rules — the defaults that make a bare page read as Broomva ═══ */
+
+html, body {
+  font-family: var(--bv-font-sans);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Sentence case everywhere. Never uppercase, never letter-spacing on labels. */
+h1 { font-size: 28px; font-weight: 400; line-height: 1.25; letter-spacing: -0.01em; margin: 0; }
+h2 { font-size: 22px; font-weight: 600; line-height: 1.3; margin: 0; }
+h3 { font-size: 18px; font-weight: 500; line-height: 1.3; margin: 0; }
+p  { font-size: 16px; line-height: 1.5; margin: 0; }
+
+a {
+  color: var(--bv-blue);
+  text-decoration: none;
+  transition: color var(--bv-dur) var(--bv-ease);
+}
+a:hover { color: var(--bv-ink); }
+
+code {
+  font-family: var(--bv-font-mono);
+  font-size: 13px;
+  background: var(--muted);
+  padding: 2px 6px;
+  border-radius: 0.25rem;
+}
+
+/* The quiet signature: focus is ai-blue, app-wide. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bv-border-strong); border-radius: var(--bv-radius-full); }
+
+/* ═══ The three earned-glass utilities. Nothing else gets glass. ═══ */
+
+.bv-glass {                                   /* popovers, menus, tooltips */
+  background: var(--bv-glass-surface);
+  backdrop-filter: blur(var(--bv-glass-blur)) saturate(var(--bv-glass-sat));
+  -webkit-backdrop-filter: blur(var(--bv-glass-blur)) saturate(var(--bv-glass-sat));
+  border: 1px solid var(--bv-glass-border);
+  border-radius: var(--bv-radius-card);
+  box-shadow:
+    inset 0 1px 0 var(--bv-glass-light-line),
+    0 12px 32px oklch(0.30 0.06 262 / 0.16);
+}
+.bv-glass-composer {                          /* the composer — glass + the halo */
+  background: var(--bv-glass-surface);
+  backdrop-filter: blur(var(--bv-glass-blur)) saturate(var(--bv-glass-sat));
+  -webkit-backdrop-filter: blur(var(--bv-glass-blur)) saturate(var(--bv-glass-sat));
+  border-radius: var(--bv-radius-composer);
+  box-shadow: inset 0 1px 0 var(--bv-glass-light-line), var(--bv-shadow-composer);
+}
+.bv-scrim {                                   /* dialog backdrop — blue-black, never gray */
+  background: oklch(0.14 0.025 270 / 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* ═══ Two building-block classes you'll reach for constantly ═══ */
+
+.bv-card {                                     /* matte, always. Never glass. */
+  background: var(--background);
+  border: 1px solid var(--bv-border);
+  border-radius: var(--bv-radius-card);
+  box-shadow: var(--bv-shadow-edge);
+  transition: box-shadow var(--bv-dur) var(--bv-ease);
+}
+.bv-card:hover { box-shadow: var(--bv-shadow-hover); }
+
+.bv-btn {                                      /* pill. Primary = ink fill. */
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 16px;
+  font: 500 14px var(--bv-font-sans);
+  border: 0; border-radius: var(--bv-radius-full);
+  background: var(--bv-ink); color: var(--bv-paper);
+  cursor: pointer;
+  transition: background var(--bv-dur) var(--bv-ease);
+}
+.bv-btn:hover { background: var(--bv-ink-hover); }        /* lighten, never scale */
+.bv-btn--ghost { background: transparent; color: var(--bv-ink); }
+.bv-btn--ghost:hover { background: var(--bv-frost); }     /* frosted-blue fill */

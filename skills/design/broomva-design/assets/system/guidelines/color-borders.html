@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Borders" subtitle="Whisper-soft blue-black · 7% default, 16% visible edge, 26% emphasis only" viewport="700x140" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { display: flex; gap: 14px; }
+.b { width: 200px; height: 64px; border-radius: 12px; background: var(--card); display: flex; align-items: center; justify-content: center; }
+</style></head><body>
+<div class="col" style="gap:6px;"><div class="b" style="border:1px solid var(--bv-border-5);"></div><span class="mono">--bv-border-5 · dividers</span></div>
+<div class="col" style="gap:6px;"><div class="b" style="border:1px solid var(--bv-border-15);"></div><span class="mono">--bv-border-15 · buttons, inputs</span></div>
+<div class="col" style="gap:6px;"><div class="b" style="border:1px solid var(--bv-border-25);"></div><span class="mono">--bv-border-25 · emphasis</span></div>
+</body></html>

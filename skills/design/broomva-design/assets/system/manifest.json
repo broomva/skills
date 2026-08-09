@@ -1,0 +1,1408 @@
+{
+  "namespace": "BroomvaDesignSystem_5727d9",
+  "components": [
+    {
+      "name": "Avatar",
+      "sourcePath": "components/core/Avatar.jsx"
+    },
+    {
+      "name": "Button",
+      "sourcePath": "components/core/Button.jsx"
+    },
+    {
+      "name": "Card",
+      "sourcePath": "components/core/Card.jsx"
+    },
+    {
+      "name": "Composer",
+      "sourcePath": "components/core/Composer.jsx"
+    },
+    {
+      "name": "DotComet",
+      "sourcePath": "components/core/DotComet.jsx"
+    },
+    {
+      "name": "IconButton",
+      "sourcePath": "components/core/IconButton.jsx"
+    },
+    {
+      "name": "Input",
+      "sourcePath": "components/core/Input.jsx"
+    },
+    {
+      "name": "StatusBadge",
+      "sourcePath": "components/core/StatusBadge.jsx"
+    },
+    {
+      "name": "Checkbox",
+      "sourcePath": "components/forms/Checkbox.jsx"
+    },
+    {
+      "name": "Field",
+      "sourcePath": "components/forms/Field.jsx"
+    },
+    {
+      "name": "Radio",
+      "sourcePath": "components/forms/Radio.jsx"
+    },
+    {
+      "name": "Select",
+      "sourcePath": "components/forms/Select.jsx"
+    },
+    {
+      "name": "Switch",
+      "sourcePath": "components/forms/Switch.jsx"
+    },
+    {
+      "name": "Textarea",
+      "sourcePath": "components/forms/Textarea.jsx"
+    },
+    {
+      "name": "CommandPalette",
+      "sourcePath": "components/navigation/CommandPalette.jsx"
+    },
+    {
+      "name": "Segmented",
+      "sourcePath": "components/navigation/Segmented.jsx"
+    },
+    {
+      "name": "Tabs",
+      "sourcePath": "components/navigation/Tabs.jsx"
+    },
+    {
+      "name": "Dialog",
+      "sourcePath": "components/overlays/Dialog.jsx"
+    },
+    {
+      "name": "ConfirmDialog",
+      "sourcePath": "components/overlays/Dialog.jsx"
+    },
+    {
+      "name": "Menu",
+      "sourcePath": "components/overlays/Menu.jsx"
+    },
+    {
+      "name": "MenuItem",
+      "sourcePath": "components/overlays/Menu.jsx"
+    },
+    {
+      "name": "MenuDivider",
+      "sourcePath": "components/overlays/Menu.jsx"
+    },
+    {
+      "name": "Toast",
+      "sourcePath": "components/overlays/Toast.jsx"
+    },
+    {
+      "name": "Tooltip",
+      "sourcePath": "components/overlays/Tooltip.jsx"
+    },
+    {
+      "name": "AutonomyScoreboard",
+      "sourcePath": "components/work/AutonomyScoreboard.jsx"
+    },
+    {
+      "name": "LifecycleRail",
+      "sourcePath": "components/work/LifecycleRail.jsx"
+    },
+    {
+      "name": "Receipt",
+      "sourcePath": "components/work/Receipt.jsx"
+    },
+    {
+      "name": "ReceiptRow",
+      "sourcePath": "components/work/Receipt.jsx"
+    },
+    {
+      "name": "RunCard",
+      "sourcePath": "components/work/RunCard.jsx"
+    },
+    {
+      "name": "Undertow",
+      "sourcePath": "components/work/Undertow.jsx"
+    },
+    {
+      "name": "WorkState",
+      "sourcePath": "components/work/WorkState.jsx"
+    }
+  ],
+  "startingPoints": [],
+  "cards": [
+    {
+      "path": "guidelines/brand-logo.html",
+      "group": "Brand",
+      "viewport": "700x210",
+      "subtitle": "Broomva blackhole glyph — keep on dark or frosted surfaces, don't recolor",
+      "name": "Logo"
+    },
+    {
+      "path": "guidelines/brand-voice.html",
+      "group": "Brand",
+      "viewport": "700x190",
+      "subtitle": "Plain language, second person, lead with the verb — quiet, capable, calm",
+      "name": "Voice"
+    },
+    {
+      "path": "guidelines/disclosure.html",
+      "group": "Brand",
+      "viewport": "780x660",
+      "subtitle": "The substrate is for agents · the user gets signals, verbs, and receipts",
+      "name": "The disclosure ladder"
+    },
+    {
+      "path": "guidelines/work-model.html",
+      "group": "Brand",
+      "viewport": "760x640",
+      "subtitle": "The workspace is the substrate · sessions are the verb · keep score in unsupervised hours",
+      "name": "The work model"
+    },
+    {
+      "path": "guidelines/color-blue.html",
+      "group": "Colors",
+      "viewport": "700x150",
+      "subtitle": "ai-blue (hue 260) owns focus, hover frost, glow · accent-blue (235) only when two accents must coexist",
+      "name": "Blue accents + frost"
+    },
+    {
+      "path": "guidelines/color-borders.html",
+      "group": "Colors",
+      "viewport": "700x140",
+      "subtitle": "Whisper-soft blue-black · 7% default, 16% visible edge, 26% emphasis only",
+      "name": "Borders"
+    },
+    {
+      "path": "guidelines/color-dark.html",
+      "group": "Colors",
+      "viewport": "700x190",
+      "subtitle": "Deep blue-purple canvas — fully specified, never pure black",
+      "name": "Dark surfaces"
+    },
+    {
+      "path": "guidelines/color-ink.html",
+      "group": "Colors",
+      "viewport": "700x150",
+      "subtitle": "Every gray sits on the blue axis (hue 265) — reads neutral until you look",
+      "name": "Ink + cool grays"
+    },
+    {
+      "path": "guidelines/color-status.html",
+      "group": "Colors",
+      "viewport": "700x120",
+      "subtitle": "OKLCH status hues, harmonized to the cool axis",
+      "name": "Status"
+    },
+    {
+      "path": "components/core/core.card.html",
+      "group": "Components",
+      "viewport": "700x300",
+      "subtitle": "Button · IconButton · Input · Card · StatusBadge · DotComet · Avatar · Composer",
+      "name": "Core primitives"
+    },
+    {
+      "path": "components/forms/forms.card.html",
+      "group": "Components",
+      "viewport": "700x330",
+      "subtitle": "Select · Checkbox · Radio · Switch · Textarea · Field — light and dark",
+      "name": "Forms"
+    },
+    {
+      "path": "components/navigation/navigation.card.html",
+      "group": "Components",
+      "viewport": "700x360",
+      "subtitle": "Tabs · Segmented · Command palette — light and dark",
+      "name": "Navigation"
+    },
+    {
+      "path": "components/overlays/overlays.card.html",
+      "group": "Components",
+      "viewport": "700x380",
+      "subtitle": "Dialog · Menu · Tooltip · Toast — glass earned by floating surfaces",
+      "name": "Overlays"
+    },
+    {
+      "path": "components/work/work.card.html",
+      "group": "Components",
+      "viewport": "700x440",
+      "subtitle": "WorkState · LifecycleRail · Receipt · Undertow · RunCard · AutonomyScoreboard — the load-bearing inventions",
+      "name": "Work primitives"
+    },
+    {
+      "path": "guidelines/buttons.html",
+      "group": "Components",
+      "viewport": "700x190",
+      "subtitle": "Pill shape · ink fill (not black) · hover = one-step lighten or frost, never scale",
+      "name": "Buttons"
+    },
+    {
+      "path": "guidelines/cards.html",
+      "group": "Components",
+      "viewport": "700x250",
+      "subtitle": "Matte, rounded-12, whisper border · running state wears the Undertow",
+      "name": "Cards"
+    },
+    {
+      "path": "guidelines/composer.html",
+      "group": "Components",
+      "viewport": "700x190",
+      "subtitle": "rounded-28 glass + the frosted-blue halo — the one dramatic depth cue",
+      "name": "Composer"
+    },
+    {
+      "path": "guidelines/dark-sample.html",
+      "group": "Components",
+      "viewport": "700x230",
+      "subtitle": "Same components on the dark canvas — primary inverts to cool white",
+      "name": "Dark mode sample"
+    },
+    {
+      "path": "guidelines/inputs.html",
+      "group": "Components",
+      "viewport": "700x160",
+      "subtitle": "rounded-md · gray-200 edge · focus ring is ai-blue",
+      "name": "Inputs"
+    },
+    {
+      "path": "guidelines/messages.html",
+      "group": "Components",
+      "viewport": "700x250",
+      "subtitle": "User bubble cool-gray · assistant plain text · links are ink pills · typing dots",
+      "name": "Messages"
+    },
+    {
+      "path": "guidelines/motion-undertow.html",
+      "group": "Components",
+      "viewport": "760x380",
+      "subtitle": "The Undertow is THE running signal · tidepool dot at dot scale · the border comet is retired",
+      "name": "Live signals"
+    },
+    {
+      "path": "guidelines/sidebar.html",
+      "group": "Components",
+      "viewport": "700x250",
+      "subtitle": "32px rows, rounded-8 · selected = frosted blue, not gray",
+      "name": "Sidebar items"
+    },
+    {
+      "path": "apps/maestro/index.html",
+      "group": "Maestro app",
+      "viewport": "1440x860",
+      "subtitle": "The Broomva app — the maestro loop: chat is the surface, the gate queues over the prompt, the plane grows/collapses by selection; feed/board/list views, resizable columns. Built on the standard compon",
+      "name": "Maestro"
+    },
+    {
+      "path": "guidelines/glass.html",
+      "group": "Spacing",
+      "viewport": "700x250",
+      "subtitle": "Earned, not ambient — overlays, popovers and the composer only · note the inner light line",
+      "name": "Glass"
+    },
+    {
+      "path": "guidelines/radii.html",
+      "group": "Spacing",
+      "viewport": "700x170",
+      "subtitle": "A deliberate ladder · pills for buttons + avatars, never cards",
+      "name": "Radii ladder"
+    },
+    {
+      "path": "guidelines/shadows.html",
+      "group": "Spacing",
+      "viewport": "700x210",
+      "subtitle": "Two tiers, every shadow faintly blue · the composer halo is the one dramatic cue",
+      "name": "Shadows"
+    },
+    {
+      "path": "guidelines/spacing.html",
+      "group": "Spacing",
+      "viewport": "700x140",
+      "subtitle": "4px base · 4 8 12 16 20 24 32 40 48",
+      "name": "Spacing scale"
+    },
+    {
+      "path": "guidelines/type-casing.html",
+      "group": "Type",
+      "viewport": "700x190",
+      "subtitle": "Sentence case everywhere — no uppercase eyebrows",
+      "name": "Casing"
+    },
+    {
+      "path": "guidelines/type-fonts.html",
+      "group": "Type",
+      "viewport": "700x230",
+      "subtitle": "System purity by default · CalSans display is opt-in, hero surfaces only",
+      "name": "Font stacks"
+    },
+    {
+      "path": "guidelines/type-scale.html",
+      "group": "Type",
+      "viewport": "700x320",
+      "subtitle": "12 / 14 / 16 / 18 / 22 / 24 / 28 — nothing else",
+      "name": "Type scale"
+    }
+  ],
+  "templates": [
+    {
+      "name": "App shell",
+      "description": "The Mission Control scaffold: sidebar, header, work plane, docked composer — light or dark.",
+      "folder": "templates/app-shell",
+      "entryPath": "templates/app-shell/AppShell.dc.html",
+      "thumbnail": {
+        "path": "templates/app-shell/.thumbnail",
+        "kind": "captured"
+      }
+    },
+    {
+      "name": "Landing page",
+      "description": "Marketing page: dark hero with orbs and CalSans, principles grid, scoreboard, footer.",
+      "folder": "templates/landing-page",
+      "entryPath": "templates/landing-page/LandingPage.dc.html",
+      "thumbnail": {
+        "path": "templates/landing-page/.thumbnail",
+        "kind": "captured"
+      }
+    }
+  ],
+  "hasThumbnailHtml": false,
+  "globalCssPaths": [
+    "tokens/colors.css",
+    "tokens/typography.css",
+    "tokens/spacing.css",
+    "tokens/glass.css",
+    "tokens/motion.css",
+    "tokens/base.css",
+    "styles.css"
+  ],
+  "tokens": [
+    {
+      "name": "--bv-ink",
+      "value": "oklch(0.175 0.022 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-ink-hover",
+      "value": "oklch(0.28 0.035 263)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-white",
+      "value": "oklch(1 0 0)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-50",
+      "value": "oklch(0.978 0.002 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-100",
+      "value": "oklch(0.945 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-200",
+      "value": "oklch(0.915 0.005 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-300",
+      "value": "oklch(0.84 0.006 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-400",
+      "value": "oklch(0.76 0.008 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-500",
+      "value": "oklch(0.68 0.010 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-600",
+      "value": "oklch(0.50 0.015 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-700",
+      "value": "oklch(0.38 0.020 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-800",
+      "value": "oklch(0.30 0.022 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-gray-900",
+      "value": "oklch(0.23 0.022 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-canvas-soft",
+      "value": "oklch(0.966 0.003 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-canvas-soft-2",
+      "value": "oklch(0.958 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-blue",
+      "value": "oklch(0.60 0.12 260)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-blue-accent",
+      "value": "oklch(0.65 0.14 235)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-frost-4",
+      "value": "oklch(0.60 0.12 260 / 0.05)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-frost-8",
+      "value": "oklch(0.60 0.12 260 / 0.09)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-frost-12",
+      "value": "oklch(0.60 0.12 260 / 0.14)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-switch-off",
+      "value": "var(--bv-gray-300)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-border-5",
+      "value": "oklch(0.25 0.04 265 / 0.07)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-border-15",
+      "value": "oklch(0.25 0.04 265 / 0.16)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-border-25",
+      "value": "oklch(0.25 0.04 265 / 0.26)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-hover-soft",
+      "value": "oklch(0.30 0.03 265 / 0.05)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-hover-medium",
+      "value": "oklch(0.30 0.03 265 / 0.08)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-success",
+      "value": "oklch(0.62 0.17 152)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-info",
+      "value": "var(--bv-blue)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-warning",
+      "value": "oklch(0.76 0.15 85)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-danger",
+      "value": "oklch(0.56 0.21 27)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-glow-blue",
+      "value": "oklch(0.62 0.18 258)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-glow-indigo",
+      "value": "oklch(0.66 0.15 280)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-glow-cyan",
+      "value": "oklch(0.72 0.13 220)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-glow-ice",
+      "value": "oklch(0.84 0.07 240)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-shadow-edge",
+      "value": "0 1px 0 oklch(0.25 0.05 265 / 0.06)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-shadow-card-hover",
+      "value": "0 6px 16px oklch(0.45 0.09 260 / 0.09),\n    0 1px 0    oklch(0.25 0.05 265 / 0.06)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-shadow-composer",
+      "value": "0 4px 4px       oklch(0.45 0.09 260 / 0.05),\n    0 4px 80px 8px  oklch(0.55 0.12 260 / 0.08),\n    0 0 1px         oklch(0.20 0.04 265 / 0.65)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--bv-shadow-glow",
+      "value": "0 0 24px oklch(0.60 0.12 260 / 0.16)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--background",
+      "value": "var(--bv-white)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--foreground",
+      "value": "var(--bv-ink)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--card",
+      "value": "var(--bv-white)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--card-foreground",
+      "value": "var(--bv-ink)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--primary",
+      "value": "var(--bv-ink)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--primary-foreground",
+      "value": "var(--bv-white)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--secondary",
+      "value": "var(--bv-canvas-soft)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--secondary-foreground",
+      "value": "var(--bv-ink)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--muted",
+      "value": "var(--bv-canvas-soft)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--muted-foreground",
+      "value": "var(--bv-gray-600)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--accent",
+      "value": "var(--bv-frost-8)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--accent-foreground",
+      "value": "var(--bv-gray-700)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--border",
+      "value": "var(--bv-border-5)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--input",
+      "value": "var(--bv-gray-200)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--ring",
+      "value": "var(--bv-blue)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--sidebar",
+      "value": "var(--bv-canvas-soft)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--sidebar-foreground",
+      "value": "var(--bv-ink)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--sidebar-border",
+      "value": "var(--bv-border-5)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--sidebar-accent",
+      "value": "var(--bv-frost-8)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--glass-surface",
+      "value": "oklch(0.99 0.003 265 / 0.86)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--glass-surface-heavy",
+      "value": "oklch(0.995 0.003 265 / 0.93)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--glass-border",
+      "value": "oklch(0.45 0.06 262 / 0.16)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--glass-light-line",
+      "value": "oklch(1 0 0 / 0.70)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--glass-inner-ring",
+      "value": "oklch(1 0 0 / 0.28)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css"
+    },
+    {
+      "name": "--background",
+      "value": "oklch(0.135 0.020 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--foreground",
+      "value": "oklch(0.965 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--card",
+      "value": "oklch(0.175 0.025 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--card-foreground",
+      "value": "oklch(0.965 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--primary",
+      "value": "oklch(0.965 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--primary-foreground",
+      "value": "oklch(0.155 0.022 270)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--secondary",
+      "value": "oklch(0.165 0.022 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--secondary-foreground",
+      "value": "oklch(0.965 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--muted",
+      "value": "oklch(0.185 0.024 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--muted-foreground",
+      "value": "oklch(0.62 0.020 270)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--accent",
+      "value": "oklch(0.60 0.12 260 / 0.13)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--accent-foreground",
+      "value": "oklch(0.88 0.012 268)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--border",
+      "value": "oklch(0.62 0.05 268 / 0.11)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--input",
+      "value": "oklch(0.26 0.028 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--ring",
+      "value": "var(--bv-blue)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--sidebar",
+      "value": "oklch(0.115 0.018 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--sidebar-foreground",
+      "value": "oklch(0.965 0.004 265)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--sidebar-border",
+      "value": "oklch(0.62 0.05 268 / 0.09)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--sidebar-accent",
+      "value": "oklch(0.60 0.12 260 / 0.14)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-canvas-soft",
+      "value": "oklch(0.165 0.022 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-canvas-soft-2",
+      "value": "oklch(0.205 0.025 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-switch-off",
+      "value": "oklch(0.32 0.02 272)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-ink-hover",
+      "value": "oklch(0.88 0.012 268)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-border-5",
+      "value": "oklch(0.62 0.05 268 / 0.09)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-border-15",
+      "value": "oklch(0.62 0.05 268 / 0.18)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-border-25",
+      "value": "oklch(0.62 0.05 268 / 0.28)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-hover-soft",
+      "value": "oklch(0.80 0.04 268 / 0.06)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-hover-medium",
+      "value": "oklch(0.80 0.04 268 / 0.10)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-gray-500",
+      "value": "oklch(0.52 0.018 270)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-gray-600",
+      "value": "oklch(0.62 0.020 270)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-success",
+      "value": "oklch(0.72 0.17 155)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-warning",
+      "value": "oklch(0.85 0.16 88)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-danger",
+      "value": "oklch(0.64 0.20 25)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-shadow-edge",
+      "value": "0 1px 0 oklch(0 0 0 / 0.25)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-shadow-card-hover",
+      "value": "0 6px 16px oklch(0 0 0 / 0.35),\n    0 0 20px   oklch(0.60 0.12 260 / 0.10)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-shadow-composer",
+      "value": "0 4px 8px       oklch(0 0 0 / 0.30),\n    0 4px 64px 8px  oklch(0.60 0.12 260 / 0.13),\n    0 0 1px         oklch(0.70 0.08 262 / 0.55)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-shadow-glow",
+      "value": "0 0 28px oklch(0.60 0.12 260 / 0.22)",
+      "kind": "shadow",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--glass-surface",
+      "value": "oklch(0.195 0.026 272 / 0.78)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--glass-surface-heavy",
+      "value": "oklch(0.205 0.026 272 / 0.90)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--glass-border",
+      "value": "oklch(0.62 0.06 265 / 0.22)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--glass-light-line",
+      "value": "oklch(1 0 0 / 0.10)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--glass-inner-ring",
+      "value": "oklch(1 0 0 / 0.05)",
+      "kind": "color",
+      "definedIn": "tokens/colors.css",
+      "scope": "[data-theme=\"dark\"]"
+    },
+    {
+      "name": "--bv-font-sans",
+      "value": "ui-sans-serif, -apple-system, system-ui, \"Segoe UI\",\n    Helvetica, Arial, sans-serif",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-font-mono",
+      "value": "ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Monaco,\n    Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-font-display",
+      "value": "\"CalSans\", var(--bv-font-sans)",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-font-heading",
+      "value": "var(--bv-font-sans)",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-xs",
+      "value": "12px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-sm",
+      "value": "14px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-base",
+      "value": "16px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-lg",
+      "value": "18px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-xl",
+      "value": "22px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-2xl",
+      "value": "24px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-text-h1",
+      "value": "28px",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-weight-regular",
+      "value": "400",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-weight-medium",
+      "value": "500",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-weight-semi",
+      "value": "600",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-leading-tight",
+      "value": "1.25",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-leading-normal",
+      "value": "1.5",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-leading-relaxed",
+      "value": "1.6",
+      "kind": "font",
+      "definedIn": "tokens/typography.css"
+    },
+    {
+      "name": "--bv-font-heading",
+      "value": "\"CalSans\", var(--bv-font-sans)",
+      "kind": "font",
+      "definedIn": "tokens/typography.css",
+      "scope": "[data-display-font=\"calsans\"]"
+    },
+    {
+      "name": "--bv-radius-chip",
+      "value": "0.25rem",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-radius-md",
+      "value": "0.375rem",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-radius-lg",
+      "value": "0.5rem",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-radius-xl",
+      "value": "0.75rem",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-radius-2xl",
+      "value": "1rem",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-radius-composer",
+      "value": "28px",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-radius-full",
+      "value": "9999px",
+      "kind": "radius",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-1",
+      "value": "4px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-2",
+      "value": "8px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-3",
+      "value": "12px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-4",
+      "value": "16px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-5",
+      "value": "20px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-6",
+      "value": "24px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-8",
+      "value": "32px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-10",
+      "value": "40px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-space-12",
+      "value": "48px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-h-icon",
+      "value": "36px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-h-btn",
+      "value": "36px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-h-btn-lg",
+      "value": "44px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-h-header",
+      "value": "52px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-w-sidebar",
+      "value": "200px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-w-chat-max",
+      "value": "768px",
+      "kind": "spacing",
+      "definedIn": "tokens/spacing.css"
+    },
+    {
+      "name": "--bv-ease-standard",
+      "value": "cubic-bezier(0.25, 0.1, 0.25, 1)",
+      "kind": "other",
+      "definedIn": "tokens/spacing.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--bv-ease-morph",
+      "value": "cubic-bezier(0.4, 0, 0.2, 1)",
+      "kind": "other",
+      "definedIn": "tokens/spacing.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--bv-dur-fast",
+      "value": "0.15s",
+      "kind": "other",
+      "definedIn": "tokens/spacing.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--bv-dur-common",
+      "value": "0.2s",
+      "kind": "other",
+      "definedIn": "tokens/spacing.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--bv-dur-slow",
+      "value": "0.35s",
+      "kind": "other",
+      "definedIn": "tokens/spacing.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--bv-dur-morph",
+      "value": "0.5s",
+      "kind": "other",
+      "definedIn": "tokens/spacing.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--bv-blur-sm",
+      "value": "6px",
+      "kind": "spacing",
+      "definedIn": "tokens/glass.css"
+    },
+    {
+      "name": "--bv-blur-md",
+      "value": "12px",
+      "kind": "spacing",
+      "definedIn": "tokens/glass.css"
+    },
+    {
+      "name": "--bv-blur-lg",
+      "value": "22px",
+      "kind": "spacing",
+      "definedIn": "tokens/glass.css"
+    },
+    {
+      "name": "--bv-blur-xl",
+      "value": "32px",
+      "kind": "spacing",
+      "definedIn": "tokens/glass.css"
+    },
+    {
+      "name": "--glass-sat",
+      "value": "1.8",
+      "kind": "other",
+      "definedIn": "tokens/glass.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--glass-sat-heavy",
+      "value": "2.0",
+      "kind": "other",
+      "definedIn": "tokens/glass.css",
+      "annotation": "other"
+    },
+    {
+      "name": "--glass-elev",
+      "value": "inset 0 1px 0 var(--glass-light-line),\n    inset 0 0 0 1px var(--glass-inner-ring),\n    0 1px 1px oklch(0.30 0.06 262 / 0.06),\n    0 12px 32px oklch(0.30 0.06 262 / 0.16)",
+      "kind": "shadow",
+      "definedIn": "tokens/glass.css"
+    },
+    {
+      "name": "--glass-elev-heavy",
+      "value": "inset 0 1px 0 var(--glass-light-line),\n    inset 0 0 0 1px var(--glass-inner-ring),\n    0 2px 4px oklch(0.30 0.06 262 / 0.08),\n    0 24px 56px oklch(0.30 0.06 262 / 0.22)",
+      "kind": "shadow",
+      "definedIn": "tokens/glass.css"
+    }
+  ],
+  "themes": [
+    {
+      "selector": "[data-theme=\"dark\"]",
+      "label": "Dark"
+    },
+    {
+      "selector": "[data-display-font=\"calsans\"]",
+      "label": "Display Font Calsans"
+    }
+  ],
+  "fonts": [
+    {
+      "family": "CalSans",
+      "weight": "400 700",
+      "style": "normal",
+      "cssPath": "tokens/typography.css",
+      "files": [
+        "fonts/CalSans-SemiBold.ttf"
+      ]
+    }
+  ],
+  "brandFonts": [
+    {
+      "family": "CalSans",
+      "status": "ok",
+      "tokens": [
+        "--bv-font-display",
+        "--bv-font-heading"
+      ],
+      "path": "tokens/typography.css"
+    }
+  ],
+  "source": "spa"
+}
