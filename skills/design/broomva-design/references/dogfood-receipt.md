@@ -33,7 +33,7 @@ A tokens-profile approval surface with one concrete human decision, lifecycle ra
 | Plan row | Executed | Evidence |
 |---|---|---|
 | Materialization | Yes | Full profile wrote and verified 179 files. Tokens profile wrote and verified 14 files. |
-| Smoke | Yes | Both pages returned HTTP 200 with zero failed resource responses and no console errors. |
+| Smoke | Yes | Both pages returned HTTP 200 with no console errors. Every explicit stylesheet, token, and logo request succeeded; Chrome made one expected implicit `/favicon.ico` request against the temporary harness and received 404. |
 | Visual themes | Yes | Twelve screenshots cover both surfaces at 375px, 768px, and 1440px in light and dark themes. |
 | Responsive layout | Yes | Every case reported zero horizontal overflow. Content order remained legible at mobile, tablet, and desktop widths. |
 | Keyboard focus | Yes | First keyboard-reachable control showed a solid 2px focus outline in every case. |
