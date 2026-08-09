@@ -124,4 +124,5 @@ Write plain, precise, second-person product copy. Use sentence case. Prefer a sh
 - `scripts/materialize.py` — safe, deterministic materializer and verifier.
 - `references/product-model.md` — work-state semantics and composition guidance.
 - `references/provenance.md` — archive audit, curation decisions, and licensing provenance.
+- `references/dogfood-receipt.md` — rendered light/dark evidence for two independently materialized test designs.
 - `assets/system/` — curated source bundle and visual specimens.
