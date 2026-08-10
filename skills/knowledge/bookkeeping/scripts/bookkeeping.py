@@ -5973,6 +5973,12 @@ def _recorded_supersessions() -> "list[dict]":
     return out
 
 
+# A slug used as a REFERENCE (resolved against the filesystem) only has to be
+# safe, not well-shaped: no glob metacharacters (`*?[]`), no path separators,
+# no leading dot. Shape is `is_entity_shaped_slug`'s job and a different question.
+_SAFE_SLUG_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 def _resolve_live_canonical(slug: str) -> "tuple[Path | None, str | None]":
     """Resolve `slug` to exactly one LIVE entity file, or explain why not.
 
@@ -5988,9 +5994,18 @@ def _resolve_live_canonical(slug: str) -> "tuple[Path | None, str | None]":
     - two live pages sharing a slug across type dirs resolve arbitrarily.
 
     Returns (path, None) on success, or (None, reason) — never a silent guess.
+
+    The slug guard checks for glob metacharacters and path separators, NOT for
+    noun-phrase shape. `is_entity_shaped_slug` answers a different question —
+    whether a NEW slug is worth minting — and 42 of the live graph's 943 entity
+    slugs fail it (`colfondos-s-a`, `tp`, `a-proof-publishes-its-frame`). Those
+    entities exist; refusing to resolve a reference to one because its name is
+    unfashionable would reject 4.5% of legitimate merges to close a hole that is
+    really about `*` and `..`.
     """
-    if not is_entity_shaped_slug(slug):
-        return None, f"canonical {slug!r} is not an entity-shaped slug"
+    if not _SAFE_SLUG_REFERENCE_RE.match(slug):
+        return None, (f"canonical {slug!r} is not a safe slug reference "
+                      f"(glob metacharacters and path separators are refused)")
     cands = [p for p in ENTITIES_DIR.rglob(f"{slug}.md")
              if ".lago-blobs" not in p.parts and p.stem == slug]
     live = []

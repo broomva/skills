@@ -1015,8 +1015,9 @@ class TestBackfillRecordedMerges:
         assert str(fm["recorded_at"]) == "2026-07-04", "the latest merge wins"
 
     @pytest.mark.parametrize("merged_into,reason", [
-        ("*", "not an entity-shaped slug"),
-        ("../../etc/passwd", "not an entity-shaped slug"),
+        ("*", "not a safe slug reference"),
+        ("../../etc/passwd", "not a safe slug reference"),
+        ("kept[1]", "not a safe slug reference"),
     ])
     def test_backfill_refuses_a_pattern_as_a_canonical(
             self, temp_entities, frozen_today, merged_into, reason, capsys):
@@ -1031,6 +1032,21 @@ class TestBackfillRecordedMerges:
         bookkeeping.cmd_backfill_revisions(self._args())
         assert reason in capsys.readouterr().out
         assert victim.read_text() == before
+
+    @pytest.mark.parametrize("slug", ["colfondos-s-a", "tp", "a-proof-publishes-its-frame"])
+    def test_an_unfashionably_named_but_real_canonical_still_resolves(
+            self, temp_entities, frozen_today, slug):
+        # 42 of the live graph's 943 slugs fail `is_entity_shaped_slug`, which
+        # decides whether to MINT a new slug — a different question from whether
+        # a reference to an existing entity is safe to resolve. Using it here
+        # would refuse 4.5% of legitimate merges.
+        canon = _write_entity(temp_entities, slug, type_dir="tool")
+        (temp_entities / "tool" / "dupe.md").write_text(
+            f'---\nslug: dupe\ntype: tool\nstatus: merged\nmerged_into: {slug}\n'
+            f'merged_at: "2026-06-09"\ncore_claim: "Merged."\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
+        assert fm["supersedes"] == ["[[dupe]]"]
 
     def test_backfill_refuses_a_canonical_that_is_itself_a_tombstone(
             self, temp_entities, frozen_today, capsys):
