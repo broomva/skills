@@ -23,7 +23,6 @@ import bookkeeping
 from bookkeeping import (
     RawItem,
     ScoredItem,
-    _apply_revision_envelope,
     _lint_temporal_drift,
     _render_updated_entity,
     _set_frontmatter_scalar,
@@ -219,6 +218,18 @@ class TestUpdatePathAndIdempotentReplay:
         existing = '---\nslug: x\nupdated: 2026-01-01\nrecorded_at: "2026-01-01"\n---\nbody\n'
         out = _render_updated_entity(existing)
         assert f'recorded_at: "{TODAY}"' in out
+        assert f"updated: {TODAY}" in out
+
+    def test_render_does_not_backfill_recorded_at_onto_a_legacy_page(
+            self, frozen_today):
+        # Asserted on the seam itself, not through the content-identity guard:
+        # the guard strips `recorded_at` as volatile, so it would mask a
+        # backfill on a no-delta page and only leak it onto pages that happen
+        # to acquire an unrelated edit — mis-stamping today as the system time
+        # of a claim recorded long before.
+        existing = '---\nslug: x\nupdated: 2026-01-01\n---\nbody\n'
+        out = _render_updated_entity(existing)
+        assert "recorded_at" not in out
         assert f"updated: {TODAY}" in out
 
     def test_legacy_page_without_recorded_at_is_not_backfilled(

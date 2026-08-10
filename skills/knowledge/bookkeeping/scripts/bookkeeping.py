@@ -2387,11 +2387,14 @@ def _render_updated_entity(existing: str) -> str:
     can compose here without touching the content-identity guard below.
 
     `recorded_at` is re-stamped only when the page ALREADY carries it. Pages
-    predating the typed envelope are not backfilled here: a backfill would be a
-    semantic delta on every legacy page at once, rewriting the whole graph on
-    the next `run` and stamping today as the system time of claims recorded
-    long before. Legacy pages acquire the field through an explicit revision or
-    a dedicated migration, not as a side effect of an unrelated update.
+    predating the typed envelope are not backfilled here, because the update
+    path cannot know when they were actually recorded: a backfill would stamp
+    today as the system time of a claim recorded long before, and it would land
+    on exactly the arbitrary subset of legacy pages that happen to acquire some
+    unrelated delta. (It would not churn the whole graph — the guard below
+    strips `recorded_at` as volatile — which is precisely what makes the
+    mis-stamping quiet rather than obvious.) Legacy pages acquire the field
+    through an explicit revision or a dedicated migration instead.
     """
     today = today_str()
     fm, body = _split_frontmatter(existing)
