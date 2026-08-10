@@ -99,6 +99,9 @@ def _write_entity(entities, slug, type_dir="concept", extra="", body="Body text.
     return p
 
 
+_ABSENT = object()  # probe sentinel: "remove this key entirely"
+
+
 def _fields(errors):
     return sorted(e.field for e in errors)
 
@@ -895,6 +898,148 @@ class TestEnvelopeAudit:
         }, lookup=lambda _s: None)
         assert errors, "the fixture must actually produce findings"
         assert {e.severity for e in errors} == {"warning"}
+
+
+class TestBackfillRecordedMerges:
+    """`backfill-revisions` replays merges the graph already recorded (gh-160)."""
+
+    def _merged_pair(self, entities, canon="kept", dup="dupe", merged_at="2026-06-09",
+                     type_dir="tool"):
+        c = _write_entity(entities, canon, type_dir=type_dir)
+        (entities / type_dir / f"{dup}.md").write_text(
+            f"---\nslug: {dup}\ntype: {type_dir}\nstatus: merged\n"
+            f'merged_into: {canon}\nmerged_at: "{merged_at}"\n'
+            f'core_claim: "Merged into [[{canon}]]."\n---\n\n# {dup}\n\nTombstone.\n')
+        return c
+
+    def _args(self, apply=True):
+        return argparse.Namespace(apply=apply)
+
+    def test_backfill_records_the_historical_merge_date_not_today(
+            self, temp_entities, frozen_today):
+        # `recorded_at` is when the graph recorded the supersession. Stamping the
+        # migration date would assert the graph learned a June merge in August —
+        # exactly the temporal flattening the envelope exists to prevent.
+        canon = self._merged_pair(temp_entities, merged_at="2026-06-09")
+        bookkeeping.cmd_backfill_revisions(self._args())
+        fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
+        assert str(fm["recorded_at"]) == "2026-06-09"
+        assert str(fm["updated"]) == TODAY, "the file IS being edited today"
+        assert fm["supersedes"] == ["[[dupe]]"]
+        assert fm["revision_link"] == ["research/entities/tool/dupe.md"]
+
+    def test_backfill_dry_run_writes_nothing(self, temp_entities, frozen_today):
+        canon = self._merged_pair(temp_entities)
+        before = canon.read_text()
+        bookkeeping.cmd_backfill_revisions(self._args(apply=False))
+        assert canon.read_text() == before
+
+    def test_backfill_is_idempotent(self, temp_entities, frozen_today):
+        canon = self._merged_pair(temp_entities)
+        bookkeeping.cmd_backfill_revisions(self._args())
+        first = canon.read_text()
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert canon.read_text() == first
+
+    def test_one_canonical_accumulates_several_recorded_merges(
+            self, temp_entities, frozen_today):
+        canon = self._merged_pair(temp_entities, dup="dupe-a", merged_at="2026-06-09")
+        self._merged_pair(temp_entities, dup="dupe-b", merged_at="2026-07-04")
+        bookkeeping.cmd_backfill_revisions(self._args())
+        fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
+        assert fm["supersedes"] == ["[[dupe-a]]", "[[dupe-b]]"]
+        assert len(fm["revision_link"]) == 2, "each merge keeps its own record"
+
+    def test_a_tombstone_with_no_date_is_reported_not_guessed(
+            self, temp_entities, frozen_today, capsys):
+        canon = self._write_undated(temp_entities)
+        bookkeeping.cmd_backfill_revisions(self._args())
+        out = capsys.readouterr().out
+        assert "no parseable merged_at" in out
+        assert "supersedes" not in canon.read_text(), \
+            "no date means no honest recorded_at — skip, never invent one"
+
+    def _write_undated(self, entities):
+        canon = _write_entity(entities, "kept", type_dir="tool")
+        (entities / "tool" / "dupe.md").write_text(
+            '---\nslug: dupe\ntype: tool\nstatus: merged\nmerged_into: kept\n'
+            'core_claim: "Merged into [[kept]]."\n---\n\n# dupe\n\nTombstone.\n')
+        return canon
+
+    def test_a_tombstone_whose_canonical_vanished_is_reported(
+            self, temp_entities, frozen_today, capsys):
+        (temp_entities / "tool" / "dupe.md").write_text(
+            '---\nslug: dupe\ntype: tool\nstatus: merged\nmerged_into: gone\n'
+            'merged_at: "2026-06-09"\ncore_claim: "Merged into [[gone]]."\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "has no entity file" in capsys.readouterr().out
+
+    def test_aliases_are_not_treated_as_supersessions(
+            self, temp_entities, frozen_today):
+        # 88 of the live graph's aliases are `aka` search synonyms, not merges.
+        # Deriving supersessions from them would be the prose inference the whole
+        # envelope refuses.
+        canon = _write_entity(temp_entities, "kept", type_dir="tool",
+                              extra="aliases:\n  - some-old-name\n")
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "supersedes" not in canon.read_text()
+
+
+class TestEnvelopeChecksCanFire:
+    """Positive controls: a checker that never fires scores like a correct one.
+
+    The gh-160 calibration found ZERO findings across the real migrated corpus.
+    That number only means something if each check is known to be able to fire —
+    otherwise silence is indistinguishable from a gutted audit. One probe per
+    defect class, each asserting the SPECIFIC field, so a check cannot be
+    covered by some other check's finding.
+    """
+
+    BASE = {
+        "slug": "current", "recorded_at": "2026-06-09",
+        "supersedes": ["[[old]]"], "revision_link": ["research/entities/tool/old.md"],
+    }
+
+    def _probe(self, **overrides):
+        fm = dict(self.BASE)
+        for k, v in overrides.items():
+            if v is _ABSENT:
+                fm.pop(k, None)
+            else:
+                fm[k] = v
+        return _fields(_lint_envelope(fm, lookup=lambda _s: {}))
+
+    def test_negative_control_a_well_formed_envelope_is_silent(self):
+        assert self._probe() == [], "the corpus baseline must be genuinely clean"
+
+    @pytest.mark.parametrize("name,overrides,expected", [
+        ("supersedes_not_wikilink", {"supersedes": ["bare-slug"]}, "temporal_supersedes"),
+        ("supersedes_not_a_list", {"supersedes": "[[old]]"}, "temporal_supersedes"),
+        ("supersedes_non_string", {"supersedes": [7]}, "temporal_supersedes"),
+        ("supersedes_self", {"supersedes": ["[[current]]"]}, "temporal_supersedes"),
+        ("revision_link_missing", {"revision_link": _ABSENT}, "temporal_revision_link"),
+        ("revision_link_blank", {"revision_link": ["", "x"]}, "temporal_revision_link"),
+        ("revision_link_non_string", {"revision_link": [7]}, "temporal_revision_link"),
+        ("revision_link_orphan", {"supersedes": _ABSENT}, "temporal_revision_link"),
+        ("recorded_at_unparseable", {"recorded_at": "2026-99-99"}, "temporal_recorded_at"),
+        ("recorded_at_future", {"recorded_at": "2099-01-01"}, "temporal_recorded_at"),
+        ("valid_from_unparseable", {"valid_from": "someday"}, "temporal_valid_from"),
+    ])
+    def test_each_defect_class_is_detected(self, name, overrides, expected):
+        assert expected in self._probe(**overrides), f"{name} went undetected"
+
+    def test_supersedes_unresolvable_target_is_detected(self):
+        fm = dict(self.BASE)
+        assert "temporal_supersedes" in _fields(
+            _lint_envelope(fm, lookup=lambda _s: None))
+
+    def test_timeline_inversion_is_detected(self):
+        # The only HEURISTIC check, and the only one the real corpus cannot
+        # exercise: it reads the superseded target's `recorded_at`, and merge
+        # tombstones do not carry one.
+        fm = dict(self.BASE)
+        assert "temporal_supersedes" in _fields(
+            _lint_envelope(fm, lookup=lambda _s: {"recorded_at": "2099-01-01"}))
 
 
 class TestDefaultLintIsUnchanged:
