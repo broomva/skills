@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.2.1] — 2026-08-10
+- `revise`/`merge` now write `updated` QUOTED. Emitting it bare un-quoted a page that already had `updated: "YYYY-MM-DD"`, so the repo's own unquoted-date lint warned on every page the command touched — the writer failing the gate it is supposed to satisfy. Found by dogfooding the merged CLI, not by the suite.
+- `valid_from` is written after `recorded_at` exists, so its `after=` anchor resolves instead of silently landing at the end of the frontmatter.
+
 ## [1.2.0] — 2026-08-10
 - Added the typed temporal revision envelope, producer-first: `promote` stamps system-time `recorded_at`; `valid_from` is written only when a source supplies it and is never inferred from prose, page dates, or the ingest timestamp.
 - Added `revise` — the explicit correction workflow that emits `supersedes` + `revision_link`; `merge` now records the same envelope on the canonical with the tombstone as its authorizing record.
