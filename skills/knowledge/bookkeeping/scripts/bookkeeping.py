@@ -6000,7 +6000,9 @@ def _recorded_supersessions() -> "list[dict]":
 # A slug used as a REFERENCE (resolved against the filesystem) only has to be
 # safe, not well-shaped: no glob metacharacters (`*?[]`), no path separators,
 # no leading dot. Shape is `is_entity_shaped_slug`'s job and a different question.
-_SAFE_SLUG_REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# `\Z`, not `$`: Python's `$` also matches before a trailing newline, so
+# `"kept\n"` would pass an otherwise strict charset.
+_SAFE_SLUG_REFERENCE_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 def _resolve_live_canonical(slug: str) -> "tuple[Path | None, str | None]":

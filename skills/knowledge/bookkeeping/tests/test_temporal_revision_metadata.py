@@ -1018,6 +1018,7 @@ class TestBackfillRecordedMerges:
         ("*", "not a safe slug reference"),
         ("../../etc/passwd", "not a safe slug reference"),
         ("kept[1]", "not a safe slug reference"),
+        (".hidden", "not a safe slug reference"),
     ])
     def test_backfill_refuses_a_pattern_as_a_canonical(
             self, temp_entities, frozen_today, merged_into, reason, capsys):
@@ -1181,6 +1182,29 @@ class TestBackfillRecordedMerges:
                               extra="aliases:\n  - some-old-name\n")
         bookkeeping.cmd_backfill_revisions(self._args())
         assert "supersedes" not in canon.read_text()
+
+
+class TestSafeSlugReference:
+    """The charset that guards a slug used as a filesystem REFERENCE."""
+
+    @pytest.mark.parametrize("slug", [
+        "*", "?", "**", "[a-z]", "kept[1]",          # glob metacharacters
+        "../../etc/passwd", "a/b", "a\\b",            # path traversal
+        ".hidden", "-lead", "", " kept", "kept ",     # shape
+        "kept\n", "kept\nother",                      # trailing/embedded newline
+    ])
+    def test_unsafe_references_are_refused(self, slug):
+        assert not bookkeeping._SAFE_SLUG_REFERENCE_RE.match(slug), slug
+
+    @pytest.mark.parametrize("slug", [
+        # Real slugs from the live graph that the MINTING heuristic rejects.
+        # Using that heuristic here refused 42 of 943 real entities.
+        "colfondos-s-a", "tp", "a-proof-publishes-its-frame",
+        "write-reachability-underdetermines-grounding", "the-three",
+        "kronos", "lago-event-journal", "cryptographic-problem",
+    ])
+    def test_real_slugs_are_accepted(self, slug):
+        assert bookkeeping._SAFE_SLUG_REFERENCE_RE.match(slug), slug
 
 
 class TestEnvelopeChecksCanFire:
