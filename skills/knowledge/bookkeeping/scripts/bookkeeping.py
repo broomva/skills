@@ -2685,6 +2685,207 @@ def _lint_timeline(path_str: str, body: str) -> list[LintError]:
     return errors
 
 
+# ── Opt-in temporal-drift audit ───────────────────────────────────────────────
+#
+# This audit is deliberately narrower than semantic reconciliation. It catches
+# two mechanically defensible conditions:
+#   1. `updated` predates newer, valid dated evidence in sources/body.
+#   2. Catalog-visible claims, state-labelled headings, or explicit state-label
+#      lines make mutable assertions without an inline ISO as-of date.
+#
+# Arbitrary present-tense prose and generic "Open Questions" sections stay out
+# of scope. Deciding whether one claim supersedes another remains P13 review
+# work until typed producers exist. Findings are warnings and the audit is only
+# run when the caller passes `lint --temporal`.
+_TEMPORAL_ISO_RE = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
+_TEMPORAL_CLAIM_RE = re.compile(
+    r"(?:\b(?:currently|today)\b|"
+    r"\b(?:is|are)\s+now\b|"
+    r"\b(?:is|are|remains?)\s+(?:now\s+)?"
+    r"(?:planned|shipped|resolved|deprecated|superseded|live|active)\b|"
+    r"\b(?:is|are)\s+no longer\b|"
+    r"\bcurrent (?:state|status|architecture|implementation|behaviou?r)\s+"
+    r"(?:is|remains|has)\b)",
+    re.IGNORECASE,
+)
+_TEMPORAL_HEADING_RE = re.compile(
+    r"^(?:"
+    r"current(?: state|status|architecture|implementation|behaviou?r|version|"
+    r"system|stack|path|workflow|mode|decision)|current|today|status|roadmap|"
+    r"planned|shipped|resolved|deprecated|superseded|open decisions?|"
+    r"open follow-?ups?)"
+    r"(?=$|\s*(?:[:—–(\-]))",
+    re.IGNORECASE,
+)
+_TEMPORAL_LABEL_RE = re.compile(
+    r"^\s*(?:(?:[-*]|\d+\.)\s+)?(?:\*\*)?"
+    r"(?:current(?: state|status|architecture|implementation|behaviou?r|"
+    r"version|system|stack|path|workflow|mode|decision)?|currently|today|"
+    r"status|open decisions?|open follow-?ups?|planned|shipped|resolved|"
+    r"deprecated|superseded|no longer)(?:\*\*)?\s*(?::|—|–|-|\()",
+    re.IGNORECASE,
+)
+_MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$")
+
+
+def _eligible_temporal_dates(text: str, audit_date: date) -> list[date]:
+    """Return valid ISO dates in `text` that are not later than the audit."""
+    found: list[date] = []
+    for raw in _TEMPORAL_ISO_RE.findall(text):
+        try:
+            parsed = date.fromisoformat(raw)
+        except ValueError:
+            continue
+        if parsed <= audit_date:
+            found.append(parsed)
+    return found
+
+
+def _coerce_temporal_date(value: object) -> "date | None":
+    """Coerce YAML date/datetime/string values to a date, else None."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _first_section_content_line(lines: list[str], start: int) -> str:
+    """Return the first non-comment content line before the next heading."""
+    in_comment = False
+    for line in lines[start:]:
+        if _MARKDOWN_HEADING_RE.match(line):
+            break
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+        return line
+    return ""
+
+
+def _lint_temporal_drift(
+    path_str: str,
+    fm: dict,
+    body: str,
+    *,
+    audit_date: "date | None" = None,
+) -> list[LintError]:
+    """Emit opt-in, warning-only temporal drift findings for one entity."""
+    audit_date = audit_date or date.today()
+    errors: list[LintError] = []
+
+    updated = _coerce_temporal_date(fm.get("updated"))
+    sources = fm.get("sources") or []
+    evidence = json.dumps(sources, ensure_ascii=False, default=str) + "\n" + body
+    evidence_dates = _eligible_temporal_dates(evidence, audit_date)
+    if updated is not None and evidence_dates:
+        newest = max(evidence_dates)
+        if newest > updated:
+            errors.append(LintError(
+                path_str,
+                "temporal_updated",
+                f"frontmatter updated {updated.isoformat()} predates newest dated "
+                f"source/body evidence {newest.isoformat()}",
+                "warning",
+            ))
+
+    core_claim = str(fm.get("core_claim") or "")
+    if (
+        _TEMPORAL_CLAIM_RE.search(core_claim)
+        and not _eligible_temporal_dates(core_claim, audit_date)
+    ):
+        errors.append(LintError(
+            path_str,
+            "temporal_as_of",
+            "core_claim makes a mutable current-state assertion without an "
+            "inline ISO as-of date (YYYY-MM-DD)",
+            "warning",
+        ))
+
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        heading = _MARKDOWN_HEADING_RE.match(line)
+        if heading:
+            title = heading.group(1).strip()
+            if _TEMPORAL_HEADING_RE.search(title):
+                first_content = _first_section_content_line(lines, index + 1)
+                dated_context = line + "\n" + first_content
+                if not _eligible_temporal_dates(dated_context, audit_date):
+                    errors.append(LintError(
+                        path_str,
+                        "temporal_as_of",
+                        f"mutable heading {title!r} lacks an ISO as-of date in "
+                        "the heading or first content line",
+                        "warning",
+                    ))
+            continue
+
+        if (
+            _TEMPORAL_LABEL_RE.search(line)
+            and not _eligible_temporal_dates(line, audit_date)
+        ):
+            preview = line.strip()[:80]
+            errors.append(LintError(
+                path_str,
+                "temporal_as_of",
+                f"mutable state label lacks an inline ISO as-of date: {preview!r}",
+                "warning",
+            ))
+
+    return errors
+
+
+def _lint_temporal_entity_page(
+    entity_path: Path,
+    *,
+    audit_date: "date | None" = None,
+) -> list[LintError]:
+    """Read one entity and run the opt-in temporal audit when parseable."""
+    if not entity_path.exists():
+        return []
+    fm, body = parse_frontmatter(entity_path.read_text(errors="replace"))
+    if not fm:
+        return []
+    return _lint_temporal_drift(
+        str(entity_path), fm, body, audit_date=audit_date,
+    )
+
+
+def _lint_temporal_all(verbose: bool = False) -> list[LintError]:
+    """Run the opt-in temporal audit across real entity pages."""
+    if not ENTITIES_DIR.exists():
+        return []
+    errors: list[LintError] = []
+    pages = [
+        page for page in ENTITIES_DIR.rglob("*.md")
+        if page.name != "_tags.md" and ".lago-blobs" not in page.parts
+    ]
+    if verbose:
+        print(f"[lint --temporal] Checking {len(pages)} entity pages...")
+    for page in pages:
+        page_errors = _lint_temporal_entity_page(page)
+        errors.extend(page_errors)
+        if verbose:
+            for error in page_errors:
+                print(
+                    f"  [WARNING] {page.name}: {error.field} — {error.message}"
+                )
+    return errors
+
+
 # ── Lint --fix: mechanical auto-repair (Fix 2) ─────────────────────────────────
 #
 # Only the unambiguous, mechanical `related:` format classes are auto-repaired:
@@ -4808,6 +5009,15 @@ def cmd_lint(args: argparse.Namespace) -> None:
         errors = lint_entity_page(path)
         total_entities = 1
 
+    # Temporal reconciliation remains an explicit warning audit rather than a
+    # universal lint gate. Preserve default output/health behavior unless the
+    # caller asks for it.
+    if getattr(args, "temporal", False):
+        if is_full:
+            errors.extend(_lint_temporal_all(verbose=args.verbose))
+        else:
+            errors.extend(_lint_temporal_entity_page(path))
+
     if not errors:
         if fix:
             print("[lint] No remaining errors. Mechanical fixes applied above.")
@@ -5743,6 +5953,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--health", action="store_true",
         help="Print the 0-100 health score + dependency-ordered remediation plan. "
              "Implied by --all.",
+    )
+    p_lint.add_argument(
+        "--temporal", action="store_true",
+        help="Add non-blocking temporal-drift warnings for stale updated dates "
+             "and undated mutable state claims/headings/labels. Opt-in; does "
+             "not attempt semantic supersession or reconciliation.",
     )
     p_lint.add_argument("--verbose", "-v", action="store_true")
     p_lint.set_defaults(func=cmd_lint)

@@ -1,7 +1,7 @@
 ---
 name: bookkeeping
 category: knowledge
-version: 1.0.0
+version: 1.1.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -151,6 +151,19 @@ Warnings (non-breaking nudges, surfaced as `warning`):
 - **`contradicts:` carries a resolution** — a non-empty `contradicts:` list must have a body `## Contradiction`/`## Resolution` section
 - `## Timeline` entries (when present) carry a leading ISO date
 
+Opt-in temporal audit (`lint --all --temporal`; warning-only):
+
+- **`updated` is not older than dated evidence** — warns when valid ISO dates
+  in `sources` or the body are later than frontmatter `updated`; invalid dates
+  and dates after the audit date are ignored
+- **Mutable state is dated where it is detached from context** — warns on
+  catalog-visible current-state claims, mutable headings, and explicit state
+  labels without an inline `YYYY-MM-DD` as-of marker
+- **Semantic reconciliation remains outside lint** — the audit does not decide
+  whether claims contradict or supersede one another, and does not require
+  `valid_from`, `recorded_at`, `supersedes`, or `revision_link` before typed
+  producers exist
+
 > Enum values defer to `references/entity-schema.md` (the schema is authoritative for `type`/`status` membership); SKILL.md remains authoritative for thresholds, stages, and layers.
 
 Lint report is written to stdout and to `~/.config/bookkeeping/status.json` under `lint_errors`. A non-zero lint error count does NOT block the pipeline — it surfaces warnings only. `lint --fix` mechanically repairs the auto-fixable classes (`related:` format, unquoted dates).
@@ -200,12 +213,13 @@ python3 scripts/bookkeeping.py synthesize --gaps      # + ranked ## Gaps report 
 python3 scripts/bookkeeping.py synthesize --gaps --backlog  # JSON Backlog ticket candidates → file via Linear MCP
 python3 scripts/bookkeeping.py lint --all             # Validate all entity pages
 python3 scripts/bookkeeping.py lint --all --health    # + 0-100 health score + remediation plan
+python3 scripts/bookkeeping.py lint --all --temporal  # + warning-only temporal-drift audit
 python3 scripts/bookkeeping.py bench                  # Retrieval benchmark (P@5/R@5/MRR)
 python3 scripts/bookkeeping.py status                 # Show knowledge graph stats
 python3 scripts/bookkeeping.py query "concept-slug"   # Find and display entity page
 ```
 
-The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, and `lint --health` are *subcommands/flags*, not new pipeline stages.
+The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, `lint --health`, and `lint --temporal` are *subcommands/flags*, not new pipeline stages.
 
 All commands accept `--dry-run` to preview changes without writing. All commands write structured output to `~/.config/bookkeeping/run-log.jsonl`.
 
@@ -233,6 +247,29 @@ A **gap** is where the graph is incomplete in a way that blocks retrieval or sig
 ### `lint --health` — health score + remediation plan
 
 Computes a `0-100` health score — `100 * (1 - weighted_issues / total_entities)`, errors weighted `1.0`, warnings `0.3`, capped at `[0,100]` — and prints a **dependency-ordered remediation plan**: broken-wikilink TARGETS first (creating one missing page unblocks every referrer), then missing/over-long `core_claim`, then enum non-conformance. Implied by `lint --all`.
+
+### `lint --temporal` — calibrated temporal-drift warnings
+
+Adds an explicit, non-blocking audit for temporal bookkeeping defects that can
+be detected mechanically without pretending to understand claim semantics:
+
+```bash
+python3 scripts/bookkeeping.py lint --all --temporal
+python3 scripts/bookkeeping.py lint --file path/to/entity.md --temporal
+```
+
+The audit checks two conditions: frontmatter `updated` predates newer dated
+source/body evidence, and mutable state appears in a catalog-visible
+`core_claim`, state-labelled heading, or explicit label line without an inline
+ISO as-of date. It deliberately excludes arbitrary present-tense prose and
+generic `Open Questions` sections. Findings are `warning` severity, so they do
+not fail the command when no ordinary lint errors exist. Default `lint` output
+is unchanged unless `--temporal` is passed.
+
+This is an emitter-first maintenance signal, not a revision-graph validator.
+Semantic contradiction, temporal authority, and supersession remain Dream
+(P13) review work until typed producers can emit their inputs. Calibration and
+known limitations are recorded in `references/temporal-drift-audit.md`.
 
 ### `replay` — closes the shadow-dream corruption mode
 

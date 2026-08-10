@@ -142,3 +142,74 @@ Make `broomva-design` usable across arbitrary digital products without weakening
 - `python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/design/broomva-design`
 - Materialize every profile twice and verify it.
 - Interact with and capture non-agentic commerce and content/data examples at 375px, 768px, and 1440px in light and dark themes.
+
+---
+
+## Bookkeeping temporal-drift warning audit
+
+Status: implementation complete; PR lifecycle pending
+
+Branch: `feature/gh-150-temporal-drift-warnings`
+
+Tracking: `broomva/skills#150` (GitHub fallback; the Linear connector exposes
+only the unrelated Stimulus workspace)
+
+### Objective
+
+Add an opt-in, non-blocking `bookkeeping lint --temporal` audit that surfaces
+mechanically defensible temporal drift without pretending to perform semantic
+reconciliation.
+
+### Dependency chain
+
+- Upstream: entity YAML `updated` metadata plus dated source/body evidence;
+  mutable-state labels and headings in entity markdown.
+- Implementation: `skills/knowledge/bookkeeping/scripts/bookkeeping.py` lint
+  helpers and CLI dispatch.
+- Contract/docs: `skills/knowledge/bookkeeping/SKILL.md`, schema reference, and
+  changelog.
+- Verification: focused temporal fixtures, the full Bookkeeping pytest suite,
+  live-graph calibration, repository checks, P20, and CI.
+- Downstream: agents running `lint --all --temporal`; status/health behavior and
+  existing default lint output must remain unchanged.
+
+### Non-goals
+
+- No automatic contradiction or supersession judgment.
+- No required `valid_from`, `recorded_at`, `supersedes`, or `revision_link`
+  schema fields before typed producers exist.
+- No hard gate and no BM25/retrieval changes.
+
+### Milestones
+
+- [x] Freeze warning semantics with positive and negative tests.
+- [x] Implement opt-in temporal lint helpers and CLI routing.
+- [x] Calibrate on the live graph and document limits.
+- [x] Run full validation and Cross-Review (P20).
+- [ ] Open, watch, merge, and clean the PR lifecycle.
+
+### Acceptance
+
+- Existing lint output is byte-for-byte unaffected unless `--temporal` is set.
+- Temporal-only findings use warning severity and do not produce a failing exit.
+- Metadata drift considers only valid ISO dates on or before the audit date.
+- Mutable-state detection is bounded to catalog-visible claims, headings, and
+  explicit label lines rather than scanning arbitrary present-tense prose.
+- Tests cover true positives, dated controls, invalid/future dates, and
+  false-positive-prone language.
+
+### Verification checkpoint — 2026-08-09
+
+- 329 Bookkeeping pytest cases passed after repairing one pre-existing
+  wall-clock-dependent retention fixture.
+- 50 retrieval benchmark tests passed.
+- Skill-version lint and `git diff --check` passed.
+- Clean workspace calibration (`f4e04b45`): 928 pages, 96 warning-only
+  findings across 91 entities; machine receipt checked in.
+- Default single-file lint stayed clean while `--temporal` reproduced the
+  Chronos warning and recognized corrected Lago as clean.
+- Cross-Review (P20) round 1: 9/10, one evidence-artifact finding.
+- Cross-Review (P20) round 2: 10/10 APPROVE after adding the JSON receipt and
+  its consistency test.
+- Bookkeeping replay against workspace `b1a4a662`: 931 entities frozen,
+  2 unrelated design-system items would promote, no writes applied.

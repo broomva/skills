@@ -174,7 +174,7 @@ Agents must enforce these rules when creating or modifying entity pages:
 
 3. **`related`, `contradicts`, `compounds_from` must use `[[wikilink]]` format.** Plain text references are not graph edges. The wikilink must exactly match the `id` slug of the target entity.
 
-4. **`updated` must be today's date** on every write. This is not optional. Stale `updated` dates break graph audit.
+4. **`updated` must be today's date** on every write. This is not optional. Stale `updated` dates break graph audit. The opt-in `lint --temporal` audit also warns when `updated` predates the newest valid ISO date found in `sources` or the body.
 
 5. **`open_questions_count` must match** the actual number of bulleted items in the Open Questions section. Count before writing.
 
@@ -183,6 +183,13 @@ Agents must enforce these rules when creating or modifying entity pages:
 7. **`scoring.raw_score` must equal `scoring.novelty + scoring.specificity + scoring.relevance`.** Sum is enforced. Mismatches indicate a copy-paste error.
 
 8. **No entity may have `status: entity` if `contradicts` is populated** without a resolution section in the body. Contradiction must be addressed before promoting to `entity`.
+
+9. **Date mutable state where it travels without surrounding context.** A
+   catalog-visible `core_claim`, mutable state heading (`Status`, `Roadmap`,
+   `Open decision`, `Open follow-ups`, and related labels), or explicit state
+   label should carry an inline `YYYY-MM-DD` as-of marker. `lint --temporal`
+   reports this as a warning only. It does not infer contradiction or
+   supersession, and it does not make revision-graph fields mandatory.
 
 ---
 

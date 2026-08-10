@@ -1,0 +1,51 @@
+{
+  "schema": "broomva.bookkeeping.temporal-drift-calibration.v1",
+  "generated_at": "2026-08-09T22:01:10-05:00",
+  "audit_date": "2026-08-09",
+  "source_repository": "https://github.com/broomva/workspace",
+  "source_commit": "f4e04b4519f43bf39f18684bf86f079538a84be9",
+  "source_tree": "clean detached worktree",
+  "command_contract": {
+    "environment": {
+      "KG_ROOT": "<clean-worktree>",
+      "KG_NO_POLICY": "1"
+    },
+    "python": "from collections import Counter; from scripts.bookkeeping import _lint_temporal_all; errors = _lint_temporal_all(); count errors by field, severity, and distinct file_path",
+    "working_directory": "skills/knowledge/bookkeeping",
+    "exit_status": 0
+  },
+  "result": {
+    "entity_pages": 928,
+    "temporal_findings": 96,
+    "by_field": {
+      "temporal_updated": 67,
+      "temporal_as_of": 29
+    },
+    "affected_entities": 91,
+    "all_findings_warning": true
+  },
+  "control_cases": {
+    "chronos_temporal_primitive": {
+      "command": "bookkeeping.py lint --file <chronos-path> --temporal",
+      "exit_status": 0,
+      "temporal_findings": 1,
+      "finding": "undated Open follow-ups heading"
+    },
+    "lago_event_journal": {
+      "command": "bookkeeping.py lint --file <lago-path> --temporal",
+      "exit_status": 0,
+      "temporal_findings": 0
+    },
+    "chronos_default_lint": {
+      "command": "bookkeeping.py lint --file <chronos-path>",
+      "exit_status": 0,
+      "temporal_findings": 0
+    }
+  },
+  "ordinary_lint_baseline": {
+    "exit_status": 1,
+    "errors": 62,
+    "warnings": 745,
+    "note": "Pre-existing workspace graph debt; not produced or modified by the temporal audit."
+  }
+}
