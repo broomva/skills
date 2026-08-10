@@ -107,6 +107,12 @@
         "temporal_supersedes": 0,
         "temporal_revision_link": 0
       }
+    },
+    "migration": {
+      "dry_run_files_written": 0,
+      "apply_files_written": 5,
+      "second_apply_files_written": 0,
+      "oracle": "git -c core.fsmonitor=false status --porcelain"
     }
   },
   "power_limit": {
@@ -127,5 +133,6 @@
       "tombstones carry recorded_at, which is what would make timeline inversion measurable on real data;",
       "an independent reviewer has judged a set of real supersession findings."
     ]
-  }
+  },
+  "method_caveat": "Every clean-tree assertion in this receipt was re-taken with `git -c core.fsmonitor=false`. The workspace repo sets core.fsmonitor=true and its daemon was dead during the run, so plain `git status --porcelain` reported 0 modified files while 5 were modified. The migration results below come from the forced comparison, not the cached one."
 }
