@@ -178,12 +178,18 @@ A `/what` answer is well-formed iff:
 - [ ] Each concept states what it is *not*
 - [ ] The short version contains no term from the inventory
 
-Script tests: `python3 -m pytest scripts/test_what_concepts.py -v`
+Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (65 tests).
+
+Every one of those tests is proven able to fail: `bash scripts/mutate.sh` breaks
+the implementation 26 ways and requires the suite to catch all 26. Run it after
+any change to `what_concepts.py`. It asserts a clean tree first, because its
+revert-to-HEAD baseline would otherwise destroy uncommitted work on line one.
 
 ## References
 
 - `scripts/what_concepts.py` — the deterministic inventory + knowledge-graph coverage classifier.
 - `scripts/test_what_concepts.py` — its unit suite (the step-3 skillify gate).
+- `scripts/mutate.sh` — the mutation proof that keeps that suite honest.
 - Prior art: [`mattpocock/skills` `productivity/wait-what`](https://github.com/mattpocock/skills/tree/main/skills/productivity/wait-what)
   — the terse mid-conversation re-pitch. `/what` keeps its two best ideas (pin
   the register, pin the vocabulary source) and adds session scope plus
