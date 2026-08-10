@@ -474,6 +474,14 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
           : "          chosen on pack price — D1 publishes no size for any of these",
       );
     }
+    if (l.offTerm) {
+      // Nothing D1 returned for this term carries the term in its name, so the
+      // line was picked from the unfiltered result set. Said per line, because
+      // it is a property of THIS line's evidence and not of the basket.
+      out.push(
+        `          nothing D1 returned for "${sanitize(l.term)}" is named after it — this may not be what you meant`,
+      );
+    }
     if (l.replaces) {
       out.push(
         `          replaces ${sanitize(l.replaces.skuId)} ${sanitize(l.replaces.name)}, which D1 cannot supply here`,

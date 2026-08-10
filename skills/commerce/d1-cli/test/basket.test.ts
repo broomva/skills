@@ -5,6 +5,7 @@ import {
   chooseBest,
   fillToBudget,
   linePrice,
+  matchesTerm,
   packPrices,
   parseBudget,
 } from "../src/basket.ts";
@@ -1613,5 +1614,127 @@ describe("an alternative must be a real price [BRO-2086]", () => {
       1_000_000,
     );
     expect(plan.lines[0]?.affordableAlternatives).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRO-2110 — a line is filled from products that NAME the term
+//
+// D1's search is loose: `huevos` returns 139 matches including yogurt and
+// mozzarella. `chooseBest` takes its measure census over whatever it is handed,
+// so off-term products do not merely COMPETE — they can win the census and
+// evict every on-term product from the comparison before ranking begins. Live,
+// that put yogurt in the basket for eggs and bread in it for milk.
+//
+// Every assertion here is at the USE site (`buildBasket`, `renderBasket`), not
+// only against the predicate: the same fix applied at one call site and tested
+// at the other is the defect class this skill has hit six times.
+
+describe("buildBasket — term relevance (BRO-2110)", () => {
+  // Two kg-measured off-term products against one unit-measured egg. Remove the
+  // filter and kg wins the census, the egg is never ranked at all, and the
+  // cheapest-per-kg product — the yogurt — fills the line. That is the live bug.
+  const looseHuevos = [
+    wire("yog", "Yogurt Griego Natural Vita Latti 330 Gr", {
+      price: 7600,
+      unit: "Gr",
+      value: "330",
+    }),
+    wire("que", "Queso Mozzarella Tajado Latti 400 Grs", {
+      price: 10500,
+      unit: "Gr",
+      value: "400",
+    }),
+    wire("egg", "Huevo Tipo Aa Sol Naciente 12 Und", { price: 7490, unit: "un", value: "12" }),
+  ];
+
+  test("an off-term product cannot fill the line, even when it wins the measure census", async () => {
+    const plan = await buildBasket(
+      fakeClient({ search: looseHuevos, searchTotal: 139 }),
+      ["huevos"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("filled");
+    expect(plan.lines[0]?.product?.skuId).toBe("egg");
+    // Only the egg was eligible for "huevos", so that is the set weighed.
+    expect(plan.lines[0]?.compared).toBe(1);
+    // The denominator still reports D1's whole answer, not the narrowed pool.
+    expect(plan.lines[0]?.matched).toBe(139);
+    // The pick names the term, so nothing is disclosed.
+    expect(plan.lines[0]?.offTerm).toBeUndefined();
+    expect(renderBasket(plan)).not.toContain("is named after it");
+  });
+
+  test("a plural term matches the singular name D1 actually ships", () => {
+    // Every egg product D1 sells is "Huevo …"; a shopper types "huevos". Without
+    // the stem the filter matches nothing and falls straight through to the
+    // unfiltered set — decorative on the commonest terms.
+    expect(matchesTerm("Huevo Tipo Aa Sol Naciente 12 Und", "huevos")).toBe(true);
+    expect(matchesTerm("Yogurt Griego Natural Vita Latti 330 Gr", "huevos")).toBe(false);
+  });
+
+  test("the stem does not eat short words", () => {
+    // "gas" must stay "gas". Stemmed to "ga" it would match GALLETAS.
+    expect(matchesTerm("GALLETAS SURTIDAS DUCALES 300 G", "gas")).toBe(false);
+    expect(matchesTerm("GASEOSA COLA 1.5 LT", "gas")).toBe(true);
+  });
+
+  test("every token of a multi-word term must appear", () => {
+    expect(matchesTerm("Leche Entera Bolsa UHT Latti 900 Ml", "leche entera")).toBe(true);
+    expect(matchesTerm("Leche Deslactosada Bolsa UHT Latti 900 Ml", "leche entera")).toBe(false);
+  });
+
+  test("accents in the typed term still match D1's unaccented names", () => {
+    expect(matchesTerm("Jabon Tocador Protex 220 Gr", "jabón")).toBe(true);
+  });
+
+  test("when nothing names the term the line still fills, and the reader is told", async () => {
+    const plan = await buildBasket(
+      fakeClient({
+        search: [
+          wire("ach", "Bebida Achocolatada Latti 200 Ml", {
+            price: 1200,
+            unit: "Ml",
+            value: "200",
+          }),
+        ],
+        searchTotal: 3,
+      }),
+      ["milo"],
+      10_000_000,
+    );
+    // Falling back beats failing the line — D1 answered, the answer is just
+    // named differently.
+    expect(plan.lines[0]?.status).toBe("filled");
+    expect(plan.lines[0]?.product?.skuId).toBe("ach");
+    expect(plan.lines[0]?.offTerm).toBe(true);
+    // Asserted at the RENDER site: a flag nothing prints is a flag nobody sees.
+    expect(renderBasket(plan)).toContain('nothing D1 returned for "milo" is named after it');
+  });
+
+  test("the category sweep starts from an ON-term product", async () => {
+    // The term's own named product is sold out, and an off-term product sits
+    // above it in D1's order. Sweeping from that off-term product is how a
+    // sold-out `arroz` once produced "replaces SAL REFINADA".
+    const plan = await buildBasket(
+      fakeClient({
+        search: [
+          wire("900", "SAL REFINADA REFISAL 1000 G", { price: 2000, unit: "Gr", value: "1000" }),
+          wire("192", "ARROZ BLANCO 500 G", { available: false, price: 1990 }),
+        ],
+        searchTotal: 12,
+        sku: sourceSku("192", "ARROZ BLANCO 500 G"),
+        sweep: [
+          wire("192", "ARROZ BLANCO 500 G", { available: false, price: 1990 }),
+          wire("738", "ARROZ INTEGRAL 1000 G", { price: 4500, unit: "Gr", value: "1000" }),
+        ],
+      }),
+      ["arroz"],
+      10_000_000,
+    );
+    // The salt names no "arroz", so it is filtered out before anything reads
+    // the page — including the code that picks the substitute source.
+    expect(plan.lines[0]?.replaces?.skuId).toBe("192");
+    expect(plan.lines[0]?.product?.skuId).toBe("738");
   });
 });
