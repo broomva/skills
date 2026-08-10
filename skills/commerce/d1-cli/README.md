@@ -575,8 +575,8 @@ that may hold hundreds, so a bare "nothing in its category is in stock" would be
 a universal over a sample.
 
 > **Not shipped.** This lives on `kg/d1-brand-compare` and has not passed its
-> review gate: ten cross-model rounds each found a sentence that was false
-> against live D1, and rounds 7 through 10 each found a defect the round before
+> review gate: eleven cross-model rounds each found a sentence that was false
+> against live D1, and rounds 7 through 11 each found a defect the round before
 > had introduced or left standing. There is one root cause and it is worth
 > reading before picking this up — **a claim may not outrun the population it
 > reads**, and every round so far has narrowed one sentence and left the next.
@@ -610,7 +610,7 @@ Two different failures are reported as two different sentences, because they
 are two different facts:
 
 ```text
-D1 returned COPELIA for these terms, but nothing of it can be bought at this store.
+D1 returned COPELIA for these terms, but nothing of it that was searched can be bought here.
 Nothing D1 returned for these terms is ZZNOSUCH.
 ```
 
@@ -627,7 +627,7 @@ label where D1 had returned six — so a claim reading from both populations
 printed above a list reading from one produced two sentences that disagreed:
 
 ```text
-D1 returned LATTI for these terms, but nothing of it can be bought at this store.
+D1 returned LATTI for these terms, but nothing of it that was searched can be bought here.
 Brands it did return: OTRA.
 ```
 
@@ -649,8 +649,17 @@ d1 basket --brand QUAKER arroz            → arroz $ 4.950                     
 
 Every categorical sentence now carries whichever of the two looks was partial —
 headline, evidence list, per-term cause and footer alike — and `comparisonExit`
-treats a partial sweep exactly as it treats a partial page: not exit 3, which is
-documented CLI-wide as "never worth retrying".
+treats a partial sweep exactly as it treats a partial page.
+
+**Exit 3 asserts the answer is KNOWN to be none**, so any unread population
+forfeits it — whether or not a flag can widen that population, and whether or
+not retrying the same command would help. `--brand ZZNOSUCHBRAND huevos
+--count 50` covers 50 of 152 and exits 0, because an agent branching on 3 would
+record "D1 has none of this brand" and 102 products were never looked at. An
+`over-budget` branded line forfeits it too: that is a fact about the wallet, and
+a larger `--budget` fills what a smaller one refused. Two reviewers argued this
+in opposite directions across two rounds; it is settled on which reading puts a
+falsehood in the machine channel, not on which reading of "retry" is tidier.
 
 **`--count` is one knob again.** It was forwarded to both looks, whose defaults
 differ (page 12, sweep 50), so typing the page's own documented default cut the
@@ -665,8 +674,8 @@ leche, arroz"* — true of `leche`, false of `arroz`. Terms are grouped by the
 sentence their own evidence produces, so identical ones still share a line:
 
 ```text
-Not counted — COPELIA is on its own page and nothing of it is buyable here, for: leche.
-Not counted — D1 returned no COPELIA at all for: arroz.
+Not counted — COPELIA is on its own page and nothing of it there is buyable, for: leche.
+Not counted — neither its page nor its category holds any COPELIA, for: arroz.
 ```
 
 **The comparison names what it bought.** Two prices and a delta are not enough
@@ -679,7 +688,7 @@ runs before the measure census and can therefore move the axis:
 ```text
 What was bought
   leche — best value: PAN LECHE HORNEADITOS 10 UND 440 G, best per kg; LATTI: LECHE ENTERA BOLSA UHT LATTI 900 ML, best per L
-1 of those rows compares products ranked on DIFFERENT measures (leche: per kg vs per L), so that much of the difference is not like for like.
+1 of those rows compares things that are NOT like for like (leche: per kg vs per L), so that much of the difference is not a saving — see what was bought.
 ```
 
 Bread rolls against milk, subtracted, and reported as a $ 1.310 saving on milk.

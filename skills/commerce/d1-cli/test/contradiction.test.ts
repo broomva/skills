@@ -31,11 +31,15 @@ import type { Product } from "../src/types.ts";
 
 const BRAND = "LATTI";
 
-const product = (name: string, price: number, brand = "OTRA"): Product => ({
+const product = (name: string, price: number, brand = "OTRA", unitPrice?: number): Product => ({
   productId: "p",
   skuId: "1",
   name,
   brand,
+  // Set, because round 11's new like-for-like rule reads it — and occurred in
+  // 0 of 18,816 states while this fixture left it undefined.
+  unitPrice,
+  size: unitPrice === undefined ? undefined : { measure: "kg", amount: 1 },
   linkText: "",
   categories: [],
   offers: [
@@ -83,10 +87,29 @@ interface Shape {
   matched: number;
   /** Measure the pick was ranked on, so a mixed-measure delta is reachable. */
   rankedOn?: string;
+  /** Unit price, so the "cheaper pack, dearer per unit" arm is reachable. */
+  unitPrice?: number;
+  /** Pack price, so a row can have a NEGATIVE delta and not merely a zero one. */
+  price?: number;
+  /**
+   * Whether an `over-budget` line came from the CATEGORY rather than the page.
+   *
+   * Production produces both — a page hit that does not fit, and a substitute
+   * `fillToBudget` downgraded, which keeps its `replaces` — and the render says
+   * different things about them. Pinning it either way leaves one arm dead.
+   */
+  fromCategory?: boolean;
+  /** Cheaper things that would have fitted, on an over-budget line. */
+  affordable?: number;
 }
 
 function lineFor(s: Shape): BasketLine {
   const named = s.status !== "no-match";
+  // The four statuses production sweeps a category on (`basket.ts`).
+  const sweeps =
+    s.status === "no-brand-match" ||
+    s.status === "filled-by-substitute" ||
+    s.status === "nothing-in-stock";
   return {
     term: s.term,
     status: s.status,
@@ -97,10 +120,19 @@ function lineFor(s: Shape): BasketLine {
     // sentence that has a scoped variant was checked in one polarity only.
     // Round 6's entire fix — a categorical claim never outruns its look — was
     // unprotected by the property test written to protect it.
-    looked: s.partial ? Math.floor(s.matched / 2) : s.matched,
+    // ABSENT on the stock substitute path, because production never sets it
+    // there (`buildBasket`'s `filled-by-substitute` push carries no `looked`).
+    // `renderBasket`'s footer falls back to `compared` for exactly this case,
+    // and the fallback was unexercised while every fixture line had a `looked`.
+    looked:
+      s.status === "filled-by-substitute"
+        ? undefined
+        : s.partial
+          ? Math.floor(s.matched / 2)
+          : s.matched,
     matched: s.matched,
-    product: named ? product(`PRODUCTO ${s.term}`, 300_000, "OTRA") : undefined,
-    price: isFilled(s.status) ? 300_000 : undefined,
+    product: named ? product(`PRODUCTO ${s.term}`, 300_000, "OTRA", s.unitPrice) : undefined,
+    price: isFilled(s.status) ? (s.price ?? 300_000) : undefined,
     // FOUR statuses, because production sets it on four (`basket.ts`: both
     // `filled-by-substitute` sites, the empty sweep, and `no-brand-match`).
     // Setting it on one made five production sentences occur in 0 of 4,704
@@ -112,8 +144,11 @@ function lineFor(s: Shape): BasketLine {
       s.status === "no-brand-match" ||
       s.status === "filled-by-substitute" ||
       s.status === "nothing-in-stock",
+    // `fillToBudget` keeps `replaces` when it downgrades a substitute line to
+    // `over-budget`, so production carries it on both statuses — and it is the
+    // input to "found only in the category around it", which was at 0 states.
     replaces:
-      s.status === "filled-by-substitute"
+      s.status === "filled-by-substitute" || (s.status === "over-budget" && s.fromCategory)
         ? product(`FUENTE ${s.term}`, 300_000, "OTRA")
         : undefined,
     rankedOn: isFilled(s.status) ? s.rankedOn : undefined,
@@ -123,8 +158,19 @@ function lineFor(s: Shape): BasketLine {
     // `no-brand-match` verdict is decided by this sweep and not by the page, so
     // an enumeration that never sets it cannot see a universal asserted over a
     // partial one — and could not, through nine rounds.
-    swept: s.sweepPartial ? 10 : 41,
-    categoryTotal: 41,
+    // ...on the lines that ACTUALLY swept, and no others.
+    //
+    // Every line — both rows, both plans — used to carry these, which made
+    // "the alt line swept and the base line did not" unrepresentable. That is
+    // what production always produces, and it is why `brandMissFor` reading
+    // `row.base` instead of `row.alt` survived the whole suite while printing
+    // an unqualified categorical claim over a 10-of-41 sweep.
+    swept: sweeps ? (s.sweepPartial ? 10 : 41) : undefined,
+    categoryTotal: sweeps ? 41 : undefined,
+    // Set only where the line was refused on money, as production does — the
+    // input to round 11's "N cheaper matches would have fitted" clause, which
+    // occurred in 0 of 18,816 states because this was never set.
+    affordableAlternatives: s.status === "over-budget" ? (s.affordable ?? 2) : undefined,
     // Set, because production always sets it and the live defect lived here.
     // Whether the page CARRIED the requested brand is its own axis: D1 returning
     // a COPELIA product at Price 0 and D1 returning no COPELIA at all are
@@ -200,7 +246,7 @@ function crossOf(opts: {
     partial: opts.partial,
     sweepPartial: opts.sweepPartial,
   };
-  const first = { ...shape, pageBrands: opts.pageBrands, sweepBrands: sweep };
+  const first = { ...shape, pageBrands: opts.pageBrands, sweepBrands: sweep, fromCategory: true };
   // Row two's evidence is its OWN. With `secondHasBrand: false` it holds no
   // trace of the requested brand in either population, which is exactly the
   // shape `--brand "NATURAL FEELING" leche arroz` produces live.
@@ -209,11 +255,35 @@ function crossOf(opts: {
   const second = { ...shape, pageBrands: secondPage, sweepBrands: secondSweep };
   const baseLines = [
     lineFor({ ...first, term: "arroz", status: opts.baseStatus, matched: 29, rankedOn: "kg" }),
-    lineFor({ ...second, term: "leche", status: secondBase, matched: 18, rankedOn: "kg" }),
+    lineFor({
+      ...second,
+      term: "leche",
+      status: secondBase,
+      matched: 18,
+      rankedOn: "kg",
+      unitPrice: 500,
+    }),
   ];
   const altLines = [
     lineFor({ ...first, term: "arroz", status: opts.altStatus, matched: 29, rankedOn: "L" }),
-    lineFor({ ...second, term: "leche", status: secondAlt, matched: 18 }),
+    lineFor(
+      opts.second === "same"
+        ? // No comparable measure: `chooseBest`'s pack-price fallback, where
+          // `rankedOn` is absent and `byPackPrice` is set. Production never
+          // sets both, so neither may the fixture.
+          { ...second, term: "leche", status: secondAlt, matched: 18 }
+        : // Same axis as the base line, cheaper pack, WORSE unit price — the
+          // shape round 11's guard claimed to catch and asserted backwards.
+          {
+            ...second,
+            term: "leche",
+            status: secondAlt,
+            matched: 18,
+            rankedOn: "kg",
+            price: 200_000,
+            unitPrice: 900,
+          },
+    ),
   ];
 
   return crossFromPlans(["arroz", "leche"], planOf(baseLines), planOf(altLines), {
@@ -369,22 +439,26 @@ function everyState(): Array<{ label: string; out: string; state: CrossBasket }>
                   // was unreachable while `crossOf` accepted a `count` nothing
                   // passed — `c.count` was 12 in every state.
                   for (const count of [12, MAX_COUNT]) {
-                    const state = crossOf({
-                      baseStatus,
-                      altStatus,
-                      pageBrands,
-                      sweepHasBrand,
-                      partial,
-                      sweepPartial,
-                      second,
-                      secondHasBrand,
-                      count,
-                    });
-                    states.push({
-                      label: `${baseStatus} / ${altStatus} / page [${pageBrands}] / sweep ${sweepHasBrand} / partial ${partial} / sweepPartial ${sweepPartial} / second ${second} / row2brand ${secondHasBrand} / count ${count}`,
-                      out: renderComparison(state, { regionId: "v2.TEST" }),
-                      state,
-                    });
+                    // The NATIONAL disclosure is its own arm and had no
+                    // enumerated state — `everyState` hardcoded a region.
+                    for (const regionId of ["v2.TEST", undefined]) {
+                      const state = crossOf({
+                        baseStatus,
+                        altStatus,
+                        pageBrands,
+                        sweepHasBrand,
+                        partial,
+                        sweepPartial,
+                        second,
+                        secondHasBrand,
+                        count,
+                      });
+                      states.push({
+                        label: `${baseStatus} / ${altStatus} / page [${pageBrands}] / sweep ${sweepHasBrand} / partial ${partial} / sweepPartial ${sweepPartial} / second ${second} / row2brand ${secondHasBrand} / count ${count} / region ${regionId}`,
+                        out: renderComparison(state, { regionId }),
+                        state,
+                      });
+                    }
                   }
                 }
               }
@@ -422,14 +496,29 @@ describe("no two sentences the comparison prints can contradict each other", () 
     // same universal, four lines lower — survived the whole suite. Six rounds
     // of this arc were spent discovering that fixing one sentence leaves the
     // next one open, so the check is over the set.
+    //
+    // These are the CURRENT wordings, and the liveness check below is why that
+    // sentence needs writing. Round 11 renamed three of the four strings this
+    // list watched and did not update it, so the test named after this arc's
+    // central invariant became inert: deleting all four patterns left the suite
+    // at 595 pass. A check whose subject can be renamed out from under it is
+    // not a check, and this file already enforces exactly that rule for
+    // `FORBIDDEN` two tests down — it simply did not cover this list.
     const UNSCOPED = [
-      /but nothing of it can be bought at this store\./,
-      /and nothing of it is buyable here, for/,
-      /D1 returned no LATTI at all for/,
+      /but nothing of it that was searched can be bought here\./,
+      /and nothing of it there is buyable, for/,
+      /neither its page nor its category holds any LATTI, for/,
       /Nothing D1 returned for these terms is/,
     ];
+    // Each pattern must match SOMEWHERE, or it is a rule about a string the
+    // render cannot produce. These are the unqualified forms, so they belong in
+    // complete-look states and nowhere else — this half proves they exist, the
+    // half below proves they never escape into a partial one.
+    const everywhere = everyState();
+    const dead = UNSCOPED.filter((u) => !everywhere.some((s) => u.test(s.out)));
+    expect(dead).toEqual([]);
     const unscoped: string[] = [];
-    for (const { label, out, state } of everyState()) {
+    for (const { label, out, state } of everywhere) {
       // Gated on the STATE, not on the output.
       //
       // The first version of this gate read `/Raise --count/` off the rendered
@@ -472,8 +561,47 @@ describe("no two sentences the comparison prints can contradict each other", () 
     }
     expect(offenders).toEqual([]);
 
-    // ...and the check can fire, or it is a rule about a string nothing emits.
-    expect(STORE_WIDE.some((p) => p.test("nothing of it can be bought at this store."))).toBe(true);
+    // ...and it fires on a real historical output rather than on a literal
+    // written to satisfy it: this is round 10's actual headline, which is what
+    // the rule exists to keep out. Asserting a regex against a hand-typed
+    // string proves only that the regex compiles.
+    const roundTen =
+      "D1 returned NATURAL FEELING for these terms, but nothing of it can be bought at this store.";
+    expect(STORE_WIDE.some((p) => p.test(roundTen))).toBe(true);
+    // ...and does not fire on the wording that replaced it.
+    const roundEleven =
+      "D1 returned NATURAL FEELING for these terms, but nothing of it that was searched can be bought here.";
+    expect(STORE_WIDE.some((p) => p.test(roundEleven))).toBe(false);
+  });
+
+  test("the not-like-for-like count never outruns the rows it says 'those' about", () => {
+    // "N of those rows compare…" — "those" is `comparable.terms`, the rows that
+    // produced the delta. Dropping `notLikeForLike`'s `delta === undefined`
+    // gate counts a row that was never compared, and the sentence then
+    // discounts part of a number that row never contributed to.
+    const offenders: string[] = [];
+    for (const { label, out, state } of everyState()) {
+      expect(state.notLikeForLike.length).toBeLessThanOrEqual(state.comparable.terms);
+      const m = out.match(/^(\d+) of those rows? compares?/m);
+      if (m && Number(m[1]) > state.comparable.terms) {
+        offenders.push(`${label}: claims ${m[1]} of ${state.comparable.terms} compared rows`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the prose and the JSON agree about which rows are not like for like", () => {
+    // `--json` carried no such field, so a consumer reading identical
+    // `rankedOn`, `size.measure` and `size.amount` would correctly conclude the
+    // row WAS like for like while the prose said the opposite.
+    let checked = 0;
+    for (const { label, out, state } of everyState()) {
+      for (const nl of state.notLikeForLike) {
+        checked += 1;
+        expect(`${label}: ${out}`).toContain(`${nl.term}: ${nl.why}`);
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 
   test("no per-term sentence prints a number no term actually has", () => {
@@ -513,7 +641,7 @@ describe("no two sentences the comparison prints can contradict each other", () 
     for (const { label, state } of everyState()) {
       const buckets: Array<[string, readonly string[]]> = [
         ["onlyBase", state.onlyBase.map((m) => m.term)],
-        ["altOverBudget", state.altOverBudget],
+        ["altOverBudget", state.altOverBudget.map((o) => o.term)],
         ["altUnknown", state.altUnknown],
         ["altNoMatch", state.altNoMatch],
         ["altNothingInStock", state.altNothingInStock],
@@ -576,6 +704,18 @@ describe("no two sentences the comparison prints can contradict each other", () 
       "in the category around some of these terms",
       "D1 returned products for this but none of them in LATTI, for",
       "LATTI fitted the budget and the best-value pick did not",
+      // Round 12: `baseMissWhy` was split FOUR ways and two arms were never
+      // asserted, so replacing either with the default returned "only LATTI
+      // could fill" over a failed network lookup — a fact about the network
+      // reported as a fact about D1's shelf, the class the split exists for.
+      "LATTI filled it and the unconstrained lookup did not answer, for",
+      "only LATTI could be bought — D1 returned others and none was buyable, for",
+      // ...and the clauses reachable only once the fixture carried the fields
+      // production sets, and the enumeration an unregioned state.
+      "cheaper matches would have fitted",
+      "cheaper pack, dearer per kg",
+      "these are NATIONAL prices and stock",
+      "found only in the category around it",
       "Raise --count to widen the page look",
       "the category sweep reads one page and --count does not widen it",
     ];
@@ -601,8 +741,12 @@ describe("no two sentences the comparison prints can contradict each other", () 
     // stops being one. These are set below what the current axes give and well
     // above what a collapsed enumeration could.
     const states = everyState();
-    expect(states.length).toBeGreaterThan(4000);
-    expect(new Set(states.map((s) => s.out)).size).toBeGreaterThan(150);
+    // Within ~2x of actual, not 5x. At the old floors both axes round 11 added
+    // could be deleted and this still passed — every one of eight fixture-axis
+    // deletions was caught by the MARKERS check and by nothing here, which is
+    // two guards where only one is load-bearing.
+    expect(states.length).toBeGreaterThan(18_000);
+    expect(new Set(states.map((s) => s.out)).size).toBeGreaterThan(900);
     // The shapes the one-row enumeration could not reach at all.
     const distinctEvidence = (c: CrossBasket) =>
       new Set(c.onlyBase.map((m) => JSON.stringify([m.returnedIn, m.look, m.sweep]))).size;

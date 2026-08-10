@@ -301,20 +301,26 @@ export function comparisonExit(cmp: CrossBasket): number {
   // (`--brand ALPIN leche` is empty at the default and $ 10.150 at --count 40).
   // An agent branching on 3 would record a fact the prose beside it denies.
   //
-  // Round 11 states the rule instead of enumerating cases: 3 asserts that NO
-  // retry helps, so it is wrong exactly when the shopper still has a lever.
-  // There are two, and the previous formulation got both wrong in opposite
-  // directions. It suppressed 3 for a partial CATEGORY sweep, which `--count`
-  // no longer reaches and which is hard-capped at 50 — so a one-product
-  // shortfall forced exit 0 forever, and the exit code came to depend on
-  // category size rather than on the answer. And it kept 3 for an all-
-  // `over-budget` branded basket, where `--budget 5000` exits 3 and
-  // `--budget 11000` fills: a fact about the wallet, reported as a fact about
-  // the shelf, one line under prose that says otherwise.
+  // The rule, stated once: **3 asserts that the answer is KNOWN to be none.**
+  //
+  // Two reviewers argued this in opposite directions across two rounds, and
+  // reconciling them on "which reading puts a falsehood in the machine
+  // channel" settles it. Round 11 read 3 as "retrying this command never
+  // helps", which is true of a partial sweep — `--count` cannot widen it and
+  // it is capped at 50 — and so returned 3 for
+  // `--brand ZZNOSUCHBRAND huevos --count 50`, a run whose own prose says it
+  // covered 50 of 138. An agent branching on 3 records "D1 has none of this
+  // brand". That is false, and no amount of prose beside it unsays a number.
+  //
+  // So an unread population forfeits 3 whether or not a flag can widen it, and
+  // the exit code depending on category size is the honest consequence: what is
+  // KNOWN depends on how much was looked at. An `over-budget` line forfeits it
+  // too — that is a fact about the wallet, and `--budget 11000` fills what
+  // `--budget 5000` refused.
   if (code !== 3) return code;
-  const canWiden = cmp.partial !== undefined && cmp.count < MAX_COUNT;
-  const canSpendMore = cmp.alt.lines.some((l) => l.status === "over-budget");
-  return canWiden || canSpendMore ? 0 : 3;
+  const lookedEverywhere = cmp.partial === undefined && cmp.sweepPartial === undefined;
+  const anyOverBudget = cmp.alt.lines.some((l) => l.status === "over-budget");
+  return lookedEverywhere && !anyOverBudget ? 3 : 0;
 }
 
 export function basketExit(lines: readonly BasketLine[]): number {

@@ -4,7 +4,7 @@ All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
 > **Not released.** `d1 basket --brand` is on this branch and has not passed its
-> review gate — ten cross-model rounds, each finding a live false sentence
+> review gate — eleven cross-model rounds, each finding a live false sentence
 > against real D1. The history below is kept because it is the useful part.
 > Tracked on BRO-2079.
 
@@ -449,7 +449,11 @@ Also fixed, each reproduced live:
   kg", and the cocada is 3.9× dearer per kg while the delta called it $ 3.500
   cheaper).
 - **`altNoMatch` said "D1 returned nothing at all"** of terms D1 returned things
-  for, always beside that term's own price.
+  for, always beside that term's own price. (Round 12 correction: this half is
+  DEFENSIVE, not live — `buildBasket` with a brand cannot emit
+  `nothing-in-stock`. It was reproduced through a hand-built fixture, and
+  calling that "reproduced live" is the distinction round 9 spent a blocker
+  teaching.)
 
 **Test integrity — four fixes had two call sites and one test each.** A 51-mutation
 campaign found every one of them alive at 579 green: `bestSubstitute`'s
@@ -475,6 +479,82 @@ longer describes a guard the function does not contain.
 One reported flake — 577/2 on a reviewer's first run, 579/0 on twenty-one
 after — was **not** a suite defect: three reviewers shared one worktree and one
 of them was mid-mutation. Fan-out needs a worktree each.
+
+### Fixed — round 11 (3/10, 4/10, 4/10): two blockers, both introduced by round 11's own fixes
+
+Three reviewers, a worktree each this time. Round 10's blockers were genuinely
+gone — the store-wide universal, the global headline verdict, the exit-3 lever
+rule and the `regionId` wiring all held under mutation. Round 11 shipped two new
+ones.
+
+**A guard that made a false claim.** `notLikeForLike`'s new "cheaper pack,
+dearer per kg" arm decided from unit prices and never read a pack price. The
+base pick is the unit-price minimum over a superset, so `alt.unitPrice >
+base.unitPrice` is the COMMON case and the clause fired wherever the branded
+pack was dearer:
+
+```text
+--brand QUAKER avena --count 50
+  avena                $ 2.250     $ 4.950   +$ 2.700
+  … $ 2.700 more than best value.
+  1 of those rows … (avena: cheaper pack, dearer per kg)
+```
+
+Two 400 g packs of oat flakes, both ranked per kg — as like-for-like as this CLI
+can produce — with the clause contradicting the number one line above it and the
+`--json` beside it. Three of eight sampled live runs were false this way. Both
+reviewers who ran it live found it independently. The arm is gated on the delta
+reading as a saving now: a warning that a difference is not a saving has nothing
+to say about a difference that is not one.
+
+**And the quantifier fix covered one field of two.** Round 11 made
+`BrandReturned.terms` honest and left `where` an existential: with the brand on
+one term's page and in another's sweep, both rows hit, so `terms` read "all" and
+`where` resolved to `"page"` — the page wording, printed over a term whose page
+holds none of it, above a per-term line saying it was in the category. Eighth
+recurrence of one shape, and this time inside the tuple built to end it. `where`
+has a `"mixed"` arm now.
+
+Also fixed:
+
+- **"each is one a shopper could have bought" printed directly under "these are
+  NATIONAL prices and stock."** Round 11 added the disclosure and left the claim
+  unconditional — half a fix is a new contradiction.
+- **`altOverBudget` said the brand was "found … for &lt;term&gt;"** over a product
+  swept from a category, and never named it; because the line is unfilled it
+  never reaches "What was bought" either, so nothing named it at all.
+- **`renderBasket`'s widen predicate** read `compared` where `looked ?? compared`
+  was needed, and both of its new sub-conditions were untested.
+- **The widening advice printed twice**, verbatim, as the first and last lines.
+- **Agreement**: "for these terms" over one term, and "the category around
+  them" over one category.
+- **`--json` carried no like-for-like field**, so a consumer reading identical
+  `rankedOn`, `size.measure` and `size.amount` would correctly conclude a row
+  WAS comparable while the prose said it was not. It is on the type now, and the
+  render reads it rather than recomputing.
+
+**The exit-code rule, settled.** Two reviewers argued it in opposite directions
+across two rounds. It is stated once now: **3 asserts the answer is KNOWN to be
+none**, so any unread population forfeits it — `--brand ZZNOSUCHBRAND huevos
+--count 50` covers 50 of 152 and exits 0. The reading round 11 used ("retrying
+this command never helps") is true of a partial sweep and still puts a falsehood
+in the machine channel, which is the tiebreak.
+
+**And the check named after this arc's invariant was inert.** Round 11 renamed
+three of the four sentences `UNSCOPED` watches and did not update the list;
+deleting all four patterns left the suite at 595 pass. The list points at the
+current wordings and now asserts each is live — the same rule this file has
+enforced for `FORBIDDEN` since round 4, which simply never covered it.
+
+Fixture fidelity closed four more: every line carried `swept`/`categoryTotal`,
+so "the alt line swept and the base line did not" — what production always
+produces — was unrepresentable, and `brandMissFor` reading `row.base` survived
+the suite while printing an unqualified claim over a 10-of-41 sweep. `looked` is
+absent on the stock substitute path as production leaves it; `affordableAlternatives`,
+`Product.unitPrice`, `replaces`-on-`over-budget` and an unregioned state are all
+set, which took four more sentences off 0 states. The coverage floors are within
+2x of actual instead of 5x, so a deleted axis fails there and not only in
+`MARKERS`.
 
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 

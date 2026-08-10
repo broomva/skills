@@ -16,6 +16,7 @@ import {
   type BasketLine,
   type BasketPlan,
   type BrandMiss,
+  type BrandOverBudget,
   type CrossBasket,
   FILLED,
   type LineStatus,
@@ -954,11 +955,25 @@ export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {
     // NAMES ITS QUANTIFIER. "for these terms" over a verdict that held for one
     // of them is a universal built from an existential, and it was the seventh
     // recurrence of one defect — see {@link BrandReturned}.
-    const some = c.brandReturnedIn?.terms === "some";
+    const rn = c.brandReturnedIn;
+    const many = c.rows.length > 1;
+    // "these terms" is wrong for one term, and `crossScope` said "across 1
+    // term" in the same sentence.
+    const all = many ? "these terms" : "this term";
+    const some = rn?.terms === "some" ? "some of these terms" : all;
+    // MIXED is its own wording, because collapsing it was round 11's blocker
+    // repeating one field over. The quantifier over `terms` was made honest and
+    // `where` was left an existential: with the brand on one term's PAGE and in
+    // another's SWEEP, both rows hit, so `terms` read "all" and `where`
+    // resolved to "page" — the page wording, printed over a term whose page
+    // holds none of it, directly above a per-term line saying it was in the
+    // category. One population, two answers, for the eighth time.
     const seenIn =
-      c.brandReturnedIn?.where === "sweep"
-        ? `in the category around ${some ? "some of these terms" : "these terms"}`
-        : `for ${some ? "some of these terms" : "these terms"}`;
+      rn?.where === "mixed"
+        ? "for some of these terms and in the category around others"
+        : rn?.where === "sweep"
+          ? `in the category around ${some}`
+          : `for ${some}`;
     // ...and the negative half never outruns EITHER look. This arm was round 5's
     // and round 6 never touched it, so "nothing of it can be bought at this
     // store" stayed a universal over `--count` products — twelve of twenty-nine
@@ -980,8 +995,8 @@ export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {
       c.brandReturnedIn
         ? `D1 returned ${brand} ${seenIn}, ${unbuyable}`
         : scope
-          ? `Nothing the look reached for these terms is ${brand} — it covered ${scope}.${widen}`
-          : `Nothing D1 returned for these terms is ${brand}.`,
+          ? `Nothing the look reached for ${all} is ${brand} — it covered ${scope}.${widen}`
+          : `Nothing D1 returned for ${all} is ${brand}.`,
     );
     if (c.brandsSeen.length) {
       // Truncated OUT LOUD. A silent `.slice(0, 12)` is the same shape as every
@@ -1084,10 +1099,13 @@ export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {
     // ...and the delta says so when it is not a like-for-like one. Named right
     // under the number it qualifies, because a reader who reads one line reads
     // this one.
-    const mixed = c.rows.map(notLikeForLike).filter((x): x is string => x !== undefined);
+    // Read from the TYPE, not recomputed here — `--json` carries the same
+    // array, so the two channels cannot disagree about a row.
+    const mixed = c.notLikeForLike;
     if (mixed.length) {
+      const named = mixed.map((m) => `${sanitize(m.term)}: ${sanitize(m.why)}`).join("; ");
       out.push(
-        `${mixed.length} of those ${mixed.length === 1 ? "rows compares" : "rows compare"} things that are NOT like for like (${mixed.join("; ")}), so that much of the difference is not a saving — see what was bought.`,
+        `${mixed.length} of those ${mixed.length === 1 ? "rows compares" : "rows compare"} things that are NOT like for like (${named}), so that much of the difference is not a saving — see what was bought.`,
       );
     }
   }
@@ -1120,7 +1138,7 @@ export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {
   // the clause has to be computed from the term.
   const missing: Array<[readonly string[], string]> = [
     ...groupMisses(c.onlyBase, brand),
-    [c.altOverBudget, `${brand} found but over budget for`],
+    ...groupOverBudget(c.altOverBudget, brand),
     [c.altUnknown, `the ${brand} lookup did not answer for`],
     [c.altNoMatch, "D1 returned nothing at all for"],
     // Split out. Folded into the line above, "D1 returned nothing at all" was
@@ -1183,7 +1201,17 @@ export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {
       "No delivery point resolved, so these are NATIONAL prices and stock. Pass --lat/--lng for your store's.",
     );
   }
-  out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
+  // SCOPED by whether a store was resolved. Round 11 added the NATIONAL
+  // disclosure and left this claim unconditional, so the two printed on
+  // adjacent lines: "these are NATIONAL prices and stock" directly above "each
+  // is one a shopper could have bought" — and the regioned twin of that exact
+  // command finds the brand unbuyable at the store. Half a fix is a new
+  // contradiction.
+  out.push(
+    opts.regionId
+      ? "Both baskets were fit to the same budget, so each is one a shopper could have bought."
+      : "Both baskets were fit to the same budget — at national prices, which no single store is guaranteed to offer.",
+  );
   // The footer `renderBasket` has had all along, and this render did not call.
   //
   // Two things were wrong with saying nothing. Both prices above are the best
@@ -1196,43 +1224,10 @@ export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {
   // sentence this render was closest to implying. `footerFor` already owns that
   // exception, word for word, and is now asked for it.
   const filledBoth = [...c.base.lines, ...c.alt.lines].filter((l) => FILLED.includes(l.status));
-  out.push(footerFor(filledBoth, widen));
+  // ...once. The headline block already carries `widen` when it prints, and the
+  // two lines were appearing verbatim as the first and last of the output.
+  out.push(footerFor(filledBoth, c.brandsSeen ? "" : widen));
   return out.join("\n");
-}
-
-/**
- * Whether a row's two sides were ranked on measures that are not comparable.
- *
- * Only for rows that actually contribute to the delta — an unfilled side has no
- * rank to disagree with. `undefined` on one side means a pack-price fallback or
- * a category sweep, which is a different disclosure and is made where it
- * belongs (`footerFor`, and the "replacing" clause below).
- */
-function notLikeForLike(r: BasketComparison): string | undefined {
-  if (r.delta === undefined) return undefined;
-  const a = r.base;
-  const b = r.alt;
-  if (!a || !b) return undefined;
-  // A REPLACEMENT is not the same kind of product, whatever it was ranked on.
-  // `--brand DULCRALIGHT arroz` put a 180 g sweetener jar against 2 kg of rice
-  // and called it $ 560 cheaper; both sides fell back to pack price, so a
-  // measure-name check saw nothing to say.
-  if (b.replaces || a.replaces) return `${sanitize(r.term)}: one side is a replacement`;
-  const am = a.rankedOn;
-  const bm = b.rankedOn;
-  if (am !== undefined && bm !== undefined && am !== bm) {
-    return `${sanitize(r.term)}: per ${sanitize(am)} vs per ${sanitize(bm)}`;
-  }
-  // Same axis, opposite verdict. `--brand COPELIA leche --count 50` reported
-  // COPELIA $ 3.500 cheaper: a 23 g cocada at $ 39.130/kg against bread rolls
-  // at $ 10.000/kg. Both said "per kg", so the measure check was silent — which
-  // is how measure equality turned out to be not sufficient either.
-  const au = a.product?.unitPrice;
-  const bu = b.product?.unitPrice;
-  if (am !== undefined && am === bm && au !== undefined && bu !== undefined && bu > au) {
-    return `${sanitize(r.term)}: cheaper pack, dearer per ${sanitize(am)}`;
-  }
-  return undefined;
 }
 
 /**
@@ -1273,13 +1268,15 @@ function crossScope(c: CrossBasket): string {
   if (c.partial) {
     const { looked, matched, terms } = c.partial;
     parts.push(
-      `${looked} of the ${matched} D1 matched across ${terms} ${terms === 1 ? "term" : "terms"}`,
+      terms === 1
+        ? `${looked} of the ${matched} D1 matched for it`
+        : `${looked} of the ${matched} D1 matched across ${terms} terms`,
     );
   }
   if (c.sweepPartial) {
     const { swept, categoryTotal, terms } = c.sweepPartial;
     parts.push(
-      `${swept} of the ${categoryTotal} in ${terms === 1 ? "the category" : "the categories"} around them`,
+      `${swept} of the ${categoryTotal} in ${terms === 1 ? "the category around it" : "the categories around them"}`,
     );
   }
   return parts.join(", and ");
@@ -1314,6 +1311,29 @@ function groupMisses(misses: readonly BrandMiss[], brand: string): Array<[string
     const bucket = byWhy.get(why);
     if (bucket) bucket.push(m.term);
     else byWhy.set(why, [m.term]);
+  }
+  return [...byWhy.entries()].map(([why, terms]) => [terms, why]);
+}
+
+/**
+ * Over-budget branded lines, grouped by WHERE the brand was found.
+ *
+ * A sweep replacement is not "found for this term", and because the line is
+ * unfilled it never reaches "What was bought" — so if this sentence does not
+ * name it, nothing does.
+ */
+function groupOverBudget(
+  over: readonly BrandOverBudget[],
+  brand: string,
+): Array<[string[], string]> {
+  const byWhy = new Map<string, string[]>();
+  for (const o of over) {
+    const why = o.replaces
+      ? `${brand} found only in the category around it — ${sanitize(o.name ?? "")}, replacing ${sanitize(o.replaces)} — and over budget for`
+      : `${brand} found but over budget for`;
+    const bucket = byWhy.get(why);
+    if (bucket) bucket.push(o.term);
+    else byWhy.set(why, [o.term]);
   }
   return [...byWhy.entries()].map(([why, terms]) => [terms, why]);
 }

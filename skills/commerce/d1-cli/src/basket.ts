@@ -897,6 +897,16 @@ export interface BasketComparison {
   delta?: PriceHundredths;
 }
 
+/** A branded line that was found and priced and refused on money. */
+export interface BrandOverBudget {
+  /** Row label, as the table prints it. */
+  term: string;
+  /** What it replaces, when the brand came from a category rather than the page. */
+  replaces?: string;
+  /** The product itself, so the sentence can name what it is talking about. */
+  name?: string;
+}
+
 /** A search-page shortfall, and how many terms it spans. */
 export interface Shortfall {
   /** Distinct terms summed into the two numbers below. */
@@ -946,7 +956,16 @@ export interface SweepShortfall {
  * rather than something the wording assumes.
  */
 export interface BrandReturned {
-  where: "page" | "sweep";
+  /**
+   * Which population held it — or `"mixed"` when the rows do not agree.
+   *
+   * `"mixed"` exists because round 11 gave `terms` a quantifier and left this
+   * field an existential, which is the same defect one field over: with the
+   * brand on one term's page and in another's sweep, `hits.includes("page")`
+   * resolved to `"page"` and the page wording printed over a term whose page
+   * held none of it.
+   */
+  where: "page" | "sweep" | "mixed";
   /** `"all"` when every row's own evidence carries it; `"some"` otherwise. */
   terms: "all" | "some";
 }
@@ -1023,8 +1042,20 @@ export interface CrossBasket {
    * and 8 each rewrote this line and each kept the global read.
    */
   onlyBase: BrandMiss[];
-  /** Terms where the branded product exists and was priced, but did not fit. */
-  altOverBudget: string[];
+  /**
+   * Terms where the branded product exists and was priced, but did not fit —
+   * and whether it was found on the term's own page or swept from a category.
+   *
+   * `brandLine` reaches the sweep whenever the page held nothing of the brand,
+   * so an over-budget branded line is routinely a replacement: live,
+   * `--budget 2900 --brand SERVIPAN pan` said "SERVIPAN found but over budget
+   * for: pan" about `MOGOLLA BLANCA 7 UND 280 G SERVIPAN`, swept from the
+   * category around a sliced loaf. And because the line is unfilled it drops
+   * out of "What was bought", so the disclosure that would have named it goes
+   * with it. `missWhy` makes exactly this page-versus-category distinction
+   * eleven lines below; this bucket did not.
+   */
+  altOverBudget: BrandOverBudget[];
   /** Terms where the branded lookup never answered — unknown, not empty. */
   altUnknown: string[];
   /** Terms D1 returned nothing at all for on the branded run. */
@@ -1033,10 +1064,19 @@ export interface CrossBasket {
    * Terms D1 returned products for on the branded run, none of them buyable.
    *
    * Split from {@link altNoMatch}, which folded the two under "D1 returned
-   * nothing at all for" — false of this half, since D1 did return them. The
-   * bucket's own filter requires the BASE line to be filled, so the sentence
-   * always printed beside that term's own price, and since round 10 beside a
-   * named product in "What was bought" too.
+   * nothing at all for" — false of this half, since D1 did return them.
+   *
+   * DEFENSIVE, and said so rather than claimed as observed. `buildBasket` with
+   * a brand cannot emit `nothing-in-stock`: `chooseBest` keeps only available,
+   * priced offers, `brandLine` returns only four other statuses, and
+   * `fillToBudget`'s downgrade needs a missing price that neither producer can
+   * yield. So this bucket is empty for every CLI input today. It exists because
+   * {@link crossFromPlans} is a total function over the states its types
+   * permit — the property enumeration drives exactly those — and because
+   * `no-match` and `nothing-in-stock` mean different things whenever both do
+   * occur. Round 10's changelog called this defect "reproduced live"; it was
+   * reproduced through a hand-built fixture, and the distinction is the one
+   * round 9 spent a blocker teaching.
    */
   altNothingInStock: string[];
   /** Terms the branded basket filled and the base one could not, and WHY. */
@@ -1076,6 +1116,16 @@ export interface CrossBasket {
    * disproof: `partial: null` next to `swept: 10, categoryTotal: 41`.
    */
   sweepPartial?: SweepShortfall;
+  /**
+   * Rows whose two sides are not comparable, and why — one entry per row.
+   *
+   * Carried on the type rather than computed in the render, because a `--json`
+   * consumer reading `rows[0]` saw identical `rankedOn`, `size.measure` and
+   * `size.amount` and would correctly conclude the row WAS like for like, while
+   * the prose said the opposite. Two channels, one run, contradicting answers —
+   * the same defect this comparison polices between its own sentences.
+   */
+  notLikeForLike: Array<{ term: string; why: string }>;
   /**
    * The page size the term searches really ran at, after the clamp.
    *
@@ -1235,7 +1285,11 @@ export function crossFromPlans(
       .map((r) => brandMissFor(r, opts.brand)),
     altOverBudget: rows
       .filter((r) => filled(r.base) && r.alt?.status === "over-budget")
-      .map((r) => r.term),
+      .map((r) => ({
+        term: r.term,
+        replaces: r.alt?.replaces?.name,
+        name: r.alt?.product?.name,
+      })),
     altUnknown: rows
       .filter((r) => filled(r.base) && r.alt?.status === "replacement-unknown")
       .map((r) => r.term),
@@ -1263,6 +1317,10 @@ export function crossFromPlans(
     // Read from the BRANDED lines: they are the ones a brand verdict rests on,
     // and the unconstrained basket rarely sweeps a category at all.
     sweepPartial: partialSweep(alt.lines),
+    notLikeForLike: rows.flatMap((r) => {
+      const why = notLikeForLike(r);
+      return why === undefined ? [] : [{ term: r.term, why }];
+    }),
     count: pageCount(opts.count),
     // Offered only when every line looked for the brand and could not BUY one.
     // Whether D1 RETURNED it is a separate question, answered separately below.
@@ -1514,6 +1572,42 @@ function distinctTerms(lines: readonly BasketLine[]): BasketLine[] {
 }
 
 /**
+ * Why a row's two sides are not comparable, if they are not.
+ *
+ * Only for rows that contribute to the delta — an unfilled side has no rank to
+ * disagree with, and counting one would make "N of those rows" outrun the
+ * `comparable.terms` the sentence says "those" refers to.
+ *
+ * The unit-price arm is gated on the delta READING as a saving. Round 11
+ * decided it from unit prices alone and never read a pack price, so the clause
+ * "cheaper pack" printed over packs that cost more — live, `--brand QUAKER
+ * avena` reported `+$ 2.700` and "cheaper pack, dearer per kg" two lines apart,
+ * about two 400 g packs of oat flakes that are as like-for-like as this CLI can
+ * produce. Both reviewers who ran it live found it independently.
+ */
+export function notLikeForLike(r: BasketComparison): string | undefined {
+  if (r.delta === undefined) return undefined;
+  const a = r.base;
+  const b = r.alt;
+  if (!a || !b) return undefined;
+  // A REPLACEMENT is not the same kind of product, whatever it was ranked on.
+  // `--brand DULCRALIGHT arroz` put a 180 g sweetener jar against 2 kg of rice
+  // and called it $ 560 cheaper; both sides fell back to pack price, so a
+  // measure-name check saw nothing to say.
+  if (b.replaces || a.replaces) return "one side is a replacement";
+  const am = a.rankedOn;
+  const bm = b.rankedOn;
+  if (am !== undefined && bm !== undefined && am !== bm) return `per ${am} vs per ${bm}`;
+  // Same axis, opposite verdict — and only where the delta claims a saving.
+  const au = a.product?.unitPrice;
+  const bu = b.product?.unitPrice;
+  if (r.delta < 0 && am !== undefined && am === bm && au !== undefined && bu !== undefined) {
+    return bu > au ? `cheaper pack, dearer per ${am}` : undefined;
+  }
+  return undefined;
+}
+
+/**
  * The brand verdict for ONE row, from that row's own two lines.
  *
  * Exported so the render's per-term sentences and the property enumeration read
@@ -1539,8 +1633,9 @@ export function brandReturnedAcross(
   const per = rows.map((r) => brandReturnedIn([r.base, r.alt].filter(isLine), brand));
   const hits = per.filter((p) => p !== undefined);
   if (!hits.length) return undefined;
+  const pages = hits.filter((h) => h === "page").length;
   return {
-    where: hits.includes("page") ? "page" : "sweep",
+    where: pages === hits.length ? "page" : pages === 0 ? "sweep" : "mixed",
     terms: hits.length === per.length ? "all" : "some",
   };
 }
