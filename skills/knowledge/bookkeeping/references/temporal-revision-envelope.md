@@ -160,9 +160,116 @@ on independently reviewed revisions showing useful precision and recall, plus an
 independent cross-review. Existing warnings are not evidence of that; they are
 the instrument that produces it.
 
-## Calibration receipt
+## Migration: replaying merges the graph already recorded
 
-`references/temporal-revision-calibration-2026-08-10.json` — the producer-phase
+```bash
+python3 scripts/bookkeeping.py backfill-revisions            # dry run
+python3 scripts/bookkeeping.py backfill-revisions --apply
+```
+
+A `status: merged` tombstone names the canonical (`merged_into`), dates the
+merge (`merged_at`), and is itself the record that authorized it.
+Reconstructing the envelope from those three is transcription, not inference,
+so this is the sanctioned way a pre-envelope page acquires the fields.
+
+`recorded_at` is stamped with the **historical** `merged_at`, not the migration
+date — the graph did not learn a June merge in August, and saying so would
+flatten the exact distinction the envelope exists to preserve. `updated` does
+move to today, because the file is genuinely being edited. The migration is
+idempotent, and a tombstone with no parseable date is reported rather than
+given an invented one.
+
+What it deliberately does **not** treat as a supersession: `aliases:` (88 in
+the live graph, almost all `aka` search synonyms rather than merged-away
+entities) and `contradicts:` edges with no recorded resolution. Deciding which
+of those were renames is the prose inference this envelope refuses.
+
+## Calibration
+
+Two receipts, answering different questions.
+
+`temporal-revision-calibration-2026-08-10.json` — the **producer-phase**
 receipt: candidate versus merged implementation over the live graph, confirming
-default lint and the temporal-audit baseline are unchanged and no entity yet
-carries the envelope.
+default lint and the temporal-audit baseline are unchanged. It proves parity,
+not precision.
+
+`supersession-calibration-2026-08-10.json` — the **audit** receipt, measured
+against a corpus this migration built from the seven recorded merges:
+
+| Measure | Result |
+|---|---|
+| Corpus | 7 recorded merges → 5 canonicals, 6 distinct superseded slugs |
+| Negative control (the 5 migrated canonicals, untouched) | **0** envelope findings |
+| Positive control (one injected defect per branch) | **13/13** detected, each matched on its own *message* |
+| Heuristic-eligible comparisons in the corpus | **0** |
+
+The positive controls exist because zero findings on a clean corpus is
+ambiguous: a checker that never fires scores identically to a correct one. Each
+probe matches the specific message its branch emits, not merely the field —
+asserting the field alone would be vacuous, since several branches share a
+field and any one of them could satisfy the assertion.
+
+**No false-positive rate is quoted, deliberately.** An earlier draft reported
+"0/7, 95% upper bound ~43%", which has no coherent sampling unit: the corpus is
+5 pages, 7 edges, and 0 heuristic-eligible comparisons at once, and a
+binomial bound needs one of those to be *the* trial. The honest statement is the
+table above — zero findings across every migrated page, and nothing at all
+measured about the one check that could produce a rate.
+
+### Why there is still no hard gate
+
+**The corpus is too small to bound any check's false-positive rate, and for
+most of these checks that rate is not the interesting question.**
+
+Two earlier framings of this section were wrong, and both were corrected under
+review rather than defended. The first claimed a rate "is not the quantity that
+describes" a deterministic check — false; a deterministic classifier has a
+perfectly well-defined rate over its decision opportunities. The second tried to
+rescue it by contrasting *deterministic* with *heuristic* — also false, since a
+threshold heuristic is equally deterministic given the same input, and a labeled
+sample estimates a rate for both.
+
+The axis that actually separates them is **definitional versus proxy**.
+
+Ten of the thirteen checks are **definitional**: the predicate *is* the property.
+"Is this entry `[[wikilink]]` form" does not stand in for some further question —
+it is the question. Asking its false-positive rate asks whether `x == x`, and no
+corpus changes the answer. What such a check can still be is *wrong about what
+matters*, which is a specification question settled by reading it, not by
+sampling.
+
+Three are **proxies**, and only these have a gap a rate could measure:
+
+| Check | Proxy for | How it can be wrong |
+|---|---|---|
+| timeline inversion | "this supersession is backwards" | stamps backfilled at different times |
+| `supersedes` target resolves | "the provenance is traceable" | the tombstone was cleaned up |
+| `recorded_at` is in the future | "the stamp is wrong" | reads the *audit host's* clock |
+
+The corpus produces **zero** heuristic-eligible comparisons for the first and
+zero findings for the other two, so none of the three is measured at all. The
+positive controls establish **reachability** — each branch fires, on its own
+message — which is what makes a zero-finding corpus mean anything. They do not
+establish that firing was the right call.
+
+Two predicates are known to be arguable, and are named rather than hidden in a
+count:
+
+- *"supersedes target resolves"* — a target can be unresolvable because the
+  tombstone was later cleaned up, not because the provenance is broken.
+  Reporting it as a defect is a policy choice: an untraceable supersession
+  defeats the purpose of recording one. It is the check most likely to need
+  revisiting.
+- *"recorded_at is in the future"* — this reads system time from the audit
+  host. A graph edited across time zones, or audited on a machine with a skewed
+  clock, produces findings about the auditor rather than the record.
+
+**The one genuine heuristic cannot be measured on this corpus.** Timeline
+inversion reads the *superseded* record's `recorded_at`; tombstones carry none,
+so the real corpus never exercises it.
+
+And with 5 of 943 pages carrying the envelope, a gate would have almost nothing
+to protect and no operational history behind it. Revisit when the fields are
+widespread through ordinary `merge`/`revise` use rather than a migration, when
+tombstones carry stamps, and when an independent reviewer has judged a set of
+real findings.
