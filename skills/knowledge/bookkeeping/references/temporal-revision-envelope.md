@@ -214,6 +214,14 @@ defect. Demanding a statistical measurement for a decision procedure is ritual.
 Their real bar is soundness, established by the positive controls plus the
 mutation proof.
 
+One of them is softer than the rest and should be named rather than hidden in
+the count: *"supersedes target resolves"* is crisp to **evaluate** but admits
+argument about **interpretation** — a target can be unresolvable because the
+tombstone was later cleaned up, not because the provenance is broken. It is
+reported as a defect because an untraceable supersession defeats the purpose of
+recording one, but that is a policy choice, not a fact, and it is the check
+most likely to need revisiting once the corpus is larger.
+
 **The one genuine heuristic cannot be measured on this corpus.** Timeline
 inversion reads the *superseded* record's `recorded_at`; tombstones carry none,
 so the real corpus never exercises it.

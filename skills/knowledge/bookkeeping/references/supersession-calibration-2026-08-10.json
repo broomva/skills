@@ -19,14 +19,16 @@
   "check_taxonomy": {
     "note": "A decision procedure has no precision to calibrate; demanding a statistical measurement for one is ritual, not evidence. Only one check in the audit is a heuristic.",
     "decidable": [
-      "temporal_recorded_at (parses / not future)",
-      "temporal_valid_from (parses)",
-      "temporal_supersedes (list / string / [[wikilink]] form / self / target resolves)",
-      "temporal_revision_link (present / non-blank / string / orphan)"
+      "temporal_recorded_at \u2014 parses / not in the future",
+      "temporal_valid_from \u2014 parses",
+      "temporal_supersedes \u2014 is a list / entries are strings / entries are [[wikilink]] form / not a self-reference",
+      "temporal_supersedes \u2014 target resolves to an entity file",
+      "temporal_revision_link \u2014 present when supersedes is / non-blank / string / not an orphan"
     ],
     "heuristic": [
       "temporal_supersedes / timeline inversion: the superseded target's recorded_at is newer than this record's"
-    ]
+    ],
+    "caveat": "One of the decidable checks \u2014 'supersedes target resolves' \u2014 is crisp to EVALUATE but admits argument about INTERPRETATION: a target may be unresolvable because the tombstone was later cleaned up, not because the provenance is broken. It is reported as a defect because an untraceable supersession defeats the purpose of recording one, but that is a policy choice rather than a fact, and it is the check most likely to need revisiting when the corpus is larger."
   },
   "measurements": {
     "negative_control": {
