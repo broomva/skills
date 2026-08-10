@@ -200,7 +200,7 @@ against a corpus this migration built from the seven recorded merges:
 |---|---|
 | Corpus | 7 recorded merges → 5 canonicals, 6 distinct superseded slugs |
 | Negative control (the 5 migrated canonicals, untouched) | **0** envelope findings |
-| Positive control (one injected defect per class) | **12/12** detected, each matched on its own *message* |
+| Positive control (one injected defect per branch) | **13/13** detected, each matched on its own *message* |
 | Heuristic-eligible comparisons in the corpus | **0** |
 
 The positive controls exist because zero findings on a clean corpus is
@@ -231,7 +231,7 @@ sample estimates a rate for both.
 
 The axis that actually separates them is **definitional versus proxy**.
 
-Nine of the twelve checks are **definitional**: the predicate *is* the property.
+Ten of the thirteen checks are **definitional**: the predicate *is* the property.
 "Is this entry `[[wikilink]]` form" does not stand in for some further question —
 it is the question. Asking its false-positive rate asks whether `x == x`, and no
 corpus changes the answer. What such a check can still be is *wrong about what

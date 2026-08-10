@@ -2231,7 +2231,15 @@ def _assert_unparseable_frontmatter(text: str) -> None:
         raise MalformedEnvelopeError(
             f"frontmatter is present but does not parse as YAML ({exc.__class__.__name__}); "
             f"rewriting it would discard fields this reader cannot see")
-    if loaded is not None and not isinstance(loaded, dict):
+    if loaded is None:
+        # An EMPTY block is fine — keys can be inserted before the fence. An
+        # explicit scalar `null` is not: the rewrite would leave a scalar
+        # followed by mapping keys, which is invalid YAML that still loads as {}.
+        if inner.strip():
+            raise MalformedEnvelopeError(
+                "frontmatter is a scalar, not a mapping; inserting keys would "
+                "produce invalid YAML")
+    elif not isinstance(loaded, dict):
         raise MalformedEnvelopeError(
             f"frontmatter parses as {type(loaded).__name__}, not a mapping")
 
@@ -5953,8 +5961,10 @@ def _recorded_supersessions() -> "list[dict]":
             # misread body prose or a fenced example as a tombstone marker.
             head, _ = _split_frontmatter(raw)
             head = head or (raw if re.match(r"^---[ \t]*\r?\n", raw) else "")
-            if re.search(r'^["\']?status["\']?:\s*["\']?merged["\']?\s*(?:#.*)?$',
-                         head, re.MULTILINE):
+            if re.search(
+                    r'^[ \t]*(?P<kq>["\']?)status(?P=kq):'
+                    r'\s*(?P<vq>["\']?)merged(?P=vq)\s*(?:#.*)?\r?$',
+                    head, re.MULTILINE):
                 out.append({
                     "superseded": page.stem, "canonical": None, "merged_at": None,
                     "revision_link": str(_display_path(page)),

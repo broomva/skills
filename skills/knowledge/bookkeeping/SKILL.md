@@ -318,9 +318,9 @@ the corpus the audit was calibrated on. It never derives supersessions from
 
 Envelope findings are warning-only and appear only under `--temporal`.
 Calibrated 2026-08-10 against that corpus: **zero envelope findings on every
-migrated page, 12/12 defect classes reachable** (no false-positive rate is
-quoted — the corpus has no coherent sampling unit for one). There is still **no hard gate**, for a measured reason — 9
-of the 12 checks are DEFINITIONAL (the predicate *is* the property, so its
+migrated page, 13/13 audit branches reachable** (no false-positive rate is
+quoted — the corpus has no coherent sampling unit for one). There is still **no hard gate**, for a measured reason — 10
+of the 13 checks are DEFINITIONAL (the predicate *is* the property, so its
 false-positive rate asks whether `x == x`) and only 3 are proxies with a gap a
 rate could measure; none of those 3 is measured by this corpus; the 1 genuine
 heuristic is unmeasurable on real data because tombstones carry no

@@ -11,6 +11,7 @@ invariants that keep the schema honest: `valid_from` is never guessed,
 finding is a warning.
 """
 import argparse
+import re
 import os
 import subprocess
 import sys
@@ -1142,6 +1143,41 @@ class TestBackfillRecordedMerges:
         fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
         assert len(fm["revision_link"]) == 3
 
+    def test_an_indented_tombstone_mapping_is_still_seen(
+            self, temp_entities, frozen_today, capsys):
+        # A consistently indented top-level mapping is legal YAML, so the raw
+        # scan must not require column 0.
+        _write_entity(temp_entities, "kept", type_dir="tool")
+        (temp_entities / "tool" / "dupe.md").write_text(
+            '---\n  slug: dupe\n  status: merged\n  merged_into: [unclosed\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "does not parse" in capsys.readouterr().out
+
+    def test_mismatched_quotes_are_not_a_tombstone_marker(
+            self, temp_entities, frozen_today, capsys):
+        # `"status': merged` is not a quoted key; opening and closing quotes
+        # have to be the same character.
+        _write_entity(temp_entities, "kept", type_dir="tool")
+        (temp_entities / "tool" / "notatomb.md").write_text(
+            '---\nslug: notatomb\n"status\': merged\nbroken: [unclosed\n---\n\nB.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "does not parse" not in capsys.readouterr().out
+
+    def test_a_scalar_null_frontmatter_is_refused(
+            self, temp_entities, frozen_today, capsys):
+        # `---\nnull\n---` loads as None, which is NOT a mapping: inserting keys
+        # leaves a scalar followed by mapping keys — invalid YAML that still
+        # round-trips to {}, so the write would be reported as successful.
+        canon = temp_entities / "tool" / "kept.md"
+        canon.write_text("---\nnull\n---\n\nBody.\n")
+        (temp_entities / "tool" / "dupe.md").write_text(
+            '---\nslug: dupe\ntype: tool\nstatus: merged\nmerged_into: kept\n'
+            'merged_at: "2026-06-09"\ncore_claim: "Merged."\n---\n\nT.\n')
+        with pytest.raises(SystemExit):
+            bookkeeping.cmd_backfill_revisions(self._args())
+        assert "scalar, not a mapping" in capsys.readouterr().err
+        assert canon.read_text() == "---\nnull\n---\n\nBody.\n"
+
     def test_a_code_fence_in_the_body_is_not_a_tombstone(
             self, temp_entities, frozen_today, capsys):
         # The marker scan is confined to the frontmatter block; a full-file
@@ -1278,6 +1314,20 @@ class TestEnvelopeChecksCanFire:
             else:
                 fm[k] = v
         return _lint_envelope(fm, lookup=lookup or (lambda _s: {}))
+
+    def test_the_probe_suite_covers_every_branch_the_audit_has(self):
+        # The receipt quotes a coverage fraction, so the denominator has to be
+        # derived from the implementation rather than counted by hand — an
+        # earlier draft claimed 12/12 while the audit had 13 branches.
+        import inspect
+        body = inspect.getsource(bookkeeping._lint_temporal_envelope)
+        branches = len(re.findall(r"errors\.append\(LintError\(", body))
+        covered = (
+            len(self.test_each_defect_class_is_detected.pytestmark[0].args[1])
+            + 2  # unresolvable target + timeline inversion, tested separately
+        )
+        assert covered == branches, (
+            f"{covered} probes for {branches} branches — every branch needs one")
 
     def test_negative_control_a_well_formed_envelope_is_silent(self):
         assert self._probe() == [], "the corpus baseline must be genuinely clean"

@@ -19,13 +19,19 @@
   "check_taxonomy": {
     "axis": "DEFINITIONAL vs PROXY \u2014 not deterministic vs heuristic. A threshold heuristic is equally deterministic given the same input, and a labeled sample estimates a rate for both. Two earlier framings of this receipt got this wrong and were corrected under review.",
     "definitional": {
-      "count": 9,
+      "count": 10,
       "note": "The predicate IS the property. 'Is this entry [[wikilink]] form' does not stand in for a further question \u2014 asking its false-positive rate asks whether x == x. Such a check can still be wrong about what MATTERS, which is a specification question settled by reading it, not by sampling.",
       "checks": [
         "temporal_recorded_at \u2014 parses",
         "temporal_valid_from \u2014 parses",
-        "temporal_supersedes \u2014 is a list / entries are strings / [[wikilink]] form / not a self-reference",
-        "temporal_revision_link \u2014 present when supersedes is / non-blank / string / not an orphan"
+        "temporal_supersedes \u2014 is a list",
+        "temporal_supersedes \u2014 entry is a string",
+        "temporal_supersedes \u2014 entry is [[wikilink]] form",
+        "temporal_supersedes \u2014 not a self-reference",
+        "temporal_revision_link \u2014 present when supersedes is",
+        "temporal_revision_link \u2014 entry is a string",
+        "temporal_revision_link \u2014 entry is non-blank",
+        "temporal_revision_link \u2014 not an orphan"
       ]
     },
     "proxy": {
@@ -52,7 +58,11 @@
         }
       ]
     },
-    "what_positive_controls_establish": "REACHABILITY \u2014 each branch fires, on its own message. That is what makes a zero-finding corpus meaningful. It does NOT establish that firing was the right call."
+    "what_positive_controls_establish": "REACHABILITY \u2014 each branch fires, on its own message. That is what makes a zero-finding corpus meaningful. It does NOT establish that firing was the right call.",
+    "branch_count": {
+      "total": 13,
+      "note": "Derived from the implementation, not counted by hand: two earlier drafts of this receipt said 12, omitting the self-reference branch. A test now asserts the probe count equals the branch count so the fraction cannot drift again."
+    }
   },
   "measurements": {
     "negative_control": {
@@ -68,7 +78,7 @@
     },
     "positive_control": {
       "what": "one injected defect per class, on a REAL migrated page; asserts the SPECIFIC field",
-      "detected": "12/12",
+      "detected": "13/13",
       "detail": {
         "supersedes_not_wikilink": true,
         "supersedes_unresolvable": true,
@@ -82,7 +92,8 @@
         "recorded_at_in_future": true,
         "valid_from_unparseable": true,
         "timeline_inversion": true
-      }
+      },
+      "note": "One probe per branch, each matched on its own MESSAGE \u2014 several branches share a field, so asserting the field alone would let one branch's finding satisfy another's probe."
     },
     "lint_after_migration": {
       "default": {
@@ -124,7 +135,7 @@
   "decision": {
     "promote_to_hard_gate": "NO \u2014 none.",
     "rationale": [
-      "The 9 definitional checks are reachable (12/12 positive controls, each matched on its own message), silent on real data, and 22/22 mutations were killed across three rounds. The 3 proxy checks are unmeasured: the corpus yields zero heuristic-eligible comparisons and zero findings. Neither result is a reason to gate NOW \u2014 only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect.",
+      "The 10 definitional checks are reachable (13/13 positive controls, each matched on its own message), silent on real data, and 22/22 mutations were killed across three rounds. The 3 proxy checks are unmeasured: the corpus yields zero heuristic-eligible comparisons and zero findings. Neither result is a reason to gate NOW \u2014 only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect.",
       "The 1 heuristic check (timeline inversion) is unmeasured on real data and cannot be measured on this corpus at all, because tombstones carry no recorded_at.",
       "Everything stays warning-only and opt-in behind --temporal. Default lint is unchanged."
     ],

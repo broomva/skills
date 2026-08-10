@@ -92,7 +92,7 @@ validator ships alongside them — see `temporal-revision-envelope.md`.
 
 Calibration ran against a corpus built by `backfill-revisions` from the seven
 merge tombstones the graph had already recorded: **zero envelope findings across
-every migrated page, and 12/12 defect classes reachable**. No false-positive
+every migrated page, and 13/13 audit branches reachable**. No false-positive
 *rate* is quoted — the corpus is 5 pages, 7 edges and 0 heuristic-eligible
 comparisons at once, and a binomial bound needs one of those to be the trial.
 Full receipt: `supersession-calibration-2026-08-10.json`.
@@ -103,7 +103,7 @@ bad:
 **For most of these checks a false-positive rate is not the interesting
 question.** The axis is not deterministic-versus-heuristic — a threshold
 heuristic is equally deterministic given the same input. It is **definitional
-versus proxy**. Nine of the twelve are definitional: "is this entry
+versus proxy**. Ten of the thirteen are definitional: "is this entry
 `[[wikilink]]` form" does not stand in for a further question, it *is* the
 question, so its rate asks whether `x == x`. Three are proxies — timeline
 inversion, target-resolves, and future-stamp — and only those have a gap a rate
