@@ -38,11 +38,11 @@ All 178 files in `assets/system/` remain the hash-pinned curated archive evidenc
 - `styles.css` is the neutral web entrypoint and imports only `broomva-foundation.css`; archived modular tokens stay in the agentic and evidence profiles because their comments and feature tokens encode that source product's work domain.
 - `manifest.json`, `index.js`, and `index.d.ts` expose 22 general React exports across core, forms, navigation, and overlays.
 - `manifest.agentic-work.json` declares the 31 exports and CSS files that the focused extension actually ships, without advertising full-profile cards or templates.
-- Profile-specific component overrides remove archived agentic examples and the `Card.running` dependency from the general web adapter while leaving the archive-derived implementations byte-exact for `agentic-work` and `full`.
+- Profile-specific component overrides remove archived agentic examples, enforce accessible public contracts, keep declarations compatible with current React types, and remove the `Card.running` dependency. The `web` and `agentic-work` profiles prefer these neutral overrides; `full` alone keeps every archive-derived implementation byte-exact as evidence.
 - `adherence.oxlintrc.json` checks public imports, token use, and general component enums without referencing work components.
 - `SHA256SUMS` pins every portability-layer asset independently from the archive-derived inventory.
 
-The materializer owns the boundary: `foundation` is platform-neutral guidance plus a standalone web stylesheet, `web` adds general React primitives, `agentic-work` adds the domain extension, and `full` preserves all source evidence. `essentials` and `tokens` retain their original archive-era path layouts for existing automation; new products should not use those compatibility profiles as neutrality boundaries.
+The materializer owns the boundary: `foundation` is platform-neutral guidance plus a standalone web stylesheet, `web` adds general React primitives, `agentic-work` adds the domain extension, and `full` preserves all source evidence. Its recommendation command uses explicit platform and product intent plus conservative framework detection; it never infers agentic intent from names or prose. `essentials` and `tokens` retain their original archive-era path layouts for existing automation; new products should not use those compatibility profiles as neutrality boundaries.
 
 Profile changes are closed-world for owned paths. Verification rejects artifacts left by another Broomva profile, and the explicit `--prune` flag removes only known managed paths. Modified managed files require the separate `--force` authorization.
 

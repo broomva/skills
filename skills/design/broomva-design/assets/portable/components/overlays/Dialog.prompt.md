@@ -7,4 +7,4 @@ Modal dialog on earned glass over a blue-black scrim. Use for confirmations and 
 </Dialog>
 ```
 
-`ConfirmDialog` provides the common cancel plus confirm shape. The implementation moves focus inside, traps Tab and Shift+Tab, then returns focus to the trigger. Pass `ariaLabel` whenever `title` is omitted.
+`ConfirmDialog` provides the common cancel plus confirm shape and requires a title. The implementation moves focus inside, traps Tab and Shift+Tab, then returns focus to the trigger. `Dialog` requires either a non-empty visible `title` or an `ariaLabel` and throws before rendering an unnamed open modal. When migrating, add a concise `ariaLabel` only if no visible heading is appropriate.

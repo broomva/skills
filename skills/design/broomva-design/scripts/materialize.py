@@ -9,9 +9,10 @@ from html.parser import HTMLParser
 import json
 import os
 import re
+import secrets
 import shutil
+import stat
 import sys
-import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -22,7 +23,18 @@ SYSTEM_SOURCE = SKILL_DIR / "assets" / "system"
 PORTABLE_SOURCE = SKILL_DIR / "assets" / "portable"
 REFERENCE_SOURCE = SKILL_DIR / "references"
 SYSTEM_DEST = Path("design-system") / "broomva"
-PROFILES = ("essentials", "tokens", "foundation", "web", "agentic-work", "full")
+DEFAULT_PROFILE = "foundation"
+PRIMARY_PROFILES = ("foundation", "web", "agentic-work")
+ADVANCED_PROFILES = ("full",)
+COMPATIBILITY_PROFILES = ("essentials", "tokens")
+PROFILES = PRIMARY_PROFILES + ADVANCED_PROFILES + COMPATIBILITY_PROFILES
+WEB_FRAMEWORKS = {
+    "react": "React",
+    "next": "Next.js",
+    "next.js": "Next.js",
+    "remix": "Remix",
+    "gatsby": "Gatsby",
+}
 
 FOUNDATION_SYSTEM_FILES = {
     "assets/broomva-blackhole-logo.png",
@@ -249,7 +261,12 @@ def profile_entries(profile: str) -> list[tuple[Path, Path]]:
     )
     for relative, source in system_by_relative.items():
         if is_any_component(relative):
-            add_entry(entries, source, relative)
+            portable_override = PORTABLE_SOURCE / relative
+            add_entry(
+                entries,
+                portable_override if portable_override.is_file() else source,
+                relative,
+            )
     add_references(entries, (AGENTIC_REFERENCE,))
     return [(source, Path(destination)) for destination, source in sorted(entries.items())]
 
@@ -267,6 +284,162 @@ def copy_plan(target: Path, profile: str) -> list[tuple[Path, Path]]:
         for source, destination in profile_entries(profile)
     )
     return plan
+
+
+def installed_profile(target: Path) -> str | None:
+    """Return an exact installed profile without printing verification output."""
+
+    target = target.resolve(strict=False)
+    for profile in PROFILES:
+        plan = copy_plan(target, profile)
+        if extra_owned_files(target, profile):
+            continue
+        if all(
+            destination.is_file() and digest(destination) == digest(source)
+            for source, destination in plan
+        ):
+            return profile
+    return None
+
+
+def package_frameworks(target: Path) -> list[str]:
+    package_path = target / "package.json"
+    if not package_path.is_file():
+        return []
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise MaterializeError(f"cannot inspect {package_path}: {exc}") from exc
+    if not isinstance(package, dict):
+        raise MaterializeError(f"cannot inspect {package_path}: root must be an object")
+    dependencies: dict[str, object] = {}
+    for section in ("dependencies", "devDependencies"):
+        values = package.get(section, {})
+        if not isinstance(values, dict):
+            raise MaterializeError(
+                f"cannot inspect {package_path}: {section} must be an object"
+            )
+        dependencies.update(values)
+    known = {
+        "react": WEB_FRAMEWORKS["react"],
+        "next": WEB_FRAMEWORKS["next"],
+        "@remix-run/react": WEB_FRAMEWORKS["remix"],
+        "gatsby": WEB_FRAMEWORKS["gatsby"],
+    }
+    return [label for dependency, label in known.items() if dependency in dependencies]
+
+
+def recommend_profile(
+    target: Path,
+    platform: str = "auto",
+    framework: str | None = None,
+    agentic_work: bool = False,
+    maintainer: bool = False,
+    compatibility_profile: str | None = None,
+) -> dict[str, object]:
+    """Recommend the smallest safe profile from explicit intent and target facts."""
+
+    target = target.resolve(strict=False)
+    detected_frameworks = package_frameworks(target)
+    if framework:
+        normalized_framework = framework.strip().lower()
+        if normalized_framework not in WEB_FRAMEWORKS:
+            supported = ", ".join(sorted(WEB_FRAMEWORKS))
+            raise MaterializeError(
+                f"unknown framework {framework!r}; supported web frameworks: {supported}. "
+                "Use --platform native, desktop, or embedded for non-web products."
+            )
+        detected_frameworks.insert(0, WEB_FRAMEWORKS[normalized_framework])
+    current = installed_profile(target)
+    facts = {
+        "target": str(target),
+        "platform": platform,
+        "frameworks": list(dict.fromkeys(detected_frameworks)),
+        "incumbentDesign": (target / "DESIGN.md").exists(),
+        "installedProfile": current,
+    }
+
+    if compatibility_profile:
+        return {
+            "profile": compatibility_profile,
+            "reasons": ["An existing workflow explicitly requires this compatibility layout."],
+            "facts": facts,
+        }
+    if maintainer:
+        return {
+            "profile": "full",
+            "reasons": ["Design-system maintenance requires the complete archive evidence."],
+            "facts": facts,
+        }
+    if agentic_work:
+        return {
+            "profile": "agentic-work",
+            "reasons": ["Explicit agentic-work intent requires work states and receipt patterns."],
+            "facts": facts,
+        }
+    if platform in {"native", "desktop", "embedded"}:
+        return {
+            "profile": "foundation",
+            "reasons": [
+                f"The {platform} platform should translate semantic roles without web components."
+            ],
+            "facts": facts,
+        }
+    if platform == "web" or framework:
+        reason = (
+            f"Detected {', '.join(detected_frameworks)} and its web component adapter."
+            if detected_frameworks
+            else "The explicit web platform benefits from the general web adapter."
+        )
+        return {"profile": "web", "reasons": [reason], "facts": facts}
+    if current:
+        return {
+            "profile": current,
+            "reasons": [f"The target already contains an exact {current} materialization."],
+            "facts": facts,
+        }
+    if detected_frameworks:
+        return {
+            "profile": "web",
+            "reasons": [
+                f"Detected {', '.join(detected_frameworks)} and its web component adapter."
+            ],
+            "facts": facts,
+        }
+    return {
+        "profile": "foundation",
+        "reasons": [
+            "No web or agentic requirement was established; start from the neutral foundation."
+        ],
+        "facts": facts,
+    }
+
+
+def destination_group(target: Path, destination: Path) -> str:
+    relative = destination.relative_to(target)
+    if relative == Path("DESIGN.md"):
+        return "contract"
+    relative = relative.relative_to(SYSTEM_DEST)
+    if relative.parts[0] == "components":
+        return "components"
+    if relative.parts[0] == "references":
+        return "references"
+    if relative.parts[0] in {"assets", "fonts"}:
+        return "brand assets"
+    if relative.parts[0] == "tokens" or relative.name in {
+        "broomva-foundation.css",
+        "broomva-essentials.css",
+        "tokens.json",
+    }:
+        return "foundation"
+    return "tooling"
+
+
+def grouped_destinations(target: Path, paths: list[Path]) -> dict[str, list[Path]]:
+    groups: dict[str, list[Path]] = {}
+    for path in paths:
+        groups.setdefault(destination_group(target, path), []).append(path)
+    return groups
 
 
 def ensure_within(path: Path, root: Path, label: str) -> None:
@@ -432,9 +605,11 @@ def validate_source() -> list[str]:
         PORTABLE_SOURCE / "index.js": "export { Button }",
         PORTABLE_SOURCE / "components/navigation/Tabs.jsx": "ArrowRight",
         PORTABLE_SOURCE / "components/navigation/CommandPalette.jsx": 'role="combobox"',
-        PORTABLE_SOURCE / "components/overlays/Dialog.jsx": "previousFocus",
+        PORTABLE_SOURCE / "components/overlays/Dialog.jsx": "throw new TypeError",
         PORTABLE_SOURCE / "components/overlays/Menu.jsx": 'event.key === "Home"',
-        PORTABLE_SOURCE / "components/forms/Switch.d.ts": "ButtonHTMLAttributes",
+        PORTABLE_SOURCE / "components/forms/Field.jsx": '"aria-describedby"',
+        PORTABLE_SOURCE / "components/forms/Field.d.ts": "React.ReactElement",
+        PORTABLE_SOURCE / "components/forms/Switch.jsx": "buttonRef.current?.labels?.length",
     }
     for path, anchor in required.items():
         if not path.is_file():
@@ -442,6 +617,13 @@ def validate_source() -> list[str]:
             continue
         if anchor not in path.read_text(encoding="utf-8", errors="replace"):
             errors.append(f"asset {path.relative_to(SKILL_DIR)} missing anchor: {anchor}")
+
+    for declaration in PORTABLE_SOURCE.rglob("*.d.ts"):
+        if re.search(r"(?<!React\.)\bJSX\.Element\b", declaration.read_text(encoding="utf-8")):
+            errors.append(
+                f"portable declaration uses the removed global JSX namespace: "
+                f"{declaration.relative_to(PORTABLE_SOURCE)}"
+            )
 
     system_available = {
         path.relative_to(SYSTEM_SOURCE).as_posix() for path in system_files()
@@ -527,11 +709,13 @@ def managed_destinations() -> set[str]:
 def extra_owned_files(target: Path, profile: str) -> list[Path]:
     expected = {destination.as_posix() for _, destination in profile_entries(profile)}
     root = target / SYSTEM_DEST
-    return [
-        root / relative
-        for relative in sorted(managed_destinations() - expected)
-        if (root / relative).is_file() or (root / relative).is_symlink()
-    ]
+    extras: list[Path] = []
+    for relative in sorted(managed_destinations() - expected):
+        candidate = root / relative
+        ensure_within(candidate, target, "managed file")
+        if candidate.is_file() or candidate.is_symlink():
+            extras.append(candidate)
+    return extras
 
 
 def owned_source_digests(destination: Path) -> set[str]:
@@ -544,12 +728,214 @@ def owned_source_digests(destination: Path) -> set[str]:
     }
 
 
+def open_parent_beneath(path: Path, root: Path) -> tuple[int, list[int], str]:
+    """Open a managed file's parent without following any symlinked directory."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise MaterializeError(f"managed file escapes target root: {path}") from exc
+    if not relative.parts:
+        raise MaterializeError(f"managed file has no relative path: {path}")
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    try:
+        current = os.open(root, directory_flags | nofollow)
+        descriptors.append(current)
+        for part in relative.parts[:-1]:
+            current = os.open(
+                part,
+                directory_flags | nofollow,
+                dir_fd=current,
+            )
+            descriptors.append(current)
+        return current, descriptors, relative.name
+    except (NotImplementedError, OSError) as exc:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+        raise MaterializeError(
+            f"refusing managed path with unsafe parent: {path}: {exc}"
+        ) from exc
+
+
+def create_parent_beneath(path: Path, root: Path) -> tuple[int, list[int], str]:
+    """Create and open a destination parent without following directory symlinks."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise MaterializeError(f"destination escapes target root: {path}") from exc
+    if not relative.parts:
+        raise MaterializeError(f"destination has no relative path: {path}")
+
+    root.mkdir(parents=True, exist_ok=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    try:
+        current = os.open(root, directory_flags | nofollow)
+        descriptors.append(current)
+        for part in relative.parts[:-1]:
+            try:
+                os.mkdir(part, mode=0o755, dir_fd=current)
+            except FileExistsError:
+                pass
+            current = os.open(
+                part,
+                directory_flags | nofollow,
+                dir_fd=current,
+            )
+            descriptors.append(current)
+        return current, descriptors, relative.name
+    except (NotImplementedError, OSError) as exc:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+        raise MaterializeError(
+            f"refusing destination with unsafe parent: {path}: {exc}"
+        ) from exc
+
+
+def write_managed_file(source: Path, destination: Path, root: Path) -> None:
+    """Atomically copy one source beneath root using descriptor-relative paths."""
+
+    parent, descriptors, name = create_parent_beneath(destination, root)
+    temporary_name = f".{name}.broomva-write-{secrets.token_hex(16)}"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            stat.S_IMODE(source.stat().st_mode),
+            dir_fd=parent,
+        )
+        with source.open("rb") as source_handle, os.fdopen(
+            descriptor, "wb"
+        ) as destination_handle:
+            descriptor = None
+            shutil.copyfileobj(source_handle, destination_handle)
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=parent,
+            dst_dir_fd=parent,
+        )
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(
+            f"refusing unsafe managed write: {destination}: {exc}"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        finally:
+            for opened in reversed(descriptors):
+                os.close(opened)
+
+
+def digest_managed_file(path: Path, root: Path) -> str:
+    parent, descriptors, name = open_parent_beneath(path, root)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent,
+        )
+        value = hashlib.sha256()
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                value.update(chunk)
+        return value.hexdigest()
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(f"refusing to inspect unsafe managed file: {path}: {exc}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        for opened in reversed(descriptors):
+            os.close(opened)
+
+
+def unlink_managed_file(path: Path, root: Path) -> None:
+    parent, descriptors, name = open_parent_beneath(path, root)
+    try:
+        os.unlink(name, dir_fd=parent)
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(f"refusing to prune unsafe managed file: {path}: {exc}") from exc
+    finally:
+        for opened in reversed(descriptors):
+            os.close(opened)
+
+
+def managed_file_is_symlink(path: Path, root: Path) -> bool:
+    parent, descriptors, name = open_parent_beneath(path, root)
+    try:
+        return stat.S_ISLNK(os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode)
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(f"refusing to inspect unsafe managed file: {path}: {exc}") from exc
+    finally:
+        for opened in reversed(descriptors):
+            os.close(opened)
+
+
+def quarantine_managed_file(path: Path, root: Path) -> Path:
+    """Atomically detach the exact managed leaf before validating or deleting it."""
+
+    parent, descriptors, name = open_parent_beneath(path, root)
+    quarantine_name = f".{name}.broomva-prune-{secrets.token_hex(16)}"
+    try:
+        os.rename(
+            name,
+            quarantine_name,
+            src_dir_fd=parent,
+            dst_dir_fd=parent,
+        )
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(f"refusing to quarantine managed file: {path}: {exc}") from exc
+    finally:
+        for opened in reversed(descriptors):
+            os.close(opened)
+    return path.with_name(quarantine_name)
+
+
+def restore_quarantined_file(original: Path, quarantine: Path, root: Path) -> None:
+    parent, descriptors, quarantine_name = open_parent_beneath(quarantine, root)
+    try:
+        try:
+            os.stat(original.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise MaterializeError(
+                f"cannot restore quarantined file because the original path was replaced: {original}"
+            )
+        os.rename(
+            quarantine_name,
+            original.name,
+            src_dir_fd=parent,
+            dst_dir_fd=parent,
+        )
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(
+            f"cannot restore quarantined managed file {original}: {exc}"
+        ) from exc
+    finally:
+        for opened in reversed(descriptors):
+            os.close(opened)
+
+
 def materialize(
     target: Path,
     profile: str,
     dry_run: bool,
     force: bool,
     prune: bool = False,
+    verbose: bool = False,
 ) -> int:
     errors = validate_source()
     if errors:
@@ -563,19 +949,6 @@ def materialize(
         raise MaterializeError(
             "target contains files owned by another Broomva profile:\n"
             f"{rendered}\nRe-run with --prune to authorize their removal."
-        )
-    modified_extras = [
-        path
-        for path in extras
-        if path.is_symlink()
-        or digest(path)
-        not in owned_source_digests(path.relative_to(target / SYSTEM_DEST))
-    ]
-    if modified_extras and not force:
-        rendered = "\n".join(f"- {path}" for path in modified_extras)
-        raise MaterializeError(
-            "refusing to prune modified managed files:\n"
-            f"{rendered}\nRe-run with both --prune and --force only after deletion is authorized."
         )
     conflicts: list[Path] = []
     pending: list[tuple[Path, Path]] = []
@@ -615,31 +988,78 @@ def materialize(
         if destination in conflicts
     ]
     if dry_run:
-        for _, destination in writes:
-            print(f"would write {destination}")
-        for path in extras:
-            print(f"would remove {path}")
-        print(
-            f"dry-run: {len(writes)} write(s), {len(extras)} removal(s), "
-            f"profile={profile}"
+        modified_extras = [
+            path
+            for path in extras
+            if managed_file_is_symlink(path, target)
+            or digest_managed_file(path, target)
+            not in owned_source_digests(path.relative_to(target / SYSTEM_DEST))
+        ]
+        if modified_extras and not force:
+            rendered = "\n".join(f"- {path}" for path in modified_extras)
+            raise MaterializeError(
+                "refusing to prune modified managed files:\n"
+                f"{rendered}\nRe-run with both --prune and --force only after deletion is authorized."
+            )
+        write_groups = grouped_destinations(
+            target, [destination for _, destination in writes]
         )
+        removal_groups = grouped_destinations(target, extras)
+        print(f"dry-run plan: profile={profile}, target={target}")
+        print(f"writes: {len(writes)}")
+        for name, paths in write_groups.items():
+            print(f"  {name}: {len(paths)}")
+        print(f"removals: {len(extras)}")
+        for name, paths in removal_groups.items():
+            print(f"  {name}: {len(paths)}")
+        if verbose:
+            print("paths:")
+            for _, destination in writes:
+                print(f"would write {destination}")
+            for path in extras:
+                print(f"would remove {path}")
+        elif writes or extras:
+            print("use --verbose to list every path")
         return 0
 
-    for source, destination in writes:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination.name}.", dir=destination.parent
-        )
-        os.close(descriptor)
-        temporary = Path(temporary_name)
-        try:
-            shutil.copy2(source, temporary)
-            os.replace(temporary, destination)
-        finally:
-            temporary.unlink(missing_ok=True)
+    quarantined: list[tuple[Path, Path]] = []
+    try:
+        for path in extras:
+            quarantined.append((path, quarantine_managed_file(path, target)))
 
-    for path in extras:
-        path.unlink()
+        modified_extras = [
+            original
+            for original, quarantine in quarantined
+            if managed_file_is_symlink(quarantine, target)
+            or digest_managed_file(quarantine, target)
+            not in owned_source_digests(original.relative_to(target / SYSTEM_DEST))
+        ]
+        if modified_extras and not force:
+            rendered = "\n".join(f"- {path}" for path in modified_extras)
+            raise MaterializeError(
+                "refusing to prune modified managed files:\n"
+                f"{rendered}\nRe-run with both --prune and --force only after deletion is authorized."
+            )
+
+        for source, destination in writes:
+            write_managed_file(source, destination, target)
+
+        for item in list(quarantined):
+            _, quarantine = item
+            unlink_managed_file(quarantine, target)
+            quarantined.remove(item)
+    except BaseException as exc:
+        restore_errors: list[str] = []
+        for original, quarantine in reversed(quarantined):
+            try:
+                restore_quarantined_file(original, quarantine, target)
+            except MaterializeError as restore_error:
+                restore_errors.append(str(restore_error))
+        if restore_errors:
+            raise MaterializeError(
+                f"{exc}\nquarantine restore failed:\n- " + "\n- ".join(restore_errors)
+            ) from exc
+        raise
     root = target / SYSTEM_DEST
     if root.is_dir():
         for directory in sorted(
@@ -681,10 +1101,31 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
 
-    write = commands.add_parser("materialize", help="copy the system into a target")
+    profile_help = (
+        "Primary profiles: foundation (default), web, agentic-work. "
+        "Advanced and compatibility profiles: full, essentials, tokens."
+    )
+    write = commands.add_parser(
+        "materialize",
+        help="copy the system into a target",
+        description="Copy the smallest sufficient Broomva profile into a target.",
+        epilog=profile_help.replace(". Advanced", ".\nAdvanced"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     write.add_argument("target", type=Path)
-    write.add_argument("--profile", choices=PROFILES, default="foundation")
+    write.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default=DEFAULT_PROFILE,
+        metavar="PROFILE",
+        help="profile to materialize (default: foundation)",
+    )
     write.add_argument("--dry-run", action="store_true")
+    write.add_argument(
+        "--verbose",
+        action="store_true",
+        help="with --dry-run, list each path after the grouped summary",
+    )
     write.add_argument("--force", action="store_true")
     write.add_argument(
         "--prune",
@@ -692,9 +1133,44 @@ def parser() -> argparse.ArgumentParser:
         help="remove files owned by a previously materialized broader profile",
     )
 
-    check = commands.add_parser("verify", help="verify a materialized target")
+    check = commands.add_parser(
+        "verify",
+        help="verify a materialized target",
+        epilog=profile_help.replace(". Advanced", ".\nAdvanced"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     check.add_argument("target", type=Path)
-    check.add_argument("--profile", choices=PROFILES, default="foundation")
+    check.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default=DEFAULT_PROFILE,
+        metavar="PROFILE",
+        help="profile to verify (default: foundation)",
+    )
+
+    recommend = commands.add_parser(
+        "recommend",
+        help="recommend a profile from target facts and explicit intent",
+    )
+    recommend.add_argument("target", type=Path)
+    recommend.add_argument(
+        "--platform",
+        choices=("auto", "web", "native", "desktop", "embedded"),
+        default="auto",
+    )
+    recommend.add_argument(
+        "--framework",
+        choices=tuple(WEB_FRAMEWORKS),
+        help="known web adapter; use --platform for native or desktop products",
+    )
+    intent = recommend.add_mutually_exclusive_group()
+    intent.add_argument("--agentic-work", action="store_true")
+    intent.add_argument("--maintainer", action="store_true")
+    intent.add_argument(
+        "--compatibility-profile",
+        choices=COMPATIBILITY_PROFILES,
+    )
+    recommend.add_argument("--json", action="store_true")
 
     commands.add_parser("verify-source", help="verify bundled source invariants")
     return root
@@ -704,11 +1180,43 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "materialize":
+            if args.verbose and not args.dry_run:
+                raise MaterializeError("--verbose requires --dry-run")
             return materialize(
-                args.target, args.profile, args.dry_run, args.force, args.prune
+                args.target,
+                args.profile,
+                args.dry_run,
+                args.force,
+                args.prune,
+                args.verbose,
             )
         if args.command == "verify":
             return verify(args.target, args.profile)
+        if args.command == "recommend":
+            recommendation = recommend_profile(
+                args.target,
+                args.platform,
+                args.framework,
+                args.agentic_work,
+                args.maintainer,
+                args.compatibility_profile,
+            )
+            if args.json:
+                print(json.dumps(recommendation, indent=2, sort_keys=True))
+            else:
+                print(f"recommended profile: {recommendation['profile']}")
+                for reason in recommendation["reasons"]:
+                    print(f"- {reason}")
+                if recommendation["facts"]["incumbentDesign"]:
+                    print(
+                        "- Incumbent DESIGN.md detected; materialization will preserve "
+                        "it by default."
+                    )
+                print(
+                    "next: materialize TARGET --profile "
+                    f"{recommendation['profile']} --dry-run"
+                )
+            return 0
         errors = validate_source()
         if errors:
             raise MaterializeError("source verification failed:\n- " + "\n- ".join(errors))

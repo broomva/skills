@@ -1,10 +1,7 @@
 import * as React from "react";
 
-export interface DialogProps {
+interface DialogBaseProps {
   open?: boolean;
-  title?: React.ReactNode;
-  /** Required when title is omitted. */
-  ariaLabel?: string;
   children?: React.ReactNode;
   actions?: React.ReactNode;
   onClose?: () => void;
@@ -12,11 +9,20 @@ export interface DialogProps {
   style?: React.CSSProperties;
 }
 
-export declare function Dialog(props: DialogProps): JSX.Element;
+type DialogTitle = string | number | React.ReactElement;
+
+type DialogName =
+  | { title: DialogTitle; ariaLabel?: string }
+  | { title?: undefined; ariaLabel: string };
+
+/** Modal dialog requiring either a visible title or an explicit accessible name. */
+export type DialogProps = DialogBaseProps & DialogName;
+
+export declare function Dialog(props: DialogProps): React.JSX.Element | null;
 
 export interface ConfirmDialogProps {
   open?: boolean;
-  title?: React.ReactNode;
+  title: DialogTitle;
   body?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
@@ -24,4 +30,4 @@ export interface ConfirmDialogProps {
   onClose?: () => void;
 }
 
-export declare function ConfirmDialog(props: ConfirmDialogProps): JSX.Element;
+export declare function ConfirmDialog(props: ConfirmDialogProps): React.JSX.Element;

@@ -9,7 +9,7 @@ export interface MenuProps extends React.HTMLAttributes<HTMLDivElement> {
   onEscape?: () => void;
 }
 
-export declare function Menu(props: MenuProps): JSX.Element;
+export declare function Menu(props: MenuProps): React.JSX.Element;
 
 export interface MenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: React.ReactNode;
@@ -17,5 +17,5 @@ export interface MenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElem
   danger?: boolean;
 }
 
-export declare function MenuItem(props: MenuItemProps): JSX.Element;
-export declare function MenuDivider(): JSX.Element;
+export declare function MenuItem(props: MenuItemProps): React.JSX.Element;
+export declare function MenuDivider(): React.JSX.Element;

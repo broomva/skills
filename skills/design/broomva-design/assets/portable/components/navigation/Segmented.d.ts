@@ -8,4 +8,4 @@ export interface SegmentedProps {
   style?: React.CSSProperties;
 }
 
-export declare function Segmented(props: SegmentedProps): JSX.Element;
+export declare function Segmented(props: SegmentedProps): React.JSX.Element;
