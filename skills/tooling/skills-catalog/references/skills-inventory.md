@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 85 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-09.
+> 86 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-09.
 
-## Governance & control — `skills/governance/` (8)
+## Governance & control — `skills/governance/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -13,6 +13,7 @@
 | `dogfood` | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
 | `keel` | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
+| `legal-readiness` | Builds an evidence-first, jurisdiction-aware legal-readiness audit; validates claims, controls, receipts, and launch gates without claiming compliance or replacing counsel |
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 
 ## Orchestration & autonomy — `skills/orchestration/` (7)
@@ -37,7 +38,7 @@
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 85 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 86 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (7)
 
@@ -201,8 +202,8 @@
 
 ## Aggregates
 
-- **Total skills**: 78
+- **Total skills**: 86
 - **Total category buckets**: 22
-- **Largest bucket**: Orchestration & autonomy (7)
+- **Largest bucket**: Governance & control (9)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 22 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
