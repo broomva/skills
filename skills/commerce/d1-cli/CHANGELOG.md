@@ -4,7 +4,7 @@ All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
 > **Not released.** `d1 basket --brand` is on this branch and has not passed its
-> review gate — nine cross-model rounds, each finding a live false sentence
+> review gate — ten cross-model rounds, each finding a live false sentence
 > against real D1. The history below is kept because it is the useful part.
 > Tracked on BRO-2079.
 
@@ -386,6 +386,95 @@ read from the *output* — a marker the fix under test emits, so a faithful reve
 skipped the state and stayed green; it gates on production-derived state now.
 And `not.toContain("cannot be bought")` was checking for a string this module
 has never produced.
+
+### Fixed — round 10 (3/10, 6/10, 4/10): the claim was wider than the evidence, again, at two new radii
+
+Three fresh-context reviewers, three lenses. Two blockers, and both are the
+shape this arc has been closing one instance at a time since round 5: **a
+sentence asserting over a population wider than the evidence it reads.**
+
+**The headline was still global.** Round 10 moved the per-term bucket onto
+per-term evidence and left the headline reading a `lines.some(...)` over both
+plans, printed as "for these terms". Found live and independently by two
+reviewers:
+
+```text
+--brand "NATURAL FEELING" leche arroz --count 50                       exit 3
+D1 returned NATURAL FEELING for these terms, but nothing of it can be bought…
+Not counted — D1 returned no NATURAL FEELING at all for: arroz.
+```
+
+`arroz` is one of "these terms". Both looks were complete, so this was not a
+denominator problem — the sentence was false of a term it named. Rounds 7, 8 and
+10 each moved this defect one hop. `brandReturnedIn` carries its quantifier now
+(`{where, terms}`), so an existential cannot be rendered as a universal.
+
+**And "at this store" was a claim about the shop.** Its evidence is two term
+pages and their two category sweeps; the same run denied NATURAL FEELING while
+`d1 search jabon` returns eight buyable NATURAL FEELING products at that store,
+with exit 3 making the false universal the machine-readable answer too. The
+per-term line eight rows below made the same claim in a second wording, and in
+the partial case sat directly under a headline that had already declined it.
+
+The check for this is **unconditional**. Every scope fix from round 5 to round
+10 hedged one sentence in the states where it was already suspect, and the next
+round found the state it had left — this one fired precisely where both looks
+were COMPLETE, so a state-gated check could never see it. The evidence this CLI
+can hold is bounded by construction, so a store-wide claim is wrong in every
+state and the test says so in every state.
+
+Also fixed, each reproduced live:
+
+- **"only LATTI could fill" over a base line that was over budget** with
+  `affordableAlternatives: 2` — the CLI had already computed that two cheaper
+  non-LATTI products would have fitted, and the unbranded twin of the command
+  says so out loud. `onlyAlt` carries its cause now, as `onlyBase` has since
+  round 3.
+- **Exit 3 on an over-budget branded basket**, where `--budget 11000` fills.
+  The rule is stated once instead of enumerated: 3 asserts that no retry helps,
+  so it is wrong exactly when a lever exists — a widenable page, or more budget.
+  A partial *sweep* is not a lever, since `--count` no longer reaches it; round
+  10 had that backwards and made the exit code depend on category size.
+- **`--brand` deleted the NATIONAL-catalogue warning.** `renderComparison` never
+  took a `regionId` while both sibling renders always had, so adding `--brand`
+  to a working command dropped the disclosure on the axis this skill treats as
+  its most dangerous. Ten of fifteen common terms carry a national-only buyable
+  brand.
+- **`renderBasket`'s widen advice was ceiling-aware but not look-aware**, so it
+  told the reader to raise a flag under a complete look and under a sweep the
+  flag no longer reaches.
+- **The like-for-like guard keyed on the measure NAME** — neither necessary (a
+  replacement has no measure at all: a 180 g sweetener jar against 2 kg of rice
+  printed nothing) nor sufficient (a 23 g cocada and bread rolls are both "per
+  kg", and the cocada is 3.9× dearer per kg while the delta called it $ 3.500
+  cheaper).
+- **`altNoMatch` said "D1 returned nothing at all"** of terms D1 returned things
+  for, always beside that term's own price.
+
+**Test integrity — four fixes had two call sites and one test each.** A 51-mutation
+campaign found every one of them alive at 579 green: `bestSubstitute`'s
+survivor reproduced round 10's own headline blocker on the *unbranded* path;
+`renderBasket`'s dropped `count` restored the ceiling defect eight lines from a
+test added for that exact class; `partialSweep`'s missing dedupe printed "20 of
+the 82" for a category of 41; and `requestedFirst`'s documented `normalizeBrand`
+comparison emitted FORBIDDEN rule 2 on the brand the accent fix is about. A
+fifth was found by round 11's own mutation run — the CLI passing `regionId` to
+the comparison render — and its first test could not fail, because both arms
+resolved to `undefined`.
+
+The enumeration handed **both rows the same brand evidence**, spread from one
+object, so "brand on term A's page, absent from term B's" was unreachable in all
+4,704 states while being live at ordinary flags. Row two owns its evidence now.
+The fixture also set `substituteSweep` on one status where production sets it on
+four, which left five production sentences at 0 of 4,704 — including round 10's
+own "replacing … from its category". Two more hand-assembled `CrossBasket`
+literals behind `as unknown as` now go through `crossFromPlans`; `DEFAULT_COUNT`
+is pinned; one unfalsifiable assertion is gone; and `brandsIn`'s docstring no
+longer describes a guard the function does not contain.
+
+One reported flake — 577/2 on a reviewer's first run, 579/0 on twenty-one
+after — was **not** a suite defect: three reviewers shared one worktree and one
+of them was mid-mutation. Fan-out needs a worktree each.
 
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 

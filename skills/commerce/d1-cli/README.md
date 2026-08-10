@@ -575,10 +575,12 @@ that may hold hundreds, so a bare "nothing in its category is in stock" would be
 a universal over a sample.
 
 > **Not shipped.** This lives on `kg/d1-brand-compare` and has not passed its
-> review gate: nine cross-model rounds each found a sentence that was false
-> against live D1, and rounds 7, 8 and 9 each found a defect the round before
-> had introduced or left standing. The root cause is in the section below and is
-> worth reading before picking it up. Tracked on BRO-2079.
+> review gate: ten cross-model rounds each found a sentence that was false
+> against live D1, and rounds 7 through 10 each found a defect the round before
+> had introduced or left standing. There is one root cause and it is worth
+> reading before picking this up — **a claim may not outrun the population it
+> reads**, and every round so far has narrowed one sentence and left the next.
+> Tracked on BRO-2079.
 
 ## Comparing a basket across brands
 

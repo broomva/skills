@@ -921,6 +921,56 @@ export interface SweepShortfall {
  * to remove, and it recurred in six consecutive review rounds because a
  * `string[]` bucket has nowhere to put a per-term fact.
  */
+/**
+ * The headline's verdict, carrying the POPULATION it is true of.
+ *
+ * `where` is which of the two populations held the brand. `terms` is how many
+ * of the shopper's terms that is true for — and it exists because leaving it
+ * out was the seventh recurrence of one defect.
+ *
+ * Round 10 moved the per-term bucket onto per-term evidence and left the
+ * headline reading a `lines.some(...)` over both plans, then printing it as
+ * "for these terms". Live:
+ *
+ * ```text
+ * D1 returned NATURAL FEELING for these terms, but nothing of it can be bought…
+ * Not counted — NATURAL FEELING is on its own page and nothing of it is buyable here, for: leche.
+ * Not counted — D1 returned no NATURAL FEELING at all for: arroz.
+ * ```
+ *
+ * `arroz` is one of "these terms". Both looks were complete, so this was not a
+ * denominator problem — the sentence was false of a term it named. Rounds 7, 8
+ * and 10 each moved this defect one hop rather than removing it.
+ *
+ * An existential cannot be rendered as a universal, so the quantifier is data
+ * rather than something the wording assumes.
+ */
+export interface BrandReturned {
+  where: "page" | "sweep";
+  /** `"all"` when every row's own evidence carries it; `"some"` otherwise. */
+  terms: "all" | "some";
+}
+
+/**
+ * Why the branded basket filled a term the best-value one could not.
+ *
+ * The mirror of {@link BrandMiss}, and a bare `string[]` until round 11 — under
+ * one sentence, "only X could fill", which is a claim about D1's shelf. Live:
+ * `--budget 3500 --brand LATTI leche` printed it while the base line was
+ * `over-budget` with `affordableAlternatives: 2`, so the CLI had already
+ * computed that two cheaper non-LATTI products would have fitted. `onlyBase`
+ * was split by cause for exactly this reason four rounds earlier — a fact about
+ * a wallet must not read as a fact about the shop — and its mirror never was.
+ */
+export interface BaseMiss {
+  /** Row label, as the table prints it. */
+  term: string;
+  /** What happened to the UNCONSTRAINED side of this row. */
+  baseStatus: LineStatus;
+  /** Cheaper products that would have fitted, when the base line was refused on money. */
+  affordable?: number;
+}
+
 export interface BrandMiss {
   /** Row label, exactly as the table prints it — see {@link rowLabels}. */
   term: string;
@@ -977,10 +1027,20 @@ export interface CrossBasket {
   altOverBudget: string[];
   /** Terms where the branded lookup never answered — unknown, not empty. */
   altUnknown: string[];
-  /** Terms D1 returned nothing for, or nothing in stock, on the branded run. */
+  /** Terms D1 returned nothing at all for on the branded run. */
   altNoMatch: string[];
-  /** Terms the branded basket filled and the base one could not. */
-  onlyAlt: string[];
+  /**
+   * Terms D1 returned products for on the branded run, none of them buyable.
+   *
+   * Split from {@link altNoMatch}, which folded the two under "D1 returned
+   * nothing at all for" — false of this half, since D1 did return them. The
+   * bucket's own filter requires the BASE line to be filled, so the sentence
+   * always printed beside that term's own price, and since round 10 beside a
+   * named product in "What was bought" too.
+   */
+  altNothingInStock: string[];
+  /** Terms the branded basket filled and the base one could not, and WHY. */
+  onlyAlt: BaseMiss[];
   /** Terms neither basket filled — not a brand difference, and not silent either. */
   neither: string[];
   /**
@@ -1078,7 +1138,7 @@ export interface CrossBasket {
    * render wrong on the day it does, in a way nothing would notice. What is
    * dropped is the CLAIM that this arm was verified — it was not.
    */
-  brandReturnedIn?: "page" | "sweep";
+  brandReturnedIn?: BrandReturned;
 }
 
 /**
@@ -1150,7 +1210,10 @@ export function crossFromPlans(
   // ...and whether D1 returned it at all, which is a different question and the
   // one the headline was answering wrongly.
   //
-  const returnedIn = brandReturnedIn([...base.lines, ...alt.lines], opts.brand);
+  // PER ROW, then quantified. Reading `some()` over every line of both plans
+  // and printing the result as "for these terms" is a universal built from an
+  // existential — see {@link BrandReturned}.
+  const returnedIn = brandReturnedAcross(rows, opts.brand);
 
   return {
     brand: opts.brand,
@@ -1177,12 +1240,20 @@ export function crossFromPlans(
       .filter((r) => filled(r.base) && r.alt?.status === "replacement-unknown")
       .map((r) => r.term),
     altNoMatch: rows
-      .filter(
-        (r) =>
-          filled(r.base) && (r.alt?.status === "no-match" || r.alt?.status === "nothing-in-stock"),
-      )
+      .filter((r) => filled(r.base) && r.alt?.status === "no-match")
       .map((r) => r.term),
-    onlyAlt: rows.filter((r) => filled(r.alt) && !filled(r.base)).map((r) => r.term),
+    // Split from the line above. "D1 returned nothing at all" is false of a
+    // term D1 DID return products for — they were simply not buyable here.
+    altNothingInStock: rows
+      .filter((r) => filled(r.base) && r.alt?.status === "nothing-in-stock")
+      .map((r) => r.term),
+    onlyAlt: rows
+      .filter((r) => filled(r.alt) && !filled(r.base))
+      .map((r) => ({
+        term: r.term,
+        baseStatus: r.base?.status ?? "no-match",
+        affordable: r.base?.affordableAlternatives,
+      })),
     // Neither side filled these, so they are not a brand difference at all —
     // but a row of two dashes with no sentence beside it leaves the reader to
     // guess, which is the one thing this output is built not to do.
@@ -1303,11 +1374,18 @@ export function pairRows(
  * each masked the other. Two guards where one is load-bearing is one guard and
  * one decoration, and the decoration is the one that goes.
  *
- * The exclusion IS load-bearing. An unfilled line carries `product: source` —
- * the thing it rejected — so a rejected LATTI put "Brands it did return:
- * LATTI" directly under "Nothing D1 returned for these terms is LATTI". If the
- * requested brand appears here the headline above it is false, and no hint is
- * worth printing a lie for.
+ * There is NO exclusion of the requested brand here, and this comment used to
+ * claim there was — describing it as load-bearing while the body contained
+ * nothing of the kind, and while {@link CrossBasket.brandsSeen} said the
+ * opposite two files over ("COMPLETE — the requested brand is no longer
+ * filtered out of it"). Two governance comments giving contradictory accounts
+ * of one predicate is the same defect this module polices in its output.
+ *
+ * Round 5 is why the exclusion is gone: filtering the requested brand out of
+ * the hint deleted the evidence and kept the claim. The claim is conditioned on
+ * the evidence now, so the list can afford to be complete — and must be, since
+ * a hint that hides the brand it was asked about emits the exact contradiction
+ * the property test's second rule forbids.
  */
 export function brandsIn(lines: readonly BasketLine[]): string[] {
   const seen = new Set<string>();
@@ -1442,8 +1520,35 @@ function distinctTerms(lines: readonly BasketLine[]): BasketLine[] {
  * the same derivation production does — {@link crossFromPlans} is built on the
  * same principle and for the same reason.
  */
+/**
+ * Where the brand was returned across a whole comparison, WITH its quantifier.
+ *
+ * Built row by row, so the headline can only ever be as wide as the rows agree
+ * on. `undefined` when no row carried the brand at all.
+ *
+ * The page outranks the sweep for the same reason {@link brandReturnedIn} picks
+ * it: {@link CrossBasket.brandsSeen} is the page alone, so a page hit is the one
+ * the rendered evidence list can corroborate. `terms` reports "all" only when
+ * EVERY row's own evidence carries it — with one row that is trivially true,
+ * which is why the defect was invisible until the enumeration grew a second.
+ */
+export function brandReturnedAcross(
+  rows: readonly BasketComparison[],
+  brand: string,
+): BrandReturned | undefined {
+  const per = rows.map((r) => brandReturnedIn([r.base, r.alt].filter(isLine), brand));
+  const hits = per.filter((p) => p !== undefined);
+  if (!hits.length) return undefined;
+  return {
+    where: hits.includes("page") ? "page" : "sweep",
+    terms: hits.length === per.length ? "all" : "some",
+  };
+}
+
+const isLine = (l: BasketLine | undefined): l is BasketLine => l !== undefined;
+
 export function brandMissFor(row: BasketComparison, brand: string): BrandMiss {
-  const lines = [row.base, row.alt].filter((l): l is BasketLine => l !== undefined);
+  const lines = [row.base, row.alt].filter(isLine);
   const al = row.alt;
   const look =
     al?.looked !== undefined && al.matched > al.looked

@@ -11,6 +11,7 @@
  */
 
 import {
+  type BaseMiss,
   type BasketComparison,
   type BasketLine,
   type BasketPlan,
@@ -553,16 +554,35 @@ export function renderBasket(
     );
   }
   out.push("");
-  // Ceiling-aware, for the same reason the comparison's is: at `--count 50` the
-  // unchecked wording tells the reader to raise a flag `search` has already
-  // clamped. `opts.count` is what the command was invoked with, so the render
-  // asks the same clamp the request asked.
+  // LOOK-aware as well as ceiling-aware — the same `widenAdvice` the comparison
+  // uses, on the same two axes.
+  //
+  // Round 10 made this ceiling-aware and stopped there, which left two of the
+  // three wrong cases standing: it printed "Raise --count to widen it." under a
+  // complete look (`atun`, best of 10 compared, where raising it fetches
+  // nothing), and under a sweep caveat that `--count` no longer reaches at all
+  // (`servipan`, `only 50 of 52 in that category were searched`, byte-identical
+  // at every count). Half-fixing the sibling render is the shape this arc keeps
+  // paying for, so the two renders now share the predicate rather than a rule
+  // of thumb.
   out.push(
     footerFor(
       filled,
-      pageCount(opts.count) < MAX_COUNT
-        ? WIDEN_UNCHECKED
-        : ` --count is already at its ceiling of ${MAX_COUNT}.`,
+      widenAdvice({
+        count: pageCount(opts.count),
+        // Split by AXIS exactly the way `scopeOf` splits it, two lines up the
+        // page — a substitute line's `compared` counts a category, not the
+        // term's page, so asking `matched > compared` of it compares two
+        // populations. The footer must agree with the per-line sentence above
+        // it or the reader gets two answers to one question.
+        pagePartial: plan.lines.some(
+          (l) => !l.substituteSweep && l.matched > (l.looked ?? l.compared),
+        ),
+        sweepPartial: plan.lines.some(
+          (l) =>
+            l.swept !== undefined && l.categoryTotal !== undefined && l.categoryTotal > l.swept,
+        ),
+      }),
     ),
   );
   return out.join("\n");
@@ -895,7 +915,7 @@ function fmtCoord(at: LatLng): string {
  * brand looks cheap, because it did not buy them. The unfilled terms are named
  * separately, where they read as a gap rather than a discount.
  */
-export function renderComparison(c: CrossBasket): string {
+export function renderComparison(c: CrossBasket, opts: { regionId?: string } = {}): string {
   const out: string[] = [];
   const brand = sanitize(c.brand);
 
@@ -931,17 +951,31 @@ export function renderComparison(c: CrossBasket): string {
     // round 7's own correct fix. Two sentences answering what reads as one
     // question, with opposite answers. One label, one population applies to the
     // claim as well as to the list.
+    // NAMES ITS QUANTIFIER. "for these terms" over a verdict that held for one
+    // of them is a universal built from an existential, and it was the seventh
+    // recurrence of one defect — see {@link BrandReturned}.
+    const some = c.brandReturnedIn?.terms === "some";
     const seenIn =
-      c.brandReturnedIn === "sweep" ? "in the category around these terms" : "for these terms";
+      c.brandReturnedIn?.where === "sweep"
+        ? `in the category around ${some ? "some of these terms" : "these terms"}`
+        : `for ${some ? "some of these terms" : "these terms"}`;
     // ...and the negative half never outruns EITHER look. This arm was round 5's
     // and round 6 never touched it, so "nothing of it can be bought at this
     // store" stayed a universal over `--count` products — twelve of twenty-nine
     // at the default, the exact disease round 6 was about. Round 9 then found
     // the second half of the same sentence: the sweep behind it was partial too,
     // and neither the claim nor the exit code said so.
+    //
+    // ...and its POPULATION. "nothing of it can be bought at this store" was a
+    // claim about the shop, drawn from two term pages and their two category
+    // sweeps. It was false: the same run denied NATURAL FEELING while `d1
+    // search jabon` returns eight buyable NATURAL FEELING products at the same
+    // store — and exit 3 made the false universal the machine-readable answer
+    // too. A complete look is complete FOR THESE TERMS; this CLI never holds
+    // store-wide evidence, so no sentence here may claim it.
     const unbuyable = scope
-      ? `but nothing of it the look reached can be bought at this store — the look covered ${scope}.${widen}`
-      : "but nothing of it can be bought at this store.";
+      ? `but nothing of it the look reached can be bought here — the look covered ${scope}.${widen}`
+      : "but nothing of it that was searched can be bought here.";
     out.push(
       c.brandReturnedIn
         ? `D1 returned ${brand} ${seenIn}, ${unbuyable}`
@@ -1050,10 +1084,10 @@ export function renderComparison(c: CrossBasket): string {
     // ...and the delta says so when it is not a like-for-like one. Named right
     // under the number it qualifies, because a reader who reads one line reads
     // this one.
-    const mixed = c.rows.filter(mixedMeasure);
+    const mixed = c.rows.map(notLikeForLike).filter((x): x is string => x !== undefined);
     if (mixed.length) {
       out.push(
-        `${mixed.length} of those ${mixed.length === 1 ? "rows compares" : "rows compare"} products ranked on DIFFERENT measures (${mixed.map(measurePair).join("; ")}), so that much of the difference is not like for like — see what was bought.`,
+        `${mixed.length} of those ${mixed.length === 1 ? "rows compares" : "rows compare"} things that are NOT like for like (${mixed.join("; ")}), so that much of the difference is not a saving — see what was bought.`,
       );
     }
   }
@@ -1089,6 +1123,11 @@ export function renderComparison(c: CrossBasket): string {
     [c.altOverBudget, `${brand} found but over budget for`],
     [c.altUnknown, `the ${brand} lookup did not answer for`],
     [c.altNoMatch, "D1 returned nothing at all for"],
+    // Split out. Folded into the line above, "D1 returned nothing at all" was
+    // false of exactly this half — D1 returned them, none was buyable — and the
+    // bucket's own filter guarantees the term's base price is on screen beside
+    // it, now with a named product too.
+    [c.altNothingInStock, `D1 returned products for this but none of them in ${brand}, for`],
   ];
   let anyMissing = false;
   for (const [terms, why] of missing) {
@@ -1096,8 +1135,15 @@ export function renderComparison(c: CrossBasket): string {
     anyMissing = true;
     out.push(`Not counted — ${why}: ${terms.map(sanitize).join(", ")}.`);
   }
-  if (c.onlyAlt.length) {
-    out.push(`Not counted — only ${brand} could fill: ${c.onlyAlt.map(sanitize).join(", ")}.`);
+  // Split by the BASE line's cause, the same way `onlyBase` was four rounds
+  // ago and for the same reason. "only LATTI could fill" is a claim about D1's
+  // shelf; live, `--budget 3500 --brand LATTI leche` printed it while the
+  // unconstrained line was `over-budget` carrying `affordableAlternatives: 2`.
+  // The CLI had already computed that two cheaper non-LATTI products would have
+  // fitted, and the unbranded twin of the same command says so out loud.
+  for (const [terms, why] of groupBaseMisses(c.onlyAlt, brand)) {
+    if (!terms.length) continue;
+    out.push(`Not counted — ${why}: ${terms.map(sanitize).join(", ")}.`);
   }
   // Only when there ARE two numbers. With nothing shared the line above says
   // there is no price to compare, and this then pointed at numbers that were
@@ -1120,6 +1166,21 @@ export function renderComparison(c: CrossBasket): string {
     // wrong in any state.
     out.push(
       `Neither basket filled: ${c.neither.map(sanitize).join(", ")}. Run the same list without --brand for the reason.`,
+    );
+  }
+  // The disclosure `--brand` was deleting.
+  //
+  // `renderBasket` and `renderSubstitutes` have both carried this since the
+  // skill's first release; `renderComparison` is the third caller and never
+  // took a `regionId` at all. So adding `--brand` to a working command silently
+  // dropped the warning on the axis this skill treats as its most dangerous:
+  // unregioned, `--brand SERVIPAN pan` priced a national-only SKU that is
+  // absent from the Bogotá page entirely, under the sentence "each is one a
+  // shopper could have bought". Ten of fifteen common terms carry at least one
+  // national-only buyable brand.
+  if (!opts.regionId) {
+    out.push(
+      "No delivery point resolved, so these are NATIONAL prices and stock. Pass --lat/--lng for your store's.",
     );
   }
   out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
@@ -1147,16 +1208,31 @@ export function renderComparison(c: CrossBasket): string {
  * a category sweep, which is a different disclosure and is made where it
  * belongs (`footerFor`, and the "replacing" clause below).
  */
-function mixedMeasure(r: BasketComparison): boolean {
-  if (r.delta === undefined) return false;
-  const a = r.base?.rankedOn;
-  const b = r.alt?.rankedOn;
-  return a !== undefined && b !== undefined && a !== b;
-}
-
-/** `leche: per kg vs per L` — the two axes, named. */
-function measurePair(r: BasketComparison): string {
-  return `${sanitize(r.term)}: per ${sanitize(r.base?.rankedOn ?? "?")} vs per ${sanitize(r.alt?.rankedOn ?? "?")}`;
+function notLikeForLike(r: BasketComparison): string | undefined {
+  if (r.delta === undefined) return undefined;
+  const a = r.base;
+  const b = r.alt;
+  if (!a || !b) return undefined;
+  // A REPLACEMENT is not the same kind of product, whatever it was ranked on.
+  // `--brand DULCRALIGHT arroz` put a 180 g sweetener jar against 2 kg of rice
+  // and called it $ 560 cheaper; both sides fell back to pack price, so a
+  // measure-name check saw nothing to say.
+  if (b.replaces || a.replaces) return `${sanitize(r.term)}: one side is a replacement`;
+  const am = a.rankedOn;
+  const bm = b.rankedOn;
+  if (am !== undefined && bm !== undefined && am !== bm) {
+    return `${sanitize(r.term)}: per ${sanitize(am)} vs per ${sanitize(bm)}`;
+  }
+  // Same axis, opposite verdict. `--brand COPELIA leche --count 50` reported
+  // COPELIA $ 3.500 cheaper: a 23 g cocada at $ 39.130/kg against bread rolls
+  // at $ 10.000/kg. Both said "per kg", so the measure check was silent — which
+  // is how measure equality turned out to be not sufficient either.
+  const au = a.product?.unitPrice;
+  const bu = b.product?.unitPrice;
+  if (am !== undefined && am === bm && au !== undefined && bu !== undefined && bu > au) {
+    return `${sanitize(r.term)}: cheaper pack, dearer per ${sanitize(am)}`;
+  }
+  return undefined;
 }
 
 /**
@@ -1243,6 +1319,46 @@ function groupMisses(misses: readonly BrandMiss[], brand: string): Array<[string
 }
 
 /**
+ * Terms only the brand could fill, grouped by what happened to the other side.
+ *
+ * Same construction as {@link groupMisses}: identical causes share a line,
+ * differing ones cannot.
+ */
+function groupBaseMisses(misses: readonly BaseMiss[], brand: string): Array<[string[], string]> {
+  const byWhy = new Map<string, string[]>();
+  for (const m of misses) {
+    const why = baseMissWhy(m, brand);
+    const bucket = byWhy.get(why);
+    if (bucket) bucket.push(m.term);
+    else byWhy.set(why, [m.term]);
+  }
+  return [...byWhy.entries()].map(([why, terms]) => [terms, why]);
+}
+
+/** Why the unconstrained basket did not fill a term the branded one did. */
+function baseMissWhy(m: BaseMiss, brand: string): string {
+  switch (m.baseStatus) {
+    case "over-budget": {
+      // Never "only X could fill". The best-value pick WAS found and priced and
+      // refused on money — a fact about the budget, not the shelf — and the
+      // count of cheaper things that would have fitted is already on the line.
+      const also =
+        m.affordable && m.affordable > 0
+          ? `, and ${m.affordable} cheaper ${m.affordable === 1 ? "match" : "matches"} would have fitted`
+          : "";
+      return `${brand} fitted the budget and the best-value pick did not${also}, for`;
+    }
+    case "replacement-unknown":
+      // A statement about the network, never dressed as one about the shelf.
+      return `${brand} filled it and the unconstrained lookup did not answer, for`;
+    case "nothing-in-stock":
+      return `only ${brand} could be bought — D1 returned others and none was buyable, for`;
+    default:
+      return `only ${brand} could fill`;
+  }
+}
+
+/**
  * One term's own brand verdict, from that term's own evidence.
  *
  * The widening advice is deliberately NOT repeated here. It is a fact about the
@@ -1256,13 +1372,18 @@ function missWhy(m: BrandMiss, brand: string): string {
   const searched = parts.length ? ` (${parts.join(", ")} searched)` : "";
   if (m.returnedIn) {
     const where = m.returnedIn === "sweep" ? "in the category around it" : "on its own page";
+    // Both arms name the population. The complete-look arm used to say
+    // "nothing of it is buyable here", which is the same store-wide claim the
+    // headline was making — and it printed BESIDE a headline that had already
+    // declined to make it, so one output carried both strengths and the
+    // stronger one was false.
     return searched
       ? `${brand} is ${where} and nothing of it the look reached is buyable${searched}, for`
-      : `${brand} is ${where} and nothing of it is buyable here, for`;
+      : `${brand} is ${where} and nothing of it there is buyable, for`;
   }
   return searched
     ? `no ${brand} in what was searched${searched}, for`
-    : `D1 returned no ${brand} at all for`;
+    : `neither its page nor its category holds any ${brand}, for`;
 }
 
 /** How many brands the near-miss hint lists before saying "and N more". */

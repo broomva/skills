@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
   type BasketLine,
   type LineStatus,
   buildBasket,
   chooseBest,
   compareBaskets,
+  crossFromPlans,
   fillToBudget,
   isFilled,
   linePrice,
@@ -14,6 +16,7 @@ import {
   parseBudget,
   rowLabels,
 } from "../src/basket.ts";
+import { DEFAULT_COUNT, MAX_COUNT, pageCount } from "../src/catalog.ts";
 import { basketExit, basketOptions, basketTerms, comparisonExit, main } from "../src/cli.ts";
 import { D1Client } from "../src/client.ts";
 import type { Measure } from "../src/measure.ts";
@@ -2088,9 +2091,16 @@ describe("onlyAlt is asserted in BOTH polarities [BRO-2079]", () => {
     const alt = fillToBudget(rows, 1_000_000);
     expect(alt.lines[1]?.status).toBe("filled");
 
-    const c = {
-      brand: "LATTI",
-      base: fillToBudget(
+    // Built through PRODUCTION, like the property enumeration.
+    //
+    // This was a `CrossBasket` literal behind `as unknown as`, which is the
+    // hand-assembled mirror round 10 removed from `test/contradiction.test.ts`
+    // and left standing here. The cast defeats the type checker, so when round
+    // 11 split `altNoMatch` the fixture went stale silently and the render
+    // crashed on `undefined.length` rather than failing to compile.
+    const c = crossFromPlans(
+      ["arroz", "leche"],
+      fillToBudget(
         [
           line({ term: "arroz", price: 100_000 }),
           line({ term: "leche", status: "no-match", product: undefined, price: undefined }),
@@ -2098,16 +2108,12 @@ describe("onlyAlt is asserted in BOTH polarities [BRO-2079]", () => {
         1_000_000,
       ),
       alt,
-      rows: [] as never[],
-      comparable: { terms: 0, baseTotal: 0, altTotal: 0, delta: 0 },
-      onlyBase: [],
-      altOverBudget: [],
-      altUnknown: [],
-      altNoMatch: [],
-      onlyAlt: ["leche"],
-      neither: [],
-    };
-    const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
+      { brand: "LATTI" },
+    );
+    // The base line is `no-match`, so this is the arm where the brand really
+    // was the only thing that could fill — not the budget arm below.
+    expect(c.onlyAlt).toEqual([{ term: "leche", baseStatus: "no-match", affordable: undefined }]);
+    const out = renderComparison(c);
     expect(out).toContain("only LATTI could fill: leche");
   });
 });
@@ -2242,17 +2248,21 @@ describe("the comparison never contradicts itself [BRO-2079 round 2]", () => {
     const c = await compareBaskets(inverted(), ["aceite"], 1_500_000, { brand: "LATTI" });
     expect(c.base.lines[0]?.status).toBe("over-budget");
     expect(c.alt.lines[0]?.status).toBe("filled");
-    expect(c.onlyAlt).toEqual(["aceite"]);
+    // Carries the BASE line's cause, so the render cannot report a budget
+    // refusal as a fact about D1's shelf — round 11.
+    expect(c.onlyAlt).toEqual([{ term: "aceite", baseStatus: "over-budget", affordable: 1 }]);
     expect(c.comparable.terms).toBe(0);
   });
 
   test("...and the summary does not then deny the line beside it", async () => {
     // "LATTI is not an alternative for any line above" printed directly above
-    // "only LATTI could fill: aceite", with the table showing LATTI filling it.
+    // "LATTI fitted the budget and the best-value pick did not, and 1 cheaper match would have fitted, for: aceite", with the table showing LATTI filling it.
     const out = renderComparison(
       await compareBaskets(inverted(), ["aceite"], 1_500_000, { brand: "LATTI" }),
     );
-    expect(out).toContain("only LATTI could fill: aceite");
+    expect(out).toContain(
+      "LATTI fitted the budget and the best-value pick did not, and 1 cheaper match would have fitted, for: aceite",
+    );
     // The summary states what happened and stops; the buckets say the rest.
     // Three rounds each conditioned an "…is not an alternative" clause on one
     // more bucket and each left another open, so the clause is gone.
@@ -2287,7 +2297,15 @@ describe("the comparison never contradicts itself [BRO-2079 round 2]", () => {
     // label in one bucket, so `new Set(labels).size === labels.length` was
     // `1 === 1` and could not fail — the very check it was written to make.
     const c = await compareBaskets(inverted(), ["aceite", "aceite"], 1_500_000, { brand: "LATTI" });
-    const buckets = [c.onlyBase, c.altOverBudget, c.altUnknown, c.altNoMatch, c.onlyAlt, c.neither];
+    const buckets: string[][] = [
+      c.onlyBase.map((m) => m.term),
+      c.altOverBudget,
+      c.altUnknown,
+      c.altNoMatch,
+      c.altNothingInStock,
+      c.onlyAlt.map((m) => m.term),
+      c.neither,
+    ];
     const labels = buckets.flat();
     // Both rows are accounted for, and in two DIFFERENT buckets — which is the
     // shape that made the old bare-term labels contradict each other.
@@ -2431,23 +2449,17 @@ describe("altNoMatch is computed AND rendered [BRO-2079]", () => {
 
   test("a term the branded run found nothing for is named as such", () => {
     // Emptying either the bucket or its render line left the suite green.
-    const c = {
-      brand: "LATTI",
-      base: fillToBudget([line({ term: "leche", price: 100_000 })], 1_000_000),
-      alt: fillToBudget(
+    // Through production, for the reason given on the sibling fixture above.
+    const c = crossFromPlans(
+      ["leche"],
+      fillToBudget([line({ term: "leche", price: 100_000 })], 1_000_000),
+      fillToBudget(
         [line({ term: "leche", status: "no-match", product: undefined, price: undefined })],
         1_000_000,
       ),
-      rows: [],
-      comparable: { terms: 0, baseTotal: 0, altTotal: 0, delta: 0 },
-      onlyBase: [],
-      altOverBudget: [],
-      altUnknown: [],
-      altNoMatch: ["leche"],
-      onlyAlt: [],
-      neither: [],
-    };
-    const out = renderComparison(c as unknown as Parameters<typeof renderComparison>[0]);
+      { brand: "LATTI" },
+    );
+    const out = renderComparison(c);
     expect(out).toContain("D1 returned nothing at all for: leche");
     // Suppressed: nothing was shared, so there are no two numbers to point at.
     expect(out).not.toContain("neither number above");
@@ -2559,10 +2571,12 @@ describe("the brands hint needs EVERY line to have missed [BRO-2079 round 3]", (
     // contradiction by filtering LATTI out of the list rather than correcting
     // the claim. Live: `--brand COPELIA leche` returns COCADA LECHE PANELA
     // COPELIA at Price 0.
-    expect(c.brandReturnedIn).toBe("page");
+    expect(c.brandReturnedIn).toEqual({ where: "page", terms: "all" });
     expect(c.brandsSeen).toContain("LATTI");
     const out = renderComparison(c);
-    expect(out).toContain("D1 returned LATTI for these terms, but nothing of it can be bought");
+    expect(out).toContain(
+      "D1 returned LATTI for these terms, but nothing of it that was searched can be bought here.",
+    );
     expect(out).not.toContain("Nothing D1 returned for these terms is LATTI");
   });
 
@@ -2648,7 +2662,7 @@ describe("the table label is the bucket label [BRO-2079 round 3]", () => {
       ...c.altOverBudget,
       ...c.altUnknown,
       ...c.altNoMatch,
-      ...c.onlyAlt,
+      ...c.onlyAlt.map((m) => m.term),
       ...c.neither,
     ]) {
       expect(rows.some((r) => r.includes(label))).toBe(true);
@@ -2799,8 +2813,10 @@ describe("the returned-brand evidence spans BOTH runs [BRO-2079 round 5]", () =>
     expect(c.alt.lines[0]?.status).toBe("no-brand-match");
     // ...and that is still evidence D1 returned it, on the PAGE — so the
     // evidence list below the headline corroborates it.
-    expect(c.brandReturnedIn).toBe("page");
-    expect(renderComparison(c)).toContain("for these terms, but nothing of it can be bought");
+    expect(c.brandReturnedIn).toEqual({ where: "page", terms: "all" });
+    expect(renderComparison(c)).toContain(
+      "for these terms, but nothing of it that was searched can be bought here.",
+    );
   });
 });
 
@@ -2851,8 +2867,17 @@ describe("a brand claim never outruns its look [BRO-2079 round 6]", () => {
     expect(out).toContain("no LATTI in what was searched (12 of 29 on its page");
     expect(out).not.toContain("Not counted — no LATTI for");
     // ...and it reads THIS TERM's numbers, never the comparison's aggregate.
-    // Round 9 found the aggregate printed here; see the round-10 block below.
-    expect(out).not.toContain("across 1 term), for");
+    //
+    // The aggregate's own wording, which no per-term line may carry. An earlier
+    // draft asserted `not.toContain("across 1 term), for")` — `missWhy` always
+    // closes with `searched)`, so no template can compose that sequence and the
+    // assertion could not fail. It was written in the round that removed two
+    // other tests for being unfalsifiable.
+    // Scoped to the per-term lines: the HEADLINE is entitled to the aggregate
+    // wording, and asserting over the whole output would only be testing that.
+    const perTerm = out.split("\n").filter((l) => l.startsWith("Not counted —"));
+    expect(perTerm).not.toHaveLength(0);
+    for (const l of perTerm) expect(l).not.toContain("D1 matched across");
   });
 
   test("a complete look drops the qualifier rather than hedging forever", async () => {
@@ -2972,7 +2997,7 @@ describe("a brand claim never outruns its look [BRO-2079 round 6]", () => {
     expect(c.alt.lines[0]?.sweepBrands).toContain("LATTI");
     expect(c.partial).toEqual({ terms: 1, looked: 1, matched: 29 });
     // The SWEEP, not the page — and that distinction is the whole of round 8.
-    expect(c.brandReturnedIn).toBe("sweep");
+    expect(c.brandReturnedIn).toEqual({ where: "sweep", terms: "all" });
     const out = renderComparison(c);
     // "Found but unbuyable" still outranks "not among the N looked at": it is
     // the stronger and more specific fact, and both cannot head the same output.
@@ -3060,9 +3085,9 @@ describe("one label, one population [BRO-2079 round 7]", () => {
       100_000_000,
       { brand: "NF" },
     );
-    expect(c.brandReturnedIn).toBe("page");
+    expect(c.brandReturnedIn).toEqual({ where: "page", terms: "all" });
     const out = renderComparison(c);
-    expect(out).toContain("NF is on its own page and nothing of it is buyable here, for: leche");
+    expect(out).toContain("NF is on its own page and nothing of it there is buyable, for: leche");
     expect(out).not.toContain("no NF for: leche");
   });
 
@@ -3139,9 +3164,71 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
     expect(out).toContain("The category sweep reads one page and --count does not widen it.");
   });
 
-  test("...and does not exit 3, which means 'never worth retrying'", async () => {
-    const c = await compareBaskets(wideCategory(), ["arroz"], 100_000_000, { brand: "QUAKER" });
-    expect(comparisonExit(c)).toBe(0);
+  test("exit 3 is decided by whether the shopper has a LEVER, not by which look was partial", async () => {
+    // Round 11 states the rule instead of enumerating cases. 3 asserts that no
+    // retry helps, so it is wrong exactly when a lever exists — and round 10's
+    // formulation got both directions wrong.
+    //
+    // A partial CATEGORY is not a lever: `--count` no longer reaches the sweep
+    // and the sweep is capped at 50, so suppressing 3 here made the exit code
+    // depend on category size rather than on the answer.
+    const sweepOnly = await compareBaskets(wideCategory(), ["arroz"], 100_000_000, {
+      brand: "QUAKER",
+    });
+    expect(sweepOnly.sweepPartial).toBeDefined();
+    expect(comparisonExit(sweepOnly)).toBe(3);
+
+    // A partial PAGE below the clamp IS a lever.
+    const widenable = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })],
+        searchTotal: 29,
+        sku: sourceSku("1", "ARROZ OTRA"),
+        sweep: [],
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "QUAKER", count: 12 },
+    );
+    expect(comparisonExit(widenable)).toBe(0);
+    // ...and it stops being one at the clamp, where raising it is a no-op.
+    const atCeiling = await compareBaskets(
+      fakeClient({
+        search: Array.from({ length: 50 }, (_, i) =>
+          wire(String(i), `P ${i}`, { price: 3_000 + i, brand: "OTRA" }),
+        ),
+        searchTotal: 300,
+        sku: sourceSku("0", "P 0"),
+        sweep: [],
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "QUAKER", count: 50 },
+    );
+    expect(atCeiling.partial).toBeDefined();
+    expect(comparisonExit(atCeiling)).toBe(3);
+  });
+
+  test("a bigger --budget is a lever too, so an over-budget brand is not exit 3", async () => {
+    // Live: `--budget 5000 --brand ALPIN leche` exited 3 while `--budget 11000`
+    // filled. 3 is documented CLI-wide as never worth retrying, and the prose
+    // one line above already said the brand was found and priced — a fact about
+    // the wallet reported as a fact about the shelf, which is the distinction
+    // `onlyBase` was split on four rounds earlier.
+    const client = () =>
+      fakeClient({
+        search: [
+          wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" }),
+          wire("2", "LECHE ALPIN", { price: 10_150, brand: "ALPIN" }),
+        ],
+      });
+    const tight = await compareBaskets(client(), ["leche"], 500_000, { brand: "ALPIN" });
+    expect(tight.alt.lines[0]?.status).toBe("over-budget");
+    expect(comparisonExit(tight)).toBe(0);
+
+    const roomy = await compareBaskets(client(), ["leche"], 1_100_000, { brand: "ALPIN" });
+    expect(roomy.alt.lines[0]?.status).toBe("filled");
+    expect(comparisonExit(roomy)).toBe(0);
   });
 
   test("a COMPLETE category still exits 3 — the guard is not a constant", async () => {
@@ -3272,9 +3359,11 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
     const out = renderComparison(c);
     // TWO sentences, each naming only the terms it is true of.
     expect(out).toContain(
-      "Not counted — COPELIA is on its own page and nothing of it is buyable here, for: leche.",
+      "Not counted — COPELIA is on its own page and nothing of it there is buyable, for: leche.",
     );
-    expect(out).toContain("Not counted — D1 returned no COPELIA at all for: arroz.");
+    expect(out).toContain(
+      "Not counted — neither its page nor its category holds any COPELIA, for: arroz.",
+    );
     expect(out).not.toContain("for: leche, arroz");
   });
 
@@ -3293,7 +3382,9 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
     );
     expect(c.onlyBase).toHaveLength(2);
     const out = renderComparison(c);
-    expect(out).toContain("Not counted — D1 returned no QUAKER at all for: arroz, sal.");
+    expect(out).toContain(
+      "Not counted — neither its page nor its category holds any QUAKER, for: arroz, sal.",
+    );
   });
 
   test("a substituted price is disclosed as a replacement, by name", async () => {
@@ -3350,7 +3441,7 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
     expect(c.base.lines[0]?.rankedOn).toBe("kg");
     expect(c.alt.lines[0]?.rankedOn).toBe("L");
     const out = renderComparison(c);
-    expect(out).toContain("ranked on DIFFERENT measures (leche: per kg vs per L)");
+    expect(out).toContain("NOT like for like (leche: per kg vs per L)");
     expect(out).toContain("PAN LECHE HORNEADITOS 440 G");
     expect(out).toContain("LECHE ENTERA LATTI 900 ML");
   });
@@ -3372,7 +3463,7 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
       100_000_000,
       { brand: "LATTI" },
     );
-    expect(renderComparison(c)).not.toContain("ranked on DIFFERENT measures");
+    expect(renderComparison(c)).not.toContain("NOT like for like");
   });
 
   test("an accent is not a different brand", async () => {
@@ -3468,11 +3559,141 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
       [line({ term: "arroz", price: 3_000, compared: 2, matched: 40 })],
       100_000_000,
     );
-    expect(renderBasket(plan, { count: 50 })).toContain("--count is already at its ceiling of 50");
-    expect(renderBasket(plan, { count: 50 })).not.toContain("Raise --count");
-    expect(renderBasket(plan, { count: 20 })).toContain("Raise --count to widen it.");
+    // A LOOK that is actually partial — the fixture's `looked` is what decides,
+    // and round 11 made this render read it. Round 10 keyed on the count alone,
+    // so it printed "Raise --count to widen it." under a complete look too.
+    const partial = fillToBudget(
+      [line({ term: "arroz", price: 3_000, compared: 2, matched: 40, looked: 12 })],
+      100_000_000,
+    );
+    expect(renderBasket(partial, { count: 50 })).toContain(
+      "--count is already at its ceiling of 50",
+    );
+    expect(renderBasket(partial, { count: 50 })).not.toContain("Raise --count");
+    expect(renderBasket(partial, { count: 20 })).toContain("Raise --count to widen the page look.");
     // Unspecified means the default of 12, which is below the ceiling.
-    expect(renderBasket(plan)).toContain("Raise --count to widen it.");
+    expect(renderBasket(partial)).toContain("Raise --count to widen the page look.");
+
+    // ...and a COMPLETE look gets no widening advice at all, at any count.
+    // Live: `d1 basket atun` prints "best of 10 compared" — every product D1
+    // matched — and used to tell the reader to raise a flag that fetches
+    // nothing more.
+    const whole = fillToBudget(
+      [line({ term: "atun", price: 3_000, compared: 10, matched: 10, looked: 10 })],
+      100_000_000,
+    );
+    expect(renderBasket(whole)).not.toContain("--count");
+    expect(renderBasket(whole, { count: 50 })).not.toContain("--count");
+
+    // ...and a partial SWEEP says the sweep cannot be widened, rather than
+    // pointing at a flag that no longer reaches it. Live: `d1 basket servipan`
+    // sweeps 50 of 52 identically at every count.
+    const swept = fillToBudget(
+      [
+        line({
+          term: "servipan",
+          price: 3_000,
+          status: "filled-by-substitute",
+          compared: 41,
+          matched: 1,
+          looked: 1,
+          substituteSweep: true,
+          swept: 50,
+          categoryTotal: 52,
+        }),
+      ],
+      100_000_000,
+    );
+    const sweptOut = renderBasket(swept);
+    expect(sweptOut).toContain("The category sweep reads one page and --count does not widen it.");
+    expect(sweptOut).not.toContain("Raise --count");
+  });
+
+  test("main() passes the region through to BOTH renders, not just the unbranded one", async () => {
+    // The fourth instance of one shape, found by mutation after three of its
+    // siblings had been fixed: `renderComparison` was given a `regionId` and
+    // tested with and without one, and nothing checked that `case "basket"`
+    // supplies it. Dropping the argument at the call site survives every
+    // render-level test and silently deletes the NATIONAL warning again.
+    const real = globalThis.fetch;
+    const log = console.log;
+    const cfg = process.env.D1_CONFIG_DIR;
+    const lines: string[] = [];
+    console.log = (...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    };
+    // An EMPTY config dir, or the developer's own stored region resolves the
+    // delivery point and the caveat correctly does not print — a green test
+    // that proves nothing, which is how this class keeps surviving.
+    process.env.D1_CONFIG_DIR = join(
+      process.env.TMPDIR ?? "/tmp",
+      `d1-region-${process.pid}-${Math.trunc(performance.now())}`,
+    );
+    try {
+      globalThis.fetch = (async (url: string) => {
+        const u = new URL(String(url));
+        if (u.pathname.includes("catalog_system")) {
+          return new Response(JSON.stringify(sourceSku("1", "LECHE OTRA")), { status: 200 });
+        }
+        if (u.pathname.includes("intelligent-search/product_search")) {
+          const isSweep =
+            u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+            "";
+          const products = isSweep
+            ? []
+            : [
+                wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" }),
+                wire("2", "LECHE LATTI", { price: 3_090, brand: "LATTI" }),
+              ];
+          return new Response(JSON.stringify({ products, recordsFiltered: products.length }), {
+            status: 200,
+          });
+        }
+        // The region lookup. It answers only when coordinates were sent, which
+        // is what makes the two halves of this test differ.
+        if (u.pathname.includes("checkout/pub/regions")) {
+          const hasPoint = u.searchParams.get("country") !== null || u.search.includes("lat");
+          return new Response(
+            JSON.stringify(hasPoint ? [{ id: "v2.TESTREGION", sellers: [{ id: "1" }] }] : []),
+            { status: 200 },
+          );
+        }
+        return new Response("[]", { status: 200 });
+      }) as unknown as typeof fetch;
+
+      lines.length = 0;
+      await main(["basket", "--budget", "100000", "--brand", "LATTI", "leche"]);
+      expect(lines.join("\n")).toContain("these are NATIONAL prices and stock");
+
+      // ...and the polarity that makes the check mean something.
+      //
+      // Without it both arms resolve to `regionId: undefined` and the mutation
+      // `renderComparison(cmp, {})` is INDISTINGUISHABLE — proven: it survived
+      // the negative-only version of this test. A wiring check has to observe
+      // the value arriving, not merely the absence of one.
+      lines.length = 0;
+      await main([
+        "basket",
+        "--budget",
+        "100000",
+        "--brand",
+        "LATTI",
+        "leche",
+        "--lat",
+        "4.75068",
+        "--lng",
+        "-74.03532",
+      ]);
+      expect(lines.join("\n")).not.toContain("NATIONAL");
+    } finally {
+      globalThis.fetch = real;
+      console.log = log;
+      // `Reflect.deleteProperty`, not `delete` — biome's `noDelete` rejects the
+      // operator, and `= undefined` would leave the literal string "undefined"
+      // as the config path, which is worse than either.
+      if (cfg === undefined) Reflect.deleteProperty(process.env, "D1_CONFIG_DIR");
+      else process.env.D1_CONFIG_DIR = cfg;
+    }
   });
 
   test("main() itself returns the comparison's exit code, not the plan's", async () => {
@@ -3510,5 +3731,377 @@ describe("both looks, not one [BRO-2079 round 10]", () => {
     } finally {
       globalThis.fetch = real;
     }
+  });
+});
+
+describe("the second call site [BRO-2079 round 11]", () => {
+  /**
+   * Every test here exists because a mutation SURVIVED 579 green tests.
+   *
+   * Round 10 applied four fixes at two call sites each and tested one of each
+   * pair. That is this arc's oldest shape wearing its newest costume: the
+   * round's own `main()` test was written because "`comparisonExit` was
+   * extracted to be testable and then only ever tested in isolation", and the
+   * identical omission was committed eight lines away for the sibling branch of
+   * the same `switch`.
+   */
+
+  /** A client that records the `count` every CATEGORY sweep asks for. */
+  function countRecorder(opts: { pageProducts: unknown[]; sweep: (n: number) => unknown[] }) {
+    const counts: number[] = [];
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("1", "P 1")), { status: 200 });
+      }
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        const isSweep =
+          u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+          "";
+        if (isSweep) {
+          const n = Number(u.searchParams.get("count"));
+          counts.push(n);
+          const products = opts.sweep(n);
+          return new Response(JSON.stringify({ products, recordsFiltered: 41 }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({
+            products: opts.pageProducts,
+            recordsFiltered: opts.pageProducts.length,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+    return { client: new D1Client({ fetchImpl: impl }), counts };
+  }
+
+  test("`bestSubstitute` does not narrow its sweep either — the UNBRANDED path", async () => {
+    // The `--count` fix landed at two `findSubstitutes` call sites. Only
+    // `brandLine`'s was tested, and re-adding `count: opts.count` to
+    // `bestSubstitute` survived the whole suite — while reproducing this very
+    // round's headline blocker on plain `d1 basket`, with no `--brand` in
+    // sight: the only priced replacement sits past index 12, so at the page's
+    // own default the line flips to `nothing-in-stock` and the command exits 3.
+    const { client, counts } = countRecorder({
+      // Out of stock, so the stock-substitute path runs.
+      pageProducts: [wire("1", "P 1", { price: 4_000, available: false })],
+      sweep: (n) =>
+        Array.from({ length: Math.min(n, 41) }, (_, i) =>
+          // Only the 21st is buyable; everything before it is out of stock.
+          wire(`s${i}`, `SUB ${i}`, { price: i === 20 ? 5_000 : 0, available: i === 20 }),
+        ),
+    });
+    const plan = await buildBasket(client, ["pan"], 100_000_000, { count: 12 });
+    expect(counts).toEqual([50]);
+    expect(plan.lines[0]?.status).toBe("filled-by-substitute");
+    expect(basketExit(plan.lines)).toBe(0);
+  });
+
+  test("`partialSweep` dedupes repeated terms too, not just `partialLook`", async () => {
+    // `distinctTerms` is called from both. Only `partialLook`'s use was
+    // asserted, so reverting the other printed "20 of the 82" for a category
+    // holding 41 — the round's own named defect, on the denominator it added.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" })],
+        sku: sourceSku("1", "LECHE OTRA"),
+        sweep: Array.from({ length: 10 }, (_, i) =>
+          wire(`s${i}`, `OTRO ${i}`, { price: 4_000 + i, brand: "OTRA" }),
+        ),
+        sweepTotal: 41,
+      }),
+      ["leche", "leche"],
+      100_000_000,
+      { brand: "ALPIN" },
+    );
+    expect(c.rows).toHaveLength(2);
+    expect(c.sweepPartial).toEqual({ terms: 1, swept: 10, categoryTotal: 41 });
+    const out = renderComparison(c, { regionId: "v2.ABC" });
+    expect(out).toContain("10 of the 41 in the category around them");
+    expect(out).not.toContain("82");
+  });
+
+  test("the brands hint hoists a differently-ACCENTED spelling past the cut", async () => {
+    // `requestedFirst`'s docstring says the comparison is on `normalizeBrand`
+    // "so an accent or a case difference still counts as the same brand here",
+    // and nothing tested it — the one test used an exact spelling. Comparing on
+    // the raw string instead survives, and emits the exact pair FORBIDDEN rule 2
+    // forbids, on the very brand round 10's accent fix is about.
+    const many = [
+      wire("99", "AREPA TRADICION", { price: 0, brand: "TRADICIÓN 1915" }),
+      ...Array.from({ length: 20 }, (_, i) =>
+        wire(String(i), `P ${i}`, { price: 0, brand: `B${String(i).padStart(2, "0")}` }),
+      ),
+    ];
+    const c = await compareBaskets(
+      fakeClient({ search: many, sku: sourceSku("99", "P 99"), sweep: [] }),
+      ["arepa"],
+      100_000_000,
+      { brand: "TRADICION 1915" },
+    );
+    const listLine = renderComparison(c, { regionId: "v2.ABC" })
+      .split("\n")
+      .find((l) => l.startsWith("Brands "));
+    // Alphabetically it sorts last of 21 and would fall past the twelve-brand
+    // cut; the hint exists to surface exactly this near-miss.
+    expect(listLine).toContain("TRADICIÓN 1915");
+    expect(listLine).toContain("and 9 more");
+  });
+
+  test("DEFAULT_COUNT is the 12 the whole scope narrative rests on", () => {
+    // Unpinned: `grep -r "count=12" test/` returned nothing, so the number half
+    // of "the search page 12, the sweep 50" could be changed silently.
+    expect(DEFAULT_COUNT).toBe(12);
+    expect(pageCount(undefined)).toBe(12);
+    expect(pageCount(200)).toBe(MAX_COUNT);
+    expect(MAX_COUNT).toBe(50);
+  });
+
+  test("adding --brand does not delete the national-catalogue warning", async () => {
+    // `renderBasket` and `renderSubstitutes` have carried this since release;
+    // `renderComparison` is the third caller and took no `regionId` at all, so
+    // adding `--brand` to a working command dropped the warning on the axis
+    // this skill treats as its most dangerous. Unregioned, the branded run
+    // priced a national-only SKU and said "each is one a shopper could have
+    // bought".
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "PAN OTRA", { price: 2_700, brand: "OTRA" }),
+          wire("2", "PAN SERVIPAN", { price: 5_450, brand: "SERVIPAN" }),
+        ],
+      }),
+      ["pan"],
+      100_000_000,
+      { brand: "SERVIPAN" },
+    );
+    expect(renderComparison(c)).toContain("these are NATIONAL prices and stock");
+    expect(renderComparison(c, { regionId: "v2.ABC" })).not.toContain("NATIONAL");
+  });
+
+  test("the headline names its QUANTIFIER when the brand is not on every term", async () => {
+    // Round 10's blocker, found live by two reviewers. `brandReturnedIn` was a
+    // `some()` over every line of both plans, printed as "for these terms".
+    let searches = 0;
+    const impl = (async (url: string) => {
+      const u = new URL(String(url));
+      if (u.pathname.includes("catalog_system")) {
+        return new Response(JSON.stringify(sourceSku("1", "P")), { status: 200 });
+      }
+      if (u.pathname.includes("intelligent-search/product_search")) {
+        const isSweep =
+          u.pathname.replace(/\/api\/io\/_v\/api\/intelligent-search\/product_search\/?/, "") !==
+          "";
+        if (isSweep) {
+          return new Response(JSON.stringify({ products: [], recordsFiltered: 0 }), {
+            status: 200,
+          });
+        }
+        searches++;
+        // `leche` carries an unbuyable NF; `arroz` carries none of it at all.
+        const products =
+          searches % 2 === 1
+            ? [
+                wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" }),
+                wire("2", "LECHE NF", { price: 0, brand: "NF" }),
+              ]
+            : [wire("1", "ARROZ OTRA", { price: 3_000, brand: "OTRA" })];
+        return new Response(JSON.stringify({ products, recordsFiltered: products.length }), {
+          status: 200,
+        });
+      }
+      return new Response("[]", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const mixed = await compareBaskets(
+      new D1Client({ fetchImpl: impl }),
+      ["leche", "arroz"],
+      100_000_000,
+      { brand: "NF" },
+    );
+    expect(mixed.brandReturnedIn).toEqual({ where: "page", terms: "some" });
+    const out = renderComparison(mixed, { regionId: "v2.ABC" });
+    expect(out).toContain("D1 returned NF for some of these terms");
+    expect(out).not.toContain("D1 returned NF for these terms");
+    // ...and the per-term line it used to contradict is still there.
+    expect(out).toContain(
+      "Not counted — neither its page nor its category holds any NF, for: arroz.",
+    );
+  });
+
+  test("...and drops the hedge when the brand IS on every term", async () => {
+    // The other polarity: "for some of these terms" must not become a
+    // permanent hedge, or the quantifier stops carrying information.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" }),
+          wire("2", "LECHE NF", { price: 0, brand: "NF" }),
+        ],
+        sku: sourceSku("1", "LECHE OTRA"),
+        sweep: [],
+      }),
+      ["leche", "leche"],
+      100_000_000,
+      { brand: "NF" },
+    );
+    expect(c.brandReturnedIn).toEqual({ where: "page", terms: "all" });
+    expect(renderComparison(c, { regionId: "v2.ABC" })).toContain(
+      "D1 returned NF for these terms,",
+    );
+  });
+
+  test("no sentence claims the whole store", async () => {
+    // The widest instance of the arc's one defect, and live-false: the same run
+    // denied NATURAL FEELING while `d1 search jabon` returns eight buyable
+    // NATURAL FEELING products at that store — with exit 3, so the false
+    // universal was the machine-readable answer too. The evidence this CLI can
+    // hold is some terms' pages and some categories; it never holds the store.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "LECHE OTRA", { price: 3_000, brand: "OTRA" }),
+          wire("2", "LECHE NF", { price: 0, brand: "NF" }),
+        ],
+        sku: sourceSku("1", "LECHE OTRA"),
+        sweep: [],
+      }),
+      ["leche"],
+      100_000_000,
+      { brand: "NF" },
+    );
+    const out = renderComparison(c, { regionId: "v2.ABC" });
+    expect(out).not.toContain("at this store");
+    expect(out).toContain("but nothing of it that was searched can be bought here.");
+    expect(out).toContain("nothing of it there is buyable");
+  });
+
+  test("a cheaper pack that is dearer per unit is not reported as a saving", async () => {
+    // Round 10's guard keyed on the measure NAME, which is neither necessary
+    // nor sufficient. Live: `--brand COPELIA leche --count 50` reported COPELIA
+    // $ 3.500 cheaper — a 23 g cocada at $ 39.130/kg against bread rolls at
+    // $ 10.000/kg. Both sides said "per kg", so nothing fired.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "PAN LECHE HORNEADITOS 440 G", {
+            price: 4_400,
+            brand: "OTRA",
+            unit: "Gr",
+            value: "440",
+          }),
+          wire("2", "COCADA LECHE PANELA COPELIA 23 GR", {
+            price: 900,
+            brand: "COPELIA",
+            unit: "Gr",
+            value: "23",
+          }),
+        ],
+      }),
+      ["leche"],
+      100_000_000,
+      { brand: "COPELIA" },
+    );
+    expect(c.base.lines[0]?.rankedOn).toBe("kg");
+    expect(c.alt.lines[0]?.rankedOn).toBe("kg");
+    const out = renderComparison(c, { regionId: "v2.ABC" });
+    expect(out).toContain("NOT like for like (leche: cheaper pack, dearer per kg)");
+  });
+
+  test("...and a genuinely cheaper pack at a cheaper unit price is left alone", async () => {
+    // The polarity that stops the guard becoming a permanent hedge.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "LECHE OTRA 900 ML", { price: 4_400, brand: "OTRA", unit: "ml", value: "900" }),
+          wire("2", "LECHE LATTI 900 ML", {
+            price: 3_090,
+            brand: "LATTI",
+            unit: "ml",
+            value: "900",
+          }),
+        ],
+      }),
+      ["leche"],
+      100_000_000,
+      { brand: "LATTI" },
+    );
+    expect(renderComparison(c, { regionId: "v2.ABC" })).not.toContain("NOT like for like");
+  });
+
+  test("a REPLACEMENT is flagged as not like for like, whatever it was ranked on", async () => {
+    // `--brand DULCRALIGHT arroz` put a 180 g sweetener jar against 2 kg of
+    // rice and called it $ 560 cheaper. The substitute side has no `rankedOn`
+    // at all, so a measure check could never see it.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          wire("1", "ARROZ DIANA 500 G", {
+            price: 5_550,
+            brand: "DIANA",
+            unit: "Gr",
+            value: "2000",
+          }),
+        ],
+        sku: sourceSku("1", "ARROZ DIANA 500 G"),
+        sweep: [wire("9", "ENDULZANTE FRASCO 180 GRS", { price: 4_990, brand: "DULCRALIGHT" })],
+      }),
+      ["arroz"],
+      100_000_000,
+      { brand: "DULCRALIGHT" },
+    );
+    expect(c.alt.lines[0]?.status).toBe("filled-by-substitute");
+    expect(renderComparison(c, { regionId: "v2.ABC" })).toContain(
+      "NOT like for like (arroz: one side is a replacement)",
+    );
+  });
+
+  test("a budget refusal on the base side is not reported as a fact about D1", async () => {
+    // "only LATTI could fill" printed while the unconstrained line was
+    // `over-budget` carrying `affordableAlternatives: 2` — the CLI had already
+    // computed that two cheaper non-LATTI products would have fitted, and the
+    // unbranded twin of the same command says so out loud.
+    const c = await compareBaskets(
+      fakeClient({
+        search: [
+          // Best VALUE and unaffordable: $ 3/ml, but a $ 9.000 pack.
+          wire("1", "LECHE GARRAFA", { price: 9_000, brand: "OTRA", unit: "ml", value: "3000" }),
+          // Affordable and worse value — one of the two the base line reports
+          // as "would have fitted".
+          wire("2", "LECHE MEDIA", { price: 3_400, brand: "OTRA", unit: "ml", value: "300" }),
+          wire("3", "LECHE LATTI", { price: 3_090, brand: "LATTI", unit: "ml", value: "900" }),
+        ],
+      }),
+      ["leche"],
+      350_000,
+      { brand: "LATTI" },
+    );
+    expect(c.base.lines[0]?.status).toBe("over-budget");
+    expect(c.onlyAlt[0]?.baseStatus).toBe("over-budget");
+    const out = renderComparison(c, { regionId: "v2.ABC" });
+    expect(out).toContain("LATTI fitted the budget and the best-value pick did not");
+    expect(out).not.toContain("only LATTI could fill");
+  });
+
+  test("'D1 returned nothing at all' is not said of a term D1 returned things for", () => {
+    // `altNoMatch` folded `nothing-in-stock` in, and its filter requires the
+    // base line to be filled — so the sentence always printed beside that
+    // term's own price, and since round 10 beside a named product too.
+    const c = crossFromPlans(
+      ["leche"],
+      fillToBudget([line({ term: "leche", price: 100_000 })], 10_000_000),
+      fillToBudget(
+        [line({ term: "leche", status: "nothing-in-stock", price: undefined })],
+        10_000_000,
+      ),
+      { brand: "LATTI" },
+    );
+    expect(c.altNoMatch).toEqual([]);
+    expect(c.altNothingInStock).toEqual(["leche"]);
+    const out = renderComparison(c, { regionId: "v2.ABC" });
+    expect(out).toContain("D1 returned products for this but none of them in LATTI, for: leche.");
+    expect(out).not.toContain("D1 returned nothing at all for: leche");
   });
 });

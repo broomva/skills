@@ -34,7 +34,15 @@ import {
   undeliverable,
   useSavedAddress,
 } from "./cart.ts";
-import { assertSkuId, categoryTree, facets, search, suggest, topSearches } from "./catalog.ts";
+import {
+  MAX_COUNT,
+  assertSkuId,
+  categoryTree,
+  facets,
+  search,
+  suggest,
+  topSearches,
+} from "./catalog.ts";
 import { D1Client } from "./client.ts";
 import { formatCOP } from "./money.ts";
 import { getOrder, listOrders, orderForDisplay } from "./orders.ts";
@@ -293,14 +301,20 @@ export function comparisonExit(cmp: CrossBasket): number {
   // (`--brand ALPIN leche` is empty at the default and $ 10.150 at --count 40).
   // An agent branching on 3 would record a fact the prose beside it denies.
   //
-  // BOTH looks, because `no-brand-match` — the status that produces this 3 —
-  // is decided by the CATEGORY SWEEP and not by the page. Round 7 fixed the
-  // page axis and round 9 found the identical defect on the axis beside it:
-  // `--brand QUAKER arroz --count 12` swept 10 of 41, missed a QUAKER product
-  // priced at $ 4.950, and exited 3. The page look was complete, so `partial`
-  // was undefined and this guard did not fire. Same rule, second denominator.
-  if (code === 3 && (cmp.partial || cmp.sweepPartial)) return 0;
-  return code;
+  // Round 11 states the rule instead of enumerating cases: 3 asserts that NO
+  // retry helps, so it is wrong exactly when the shopper still has a lever.
+  // There are two, and the previous formulation got both wrong in opposite
+  // directions. It suppressed 3 for a partial CATEGORY sweep, which `--count`
+  // no longer reaches and which is hard-capped at 50 — so a one-product
+  // shortfall forced exit 0 forever, and the exit code came to depend on
+  // category size rather than on the answer. And it kept 3 for an all-
+  // `over-budget` branded basket, where `--budget 5000` exits 3 and
+  // `--budget 11000` fills: a fact about the wallet, reported as a fact about
+  // the shelf, one line under prose that says otherwise.
+  if (code !== 3) return code;
+  const canWiden = cmp.partial !== undefined && cmp.count < MAX_COUNT;
+  const canSpendMore = cmp.alt.lines.some((l) => l.status === "over-budget");
+  return canWiden || canSpendMore ? 0 : 3;
 }
 
 export function basketExit(lines: readonly BasketLine[]): number {
@@ -653,7 +667,11 @@ async function main(argv: string[]): Promise<number> {
 
       if (brand !== undefined) {
         const cmp = await compareBaskets(client, terms, budget, { ...opts, brand });
-        console.log(asJson ? json({ ...cmp, regionId: region?.id }) : renderComparison(cmp));
+        console.log(
+          asJson
+            ? json({ ...cmp, regionId: region?.id })
+            : renderComparison(cmp, { regionId: region?.id }),
+        );
         return comparisonExit(cmp);
       }
 
