@@ -474,6 +474,24 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
           : "          chosen on pack price — D1 publishes no size for any of these",
       );
     }
+    // How the name-narrowing affected this line. Said per line, because it is a
+    // property of THIS line's evidence and not of the basket.
+    //
+    // Both arms print. Disclosing only the empty case is what let `pasta` hand
+    // back a kitchen utensil in silence.
+    if (l.termFilter === "none-matched") {
+      out.push(
+        `          nothing D1 returned for "${sanitize(l.term)}" is named after it — this may not be what you meant`,
+      );
+    } else if (l.termFilter === "changed-pick" && l.widePick) {
+      // States what happened and names what was displaced. Deliberately NOT a
+      // warning: narrowing moves the pick on the terms it FIXES as often as on
+      // the terms it breaks, so "this may not be what you meant" would be false
+      // on most lines it appears on. The reader can see which case this is.
+      out.push(
+        `          narrowed to products named "${sanitize(l.term)}" — without that this line would be ${sanitize(l.widePick.name)}`,
+      );
+    }
     if (l.replaces) {
       out.push(
         `          replaces ${sanitize(l.replaces.skuId)} ${sanitize(l.replaces.name)}, which D1 cannot supply here`,
