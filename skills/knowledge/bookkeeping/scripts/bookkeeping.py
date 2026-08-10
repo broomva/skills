@@ -2748,10 +2748,16 @@ def _coerce_temporal_date(value: object) -> "date | None":
     if isinstance(value, date):
         return value
     if isinstance(value, str):
+        raw = value.strip()
         try:
-            return date.fromisoformat(value[:10])
+            return date.fromisoformat(raw)
         except ValueError:
-            return None
+            if raw.endswith("Z"):
+                raw = f"{raw[:-1]}+00:00"
+            try:
+                return datetime.fromisoformat(raw).date()
+            except ValueError:
+                return None
     return None
 
 

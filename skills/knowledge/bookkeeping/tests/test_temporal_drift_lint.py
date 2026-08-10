@@ -63,6 +63,11 @@ def test_invalid_and_future_content_dates_do_not_make_updated_stale():
     ) == []
 
 
+def test_updated_date_parser_rejects_valid_prefix_with_invalid_suffix():
+    assert bookkeeping._coerce_temporal_date("2026-08-09-invalid") is None
+    assert bookkeeping._coerce_temporal_date("2026-08-09T14:30:00Z") == AUDIT_DATE
+
+
 def test_catalog_visible_current_state_claim_needs_inline_as_of_date():
     errors = _lint({
         "updated": "2026-08-09",

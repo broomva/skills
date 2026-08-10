@@ -202,7 +202,7 @@ reconciliation.
 
 ### Verification checkpoint — 2026-08-09
 
-- 330 Bookkeeping pytest cases passed after repairing one pre-existing
+- 331 Bookkeeping pytest cases passed after repairing one pre-existing
   wall-clock-dependent retention fixture.
 - 50 retrieval benchmark tests passed.
 - Skill-version lint and `git diff --check` passed.
