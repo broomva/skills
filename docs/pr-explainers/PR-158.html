@@ -1,0 +1,181 @@
+<!doctype html>
+<!--
+---
+title: "PR #158 — Typed temporal revision metadata"
+kind: pr-explainer
+status: review
+date: 2026-08-10
+repository: broomva/skills
+pull_request: 158
+issue: 156
+related:
+  - "[[refuse-never-repair]]"
+  - "[[belief-revision-graph-as-fourth-dimension]]"
+  - "[[chronos-temporal-primitive]]"
+---
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PR #158 — Typed temporal revision metadata</title>
+  <style>
+    :root { color-scheme: dark; --ink:#f3f0e8; --muted:#aaa79f; --panel:#161b22; --line:#303842; --amber:#f4b942; --mint:#72d6ad; --blue:#76a9fa; --rose:#f08c8c; --bg:#0b0f14; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+    main { width:min(1080px,calc(100% - 32px)); margin:0 auto; padding:56px 0 72px; }
+    header { display:grid; gap:18px; grid-template-columns:minmax(0,1.5fr) minmax(240px,.7fr); align-items:end; border-bottom:1px solid var(--line); padding-bottom:32px; }
+    .eyebrow { color:var(--amber); font:600 12px/1.2 ui-monospace,SFMono-Regular,monospace; letter-spacing:.13em; text-transform:uppercase; }
+    h1 { font-size:clamp(2.4rem,7vw,5.8rem); line-height:.94; letter-spacing:-.055em; margin:10px 0 16px; max-width:850px; }
+    h2 { font-size:clamp(1.45rem,3vw,2.2rem); letter-spacing:-.025em; margin:0 0 18px; }
+    p { margin:0 0 14px; }
+    .lede { font-size:clamp(1.1rem,2vw,1.35rem); color:#d8d4ca; max-width:700px; }
+    .stamp { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:20px; }
+    .stamp strong { display:block; color:var(--mint); font-size:1.15rem; margin-bottom:8px; }
+    section { padding:38px 0; border-bottom:1px solid var(--line); }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+    .grid-4 { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; }
+    .card h3 { margin:0 0 8px; font-size:1rem; }
+    .card p, .small { color:var(--muted); font-size:.92rem; }
+    .metric { font-size:2.35rem; line-height:1; letter-spacing:-.04em; color:var(--mint); margin:8px 0; }
+    .flow { display:grid; grid-template-columns:1fr auto 1fr auto 1fr; gap:12px; align-items:stretch; }
+    .flow .node { border:1px solid var(--line); border-radius:14px; padding:18px; background:var(--panel); }
+    .arrow { align-self:center; color:var(--amber); font-size:1.5rem; }
+    code { font-family:ui-monospace,SFMono-Regular,monospace; background:#202733; border-radius:5px; padding:.12em .35em; color:#dce9ff; }
+    .boundary { border-left:4px solid var(--amber); padding:4px 0 4px 20px; max-width:850px; }
+    .split { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    ul { margin:10px 0 0; padding-left:20px; }
+    li + li { margin-top:7px; }
+    .yes { border-top:3px solid var(--mint); }
+    .later { border-top:3px solid var(--blue); }
+    .held { border-top:3px solid var(--rose); }
+    .scroll { overflow-x:auto; }
+    table { border-collapse:collapse; width:100%; min-width:520px; font-size:.94rem; }
+    th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--amber); font:600 12px/1.2 ui-monospace,SFMono-Regular,monospace; letter-spacing:.1em; text-transform:uppercase; }
+    footer { padding-top:30px; color:var(--muted); font-size:.85rem; }
+    @media (max-width:760px) { header,.grid,.grid-4,.split { grid-template-columns:1fr; } .flow { grid-template-columns:1fr; } .arrow { transform:rotate(90deg); justify-self:center; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">Bookkeeping · PR #158 · producer-first</div>
+      <h1>Give the detector something true to check.</h1>
+      <p class="lede">PR #151 could see that a page asserted mutable state without a date. It could never say which belief was current. That answer has to be written, not inferred — so this builds the writers first.</p>
+    </div>
+    <aside class="stamp" aria-label="Review status">
+      <strong>426 tests · 37/37 mutations killed</strong>
+      <span class="small">Green on Python 3.11 and 3.12. Four rounds of cross-model adversarial review (codex-cli, gpt-5.4), scoring 3 → 4 → 5. Three findings held unfixed and documented rather than closed.</span>
+    </aside>
+  </header>
+
+  <section aria-labelledby="why">
+    <h2 id="why">A detector cannot decide what is true. Only a producer can.</h2>
+    <div class="grid">
+      <article class="card"><h3>What #151 proved</h3><p>Stale <code>updated</code> dates and undated mutable claims are mechanically visible. 96 findings across 91 entities, all warnings.</p></article>
+      <article class="card"><h3>What it could not</h3><p>Whether a newer claim supersedes an older one. No amount of regex over present-tense prose answers that — it is a decision somebody made, not a property of the text.</p></article>
+      <article class="card"><h3>The sequencing rule</h3><p>Requiring the fields before any writer emits them would have produced compliance theater: a schema whose guarantees nothing supplies.</p></article>
+    </div>
+  </section>
+
+  <section aria-labelledby="fields">
+    <h2 id="fields">Four fields, four different provenance rules</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Field</th><th>Clock</th><th>Who may write it</th></tr></thead>
+        <tbody>
+          <tr><td><code>recorded_at</code></td><td>System time — when the graph recorded this state</td><td><code>promote</code>, mechanically. Never operator-supplied.</td></tr>
+          <tr><td><code>valid_from</code></td><td>Claim-effective time — when the claim became true</td><td>Only a source or revision that <em>supplies</em> it. One metadata key, no fuzzy aliasing.</td></tr>
+          <tr><td><code>supersedes</code></td><td>—</td><td><code>revise</code> / <code>merge</code> only.</td></tr>
+          <tr><td><code>revision_link</code></td><td>—</td><td><code>revise</code> / <code>merge</code> only. A <strong>list</strong>, one entry per authorizing record.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="boundary"><strong>The rule the whole change enforces:</strong> no field here may be produced by reading prose. Promotion never emits <code>supersedes</code>, however emphatically the content says “this replaces X”. An absent <code>valid_from</code> is a truthful “not stated”; a defaulted one would assert that every claim became true on its promotion date.</p>
+  </section>
+
+  <section aria-labelledby="flow">
+    <h2 id="flow">Where the envelope comes from</h2>
+    <div class="flow" role="img" aria-label="Promotion stamps system time; explicit corrections emit supersession; the audit reads what they wrote">
+      <div class="node"><strong>promote</strong><br><span class="small">stamps <code>recorded_at</code>; writes <code>valid_from</code> only if supplied</span></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><strong>revise / merge</strong><br><span class="small">the only emitters of <code>supersedes</code> + <code>revision_link</code></span></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><strong>lint --temporal</strong><br><span class="small">warning-only checks on what the writers actually wrote</span></div>
+    </div>
+    <p class="small"><code>merge</code> matters here: without it the envelope would have a producer and no real caller — the schema-with-no-writer failure this phase exists to avoid. A merge <em>is</em> a correction, so the canonical now supersedes the dup with the tombstone as its authorizing record.</p>
+  </section>
+
+  <section aria-labelledby="churn">
+    <h2 id="churn">Two invariants that cost the most care</h2>
+    <div class="split">
+      <article class="card yes">
+        <h3><code>recorded_at</code> is volatile</h3>
+        <p>It is excluded from the content-identity comparison, so it can never itself trigger a write. Without that, every page would differ from its own update candidate on every run — the 137-entities-churned pathology the guard was built to kill — and the field would degrade into a “last run” stamp.</p>
+      </article>
+      <article class="card yes">
+        <h3>Legacy pages are not backfilled</h3>
+        <p>The update path cannot know when a pre-envelope page was recorded. Backfilling would not churn the graph — volatility prevents that — which is precisely what would make the mis-stamping quiet: today’s date landing on the arbitrary subset of old pages that happen to acquire an unrelated edit.</p>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="refuse">
+    <h2 id="refuse">Refuse, never repair</h2>
+    <p>Both correction workflows read the existing envelope before rewriting it. A value they cannot read <em>exactly</em> is a value they would destroy, so they refuse and leave the repair to a human.</p>
+    <div class="grid-4">
+      <article class="card"><h3>Non-canonical entry</h3><p class="small">A bare slug or truncated wikilink is refused, not silently canonicalised.</p></article>
+      <article class="card"><h3>Duplicate key</h3><p class="small">YAML keeps only the last, so a read-then-write would erase the earlier declaration.</p></article>
+      <article class="card"><h3>Blank link entry</h3><p class="small">A slot somebody meant to fill — dropping it on rewrite is the same silent repair.</p></article>
+      <article class="card"><h3>No frontmatter</h3><p class="small">Every setter would no-op while the command reported success.</p></article>
+    </div>
+    <p class="boundary"><strong>The corollary the review forced:</strong> the audit and the writer may disagree in exactly one direction. The audit warns where the writer refuses — never the reverse. A gate that passes what the thing it gates rejects is not a gate.</p>
+  </section>
+
+  <section aria-labelledby="review">
+    <h2 id="review">Four rounds, and what they cost</h2>
+    <div class="grid-4">
+      <article class="card"><div class="eyebrow">Round 1</div><div class="metric" style="color:var(--rose)">3/10</div><p>16 findings, one a YAML-injection BLOCKER in <code>revision_link</code>.</p></article>
+      <article class="card"><div class="eyebrow">Round 2</div><div class="metric" style="color:var(--rose)">4/10</div><p>13 of 16 confirmed fixed; 7 new. Duplicate keys read-then-destroyed.</p></article>
+      <article class="card"><div class="eyebrow">Round 3</div><div class="metric" style="color:var(--amber)">5/10</div><p>6 new. One was a corruption path introduced by round 3’s <em>own</em> abort logic.</p></article>
+      <article class="card"><div class="eyebrow">Round 4</div><div class="metric">ship</div><p>Fixes landed. Scores climbed monotonically; findings narrowed from architecture to edges.</p></article>
+    </div>
+    <p class="small">Round 4 exceeded the three-round budget deliberately. <code>merge</code> repointed every inbound wikilink <em>before</em> validating the canonical, so the abort paths round 3 had just added left third-party pages pointing at a canonical that never got merged. Shipping known corruption to satisfy a round counter is the wrong reading of the gate.</p>
+    <p class="small">The mutation suite carries its own scar: the first “merge validates after repointing” mutation inserted a no-op instead of reordering the work, and reported a <em>false</em> SURVIVED. A mutation that applies but is semantically inert proves exactly as much as one that never applied.</p>
+  </section>
+
+  <section aria-labelledby="held">
+    <h2 id="held">Three findings held, not closed</h2>
+    <div class="grid">
+      <article class="card held"><h3>Entry-to-link binding</h3><p><code>supersedes</code> and <code>revision_link</code> are parallel sets, not pairs. Round 2 stopped the data <em>loss</em>; what remains is expressiveness. A per-entry schema is better designed against real revisions than in advance.</p></article>
+      <article class="card held"><h3>Concurrent writes</h3><p>Read-modify-write with no lock. Shared by <code>promote</code>, <code>merge</code>, and <code>lint --fix</code>; hardening one command would buy a false sense of safety.</p></article>
+      <article class="card held"><h3>Non-UTF-8 bytes</h3><p><code>errors="replace"</code> is the codebase-wide idiom. Not introduced here, and not quietly fixed in one path.</p></article>
+    </div>
+    <p class="small">All three are written into <code>references/temporal-revision-envelope.md</code> § Known limitations. A limitation stated is a limitation a reader can plan around; a limitation implied away is a lie with a longer fuse.</p>
+  </section>
+
+  <section aria-labelledby="calibration">
+    <h2 id="calibration">What the receipt proves — and what it does not</h2>
+    <div class="grid">
+      <article class="card"><div class="eyebrow">Corpus</div><div class="metric">941</div><p>entity pages, read-only, candidate vs merged measured in one pass</p></article>
+      <article class="card"><div class="eyebrow">Baseline</div><div class="metric">0</div><p>change to default lint output, and to the 68 + 29 temporal-audit findings</p></article>
+      <article class="card"><div class="eyebrow">Envelope</div><div class="metric">0</div><p>findings — because no entity carries the fields yet</p></article>
+    </div>
+    <p class="boundary"><strong>This receipt proves parity, not precision.</strong> The new checks contribute nothing by construction, so their precision and recall on real revisions are unmeasured. Everything stays optional and warning-only; a hard gate remains blocked on that measurement plus an independent cross-review — the same bar #151 set for itself, now with two of its three conditions met and the third explicitly not.</p>
+  </section>
+
+  <section aria-labelledby="next">
+    <h2 id="next">What becomes possible next</h2>
+    <div class="split">
+      <article class="card yes"><h3>Safe now</h3><p>Record real corrections with <code>revise</code>. Every merge starts emitting typed provenance automatically. The audit begins accumulating a reviewed corpus of actual revisions instead of a hypothetical one.</p></article>
+      <article class="card later"><h3>Earn later</h3><p>Calibrate supersession precision on those reviewed revisions, decide per-entry link binding against real cases, and only then discuss promoting any of it to a hard gate.</p></article>
+    </div>
+  </section>
+
+  <footer>Evidence projection for broomva/skills PR #158 · Generated from the committed implementation, the calibration receipt, the mutation proof, and four rounds of independent Cross-Review.</footer>
+</main>
+</body>
+</html>

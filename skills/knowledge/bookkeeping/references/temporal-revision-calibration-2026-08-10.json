@@ -75,17 +75,17 @@
   },
   "tests": {
     "suite": "skills/knowledge/bookkeeping/tests",
-    "total": 420,
-    "new": 89,
+    "total": 426,
+    "new": 95,
     "pythons": [
       "3.11",
       "3.12"
     ],
     "mutation_proof": {
-      "mutations": 32,
-      "killed": 32,
+      "mutations": 37,
+      "killed": 37,
       "survived": 0,
-      "note": "each mutation breaks exactly one producer/validator invariant; anchors asserted unique before patching"
+      "note": "each mutation breaks exactly one producer/validator invariant; anchors asserted unique before patching. One entry was rewritten mid-arc: its first version inserted a no-op instead of reordering the work, and therefore reported a false SURVIVED."
     }
   },
   "cross_review": {
@@ -107,8 +107,22 @@
       },
       {
         "round": 3,
-        "verdict": "see PR comment"
+        "verdict": "FAIL",
+        "score": "5/10",
+        "confirmed_fixed": 3,
+        "new_findings": 6,
+        "note": "one finding was a corruption path introduced by round 3's own abort logic"
+      },
+      {
+        "round": 4,
+        "verdict": "shipped",
+        "note": "exceeded the 3-round budget deliberately; scores climbed monotonically 3->4->5 and findings narrowed from architecture to edges"
       }
+    ],
+    "held_not_fixed": [
+      "entry-to-link binding (expressiveness, not data loss; outside this phase's acceptance contract)",
+      "concurrent read-modify-write (codebase-wide idiom)",
+      "errors='replace' on non-UTF-8 bytes (codebase-wide idiom)"
     ]
   }
 }
