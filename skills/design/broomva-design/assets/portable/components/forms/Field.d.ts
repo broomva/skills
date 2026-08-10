@@ -3,7 +3,7 @@ import * as React from "react";
 type FieldControlProps = {
   id?: string;
   "aria-describedby"?: string;
-  "aria-invalid"?: boolean | "true" | "false";
+  "aria-invalid"?: React.AriaAttributes["aria-invalid"];
 };
 
 /** Accessible form row binding one persistent label and one hint or error to one control. */

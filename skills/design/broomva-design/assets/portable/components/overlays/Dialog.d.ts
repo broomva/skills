@@ -18,7 +18,7 @@ type DialogName =
 /** Modal dialog requiring either a visible title or an explicit accessible name. */
 export type DialogProps = DialogBaseProps & DialogName;
 
-export declare function Dialog(props: DialogProps): React.JSX.Element;
+export declare function Dialog(props: DialogProps): React.JSX.Element | null;
 
 export interface ConfirmDialogProps {
   open?: boolean;

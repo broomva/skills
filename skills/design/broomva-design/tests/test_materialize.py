@@ -191,7 +191,8 @@ class MaterializeTests(unittest.TestCase):
             self.assertEqual(materialize.planned_css_reference_errors(profile), [])
 
     def test_portable_declarations_support_current_react_types(self) -> None:
-        declarations = materialize.PORTABLE_SOURCE.glob("components/*/*.d.ts")
+        declarations = list(materialize.PORTABLE_SOURCE.rglob("*.d.ts"))
+        self.assertTrue(declarations)
         for declaration in declarations:
             with self.subTest(declaration=declaration.name):
                 text = declaration.read_text(encoding="utf-8")
@@ -427,6 +428,37 @@ class MaterializeTests(unittest.TestCase):
             self.assertEqual(
                 external_undertow.read_text(encoding="utf-8"), "external\n"
             )
+
+    def test_write_rechecks_parent_immediately_before_copy(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside,
+        ):
+            target = Path(directory)
+            root = target / "design-system/broomva"
+            internal = root / "components"
+            internal.mkdir(parents=True)
+            external = Path(outside) / "components"
+            external.mkdir()
+            original_write = materialize.write_managed_file
+            swapped = False
+
+            def swap_then_write(
+                source: Path, destination: Path, write_root: Path
+            ) -> None:
+                nonlocal swapped
+                if not swapped and "components" in destination.parts:
+                    shutil.move(internal, root / "components-before-swap")
+                    internal.symlink_to(external, target_is_directory=True)
+                    swapped = True
+                original_write(source, destination, write_root)
+
+            with mock.patch.object(
+                materialize, "write_managed_file", side_effect=swap_then_write
+            ):
+                with self.assertRaisesRegex(materialize.MaterializeError, "unsafe parent"):
+                    materialize.materialize(target, "web", False, False)
+            self.assertEqual(list(external.iterdir()), [])
 
     def test_prune_preserves_leaf_replaced_after_quarantine_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -13,7 +13,6 @@ import secrets
 import shutil
 import stat
 import sys
-import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -619,7 +618,7 @@ def validate_source() -> list[str]:
         if anchor not in path.read_text(encoding="utf-8", errors="replace"):
             errors.append(f"asset {path.relative_to(SKILL_DIR)} missing anchor: {anchor}")
 
-    for declaration in PORTABLE_SOURCE.glob("components/*/*.d.ts"):
+    for declaration in PORTABLE_SOURCE.rglob("*.d.ts"):
         if re.search(r"(?<!React\.)\bJSX\.Element\b", declaration.read_text(encoding="utf-8")):
             errors.append(
                 f"portable declaration uses the removed global JSX namespace: "
@@ -759,6 +758,83 @@ def open_parent_beneath(path: Path, root: Path) -> tuple[int, list[int], str]:
         raise MaterializeError(
             f"refusing managed path with unsafe parent: {path}: {exc}"
         ) from exc
+
+
+def create_parent_beneath(path: Path, root: Path) -> tuple[int, list[int], str]:
+    """Create and open a destination parent without following directory symlinks."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise MaterializeError(f"destination escapes target root: {path}") from exc
+    if not relative.parts:
+        raise MaterializeError(f"destination has no relative path: {path}")
+
+    root.mkdir(parents=True, exist_ok=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
+    try:
+        current = os.open(root, directory_flags | nofollow)
+        descriptors.append(current)
+        for part in relative.parts[:-1]:
+            try:
+                os.mkdir(part, mode=0o755, dir_fd=current)
+            except FileExistsError:
+                pass
+            current = os.open(
+                part,
+                directory_flags | nofollow,
+                dir_fd=current,
+            )
+            descriptors.append(current)
+        return current, descriptors, relative.name
+    except (NotImplementedError, OSError) as exc:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+        raise MaterializeError(
+            f"refusing destination with unsafe parent: {path}: {exc}"
+        ) from exc
+
+
+def write_managed_file(source: Path, destination: Path, root: Path) -> None:
+    """Atomically copy one source beneath root using descriptor-relative paths."""
+
+    parent, descriptors, name = create_parent_beneath(destination, root)
+    temporary_name = f".{name}.broomva-write-{secrets.token_hex(16)}"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            stat.S_IMODE(source.stat().st_mode),
+            dir_fd=parent,
+        )
+        with source.open("rb") as source_handle, os.fdopen(
+            descriptor, "wb"
+        ) as destination_handle:
+            descriptor = None
+            shutil.copyfileobj(source_handle, destination_handle)
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=parent,
+            dst_dir_fd=parent,
+        )
+    except (NotImplementedError, OSError) as exc:
+        raise MaterializeError(
+            f"refusing unsafe managed write: {destination}: {exc}"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        finally:
+            for opened in reversed(descriptors):
+                os.close(opened)
 
 
 def digest_managed_file(path: Path, root: Path) -> str:
@@ -966,17 +1042,7 @@ def materialize(
             )
 
         for source, destination in writes:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f".{destination.name}.", dir=destination.parent
-            )
-            os.close(descriptor)
-            temporary = Path(temporary_name)
-            try:
-                shutil.copy2(source, temporary)
-                os.replace(temporary, destination)
-            finally:
-                temporary.unlink(missing_ok=True)
+            write_managed_file(source, destination, target)
 
         for item in list(quarantined):
             _, quarantine = item
