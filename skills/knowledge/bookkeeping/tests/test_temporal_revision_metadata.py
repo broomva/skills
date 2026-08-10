@@ -1322,12 +1322,15 @@ class TestEnvelopeChecksCanFire:
         import inspect
         body = inspect.getsource(bookkeeping._lint_temporal_envelope)
         branches = len(re.findall(r"errors\.append\(LintError\(", body))
-        covered = (
-            len(self.test_each_defect_class_is_detected.pytestmark[0].args[1])
-            + 2  # unresolvable target + timeline inversion, tested separately
-        )
+        # Equal COUNTS would not prove one-to-one coverage: swapping one probe
+        # for a duplicate of another keeps the totals matching while leaving a
+        # branch untested. Assert the probes are DISTINCT, then count.
+        cases = self.test_each_defect_class_is_detected.pytestmark[0].args[1]
+        signatures = {(c[2], c[3]) for c in cases}
+        assert len(signatures) == len(cases), "two probes assert the same branch"
+        covered = len(signatures) + 2  # unresolvable target + timeline inversion
         assert covered == branches, (
-            f"{covered} probes for {branches} branches — every branch needs one")
+            f"{covered} distinct probes for {branches} branches — every branch needs one")
 
     def test_negative_control_a_well_formed_envelope_is_silent(self):
         assert self._probe() == [], "the corpus baseline must be genuinely clean"

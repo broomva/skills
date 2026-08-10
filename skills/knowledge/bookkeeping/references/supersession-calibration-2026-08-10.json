@@ -91,7 +91,8 @@
         "recorded_at_unparseable": true,
         "recorded_at_in_future": true,
         "valid_from_unparseable": true,
-        "timeline_inversion": true
+        "timeline_inversion": true,
+        "supersedes_self": true
       },
       "note": "One probe per branch, each matched on its own MESSAGE \u2014 several branches share a field, so asserting the field alone would let one branch's finding satisfy another's probe."
     },
