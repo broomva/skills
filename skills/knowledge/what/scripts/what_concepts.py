@@ -335,7 +335,12 @@ STOPWORDS = {
     "left-hand", "right-hand", "step-by-step", "line-by-line", "case-by-case",
     "non-zero", "no-op", "no-ops", "double-check", "self-contained", "built-in",
     "opt-in", "opt-out", "drop-in", "back-and-forth",
-    "file_path", "old_string", "new_string", "run_in_background",
+    # Harness tool-input keys and stdlib call names. These flood the inventory
+    # under --include-tools, where the mined text is code rather than prose.
+    # A fixed, enumerable set — not whack-a-mole.
+    "file_path", "old_string", "new_string", "run_in_background", "replace_all",
+    "tool_use_id", "subagent_type", "is_file", "is_dir", "read_text",
+    "write_text", "file_paths", "max_results", "timeout_ms",
     # shouted status labels — verdicts and log levels, not concepts
     "fail", "pass", "warn", "skip", "major", "minor", "blocker", "critical",
     "done", "error", "debug", "info", "trace", "yes", "new", "old",

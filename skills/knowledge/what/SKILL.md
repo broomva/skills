@@ -84,6 +84,14 @@ and returns each one with four facts that decide the explanation:
 Ranking is deliberately *not* frequency-first. A term said 200 times and
 already defined ranks below a term said twice and never defined.
 
+**`--include-tools` answers a different question.** By default only the agent's
+*prose* is mined, because prose is what the operator actually read. Adding
+`--include-tools` also mines the code the agent wrote, which changes the
+question from "what did you say to me" to "what vocabulary is in the diff" —
+useful after a build-heavy session where the agent acted more than it spoke,
+but it surfaces identifiers and test-fixture strings alongside real concepts.
+Read it with that in mind; do not treat every snake_case row as a concept.
+
 ### 2. Read the grounded claims before writing a word
 
 Every `grounded` row carries an entity path. Read those bodies. The knowledge

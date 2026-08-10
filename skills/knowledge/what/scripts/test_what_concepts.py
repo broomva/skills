@@ -358,6 +358,29 @@ def test_keep_term_overrides_the_stoplist():
     assert not wc.is_noise("CI", "acronym", wc.STOPWORDS, {"ci"})
 
 
+def test_harness_tool_input_keys_are_dropped():
+    """Under --include-tools the mined text is code, and these flood the inventory."""
+    for key in ("replace_all", "is_file", "file_path", "subagent_type", "tool_use_id"):
+        assert wc.is_noise(key, "snake", wc.STOPWORDS, set()), key
+
+
+def test_harness_keys_are_dropped_end_to_end_with_tools_included(tmp_path: Path):
+    p = tmp_path / "t.jsonl"
+    p.write_text(jsonl([{
+        "type": "assistant", "uuid": "a1",
+        "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Applied the edit."},
+            {"type": "tool_use", "id": "t1", "name": "Edit",
+             "input": {"replace_all": True, "file_path": "/x/y.py",
+                       "new_string": "expiry-aware-lease guards expiry-aware-lease"}},
+        ]},
+    }]), encoding="utf-8")
+    turns = wc.load_transcript(p, include_tools=True, include_sidechains=False)
+    terms = {c.term for c in wc.build_inventory(turns, {}, {}, {})}
+    assert "expiry-aware-lease" in terms
+    assert not ({"replace_all", "file_path", "new_string"} & terms), terms
+
+
 def test_shouted_status_labels_are_dropped():
     for label in ("FAIL", "BLOCKER", "MAJOR", "WARN"):
         assert wc.is_noise(label, "acronym", wc.STOPWORDS, set()), label
