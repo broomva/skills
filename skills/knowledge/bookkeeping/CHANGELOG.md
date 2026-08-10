@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.0] — 2026-08-09
+- Added opt-in `lint --temporal` warnings for stale `updated` metadata and undated mutable state in catalog-visible claims, headings, and explicit labels.
+- Kept temporal findings non-blocking and default lint behavior unchanged; semantic contradiction/supersession remains outside the mechanical linter.
+- Added focused boundary tests and a machine-readable clean-workspace calibration receipt over 928 entity pages.
+
 ## [1.0.0] — 2026-06-27
 - Consolidated into the `broomva/skills` monorepo (BRO-1561); canonical install is now `npx skills add broomva/skills --skill bookkeeping`. The standalone `broomva/bookkeeping` repo remains functional through its deprecation window.
 - bstack primitive **P6** — the universal knowledge engine. Implements the LLM Wiki pattern: raw sources → score → promote → entity graph → synthesize.
