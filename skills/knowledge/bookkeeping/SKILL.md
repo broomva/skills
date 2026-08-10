@@ -320,9 +320,9 @@ Envelope findings are warning-only and appear only under `--temporal`.
 Calibrated 2026-08-10 against that corpus: **zero envelope findings on every
 migrated page, 12/12 defect classes reachable** (no false-positive rate is
 quoted — the corpus has no coherent sampling unit for one). There is still **no hard gate**, for a measured reason — 11
-of the 12 checks are deterministic, so a false-positive rate is not the quantity
-that describes them (their failure mode is specification error, not noise, and
-the remedy is predicate review rather than a bigger corpus); the 1 genuine
+of the 12 checks are deterministic, so they misfire on every instance of a shape
+rather than a random fraction, and the remedy is predicate review rather than a
+bigger sample (5 pages cannot bound a rate either way); the 1 genuine
 heuristic is unmeasurable on real data because tombstones carry no
 `recorded_at`; and 5 of 943 pages carrying the envelope is not enough
 operational history to gate on. Receipts:

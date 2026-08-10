@@ -100,14 +100,16 @@ Full receipt: `supersession-calibration-2026-08-10.json`.
 Two findings decide the gate question, and neither is about the numbers being
 bad:
 
-**Most of these checks fail in a way statistics cannot measure.** Eleven of the
-twelve are deterministic — is this string `[[slug]]`, does this file exist, does
-this date parse — so a false-positive *rate* is not the quantity that describes
-them. That is not a claim that they are correct: a deterministic check can
-decide the wrong predicate, perfectly, every time. Their failure mode is
-specification error, and the remedy is review of the predicate rather than a
-larger corpus. The positive controls establish reachability, which is what makes
-a zero-finding corpus mean anything at all.
+**The corpus is too small to bound any rate, and eleven of the twelve checks
+would need a different kind of evidence anyway.** They are deterministic — is
+this string `[[slug]]`, does this file exist, does this date parse. That does
+not mean they have no false-positive rate; a deterministic classifier has a
+perfectly well-defined one over its decision opportunities. It means the error
+lives somewhere else: such a check misfires because its predicate does not match
+intent, and then misfires on *every* instance of that shape rather than a random
+fraction, so the remedy is review of the predicate rather than a larger sample.
+The positive controls establish reachability, which is what makes a
+zero-finding corpus mean anything at all.
 
 **The one genuine heuristic is unmeasurable on this corpus.** Timeline
 inversion reads the *superseded* record's `recorded_at`, and merge tombstones

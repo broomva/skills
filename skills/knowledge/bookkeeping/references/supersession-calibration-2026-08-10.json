@@ -17,7 +17,7 @@
     "writes_to_live_graph": "none \u2014 all runs against a pinned detached worktree"
   },
   "check_taxonomy": {
-    "note": "Eleven of twelve checks are DETERMINISTIC: given a page each either fires or does not, with no threshold and no dependence on a sample, so a false-positive RATE is not the quantity that describes them. This is not a claim that they are correct \u2014 determinism only moves the failure mode from statistical noise to SPECIFICATION ERROR, and the remedy for that is review of the predicate, not a larger corpus.",
+    "note": "Eleven of twelve checks are DETERMINISTIC. That does NOT mean they lack a false-positive rate \u2014 a deterministic classifier has a well-defined one over its decision opportunities, and an earlier draft of this receipt wrongly claimed otherwise. It means the error lives elsewhere: such a check misfires because its PREDICATE does not match intent, and then misfires on every instance of that shape rather than a random fraction, so the remedy is review of the predicate rather than a larger sample. The corpus is separately too small to bound any rate.",
     "deterministic": [
       "temporal_recorded_at \u2014 parses / not in the future",
       "temporal_valid_from \u2014 parses",
@@ -98,7 +98,7 @@
   "decision": {
     "promote_to_hard_gate": "NO \u2014 none.",
     "rationale": [
-      "The 11 deterministic checks are reachable (12/12 positive controls, each matched on its own message) and silent on real data (0 findings across 5 migrated canonicals), and 7/7 mutations were killed. That is a soundness argument, not a precision measurement \u2014 and soundness is not a reason to gate NOW: only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect and no operational history behind it.",
+      "The 11 deterministic checks are reachable (12/12 positive controls, each matched on its own message), silent on real data (0 findings across 5 migrated canonicals), and 15/15 mutations were killed across two rounds. That is a soundness argument, not a bound on their false-positive rate \u2014 5 pages cannot provide one \u2014 and it is not a reason to gate NOW: only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect and no operational history behind it.",
       "The 1 heuristic check (timeline inversion) is unmeasured on real data and cannot be measured on this corpus at all, because tombstones carry no recorded_at.",
       "Everything stays warning-only and opt-in behind --temporal. Default lint is unchanged."
     ],

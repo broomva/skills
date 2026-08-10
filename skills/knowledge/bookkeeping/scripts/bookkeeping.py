@@ -2213,6 +2213,13 @@ def _assert_unparseable_frontmatter(text: str) -> None:
         return
     fm, _ = _split_frontmatter(text)
     if not fm:
+        # A leading `---` with no closing fence is not "no frontmatter": every
+        # setter would no-op on it and the caller would report success while
+        # recording nothing. Distinguish it from a plain body document.
+        if re.match(r"^---[ \t]*\r?\n", text):
+            raise MalformedEnvelopeError(
+                "frontmatter opens with `---` but is never closed; "
+                "rewriting it would silently record nothing")
         return  # no frontmatter at all — callers guard that separately
     inner = re.sub(r"^---[ \t]*\r?\n", "", fm, count=1)
     inner = re.sub(r"---[ \t]*\r?\n?$", "", inner)
@@ -2301,7 +2308,7 @@ def _apply_revision_envelope(
     text: str,
     *,
     supersedes: "list[str]",
-    revision_link: str,
+    revision_link: "str | list[str]",
     valid_from: "str | None" = None,
     today: "str | None" = None,
     recorded_at: "str | None" = None,
@@ -2372,9 +2379,13 @@ def _apply_revision_envelope(
         if slug not in merged:
             merged.append(slug)
     links = list(existing_links)
-    link = (revision_link or "").strip()
-    if merged and link and link not in links:
-        links.append(link)
+    # One call may carry several authorizing records (a canonical that absorbed
+    # several dups), so a list is accepted alongside the single-record form.
+    incoming = revision_link if isinstance(revision_link, list) else [revision_link]
+    for entry in incoming:
+        entry = (entry or "").strip()
+        if merged and entry and entry not in links:
+            links.append(entry)
 
     unchanged = (
         merged == existing_slugs
@@ -5935,8 +5946,13 @@ def _recorded_supersessions() -> "list[dict]":
         if not isinstance(fm, dict) or fm.get("status") != "merged":
             # A tombstone whose YAML is broken parses to {} and would vanish from
             # the scan entirely — reported as "no tombstones" rather than as a
-            # record that needs attention. Catch it from the raw text instead.
-            if re.search(r"^status:\s*merged\s*$", raw, re.MULTILINE):
+            # record that needs attention. Catch it from the raw text instead,
+            # scanning ONLY the frontmatter block: a full-file search would
+            # misread body prose or a fenced example as a tombstone marker.
+            head, _ = _split_frontmatter(raw)
+            head = head or (raw if re.match(r"^---[ \t]*\r?\n", raw) else "")
+            if re.search(r'^status:\s*["\']?merged["\']?\s*(?:#.*)?$',
+                         head, re.MULTILINE):
                 out.append({
                     "superseded": page.stem, "canonical": None, "merged_at": None,
                     "revision_link": str(_display_path(page)),
@@ -5957,6 +5973,14 @@ def _recorded_supersessions() -> "list[dict]":
         target = _resolve_live_canonical(canon) if canon else (None, None)
         if not canon:
             row["skip"] = "tombstone has no merged_into target"
+        elif not _SAFE_SLUG_REFERENCE_RE.match(dup):
+            # The tombstone's own `slug` is written INTO the canonical, so it is
+            # untrusted input too — not just the target it points at.
+            row["skip"] = f"superseded slug {dup!r} is not a safe slug reference"
+        elif dup == canon:
+            # `tool/old.md` declaring `slug: kept, merged_into: kept` would
+            # otherwise write `supersedes: ["[[kept]]"]` onto kept.md itself.
+            row["skip"] = f"tombstone names '{canon}' as both the dup and the canonical"
         elif target[1]:
             row["skip"] = target[1]
         elif merged_at is None:
@@ -6044,6 +6068,13 @@ def cmd_backfill_revisions(args: argparse.Namespace) -> None:
     already-migrated graph writes nothing. `--dry-run` is accepted as an
     explicit no-op so the documented universal flag stays true.
     """
+    # `--apply --dry-run` is a contradiction, and resolving it silently either
+    # way writes or withholds against half the operator's stated intent.
+    if getattr(args, "apply", False) and getattr(args, "dry_run", False):
+        print("[backfill] --apply and --dry-run contradict each other",
+              file=sys.stderr)
+        sys.exit(2)
+
     rows = _recorded_supersessions()
     if not rows:
         print("[backfill] no merge tombstones found — nothing to replay")
@@ -6073,10 +6104,11 @@ def cmd_backfill_revisions(args: argparse.Namespace) -> None:
         label = f"{canon} supersedes {', '.join(sorted(set(dups)))}"
         original = path.read_text(errors="replace")
         try:
-            revised = original
-            for link in links:
-                revised = _apply_revision_envelope(
-                    revised, supersedes=dups, revision_link=link, recorded_at=stamp)
+            # ONE call, not one per link: the helper takes every authorizing
+            # record at once, so a canonical that absorbed N dups is parsed and
+            # rewritten once rather than N times.
+            revised = _apply_revision_envelope(
+                original, supersedes=dups, revision_link=links, recorded_at=stamp)
         except MalformedEnvelopeError as exc:
             failed += 1
             print(f"  [FAIL] {label}: {exc}", file=sys.stderr)

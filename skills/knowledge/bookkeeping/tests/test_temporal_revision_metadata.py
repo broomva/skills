@@ -912,8 +912,8 @@ class TestBackfillRecordedMerges:
             f'core_claim: "Merged into [[{canon}]]."\n---\n\n# {dup}\n\nTombstone.\n')
         return c
 
-    def _args(self, apply=True):
-        return argparse.Namespace(apply=apply)
+    def _args(self, apply=True, dry_run=False):
+        return argparse.Namespace(apply=apply, dry_run=dry_run)
 
     def test_backfill_records_the_historical_merge_date_not_today(
             self, temp_entities, frozen_today):
@@ -1047,6 +1047,71 @@ class TestBackfillRecordedMerges:
         bookkeeping.cmd_backfill_revisions(self._args())
         fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
         assert fm["supersedes"] == ["[[dupe]]"]
+
+    def test_backfill_refuses_a_tombstone_naming_itself_as_its_own_canonical(
+            self, temp_entities, frozen_today, capsys):
+        # The tombstone's own `slug` is written INTO the canonical, so it is
+        # untrusted input too: `tool/old.md` declaring `slug: kept` alongside
+        # `merged_into: kept` would give kept.md `supersedes: ["[[kept]]"]`.
+        canon = _write_entity(temp_entities, "kept", type_dir="tool")
+        before = canon.read_text()
+        (temp_entities / "tool" / "old.md").write_text(
+            '---\nslug: kept\ntype: tool\nstatus: merged\nmerged_into: kept\n'
+            'merged_at: "2026-06-09"\ncore_claim: "Merged."\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "both the dup and the canonical" in capsys.readouterr().out
+        assert canon.read_text() == before
+
+    def test_backfill_refuses_an_unsafe_superseded_slug(
+            self, temp_entities, frozen_today, capsys):
+        canon = _write_entity(temp_entities, "kept", type_dir="tool")
+        before = canon.read_text()
+        (temp_entities / "tool" / "old.md").write_text(
+            '---\nslug: "../../etc/passwd"\ntype: tool\nstatus: merged\n'
+            'merged_into: kept\nmerged_at: "2026-06-09"\ncore_claim: "M."\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "not a safe slug reference" in capsys.readouterr().out
+        assert canon.read_text() == before
+
+    def test_backfill_refuses_a_canonical_with_an_unterminated_fence(
+            self, temp_entities, frozen_today, capsys):
+        # A leading `---` with no closing fence is not "no frontmatter": every
+        # setter no-ops and the run would report the page as already recorded.
+        canon = self._merged_pair(temp_entities)
+        canon.write_text('---\nslug: kept\nsupersedes: ["[[old]]"]\n\nBody only.\n')
+        before = canon.read_text()
+        with pytest.raises(SystemExit):
+            bookkeeping.cmd_backfill_revisions(self._args())
+        assert "never closed" in capsys.readouterr().err
+        assert canon.read_text() == before
+
+    def test_a_quoted_status_marker_is_still_seen_on_a_broken_tombstone(
+            self, temp_entities, frozen_today, capsys):
+        _write_entity(temp_entities, "kept", type_dir="tool")
+        (temp_entities / "tool" / "dupe.md").write_text(
+            '---\nslug: dupe\nstatus: "merged"\nmerged_into: [unclosed\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "does not parse" in capsys.readouterr().out
+
+    def test_a_code_fence_in_the_body_is_not_a_tombstone(
+            self, temp_entities, frozen_today, capsys):
+        # The marker scan is confined to the frontmatter block; a full-file
+        # search would read documentation examples as records.
+        _write_entity(temp_entities, "kept", type_dir="tool",
+                      body="Example:\n\n```yaml\nstatus: merged\n```\n")
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "does not parse" not in capsys.readouterr().out
+
+    def test_apply_and_dry_run_together_are_refused(
+            self, temp_entities, frozen_today, capsys):
+        canon = self._merged_pair(temp_entities)
+        before = canon.read_text()
+        with pytest.raises(SystemExit) as exc:
+            bookkeeping.cmd_backfill_revisions(
+                argparse.Namespace(apply=True, dry_run=True))
+        assert exc.value.code != 0
+        assert "contradict" in capsys.readouterr().err
+        assert canon.read_text() == before
 
     def test_backfill_refuses_a_canonical_that_is_itself_a_tombstone(
             self, temp_entities, frozen_today, capsys):

@@ -218,19 +218,27 @@ measured about the one check that could produce a rate.
 
 ### Why there is still no hard gate
 
-**Eleven of the twelve checks fail in a way statistics cannot measure.** They
-are deterministic: given a page, each either fires or does not, with no
-threshold, no scoring, and no dependence on a sample. Running more pages through
-them produces no new information about their behaviour, so a false-positive
-*rate* is not the quantity that describes them.
+**The corpus is too small to bound any check's false-positive rate, and the
+deterministic ones would need a different kind of evidence anyway.**
 
-That is emphatically **not** a claim that they are correct. Determinism only
-moves the failure mode: a deterministic check can decide the wrong predicate,
-perfectly, every time. Their failure mode is **specification error**, and the
-remedy is review of the predicate, not a larger corpus. The positive controls
-establish **reachability** — that each branch can fire and does so on its own
-message — which is what makes a zero-finding corpus meaningful; they do not
-establish that firing was the right call.
+An earlier draft of this section claimed a rate "is not the quantity that
+describes" a deterministic check. That was wrong, and the reviewer was right to
+say so: a deterministic classifier has a perfectly well-defined false-positive
+rate over a defined set of decision opportunities — here, pages carrying the
+relevant field. Determinism is not a reason the number does not exist.
+
+What determinism *does* change is where the error lives. A threshold heuristic
+misfires because a sample fell the wrong side of a line, and more data tightens
+the estimate. A deterministic check misfires because its **predicate does not
+match intent** — and it will then misfire on *every* instance of that shape, not
+a random fraction. More data can reveal such a shape, but the remedy is review
+of the predicate, not a larger sample.
+
+So both are true and neither is sufficient: the observed rate is 0 across every
+migrated page, and 5 pages cannot bound it. The positive controls establish
+**reachability** — each branch fires, on its own message — which is what makes a
+zero-finding corpus mean anything at all. They do not establish that firing was
+the right call.
 
 Two predicates are known to be arguable, and are named rather than hidden in a
 count:
