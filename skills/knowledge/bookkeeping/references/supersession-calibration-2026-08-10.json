@@ -17,18 +17,22 @@
     "writes_to_live_graph": "none \u2014 all runs against a pinned detached worktree"
   },
   "check_taxonomy": {
-    "note": "A decision procedure has no precision to calibrate; demanding a statistical measurement for one is ritual, not evidence. Only one check in the audit is a heuristic.",
-    "decidable": [
+    "note": "Eleven of twelve checks are DETERMINISTIC: given a page each either fires or does not, with no threshold and no dependence on a sample, so a false-positive RATE is not the quantity that describes them. This is not a claim that they are correct \u2014 determinism only moves the failure mode from statistical noise to SPECIFICATION ERROR, and the remedy for that is review of the predicate, not a larger corpus.",
+    "deterministic": [
       "temporal_recorded_at \u2014 parses / not in the future",
       "temporal_valid_from \u2014 parses",
       "temporal_supersedes \u2014 is a list / entries are strings / entries are [[wikilink]] form / not a self-reference",
-      "temporal_supersedes \u2014 target resolves to an entity file",
+      "temporal_supersedes \u2014 target resolves to a live entity file",
       "temporal_revision_link \u2014 present when supersedes is / non-blank / string / not an orphan"
     ],
     "heuristic": [
       "temporal_supersedes / timeline inversion: the superseded target's recorded_at is newer than this record's"
     ],
-    "caveat": "One of the decidable checks \u2014 'supersedes target resolves' \u2014 is crisp to EVALUATE but admits argument about INTERPRETATION: a target may be unresolvable because the tombstone was later cleaned up, not because the provenance is broken. It is reported as a defect because an untraceable supersession defeats the purpose of recording one, but that is a policy choice rather than a fact, and it is the check most likely to need revisiting when the corpus is larger."
+    "arguable_predicates": [
+      "'supersedes target resolves' \u2014 a target can be unresolvable because the tombstone was cleaned up, not because provenance is broken. Reporting it is a policy choice.",
+      "'recorded_at is in the future' \u2014 reads system time from the AUDIT HOST, so clock skew or cross-time-zone editing produces findings about the auditor rather than the record."
+    ],
+    "what_positive_controls_establish": "REACHABILITY \u2014 each branch can fire, and fires on its own message. That is what makes a zero-finding corpus meaningful. It does NOT establish that firing was the right call."
   },
   "measurements": {
     "negative_control": {
@@ -86,15 +90,15 @@
     }
   },
   "power_limit": {
-    "observed_false_positive_rate": "0/7",
-    "ninety_five_pct_upper_bound": "~43% (rule of three at n=7)",
-    "meaning": "0/7 is consistent with a true FP rate up to ~43%. This corpus cannot support a hard gate for any HEURISTIC check.",
+    "no_false_positive_rate_quoted": "An earlier draft reported '0/7, 95% upper bound ~43%'. That has no coherent sampling unit: the corpus is 5 pages, 7 edges, and 0 heuristic-eligible comparisons at once, and a binomial bound requires one of those to be the trial. Removed rather than qualified.",
+    "observed": "zero envelope findings across every migrated canonical",
+    "heuristic_eligible_comparisons": 0,
     "timeline_inversion_unexercised": "timeline_inversion is NOT exercised by the real corpus: the check compares the superseded target's recorded_at, and merge tombstones do not carry one. Its probe above had to synthesise a stamp onto a tombstone. Calibrating it on real data would require the envelope on tombstones too \u2014 a design decision, not a measurement."
   },
   "decision": {
     "promote_to_hard_gate": "NO \u2014 none.",
     "rationale": [
-      "The 11 decidable checks meet a soundness bar (12/12 positive controls fire on the specific field; 0/7 false positives; 37 mutations killed) \u2014 but soundness is not a reason to gate NOW: only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect and no operational history behind it.",
+      "The 11 deterministic checks are reachable (12/12 positive controls, each matched on its own message) and silent on real data (0 findings across 5 migrated canonicals), and 7/7 mutations were killed. That is a soundness argument, not a precision measurement \u2014 and soundness is not a reason to gate NOW: only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect and no operational history behind it.",
       "The 1 heuristic check (timeline inversion) is unmeasured on real data and cannot be measured on this corpus at all, because tombstones carry no recorded_at.",
       "Everything stays warning-only and opt-in behind --temporal. Default lint is unchanged."
     ],

@@ -198,29 +198,51 @@ against a corpus this migration built from the seven recorded merges:
 
 | Measure | Result |
 |---|---|
-| Negative control (5 real migrated canonicals, untouched) | **0** envelope findings |
-| Positive control (one injected defect per class) | **12/12** detected, each on its specific field |
-| Observed false-positive rate | 0/7 — 95% upper bound ~43% at this n |
+| Corpus | 7 recorded merges → 5 canonicals, 6 distinct superseded slugs |
+| Negative control (the 5 migrated canonicals, untouched) | **0** envelope findings |
+| Positive control (one injected defect per class) | **12/12** detected, each matched on its own *message* |
+| Heuristic-eligible comparisons in the corpus | **0** |
 
 The positive controls exist because zero findings on a clean corpus is
-ambiguous: a checker that never fires scores identically to a correct one.
+ambiguous: a checker that never fires scores identically to a correct one. Each
+probe matches the specific message its branch emits, not merely the field —
+asserting the field alone would be vacuous, since several branches share a
+field and any one of them could satisfy the assertion.
+
+**No false-positive rate is quoted, deliberately.** An earlier draft reported
+"0/7, 95% upper bound ~43%", which has no coherent sampling unit: the corpus is
+5 pages, 7 edges, and 0 heuristic-eligible comparisons at once, and a
+binomial bound needs one of those to be *the* trial. The honest statement is the
+table above — zero findings across every migrated page, and nothing at all
+measured about the one check that could produce a rate.
 
 ### Why there is still no hard gate
 
-**Eleven of the twelve checks are not the kind of thing calibration measures.**
-They are decision procedures — is this string `[[slug]]`, does this file exist,
-does this date parse. Precision is 1.0 by construction; a finding *is* the
-defect. Demanding a statistical measurement for a decision procedure is ritual.
-Their real bar is soundness, established by the positive controls plus the
-mutation proof.
+**Eleven of the twelve checks fail in a way statistics cannot measure.** They
+are deterministic: given a page, each either fires or does not, with no
+threshold, no scoring, and no dependence on a sample. Running more pages through
+them produces no new information about their behaviour, so a false-positive
+*rate* is not the quantity that describes them.
 
-One of them is softer than the rest and should be named rather than hidden in
-the count: *"supersedes target resolves"* is crisp to **evaluate** but admits
-argument about **interpretation** — a target can be unresolvable because the
-tombstone was later cleaned up, not because the provenance is broken. It is
-reported as a defect because an untraceable supersession defeats the purpose of
-recording one, but that is a policy choice, not a fact, and it is the check
-most likely to need revisiting once the corpus is larger.
+That is emphatically **not** a claim that they are correct. Determinism only
+moves the failure mode: a deterministic check can decide the wrong predicate,
+perfectly, every time. Their failure mode is **specification error**, and the
+remedy is review of the predicate, not a larger corpus. The positive controls
+establish **reachability** — that each branch can fire and does so on its own
+message — which is what makes a zero-finding corpus meaningful; they do not
+establish that firing was the right call.
+
+Two predicates are known to be arguable, and are named rather than hidden in a
+count:
+
+- *"supersedes target resolves"* — a target can be unresolvable because the
+  tombstone was later cleaned up, not because the provenance is broken.
+  Reporting it as a defect is a policy choice: an untraceable supersession
+  defeats the purpose of recording one. It is the check most likely to need
+  revisiting.
+- *"recorded_at is in the future"* — this reads system time from the audit
+  host. A graph edited across time zones, or audited on a machine with a skewed
+  clock, produces findings about the auditor rather than the record.
 
 **The one genuine heuristic cannot be measured on this corpus.** Timeline
 inversion reads the *superseded* record's `recorded_at`; tombstones carry none,

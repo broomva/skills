@@ -91,19 +91,23 @@ Typed write-side producers exist (`promote` stamps `recorded_at`; `revise` and
 validator ships alongside them — see `temporal-revision-envelope.md`.
 
 Calibration ran against a corpus built by `backfill-revisions` from the seven
-merge tombstones the graph had already recorded: **0/7 false positives, 12/12
-defect classes detected**. Full receipt:
-`supersession-calibration-2026-08-10.json`.
+merge tombstones the graph had already recorded: **zero envelope findings across
+every migrated page, and 12/12 defect classes reachable**. No false-positive
+*rate* is quoted — the corpus is 5 pages, 7 edges and 0 heuristic-eligible
+comparisons at once, and a binomial bound needs one of those to be the trial.
+Full receipt: `supersession-calibration-2026-08-10.json`.
 
 Two findings decide the gate question, and neither is about the numbers being
 bad:
 
-**Most of these checks are not the kind of thing calibration measures.** Eleven
-of the twelve are decision procedures — is this string `[[slug]]`, does this
-file exist, does this date parse. Their precision is 1.0 by construction; a
-finding *is* the defect. Demanding a statistical measurement for a decision
-procedure is ritual, not evidence. The right bar for them is soundness, which
-the positive controls and the mutation proof establish.
+**Most of these checks fail in a way statistics cannot measure.** Eleven of the
+twelve are deterministic — is this string `[[slug]]`, does this file exist, does
+this date parse — so a false-positive *rate* is not the quantity that describes
+them. That is not a claim that they are correct: a deterministic check can
+decide the wrong predicate, perfectly, every time. Their failure mode is
+specification error, and the remedy is review of the predicate rather than a
+larger corpus. The positive controls establish reachability, which is what makes
+a zero-finding corpus mean anything at all.
 
 **The one genuine heuristic is unmeasurable on this corpus.** Timeline
 inversion reads the *superseded* record's `recorded_at`, and merge tombstones

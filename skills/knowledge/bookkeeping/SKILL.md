@@ -317,12 +317,15 @@ the corpus the audit was calibrated on. It never derives supersessions from
 `aliases:` (those are `aka` search synonyms) or from prose.
 
 Envelope findings are warning-only and appear only under `--temporal`.
-Calibrated 2026-08-10 against that corpus: **0/7 false positives, 12/12 defect
-classes detected**. There is still **no hard gate**, for a measured reason — 11
-of the 12 checks are decision procedures whose precision is 1.0 by construction
-(calibrating them is ritual), the 1 genuine heuristic is unmeasurable on real
-data because tombstones carry no `recorded_at`, and 5 of 943 pages carrying the
-envelope is not enough operational history to gate on. Receipts:
+Calibrated 2026-08-10 against that corpus: **zero envelope findings on every
+migrated page, 12/12 defect classes reachable** (no false-positive rate is
+quoted — the corpus has no coherent sampling unit for one). There is still **no hard gate**, for a measured reason — 11
+of the 12 checks are deterministic, so a false-positive rate is not the quantity
+that describes them (their failure mode is specification error, not noise, and
+the remedy is predicate review rather than a bigger corpus); the 1 genuine
+heuristic is unmeasurable on real data because tombstones carry no
+`recorded_at`; and 5 of 943 pages carrying the envelope is not enough
+operational history to gate on. Receipts:
 `references/supersession-calibration-2026-08-10.json`. Full contract:
 `references/temporal-revision-envelope.md`.
 
