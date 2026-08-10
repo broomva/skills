@@ -2207,16 +2207,40 @@ def _assert_no_duplicate_envelope_keys(text: str) -> None:
     as ticket-A and then ticket-B parses as ticket-B alone, and adding ticket-C
     would erase A permanently. Reading a value we are about to destroy is not
     something a correction workflow may do quietly.
+
+    Detection walks the parser's own mapping nodes rather than matching lines.
+    A line-based count answers a different question than YAML does, in both
+    directions: `note: "…\\nsupersedes: prose"` is one key inside a legal
+    multiline scalar (a false refusal), and `"supersedes":` is a second real key
+    a `^supersedes:` pattern never sees (a missed one).
     """
+    if not _YAML_AVAILABLE:
+        return
     fm, _ = _split_frontmatter(text)
     if not fm:
         return
+    inner = fm.strip()
+    if inner.startswith("---"):
+        inner = inner[3:]
+    if inner.rstrip().endswith("---"):
+        inner = inner.rstrip()[:-3]
+    try:
+        node = yaml.compose(inner)
+    except Exception:
+        return  # unparseable frontmatter is the ordinary lint's problem
+    if node is None or not isinstance(node, yaml.MappingNode):
+        return
+    seen: dict = {}
+    for key_node, _value in node.value:
+        key = getattr(key_node, "value", None)
+        if not isinstance(key, str):
+            continue
+        seen[key] = seen.get(key, 0) + 1
     for key in _ENVELOPE_KEYS:
-        n = len(list(_fm_key_block_re(key).finditer(fm)))
-        if n > 1:
+        if seen.get(key, 0) > 1:
             raise MalformedEnvelopeError(
-                f"frontmatter declares '{key}' {n} times; YAML keeps only the "
-                f"last, so rewriting would discard the others")
+                f"frontmatter declares '{key}' {seen[key]} times; YAML keeps "
+                f"only the last, so rewriting would discard the others")
 
 
 def _parse_revision_links(value: object) -> "list[str]":
@@ -2224,7 +2248,10 @@ def _parse_revision_links(value: object) -> "list[str]":
 
     A single authorizing record reads naturally as a scalar and hand-authored
     pages carry it that way, so a lone string is accepted and normalised into a
-    one-element list. Anything non-string raises, for the same reason as above.
+    one-element list. Anything else raises — including a BLANK entry, which is
+    not "nothing to preserve": it is a slot somebody meant to fill, and quietly
+    dropping it on rewrite is the same silent repair the strict `supersedes`
+    parser refuses.
     """
     if value is None:
         return []
@@ -2235,7 +2262,9 @@ def _parse_revision_links(value: object) -> "list[str]":
             raise MalformedEnvelopeError(
                 f"revision_link entry {entry!r} is not a string")
         entry = entry.strip()
-        if entry and entry not in out:
+        if not entry:
+            raise MalformedEnvelopeError("revision_link contains a blank entry")
+        if entry not in out:
             out.append(entry)
     return out
 
@@ -3289,8 +3318,10 @@ def _lint_temporal_envelope(
     # to precede the writer has to see it too.
     if revision_link is not None:
         for entry in link_entries:
-            if entry is None:
-                continue
+            # A null MEMBER is checked like any other: the writer rejects it, so
+            # the audit that precedes the writer must not wave it through. (A
+            # null `revision_link` scalar never reaches here — the guard above
+            # treats it as absence, which is what YAML null means.)
             if not isinstance(entry, str):
                 errors.append(LintError(
                     path_str, "temporal_revision_link",
@@ -3305,7 +3336,10 @@ def _lint_temporal_envelope(
             "supersedes is set without a revision_link — the supersession has "
             "no authorizing record", "warning",
         ))
-    if revision_link is not None and not entries:
+    # An EMPTY `revision_link: []` alongside an empty `supersedes: []` is a pair
+    # of cleared optional fields, not an orphan — there is no link to be
+    # orphaned. Only an actual link with nothing to revise is reported.
+    if has_link and not entries:
         errors.append(LintError(
             path_str, "temporal_revision_link",
             "revision_link is set with no supersedes — it points at a revision "
@@ -5720,6 +5754,33 @@ def cmd_merge(args: argparse.Namespace) -> None:
         sys.exit(2)
 
     dry = getattr(args, "dry_run", False)
+
+    # 0. Compute the canonical's new text BEFORE touching anything, so every
+    #    reason to refuse fires while the graph is still untouched. Repointing
+    #    referrers first and validating afterwards left them pointing at a
+    #    canonical that never got merged — an abort that corrupts.
+    dup_type = dup_path.relative_to(ENTITIES_DIR).parts[0]
+    # A whitespace-only override would otherwise write an envelope the audit
+    # rejects, so it falls back to the tombstone rather than being taken
+    # literally.
+    revision_link = (getattr(args, "revision_link", None) or "").strip() or str(
+        _display_path(ENTITIES_DIR / dup_type / f"{dup}.md"))
+    canon_text = canon_path.read_text(errors="replace")
+    if not _split_frontmatter(canon_text)[0]:
+        print(f"[merge] canonical '{canon}' has no YAML frontmatter — every "
+              f"envelope write would silently no-op while the dup is still "
+              f"tombstoned", file=sys.stderr)
+        sys.exit(1)
+    canon_new = _add_alias_to_frontmatter(canon_text, dup)
+    try:
+        canon_new = _apply_revision_envelope(
+            canon_new, supersedes=[dup], revision_link=revision_link)
+    except MalformedEnvelopeError as exc:
+        print(f"[merge] canonical '{canon}' has a malformed revision envelope: "
+              f"{exc}. Repair it by hand, then re-run this merge.",
+              file=sys.stderr)
+        sys.exit(1)
+
     # 1. Repoint inbound wikilinks (plain, aliased, heading-anchored forms) across
     # entities AND synthesis notes. Skip the dup itself and any existing tombstone
     # (rewriting a tombstone's prose would corrupt its provenance trail).
@@ -5745,35 +5806,11 @@ def cmd_merge(args: argparse.Namespace) -> None:
                 if not dry:
                     p.write_text(nt)
                 repointed += 1
-    # 2. Record dup as an alias on the canonical (provenance), and record the
-    #    typed revision: a merge IS an explicit correction, so the canonical
-    #    supersedes the dup and points at the tombstone that authorized it.
-    #    Without this the envelope would have a `revise` producer and no real
-    #    caller — the schema-with-no-writer failure this phase exists to avoid.
-    dup_type = dup_path.relative_to(ENTITIES_DIR).parts[0]
-    # A whitespace-only override would otherwise write an envelope the audit
-    # rejects, so it falls back to the tombstone rather than being taken
-    # literally.
-    revision_link = (getattr(args, "revision_link", None) or "").strip() or str(
-        _display_path(ENTITIES_DIR / dup_type / f"{dup}.md"))
-    canon_text = canon_path.read_text(errors="replace")
-    if not _split_frontmatter(canon_text)[0]:
-        print(f"[merge] canonical '{canon}' has no YAML frontmatter — every "
-              f"envelope write would silently no-op while the dup is still "
-              f"tombstoned", file=sys.stderr)
-        sys.exit(1)
-    canon_new = _add_alias_to_frontmatter(canon_text, dup)
-    try:
-        canon_new = _apply_revision_envelope(
-            canon_new, supersedes=[dup], revision_link=revision_link)
-    except MalformedEnvelopeError as exc:
-        # Abort rather than half-merge. Tombstoning the dup while skipping the
-        # supersession would leave a merged record whose provenance says nothing
-        # — a broken intermediate state the operator has no reason to expect.
-        print(f"[merge] canonical '{canon}' has a malformed revision envelope: "
-              f"{exc}. Repair it by hand, then re-run this merge.",
-              file=sys.stderr)
-        sys.exit(1)
+    # 2. Write the canonical computed in step 0 — the alias (provenance) plus
+    #    the typed revision. A merge IS an explicit correction, so the canonical
+    #    supersedes the dup and points at the tombstone that authorized it;
+    #    without this the envelope would have a `revise` producer and no real
+    #    caller, the schema-with-no-writer failure this phase exists to avoid.
     if canon_new != canon_text and not dry:
         canon_path.write_text(canon_new)
     # 3. Rewrite dup as a tombstone.

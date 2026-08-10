@@ -2,15 +2,16 @@
   "phase": "producer \u2014 typed temporal revision envelope",
   "issue": "https://github.com/broomva/skills/issues/156",
   "audit_date": "2026-08-10",
-  "candidate_commit": "af9d5edf270e8cda0b639ae987feb41afac8c2fd",
+  "candidate_commit": "1eee54c697fa5b849c602f9328d7491e303ecc0e",
   "graph": {
     "root": "/Users/broomva/broomva",
-    "entity_pages": 935,
+    "entity_pages": 941,
     "env": {
       "KG_ROOT": "/Users/broomva/broomva",
       "KG_NO_POLICY": "1"
     },
-    "writes": "none \u2014 lint is read-only"
+    "writes": "none \u2014 lint is read-only",
+    "note": "the workspace graph is live; both implementations were measured in the SAME pass, which is what the parity controls rest on"
   },
   "commands": {
     "default": "python3 <impl> lint --all",
@@ -19,9 +20,9 @@
   "results": {
     "merged": {
       "default": {
-        "issues": 808,
+        "issues": 821,
         "errors": 62,
-        "warnings": 746,
+        "warnings": 759,
         "temporal_updated": 0,
         "temporal_as_of": 0,
         "temporal_recorded_at": 0,
@@ -30,9 +31,9 @@
         "temporal_revision_link": 0
       },
       "temporal": {
-        "issues": 905,
+        "issues": 918,
         "errors": 62,
-        "warnings": 843,
+        "warnings": 856,
         "temporal_updated": 68,
         "temporal_as_of": 29,
         "temporal_recorded_at": 0,
@@ -43,9 +44,9 @@
     },
     "candidate": {
       "default": {
-        "issues": 808,
+        "issues": 821,
         "errors": 62,
-        "warnings": 746,
+        "warnings": 759,
         "temporal_updated": 0,
         "temporal_as_of": 0,
         "temporal_recorded_at": 0,
@@ -54,9 +55,9 @@
         "temporal_revision_link": 0
       },
       "temporal": {
-        "issues": 905,
+        "issues": 918,
         "errors": 62,
-        "warnings": 843,
+        "warnings": 856,
         "temporal_updated": 68,
         "temporal_as_of": 29,
         "temporal_recorded_at": 0,
@@ -70,20 +71,44 @@
     "default_lint_unchanged": true,
     "temporal_baseline_unchanged": true,
     "no_envelope_findings_on_live_graph": true,
-    "envelope_absent_from_live_graph_note": "No entity yet carries recorded_at/valid_from/supersedes/revision_link, so the envelope audit contributes zero findings by construction. Precision/recall on real revisions cannot be measured until revisions exist; that measurement gates any hard gate."
+    "envelope_absent_from_live_graph_note": "No entity yet carries recorded_at/valid_from/supersedes/revision_link, so the envelope audit contributes zero findings BY CONSTRUCTION. This receipt therefore proves parity, not precision. Precision/recall on real revisions cannot be measured until revisions exist; that measurement, plus independent cross-review, gates any hard gate."
   },
   "tests": {
     "suite": "skills/knowledge/bookkeeping/tests",
-    "total": 390,
-    "new": 59,
+    "total": 420,
+    "new": 89,
     "pythons": [
       "3.11",
       "3.12"
     ],
     "mutation_proof": {
-      "mutations": 16,
-      "killed": 16,
-      "survived": 0
+      "mutations": 32,
+      "killed": 32,
+      "survived": 0,
+      "note": "each mutation breaks exactly one producer/validator invariant; anchors asserted unique before patching"
     }
+  },
+  "cross_review": {
+    "primitive": "P20",
+    "strata": "A (codex-cli 0.147.0, gpt-5.4)",
+    "rounds": [
+      {
+        "round": 1,
+        "verdict": "FAIL",
+        "score": "3/10",
+        "findings": 16
+      },
+      {
+        "round": 2,
+        "verdict": "FAIL",
+        "score": "4/10",
+        "confirmed_fixed": 13,
+        "new_findings": 7
+      },
+      {
+        "round": 3,
+        "verdict": "see PR comment"
+      }
+    ]
   }
 }

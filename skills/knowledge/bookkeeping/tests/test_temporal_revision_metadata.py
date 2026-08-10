@@ -405,6 +405,47 @@ class TestMalformedExistingEnvelopeIsRefused:
         assert "only the last" in capsys.readouterr().err
         assert path.read_text() == before
 
+    def test_a_quoted_duplicate_key_is_still_a_duplicate(
+            self, temp_entities, frozen_today, capsys):
+        # A `^supersedes:` line match never sees `"supersedes":`, so the second
+        # (authoritative) value would be silently shadowed.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(
+            temp_entities, "new-belief",
+            extra='supersedes: ["[[old-belief]]"]\n"supersedes": ["[[other]]"]\n')
+        before = path.read_text()
+        with pytest.raises(SystemExit):
+            cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        assert "only the last" in capsys.readouterr().err
+        assert path.read_text() == before
+
+    def test_an_envelope_key_inside_a_multiline_scalar_is_not_a_duplicate(
+            self, temp_entities, frozen_today):
+        # The mirror-image failure: refusing a legal page because a quoted
+        # scalar happens to contain a line that looks like a key.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(
+            temp_entities, "new-belief",
+            extra='note: "a paragraph\\nsupersedes: prose, not a key"\n')
+        cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        fm, _ = bookkeeping.parse_frontmatter(path.read_text())
+        assert fm["supersedes"] == ["[[old-belief]]"]
+        assert "prose, not a key" in fm["note"]
+
+    def test_revise_refuses_a_blank_existing_revision_link_entry(
+            self, temp_entities, frozen_today, capsys):
+        # Dropping the blank on rewrite would be the same silent repair the
+        # strict supersedes parser refuses.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(
+            temp_entities, "new-belief",
+            extra='supersedes: ["[[old-belief]]"]\nrevision_link: ["", "ticket://A"]\n')
+        before = path.read_text()
+        with pytest.raises(SystemExit):
+            cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        assert "blank entry" in capsys.readouterr().err
+        assert path.read_text() == before
+
     def test_an_envelope_without_a_stamp_is_not_already_recorded(
             self, temp_entities, frozen_today):
         # The unchanged early-return must not fire when the mechanical field is
@@ -650,6 +691,27 @@ class TestMergeRecordsTypedRevision:
         assert canon.read_text() == canon_before
         assert dup.read_text() == dup_before, "the dup must not be tombstoned"
 
+    def test_an_aborted_merge_leaves_referrers_untouched(
+            self, temp_entities, frozen_today):
+        # The abort path must not corrupt: repointing referrers first and
+        # validating afterwards left third pages pointing at a canonical that
+        # never got merged.
+        canon = self._write(temp_entities, "kept")
+        canon.write_text(canon.read_text().replace(
+            "---\n# kept", 'supersedes:\n  - bare-slug\n---\n# kept'))
+        self._write(temp_entities, "dupe")
+        referrer = temp_entities / "concept" / "linker.md"
+        referrer.write_text(
+            '---\nslug: linker\ntype: concept\nstatus: entity\n'
+            'core_claim: "A claim about linking."\nsources:\n  - s\n---\n'
+            "# linker\nSee [[dupe]] for details.\n")
+        before = referrer.read_text()
+        with pytest.raises(SystemExit):
+            cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
+        assert referrer.read_text() == before, \
+            "an abort must not leave referrers repointed at an unmerged canonical"
+        assert "[[dupe]]" in referrer.read_text()
+
     def test_merge_aborts_when_the_canonical_has_no_frontmatter(
             self, temp_entities, frozen_today, capsys):
         canon = temp_entities / "tool" / "kept.md"
@@ -745,9 +807,17 @@ class TestEnvelopeAudit:
         })
         assert "temporal_revision_link" in _fields(errors)
 
+    def test_two_cleared_optional_lists_are_not_an_orphaned_link(self):
+        # `supersedes: []` with `revision_link: []` is a pair of cleared fields,
+        # not a link pointing at nothing — there is no link.
+        assert _lint_envelope({
+            "slug": "current", "supersedes": [], "revision_link": [],
+        }) == []
+
     @pytest.mark.parametrize("links,expected", [
         ([7, "ticket://BRO-1"], "is not a string"),
         (["", "ticket://BRO-1"], "blank entry"),
+        ([None, "ticket://BRO-1"], "is not a string"),
     ])
     def test_a_partially_malformed_link_list_still_warns(self, links, expected):
         # One usable entry must not launder the rest: the writer refuses such a
