@@ -2035,7 +2035,29 @@ def _merged_tombstone_path(slug: str, entity_type: str | None = None) -> "Path |
 # author "meant" is the prose inference this envelope refuses to do.
 _VALID_FROM_METADATA_KEY = "valid_from"
 
-_FM_CLOSING_FENCE_RE = re.compile(r"^---[ \t]*$", re.MULTILINE)
+_FM_CLOSING_FENCE_RE = re.compile(r"^---[ \t]*\r?$", re.MULTILINE)
+
+
+class MalformedEnvelopeError(Exception):
+    """An existing `supersedes` value cannot be rewritten without losing data.
+
+    Raised instead of silently repairing. A correction workflow that quietly
+    rewrote corrupt provenance would destroy the very record it exists to
+    preserve — the operator has to look at it.
+    """
+
+
+def _yaml_double_quoted(value: str) -> str:
+    """Render `value` as a YAML double-quoted scalar, escaped.
+
+    `json.dumps` is exactly right here: YAML 1.2's double-quoted scalar accepts
+    JSON's escape set, so quotes, backslashes, newlines and control characters
+    all survive. Naive f-string interpolation does not — a `--revision-link`
+    containing a quote and a newline could otherwise close the scalar and inject
+    frontmatter (`x"\\n---\\nforged:`), splicing an attacker-controlled document
+    into the page.
+    """
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def _coerce_iso_date_str(value: object) -> "str | None":
@@ -2072,14 +2094,19 @@ def _fm_key_block_re(key: str) -> "re.Pattern":
     (`supersedes:\\n  - "[[x]]"`) into invalid YAML at the top level. Consuming
     the continuation block keeps a rewrite total.
 
-    The closing `---` fence is excluded explicitly. Without that lookahead a
-    block list as the LAST frontmatter key would swallow the fence (`---`
-    satisfies the "line starts with a dash" arm), and the rewrite would splice
-    frontmatter and body into one unparseable document.
+    The closing `---` fence is excluded explicitly, and the lookahead tolerates
+    a trailing `\\r`. Without that, a block list as the LAST frontmatter key
+    would swallow the fence (`---` satisfies the "line starts with a dash" arm)
+    and splice frontmatter into the body — and on a CRLF page the fence line is
+    `---\\r`, which an anchored `---[ \\t]*$` would fail to recognise at all.
+
+    Blank lines are consumed only when a further continuation line follows, so
+    a legal `key:\\n  - a\\n\\n  - b\\n` block is taken whole while a blank line
+    separating the key from the fence is left alone.
     """
     return re.compile(
         rf"^{re.escape(key)}:[^\n]*\n"
-        rf"(?:(?!---[ \t]*$)(?:[ \t]+|[ \t]*-)[^\n]*\n)*",
+        rf"(?:(?:[ \t]*\r?\n)*(?!---[ \t]*\r?$)(?:[ \t]+|[ \t]*-)[^\n]*\n)*",
         re.MULTILINE,
     )
 
@@ -2097,14 +2124,22 @@ def _set_frontmatter_scalar(
     Returns `text` unchanged when the document has no frontmatter: a page
     without frontmatter is not an entity page, and inventing one here would
     produce a file the rest of the pipeline cannot read.
+
+    Every occurrence of `key` is removed and the new value written once at the
+    position of the first. Replacing only the first would leave a duplicate key
+    behind — and PyYAML resolves duplicates to the LAST one, so the write would
+    parse back as if it had never happened.
     """
     fm, body = _split_frontmatter(text)
     if not fm:
         return text
     line = f"{key}: {rendered}\n"
     block_re = _fm_key_block_re(key)
-    if block_re.search(fm):
-        fm = block_re.sub(lambda _m: line, fm, count=1)
+    matches = list(block_re.finditer(fm))
+    if matches:
+        at = matches[0].start()
+        fm = block_re.sub("", fm)
+        fm = fm[:at] + line + fm[at:]
         return fm + body
     if after:
         after_re = _fm_key_block_re(after)
@@ -2120,23 +2155,53 @@ def _set_frontmatter_scalar(
     return fm + body
 
 
-def _render_wikilink_flow_list(slugs: "list[str]") -> str:
-    """Render slugs as a single-line YAML flow list of [[wikilink]] strings.
+def _render_flow_list(values: "list[str]") -> str:
+    """Render values as a single-line YAML flow list of escaped scalars.
 
     Flow style (not a block list) keeps every envelope field a one-line entry,
     which is what makes `_set_frontmatter_scalar` rewrites and the byte-identity
     idempotency check straightforward.
     """
-    return "[" + ", ".join(f'"[[{s}]]"' for s in slugs) + "]"
+    return "[" + ", ".join(_yaml_double_quoted(v) for v in values) + "]"
 
 
 def _parse_wikilink_list(value: object) -> "list[str]":
-    """Extract slugs from a `supersedes`-shaped value, preserving order.
+    """Parse a `supersedes` value into slugs, STRICTLY.
 
-    Tolerant on the READ side (bare slug, `[[slug]]`, a single string instead of
-    a list) because hand-authored pages exist; the write side always emits the
-    canonical `[[slug]]` flow list. Malformed entries are reported by the
-    audit, not silently repaired here.
+    Only canonical `[[slug]]` entries are accepted — the write side emits
+    nothing else. Anything other than that (a bare slug, a truncated `[[broken`,
+    a non-string) raises rather than being repaired or dropped, because the
+    caller is about to rewrite this field: silently canonicalising a malformed
+    entry, or dropping one it cannot read, would destroy provenance while
+    reporting success. The audit reports these as warnings; the WRITER refuses.
+    """
+    if value is None:
+        return []
+    raw = value if isinstance(value, list) else [value]
+    if not isinstance(value, list):
+        raise MalformedEnvelopeError(
+            f"supersedes must be a list, found {type(value).__name__}")
+    out: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            raise MalformedEnvelopeError(
+                f"supersedes entry {entry!r} is not a string")
+        m = _CANONICAL_WIKILINK_RE.match(entry.strip())
+        if not m:
+            raise MalformedEnvelopeError(
+                f"supersedes entry {entry!r} is not [[wikilink]] format")
+        slug = m.group(1).strip()
+        if slug and slug not in out:
+            out.append(slug)
+    return out
+
+
+def _parse_revision_links(value: object) -> "list[str]":
+    """Parse `revision_link` into a list, tolerating the legacy scalar form.
+
+    A single authorizing record reads naturally as a scalar and hand-authored
+    pages carry it that way, so a lone string is accepted and normalised into a
+    one-element list. Anything non-string raises, for the same reason as above.
     """
     if value is None:
         return []
@@ -2144,14 +2209,11 @@ def _parse_wikilink_list(value: object) -> "list[str]":
     out: list[str] = []
     for entry in raw:
         if not isinstance(entry, str):
-            continue
-        slug = entry.strip()
-        m = re.match(r"^\[\[([^\]|#]+)", slug)
-        if m:
-            slug = m.group(1)
-        slug = slug.strip()
-        if slug and slug not in out:
-            out.append(slug)
+            raise MalformedEnvelopeError(
+                f"revision_link entry {entry!r} is not a string")
+        entry = entry.strip()
+        if entry and entry not in out:
+            out.append(entry)
     return out
 
 
@@ -2171,31 +2233,61 @@ def _apply_revision_envelope(
     "this record replaces that one" a statement somebody made, rather than
     something a regex concluded from present-tense prose.
 
-    New `supersedes` slugs are UNIONED with any already present (order
-    preserved, deduped): a page can be corrected more than once, and a later
-    revision must not silently drop what an earlier one recorded. Re-applying
-    the same revision on the same day is byte-identical — the union, the
-    canonical flow-list rendering, and the date stamps are all idempotent.
+    Both `supersedes` and `revision_link` are UNIONED with what is already
+    present (order preserved, deduped). A page can be corrected more than once,
+    and a later revision must not silently drop what an earlier one recorded —
+    which is why `revision_link` is a LIST: overwriting a scalar would leave
+    ticket B claiming authorship of the supersession ticket A authorized.
 
-    `recorded_at` is re-stamped (and backfilled if missing) because an explicit
-    revision IS a substantive change; `valid_from` is written only when the
-    caller was given one.
+    (What the envelope still does not represent is WHICH link authorized WHICH
+    entry. A per-entry binding is a larger schema change; until it exists, the
+    fields say "these records were replaced, on the authority of these
+    decisions" and no more. See references/temporal-revision-envelope.md.)
+
+    Idempotent in both directions: when the merged envelope and `valid_from`
+    are already what a revision would write, the text is returned UNCHANGED —
+    no stamp is touched. Without that early return, replaying the same command
+    on a later day would rewrite `updated` and `recorded_at` and report a
+    substantive change that did not happen.
+
+    Raises MalformedEnvelopeError when the existing `supersedes` or
+    `revision_link` cannot be read exactly; the caller decides whether that is
+    fatal.
     """
     today = today or today_str()
-    merged = _parse_wikilink_list(_frontmatter_value(text, "supersedes"))
+    existing_slugs = _parse_wikilink_list(_frontmatter_value(text, "supersedes"))
+    existing_links = _parse_revision_links(_frontmatter_value(text, "revision_link"))
+    existing_valid_from = _coerce_iso_date_str(_frontmatter_value(text, "valid_from"))
+
+    merged = list(existing_slugs)
     for slug in supersedes:
         if slug not in merged:
             merged.append(slug)
+    links = list(existing_links)
+    link = (revision_link or "").strip()
+    if merged and link and link not in links:
+        links.append(link)
+
+    unchanged = (
+        merged == existing_slugs
+        and links == existing_links
+        and (valid_from is None or valid_from == existing_valid_from)
+    )
+    if unchanged:
+        return text
+
     if merged:
         text = _set_frontmatter_scalar(
-            text, "supersedes", _render_wikilink_flow_list(merged), after="related")
+            text, "supersedes", _render_flow_list([f"[[{s}]]" for s in merged]),
+            after="related")
         text = _set_frontmatter_scalar(
-            text, "revision_link", f'"{revision_link}"', after="supersedes")
+            text, "revision_link", _render_flow_list(links), after="supersedes")
     if valid_from:
         text = _set_frontmatter_scalar(
-            text, "valid_from", f'"{valid_from}"', after="recorded_at")
+            text, "valid_from", _yaml_double_quoted(valid_from), after="recorded_at")
     text = _set_frontmatter_scalar(text, "updated", today, after="created")
-    text = _set_frontmatter_scalar(text, "recorded_at", f'"{today}"', after="updated")
+    text = _set_frontmatter_scalar(
+        text, "recorded_at", _yaml_double_quoted(today), after="updated")
     return text
 
 
@@ -2309,7 +2401,14 @@ def promote_item(
     valid_from = _supplied_valid_from(scored.item)
     if valid_from:
         page = _set_frontmatter_scalar(
-            page, "valid_from", f'"{valid_from}"', after="recorded_at")
+            page, "valid_from", _yaml_double_quoted(valid_from), after="recorded_at")
+    elif verbose and isinstance(getattr(scored.item, "metadata", None), dict) \
+            and scored.item.metadata.get(_VALID_FROM_METADATA_KEY) is not None:
+        # The source TRIED to state a claim-effective time and it did not parse.
+        # Dropping it is correct — coercing a guess would be worse — but doing
+        # so silently hides a broken upstream emitter.
+        print(f"  [promote] ignoring unparseable metadata.valid_from "
+              f"{scored.item.metadata[_VALID_FROM_METADATA_KEY]!r}: {entity_slug}")
 
     if not dry_run:
         entity_dir.mkdir(parents=True, exist_ok=True)
@@ -3148,8 +3247,13 @@ def _lint_temporal_envelope(
                 "warning",
             ))
 
+    # `revision_link` is written as a list (one entry per authorizing record) but
+    # a hand-authored scalar is accepted; either way it must carry at least one
+    # non-blank string.
     revision_link = fm.get("revision_link")
-    has_link = isinstance(revision_link, str) and revision_link.strip() != ""
+    link_entries = revision_link if isinstance(revision_link, list) else [revision_link]
+    has_link = any(
+        isinstance(entry, str) and entry.strip() != "" for entry in link_entries)
     if entries and not has_link:
         errors.append(LintError(
             path_str, "temporal_revision_link",
@@ -5606,8 +5710,17 @@ def cmd_merge(args: argparse.Namespace) -> None:
         _display_path(ENTITIES_DIR / dup_type / f"{dup}.md"))
     canon_text = canon_path.read_text(errors="replace")
     canon_new = _add_alias_to_frontmatter(canon_text, dup)
-    canon_new = _apply_revision_envelope(
-        canon_new, supersedes=[dup], revision_link=revision_link)
+    try:
+        canon_new = _apply_revision_envelope(
+            canon_new, supersedes=[dup], revision_link=revision_link)
+    except MalformedEnvelopeError as exc:
+        # The dedup work below is independent of the envelope and still correct,
+        # so a corrupt pre-existing envelope must not abort the merge — but it
+        # must not be silently rewritten either.
+        print(f"[merge] WARNING: '{canon}' has a malformed revision envelope "
+              f"({exc}); skipping the typed revision. Repair it, then run: "
+              f"bookkeeping revise --entity {canon} --supersedes {dup} "
+              f"--revision-link {revision_link}", file=sys.stderr)
     if canon_new != canon_text and not dry:
         canon_path.write_text(canon_new)
     # 3. Rewrite dup as a tombstone.
@@ -5648,6 +5761,14 @@ def cmd_revise(args: argparse.Namespace) -> None:
         print(f"[revise] entity '{entity}' not found", file=sys.stderr)
         sys.exit(1)
 
+    # A blank link satisfies argparse but not the audit, so the command would
+    # otherwise "succeed" while writing an envelope its own linter rejects.
+    revision_link = (args.revision_link or "").strip()
+    if not revision_link:
+        print("[revise] --revision-link must not be blank — a supersession "
+              "with no authorizing record is untraceable", file=sys.stderr)
+        sys.exit(2)
+
     targets: list[str] = []
     for raw in args.supersedes:
         for slug in str(raw).split(","):
@@ -5678,19 +5799,35 @@ def cmd_revise(args: argparse.Namespace) -> None:
             sys.exit(2)
 
     original = entity_path.read_text(errors="replace")
-    revised = _apply_revision_envelope(
-        original,
-        supersedes=targets,
-        revision_link=args.revision_link,
-        valid_from=valid_from,
-    )
+    # Every setter is a no-op on a document without frontmatter, so without this
+    # check the command would exit 0 reporting "no change" while recording
+    # nothing at all.
+    fm_block, _ = _split_frontmatter(original)
+    if not fm_block:
+        print(f"[revise] '{entity}' has no YAML frontmatter — nothing to revise "
+              f"({_display_path(entity_path)})", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        revised = _apply_revision_envelope(
+            original,
+            supersedes=targets,
+            revision_link=revision_link,
+            valid_from=valid_from,
+        )
+    except MalformedEnvelopeError as exc:
+        print(f"[revise] '{entity}' has a malformed revision envelope: {exc}. "
+              f"Repair it by hand — rewriting it here would destroy the "
+              f"provenance this command exists to preserve.", file=sys.stderr)
+        sys.exit(1)
+
     dry = getattr(args, "dry_run", False)
     if not dry and revised != original:
         entity_path.write_text(revised)
     tag = " (dry-run)" if dry else ""
-    changed = "no change" if revised == original else "updated"
+    changed = "already recorded" if revised == original else "updated"
     print(f"[revise]{tag} {entity} supersedes {', '.join(targets)} "
-          f"(revision_link: {args.revision_link}) — {changed}.")
+          f"(revision_link: {revision_link}) — {changed}.")
     print("        Supersession findings surface under `lint --temporal` "
           "(warning-only).")
 

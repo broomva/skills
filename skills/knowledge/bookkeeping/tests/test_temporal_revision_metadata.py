@@ -168,6 +168,23 @@ class TestCreationProducer:
         fm, _ = bookkeeping.parse_frontmatter(path.read_text())
         assert "valid_from" not in fm, "an unparseable value must be omitted, not guessed"
 
+    def test_an_unparseable_supplied_valid_from_is_reported_under_verbose(
+            self, temp_entities, frozen_today, capsys):
+        # Dropping it is correct; dropping it silently hides a broken upstream
+        # emitter that thinks it is supplying claim-effective time.
+        scored = _scored(metadata={"valid_from": "last Tuesday"})
+        promote_item(scored, "noisy-effective-date", entity_type="concept",
+                     verbose=True)
+        out = capsys.readouterr().out
+        assert "unparseable metadata.valid_from" in out and "last Tuesday" in out
+
+    def test_a_valid_supplied_date_produces_no_such_warning(
+            self, temp_entities, frozen_today, capsys):
+        scored = _scored(metadata={"valid_from": "2026-03-01"})
+        promote_item(scored, "quiet-effective-date", entity_type="concept",
+                     verbose=True)
+        assert "unparseable" not in capsys.readouterr().out
+
     def test_supplied_valid_from_reads_only_the_canonical_metadata_key(self):
         item = _scored(metadata={"validFrom": "2026-03-01",
                                  "effective_date": "2026-03-01"}).item
@@ -288,6 +305,101 @@ class TestFrontmatterWriter:
         text = "# Just a body\n"
         assert _set_frontmatter_scalar(text, "recorded_at", '"2026-08-10"') == text
 
+    def test_crlf_page_keeps_its_closing_fence(self):
+        # On a CRLF page the fence line is `---\r`, which an anchored
+        # `---[ \t]*$` never matches — the block regex would then treat it as a
+        # list continuation and swallow it into the frontmatter.
+        text = ("---\r\nslug: x\r\ntags:\r\n  - a\r\n  - b\r\n---\r\n\r\n# Body\r\n")
+        out = _set_frontmatter_scalar(text, "tags", '["c"]')
+        parsed, body = bookkeeping.parse_frontmatter(out)
+        assert parsed["slug"] == "x" and parsed["tags"] == ["c"]
+        assert "# Body" in body
+
+    def test_blank_line_inside_a_block_list_does_not_orphan_items(self):
+        text = ('---\nslug: x\nsupersedes:\n  - "[[a]]"\n\n  - "[[b]]"\n'
+                'related: []\n---\nbody\n')
+        out = _set_frontmatter_scalar(text, "supersedes", '["[[new]]"]')
+        parsed, _ = bookkeeping.parse_frontmatter(out)
+        assert parsed["supersedes"] == ["[[new]]"]
+        assert parsed["related"] == []
+        assert '"[[b]]"' not in out, "the second item must not survive as orphaned YAML"
+
+    def test_duplicate_keys_collapse_to_one_authoritative_value(self):
+        # PyYAML resolves duplicates to the LAST occurrence, so replacing only
+        # the first would parse back as if the write never happened.
+        text = ('---\nslug: x\nsupersedes: ["[[a]]"]\nrelated: []\n'
+                'supersedes: ["[[b]]"]\n---\nbody\n')
+        out = _set_frontmatter_scalar(text, "supersedes", '["[[new]]"]')
+        fm, _ = _split_frontmatter(out)
+        assert fm.count("supersedes:") == 1
+        parsed, _ = bookkeeping.parse_frontmatter(out)
+        assert parsed["supersedes"] == ["[[new]]"]
+
+    def test_a_key_that_prefixes_another_key_is_not_matched(self):
+        text = '---\nslug: x\nrecorded_at_note: keep me\n---\nbody\n'
+        out = _set_frontmatter_scalar(text, "recorded_at", '"2026-08-10"')
+        parsed, _ = bookkeeping.parse_frontmatter(out)
+        assert parsed["recorded_at_note"] == "keep me"
+        assert str(parsed["recorded_at"]) == "2026-08-10"
+
+
+class TestYamlEscaping:
+    def test_a_revision_link_cannot_inject_frontmatter(
+            self, temp_entities, frozen_today):
+        # Naive f-string quoting lets a link close its own scalar and open a new
+        # document: `x"\n---\nforged: ...`.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(temp_entities, "new-belief")
+        hostile = 'x"\n---\nforged_key: injected\n'
+        cmd_revise(_revise_args("new-belief", ["old-belief"], link=hostile))
+        fm, body = bookkeeping.parse_frontmatter(path.read_text())
+        assert fm, "the page must still parse"
+        assert "forged_key" not in fm
+        assert fm["revision_link"] == [hostile.strip()]
+        assert "Body text." in body
+
+    def test_a_revision_link_with_quotes_and_unicode_round_trips(
+            self, temp_entities, frozen_today):
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(temp_entities, "new-belief")
+        link = 'decisión: "final" \\ escape'
+        cmd_revise(_revise_args("new-belief", ["old-belief"], link=link))
+        fm, _ = bookkeeping.parse_frontmatter(path.read_text())
+        assert fm["revision_link"] == [link]
+
+
+class TestMalformedExistingEnvelopeIsRefused:
+    @pytest.mark.parametrize("extra", [
+        'supersedes:\n  - bare-slug\n',          # not wikilink form
+        'supersedes:\n  - "[[broken"\n',         # truncated wikilink
+        'supersedes: 7\n',                       # not a list
+        'supersedes:\n  - 7\n',                  # non-string entry
+        'supersedes: ["[[a]]"]\nrevision_link:\n  - 7\n',  # non-string link
+    ])
+    def test_revise_refuses_rather_than_repairing(
+            self, temp_entities, frozen_today, extra, capsys):
+        _write_entity(temp_entities, "old-belief")
+        _write_entity(temp_entities, "a")
+        path = _write_entity(temp_entities, "new-belief", extra=extra)
+        before = path.read_text()
+        with pytest.raises(SystemExit) as exc:
+            cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        assert exc.value.code != 0
+        assert path.read_text() == before, \
+            "corrupt provenance must never be silently rewritten"
+        assert "malformed revision envelope" in capsys.readouterr().err
+
+    def test_revise_refuses_a_page_without_frontmatter(
+            self, temp_entities, frozen_today, capsys):
+        _write_entity(temp_entities, "old-belief")
+        path = temp_entities / "concept" / "bodyonly.md"
+        path.write_text("# Just a body\n")
+        with pytest.raises(SystemExit) as exc:
+            cmd_revise(_revise_args("bodyonly", ["old-belief"]))
+        assert exc.value.code != 0
+        assert "no YAML frontmatter" in capsys.readouterr().err
+        assert path.read_text() == "# Just a body\n"
+
 
 # ── Explicit correction flow ─────────────────────────────────────────────────
 
@@ -307,7 +419,7 @@ class TestReviseCommand:
         cmd_revise(_revise_args("new-belief", ["old-belief"]))
         fm, _ = bookkeeping.parse_frontmatter(path.read_text())
         assert fm["supersedes"] == ["[[old-belief]]"]
-        assert fm["revision_link"] == "https://example.test/decision/1"
+        assert fm["revision_link"] == ["https://example.test/decision/1"]
         assert str(fm["recorded_at"]) == TODAY
         assert str(fm["updated"]) == TODAY
 
@@ -319,17 +431,55 @@ class TestReviseCommand:
         cmd_revise(_revise_args("new-belief", ["old-belief"]))
         assert path.read_text() == first, "re-applying a revision must not churn"
 
+    def test_revise_is_idempotent_ACROSS_DAYS(self, temp_entities, monkeypatch):
+        # The dangerous case: same command, later date. Re-stamping `updated`
+        # and `recorded_at` would report a substantive change that did not
+        # happen, and rewrite the file on every replay forever.
+        monkeypatch.setattr(bookkeeping, "today_str", lambda: "2026-08-10")
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(temp_entities, "new-belief")
+        cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        first = path.read_text()
+        monkeypatch.setattr(bookkeeping, "today_str", lambda: "2026-11-30")
+        cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        assert path.read_text() == first
+        assert '"2026-11-30"' not in first
+
+    def test_a_genuinely_new_revision_on_a_later_day_does_restamp(
+            self, temp_entities, monkeypatch):
+        # Control for the test above: the early return must not swallow real work.
+        monkeypatch.setattr(bookkeeping, "today_str", lambda: "2026-08-10")
+        _write_entity(temp_entities, "old-a")
+        _write_entity(temp_entities, "old-b")
+        path = _write_entity(temp_entities, "current")
+        cmd_revise(_revise_args("current", ["old-a"], link="ticket://BRO-1"))
+        monkeypatch.setattr(bookkeeping, "today_str", lambda: "2026-11-30")
+        cmd_revise(_revise_args("current", ["old-b"], link="ticket://BRO-2"))
+        fm, _ = bookkeeping.parse_frontmatter(path.read_text())
+        assert str(fm["recorded_at"]) == "2026-11-30"
+        assert fm["supersedes"] == ["[[old-a]]", "[[old-b]]"]
+
+    def test_a_new_valid_from_alone_is_a_substantive_change(
+            self, temp_entities, frozen_today):
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(temp_entities, "new-belief")
+        cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        cmd_revise(_revise_args("new-belief", ["old-belief"], valid_from="2026-04-15"))
+        fm, _ = bookkeeping.parse_frontmatter(path.read_text())
+        assert str(fm["valid_from"]) == "2026-04-15"
+
     def test_a_second_revision_unions_rather_than_replaces(
             self, temp_entities, frozen_today):
         _write_entity(temp_entities, "old-a")
         _write_entity(temp_entities, "old-b")
         path = _write_entity(temp_entities, "current")
-        cmd_revise(_revise_args("current", ["old-a"]))
+        cmd_revise(_revise_args("current", ["old-a"], link="ticket://BRO-1"))
         cmd_revise(_revise_args("current", ["old-b"], link="ticket://BRO-2"))
         fm, _ = bookkeeping.parse_frontmatter(path.read_text())
         assert fm["supersedes"] == ["[[old-a]]", "[[old-b]]"], \
             "a later revision must not drop what an earlier one recorded"
-        assert fm["revision_link"] == "ticket://BRO-2"
+        assert fm["revision_link"] == ["ticket://BRO-1", "ticket://BRO-2"], \
+            "a later revision must not reattribute what an earlier one authorized"
 
     def test_revise_writes_an_operator_supplied_valid_from(
             self, temp_entities, frozen_today):
@@ -417,7 +567,7 @@ class TestMergeRecordsTypedRevision:
         cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
         fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
         assert fm["supersedes"] == ["[[dupe]]"]
-        assert fm["revision_link"] == "research/entities/tool/dupe.md", \
+        assert fm["revision_link"] == ["research/entities/tool/dupe.md"], \
             "the tombstone is the record that authorized the merge"
         assert str(fm["recorded_at"]) == TODAY
 
@@ -427,7 +577,7 @@ class TestMergeRecordsTypedRevision:
         cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False,
                                      revision_link="ticket://BRO-1442"))
         fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
-        assert fm["revision_link"] == "ticket://BRO-1442"
+        assert fm["revision_link"] == ["ticket://BRO-1442"]
 
     def test_merge_dry_run_leaves_the_canonical_untouched(
             self, temp_entities, frozen_today):
@@ -437,12 +587,36 @@ class TestMergeRecordsTypedRevision:
         cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=True))
         assert canon.read_text() == before
 
-    def test_merged_canonical_lints_clean(self, temp_entities, frozen_today):
+    def test_merged_canonical_lints_clean_including_the_temporal_audit(
+            self, temp_entities, frozen_today):
         canon = self._write(temp_entities, "kept")
         self._write(temp_entities, "dupe")
         cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
         hard = [e for e in lint_entity_page(canon) if e.severity == "error"]
         assert not hard, f"merged canonical must lint clean, got: {hard}"
+        # Default lint cannot see the envelope at all, so checking only errors
+        # would pass on a corrupt one. The audit is what actually inspects it.
+        envelope = [e for e in
+                    bookkeeping._lint_temporal_entity_page(canon, audit_date=AUDIT_DATE)
+                    if e.field in ("temporal_supersedes", "temporal_revision_link",
+                                   "temporal_recorded_at", "temporal_valid_from")]
+        assert not envelope, f"merge must emit a well-formed envelope, got: {envelope}"
+
+    def test_merge_completes_but_skips_a_malformed_pre_existing_envelope(
+            self, temp_entities, frozen_today, capsys):
+        canon = self._write(temp_entities, "kept")
+        canon.write_text(canon.read_text().replace(
+            "---\n# kept", 'supersedes:\n  - bare-slug\n---\n# kept'))
+        before = canon.read_text()
+        self._write(temp_entities, "dupe")
+        cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
+        # The dedup work is independent and must still land...
+        assert "status: merged" in (temp_entities / "tool" / "dupe.md").read_text()
+        # ...but corrupt provenance must not be silently rewritten.
+        assert "bare-slug" in canon.read_text()
+        assert "supersedes: [" not in canon.read_text()
+        assert "malformed revision envelope" in capsys.readouterr().err
+        assert canon.read_text() != before, "the alias must still be recorded"
 
 
 # ── Warning-only supersession validation (opt-in) ────────────────────────────
@@ -505,6 +679,18 @@ class TestEnvelopeAudit:
         assert _fields(errors) == ["temporal_revision_link"]
         assert "revises nothing" in errors[0].message
 
+    def test_a_list_valued_revision_link_satisfies_the_requirement(self):
+        assert _lint_envelope({
+            "slug": "current", "supersedes": ["[[old]]"],
+            "revision_link": ["ticket://BRO-1", "ticket://BRO-2"],
+        }) == []
+
+    def test_an_all_blank_revision_link_list_does_not(self):
+        errors = _lint_envelope({
+            "slug": "current", "supersedes": ["[[old]]"], "revision_link": ["", "  "],
+        })
+        assert "temporal_revision_link" in _fields(errors)
+
     def test_timeline_inversion_warns(self):
         errors = _lint_envelope({
             "slug": "current", "recorded_at": "2026-06-01",
@@ -548,17 +734,23 @@ class TestEnvelopeAudit:
 
 
 class TestDefaultLintIsUnchanged:
-    def test_default_lint_ignores_a_malformed_envelope(
+    def test_default_lint_output_is_identical_with_and_without_an_envelope(
             self, temp_entities, frozen_today):
-        path = _write_entity(
-            temp_entities, "malformed",
-            extra='supersedes:\n  - bare-slug\nrevision_link: ""\n'
-                  'recorded_at: "2027-12-25"\nvalid_from: nonsense\n',
-        )
-        errors = lint_entity_page(path)
-        assert not [e for e in errors if e.field.startswith("temporal_")], \
-            "envelope findings must require --temporal"
-        assert not [e for e in errors if e.severity == "error"]
+        # The strong form: the FULL default-lint finding set for a page carrying
+        # a (deliberately malformed) envelope must equal the set for the same
+        # page without one. Asserting only "no temporal_* fields" would pass
+        # even if the envelope introduced some other new default warning.
+        envelope = ('supersedes:\n  - bare-slug\nrevision_link: ""\n'
+                    'recorded_at: "2027-12-25"\nvalid_from: nonsense\n')
+        with_env = _write_entity(temp_entities, "with-envelope", extra=envelope)
+        without = _write_entity(temp_entities, "without-envelope")
+
+        def signature(p):
+            return sorted((e.field, e.severity, e.message) for e in lint_entity_page(p))
+
+        assert signature(with_env) == signature(without), \
+            "the envelope must be invisible to default lint"
+        assert not [e for e in lint_entity_page(with_env) if e.severity == "error"]
 
     def test_temporal_audit_surfaces_what_default_lint_skipped(
             self, temp_entities, frozen_today):
@@ -610,7 +802,7 @@ class TestReviseCLI:
         assert result.returncode == 0, result.stderr
         text = (entities / "new-belief.md").read_text()
         assert 'supersedes: ["[[old-belief]]"]' in text
-        assert 'revision_link: "https://example.test/decision/1"' in text
+        assert 'revision_link: ["https://example.test/decision/1"]' in text
 
     def test_cli_requires_a_revision_link(self, tmp_path):
         self._graph(tmp_path)
@@ -621,16 +813,45 @@ class TestReviseCLI:
         assert result.returncode != 0
         assert "revision-link" in result.stderr
 
-    def test_cli_lint_temporal_reports_the_supersession_as_a_warning(self, tmp_path):
+    def test_cli_temporal_flag_actually_runs_envelope_validation(self, tmp_path):
+        # Asserting rc==0 and "no ERROR" would pass even if --temporal were
+        # ignored entirely. Feed a page whose envelope is deliberately broken
+        # and require the specific warning to appear, and require the DEFAULT
+        # run on the same file to stay silent about it.
         entities = self._graph(tmp_path)
-        self._run(
-            ["revise", "--entity", "new-belief", "--supersedes", "old-belief",
-             "--revision-link", "ticket://BRO-1"],
-            tmp_path,
-        )
+        bad = entities / "new-belief.md"
+        bad.write_text(bad.read_text().replace(
+            "related: []\n", 'related: []\nsupersedes: ["[[ghost]]"]\n'))
+
+        default = self._run(["lint", "--file", str(bad)], tmp_path)
+        assert default.returncode == 0, default.stderr
+        assert "temporal_" not in default.stdout
+
+        temporal = self._run(["lint", "--file", str(bad), "--temporal"], tmp_path)
+        assert temporal.returncode == 0, temporal.stderr
+        assert "temporal_supersedes" in temporal.stdout
+        assert "temporal_revision_link" in temporal.stdout
+        assert "WARN" in temporal.stdout and "ERROR" not in temporal.stdout
+
+    def test_cli_replaying_a_revision_reports_and_writes_nothing(self, tmp_path):
+        entities = self._graph(tmp_path)
+        args = ["revise", "--entity", "new-belief", "--supersedes", "old-belief",
+                "--revision-link", "ticket://BRO-1"]
+        assert self._run(args, tmp_path).returncode == 0
+        first = (entities / "new-belief.md").read_text()
+        second = self._run(args, tmp_path)
+        assert second.returncode == 0, second.stderr
+        assert "already recorded" in second.stdout
+        assert (entities / "new-belief.md").read_text() == first
+
+    def test_cli_rejects_a_blank_revision_link(self, tmp_path):
+        entities = self._graph(tmp_path)
+        before = (entities / "new-belief.md").read_text()
         result = self._run(
-            ["lint", "--file", str(entities / "new-belief.md"), "--temporal"],
+            ["revise", "--entity", "new-belief", "--supersedes", "old-belief",
+             "--revision-link", "   "],
             tmp_path,
         )
-        assert result.returncode == 0, result.stderr
-        assert "ERROR" not in result.stdout
+        assert result.returncode != 0
+        assert "must not be blank" in result.stderr
+        assert (entities / "new-belief.md").read_text() == before

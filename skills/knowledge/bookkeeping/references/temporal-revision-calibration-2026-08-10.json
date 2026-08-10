@@ -1,0 +1,89 @@
+{
+  "phase": "producer \u2014 typed temporal revision envelope",
+  "issue": "https://github.com/broomva/skills/issues/156",
+  "audit_date": "2026-08-10",
+  "candidate_commit": "af9d5edf270e8cda0b639ae987feb41afac8c2fd",
+  "graph": {
+    "root": "/Users/broomva/broomva",
+    "entity_pages": 935,
+    "env": {
+      "KG_ROOT": "/Users/broomva/broomva",
+      "KG_NO_POLICY": "1"
+    },
+    "writes": "none \u2014 lint is read-only"
+  },
+  "commands": {
+    "default": "python3 <impl> lint --all",
+    "temporal": "python3 <impl> lint --all --temporal"
+  },
+  "results": {
+    "merged": {
+      "default": {
+        "issues": 808,
+        "errors": 62,
+        "warnings": 746,
+        "temporal_updated": 0,
+        "temporal_as_of": 0,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      },
+      "temporal": {
+        "issues": 905,
+        "errors": 62,
+        "warnings": 843,
+        "temporal_updated": 68,
+        "temporal_as_of": 29,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      }
+    },
+    "candidate": {
+      "default": {
+        "issues": 808,
+        "errors": 62,
+        "warnings": 746,
+        "temporal_updated": 0,
+        "temporal_as_of": 0,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      },
+      "temporal": {
+        "issues": 905,
+        "errors": 62,
+        "warnings": 843,
+        "temporal_updated": 68,
+        "temporal_as_of": 29,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      }
+    }
+  },
+  "controls": {
+    "default_lint_unchanged": true,
+    "temporal_baseline_unchanged": true,
+    "no_envelope_findings_on_live_graph": true,
+    "envelope_absent_from_live_graph_note": "No entity yet carries recorded_at/valid_from/supersedes/revision_link, so the envelope audit contributes zero findings by construction. Precision/recall on real revisions cannot be measured until revisions exist; that measurement gates any hard gate."
+  },
+  "tests": {
+    "suite": "skills/knowledge/bookkeeping/tests",
+    "total": 390,
+    "new": 59,
+    "pythons": [
+      "3.11",
+      "3.12"
+    ],
+    "mutation_proof": {
+      "mutations": 16,
+      "killed": 16,
+      "survived": 0
+    }
+  }
+}

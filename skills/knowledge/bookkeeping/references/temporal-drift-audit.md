@@ -4,6 +4,12 @@
 filesystem knowledge graphs. It detects temporal bookkeeping defects that can
 be established from local syntax without asking a regex to decide what is true.
 
+> **Scope.** This document covers the *drift detector* — `temporal_updated` and
+> `temporal_as_of`. The typed revision envelope (`recorded_at`, `valid_from`,
+> `supersedes`, `revision_link`), its producers, and its own warning-only
+> findings are specified in `temporal-revision-envelope.md`. The two run under
+> the same `--temporal` flag and are otherwise independent.
+
 ## Contract
 
 The audit emits two fields:
@@ -73,3 +79,16 @@ Semantic reconciliation therefore remains a Dream (P13) review step. A future
 hard gate requires typed write-side producers, a non-blocking supersession
 validator, and calibration showing that the warning has useful precision and
 recall on independently judged cases.
+
+## Status of that requirement — 2026-08-10
+
+The first two conditions are now met and the third is not.
+
+Typed write-side producers exist (`promote` stamps `recorded_at`; `revise` and
+`merge` emit `supersedes` + `revision_link`), and a non-blocking supersession
+validator ships alongside them — see `temporal-revision-envelope.md` for both.
+
+Calibration does not. No entity in the live graph yet carries the envelope, so
+the new checks contribute zero findings by construction and their precision and
+recall on independently judged revisions are unmeasured. Those fields remain
+optional, every finding remains a warning, and nothing here is a gate.

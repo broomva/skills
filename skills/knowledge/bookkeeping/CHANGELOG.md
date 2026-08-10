@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0] — 2026-08-10
+- Added the typed temporal revision envelope, producer-first: `promote` stamps system-time `recorded_at`; `valid_from` is written only when a source supplies it and is never inferred from prose, page dates, or the ingest timestamp.
+- Added `revise` — the explicit correction workflow that emits `supersedes` + `revision_link`; `merge` now records the same envelope on the canonical with the tombstone as its authorizing record.
+- Added warning-only, `--temporal`-gated supersession validation (stamp parseability, future `recorded_at`, wikilink form, self-supersession, unresolvable targets, missing authorizing record, timeline inversion). Default `lint` output is unchanged.
+- `recorded_at` is excluded from the content-identity guard, so replay stays byte-identical; legacy pages are not backfilled by the update path.
+- Contract in `references/temporal-revision-envelope.md`; live-graph parity receipt in `references/temporal-revision-calibration-2026-08-10.json`. No hard gate: the new checks are uncalibrated because no entity yet carries the envelope.
+
 ## [1.1.0] — 2026-08-09
 - Added opt-in `lint --temporal` warnings for stale `updated` metadata and undated mutable state in catalog-visible claims, headings, and explicit labels.
 - Kept temporal findings non-blocking and default lint behavior unchanged; semantic contradiction/supersession remains outside the mechanical linter.

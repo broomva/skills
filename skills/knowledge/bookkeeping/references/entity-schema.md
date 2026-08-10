@@ -127,6 +127,38 @@ open_questions_count: {N}
 implementation_status: implemented | designed | experimental | open-question | not-applicable
 # Required. Whether the concept has been implemented in this workspace.
 # "not-applicable" for concepts/people/discoveries where implementation isn't meaningful.
+
+# ── TEMPORAL REVISION ENVELOPE ────────────────────────────────────────────────
+# Four typed fields with deliberately different provenance rules. Full write-side
+# contract: references/temporal-revision-envelope.md. Validation is warning-only
+# and opt-in (`lint --temporal`); none of these fields is required, and default
+# lint never reports on them.
+
+recorded_at: "YYYY-MM-DD"
+# Optional, machine-written. SYSTEM time — when the graph recorded this state.
+# Stamped by `promote` on creation and re-stamped on a substantive update. Never
+# operator-supplied. Distinct from `updated`, which tracks the page; this tracks
+# the record. Pages predating the envelope are not backfilled by the update path.
+
+valid_from: "YYYY-MM-DD"
+# Optional. CLAIM-EFFECTIVE time — when the claim became true. Written only when
+# a source (raw item `metadata.valid_from`) or an explicit `revise --valid-from`
+# supplies it. NEVER inferred from prose, from dates elsewhere in the page, or
+# from the ingest timestamp. An absent value means "not stated", which is the
+# honest answer; a defaulted one would assert something nobody claimed.
+
+supersedes:
+  - "[[{entity-slug}]]"
+# Optional. Records this page replaces. Emitted ONLY by an explicit correction
+# workflow (`bookkeeping revise`, or `bookkeeping merge` on the canonical) —
+# never inferred from present-tense prose, however emphatic. Entries must be
+# [[wikilink]] form and must resolve to an entity file (a merge tombstone
+# resolves deliberately: superseding a merged-away slug is the normal case).
+
+revision_link: "{url-ticket-or-doc-path}"
+# Optional, but REQUIRED whenever `supersedes` is non-empty. The record that
+# authorized the supersession. Without it, a replacement asserts that something
+# was superseded while saying nothing about who decided that, or on what basis.
 ---
 ```
 
