@@ -1094,6 +1094,54 @@ class TestBackfillRecordedMerges:
         bookkeeping.cmd_backfill_revisions(self._args())
         assert "does not parse" in capsys.readouterr().out
 
+    def test_a_quoted_status_KEY_is_still_a_key(
+            self, temp_entities, frozen_today, capsys):
+        _write_entity(temp_entities, "kept", type_dir="tool")
+        (temp_entities / "tool" / "dupe.md").write_text(
+            '---\nslug: dupe\n"status": merged\nmerged_into: [unclosed\n---\n\nT.\n')
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert "does not parse" in capsys.readouterr().out
+
+    def test_a_body_only_canonical_is_refused_not_reported_recorded(
+            self, temp_entities, frozen_today, capsys):
+        # A page with no frontmatter is not an entity page: every setter no-ops,
+        # so the run would report it as "already recorded" having written nothing.
+        canon = temp_entities / "tool" / "kept.md"
+        canon.write_text("# kept\n\nBody only.\n")
+        (temp_entities / "tool" / "dupe.md").write_text(
+            '---\nslug: dupe\ntype: tool\nstatus: merged\nmerged_into: kept\n'
+            'merged_at: "2026-06-09"\ncore_claim: "Merged."\n---\n\nT.\n')
+        with pytest.raises(SystemExit):
+            bookkeeping.cmd_backfill_revisions(self._args())
+        out = capsys.readouterr()
+        assert "no YAML frontmatter" in out.err
+        assert "[ok]" not in out.out, "no row may be reported as already recorded"
+        assert "1 failed" in out.out
+        assert canon.read_text() == "# kept\n\nBody only.\n"
+
+    def test_one_disk_write_per_canonical_regardless_of_link_count(
+            self, temp_entities, frozen_today, monkeypatch):
+        # Pins the ONE-CALL contract: restoring a per-link loop would still
+        # produce the right frontmatter, so asserting only the result cannot
+        # detect the regression.
+        canon = self._merged_pair(temp_entities, dup="dupe-a", merged_at="2026-06-09")
+        self._merged_pair(temp_entities, dup="dupe-b", merged_at="2026-07-04")
+        self._merged_pair(temp_entities, dup="dupe-c", merged_at="2026-07-05")
+        calls = []
+        real = bookkeeping._apply_revision_envelope
+        monkeypatch.setattr(
+            bookkeeping, "_apply_revision_envelope",
+            lambda *a, **k: (calls.append(k.get("revision_link")), real(*a, **k))[1])
+        bookkeeping.cmd_backfill_revisions(self._args())
+        assert len(calls) == 1, f"expected one call for one canonical, got {len(calls)}"
+        assert calls[0] == [
+            "research/entities/tool/dupe-a.md",
+            "research/entities/tool/dupe-b.md",
+            "research/entities/tool/dupe-c.md",
+        ]
+        fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
+        assert len(fm["revision_link"]) == 3
+
     def test_a_code_fence_in_the_body_is_not_a_tombstone(
             self, temp_entities, frozen_today, capsys):
         # The marker scan is confined to the frontmatter block; a full-file

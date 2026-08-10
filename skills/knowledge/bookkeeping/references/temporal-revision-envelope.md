@@ -218,27 +218,39 @@ measured about the one check that could produce a rate.
 
 ### Why there is still no hard gate
 
-**The corpus is too small to bound any check's false-positive rate, and the
-deterministic ones would need a different kind of evidence anyway.**
+**The corpus is too small to bound any check's false-positive rate, and for
+most of these checks that rate is not the interesting question.**
 
-An earlier draft of this section claimed a rate "is not the quantity that
-describes" a deterministic check. That was wrong, and the reviewer was right to
-say so: a deterministic classifier has a perfectly well-defined false-positive
-rate over a defined set of decision opportunities — here, pages carrying the
-relevant field. Determinism is not a reason the number does not exist.
+Two earlier framings of this section were wrong, and both were corrected under
+review rather than defended. The first claimed a rate "is not the quantity that
+describes" a deterministic check — false; a deterministic classifier has a
+perfectly well-defined rate over its decision opportunities. The second tried to
+rescue it by contrasting *deterministic* with *heuristic* — also false, since a
+threshold heuristic is equally deterministic given the same input, and a labeled
+sample estimates a rate for both.
 
-What determinism *does* change is where the error lives. A threshold heuristic
-misfires because a sample fell the wrong side of a line, and more data tightens
-the estimate. A deterministic check misfires because its **predicate does not
-match intent** — and it will then misfire on *every* instance of that shape, not
-a random fraction. More data can reveal such a shape, but the remedy is review
-of the predicate, not a larger sample.
+The axis that actually separates them is **definitional versus proxy**.
 
-So both are true and neither is sufficient: the observed rate is 0 across every
-migrated page, and 5 pages cannot bound it. The positive controls establish
-**reachability** — each branch fires, on its own message — which is what makes a
-zero-finding corpus mean anything at all. They do not establish that firing was
-the right call.
+Nine of the twelve checks are **definitional**: the predicate *is* the property.
+"Is this entry `[[wikilink]]` form" does not stand in for some further question —
+it is the question. Asking its false-positive rate asks whether `x == x`, and no
+corpus changes the answer. What such a check can still be is *wrong about what
+matters*, which is a specification question settled by reading it, not by
+sampling.
+
+Three are **proxies**, and only these have a gap a rate could measure:
+
+| Check | Proxy for | How it can be wrong |
+|---|---|---|
+| timeline inversion | "this supersession is backwards" | stamps backfilled at different times |
+| `supersedes` target resolves | "the provenance is traceable" | the tombstone was cleaned up |
+| `recorded_at` is in the future | "the stamp is wrong" | reads the *audit host's* clock |
+
+The corpus produces **zero** heuristic-eligible comparisons for the first and
+zero findings for the other two, so none of the three is measured at all. The
+positive controls establish **reachability** — each branch fires, on its own
+message — which is what makes a zero-finding corpus mean anything. They do not
+establish that firing was the right call.
 
 Two predicates are known to be arguable, and are named rather than hidden in a
 count:

@@ -2220,7 +2220,9 @@ def _assert_unparseable_frontmatter(text: str) -> None:
             raise MalformedEnvelopeError(
                 "frontmatter opens with `---` but is never closed; "
                 "rewriting it would silently record nothing")
-        return  # no frontmatter at all — callers guard that separately
+        raise MalformedEnvelopeError(
+            "page has no YAML frontmatter; every envelope setter would no-op "
+            "and the write would be reported as already recorded")
     inner = re.sub(r"^---[ \t]*\r?\n", "", fm, count=1)
     inner = re.sub(r"---[ \t]*\r?\n?$", "", inner)
     try:
@@ -5951,7 +5953,7 @@ def _recorded_supersessions() -> "list[dict]":
             # misread body prose or a fenced example as a tombstone marker.
             head, _ = _split_frontmatter(raw)
             head = head or (raw if re.match(r"^---[ \t]*\r?\n", raw) else "")
-            if re.search(r'^status:\s*["\']?merged["\']?\s*(?:#.*)?$',
+            if re.search(r'^["\']?status["\']?:\s*["\']?merged["\']?\s*(?:#.*)?$',
                          head, re.MULTILINE):
                 out.append({
                     "superseded": page.stem, "canonical": None, "merged_at": None,

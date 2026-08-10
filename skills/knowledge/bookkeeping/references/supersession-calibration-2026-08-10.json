@@ -17,22 +17,42 @@
     "writes_to_live_graph": "none \u2014 all runs against a pinned detached worktree"
   },
   "check_taxonomy": {
-    "note": "Eleven of twelve checks are DETERMINISTIC. That does NOT mean they lack a false-positive rate \u2014 a deterministic classifier has a well-defined one over its decision opportunities, and an earlier draft of this receipt wrongly claimed otherwise. It means the error lives elsewhere: such a check misfires because its PREDICATE does not match intent, and then misfires on every instance of that shape rather than a random fraction, so the remedy is review of the predicate rather than a larger sample. The corpus is separately too small to bound any rate.",
-    "deterministic": [
-      "temporal_recorded_at \u2014 parses / not in the future",
-      "temporal_valid_from \u2014 parses",
-      "temporal_supersedes \u2014 is a list / entries are strings / entries are [[wikilink]] form / not a self-reference",
-      "temporal_supersedes \u2014 target resolves to a live entity file",
-      "temporal_revision_link \u2014 present when supersedes is / non-blank / string / not an orphan"
-    ],
-    "heuristic": [
-      "temporal_supersedes / timeline inversion: the superseded target's recorded_at is newer than this record's"
-    ],
-    "arguable_predicates": [
-      "'supersedes target resolves' \u2014 a target can be unresolvable because the tombstone was cleaned up, not because provenance is broken. Reporting it is a policy choice.",
-      "'recorded_at is in the future' \u2014 reads system time from the AUDIT HOST, so clock skew or cross-time-zone editing produces findings about the auditor rather than the record."
-    ],
-    "what_positive_controls_establish": "REACHABILITY \u2014 each branch can fire, and fires on its own message. That is what makes a zero-finding corpus meaningful. It does NOT establish that firing was the right call."
+    "axis": "DEFINITIONAL vs PROXY \u2014 not deterministic vs heuristic. A threshold heuristic is equally deterministic given the same input, and a labeled sample estimates a rate for both. Two earlier framings of this receipt got this wrong and were corrected under review.",
+    "definitional": {
+      "count": 9,
+      "note": "The predicate IS the property. 'Is this entry [[wikilink]] form' does not stand in for a further question \u2014 asking its false-positive rate asks whether x == x. Such a check can still be wrong about what MATTERS, which is a specification question settled by reading it, not by sampling.",
+      "checks": [
+        "temporal_recorded_at \u2014 parses",
+        "temporal_valid_from \u2014 parses",
+        "temporal_supersedes \u2014 is a list / entries are strings / [[wikilink]] form / not a self-reference",
+        "temporal_revision_link \u2014 present when supersedes is / non-blank / string / not an orphan"
+      ]
+    },
+    "proxy": {
+      "count": 3,
+      "note": "Only these have a gap a false-positive rate could measure. None is measured by this corpus.",
+      "checks": [
+        {
+          "check": "timeline inversion",
+          "proxy_for": "this supersession is backwards",
+          "how_it_can_be_wrong": "stamps backfilled at different times",
+          "measured": "0 heuristic-eligible comparisons in the corpus"
+        },
+        {
+          "check": "supersedes target resolves",
+          "proxy_for": "the provenance is traceable",
+          "how_it_can_be_wrong": "the tombstone was cleaned up",
+          "measured": "0 findings"
+        },
+        {
+          "check": "recorded_at is in the future",
+          "proxy_for": "the stamp is wrong",
+          "how_it_can_be_wrong": "reads the AUDIT HOST's clock",
+          "measured": "0 findings"
+        }
+      ]
+    },
+    "what_positive_controls_establish": "REACHABILITY \u2014 each branch fires, on its own message. That is what makes a zero-finding corpus meaningful. It does NOT establish that firing was the right call."
   },
   "measurements": {
     "negative_control": {
@@ -98,7 +118,7 @@
   "decision": {
     "promote_to_hard_gate": "NO \u2014 none.",
     "rationale": [
-      "The 11 deterministic checks are reachable (12/12 positive controls, each matched on its own message), silent on real data (0 findings across 5 migrated canonicals), and 15/15 mutations were killed across two rounds. That is a soundness argument, not a bound on their false-positive rate \u2014 5 pages cannot provide one \u2014 and it is not a reason to gate NOW: only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect and no operational history behind it.",
+      "The 9 definitional checks are reachable (12/12 positive controls, each matched on its own message), silent on real data, and 22/22 mutations were killed across three rounds. The 3 proxy checks are unmeasured: the corpus yields zero heuristic-eligible comparisons and zero findings. Neither result is a reason to gate NOW \u2014 only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect.",
       "The 1 heuristic check (timeline inversion) is unmeasured on real data and cannot be measured on this corpus at all, because tombstones carry no recorded_at.",
       "Everything stays warning-only and opt-in behind --temporal. Default lint is unchanged."
     ],
