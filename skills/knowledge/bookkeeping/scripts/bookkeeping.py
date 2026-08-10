@@ -1694,6 +1694,7 @@ sources:
 related: []
 created: {created}
 updated: {updated}
+recorded_at: "{recorded_at}"
 tags:
   - {entity_type}
   - bookkeeping
@@ -2001,6 +2002,209 @@ def _merged_tombstone_path(slug: str, entity_type: str | None = None) -> "Path |
     return None
 
 
+# ── Typed temporal revision envelope — PRODUCER side (gh-156) ─────────────────
+#
+# The shipped `lint --temporal` audit is a DETECTOR. It can surface that a page
+# asserts mutable state without an as-of date; it cannot establish which belief
+# is current or which record supersedes another. That question is only decidable
+# if the WRITE path emits the answer, so the producers come first and the
+# semantic validation is layered on afterwards.
+#
+# Four typed fields, with deliberately different provenance rules:
+#
+#   recorded_at   system time. Emitted MECHANICALLY on creation and re-stamped
+#                 on a substantive update. Never operator-supplied — a
+#                 hand-chosen "when the system learned this" is not system time.
+#   valid_from    claim-effective time. OPTIONAL, and only ever written when a
+#                 source or an explicit revision SUPPLIES it. It is never
+#                 inferred from prose, from an ISO date found in the body, or
+#                 from the ingest timestamp (which is when we saw the claim, not
+#                 when the claim became true).
+#   supersedes    the records this page replaces, as [[wikilink]]s. Emitted ONLY
+#                 by an explicit correction/revision action (`revise`, `merge`).
+#   revision_link the record that authorized the supersession. Required
+#                 alongside `supersedes` so a replacement is always traceable to
+#                 the decision that made it.
+#
+# The hard rule this section exists to enforce: no field here may be produced by
+# reading present-tense prose. A schema that claims guarantees no writing path
+# supplies is compliance theater — see references/temporal-revision-envelope.md.
+
+# `valid_from` is read from exactly this metadata key on the raw item. One
+# canonical key, no fuzzy aliasing: guessing which of several near-miss keys the
+# author "meant" is the prose inference this envelope refuses to do.
+_VALID_FROM_METADATA_KEY = "valid_from"
+
+_FM_CLOSING_FENCE_RE = re.compile(r"^---[ \t]*$", re.MULTILINE)
+
+
+def _coerce_iso_date_str(value: object) -> "str | None":
+    """Render `value` as a canonical YYYY-MM-DD string, or None if it isn't a date.
+
+    Accepts what YAML actually hands back for a date-shaped field (`date`,
+    `datetime`, or a string) and rejects everything else. Returning None is the
+    contract for "not supplied" — a caller must never fall back to today, since
+    that would silently manufacture a claim-effective time.
+    """
+    parsed = _coerce_temporal_date(value)
+    return parsed.isoformat() if parsed is not None else None
+
+
+def _supplied_valid_from(item: "RawItem") -> "str | None":
+    """Return the explicitly supplied claim-effective date for `item`, else None.
+
+    Reads ONLY `item.metadata["valid_from"]`. It deliberately does not consult
+    `item.content` (prose inference), `item.timestamp` (ingest time, not
+    claim-effective time), or any date found in the body. When the source did
+    not state when the claim became true, the field is omitted — an absent
+    `valid_from` is honest, a guessed one is not.
+    """
+    metadata = getattr(item, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    return _coerce_iso_date_str(metadata.get(_VALID_FROM_METADATA_KEY))
+
+
+def _fm_key_block_re(key: str) -> "re.Pattern":
+    """Match a frontmatter key AND any indented/list continuation lines it owns.
+
+    Replacing only the `key:` line would orphan the items of a block list
+    (`supersedes:\\n  - "[[x]]"`) into invalid YAML at the top level. Consuming
+    the continuation block keeps a rewrite total.
+
+    The closing `---` fence is excluded explicitly. Without that lookahead a
+    block list as the LAST frontmatter key would swallow the fence (`---`
+    satisfies the "line starts with a dash" arm), and the rewrite would splice
+    frontmatter and body into one unparseable document.
+    """
+    return re.compile(
+        rf"^{re.escape(key)}:[^\n]*\n"
+        rf"(?:(?!---[ \t]*$)(?:[ \t]+|[ \t]*-)[^\n]*\n)*",
+        re.MULTILINE,
+    )
+
+
+def _set_frontmatter_scalar(
+    text: str, key: str, rendered: str, after: "str | None" = None,
+) -> str:
+    """Set `key: rendered` in `text`'s frontmatter, replacing or inserting.
+
+    `rendered` is emitted verbatim, so callers own the YAML rendering (quoting a
+    date, flow-listing wikilinks). Only the leading frontmatter block is
+    touched; a body line that happens to start with `key:` is preserved — the
+    same invariant `_split_frontmatter` exists to protect.
+
+    Returns `text` unchanged when the document has no frontmatter: a page
+    without frontmatter is not an entity page, and inventing one here would
+    produce a file the rest of the pipeline cannot read.
+    """
+    fm, body = _split_frontmatter(text)
+    if not fm:
+        return text
+    line = f"{key}: {rendered}\n"
+    block_re = _fm_key_block_re(key)
+    if block_re.search(fm):
+        fm = block_re.sub(lambda _m: line, fm, count=1)
+        return fm + body
+    if after:
+        after_re = _fm_key_block_re(after)
+        m = after_re.search(fm)
+        if m:
+            fm = fm[: m.end()] + line + fm[m.end():]
+            return fm + body
+    # Fall back to inserting immediately before the closing fence.
+    fences = list(_FM_CLOSING_FENCE_RE.finditer(fm))
+    if len(fences) >= 2:
+        at = fences[-1].start()
+        fm = fm[:at] + line + fm[at:]
+    return fm + body
+
+
+def _render_wikilink_flow_list(slugs: "list[str]") -> str:
+    """Render slugs as a single-line YAML flow list of [[wikilink]] strings.
+
+    Flow style (not a block list) keeps every envelope field a one-line entry,
+    which is what makes `_set_frontmatter_scalar` rewrites and the byte-identity
+    idempotency check straightforward.
+    """
+    return "[" + ", ".join(f'"[[{s}]]"' for s in slugs) + "]"
+
+
+def _parse_wikilink_list(value: object) -> "list[str]":
+    """Extract slugs from a `supersedes`-shaped value, preserving order.
+
+    Tolerant on the READ side (bare slug, `[[slug]]`, a single string instead of
+    a list) because hand-authored pages exist; the write side always emits the
+    canonical `[[slug]]` flow list. Malformed entries are reported by the
+    audit, not silently repaired here.
+    """
+    if value is None:
+        return []
+    raw = value if isinstance(value, list) else [value]
+    out: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        slug = entry.strip()
+        m = re.match(r"^\[\[([^\]|#]+)", slug)
+        if m:
+            slug = m.group(1)
+        slug = slug.strip()
+        if slug and slug not in out:
+            out.append(slug)
+    return out
+
+
+def _apply_revision_envelope(
+    text: str,
+    *,
+    supersedes: "list[str]",
+    revision_link: str,
+    valid_from: "str | None" = None,
+    today: "str | None" = None,
+) -> str:
+    """Write the typed revision envelope onto an entity page's frontmatter.
+
+    The single write-side entry point for `supersedes` + `revision_link`, shared
+    by every explicit correction workflow (`revise`, `merge`). Nothing else in
+    the pipeline may emit these two fields — that restriction is what keeps
+    "this record replaces that one" a statement somebody made, rather than
+    something a regex concluded from present-tense prose.
+
+    New `supersedes` slugs are UNIONED with any already present (order
+    preserved, deduped): a page can be corrected more than once, and a later
+    revision must not silently drop what an earlier one recorded. Re-applying
+    the same revision on the same day is byte-identical — the union, the
+    canonical flow-list rendering, and the date stamps are all idempotent.
+
+    `recorded_at` is re-stamped (and backfilled if missing) because an explicit
+    revision IS a substantive change; `valid_from` is written only when the
+    caller was given one.
+    """
+    today = today or today_str()
+    merged = _parse_wikilink_list(_frontmatter_value(text, "supersedes"))
+    for slug in supersedes:
+        if slug not in merged:
+            merged.append(slug)
+    if merged:
+        text = _set_frontmatter_scalar(
+            text, "supersedes", _render_wikilink_flow_list(merged), after="related")
+        text = _set_frontmatter_scalar(
+            text, "revision_link", f'"{revision_link}"', after="supersedes")
+    if valid_from:
+        text = _set_frontmatter_scalar(
+            text, "valid_from", f'"{valid_from}"', after="recorded_at")
+    text = _set_frontmatter_scalar(text, "updated", today, after="created")
+    text = _set_frontmatter_scalar(text, "recorded_at", f'"{today}"', after="updated")
+    return text
+
+
+def _frontmatter_value(text: str, key: str) -> object:
+    """Return one parsed frontmatter value from raw page text, or None."""
+    fm, _ = parse_frontmatter(text)
+    return fm.get(key) if isinstance(fm, dict) else None
+
+
 def promote_item(
     scored: ScoredItem,
     entity_slug: str,
@@ -2083,6 +2287,9 @@ def promote_item(
         "source_ref": source_ref,
         "created": today,
         "updated": today,
+        # System time, emitted mechanically — this is the one envelope field the
+        # producer is entitled to author on its own.
+        "recorded_at": today,
         "content": scored.item.content,
         "quote": scored.item.quote or scored.item.content[:200],
         "score": str(scored.total),
@@ -2094,6 +2301,15 @@ def promote_item(
     for key, value in content_map.items():
         page = page.replace("{" + key + "}", value)
     page = _sanitize_page_text(page)
+
+    # `valid_from` is written ONLY when the source supplied it. No supplied
+    # value ⇒ no field: an omitted claim-effective time is a truthful "not
+    # stated", whereas defaulting it to today would assert that every promoted
+    # claim became true on its promotion date.
+    valid_from = _supplied_valid_from(scored.item)
+    if valid_from:
+        page = _set_frontmatter_scalar(
+            page, "valid_from", f'"{valid_from}"', after="recorded_at")
 
     if not dry_run:
         entity_dir.mkdir(parents=True, exist_ok=True)
@@ -2108,10 +2324,19 @@ def promote_item(
 
 
 # Frontmatter fields that legitimately change every run and therefore must
-# be excluded from the content-identity comparison. `updated:` is the only
-# pure-timestamp field the pipeline touches on update; if more are added in
-# future they belong here.
-_VOLATILE_FRONTMATTER_FIELDS = ("updated",)
+# be excluded from the content-identity comparison. Both entries are pure
+# system-time stamps the pipeline re-writes on update.
+#
+# `recorded_at` MUST be listed here. It is bumped by `_render_updated_entity`
+# alongside `updated`, so leaving it out would make every page differ from its
+# own candidate on every run — resurrecting exactly the 137-entities-churned
+# pathology the guard below was built to kill, and inflating `recorded_at` into
+# a "last run" stamp instead of "last substantive change".
+#
+# `valid_from`, `supersedes`, and `revision_link` are deliberately NOT volatile:
+# they are semantic claims, and a change to any of them is a real delta that
+# must be written.
+_VOLATILE_FRONTMATTER_FIELDS = ("updated", "recorded_at")
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
@@ -2157,9 +2382,16 @@ def _render_updated_entity(existing: str) -> str:
     Compute the would-be new content for an existing entity page on update.
 
     The current pipeline carries no semantic merge through the update path —
-    it only bumps the `updated:` frontmatter field to today. Isolated as a
-    named seam so a future semantic-merge step (and tests) can compose here
-    without touching the content-identity guard below.
+    it only bumps the `updated:` and `recorded_at:` frontmatter fields to
+    today. Isolated as a named seam so a future semantic-merge step (and tests)
+    can compose here without touching the content-identity guard below.
+
+    `recorded_at` is re-stamped only when the page ALREADY carries it. Pages
+    predating the typed envelope are not backfilled here: a backfill would be a
+    semantic delta on every legacy page at once, rewriting the whole graph on
+    the next `run` and stamping today as the system time of claims recorded
+    long before. Legacy pages acquire the field through an explicit revision or
+    a dedicated migration, not as a side effect of an unrelated update.
     """
     today = today_str()
     fm, body = _split_frontmatter(existing)
@@ -2167,6 +2399,9 @@ def _render_updated_entity(existing: str) -> str:
         return existing
     fm = re.sub(
         r"(^updated:\s*)(.+)$", rf"\g<1>{today}", fm, flags=re.MULTILINE
+    )
+    fm = re.sub(
+        r'(^recorded_at:\s*)(.+)$', rf'\g<1>"{today}"', fm, flags=re.MULTILINE
     )
     return fm + body
 
@@ -2782,16 +3017,169 @@ def _first_section_content_line(lines: list[str], start: int) -> str:
     return ""
 
 
+_CANONICAL_WIKILINK_RE = re.compile(r"^\[\[([^\[\]|#]+)\]\]$")
+
+
+def _default_entity_lookup(slug: str) -> "dict | None":
+    """Resolve `slug` to its frontmatter on disk, or None when no file exists.
+
+    Tombstones resolve deliberately: superseding a slug that was merged away is
+    the normal case, and reporting it as dangling would flag every merge.
+    """
+    path = _find_entity_file(slug)
+    if path is None:
+        return None
+    try:
+        fm, _ = read_frontmatter(path)
+    except Exception:
+        return {}
+    return fm if isinstance(fm, dict) else {}
+
+
+def _lint_temporal_envelope(
+    path_str: str,
+    fm: dict,
+    *,
+    audit_date: date,
+    entity_lookup,
+) -> list[LintError]:
+    """Warning-only validation of the typed revision envelope (gh-156).
+
+    Validates only what the WRITE path is supposed to guarantee — that stamps
+    parse, that a supersession resolves, that it carries an authorizing record,
+    and that its timeline runs forwards. It still does not judge whether the
+    supersession is CORRECT; that stays a P13 review question.
+
+    Every finding is a warning, and every finding is reachable only via
+    `lint --temporal`. Promotion to a hard gate is gated on live-graph
+    calibration and an independent cross-review, not on this code existing.
+    """
+    errors: list[LintError] = []
+
+    recorded_at_raw = fm.get("recorded_at")
+    recorded_at = _coerce_temporal_date(recorded_at_raw)
+    if recorded_at_raw is not None and recorded_at is None:
+        errors.append(LintError(
+            path_str, "temporal_recorded_at",
+            f"recorded_at {recorded_at_raw!r} is not an ISO date (YYYY-MM-DD)",
+            "warning",
+        ))
+    elif recorded_at is not None and recorded_at > audit_date:
+        errors.append(LintError(
+            path_str, "temporal_recorded_at",
+            f"recorded_at {recorded_at.isoformat()} is in the future — it is "
+            f"system time, so it cannot postdate the audit "
+            f"({audit_date.isoformat()})",
+            "warning",
+        ))
+
+    valid_from_raw = fm.get("valid_from")
+    if valid_from_raw is not None and _coerce_temporal_date(valid_from_raw) is None:
+        errors.append(LintError(
+            path_str, "temporal_valid_from",
+            f"valid_from {valid_from_raw!r} is not an ISO date (YYYY-MM-DD)",
+            "warning",
+        ))
+
+    self_slug = fm.get("slug") if isinstance(fm.get("slug"), str) else None
+    supersedes_raw = fm.get("supersedes")
+    entries: list[object]
+    if supersedes_raw is None:
+        entries = []
+    elif isinstance(supersedes_raw, list):
+        entries = list(supersedes_raw)
+    else:
+        entries = [supersedes_raw]
+        errors.append(LintError(
+            path_str, "temporal_supersedes",
+            f"supersedes must be a list of [[wikilink]] entries, got "
+            f"{type(supersedes_raw).__name__}",
+            "warning",
+        ))
+
+    resolved: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, str):
+            errors.append(LintError(
+                path_str, "temporal_supersedes",
+                f"supersedes entry {entry!r} is not a string", "warning"))
+            continue
+        m = _CANONICAL_WIKILINK_RE.match(entry.strip())
+        if not m:
+            errors.append(LintError(
+                path_str, "temporal_supersedes",
+                f"supersedes entry {entry!r} is not [[wikilink]] format",
+                "warning",
+            ))
+            continue
+        slug = m.group(1).strip()
+        if self_slug and slug == self_slug:
+            errors.append(LintError(
+                path_str, "temporal_supersedes",
+                f"supersedes lists its own slug {slug!r} — a record cannot "
+                f"supersede itself", "warning",
+            ))
+            continue
+        target_fm = entity_lookup(slug)
+        if target_fm is None:
+            errors.append(LintError(
+                path_str, "temporal_supersedes",
+                f"supersedes {slug!r} has no entity file — the superseded "
+                f"record is unresolvable", "warning",
+            ))
+            continue
+        resolved.append(slug)
+        # A revision that predates what it replaces is a timeline inversion:
+        # either the stamps are wrong or the direction of the supersession is.
+        target_recorded = _coerce_temporal_date(target_fm.get("recorded_at"))
+        if (
+            recorded_at is not None
+            and target_recorded is not None
+            and target_recorded > recorded_at
+        ):
+            errors.append(LintError(
+                path_str, "temporal_supersedes",
+                f"supersedes {slug!r} recorded {target_recorded.isoformat()}, "
+                f"which is newer than this record's recorded_at "
+                f"{recorded_at.isoformat()} — timeline inversion",
+                "warning",
+            ))
+
+    revision_link = fm.get("revision_link")
+    has_link = isinstance(revision_link, str) and revision_link.strip() != ""
+    if entries and not has_link:
+        errors.append(LintError(
+            path_str, "temporal_revision_link",
+            "supersedes is set without a revision_link — the supersession has "
+            "no authorizing record", "warning",
+        ))
+    if revision_link is not None and not entries:
+        errors.append(LintError(
+            path_str, "temporal_revision_link",
+            "revision_link is set with no supersedes — it points at a revision "
+            "that revises nothing", "warning",
+        ))
+
+    return errors
+
+
 def _lint_temporal_drift(
     path_str: str,
     fm: dict,
     body: str,
     *,
     audit_date: "date | None" = None,
+    entity_lookup=None,
 ) -> list[LintError]:
     """Emit opt-in, warning-only temporal drift findings for one entity."""
     audit_date = audit_date or date.today()
     errors: list[LintError] = []
+
+    errors.extend(_lint_temporal_envelope(
+        path_str, fm,
+        audit_date=audit_date,
+        entity_lookup=entity_lookup or _default_entity_lookup,
+    ))
 
     updated = _coerce_temporal_date(fm.get("updated"))
     sources = fm.get("sources") or []
@@ -5205,13 +5593,21 @@ def cmd_merge(args: argparse.Namespace) -> None:
                 if not dry:
                     p.write_text(nt)
                 repointed += 1
-    # 2. Record dup as an alias on the canonical (provenance).
+    # 2. Record dup as an alias on the canonical (provenance), and record the
+    #    typed revision: a merge IS an explicit correction, so the canonical
+    #    supersedes the dup and points at the tombstone that authorized it.
+    #    Without this the envelope would have a `revise` producer and no real
+    #    caller — the schema-with-no-writer failure this phase exists to avoid.
+    dup_type = dup_path.relative_to(ENTITIES_DIR).parts[0]
+    revision_link = getattr(args, "revision_link", None) or str(
+        _display_path(ENTITIES_DIR / dup_type / f"{dup}.md"))
     canon_text = canon_path.read_text(errors="replace")
     canon_new = _add_alias_to_frontmatter(canon_text, dup)
+    canon_new = _apply_revision_envelope(
+        canon_new, supersedes=[dup], revision_link=revision_link)
     if canon_new != canon_text and not dry:
         canon_path.write_text(canon_new)
     # 3. Rewrite dup as a tombstone.
-    dup_type = dup_path.relative_to(ENTITIES_DIR).parts[0]
     today = today_str()
     tombstone = (
         f"---\nslug: {dup}\ntype: {dup_type}\nstatus: merged\n"
@@ -5228,6 +5624,72 @@ def cmd_merge(args: argparse.Namespace) -> None:
     print(f"[merge]{tag} {dup} → {canon}: repointed {repointed} link(s), aliased canonical, tombstoned.")
     if not dry:
         print("        Run `bookkeeping index` to drop the tombstone from the catalog.")
+
+
+def cmd_revise(args: argparse.Namespace) -> None:
+    """Record an explicit correction: `entity` supersedes one or more records (gh-156).
+
+    The sanctioned way to state "this page replaces that one". It is an
+    operator/agent ACTION, never an inference: the caller names the revising
+    entity, the superseded slugs, and the record that authorized the change.
+    Nothing about present-tense prose can trigger it.
+
+    Both supersession targets and the revising entity must already exist on
+    disk. Pointing at a slug with no file is a hard error rather than a
+    warning, because writing an unresolvable `supersedes` would create exactly
+    the dangling-provenance state the audit then has to report.
+    """
+    entity = args.entity
+    entity_path = _find_entity_file(entity)
+    if entity_path is None:
+        print(f"[revise] entity '{entity}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    targets: list[str] = []
+    for raw in args.supersedes:
+        for slug in str(raw).split(","):
+            slug = slug.strip().strip("[]").strip()
+            if slug and slug not in targets:
+                targets.append(slug)
+    if not targets:
+        print("[revise] --supersedes requires at least one slug", file=sys.stderr)
+        sys.exit(2)
+    if entity in targets:
+        print(f"[revise] '{entity}' cannot supersede itself", file=sys.stderr)
+        sys.exit(2)
+    missing = [s for s in targets if _find_entity_file(s) is None]
+    if missing:
+        print(f"[revise] superseded slug(s) not found: {', '.join(missing)}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # `valid_from` is operator-supplied here and nowhere else in this command:
+    # a revision is precisely the moment somebody KNOWS when the corrected
+    # claim became true. Absent the flag, the field is left alone.
+    valid_from = None
+    if getattr(args, "valid_from", None):
+        valid_from = _coerce_iso_date_str(args.valid_from)
+        if valid_from is None:
+            print(f"[revise] --valid-from {args.valid_from!r} is not an ISO date "
+                  f"(YYYY-MM-DD)", file=sys.stderr)
+            sys.exit(2)
+
+    original = entity_path.read_text(errors="replace")
+    revised = _apply_revision_envelope(
+        original,
+        supersedes=targets,
+        revision_link=args.revision_link,
+        valid_from=valid_from,
+    )
+    dry = getattr(args, "dry_run", False)
+    if not dry and revised != original:
+        entity_path.write_text(revised)
+    tag = " (dry-run)" if dry else ""
+    changed = "no change" if revised == original else "updated"
+    print(f"[revise]{tag} {entity} supersedes {', '.join(targets)} "
+          f"(revision_link: {args.revision_link}) — {changed}.")
+    print("        Supersession findings surface under `lint --temporal` "
+          "(warning-only).")
 
 
 def cmd_status(_args: argparse.Namespace) -> None:
@@ -6006,7 +6468,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("canonical", help="slug of the canonical entity to keep")
     p_merge.add_argument("--dry-run", action="store_true",
                          help="report actions without writing")
+    p_merge.add_argument(
+        "--revision-link", metavar="REF",
+        help="record that authorized the merge (default: the tombstone path)")
     p_merge.set_defaults(func=cmd_merge)
+
+    # revise — explicit correction: record supersedes + revision_link (gh-156)
+    p_revise = sub.add_parser(
+        "revise",
+        help="Record an explicit correction: ENTITY supersedes one or more records")
+    p_revise.add_argument("--entity", required=True,
+                          help="slug of the revising (current) entity")
+    p_revise.add_argument(
+        "--supersedes", required=True, nargs="+", metavar="SLUG",
+        help="slug(s) this entity replaces; repeat or comma-separate")
+    p_revise.add_argument(
+        "--revision-link", required=True, metavar="REF",
+        help="the record that authorized this revision (URL, ticket, doc path). "
+             "Required: a supersession with no authorizing record is untraceable.")
+    p_revise.add_argument(
+        "--valid-from", metavar="YYYY-MM-DD",
+        help="claim-effective date, when the revision supplies one. Omit when "
+             "unknown — it is never guessed.")
+    p_revise.add_argument("--dry-run", action="store_true",
+                          help="report actions without writing")
+    p_revise.set_defaults(func=cmd_revise)
 
     # query
     p_query = sub.add_parser("query", help="Find and display an entity page")
