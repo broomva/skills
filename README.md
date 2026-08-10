@@ -90,6 +90,7 @@ npx skills add broomva/skills --skill '*'
 | [`comprehend`](skills/knowledge/comprehend/) | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
 | [`goodies`](skills/knowledge/goodies/) | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
+| [`what`](skills/knowledge/what/) | Explain the *concepts* a session used, at the operator's register — ranked by what blocks understanding, anchored to where each term appeared, grounded in the knowledge graph; degrades to a re-pitch when the slice is short |
 
 ### Research — `skills/research/`
 
