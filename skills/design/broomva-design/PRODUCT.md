@@ -24,7 +24,7 @@ Unlike a component dump or a fixed application template, Broomva Design separate
 
 ## Operating Context
 
-Agents invoke the skill inside an existing or new product repository. They inspect the target's platform, incumbent design authority, accessibility baseline, domain objects, and user jobs; choose `foundation`, `web`, `agentic-work`, or an explicitly required compatibility/evidence profile; materialize or consult the relevant assets; implement through semantic roles; then inspect and interact with representative states and device classes.
+Agents invoke the skill inside an existing or new product repository. They inspect the target's platform, incumbent design authority, accessibility baseline, domain objects, and user jobs; ask the deterministic preflight to recommend `foundation`, `web`, or `agentic-work`; confirm any explicit agentic or maintainer intent; materialize or consult the relevant assets; implement through semantic roles; then inspect and interact with representative states and device classes. Compatibility and evidence profiles remain progressively disclosed for existing automation and system maintenance.
 
 Human reviewers use `DESIGN.md`, rendered specimens, dogfood receipts, and target-product evidence to judge conformance. Maintainers use the `full` profile, provenance records, checksum inventories, unit tests, and source verification when evolving or auditing the design system itself.
 
@@ -33,7 +33,7 @@ Human reviewers use `DESIGN.md`, rendered specimens, dogfood receipts, and targe
 - Provides a canonical platform-neutral `DESIGN.md`, machine-readable semantic tokens, standalone foundation CSS, product-pattern guidance, and platform-adaptation guidance.
 - Provides a neutral web adapter with 22 public React exports and an optional agentic-work extension with 31 exports and canonical long-running-work semantics.
 - Preserves the curated source archive as hash-pinned evidence in the `full` profile while keeping archive-era domain vocabulary out of neutral profiles.
-- Supports safe, deterministic materialization, dry runs, target verification, source verification, idempotent reruns, and explicit broader-to-smaller profile pruning.
+- Supports target-aware profile recommendation, grouped dry-run summaries, safe deterministic materialization, target verification, source verification, idempotent reruns, and explicit broader-to-smaller profile pruning.
 - Refuses to overwrite differing incumbent files unless replacement is explicitly authorized with `--force`.
 - Treats CSS and React as adapters rather than the design system itself; native and constrained platforms translate semantic roles into their own conventions.
 - Does not infer a target product's information architecture, terminology, claims, or domain objects from Broomva's agentic products.

@@ -7,6 +7,10 @@ trap 'rm -rf "$target_dir"' EXIT
 
 python3 "$skill_dir/scripts/materialize.py" materialize "$target_dir" --profile web
 python3 "$skill_dir/scripts/materialize.py" verify "$target_dir" --profile web
+python3 "$skill_dir/scripts/materialize.py" recommend "$target_dir" | grep -q 'recommended profile: web'
+python3 "$skill_dir/scripts/materialize.py" materialize "$target_dir" --profile web --dry-run | grep -q 'dry-run plan: profile=web'
+python3 "$skill_dir/scripts/materialize.py" materialize "$target_dir" --profile web --dry-run --verbose | grep -q 'paths:'
+python3 "$skill_dir/scripts/materialize.py" materialize --help | grep -q 'default: foundation'
 test -f "$target_dir/DESIGN.md"
 test -f "$target_dir/design-system/broomva/broomva-foundation.css"
 test -f "$target_dir/design-system/broomva/tokens.json"

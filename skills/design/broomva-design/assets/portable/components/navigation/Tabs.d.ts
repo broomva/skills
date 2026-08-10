@@ -19,4 +19,4 @@ export interface TabsProps {
   style?: React.CSSProperties;
 }
 
-export declare function Tabs(props: TabsProps): JSX.Element;
+export declare function Tabs(props: TabsProps): React.JSX.Element;

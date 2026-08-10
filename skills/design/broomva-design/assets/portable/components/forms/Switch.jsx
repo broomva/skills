@@ -3,8 +3,18 @@ import React from "react";
 /* Compact immediate on/off setting. Blue means enabled; the neutral track
    handles the off state in both themes. The thumb slides without bounce. */
 export function Switch({
-  checked, defaultChecked = false, onChange, onClick, disabled = false, style, ...rest
+  checked,
+  defaultChecked = false,
+  onChange,
+  onClick,
+  disabled = false,
+  style,
+  id,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
+  ...rest
 }) {
+  const buttonRef = React.useRef(null);
   const [inner, setInner] = React.useState(defaultChecked);
   const isOn = checked !== undefined ? checked : inner;
   const toggle = (event) => {
@@ -13,10 +23,28 @@ export function Switch({
     onChange && onChange(!isOn);
     onClick?.(event);
   };
+  React.useEffect(() => {
+    if (
+      !ariaLabel &&
+      !ariaLabelledBy &&
+      !buttonRef.current?.labels?.length &&
+      typeof process !== "undefined" &&
+      process.env?.NODE_ENV !== "production"
+    ) {
+      console.warn("Broomva Switch requires an associated label or ARIA name.");
+    }
+  }, [ariaLabel, ariaLabelledBy, id]);
   return (
     <button
       {...rest}
-      type="button" role="switch" aria-checked={isOn} disabled={disabled}
+      ref={buttonRef}
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={isOn}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      disabled={disabled}
       onClick={toggle}
       style={{
         position: "relative", width: 38, height: 22, flexShrink: 0,

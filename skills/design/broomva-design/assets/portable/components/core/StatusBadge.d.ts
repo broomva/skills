@@ -9,4 +9,4 @@ export interface StatusBadgeProps extends React.HTMLAttributes<HTMLSpanElement> 
   children?: React.ReactNode;
 }
 
-export declare function StatusBadge(props: StatusBadgeProps): JSX.Element;
+export declare function StatusBadge(props: StatusBadgeProps): React.JSX.Element;

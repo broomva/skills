@@ -23,4 +23,4 @@ export interface CommandPaletteProps {
   style?: React.CSSProperties;
 }
 
-export declare function CommandPalette(props: CommandPaletteProps): JSX.Element;
+export declare function CommandPalette(props: CommandPaletteProps): React.JSX.Element;

@@ -6,12 +6,24 @@ const FOCUSABLE = [
   "select:not([disabled])", "textarea:not([disabled])", "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
+function hasVisibleTitle(title) {
+  if (typeof title === "string") return title.trim().length > 0;
+  if (typeof title === "number") return true;
+  if (Array.isArray(title)) return title.some(hasVisibleTitle);
+  if (React.isValidElement(title) && title.type === React.Fragment) {
+    return hasVisibleTitle(title.props.children);
+  }
+  return React.isValidElement(title);
+}
+
 export function Dialog({
   open = true, title, ariaLabel, children, actions, onClose, width = 440, style,
 }) {
   const dialogRef = React.useRef(null);
   const previousFocus = React.useRef(null);
   const titleId = React.useId();
+  const hasTitle = hasVisibleTitle(title);
+  const hasAriaLabel = typeof ariaLabel === "string" && ariaLabel.trim().length > 0;
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -51,6 +63,9 @@ export function Dialog({
   }, [open, onClose]);
 
   if (!open) return null;
+  if (!hasTitle && !hasAriaLabel) {
+    throw new TypeError("Broomva Dialog requires a visible title or non-empty ariaLabel.");
+  }
   return (
     <div
       onClick={(event) => {
@@ -67,8 +82,8 @@ export function Dialog({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={title ? titleId : undefined}
-        aria-label={!title ? (ariaLabel || "Dialog") : undefined}
+        aria-labelledby={hasTitle ? titleId : undefined}
+        aria-label={!hasTitle ? ariaLabel.trim() : undefined}
         tabIndex={-1}
         className="bv-glass-heavy"
         style={{
@@ -77,7 +92,7 @@ export function Dialog({
           display: "flex", flexDirection: "column", gap: 14, ...style,
         }}
       >
-        {title && (
+        {hasTitle && (
           <div id={titleId} style={{
             fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em",
             color: "var(--foreground)",

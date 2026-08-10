@@ -1,7 +1,9 @@
 Single-line text input for forms, search, and settings.
 
 ```jsx
-<Input placeholder="Search catalog" />
+<Field label="Search catalog">
+  <Input type="search" placeholder="Name or SKU" />
+</Field>
 ```
 
-The control is 36px tall with a restrained radius and a visible global focus ring. Use a short sentence-case noun phrase for placeholders rather than repeating the field label or writing an instruction.
+The control is 36px tall with a restrained radius and a visible global focus ring. Use `Field` for persistent labels. When an input must stand alone, provide `aria-label` or `aria-labelledby`. A placeholder is never the accessible label.

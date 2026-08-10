@@ -12,7 +12,7 @@ Apply one Broomva identity to the product's actual domain. The foundation is cal
 1. Read this skill's `DESIGN.md` before changing UI.
 2. Inspect the target's platform, existing styles, primitives, accessibility baseline, and incumbent `DESIGN.md`.
 3. Read `references/product-patterns.md` and `references/platform-adaptation.md` for the relevant product and platform.
-4. Choose the smallest materialization profile that provides what the target needs. Do not overwrite an incumbent system without an explicit migration request.
+4. Ask the materializer to recommend the smallest profile, then confirm it against the target's real domain. Do not overwrite an incumbent system without an explicit migration request.
 5. Implement through semantic roles and reusable components, then validate behavior, accessibility, themes, and representative viewports or device classes.
 
 Set `SKILL_DIR` to the directory containing this file, then materialize the neutral foundation:
@@ -22,21 +22,38 @@ python3 "$SKILL_DIR/scripts/materialize.py" materialize . --profile foundation
 python3 "$SKILL_DIR/scripts/materialize.py" verify . --profile foundation
 ```
 
+For an unfamiliar target, get a recommendation before materializing:
+
+```bash
+python3 "$SKILL_DIR/scripts/materialize.py" recommend .
+```
+
+Use `--agentic-work` only for products that actually model autonomous work, or `--maintainer` when evolving the design system itself. Explicit intent wins over an installed profile and framework detection. `--framework` accepts only supported web adapters; use `--platform native`, `desktop`, or `embedded` for other products.
+
 Preview without writing:
 
 ```bash
 python3 "$SKILL_DIR/scripts/materialize.py" materialize . --profile web --dry-run
 ```
 
+Dry-run output shows grouped counts first. Add `--verbose` only when every affected path is needed.
+
 The command writes `DESIGN.md` at the target root, selected assets under `design-system/broomva/`, and relevant guidance under `design-system/broomva/references/`. Existing differing files cause a failure. Use `--force` only when the user explicitly authorized replacement. When intentionally moving from a broader profile to a smaller one, add `--prune`; the materializer removes only paths owned by another Broomva profile and still protects modified files unless `--force` is also explicit.
 
-## Choose the profile
+## Primary profiles
 
 | Profile | Materializes | Use when |
 |---|---|---|
 | `foundation` | Portable `DESIGN.md`, machine-readable semantic tokens, standalone CSS, logo, font/license, product patterns, and platform adaptation | Starting any Broomva digital product; this is the default |
 | `web` | Foundation plus a web stylesheet entrypoint, 22 general React exports, prompt contracts, public entry points, manifest, and adherence rules | Building a Broomva web or React product without domain-specific work orchestration |
 | `agentic-work` | Web profile plus Composer, live-signal motion, seven work exports, canonical work states, and agentic composition guidance | Building agent runs, orchestration, human-in-the-loop decisions, or receipt-driven work UI |
+
+## Advanced and compatibility profiles
+
+These profiles remain available for maintainers and existing automation, but they are not peer choices for a new product.
+
+| Profile | Materializes | Use when |
+|---|---|---|
 | `full` | Complete curated archive evidence: all 31 exports, specimens, guidelines, templates, desktop kit, browser bundle, and Maestro reference app | Developing or auditing the design system itself; not a default product starter |
 | `essentials` | Legacy `DESIGN.md`, `broomva-essentials.css`, and blackhole logo layout | Existing automation that depends on the original minimal profile |
 | `tokens` | Legacy essentials plus archived modular tokens, motion, root CSS, fonts/license, full manifest, and adherence rules | Existing automation that depends on the original token-profile file layout |
