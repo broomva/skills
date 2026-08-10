@@ -1673,6 +1673,13 @@ describe("buildBasket — term relevance (BRO-2110)", () => {
     expect(matchesTerm("Yogurt Griego Natural Vita Latti 330 Gr", "huevos")).toBe(false);
   });
 
+  test("an -es plural stems to the consonant singular D1 uses", () => {
+    // Spanish pluralises a final consonant with -es: pan -> panes, flor ->
+    // flores. Without this branch a shopper typing "panes" matches no bread.
+    expect(matchesTerm("PAN TAJADO BLANCO 500 G", "panes")).toBe(true);
+    expect(matchesTerm("AREPA DE MAIZ 5 UND", "panes")).toBe(false);
+  });
+
   test("the stem does not eat short words", () => {
     // "gas" must stay "gas". Stemmed to "ga" it would match GALLETAS.
     expect(matchesTerm("GALLETAS SURTIDAS DUCALES 300 G", "gas")).toBe(false);
