@@ -1,0 +1,73 @@
+name: test-legal-readiness
+
+on:
+  pull_request:
+    paths:
+      - 'skills/governance/legal-readiness/**'
+      - '.github/workflows/test-legal-readiness.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/governance/legal-readiness/**'
+      - '.github/workflows/test-legal-readiness.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-legal-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: skills/governance/legal-readiness
+
+jobs:
+  test:
+    name: pytest and dogfood (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test dependency
+        run: pip install -r tests/requirements-dev.txt
+      - name: Unit and local integration tests
+        run: python -m pytest tests/ -v
+      - name: Prove untouched template is refused
+        run: |
+          set +e
+          python3 scripts/legal_readiness.py check assets/legal-readiness.example.json
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected untouched template to exit 1, got $rc"
+            exit 1
+          fi
+      - name: E2E skill smoke
+        run: bash tests/smoke.sh
+      - name: Prove unsupported closure claims fail the gate
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          src = Path('assets/legal-readiness.example.json')
+          data = json.loads(src.read_text())
+          data['project']['template'] = False
+          data['completion_statement'] = 'The product is fully compliant.'
+          Path('/tmp/legal-readiness-invalid.json').write_text(json.dumps(data))
+          PY
+          set +e
+          python3 scripts/legal_readiness.py check /tmp/legal-readiness-invalid.json
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::expected unsupported closure statement to exit 1, got $rc"
+            exit 1
+          fi
