@@ -322,6 +322,13 @@ def test_named_primitive_suppresses_its_bare_forms():
     assert "P6" not in found
 
 
+def test_camelcase_primitive_name_is_suppressed_too():
+    """A multi-hump name would otherwise be re-extracted as a separate CamelCase row."""
+    found = wc.extract_terms("Ran DeepChain (P14) then DeepChain again.")
+    assert found.get("DeepChain (P14)") == "primitive"
+    assert "DeepChain" not in found, "the bare CamelCase name must not double as its own row"
+
+
 def test_bare_primitive_recognised_without_a_name():
     """Only P1-P20 are primitives. P21 may still surface, but never as one."""
     found = wc.extract_terms("Ran P20 then P9. P21 is not a primitive.")
@@ -544,6 +551,15 @@ def test_ranking_is_deterministic_across_runs(kg):
     turns = [wc.Turn("agent", "alpha-token alpha-token beta-token beta-token gamma-token gamma-token")]
     runs = [[c.term for c in wc.build_inventory(turns, entities, aliases, prims)] for _ in range(5)]
     assert all(r == runs[0] for r in runs)
+
+
+def test_equal_scores_break_ties_by_term_not_by_appearance_order(kg):
+    """Without an explicit tie-break the order would leak the order of appearance."""
+    entities, aliases, prims = kg
+    turns = [wc.Turn("agent", "zeta-token zeta-token mid-token-x mid-token-x alpha-token alpha-token")]
+    ranked = [c.term for c in wc.build_inventory(turns, entities, aliases, prims)]
+    assert len({c for c in ranked}) == 3
+    assert ranked == sorted(ranked), f"equal scores must sort by term, got {ranked}"
 
 
 def test_dedupe_merges_an_alias_into_its_slug_and_sums_uses(kg):
