@@ -18,7 +18,7 @@ supplies is compliance theater.
 | `recorded_at` | System time — when the graph recorded this state | The pipeline, mechanically |
 | `valid_from` | Claim-effective time — when the claim became true | A source or an explicit revision, only if it supplies one |
 | `supersedes` | Records this page replaces, as `[[wikilink]]`s | An explicit correction workflow only |
-| `revision_link` | The record that authorized the supersession | An explicit correction workflow only |
+| `revision_link` | The record(s) that authorized the supersession — a **list** | An explicit correction workflow only |
 
 `recorded_at` and `valid_from` are deliberately different clocks. Collapsing
 them — treating "when we wrote it down" as "when it became true" — is the
@@ -66,7 +66,46 @@ from exactly two explicit workflows, both routed through
 
 `revision_link` is required alongside `supersedes` because a supersession with
 no authorizing record is untraceable — it asserts that something was replaced
-without saying who decided that or on what basis.
+without saying who decided that or on what basis. It is a **list**: a page can
+be corrected more than once, and a scalar that each revision overwrote would
+leave the latest ticket claiming authorship of every earlier supersession.
+
+## Refuse, never repair
+
+Both correction workflows read the existing envelope before rewriting it, so a
+value they cannot read exactly is a value they would destroy. They refuse
+instead, with the repair left to a human:
+
+- a `supersedes` entry that is not canonical `[[slug]]` form, or is not a
+  string, or is not in a list;
+- a `revision_link` entry that is not a string;
+- an envelope key declared **twice** in the same frontmatter — PyYAML resolves
+  duplicates to the last, so a read-then-write silently discards the earlier
+  one;
+- a page with no YAML frontmatter, where every setter would no-op while the
+  command reported success.
+
+`merge` aborts on all of these rather than tombstoning the dup and skipping the
+supersession: a merged record whose provenance says nothing is a worse outcome
+than a merge the operator has to re-run.
+
+## Known limitations
+
+These are stated rather than designed around, because the phase's own doctrine
+is that a schema must not claim guarantees its writers do not supply.
+
+- **Entry-to-link binding is not represented.** `supersedes` and
+  `revision_link` are parallel sets, not pairs. The envelope says "these
+  records were replaced, on the authority of these decisions" and no more.
+  Per-entry binding is a larger schema change and is better designed against
+  real revisions than in advance.
+- **Writes are not atomic or locked.** `revise` and `merge` do a
+  read-modify-write, so two concurrent runs can lose one another's additions.
+  This is true of every write path in the engine (`promote`, `merge`,
+  `lint --fix`); locking one command would buy a false sense of safety.
+- **Non-UTF-8 bytes do not survive a rewrite.** Pages are read with
+  `errors="replace"`, the codebase-wide idiom. A page containing invalid UTF-8
+  will have those bytes replaced if it is revised.
 
 ## Commands
 
@@ -103,7 +142,7 @@ finding.
 | `temporal_recorded_at` | Unparseable, or in the future relative to the audit date (system time cannot postdate the audit) |
 | `temporal_valid_from` | Unparseable. A *future* `valid_from` is allowed — a scheduled change is not a defect |
 | `temporal_supersedes` | Not a list; entry not a string; entry not `[[wikilink]]` form; self-supersession; target has no entity file; target's `recorded_at` is newer than this record's (timeline inversion) |
-| `temporal_revision_link` | `supersedes` set with no non-blank `revision_link`; `revision_link` set with no `supersedes` |
+| `temporal_revision_link` | `supersedes` set with no non-blank `revision_link`; `revision_link` set with no `supersedes`; any entry blank or not a string (one usable entry must not launder the rest — the writer refuses such a page, so the audit that precedes it must see it) |
 
 Merge tombstones resolve deliberately: superseding a slug that was merged away
 is the normal case, and reporting it as dangling would flag every merge.

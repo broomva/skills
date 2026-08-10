@@ -155,10 +155,21 @@ supersedes:
 # [[wikilink]] form and must resolve to an entity file (a merge tombstone
 # resolves deliberately: superseding a merged-away slug is the normal case).
 
-revision_link: "{url-ticket-or-doc-path}"
-# Optional, but REQUIRED whenever `supersedes` is non-empty. The record that
+revision_link:
+  - "{url-ticket-or-doc-path}"
+# Optional, but REQUIRED whenever `supersedes` is non-empty. The record(s) that
 # authorized the supersession. Without it, a replacement asserts that something
 # was superseded while saying nothing about who decided that, or on what basis.
+#
+# A LIST, because a page can be corrected more than once and each correction has
+# its own authorizing record; a scalar that each revision overwrote would leave
+# the latest ticket claiming authorship of every earlier supersession. A
+# hand-authored scalar is still accepted on read and normalised to a one-element
+# list on the next write.
+#
+# KNOWN LIMITATION: which link authorized which `supersedes` entry is NOT
+# represented. The pair says "these records were replaced, on the authority of
+# these decisions" and no more. Per-entry binding is tracked separately.
 ---
 ```
 

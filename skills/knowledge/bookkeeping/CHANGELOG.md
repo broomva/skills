@@ -5,6 +5,7 @@
 - Added `revise` — the explicit correction workflow that emits `supersedes` + `revision_link`; `merge` now records the same envelope on the canonical with the tombstone as its authorizing record.
 - Added warning-only, `--temporal`-gated supersession validation (stamp parseability, future `recorded_at`, wikilink form, self-supersession, unresolvable targets, missing authorizing record, timeline inversion). Default `lint` output is unchanged.
 - `recorded_at` is excluded from the content-identity guard, so replay stays byte-identical; legacy pages are not backfilled by the update path.
+- `revision_link` is a LIST (one entry per authorizing record); both correction workflows REFUSE rather than repair a malformed or duplicated envelope, and `merge` aborts instead of half-merging.
 - Contract in `references/temporal-revision-envelope.md`; live-graph parity receipt in `references/temporal-revision-calibration-2026-08-10.json`. No hard gate: the new checks are uncalibrated because no entity yet carries the envelope.
 
 ## [1.1.0] — 2026-08-09

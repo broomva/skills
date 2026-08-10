@@ -389,6 +389,36 @@ class TestMalformedExistingEnvelopeIsRefused:
             "corrupt provenance must never be silently rewritten"
         assert "malformed revision envelope" in capsys.readouterr().err
 
+    @pytest.mark.parametrize("key", ["supersedes", "revision_link", "recorded_at"])
+    def test_revise_refuses_a_duplicated_envelope_key(
+            self, temp_entities, frozen_today, key, capsys):
+        # PyYAML keeps the LAST duplicate, so a read-then-write would silently
+        # destroy whatever the earlier one held.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(
+            temp_entities, "new-belief",
+            extra=f'{key}: "x"\nrelated: []\n{key}: "y"\n')
+        before = path.read_text()
+        with pytest.raises(SystemExit) as exc:
+            cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        assert exc.value.code != 0
+        assert "only the last" in capsys.readouterr().err
+        assert path.read_text() == before
+
+    def test_an_envelope_without_a_stamp_is_not_already_recorded(
+            self, temp_entities, frozen_today):
+        # The unchanged early-return must not fire when the mechanical field is
+        # still missing, or the first explicit revision never gets stamped.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(
+            temp_entities, "new-belief",
+            extra='supersedes: ["[[old-belief]]"]\n'
+                  'revision_link: ["https://example.test/decision/1"]\n')
+        assert "recorded_at" not in path.read_text()
+        cmd_revise(_revise_args("new-belief", ["old-belief"]))
+        fm, _ = bookkeeping.parse_frontmatter(path.read_text())
+        assert str(fm["recorded_at"]) == TODAY
+
     def test_revise_refuses_a_page_without_frontmatter(
             self, temp_entities, frozen_today, capsys):
         _write_entity(temp_entities, "old-belief")
@@ -602,21 +632,45 @@ class TestMergeRecordsTypedRevision:
                                    "temporal_recorded_at", "temporal_valid_from")]
         assert not envelope, f"merge must emit a well-formed envelope, got: {envelope}"
 
-    def test_merge_completes_but_skips_a_malformed_pre_existing_envelope(
+    def test_merge_aborts_on_a_malformed_pre_existing_envelope(
             self, temp_entities, frozen_today, capsys):
+        # Tombstoning the dup while skipping the supersession would leave a
+        # merged record whose provenance says nothing — a broken intermediate
+        # state. The merge is not urgent; the corrupt page is.
         canon = self._write(temp_entities, "kept")
         canon.write_text(canon.read_text().replace(
             "---\n# kept", 'supersedes:\n  - bare-slug\n---\n# kept'))
-        before = canon.read_text()
-        self._write(temp_entities, "dupe")
-        cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
-        # The dedup work is independent and must still land...
-        assert "status: merged" in (temp_entities / "tool" / "dupe.md").read_text()
-        # ...but corrupt provenance must not be silently rewritten.
-        assert "bare-slug" in canon.read_text()
-        assert "supersedes: [" not in canon.read_text()
+        canon_before = canon.read_text()
+        dup = self._write(temp_entities, "dupe")
+        dup_before = dup.read_text()
+        with pytest.raises(SystemExit) as exc:
+            cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
+        assert exc.value.code != 0
         assert "malformed revision envelope" in capsys.readouterr().err
-        assert canon.read_text() != before, "the alias must still be recorded"
+        assert canon.read_text() == canon_before
+        assert dup.read_text() == dup_before, "the dup must not be tombstoned"
+
+    def test_merge_aborts_when_the_canonical_has_no_frontmatter(
+            self, temp_entities, frozen_today, capsys):
+        canon = temp_entities / "tool" / "kept.md"
+        canon.write_text("# kept\nbody only\n")
+        dup = self._write(temp_entities, "dupe")
+        dup_before = dup.read_text()
+        with pytest.raises(SystemExit) as exc:
+            cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False))
+        assert exc.value.code != 0
+        assert "no YAML frontmatter" in capsys.readouterr().err
+        assert dup.read_text() == dup_before
+
+    def test_merge_falls_back_to_the_tombstone_on_a_blank_link_override(
+            self, temp_entities, frozen_today):
+        canon = self._write(temp_entities, "kept")
+        self._write(temp_entities, "dupe")
+        cmd_merge(argparse.Namespace(dup="dupe", canonical="kept", dry_run=False,
+                                     revision_link="   "))
+        fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
+        assert fm["revision_link"] == ["research/entities/tool/dupe.md"], \
+            "a blank override must not become an unauthorized envelope"
 
 
 # ── Warning-only supersession validation (opt-in) ────────────────────────────
@@ -690,6 +744,19 @@ class TestEnvelopeAudit:
             "slug": "current", "supersedes": ["[[old]]"], "revision_link": ["", "  "],
         })
         assert "temporal_revision_link" in _fields(errors)
+
+    @pytest.mark.parametrize("links,expected", [
+        ([7, "ticket://BRO-1"], "is not a string"),
+        (["", "ticket://BRO-1"], "blank entry"),
+    ])
+    def test_a_partially_malformed_link_list_still_warns(self, links, expected):
+        # One usable entry must not launder the rest: the writer refuses such a
+        # page, so the audit that precedes the writer has to see it.
+        errors = _lint_envelope({
+            "slug": "current", "supersedes": ["[[old]]"], "revision_link": links,
+        })
+        assert any(expected in e.message for e in errors)
+        assert {e.severity for e in errors} == {"warning"}
 
     def test_timeline_inversion_warns(self):
         errors = _lint_envelope({

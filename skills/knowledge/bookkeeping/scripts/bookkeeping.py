@@ -2196,6 +2196,29 @@ def _parse_wikilink_list(value: object) -> "list[str]":
     return out
 
 
+_ENVELOPE_KEYS = ("supersedes", "revision_link", "recorded_at", "valid_from")
+
+
+def _assert_no_duplicate_envelope_keys(text: str) -> None:
+    """Refuse to rewrite frontmatter that declares an envelope key twice.
+
+    PyYAML resolves a duplicate key to the LAST occurrence, so a read-then-write
+    would silently discard whatever the earlier one held: `revision_link` listed
+    as ticket-A and then ticket-B parses as ticket-B alone, and adding ticket-C
+    would erase A permanently. Reading a value we are about to destroy is not
+    something a correction workflow may do quietly.
+    """
+    fm, _ = _split_frontmatter(text)
+    if not fm:
+        return
+    for key in _ENVELOPE_KEYS:
+        n = len(list(_fm_key_block_re(key).finditer(fm)))
+        if n > 1:
+            raise MalformedEnvelopeError(
+                f"frontmatter declares '{key}' {n} times; YAML keeps only the "
+                f"last, so rewriting would discard the others")
+
+
 def _parse_revision_links(value: object) -> "list[str]":
     """Parse `revision_link` into a list, tolerating the legacy scalar form.
 
@@ -2255,9 +2278,11 @@ def _apply_revision_envelope(
     fatal.
     """
     today = today or today_str()
+    _assert_no_duplicate_envelope_keys(text)
     existing_slugs = _parse_wikilink_list(_frontmatter_value(text, "supersedes"))
     existing_links = _parse_revision_links(_frontmatter_value(text, "revision_link"))
     existing_valid_from = _coerce_iso_date_str(_frontmatter_value(text, "valid_from"))
+    existing_recorded_at = _coerce_temporal_date(_frontmatter_value(text, "recorded_at"))
 
     merged = list(existing_slugs)
     for slug in supersedes:
@@ -2272,6 +2297,11 @@ def _apply_revision_envelope(
         merged == existing_slugs
         and links == existing_links
         and (valid_from is None or valid_from == existing_valid_from)
+        # A page carrying the right envelope but NO parseable system-time stamp
+        # is not "already recorded" — the mechanical field is still missing, and
+        # returning early here would leave the first explicit revision unstamped
+        # forever.
+        and existing_recorded_at is not None
     )
     if unchanged:
         return text
@@ -3254,6 +3284,21 @@ def _lint_temporal_envelope(
     link_entries = revision_link if isinstance(revision_link, list) else [revision_link]
     has_link = any(
         isinstance(entry, str) and entry.strip() != "" for entry in link_entries)
+    # A list where SOME entry is unusable must not pass merely because another
+    # one is fine: the writer refuses such a page, so the audit that is supposed
+    # to precede the writer has to see it too.
+    if revision_link is not None:
+        for entry in link_entries:
+            if entry is None:
+                continue
+            if not isinstance(entry, str):
+                errors.append(LintError(
+                    path_str, "temporal_revision_link",
+                    f"revision_link entry {entry!r} is not a string", "warning"))
+            elif entry.strip() == "":
+                errors.append(LintError(
+                    path_str, "temporal_revision_link",
+                    "revision_link contains a blank entry", "warning"))
     if entries and not has_link:
         errors.append(LintError(
             path_str, "temporal_revision_link",
@@ -5706,21 +5751,29 @@ def cmd_merge(args: argparse.Namespace) -> None:
     #    Without this the envelope would have a `revise` producer and no real
     #    caller — the schema-with-no-writer failure this phase exists to avoid.
     dup_type = dup_path.relative_to(ENTITIES_DIR).parts[0]
-    revision_link = getattr(args, "revision_link", None) or str(
+    # A whitespace-only override would otherwise write an envelope the audit
+    # rejects, so it falls back to the tombstone rather than being taken
+    # literally.
+    revision_link = (getattr(args, "revision_link", None) or "").strip() or str(
         _display_path(ENTITIES_DIR / dup_type / f"{dup}.md"))
     canon_text = canon_path.read_text(errors="replace")
+    if not _split_frontmatter(canon_text)[0]:
+        print(f"[merge] canonical '{canon}' has no YAML frontmatter — every "
+              f"envelope write would silently no-op while the dup is still "
+              f"tombstoned", file=sys.stderr)
+        sys.exit(1)
     canon_new = _add_alias_to_frontmatter(canon_text, dup)
     try:
         canon_new = _apply_revision_envelope(
             canon_new, supersedes=[dup], revision_link=revision_link)
     except MalformedEnvelopeError as exc:
-        # The dedup work below is independent of the envelope and still correct,
-        # so a corrupt pre-existing envelope must not abort the merge — but it
-        # must not be silently rewritten either.
-        print(f"[merge] WARNING: '{canon}' has a malformed revision envelope "
-              f"({exc}); skipping the typed revision. Repair it, then run: "
-              f"bookkeeping revise --entity {canon} --supersedes {dup} "
-              f"--revision-link {revision_link}", file=sys.stderr)
+        # Abort rather than half-merge. Tombstoning the dup while skipping the
+        # supersession would leave a merged record whose provenance says nothing
+        # — a broken intermediate state the operator has no reason to expect.
+        print(f"[merge] canonical '{canon}' has a malformed revision envelope: "
+              f"{exc}. Repair it by hand, then re-run this merge.",
+              file=sys.stderr)
+        sys.exit(1)
     if canon_new != canon_text and not dry:
         canon_path.write_text(canon_new)
     # 3. Rewrite dup as a tombstone.
