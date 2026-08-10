@@ -1,0 +1,93 @@
+name: test-what
+
+# Python test gate for the `what` skill (skills/knowledge/what/). Path-filtered so it
+# runs ONLY when skills/knowledge/what/** changes. This is the skillify step-3 gate
+# (`bstack skills audit --require-tests`) made enforceable in CI.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/knowledge/what/**'
+      - '.github/workflows/test-what.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/knowledge/what/**'
+      - '.github/workflows/test-what.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-what-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/knowledge/what
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install pytest
+        # PyYAML is a soft runtime dep: catalog resolution reads the top-level
+        # knowledge: block in .control/policy.yaml when one is present. Install it
+        # so the policy-driven resolver test runs for real instead of skipping.
+        run: pip install pytest PyYAML
+      - name: Tests
+        run: python -m pytest scripts/test_what_concepts.py -v
+
+      # The inventory must survive a transcript it has never seen. Runs the CLI
+      # end-to-end against a synthetic session with no catalog and no CLAUDE.md,
+      # which is the degraded path most likely to regress unnoticed.
+      - name: Smoke — CLI on a bare session
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          rows = [
+            {"type": "user", "uuid": "u1",
+             "message": {"role": "user", "content": "go build it"}},
+            {"type": "assistant", "uuid": "a1", "message": {"role": "assistant",
+             "content": [{"type": "text", "text":
+              "The expiry-aware-lease guards the tick. expiry-aware-lease again, "
+              "and the gate-chain held. gate-chain twice."}]}},
+          ]
+          pathlib.Path("/tmp/what-smoke.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows) + "\n")
+          PY
+          out=$(python3 scripts/what_concepts.py --transcript /tmp/what-smoke.jsonl \
+                  --catalog /nonexistent.md --claude-md /nonexistent.md --cwd /tmp --json)
+          echo "$out"
+          python3 -c "
+          import json,sys
+          d=json.loads(sys.argv[1])
+          terms={c['term'] for c in d['concepts']}
+          assert 'expiry-aware-lease' in terms, terms
+          assert 'gate-chain' in terms, terms
+          assert all(c['coverage']=='ungrounded' for c in d['concepts']), d['concepts']
+          print('smoke OK:', sorted(terms))
+          " "$out"
+
+  mutation:
+    name: mutation proof (every test must be able to fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest PyYAML
+      # SKILL.md claims every test is proven able to fail. Until this ran in CI
+      # that proof fired only when an agent chose to run it, so a vacuous test
+      # added tomorrow kept the build green.
+      - name: Mutate
+        run: bash scripts/mutate.sh

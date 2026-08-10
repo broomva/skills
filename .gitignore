@@ -10,3 +10,4 @@ dist/
 # Python bytecode (never vendor compiled artifacts)
 __pycache__/
 *.pyc
+.pytest_cache/

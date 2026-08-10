@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 85 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-09.
+> 86 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-09.
 
 ## Governance & control — `skills/governance/` (8)
 
@@ -37,9 +37,9 @@
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 85 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 86 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
-## Knowledge & memory — `skills/knowledge/` (7)
+## Knowledge & memory — `skills/knowledge/` (8)
 
 | Skill | What it does |
 |---|---|
@@ -50,6 +50,7 @@
 | `comprehend` | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
 | `goodies` | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | `kg` | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
+| `what` | Explain the *concepts* a session used, at the operator's register — ranked by what blocks understanding, anchored to where each term appeared, grounded in the knowledge graph; degrades to a re-pitch when the slice is short |
 
 ## Research — `skills/research/` (2)
 
