@@ -147,12 +147,14 @@ Make `broomva-design` usable across arbitrary digital products without weakening
 
 ## Bookkeeping temporal-drift warning audit
 
-Status: implementation complete; PR lifecycle pending
+Status: implementation complete; PR #151 lifecycle pending
 
 Branch: `feature/gh-150-temporal-drift-warnings`
 
 Tracking: `broomva/skills#150` (GitHub fallback; the Linear connector exposes
 only the unrelated Stimulus workspace)
+
+Pull request: `broomva/skills#151`
 
 ### Objective
 
@@ -200,7 +202,7 @@ reconciliation.
 
 ### Verification checkpoint — 2026-08-09
 
-- 329 Bookkeeping pytest cases passed after repairing one pre-existing
+- 330 Bookkeeping pytest cases passed after repairing one pre-existing
   wall-clock-dependent retention fixture.
 - 50 retrieval benchmark tests passed.
 - Skill-version lint and `git diff --check` passed.
