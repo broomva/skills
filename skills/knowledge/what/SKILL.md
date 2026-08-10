@@ -20,7 +20,7 @@ description: |
   extending the work (/what explains, it never builds).
 disable-model-invocation: true
 user-invocable: true
-argument-hint: "[term] [--scope session] [--all]"
+argument-hint: "[term] [--scope session]"
 ---
 
 # what — explain the concepts, not the timeline
@@ -64,11 +64,23 @@ sentences, and the workspace's own words. Do not report "no concepts found."
 
 ### 1. Build the inventory (deterministic — never do this by eye)
 
+Run it **from the project you are explaining**, with an absolute path to the
+script — transcript, catalog and `CLAUDE.md` resolution all key off the current
+directory, so `cd`-ing into the skill dir to shorten the path breaks resolution.
+
 ```bash
-python3 scripts/what_concepts.py --json          # since the last /what, current project
-python3 scripts/what_concepts.py --scope session # whole session
-python3 scripts/what_concepts.py --conversation docs/conversations/<id>.md
+W=~/.claude/skills/what/scripts/what_concepts.py
+
+python3 $W --json                      # since the last /what, current project
+python3 $W --scope session --json      # whole session, markers ignored
+python3 $W --conversation docs/conversations/<id>.md
+python3 $W --cwd /path/to/other/repo   # explain a session from elsewhere
 ```
+
+Useful when the default filters misjudge a term:
+`--keep-term MAJOR` forces a stoplisted term back in, `--stopword <t>` drops one,
+`--include-tools` also mines the code the agent wrote, `--top N` / `--min-freq N`
+move the thresholds.
 
 It resolves the transcript, extracts candidate terms from the agent's prose,
 and returns each one with four facts that decide the explanation:
@@ -103,10 +115,22 @@ is how two vocabularies for one idea get created.
 Top rows first. Stop at the point where the remaining rows would not change
 what the operator can now do. Six well-explained concepts beat twelve listed.
 
-### 4. File the ungrounded terms — do not ask
+### 4. Route the ungrounded terms through the P6 scoring gate
 
-Every `ungrounded` row that the agent used repeatedly is a Bookkeeping (P6)
-candidate. File it, then report. P6 is a reflex, never a question.
+Every `ungrounded` row is a Bookkeeping (P6) **candidate** — not an entity.
+Measured precision on real sessions is roughly 1-2 genuine concepts per 12 rows,
+so filing the column wholesale would put ten junk pages per session into a graph
+whose contract is that it *never holds unscored items* (`CLAUDE.md`, Nous gate
+>= 5/9).
+
+So: score first, file what clears the gate, report the rest.
+
+```bash
+python3 ~/.claude/skills/bookkeeping/scripts/bookkeeping.py score --content "<term + what it meant here>"
+```
+
+Filing is still a reflex, not a question — you do not ask permission to run the
+gate. What you never do is skip it.
 
 ## The register
 
@@ -159,7 +183,8 @@ One sentence.
 | "I'll pick the concepts by eye." | Selection is precision work. Run the script — by eye you pick what *you* found interesting, which is the opposite of what blocked the reader. |
 | "The inventory came back empty, so there's nothing to say." | Empty means re-pitch. Explain the last message again, simpler. Never report the empty table. |
 | "This term has no entity page, so I'll skip it." | An ungrounded, heavily-used term is the *highest*-value row and a P6 filing candidate. |
-| "Should I file the missing entities?" | Never ask (P6). File, then report. |
+| "Ungrounded, so I'll file it." | Candidate, not entity. Most ungrounded rows are English hyphenation, not concepts. Score it (>= 5/9) and file what clears. |
+| "Should I file the missing entities?" | Do not ask permission to run the gate — run it. Do not file what it rejects. |
 | "While explaining, I noticed a bug — let me fix it." | `/what` explains. Name the bug, do not fix it in this turn. |
 | "I'll define it in my own clearer words." | If the knowledge graph already names it, its words win. Two vocabularies for one idea is the cost. |
 
@@ -182,14 +207,14 @@ A `/what` answer is well-formed iff:
 - [ ] No section is ordered by time
 - [ ] Every explained term has an anchor in this session
 - [ ] Every `grounded` term's entity body was read before it was explained
-- [ ] Every `ungrounded` term was filed via P6, not merely noted
+- [ ] Every `ungrounded` term was scored via P6, and those clearing >= 5/9 were filed
 - [ ] Each concept states what it is *not*
 - [ ] The short version contains no term from the inventory
 
-Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (65 tests).
+Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (85 tests).
 
 Every one of those tests is proven able to fail: `bash scripts/mutate.sh` breaks
-the implementation 26 ways and requires the suite to catch all 26. Run it after
+the implementation 34 ways and requires the suite to catch all 34. Run it after
 any change to `what_concepts.py`. It asserts a clean tree first, because its
 revert-to-HEAD baseline would otherwise destroy uncommitted work on line one.
 

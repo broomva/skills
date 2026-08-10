@@ -303,6 +303,20 @@ def test_scrub_removes_fences_urls_and_paths():
     assert "prose" in out
 
 
+def test_scrub_is_linear_on_a_long_slash_free_token():
+    """A pasted JWT or hash list must not stall the run (was 16s via `\\S*/\\S*`)."""
+    import time
+    start = time.monotonic()
+    wc.scrub("A" * 200_000, keep_code=False)
+    assert time.monotonic() - start < 1.0
+
+
+def test_scrub_keeps_hyphenated_prose_but_drops_path_and_url_tokens():
+    out = wc.scrub("the expiry-aware-lease at https://x.dev/a and src/mod.py held", keep_code=False)
+    assert "expiry-aware-lease" in out
+    assert "x.dev" not in out and "mod.py" not in out
+
+
 def test_keep_code_preserves_fenced_tokens():
     text = "prose ```\nfenced-token\n```"
     assert "fenced-token" in wc.scrub(text, keep_code=True)
@@ -372,7 +386,8 @@ def test_harness_keys_are_dropped_end_to_end_with_tools_included(tmp_path: Path)
             {"type": "text", "text": "Applied the edit."},
             {"type": "tool_use", "id": "t1", "name": "Edit",
              "input": {"replace_all": True, "file_path": "/x/y.py",
-                       "new_string": "expiry-aware-lease guards expiry-aware-lease"}},
+                       "new_string": "replace_all replace_all file_path file_path "
+                                     "expiry-aware-lease guards expiry-aware-lease"}},
         ]},
     }]), encoding="utf-8")
     turns = wc.load_transcript(p, include_tools=True, include_sidechains=False)
@@ -543,21 +558,22 @@ def test_undefined_agent_introduced_ungrounded_outranks_a_defined_grounded_term(
     assert order.index("dottyback-widget") < order.index("stability-budget")
 
 
-def test_frequency_cannot_outrank_needing_an_explanation(kg):
+def test_frequency_cannot_outrank_needing_an_explanation_even_when_both_are_agent_introduced(kg):
     """A term repeated 200 times but already glossed must lose to a rare, unexplained one.
 
     This is the whole point of the ranking: /what leads with what blocks
     understanding, not with what the session said most often.
     """
     entities, aliases, prims = kg
-    loud = " ".join(["chattyterm-token"] * 200)
-    turns = [
-        wc.Turn("human", "chattyterm-token please"),          # human already owns it
-        wc.Turn("agent", f"A chattyterm-token is a token. {loud} "
-                         "Also dottyback-widget and dottyback-widget."),
-    ]
+    # No human turn: BOTH terms are agent-introduced, so the only difference is
+    # frequency vs never-glossed. The earlier fixture leaked the loud term into the
+    # human turn, which stripped its +3 bonus and made the test pass for the wrong
+    # reason — flipping that one line inverted the result.
+    loud = " ".join(["chattyterm-token"] * 500)
+    turns = [wc.Turn("agent", f"A chattyterm-token is a token. {loud} "
+                              "Also dottyback-widget and dottyback-widget.")]
     ranked = [c.term for c in wc.build_inventory(turns, entities, aliases, prims)]
-    assert ranked.index("dottyback-widget") < ranked.index("chattyterm-token")
+    assert ranked.index("dottyback-widget") < ranked.index("chattyterm-token"), ranked
 
 
 def test_frequency_contribution_is_capped(kg):
@@ -605,10 +621,19 @@ def test_dedupe_does_not_merge_two_different_primitives(kg):
 
 
 def test_dedupe_does_not_merge_unrelated_partial_hits(kg):
+    """Two DISTINCT partial hits on the same entity must stay two rows.
+
+    The earlier fixture used bare lowercase words, which no extraction pattern
+    matches, so the inventory had one row and the assertion compared a list to
+    itself. These terms are really extracted and really both classify `partial`.
+    """
     entities, aliases, prims = kg
-    turns = [wc.Turn("agent", "stability stability and budget-line budget-line")]
-    merged = wc.dedupe(wc.build_inventory(turns, entities, aliases, prims))
-    assert len({c.term for c in merged}) == len(merged)
+    turns = [wc.Turn("agent", "stability-margin stability-margin and stability-window stability-window")]
+    inv = wc.build_inventory(turns, entities, aliases, prims)
+    assert len(inv) == 2, [c.term for c in inv]
+    assert {c.coverage for c in inv} == {"partial"}, [(c.term, c.coverage) for c in inv]
+    merged = wc.dedupe(inv)
+    assert len(merged) == 2, [c.term for c in merged]
 
 
 def test_inventory_works_with_no_catalog_at_all():
@@ -640,7 +665,8 @@ def test_render_flags_undefined_terms_and_lists_p6_candidates():
     ]
     out = wc.render_markdown(concepts, BASE_META)
     assert "| NO |" in out              # undefined term flagged loudly
-    assert "Bookkeeping (P6) filing candidates" in out
+    assert "Bookkeeping (P6) candidates (score before filing)" in out
+    assert "5/9" in out, "the report must carry the scoring gate, not a file-everything order"
     assert "`dottyback-widget` (4 uses)" in out
     assert "**stability-budget** — the margin" in out
 
@@ -717,3 +743,137 @@ def test_cli_markdown_output_has_a_table(tmp_path: Path, catalog: Path, claude_m
     out = capsys.readouterr().out
     assert "| # | Term | Uses |" in out
     assert "`expiry-aware-lease`" in out
+
+
+# --------------------------------------------------------------------------
+# P20 round-1 regressions — every test below pins a defect the review found
+# --------------------------------------------------------------------------
+
+def test_slash_command_is_recognised_in_the_xml_envelope_form():
+    """Claude Code records `/what` as XML, not as the typed text.
+
+    Matching only the raw form made the whole since-last-what scope inert in
+    production while every offline test stayed green.
+    """
+    xml = ("<command-name>/what</command-name>\n"
+           "            <command-message>what</command-message>\n"
+           "            <command-args></command-args>")
+    assert wc.is_what_invocation(xml)
+    assert wc.is_what_invocation("/what")
+    assert wc.is_what_invocation("  /what --scope session")
+
+
+def test_other_slash_commands_are_not_what_markers():
+    for other in ("/effort", "/compact", "/checkit", "/whatever"):
+        env = f"<command-name>{other}</command-name>\n<command-message>x</command-message>"
+        assert not wc.is_what_invocation(env), other
+    assert not wc.is_what_invocation("/whatever")
+
+
+def test_scope_uses_the_previous_marker_when_the_last_one_is_the_live_invocation():
+    """The `/what` firing now is the final turn; slicing after it yields nothing.
+
+    "Everything since you last asked" means the slice opens at the PREVIOUS marker.
+    """
+    turns = [
+        wc.Turn("human", "/what"), wc.Turn("agent", "first explanation"),
+        wc.Turn("human", "keep going"), wc.Turn("agent", "more work"),
+        wc.Turn("human", "<command-name>/what</command-name>"),
+    ]
+    sliced, scope = wc.slice_scope(turns, "auto")
+    assert scope == "since-last-what"
+    assert [t.text for t in sliced] == ["first explanation", "keep going", "more work"]
+
+
+def test_scope_is_session_when_the_live_invocation_is_the_only_marker():
+    turns = [wc.Turn("agent", "did work"), wc.Turn("human", "<command-name>/what</command-name>")]
+    assert wc.slice_scope(turns, "auto")[1] == "session"
+
+
+def test_catalog_parses_em_dash_status_and_trailing_score_metadata():
+    """43 of 895 live entities were invisible, so real pages read `ungrounded`."""
+    text = (
+        "#### em-dash-status [concept·—]\nclaim a\npath: concept/em-dash-status.md\n\n"
+        "#### scored-entity [pattern·candidate] · score 7/9\nclaim b\npath: pattern/scored-entity.md\n\n"
+        "#### _tags [_root·—]\nclaim c\npath: _tags.md\n"
+    )
+    entities, _ = wc.parse_catalog(text)
+    assert set(entities) == {"em-dash-status", "scored-entity", "_tags"}
+    assert entities["scored-entity"].claim == "claim b"
+
+
+def test_scoring_constants_guarantee_the_ranking_invariant():
+    """The headline claim is arithmetic, so assert it on the constants themselves."""
+    need = wc.UNDEFINED_BONUS + (wc.COVERAGE_WEIGHT["ungrounded"] - wc.COVERAGE_WEIGHT["grounded"])
+    assert need > wc.FREQ_CAP, f"{need} must exceed the max frequency advantage {wc.FREQ_CAP}"
+
+
+def test_a_never_glossed_ungrounded_term_wins_at_any_frequency(kg):
+    entities, aliases, prims = kg
+    for n in (2, 15, 60, 500):
+        loud = " ".join(["stability-budget"] * n)
+        turns = [wc.Turn("agent", f"A stability-budget is the margin. {loud} "
+                                  "quietterm-beta and quietterm-beta.")]
+        ranked = [c.term for c in wc.build_inventory(turns, entities, aliases, prims)]
+        assert ranked.index("quietterm-beta") < ranked.index("stability-budget"), (n, ranked)
+
+
+def test_definitional_does_not_fire_on_a_longer_hyphenated_sibling():
+    text = "gate-chain-v2 shipped. gate-chain held. gate-chain again."
+    assert not wc.definitional(text, "gate-chain")
+    assert not wc.definitional("we ran cross-review-gate twice", "cross-review")
+    assert not wc.definitional("the gate-chain held", "gate")
+
+
+def test_definitional_still_fires_on_a_real_gloss():
+    assert wc.definitional("A gate-chain — the ordered set of gates", "gate-chain")
+    assert wc.definitional("gate-chain: the ordered set", "gate-chain")
+    assert wc.definitional("A gate-chain is the ordered set", "gate-chain")
+
+
+def test_acronym_counts_inside_a_hyphenated_compound():
+    """`RCS` in `RCS-based` is a use; the strict guard scored it 0 and dropped it."""
+    text = "RCS-based here, RCS-based there, RCS-based everywhere."
+    assert wc.count_uses(text, "RCS", "acronym") == 3
+    assert "RCS" in {c.term for c in wc.build_inventory([wc.Turn("agent", text)], {}, {}, {})}
+
+
+def test_kebab_does_not_count_inside_a_longer_compound():
+    assert wc.count_uses("cross-review here and cross-review-gate there", "cross-review", "kebab") == 1
+
+
+def test_every_extracted_term_recounts_to_at_least_one(kg):
+    """Extraction and the recount must agree, or terms vanish with no trace."""
+    entities, aliases, prims = kg
+    prose = ("RCS-based work on the expiry-aware-lease. Applied Cross-Review\n(P20) twice. "
+             "HttpClient and reducer_noop_check and EGRI here. Bookkeeping(P6) too.")
+    text = wc.scrub(prose, keep_code=False)
+    for term, kind in wc.extract_terms(text).items():
+        assert wc.count_uses(text, term, kind) >= 1, f"{term!r} ({kind}) extracted but recounts to 0"
+
+
+def test_line_wrapped_primitive_survives_the_recount():
+    turns = [wc.Turn("agent", "Applied Cross-Review\n(P20) here. Cross-Review\n(P20) there.")]
+    assert "Cross-Review (P20)" in {c.term for c in wc.build_inventory(turns, {}, {}, {})}
+
+
+def test_dedupe_recomputes_score_from_the_merged_use_count(kg):
+    entities, aliases, prims = kg
+    turns = [wc.Turn("agent", "RCS is central. RCS again. recursive-controlled-system "
+                              "underpins it, recursive-controlled-system indeed.")]
+    merged = wc.dedupe(wc.build_inventory(turns, entities, aliases, prims))
+    row = next(c for c in merged if c.entity_path == "concept/recursive-controlled-system.md")
+    assert row.uses == 4
+    assert row.score == wc.score_concept(4, row.agent_introduced, row.defined_inline,
+                                         row.kind, row.coverage)
+
+
+def test_partial_tier_fires_on_a_shared_slug_segment(kg):
+    entities, aliases, prims = kg
+    g = wc.classify("stability-margin", entities, aliases, prims)
+    assert g.coverage == "partial" and g.path == "concept/stability-budget.md"
+
+
+def test_partial_tier_ignores_short_generic_segments(kg):
+    entities, aliases, prims = kg
+    assert wc.classify("the-gate-loop", entities, aliases, prims).coverage == "ungrounded"

@@ -44,7 +44,7 @@ t = open(src, encoding="utf-8").read()
 open(src, "w", encoding="utf-8").write(t.replace(anchor, repl, 1))
 PY
 
-  if python3 -m pytest scripts/test_what_concepts.py -q >/dev/null 2>&1; then
+  if PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest scripts/test_what_concepts.py -q -p no:cacheprovider >/dev/null 2>&1; then
     echo "  SURVIVED [$name]  <-- no test catches this"
     SURVIVORS+=("$name")
     survived=$((survived+1))
@@ -78,7 +78,7 @@ src, a1, r1, a2, r2 = sys.argv[1:6]
 t = open(src, encoding="utf-8").read().replace(a1, r1, 1).replace(a2, r2, 1)
 open(src, "w", encoding="utf-8").write(t)
 PY
-  if python3 -m pytest scripts/test_what_concepts.py -q >/dev/null 2>&1; then
+  if PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest scripts/test_what_concepts.py -q -p no:cacheprovider >/dev/null 2>&1; then
     echo "  SURVIVED [$name]  <-- no test catches this"
     SURVIVORS+=("$name"); survived=$((survived+1))
   else
@@ -86,9 +86,13 @@ PY
   fi
 }
 
+# Bytecode isolation: a length-preserving mutation written inside the same
+# wall-clock second reuses stale .pyc and never executes, reporting a false
+# SURVIVED (measured 2/10 before -B + no:cacheprovider).
+rm -rf scripts/__pycache__ .pytest_cache
 echo "== baseline =="
 git checkout -q -- scripts/what_concepts.py
-python3 -m pytest scripts/test_what_concepts.py -q 2>&1 | tail -1
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest scripts/test_what_concepts.py -q -p no:cacheprovider 2>&1 | tail -1
 
 echo "== mutations =="
 
@@ -235,6 +239,60 @@ mutate "p6-candidates-section-removed" \
 mutate "ranking-loses-total-order" \
   'concepts.sort(key=lambda c: (-c.score, -c.uses, c.term))' \
   'concepts.sort(key=lambda c: -c.score)'
+
+# --- round-2 mutations: behaviours the P20 review found unpinned ---
+
+mutate "scope-ignores-xml-command-form" \
+  'm = COMMAND_NAME.search(text)' \
+  'm = None'
+
+mutate "scope-accepts-any-slash-command-as-what" \
+  'return m.group(1).lower() == "what"' \
+  'return True'
+
+mutate "scope-keeps-the-live-invocation-turn" \
+  '        end = len(turns) - 1' \
+  '        end = len(turns)'
+
+mutate "undefined-bonus-restored-to-broken-value" \
+  'UNDEFINED_BONUS = 5.0' \
+  'UNDEFINED_BONUS = 2.4'
+
+mutate "coverage-weight-flattened" \
+  'COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 0.5, "ungrounded": 1.5}' \
+  'COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 1.0, "ungrounded": 1.0}'
+
+mutate "kind-weight-flattened" \
+  'KIND_WEIGHT = {"primitive": 2.0, "kebab": 1.5, "camel": 1.0, "acronym": 1.0, "snake": 0.5}' \
+  'KIND_WEIGHT = {"primitive": 1.0, "kebab": 1.0, "camel": 1.0, "acronym": 1.0, "snake": 1.0}'
+
+mutate "acronym-recount-uses-strict-boundary" \
+  'pattern = rf"\b{re.escape(term)}\b"' \
+  'pattern = rf"(?<![\w-]){re.escape(term)}(?![\w-])"'
+
+mutate "definitional-hyphen-guard-removed" \
+  '    end = r"(?![\w-])"' \
+  '    end = r""'
+
+mutate "dedupe-does-not-recompute-score" \
+  '            "score": score_concept(uses, c.agent_introduced, c.defined_inline, c.kind, c.coverage),' \
+  '            "score": c.score,'
+
+mutate "dedupe-keeps-first-not-best" \
+  'if prev is None or (c.score, c.term) > (prev.score, prev.term):' \
+  'if prev is None:'
+
+mutate "dedupe-final-sort-drops-tiebreak" \
+  'out.sort(key=lambda c: (-c.score, -c.uses, c.term))' \
+  'out.sort(key=lambda c: -c.score)'
+
+mutate "partial-tier-accepts-short-generic-segments" \
+  'PARTIAL_SEGMENT_MIN = 6' \
+  'PARTIAL_SEGMENT_MIN = 1'
+
+mutate "path-token-filter-removed" \
+  'if "/" not in tok and not PATH_EXT.search(tok.rstrip(".,;:)]}"))' \
+  'if True'
 
 git checkout -q -- scripts/what_concepts.py
 echo

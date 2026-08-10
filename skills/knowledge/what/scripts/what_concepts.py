@@ -186,6 +186,23 @@ class Turn:
 
 WHAT_INVOCATION = re.compile(r"^\s*/what\b", re.IGNORECASE)
 
+# Claude Code records a user-invoked slash command as an XML envelope, not as the
+# typed text — and the exact shape varies by version, so BOTH forms are reachable:
+#   <command-name>/what</command-name>\n<command-message>what</command-message>...
+#   /what
+# Matching only the raw form made the entire since-last-what scope inert in
+# production. The captured name is compared exactly, so /whatever and /effort
+# never count as a /what marker.
+COMMAND_NAME = re.compile(r"<command-name>\s*/?([a-z0-9][a-z0-9-]*)\s*</command-name>", re.I)
+
+
+def is_what_invocation(text: str) -> bool:
+    """True when this human turn is a `/what` invocation, in either recorded form."""
+    m = COMMAND_NAME.search(text)
+    if m:
+        return m.group(1).lower() == "what"
+    return bool(WHAT_INVOCATION.match(text))
+
 
 def load_transcript(path: Path, include_tools: bool, include_sidechains: bool) -> list[Turn]:
     """Parse a Claude Code transcript JSONL into human/agent turns.
@@ -291,12 +308,17 @@ def slice_scope(turns: list[Turn], scope: str) -> tuple[list[Turn], str]:
     """
     if scope == "session":
         return turns, "session"
-    cut = -1
-    for i, t in enumerate(turns):
-        if t.role == "human" and WHAT_INVOCATION.match(t.text):
-            cut = i
-    if cut >= 0 and cut + 1 < len(turns):
-        return turns[cut + 1:], "since-last-what"
+    markers = [i for i, t in enumerate(turns) if t.role == "human" and is_what_invocation(t.text)]
+    end = len(turns)
+    # The invocation running right now is the final turn. Slicing after *it* yields
+    # nothing, so the slice opens at the PREVIOUS marker and closes just before the
+    # live one — that is what "everything since you last asked" means. Dropping only
+    # a trailing marker keeps the offline case (a saved transcript) working unchanged.
+    if markers and markers[-1] == len(turns) - 1:
+        end = len(turns) - 1
+        markers = markers[:-1]
+    if markers:
+        return turns[markers[-1] + 1:end], "since-last-what"
     return turns, "session"
 
 
@@ -305,9 +327,12 @@ def slice_scope(turns: list[Turn], scope: str) -> tuple[list[Turn], str]:
 # --------------------------------------------------------------------------
 
 FENCE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
-URL = re.compile(r"https?://\S+")
-PATHY = re.compile(
-    r"\S*/\S*|\b\S+\.(?:md|py|ts|tsx|js|jsx|json|ya?ml|toml|rs|sh|txt|html|css)\b"
+# Path stripping is done token-wise, NOT by regex. Any `\S*/\S*` form is quadratic on
+# a long slash-free run — every start position rescans the whole token hunting for a
+# slash — so one pasted JWT or hash list stalled the tool for 16s. Splitting on
+# whitespace first makes it linear, and a file path is by definition one token.
+PATH_EXT = re.compile(
+    r"\.(?:md|py|ts|tsx|js|jsx|json|ya?ml|toml|rs|sh|txt|html|css)$", re.IGNORECASE
 )
 
 PRIMITIVE_NAMED = re.compile(r"\b([A-Z][A-Za-z]*(?:-[A-Z][A-Za-z]*)*)\s*\(P(\d{1,2})\)")
@@ -356,16 +381,34 @@ PREFIX_SEGMENTS = {
     "self", "ex", "pro", "counter",
 }
 
-# Frequency says a term was load-bearing; it does not say the term was
-# confusing. Cap its contribution so the explanation-need signals
-# (agent-introduced, never-glossed) decide the ranking instead.
+# Frequency says a term was load-bearing; it does not say the term was confusing.
+# Cap its contribution so the explanation-need signals decide the ranking.
+#
+# INVARIANT (asserted below, and pinned by test_scoring_constants_*): for two terms
+# of the same kind and the same agent_introduced value, a never-glossed ungrounded
+# term outranks an already-glossed grounded one at ANY frequency. That requires the
+# explanation-need advantage to exceed the largest frequency advantage:
+#     UNDEFINED_BONUS + (ungrounded - grounded) > FREQ_CAP
+# The first version shipped 2.0 + 0.5 = 2.5 against a cap of 4.0, so the headline
+# claim was false above ~15 uses.
 FREQ_WEIGHT = 1.2
 FREQ_CAP = 4.0
+UNDEFINED_BONUS = 5.0
+AGENT_INTRODUCED_BONUS = 3.0
 
 KIND_WEIGHT = {"primitive": 2.0, "kebab": 1.5, "camel": 1.0, "acronym": 1.0, "snake": 0.5}
 COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 0.5, "ungrounded": 1.5}
 
 MIN_LEN = {"kebab": 6, "snake": 6, "camel": 5, "acronym": 2}
+
+# A shared slug segment must be this long to imply partial coverage; shorter ones
+# ("gate", "loop", "state") match half the graph and mean nothing.
+PARTIAL_SEGMENT_MIN = 6
+
+assert UNDEFINED_BONUS + (COVERAGE_WEIGHT["ungrounded"] - COVERAGE_WEIGHT["grounded"]) > FREQ_CAP, (
+    "scoring constants violate the ranking invariant: a loud already-glossed term "
+    "would outrank a quiet never-glossed one"
+)
 
 # A trailing run/ticket/version number makes the compound an identifier, not an
 # idea: round-2, board-m3, bro-2107, run-264, slice_1.
@@ -373,12 +416,42 @@ IDENT_TAIL = re.compile(r"[a-z]?\d+")
 
 
 def scrub(text: str, keep_code: bool) -> str:
-    """Strip the surfaces that produce terms nobody chose: fences, URLs, paths."""
+    """Strip the surfaces that produce terms nobody chose: fences, URLs, paths.
+
+    Whitespace is collapsed last so extraction and the `uses` recount see the same
+    shape. Without it a line-wrapped `Cross-Review\\n(P20)` extracts as the canonical
+    `Cross-Review (P20)` and then recounts to zero, silently dropping the row.
+    """
     if not keep_code:
         text = FENCE.sub(" ", text)
-    text = URL.sub(" ", text)
-    text = PATHY.sub(" ", text)
-    return text
+    # No separate URL pass: every URL is one whitespace-delimited token containing
+    # `/`, so the path filter already removes it. A dedicated `URL.sub` here was dead
+    # code — deleting it left the whole suite green, which is how it was found.
+    return " ".join(
+        tok for tok in text.split()
+        if "/" not in tok and not PATH_EXT.search(tok.rstrip(".,;:)]}"))
+    )
+
+
+def count_uses(text: str, term: str, kind: str) -> int:
+    """Occurrences of `term`, using the boundary its own extraction pattern implies.
+
+    Acronyms and CamelCase are extracted on `\\b`, so `RCS` inside `RCS-based` IS a
+    use and must be counted as one — the strict `(?<![\\w-])` guard scored those at
+    zero and dropped the term. Kebab/snake/primitive keep the strict guard, so
+    `review` is never counted inside `cross-review`.
+    """
+    if kind == "primitive" and " (" in term:
+        # PRIMITIVE_NAMED reconstructs a CANONICAL surface ("Bookkeeping (P6)") from a
+        # match that allowed any spacing ("Bookkeeping(P6)"). Counting the canonical
+        # form literally then returns 0 and silently drops the highest-weight row.
+        name, rest = term.split(" (", 1)
+        pattern = rf"(?<![\w-]){re.escape(name)}\s*\({re.escape(rest.rstrip(')'))}\)"
+    elif kind in ("acronym", "camel"):
+        pattern = rf"\b{re.escape(term)}\b"
+    else:
+        pattern = rf"(?<![\w-]){re.escape(term)}(?![\w-])"
+    return len(re.findall(pattern, text))
 
 
 def normalize(term: str) -> str:
@@ -445,11 +518,16 @@ def is_noise(
 def definitional(text: str, term: str) -> bool:
     """Did the session already gloss this term? Then it does not need explaining."""
     t = re.escape(term)
+    # The term must not be a prefix of a longer hyphenated sibling: "cross-review-gate"
+    # is not a gloss of "cross-review", and a bare `-` in the separator class made
+    # every such compound read as a definition, zeroing the never-glossed signal.
+    end = r"(?![\w-])"
     patterns = (
-        rf"{t}\s+(?:is|are|was|were|means?|refers to|stands for)\b",
-        rf"{t}\s*[—–:=-]\s*\w",
-        rf"\b(?:i\.e\.|that is|in other words|which is)[^.\n]{{0,80}}{t}",
-        rf"{t}\s*\([^)]{{4,}}\)",
+        rf"{t}{end}\s+(?:is|are|was|were|means?|refers to|stands for)\b",
+        rf"{t}{end}\s*[—–]\s*\w",          # em/en dash gloss (never a plain hyphen)
+        rf"{t}{end}\s*[:=]\s+\w",          # "term: gloss"
+        rf"\b(?:i\.e\.|that is|in other words|which is)[^.\n]{{0,80}}{t}{end}",
+        rf"{t}{end}\s*\([^)]{{4,}}\)",
     )
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
@@ -458,7 +536,11 @@ def definitional(text: str, term: str) -> bool:
 # Knowledge-graph grounding
 # --------------------------------------------------------------------------
 
-CATALOG_HEAD = re.compile(r"^####\s+(\S+)\s+\[([a-z-]+)[·|](\w+)\]\s*$")
+# Live catalog heads carry two shapes the strict form rejected, costing 43 of 895
+# entities — which then read `ungrounded` and get re-proposed as duplicates:
+#   #### slug [concept·—]                        (status is an em-dash, not \w)
+#   #### slug [concept·candidate] · score 7/9    (trailing scoring metadata)
+CATALOG_HEAD = re.compile(r"^####\s+(\S+)\s+\[([a-z_-]+)[·|]([^\]]+)\]\s*(?:·.*)?$")
 CATALOG_PATH = re.compile(r"^path:\s*(\S+)\s*$")
 AKA = re.compile(r"\baka:\s*([^·|\n]+)")
 
@@ -558,10 +640,22 @@ def classify(
     if slug:
         e = entities[slug]
         return Grounding("grounded", e.path or f"{e.etype}/{e.slug}.md", e.claim, f"entity:{slug}")
-    if len(key) >= 5:
-        for cand, e in entities.items():
-            if key in cand.split("-") or (key in cand and len(key) >= 8):
-                return Grounding("partial", e.path or f"{e.etype}/{e.slug}.md", e.claim, None)
+    # `partial` = the term shares a distinctive segment with an entity slug. The
+    # earlier rule (whole term IS a slug segment, or an 8-char substring) was
+    # unreachable for realistic multi-word terms, so the tier never fired: a
+    # `stability-margin` next to a `stability-budget` entity read `ungrounded` and
+    # became a duplicate filing candidate.
+    segs = {s for s in key.split("-") if len(s) >= PARTIAL_SEGMENT_MIN}
+    if segs:
+        best: tuple[int, str] | None = None
+        for cand in entities:
+            shared = len(segs & set(cand.split("-")))
+            # Deterministic: most shared segments wins, ties broken by slug name.
+            if shared and (best is None or (-shared, cand) < (-best[0], best[1])):
+                best = (shared, cand)
+        if best is not None:
+            e = entities[best[1]]
+            return Grounding("partial", e.path or f"{e.etype}/{e.slug}.md", e.claim, None)
     return Grounding("ungrounded")
 
 
@@ -580,6 +674,19 @@ class Concept:
     entity_path: str | None
     claim: str | None
     score: float
+
+
+def score_concept(uses: int, agent_introduced: bool, defined_inline: bool,
+                  kind: str, coverage: str) -> float:
+    """The ranking model, in one place so dedupe recomputes rather than inherits."""
+    return round(
+        min(FREQ_WEIGHT * math.log1p(uses), FREQ_CAP)
+        + (AGENT_INTRODUCED_BONUS if agent_introduced else 0.0)
+        + (0.0 if defined_inline else UNDEFINED_BONUS)
+        + KIND_WEIGHT.get(kind, 0.5)
+        + COVERAGE_WEIGHT.get(coverage, 0.0),
+        3,
+    )
 
 
 def build_inventory(
@@ -606,21 +713,15 @@ def build_inventory(
         g = classify(term, entities, aliases, primitives)
         if is_noise(term, kind, stopwords, keep_terms, grounded=g.coverage == "grounded"):
             continue
-        uses = len(re.findall(rf"(?<![\w-]){re.escape(term)}(?![\w-])", agent_text))
+        uses = count_uses(agent_text, term, kind)
         if uses < min_freq:
             continue
         agent_introduced = normalize(term) not in human_norm
         defined_inline = definitional(agent_text, term)
-        score = (
-            min(FREQ_WEIGHT * math.log1p(uses), FREQ_CAP)
-            + (3.0 if agent_introduced else 0.0)
-            + (0.0 if defined_inline else 2.0)
-            + KIND_WEIGHT.get(kind, 0.5)
-            + COVERAGE_WEIGHT.get(g.coverage, 0.0)
-        )
         concepts.append(
             Concept(term, kind, uses, agent_introduced, defined_inline,
-                    g.coverage, g.path, g.claim, round(score, 3))
+                    g.coverage, g.path, g.claim,
+                    score_concept(uses, agent_introduced, defined_inline, kind, g.coverage))
         )
     # Deterministic order: score desc, uses desc, term asc. Never mtime or set order.
     concepts.sort(key=lambda c: (-c.score, -c.uses, c.term))
@@ -648,7 +749,13 @@ def dedupe(concepts: Iterable[Concept]) -> list[Concept]:
             best[key] = c
     out: list[Concept] = []
     for key, c in best.items():
-        merged = Concept(**{**asdict(c), "uses": total[key]})
+        uses = total[key]
+        # Recompute rather than inherit: a merged row's score must reflect its merged
+        # use count, or it ranks against unmerged rows on a stale number.
+        merged = Concept(**{
+            **asdict(c), "uses": uses,
+            "score": score_concept(uses, c.agent_introduced, c.defined_inline, c.kind, c.coverage),
+        })
         out.append(merged)
     out.sort(key=lambda c: (-c.score, -c.uses, c.term))
     return out
@@ -695,9 +802,10 @@ def render_markdown(concepts: list[Concept], meta: dict) -> str:
     if ungrounded:
         lines += [
             "",
-            "## Ungrounded — Bookkeeping (P6) filing candidates",
+            "## Ungrounded — Bookkeeping (P6) candidates (score before filing)",
             "",
-            "Used repeatedly, no entity page. File these; do not ask first.",
+            "No entity page. Most are English hyphenation, not concepts — run these",
+            "through the P6 gate (>= 5/9) and file only what clears it.",
             "",
         ]
         lines += [f"- `{c.term}` ({c.uses} uses)" for c in ungrounded]
