@@ -1,7 +1,7 @@
 ---
 name: bookkeeping
 category: knowledge
-version: 1.1.0
+version: 1.2.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -159,10 +159,16 @@ Opt-in temporal audit (`lint --all --temporal`; warning-only):
 - **Mutable state is dated where it is detached from context** — warns on
   catalog-visible current-state claims, mutable headings, and explicit state
   labels without an inline `YYYY-MM-DD` as-of marker
+- **The typed revision envelope is well-formed** — `recorded_at` parses and is
+  not in the future; `valid_from` parses (a *future* `valid_from` is fine — a
+  scheduled change is not a defect); `supersedes` entries are `[[wikilink]]`s
+  that resolve, are not self-references, and are not newer than the record that
+  supersedes them; `supersedes` carries a `revision_link` and vice versa. All
+  four fields stay **optional** — a page without them produces no finding
 - **Semantic reconciliation remains outside lint** — the audit does not decide
-  whether claims contradict or supersede one another, and does not require
-  `valid_from`, `recorded_at`, `supersedes`, or `revision_link` before typed
-  producers exist
+  whether claims contradict or supersede one another, nor whether a
+  supersession is correct; it only checks what the write path is supposed to
+  guarantee
 
 > Enum values defer to `references/entity-schema.md` (the schema is authoritative for `type`/`status` membership); SKILL.md remains authoritative for thresholds, stages, and layers.
 
@@ -217,9 +223,12 @@ python3 scripts/bookkeeping.py lint --all --temporal  # + warning-only temporal-
 python3 scripts/bookkeeping.py bench                  # Retrieval benchmark (P@5/R@5/MRR)
 python3 scripts/bookkeeping.py status                 # Show knowledge graph stats
 python3 scripts/bookkeeping.py query "concept-slug"   # Find and display entity page
+python3 scripts/bookkeeping.py merge dupe canonical   # Fold a dup into a canonical (tombstone)
+python3 scripts/bookkeeping.py revise --entity new --supersedes old \
+        --revision-link REF                           # Record an explicit correction
 ```
 
-The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, `lint --health`, and `lint --temporal` are *subcommands/flags*, not new pipeline stages.
+The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, `lint --health`, `lint --temporal`, `merge`, and `revise` are *subcommands/flags*, not new pipeline stages.
 
 All commands accept `--dry-run` to preview changes without writing. All commands write structured output to `~/.config/bookkeeping/run-log.jsonl`.
 
@@ -267,9 +276,43 @@ not fail the command when no ordinary lint errors exist. Default `lint` output
 is unchanged unless `--temporal` is passed.
 
 This is an emitter-first maintenance signal, not a revision-graph validator.
-Semantic contradiction, temporal authority, and supersession remain Dream
-(P13) review work until typed producers can emit their inputs. Calibration and
-known limitations are recorded in `references/temporal-drift-audit.md`.
+Semantic contradiction and temporal authority remain Dream (P13) review work.
+Calibration and known limitations are recorded in
+`references/temporal-drift-audit.md`.
+
+### `revise` — record an explicit correction
+
+The write side of the typed temporal revision envelope. Four frontmatter fields
+carry different clocks and different provenance rules; the governing constraint
+is that **none of them may be produced by reading prose**.
+
+| Field | Meaning | Who writes it |
+|---|---|---|
+| `recorded_at` | System time — when the graph recorded this state | `promote`, mechanically |
+| `valid_from` | Claim-effective time — when the claim became true | Only a source or revision that *supplies* it |
+| `supersedes` | Records this page replaces | `revise` / `merge` only |
+| `revision_link` | The record that authorized the supersession | `revise` / `merge` only |
+
+```bash
+python3 scripts/bookkeeping.py revise \
+  --entity new-belief --supersedes old-belief \
+  --revision-link "https://linear.app/broomva/issue/BRO-1234" \
+  [--valid-from 2026-04-15] [--dry-run]
+```
+
+`promote` stamps `recorded_at` from system time and writes `valid_from` only
+when the raw item carries an explicit `metadata.valid_from`; it never emits
+`supersedes` or `revision_link`, whatever the content asserts. `merge` records
+the canonical as superseding the dup, with the tombstone as its authorizing
+record. `revise` refuses (non-zero exit) on a missing entity, an unresolvable
+superseded slug, a self-supersession, or a non-ISO `--valid-from`, and is
+byte-identical on replay — repeated revisions union rather than overwrite.
+
+Envelope findings are warning-only and appear only under `--temporal`. They are
+not calibrated: no live entity carries these fields yet, so precision and recall
+on real revisions are unmeasured, and a hard gate stays blocked on that
+measurement plus an independent cross-review. Full contract:
+`references/temporal-revision-envelope.md`.
 
 ### `replay` — closes the shadow-dream corruption mode
 
@@ -568,5 +611,7 @@ Output format:
 | `references/scoring-rubric.md` | Full Nous gate rubric with examples for each score level |
 | `references/entity-schema.md` | Complete entity page schema with all valid field values |
 | `references/promotion-workflow.md` | Layer definitions, promotion decision tree, status transitions |
+| `references/temporal-drift-audit.md` | `lint --temporal` drift detector: contract, precision boundary, calibration |
+| `references/temporal-revision-envelope.md` | Typed revision envelope: producer contract, provenance rules, `revise`, warning-only validation |
 | `templates/entity-page.md` | Canonical template for new entity pages |
 | `scripts/bookkeeping.py` | Main CLI implementation |
