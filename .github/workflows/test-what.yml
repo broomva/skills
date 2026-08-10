@@ -76,3 +76,18 @@ jobs:
           assert all(c['coverage']=='ungrounded' for c in d['concepts']), d['concepts']
           print('smoke OK:', sorted(terms))
           " "$out"
+
+  mutation:
+    name: mutation proof (every test must be able to fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest PyYAML
+      # SKILL.md claims every test is proven able to fail. Until this ran in CI
+      # that proof fired only when an agent chose to run it, so a vacuous test
+      # added tomorrow kept the build green.
+      - name: Mutate
+        run: bash scripts/mutate.sh

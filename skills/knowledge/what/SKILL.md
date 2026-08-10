@@ -211,10 +211,10 @@ A `/what` answer is well-formed iff:
 - [ ] Each concept states what it is *not*
 - [ ] The short version contains no term from the inventory
 
-Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (85 tests).
+Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (90 tests).
 
 Every one of those tests is proven able to fail: `bash scripts/mutate.sh` breaks
-the implementation 34 ways and requires the suite to catch all 34. Run it after
+the implementation 39 ways and requires the suite to catch all 39. Run it after
 any change to `what_concepts.py`. It asserts a clean tree first, because its
 revert-to-HEAD baseline would otherwise destroy uncommitted work on line one.
 
