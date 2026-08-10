@@ -1,7 +1,7 @@
 ---
 name: bookkeeping
 category: knowledge
-version: 1.2.0
+version: 1.2.1
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva

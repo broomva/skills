@@ -2341,12 +2341,21 @@ def _apply_revision_envelope(
             after="related")
         text = _set_frontmatter_scalar(
             text, "revision_link", _render_flow_list(links), after="supersedes")
+    # `updated` is written QUOTED. Emitting it bare would un-quote a page that
+    # already had `updated: "2026-01-01"`, and the repo's own unquoted-date lint
+    # then warns on every page this command touches — the writer failing the
+    # gate it is supposed to satisfy. (The promote path still emits it bare;
+    # that predates the envelope and is left alone here.)
+    text = _set_frontmatter_scalar(
+        text, "updated", _yaml_double_quoted(today), after="created")
+    text = _set_frontmatter_scalar(
+        text, "recorded_at", _yaml_double_quoted(today), after="updated")
+    # Placed AFTER `recorded_at` exists, so `after=` actually resolves. Set
+    # earlier, the anchor was absent on a page acquiring the envelope for the
+    # first time and the field landed at the end of the frontmatter instead.
     if valid_from:
         text = _set_frontmatter_scalar(
             text, "valid_from", _yaml_double_quoted(valid_from), after="recorded_at")
-    text = _set_frontmatter_scalar(text, "updated", today, after="created")
-    text = _set_frontmatter_scalar(
-        text, "recorded_at", _yaml_double_quoted(today), after="updated")
     return text
 
 

@@ -587,6 +587,33 @@ class TestReviseCommand:
         fm, _ = bookkeeping.parse_frontmatter(path.read_text())
         assert fm["supersedes"] == ["[[old-a]]", "[[old-b]]", "[[old-c]]"]
 
+    def test_revise_output_passes_the_repo_s_own_default_lint(
+            self, temp_entities, frozen_today):
+        # Caught by dogfooding the MERGED artifact, not by the suite: writing
+        # `updated` bare un-quoted a page that already had it quoted, so every
+        # revised page picked up an unquoted-date warning — the writer failing
+        # the gate it is supposed to satisfy.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(temp_entities, "new-belief")
+        path.write_text(path.read_text().replace(
+            "created: 2026-01-01\nupdated: 2026-01-01\n",
+            'created: "2026-01-01"\nupdated: "2026-01-01"\n'))
+        cmd_revise(_revise_args("new-belief", ["old-belief"], valid_from="2026-04-15"))
+        text = path.read_text()
+        assert f'updated: "{TODAY}"' in text
+        dates = [e for e in lint_entity_page(path) if "unquoted date" in e.message]
+        assert not dates, f"revise must not emit unquoted dates, got: {dates}"
+
+    def test_valid_from_lands_next_to_recorded_at(self, temp_entities, frozen_today):
+        # `after="recorded_at"` only resolves if recorded_at is already present;
+        # set earlier, the field silently fell to the end of the frontmatter.
+        _write_entity(temp_entities, "old-belief")
+        path = _write_entity(temp_entities, "new-belief")
+        cmd_revise(_revise_args("new-belief", ["old-belief"], valid_from="2026-04-15"))
+        fm, _ = _split_frontmatter(path.read_text())
+        keys = [ln.split(":")[0] for ln in fm.splitlines() if ln[:1].isalpha()]
+        assert keys.index("valid_from") == keys.index("recorded_at") + 1
+
     def test_revise_preserves_body_and_lints_clean(self, temp_entities, frozen_today):
         _write_entity(temp_entities, "old-belief")
         path = _write_entity(temp_entities, "new-belief", body="Load-bearing prose.\n")
