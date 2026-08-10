@@ -397,7 +397,11 @@ UNDEFINED_BONUS = 5.0
 AGENT_INTRODUCED_BONUS = 3.0
 
 KIND_WEIGHT = {"primitive": 2.0, "kebab": 1.5, "camel": 1.0, "acronym": 1.0, "snake": 0.5}
-COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 0.5, "ungrounded": 1.5}
+# Ordered by explanation need, not by how much we know: `ungrounded` (nothing
+# written) > `partial` (something adjacent to read) > `grounded` (a canonical
+# definition already exists). `partial` sat BELOW `grounded` until a test
+# asserted the documented ordering.
+COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 1.25, "ungrounded": 1.5}
 
 MIN_LEN = {"kebab": 6, "snake": 6, "camel": 5, "acronym": 2}
 

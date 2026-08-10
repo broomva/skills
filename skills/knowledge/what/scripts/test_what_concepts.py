@@ -877,3 +877,44 @@ def test_partial_tier_fires_on_a_shared_slug_segment(kg):
 def test_partial_tier_ignores_short_generic_segments(kg):
     entities, aliases, prims = kg
     assert wc.classify("the-gate-loop", entities, aliases, prims).coverage == "ungrounded"
+
+
+def test_coverage_weight_separates_ungrounded_from_grounded():
+    """"Ungrounded is the highest-value row" must be a scored fact, not a slogan."""
+    a = wc.score_concept(3, True, False, "kebab", "ungrounded")
+    b = wc.score_concept(3, True, False, "kebab", "grounded")
+    c = wc.score_concept(3, True, False, "kebab", "partial")
+    assert a > c > b, (a, c, b)
+
+
+def test_kind_weight_ranks_a_primitive_above_a_bare_snake_identifier():
+    p = wc.score_concept(3, True, False, "primitive", "ungrounded")
+    k = wc.score_concept(3, True, False, "kebab", "ungrounded")
+    s = wc.score_concept(3, True, False, "snake", "ungrounded")
+    assert p > k > s, (p, k, s)
+
+
+def test_dedupe_keeps_the_best_row_not_the_first():
+    """Two surfaces of one entity: the higher-scoring row must be the survivor."""
+    low = wc.Concept("RCS", "acronym", 2, True, True, "grounded",
+                     "concept/recursive-controlled-system.md", "claim", 4.0)
+    high = wc.Concept("recursive-controlled-system", "kebab", 2, True, False, "grounded",
+                      "concept/recursive-controlled-system.md", "claim", 9.0)
+    merged = wc.dedupe([low, high])
+    assert len(merged) == 1
+    assert merged[0].term == "recursive-controlled-system", merged[0].term
+
+
+def test_dedupe_output_is_totally_ordered_on_equal_scores():
+    """dedupe's own sort is what the CLI emits; build_inventory's is not enough."""
+    def mk(term):
+        return wc.Concept(term, "kebab", 2, True, False, "ungrounded", None, None, 7.0)
+    merged = wc.dedupe([mk("zeta-token"), mk("mid-token-x"), mk("alpha-token")])
+    assert [c.term for c in merged] == sorted(c.term for c in merged)
+
+
+def test_partial_tier_requires_a_long_shared_segment(kg):
+    """A 5-char segment like `skill` matches half the graph and means nothing."""
+    entities, aliases, prims = kg          # holds `linked-skill-inheritance`
+    assert wc.classify("skill-gate", entities, aliases, prims).coverage == "ungrounded"
+    assert wc.classify("inheritance-gate", entities, aliases, prims).coverage == "partial"

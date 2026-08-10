@@ -113,10 +113,8 @@ mutate "sidechains-always-included" \
 
 # 4. scope cuts at the FIRST /what instead of the last
 mutate "scope-cuts-at-first-what" \
-  '        if t.role == "human" and WHAT_INVOCATION.match(t.text):
-            cut = i' \
-  '        if t.role == "human" and WHAT_INVOCATION.match(t.text) and cut < 0:
-            cut = i'
+  'return turns[markers[-1] + 1:end], "since-last-what"' \
+  'return turns[markers[0] + 1:end], "since-last-what"'
 
 # 5. /what matched anywhere in the turn, not just at the start.
 #    "start of turn" is defended TWICE: the `^` in the pattern and .match()'s own
@@ -125,8 +123,8 @@ mutate "scope-cuts-at-first-what" \
 mutate2 "what-marker-matches-midsentence" \
   'WHAT_INVOCATION = re.compile(r"^\s*/what\b", re.IGNORECASE)' \
   'WHAT_INVOCATION = re.compile(r"\s*/what\b", re.IGNORECASE)' \
-  'if t.role == "human" and WHAT_INVOCATION.match(t.text):' \
-  'if t.role == "human" and WHAT_INVOCATION.search(t.text):'
+  '    return bool(WHAT_INVOCATION.match(text))' \
+  '    return bool(WHAT_INVOCATION.search(text))'
 
 # 6. frequency cap removed -> loud terms dominate the ranking again
 mutate "frequency-cap-removed" \
@@ -231,9 +229,9 @@ mutate "undefined-flag-softened" \
   "| {'yes' if c.defined_inline else 'no'} |"
 
 # 24. P6 candidate section removed from the report
-mutate "p6-candidates-section-removed" \
-  'Bookkeeping (P6) filing candidates' \
-  'Other terms'
+mutate "p6-scoring-gate-dropped-from-report" \
+  'through the P6 gate (>= 5/9) and file only what clears it.' \
+  'and file them.'
 
 # 25. ranking tie-break made nondeterministic in shape (drops term ordering)
 mutate "ranking-loses-total-order" \
@@ -259,7 +257,7 @@ mutate "undefined-bonus-restored-to-broken-value" \
   'UNDEFINED_BONUS = 2.4'
 
 mutate "coverage-weight-flattened" \
-  'COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 0.5, "ungrounded": 1.5}' \
+  'COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 1.25, "ungrounded": 1.5}' \
   'COVERAGE_WEIGHT = {"grounded": 1.0, "partial": 1.0, "ungrounded": 1.0}'
 
 mutate "kind-weight-flattened" \
@@ -270,9 +268,9 @@ mutate "acronym-recount-uses-strict-boundary" \
   'pattern = rf"\b{re.escape(term)}\b"' \
   'pattern = rf"(?<![\w-]){re.escape(term)}(?![\w-])"'
 
-mutate "definitional-hyphen-guard-removed" \
-  '    end = r"(?![\w-])"' \
-  '    end = r""'
+mutate "definitional-treats-a-bare-hyphen-as-a-gloss" \
+  'rf"{t}{end}\s*[—–]\s*\w",          # em/en dash gloss (never a plain hyphen)' \
+  'rf"{t}\s*[—–:=-]\s*\w",'
 
 mutate "dedupe-does-not-recompute-score" \
   '            "score": score_concept(uses, c.agent_introduced, c.defined_inline, c.kind, c.coverage),' \
