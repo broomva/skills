@@ -575,10 +575,10 @@ that may hold hundreds, so a bare "nothing in its category is in stock" would be
 a universal over a sample.
 
 > **Not shipped.** This lives on `kg/d1-brand-compare` and has not passed its
-> review gate: eight cross-model rounds each found a sentence that was false
-> against live D1, and rounds 7 and 8 each found a defect the round before had
-> introduced. The root cause is in the section below and is worth reading before
-> picking it up. Tracked on BRO-2079.
+> review gate: nine cross-model rounds each found a sentence that was false
+> against live D1, and rounds 7, 8 and 9 each found a defect the round before
+> had introduced or left standing. The root cause is in the section below and is
+> worth reading before picking it up. Tracked on BRO-2079.
 
 ## Comparing a basket across brands
 
@@ -633,10 +633,60 @@ Hence `in the category around these terms` as a distinct wording, and
 `Brands on these terms' own pages` as a label that cannot be read as the
 complete answer to the sentence above it.
 
-And no claim outruns its look. `--count` defaults to 12 against result sets that
-are routinely 25–31, so every categorical sentence here carries its own
-denominator whenever the look was partial — headline, evidence list, and the
-per-term cause line alike.
+And no claim outruns **either** look. There are two denominators, not one, and
+round 9 found that only the first had a reader. `--count` defaults to 12 against
+result sets that are routinely 25–31 — that is the page. But a `no-brand-match`
+verdict is not decided by the page at all: the page finding nothing of the brand
+is what *starts* the category sweep, and the sweep is what decides. With a
+complete page look, no qualifier printed anywhere:
+
+```text
+d1 basket --brand QUAKER arroz --count 12 → "Nothing D1 returned for these terms is QUAKER."  exit 3
+d1 basket --brand QUAKER arroz            → arroz $ 4.950                                     exit 0
+```
+
+Every categorical sentence now carries whichever of the two looks was partial —
+headline, evidence list, per-term cause and footer alike — and `comparisonExit`
+treats a partial sweep exactly as it treats a partial page: not exit 3, which is
+documented CLI-wide as "never worth retrying".
+
+**`--count` is one knob again.** It was forwarded to both looks, whose defaults
+differ (page 12, sweep 50), so typing the page's own documented default cut the
+sweep to a quarter and inverted the answer above. The basket's sweeps keep the
+sweep's default, which is already the API's ceiling — there is nothing for a
+flag to widen, and nothing in the output suggests widening one. `d1 substitute`
+still honours `--count`, because there the sweep is the thing being asked about.
+
+**Every claim about a term reads that term's own evidence.** `--brand COPELIA
+--count 50 leche arroz` used to print *"COPELIA found but not buyable here, for:
+leche, arroz"* — true of `leche`, false of `arroz`. Terms are grouped by the
+sentence their own evidence produces, so identical ones still share a line:
+
+```text
+Not counted — COPELIA is on its own page and nothing of it is buyable here, for: leche.
+Not counted — D1 returned no COPELIA at all for: arroz.
+```
+
+**The comparison names what it bought.** Two prices and a delta are not enough
+to check a comparison, and three separate defects hid behind that. A row can be
+filled by a *replacement* swept from some category — by construction, since the
+branded path only runs when the term's own page held nothing of the brand — and
+the two sides can be ranked on **different measures**, because the brand filter
+runs before the measure census and can therefore move the axis:
+
+```text
+What was bought
+  leche — best value: PAN LECHE HORNEADITOS 10 UND 440 G, best per kg; LATTI: LECHE ENTERA BOLSA UHT LATTI 900 ML, best per L
+1 of those rows compares products ranked on DIFFERENT measures (leche: per kg vs per L), so that much of the difference is not like for like.
+```
+
+Bread rolls against milk, subtracted, and reported as a $ 1.310 saving on milk.
+
+**Accents are not a different brand.** `--brand "TRADICION 1915"` denied a brand
+`--brand "TRADICIÓN 1915"` buys at $ 4.200. `normalizeBrand` folds combining
+marks, which makes `Ñ` and `N` the same letter — deliberate: a filter that is too
+wide returns a product whose name the shopper reads and rejects, and one that is
+too narrow says D1 does not stock something it stocks.
 
 ## Roadmap
 

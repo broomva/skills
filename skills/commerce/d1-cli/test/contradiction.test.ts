@@ -20,11 +20,10 @@ import {
   type BasketPlan,
   type CrossBasket,
   type LineStatus,
-  brandReturnedIn,
-  brandsIn,
+  crossFromPlans,
   isFilled,
-  partialLook,
 } from "../src/basket.ts";
+import { sum } from "../src/money.ts";
 import { renderComparison, renderStores } from "../src/present.ts";
 import type { StoresResult } from "../src/stores.ts";
 import type { Product } from "../src/types.ts";
@@ -61,18 +60,35 @@ const ALL_STATUSES: LineStatus[] = [
   "no-match",
 ];
 
-function lineFor(
-  term: string,
-  status: LineStatus,
-  brand: string,
-  pageBrands: string[],
-  sweepBrands: string[],
-  partial: boolean,
-): BasketLine {
-  const named = status !== "no-match";
+/**
+ * One line's worth of DATA — nothing derived.
+ *
+ * Everything here is a fact a live run could hand back: a status, a page width,
+ * a category width, two brand lists. What those facts IMPLY is derived by
+ * production, in {@link crossFromPlans}.
+ */
+interface Shape {
+  term: string;
+  status: LineStatus;
+  /** Brands D1 returned on this term's own search page. */
+  pageBrands: string[];
+  /** Brands the category sweep returned, when one ran. */
+  sweepBrands: string[];
+  /** `looked` short of `matched` — the search page was cut by `--count`. */
+  partial: boolean;
+  /** `swept` short of `categoryTotal` — the sweep read one page of a bigger category. */
+  sweepPartial: boolean;
+  /** Total D1 matched for the term, so two rows can differ. */
+  matched: number;
+  /** Measure the pick was ranked on, so a mixed-measure delta is reachable. */
+  rankedOn?: string;
+}
+
+function lineFor(s: Shape): BasketLine {
+  const named = s.status !== "no-match";
   return {
-    term,
-    status,
+    term: s.term,
+    status: s.status,
     compared: 1,
     // A PARTIAL look is its own axis. `matched > looked` is what makes
     // `partialLook` fire, and before round 8 no state in this file set either
@@ -80,112 +96,97 @@ function lineFor(
     // sentence that has a scoped variant was checked in one polarity only.
     // Round 6's entire fix — a categorical claim never outruns its look — was
     // unprotected by the property test written to protect it.
-    looked: partial ? 12 : 29,
-    matched: 29,
-    product: named ? product(`PRODUCTO ${term}`, 300_000, brand) : undefined,
-    price: isFilled(status) ? 300_000 : undefined,
-    substituteSweep: status === "no-brand-match",
+    looked: s.partial ? Math.floor(s.matched / 2) : s.matched,
+    matched: s.matched,
+    product: named ? product(`PRODUCTO ${s.term}`, 300_000, "OTRA") : undefined,
+    price: isFilled(s.status) ? 300_000 : undefined,
+    substituteSweep: s.status === "no-brand-match",
+    rankedOn: isFilled(s.status) ? s.rankedOn : undefined,
+    // The CATEGORY denominator, which round 9 found had no reader at all. A
+    // `no-brand-match` verdict is decided by this sweep and not by the page, so
+    // an enumeration that never sets it cannot see a universal asserted over a
+    // partial one — and could not, through nine rounds.
+    swept: s.sweepPartial ? 10 : 41,
+    categoryTotal: 41,
     // Set, because production always sets it and the live defect lived here.
     // Whether the page CARRIED the requested brand is its own axis: D1 returning
     // a COPELIA product at Price 0 and D1 returning no COPELIA at all are
     // different facts that produce different headlines, and an enumeration
     // fixing one of them can never exercise the other.
-    pageBrands: named ? pageBrands : [],
+    pageBrands: named ? s.pageBrands : [],
     // ...and whether the CATEGORY SWEEP carried it is a third. Round 6 added
     // this population to production's returned-brand test and round 7 kept the
     // display list on the page alone — correctly — which made "brand in the
     // sweep but not on the page" a reachable state in which the headline and
     // the list beside it disagreed. No state here could produce it, because
     // this fixture never set the field at all.
-    sweepBrands: named ? sweepBrands : [],
+    sweepBrands: named ? s.sweepBrands : [],
   };
 }
 
 const planOf = (lines: BasketLine[]): BasketPlan => ({
   budget: 10_000_000,
   lines,
-  total: 0,
+  total: sum(lines.filter((l) => isFilled(l.status)).map((l) => l.price ?? 0)),
   remaining: 10_000_000,
 });
 
 /**
- * Mirrors `compareBaskets`' own bucketing.
+ * A comparison built the way production builds one.
  *
- * Deliberately re-derived rather than imported: this file's job is to check the
- * RENDER against the state it is handed, and every state the type permits — not
- * only the ones one production path happens to produce today.
+ * The plans are DATA — a test is entitled to invent what D1 returned. Every
+ * conclusion drawn from them comes from `crossFromPlans`, which is the function
+ * `compareBaskets` itself calls.
+ *
+ * This used to hand-assemble the `CrossBasket` literal, and each round found
+ * one more field of it drifted from production. Round 4 converted one of two;
+ * round 8 converted two of three, in the same commit series that wrote down
+ * "convert every derived field". `brandMissed` was the survivor: deleting
+ * production's gate for it changed real output and failed nothing here. The
+ * class only closes when there is nothing left to mirror.
+ *
+ * TWO rows, of DIFFERENT widths. One row made three whole families of defect
+ * structurally unreachable — per-term-versus-aggregate divergence, mixed
+ * buckets, and a denominator summed across terms and printed as one term's own.
+ * All three were live at the time the one-row enumeration was passing.
  */
-function crossOf(
-  baseStatus: LineStatus,
-  altStatus: LineStatus,
-  brandOnBase: string,
-  pageHasBrand = true,
-  sweepHasBrand = false,
-  partial = false,
-): CrossBasket {
-  const page = pageHasBrand ? [brandOnBase, BRAND] : [brandOnBase];
-  const sweep = sweepHasBrand ? [BRAND] : [];
-  // The ALT line's product is the source it REJECTED, not something of the
-  // requested brand — that is what `no-brand-match` means. Deriving the page
-  // from it pinned the requested brand into every page, so the other headline
-  // was never rendered and its rule reported itself dead.
-  const base = planOf([lineFor("arroz", baseStatus, brandOnBase, page, sweep, partial)]);
-  const alt = planOf([lineFor("arroz", altStatus, brandOnBase, page, sweep, partial)]);
-  const bl = base.lines[0] as BasketLine;
-  const al = alt.lines[0] as BasketLine;
-  const bothFilled = isFilled(bl.status) && isFilled(al.status);
-  const filledBase = isFilled(bl.status);
+function crossOf(opts: {
+  baseStatus: LineStatus;
+  altStatus: LineStatus;
+  pageBrands: string[];
+  sweepHasBrand: boolean;
+  partial: boolean;
+  sweepPartial: boolean;
+  /** The second row's own (base, alt) pair, or "same" to mirror the first. */
+  second: readonly [LineStatus, LineStatus] | "same";
+  count?: number;
+}): CrossBasket {
+  const sweep = opts.sweepHasBrand ? [BRAND] : [];
+  const [secondBase, secondAlt] =
+    opts.second === "same" ? [opts.baseStatus, opts.altStatus] : opts.second;
 
-  return {
-    brand: BRAND,
-    base,
-    alt,
-    rows: [
-      {
-        term: "arroz",
-        base: bl,
-        alt: al,
-        delta: bothFilled ? 0 : undefined,
-      },
-    ],
-    comparable: bothFilled
-      ? { terms: 1, baseTotal: 300_000, altTotal: 300_000, delta: 0 }
-      : { terms: 0, baseTotal: 0, altTotal: 0, delta: 0 },
-    onlyBase: filledBase && al.status === "no-brand-match" ? ["arroz"] : [],
-    altOverBudget: filledBase && al.status === "over-budget" ? ["arroz"] : [],
-    altUnknown: filledBase && al.status === "replacement-unknown" ? ["arroz"] : [],
-    altNoMatch:
-      filledBase && (al.status === "no-match" || al.status === "nothing-in-stock") ? ["arroz"] : [],
-    onlyAlt: isFilled(al.status) && !filledBase ? ["arroz"] : [],
-    neither: !filledBase && !isFilled(al.status) ? ["arroz"] : [],
-    // PRODUCTION's own `brandsIn`, not a copy of it.
-    //
-    // This was re-derived inline, and drifted the moment `brandsIn` changed —
-    // in the very commit series that wrote this file. The two flagship rules
-    // below then became unfalsifiable: side b of the "names the brand it says
-    // is absent" rule occurred in 0 of 98 states, because the mirror
-    // re-implemented the exclusion the rule exists to check. A mirror of the
-    // code under test tests the mirror.
-    brandsSeen:
-      alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
-        ? brandsIn([...base.lines, ...alt.lines])
-        : undefined,
-    // PRODUCTION's own function, for the same reason `brandsIn` is above it.
-    //
-    // This was the one field still re-derived by hand, and it drifted exactly as
-    // round 4 warned: production learned to read `sweepBrands` in round 6 and
-    // this copy never did. Every enumerated state therefore had the requested
-    // brand either on the page or nowhere — the sweep-only state, where the
-    // headline and the evidence list disagree, was unreachable here while being
-    // perfectly reachable live. A mirror of the code under test tests the
-    // mirror; round 4 found that and fixed one of the two fields.
-    brandReturnedIn:
-      alt.lines.length && alt.lines.every((l) => l.status === "no-brand-match")
-        ? brandReturnedIn([...base.lines, ...alt.lines], BRAND)
-        : undefined,
-    // Production's, too — same rule.
-    partial: partialLook(alt.lines),
+  // Row two is DELIBERATELY narrower and against a smaller shelf, so any
+  // sentence printing an aggregate where a per-term number belongs shows a
+  // number no term has.
+  const common = {
+    pageBrands: opts.pageBrands,
+    sweepBrands: sweep,
+    partial: opts.partial,
+    sweepPartial: opts.sweepPartial,
   };
+  const baseLines = [
+    lineFor({ ...common, term: "arroz", status: opts.baseStatus, matched: 29, rankedOn: "kg" }),
+    lineFor({ ...common, term: "leche", status: secondBase, matched: 18, rankedOn: "kg" }),
+  ];
+  const altLines = [
+    lineFor({ ...common, term: "arroz", status: opts.altStatus, matched: 29, rankedOn: "L" }),
+    lineFor({ ...common, term: "leche", status: secondAlt, matched: 18, rankedOn: "kg" }),
+  ];
+
+  return crossFromPlans(["arroz", "leche"], planOf(baseLines), planOf(altLines), {
+    brand: BRAND,
+    count: opts.count,
+  });
 }
 
 /**
@@ -195,7 +196,7 @@ function crossOf(
  * defect rather than a line number. All four rounds' findings are here.
  */
 /** The evidence list's label, either scoping. Both are the PAGE population. */
-const LIST_LABEL = `Brands (?:on these terms' own pages|among the \\d+ looked at)`;
+const LIST_LABEL = `Brands (?:on these terms' own pages|among the \\d+ products looked at across \\d+ terms?)`;
 /**
  * The brand as a COMPLETE list item, not a word inside one. `\bLATTI\b` also
  * matched "LATTI FOODS", which is a different brand and precisely the near-miss
@@ -276,8 +277,8 @@ const FORBIDDEN: Array<{ why: string; a: RegExp; b: RegExp; regressionOnly?: boo
   },
   {
     why: "says a term was not counted for two mutually exclusive reasons",
-    a: /Not counted — no .* for: arroz\b/,
-    b: /Neither basket filled: arroz\b/,
+    a: /Not counted — (?:no|D1 returned no) .* for: (?:[^\n]*, )?arroz\b/,
+    b: /Neither basket filled: (?:[^\n]*, )?arroz\b/,
   },
 ];
 
@@ -289,20 +290,48 @@ const FORBIDDEN: Array<{ why: string; a: RegExp; b: RegExp; regressionOnly?: boo
  * three of four call sites leaves a test quietly enumerating less than it
  * claims to, which is this file's own recurring defect wearing a new hat.
  */
-function everyState(): Array<{ label: string; out: string }> {
-  const states: Array<{ label: string; out: string }> = [];
+/** Page-brand lists: absent, present, and the near-miss that must not be flagged. */
+const PAGE_LISTS: string[][] = [["OTRA"], ["OTRA", BRAND], ["OTRA", `${BRAND} FOODS`]];
+
+/**
+ * The second row's own status pair.
+ *
+ * `"same"` keeps the two rows uniform, which is what makes an all-`no-brand-match`
+ * basket — and therefore the headline block — reachable for every status. The
+ * other three are deliberately MIXED, which is the shape a one-row enumeration
+ * could not produce and where the per-term sentences went wrong live.
+ */
+const SECOND_ROW: Array<readonly [LineStatus, LineStatus] | "same"> = [
+  "same",
+  ["filled", "filled"],
+  ["filled", "no-brand-match"],
+  ["no-match", "no-brand-match"],
+];
+
+function everyState(): Array<{ label: string; out: string; state: CrossBasket }> {
+  const states: Array<{ label: string; out: string; state: CrossBasket }> = [];
   for (const baseStatus of ALL_STATUSES) {
     for (const altStatus of ALL_STATUSES) {
-      for (const brandOnBase of ["OTRA", BRAND, `${BRAND} FOODS`]) {
-        for (const pageHasBrand of [true, false]) {
-          for (const sweepHasBrand of [true, false]) {
-            for (const partial of [true, false]) {
-              states.push({
-                label: `${baseStatus} / ${altStatus} / base brand ${brandOnBase} / page ${pageHasBrand} / sweep ${sweepHasBrand} / partial ${partial}`,
-                out: renderComparison(
-                  crossOf(baseStatus, altStatus, brandOnBase, pageHasBrand, sweepHasBrand, partial),
-                ),
-              });
+      for (const pageBrands of PAGE_LISTS) {
+        for (const sweepHasBrand of [true, false]) {
+          for (const partial of [true, false]) {
+            for (const sweepPartial of [true, false]) {
+              for (const second of SECOND_ROW) {
+                const state = crossOf({
+                  baseStatus,
+                  altStatus,
+                  pageBrands,
+                  sweepHasBrand,
+                  partial,
+                  sweepPartial,
+                  second,
+                });
+                states.push({
+                  label: `${baseStatus} / ${altStatus} / page [${pageBrands}] / sweep ${sweepHasBrand} / partial ${partial} / sweepPartial ${sweepPartial} / second ${second}`,
+                  out: renderComparison(state),
+                  state,
+                });
+              }
             }
           }
         }
@@ -339,13 +368,21 @@ describe("no two sentences the comparison prints can contradict each other", () 
     // next one open, so the check is over the set.
     const UNSCOPED = [
       /but nothing of it can be bought at this store\./,
-      /found but not buyable here,/,
+      /and nothing of it is buyable here, for/,
+      /D1 returned no LATTI at all for/,
       /Nothing D1 returned for these terms is/,
     ];
     const unscoped: string[] = [];
-    for (const { label, out } of everyState()) {
-      // A complete look needs no qualifier; only partial states are checked.
-      if (!/Raise --count/.test(out)) continue;
+    for (const { label, out, state } of everyState()) {
+      // Gated on the STATE, not on the output.
+      //
+      // The first version of this gate read `/Raise --count/` off the rendered
+      // string — a marker the fix under test is itself responsible for
+      // emitting. A faithful revert of that fix deletes the marker, the state
+      // is skipped, and the test stays green while the defect is back. Proven
+      // by a mutation pair differing only in whether the marker survived. A
+      // check may never take its precondition from the thing it is checking.
+      if (!state.partial && !state.sweepPartial) continue;
       for (const u of UNSCOPED) {
         if (u.test(out)) {
           unscoped.push(`${label}: unqualified universal ${u} beside a partial look\n${out}\n`);
@@ -355,6 +392,61 @@ describe("no two sentences the comparison prints can contradict each other", () 
     expect(unscoped).toEqual([]);
   });
 
+  test("no per-term sentence prints a number no term actually has", () => {
+    // Round 9, found independently by two reviewers. `partialLook` sums across
+    // terms and two consumers read the sum as one term's own: with `leche`
+    // looking at 12 and `arroz` at 10, the output said "nothing of ALPIN among
+    // the 22 looked at, for: leche" and "best among the 22 products fetched for
+    // its term". No term fetched 22. A one-row enumeration cannot see this at
+    // all, because with one row the sum IS the term's number — which is why
+    // this went through 560 green tests.
+    const offenders: string[] = [];
+    for (const { label, out, state } of everyState()) {
+      const perTerm = new Set<number>();
+      for (const l of [...state.base.lines, ...state.alt.lines]) {
+        if (l.looked !== undefined) perTerm.add(l.looked);
+        if (l.swept !== undefined) perTerm.add(l.swept);
+      }
+      // Every "Not counted" line is ABOUT specific terms, so every count in one
+      // must be a count some term really had.
+      for (const line of out.split("\n")) {
+        if (!line.startsWith("Not counted —")) continue;
+        for (const m of line.matchAll(/(\d+) of (\d+) (?:on its page|in its category)/g)) {
+          const n = Number(m[1]);
+          if (!perTerm.has(n)) offenders.push(`${label}: per-term line cites ${n}\n${line}\n`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("a term never appears in two mutually exclusive buckets", () => {
+    // Structural, not regex. The buckets project rows back to labels, and a
+    // label landing in two of them is two incompatible claims about one row
+    // however the sentences happen to be worded — so this reads the buckets
+    // rather than the prose, and cannot be defeated by a rewording.
+    const offenders: string[] = [];
+    for (const { label, state } of everyState()) {
+      const buckets: Array<[string, readonly string[]]> = [
+        ["onlyBase", state.onlyBase.map((m) => m.term)],
+        ["altOverBudget", state.altOverBudget],
+        ["altUnknown", state.altUnknown],
+        ["altNoMatch", state.altNoMatch],
+        ["onlyAlt", state.onlyAlt],
+        ["neither", state.neither],
+      ];
+      const seen = new Map<string, string>();
+      for (const [name, terms] of buckets) {
+        for (const t of terms) {
+          const prior = seen.get(t);
+          if (prior) offenders.push(`${label}: "${t}" in both ${prior} and ${name}`);
+          else seen.set(t, name);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test("the enumeration is not vacuous — it really does exercise every sentence", () => {
     // A forbidden-pair check passes trivially if no state produces either
     // sentence. This asserts the render surface is actually being covered, so
@@ -362,7 +454,7 @@ describe("no two sentences the comparison prints can contradict each other", () 
     const MARKERS = [
       "BOTH filled:",
       "no price to compare",
-      "Not counted — no LATTI for",
+      "D1 returned no LATTI at all for",
       "found but over budget for",
       "lookup did not answer for",
       "D1 returned nothing at all for",
@@ -374,9 +466,19 @@ describe("no two sentences the comparison prints can contradict each other", () 
       // unreachable in this enumeration before the sweep and partial axes
       // existed — which is exactly why the defects they describe survived.
       "in the category around these terms",
-      "the look covered 12 of the 29 D1 matched",
       "Brands on these terms' own pages",
-      "Brands among the 12 looked at",
+      "Brands among the 23 products looked at across 2 terms",
+      // Round 10's. The category denominator, the per-term verdicts that replaced
+      // one global one, the two disclosures the render never made, and the
+      // ceiling-aware advice.
+      "in the categories around them",
+      "LATTI is on its own page and nothing of it is buyable here, for",
+      "LATTI is in the category around it and nothing of it the look reached is buyable",
+      "no LATTI in what was searched",
+      "What was bought",
+      "ranked on DIFFERENT measures",
+      "Raise --count to widen the page look",
+      "the category sweep reads one page and --count does not widen it",
     ];
     const seen = new Set<string>();
     for (const { out } of everyState()) {
@@ -386,6 +488,33 @@ describe("no two sentences the comparison prints can contradict each other", () 
     // replaced as when it was covered, so it could not tell "all ten covered"
     // from "nine covered and one typo'd".
     expect([...seen].sort()).toEqual([...MARKERS].sort());
+  });
+
+  test("the enumeration is a table, not one cell repeated", () => {
+    // Round 9's measurement, kept as an assertion. Reviewer B instrumented the
+    // then-current enumeration and found 1176 iterations collapsing to 40
+    // distinct outputs, with three rules structurally unable to fire because
+    // `crossOf` built ONE row — so per-term-versus-aggregate divergence, mixed
+    // buckets and duplicate terms were all unreachable while being live.
+    //
+    // Floors, not exact counts: an exact number is a maintenance tax that gets
+    // updated to whatever the code now produces, which is how a coverage check
+    // stops being one. These are set below what the current axes give and well
+    // above what a collapsed enumeration could.
+    const states = everyState();
+    expect(states.length).toBeGreaterThan(4000);
+    expect(new Set(states.map((s) => s.out)).size).toBeGreaterThan(150);
+    // The shapes the one-row enumeration could not reach at all.
+    const distinctEvidence = (c: CrossBasket) =>
+      new Set(c.onlyBase.map((m) => JSON.stringify([m.returnedIn, m.look, m.sweep]))).size;
+    expect(states.filter((s) => distinctEvidence(s.state) > 1).length).toBeGreaterThan(0);
+    expect(
+      states.filter((s) => (s.out.match(/^Not counted —/gm) ?? []).length > 1).length,
+    ).toBeGreaterThan(0);
+    expect(states.filter((s) => s.state.sweepPartial !== undefined).length).toBeGreaterThan(0);
+    expect(states.filter((s) => /ranked on DIFFERENT measures/.test(s.out)).length).toBeGreaterThan(
+      0,
+    );
   });
 
   test("every LIVE rule can actually fire — a rule matching nothing proves nothing", () => {

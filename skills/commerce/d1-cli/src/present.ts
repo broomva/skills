@@ -14,11 +14,13 @@ import {
   type BasketComparison,
   type BasketLine,
   type BasketPlan,
+  type BrandMiss,
   type CrossBasket,
   FILLED,
   type LineStatus,
+  normalizeBrand,
 } from "./basket.ts";
-import { bestOffer, priced } from "./catalog.ts";
+import { MAX_COUNT, bestOffer, pageCount, priced } from "./catalog.ts";
 import { formatUnitPrice } from "./measure.ts";
 import { discountPercent, formatCOP, sum } from "./money.ts";
 import { MAX_REACHABLE, type StoresResult, hoursOn } from "./stores.ts";
@@ -455,7 +457,10 @@ export function renderAddresses(addrs: SavedAddress[]): string {
  * would not happen, which is the same defect as an empty substitute result
  * asserting "nothing is in stock" without saying it compared 3 of 140.
  */
-export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {}): string {
+export function renderBasket(
+  plan: BasketPlan,
+  opts: { regionId?: string; count?: number } = {},
+): string {
   const out: string[] = [];
   // A filled line without a product cannot be rendered as a row, and must not
   // be counted or billed either — dropping it from the body alone produced an
@@ -548,7 +553,18 @@ export function renderBasket(plan: BasketPlan, opts: { regionId?: string } = {})
     );
   }
   out.push("");
-  out.push(footerFor(filled));
+  // Ceiling-aware, for the same reason the comparison's is: at `--count 50` the
+  // unchecked wording tells the reader to raise a flag `search` has already
+  // clamped. `opts.count` is what the command was invoked with, so the render
+  // asks the same clamp the request asked.
+  out.push(
+    footerFor(
+      filled,
+      pageCount(opts.count) < MAX_COUNT
+        ? WIDEN_UNCHECKED
+        : ` --count is already at its ceiling of ${MAX_COUNT}.`,
+    ),
+  );
   return out.join("\n");
 }
 
@@ -582,7 +598,7 @@ function scopeOf(l: BasketLine): string {
  * "best value among the products fetched for its term", which was false for the
  * last two.
  */
-function footerFor(filled: readonly BasketLine[]): string {
+function footerFor(filled: readonly BasketLine[], widen = WIDEN_UNCHECKED): string {
   const substitutes = filled.filter((l) => l.substituteSweep).length;
   // When EVERY line is a replacement, "the products fetched for its term" is
   // false for the whole basket and the exception swallows the rule.
@@ -599,7 +615,46 @@ function footerFor(filled: readonly BasketLine[]): string {
       "except a replacement, which is the closest match from its category rather than for the term you typed",
     );
   }
-  return `${parts.join(" — ")}. Raise --count to widen it.`;
+  return `${parts.join(" — ")}.${widen}`;
+}
+
+/**
+ * The widening advice, when the caller has not checked whether widening works.
+ *
+ * `search` clamps `--count` to {@link MAX_COUNT}, so at 50 this sentence tells
+ * the reader to do something the CLI refuses: `--count 50` and `--count 100`
+ * produce byte-identical output. {@link widenAdvice} is the checked form, and
+ * every caller that knows its own count uses it.
+ */
+const WIDEN_UNCHECKED = " Raise --count to widen it.";
+
+/**
+ * What to tell the reader about widening, given what the run actually did.
+ *
+ * Two looks, two answers. The SEARCH PAGE takes `--count` and can be widened up
+ * to the clamp. The CATEGORY SWEEP does not take it at all — see "The sweep
+ * does not take --count" in `basket.ts` — so advice about it would be advice
+ * about a flag that no longer reaches it.
+ */
+function widenAdvice(opts: {
+  count: number;
+  pagePartial: boolean;
+  sweepPartial?: boolean;
+}): string {
+  const parts: string[] = [];
+  if (opts.pagePartial) {
+    parts.push(
+      opts.count < MAX_COUNT
+        ? "raise --count to widen the page look"
+        : `--count is already at its ceiling of ${MAX_COUNT}`,
+    );
+  }
+  if (opts.sweepPartial) {
+    parts.push("the category sweep reads one page and --count does not widen it");
+  }
+  if (!parts.length) return "";
+  const joined = parts.join("; ");
+  return ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`;
 }
 
 /**
@@ -844,6 +899,18 @@ export function renderComparison(c: CrossBasket): string {
   const out: string[] = [];
   const brand = sanitize(c.brand);
 
+  // The two looks a brand verdict rests on, as ONE phrase, each naming its own
+  // population and its own span. Round 6 scoped the claims to the page; round 9
+  // found that `no-brand-match` is decided by the CATEGORY sweep, whose
+  // denominator nothing read — so a complete page look printed no qualifier at
+  // all over a sweep of 10 of 41, and exited 3.
+  const scope = crossScope(c);
+  const widen = widenAdvice({
+    count: c.count,
+    pagePartial: c.partial !== undefined,
+    sweepPartial: c.sweepPartial !== undefined,
+  });
+
   if (c.brandsSeen) {
     // Two different facts, and the code now knows which one it has. `no-brand-match`
     // means nothing of the brand was BUYABLE — it does not mean D1 returned none
@@ -866,18 +933,20 @@ export function renderComparison(c: CrossBasket): string {
     // claim as well as to the list.
     const seenIn =
       c.brandReturnedIn === "sweep" ? "in the category around these terms" : "for these terms";
-    // ...and the negative half never outruns the look. This arm was round 5's
+    // ...and the negative half never outruns EITHER look. This arm was round 5's
     // and round 6 never touched it, so "nothing of it can be bought at this
     // store" stayed a universal over `--count` products — twelve of twenty-nine
-    // at the default, the exact disease round 6 was about.
-    const unbuyable = c.partial
-      ? `but nothing of it the look reached can be bought at this store — the look covered ${c.partial.looked} of the ${c.partial.matched} D1 matched. Raise --count to widen it.`
+    // at the default, the exact disease round 6 was about. Round 9 then found
+    // the second half of the same sentence: the sweep behind it was partial too,
+    // and neither the claim nor the exit code said so.
+    const unbuyable = scope
+      ? `but nothing of it the look reached can be bought at this store — the look covered ${scope}.${widen}`
       : "but nothing of it can be bought at this store.";
     out.push(
       c.brandReturnedIn
         ? `D1 returned ${brand} ${seenIn}, ${unbuyable}`
-        : c.partial
-          ? `Nothing among the ${c.partial.looked} products looked at for these terms is ${brand} — D1 matched ${c.partial.matched}. Raise --count to widen the look.`
+        : scope
+          ? `Nothing the look reached for these terms is ${brand} — it covered ${scope}.${widen}`
           : `Nothing D1 returned for these terms is ${brand}.`,
     );
     if (c.brandsSeen.length) {
@@ -885,8 +954,21 @@ export function renderComparison(c: CrossBasket): string {
       // partial-sweep claim this module already caveats — and the whole point of
       // the hint is to surface a near-miss, which is exactly what a silent cut
       // would drop.
-      const shown = c.brandsSeen.slice(0, MAX_BRAND_HINT);
-      const more = c.brandsSeen.length - shown.length;
+      // The REQUESTED brand first, whenever the page carried it.
+      //
+      // The list is sorted alphabetically and cut at twelve, so a near-miss
+      // spelling of the very brand asked for could fall past the cut — and did:
+      // `--brand "TRADICION 1915"` (no accent) printed "Nothing D1 returned for
+      // these terms is TRADICION 1915" above a list that omitted the accented
+      // spelling as "and 1 more". The one entry the hint exists to surface was
+      // the one entry a fixed-length cut is free to drop, and the omission also
+      // emitted the exact pair FORBIDDEN rule 1 forbids. `normalizeBrand` now
+      // folds accents so this case fills instead — but a hint that can hide its
+      // own subject is wrong for every other near-miss too, so the ordering is
+      // the fix and the folding is a separate one.
+      const ordered = requestedFirst(c.brandsSeen, c.brand);
+      const shown = ordered.slice(0, MAX_BRAND_HINT);
+      const more = ordered.length - shown.length;
       // Scoped like the headline above it. This was the same unqualified
       // universal, one line below the sentence that had just been fixed: for
       // `leche` it named one brand of the eleven D1 returns, under a label that
@@ -898,7 +980,7 @@ export function renderComparison(c: CrossBasket): string {
       // list is the term pages and says so, so no reading of it competes with a
       // sentence about the category.
       const label = c.partial
-        ? `Brands among the ${c.partial.looked} looked at`
+        ? `Brands among the ${c.partial.looked} products looked at across ${c.partial.terms} ${c.partial.terms === 1 ? "term" : "terms"}`
         : "Brands on these terms' own pages";
       out.push(
         `${label}: ${shown.map(sanitize).join(", ")}${more > 0 ? `, and ${more} more` : ""}.`,
@@ -917,6 +999,23 @@ export function renderComparison(c: CrossBasket): string {
     const basePart = priceCell(r.base);
     const altPart = priceCell(r.alt);
     out.push(`  ${sanitize(r.term).padEnd(width)} ${basePart}   ${altPart}${deltaCell(r)}`);
+  }
+
+  // WHAT was bought, by name.
+  //
+  // The table is four numbers and a term, and every defect round 9 found in the
+  // delta was invisible in it. `--brand LATTI leche --count 50` reported LATTI
+  // as $ 1.310 cheaper: the unconstrained side had bought
+  // `PAN LECHE HORNEADITOS 10 UND 440 G` — bread rolls, best in the page's
+  // dominant `$/kg` census — and the branded side `LECHE ENTERA … LATTI 900 ML`,
+  // best on `$/L`. Two ranks on two axes, subtracted. Nothing on screen named
+  // either product, so no reader could catch it and no amount of hedging in the
+  // footer would have helped.
+  const bought = boughtLines(c);
+  if (bought.length) {
+    out.push("");
+    out.push("What was bought");
+    for (const line of bought) out.push(line);
   }
 
   out.push("");
@@ -948,6 +1047,15 @@ export function renderComparison(c: CrossBasket): string {
     out.push(
       `Over the ${terms} ${terms === 1 ? "term" : "terms"} BOTH filled: ${formatCOP(baseTotal)} best-value vs ${formatCOP(altTotal)} in ${brand} — ${formatCOP(Math.abs(delta))} ${dir} best value.`,
     );
+    // ...and the delta says so when it is not a like-for-like one. Named right
+    // under the number it qualifies, because a reader who reads one line reads
+    // this one.
+    const mixed = c.rows.filter(mixedMeasure);
+    if (mixed.length) {
+      out.push(
+        `${mixed.length} of those ${mixed.length === 1 ? "rows compares" : "rows compare"} products ranked on DIFFERENT measures (${mixed.map(measurePair).join("; ")}), so that much of the difference is not like for like — see what was bought.`,
+      );
+    }
   }
 
   // Named, not netted — and named by CAUSE. One sentence covering every reason a
@@ -967,15 +1075,17 @@ export function renderComparison(c: CrossBasket): string {
   // Carries the headline's scope too, for the same reason the headline needed
   // it: "found but not buyable here" is a universal over whatever `--count`
   // happened to fetch.
-  const notFound = c.brandReturnedIn
-    ? c.partial
-      ? `${brand} found but nothing of it the look reached is buyable, for`
-      : `${brand} found but not buyable here, for`
-    : c.partial
-      ? `nothing of ${brand} among the ${c.partial.looked} looked at, for`
-      : `no ${brand} for`;
+  // PER TERM, and grouped by the sentence each term's own evidence produces.
+  //
+  // The single global sentence was the sixth recurrence of one root defect, in
+  // the line rounds 7 and 8 each rewrote. `--brand COPELIA --count 50 leche
+  // arroz` printed "COPELIA found but not buyable here, for: leche, arroz" —
+  // true of `leche`, whose page carries COPELIA at Price 0, and false of
+  // `arroz`, which has none of it in either population at a complete look. A
+  // list of terms under one clause asserts that clause of every term in it, so
+  // the clause has to be computed from the term.
   const missing: Array<[readonly string[], string]> = [
-    [c.onlyBase, notFound],
+    ...groupMisses(c.onlyBase, brand),
     [c.altOverBudget, `${brand} found but over budget for`],
     [c.altUnknown, `the ${brand} lookup did not answer for`],
     [c.altNoMatch, "D1 returned nothing at all for"],
@@ -1013,17 +1123,146 @@ export function renderComparison(c: CrossBasket): string {
     );
   }
   out.push("Both baskets were fit to the same budget, so each is one a shopper could have bought.");
-  // The footer `renderBasket` has had all along. Both prices above are the best
-  // of a window, not of D1, and the window moves with `--count`: the same
-  // command at 12 and at 30 picks different products and reports different
-  // totals. A comparison that does not say so invites the reader to treat it as
-  // a fact about the shop.
+  // The footer `renderBasket` has had all along, and this render did not call.
+  //
+  // Two things were wrong with saying nothing. Both prices above are the best
+  // of a window, not of D1, and the window moves with `--count`. And a line can
+  // be a REPLACEMENT swept from a category — `--brand DULCRALIGHT … arroz`
+  // filled `arroz` with `ENDULZANTE FRASCO 180 GRS`, a sweetener, and priced
+  // the brand cheaper on it. By construction `brandLine` runs only when the
+  // term's own page held nothing of the brand, so a `filled-by-substitute` price
+  // here is NEVER "the best among the products fetched for its term" — the one
+  // sentence this render was closest to implying. `footerFor` already owns that
+  // exception, word for word, and is now asked for it.
+  const filledBoth = [...c.base.lines, ...c.alt.lines].filter((l) => FILLED.includes(l.status));
+  out.push(footerFor(filledBoth, widen));
+  return out.join("\n");
+}
+
+/**
+ * Whether a row's two sides were ranked on measures that are not comparable.
+ *
+ * Only for rows that actually contribute to the delta — an unfilled side has no
+ * rank to disagree with. `undefined` on one side means a pack-price fallback or
+ * a category sweep, which is a different disclosure and is made where it
+ * belongs (`footerFor`, and the "replacing" clause below).
+ */
+function mixedMeasure(r: BasketComparison): boolean {
+  if (r.delta === undefined) return false;
+  const a = r.base?.rankedOn;
+  const b = r.alt?.rankedOn;
+  return a !== undefined && b !== undefined && a !== b;
+}
+
+/** `leche: per kg vs per L` — the two axes, named. */
+function measurePair(r: BasketComparison): string {
+  return `${sanitize(r.term)}: per ${sanitize(r.base?.rankedOn ?? "?")} vs per ${sanitize(r.alt?.rankedOn ?? "?")}`;
+}
+
+/**
+ * The product each side actually bought, per row.
+ *
+ * Includes the replacement disclosure. `brandLine` runs only when a term's own
+ * page held nothing of the brand, so the branded side of a row is routinely a
+ * product swept from some category — `arroz` filled with a sweetener, priced,
+ * and reported as the brand being cheaper on rice.
+ */
+function boughtLines(c: CrossBasket): string[] {
+  const out: string[] = [];
+  for (const r of c.rows) {
+    const parts: string[] = [];
+    const side = (l: BasketLine | undefined, who: string) => {
+      if (!l || !FILLED.includes(l.status) || !l.product) return;
+      const measure = l.rankedOn ? `, best per ${sanitize(l.rankedOn)}` : "";
+      const replacing = l.replaces
+        ? `, replacing ${sanitize(l.replaces.name)} from its category`
+        : "";
+      parts.push(`${who}: ${sanitize(l.product.name)}${measure}${replacing}`);
+    };
+    side(r.base, "best value");
+    side(r.alt, sanitize(c.brand));
+    if (parts.length) out.push(`  ${sanitize(r.term)} — ${parts.join("; ")}`);
+  }
+  return out;
+}
+
+/**
+ * The two looks a brand verdict rests on, as one phrase.
+ *
+ * Empty when both were complete, which is the only state in which a categorical
+ * claim needs no qualifier at all.
+ */
+function crossScope(c: CrossBasket): string {
+  const parts: string[] = [];
   if (c.partial) {
-    out.push(
-      `Each price is the best among the ${c.partial.looked} products fetched for its term, not across all of D1 — raise --count to widen it.`,
+    const { looked, matched, terms } = c.partial;
+    parts.push(
+      `${looked} of the ${matched} D1 matched across ${terms} ${terms === 1 ? "term" : "terms"}`,
     );
   }
-  return out.join("\n");
+  if (c.sweepPartial) {
+    const { swept, categoryTotal, terms } = c.sweepPartial;
+    parts.push(
+      `${swept} of the ${categoryTotal} in ${terms === 1 ? "the category" : "the categories"} around them`,
+    );
+  }
+  return parts.join(", and ");
+}
+
+/**
+ * The requested brand first, so a fixed-length cut cannot drop it.
+ *
+ * Comparison is on {@link normalizeBrand}, the same predicate the filter used,
+ * so an accent or a case difference still counts as the same brand here.
+ */
+function requestedFirst(brands: readonly string[], brand: string): string[] {
+  const want = normalizeBrand(brand);
+  const hit: string[] = [];
+  const rest: string[] = [];
+  for (const b of brands) (normalizeBrand(b) === want ? hit : rest).push(b);
+  return [...hit, ...rest];
+}
+
+/**
+ * Per-term brand verdicts, grouped by the sentence each one produces.
+ *
+ * Terms whose evidence is identical share a line — that is the whole benefit of
+ * the old global sentence, kept. Terms whose evidence differs get different
+ * lines, which is the part that was missing and the part that made the old one
+ * false. Order follows first appearance, so the sentences stay in list order.
+ */
+function groupMisses(misses: readonly BrandMiss[], brand: string): Array<[string[], string]> {
+  const byWhy = new Map<string, string[]>();
+  for (const m of misses) {
+    const why = missWhy(m, brand);
+    const bucket = byWhy.get(why);
+    if (bucket) bucket.push(m.term);
+    else byWhy.set(why, [m.term]);
+  }
+  return [...byWhy.entries()].map(([why, terms]) => [terms, why]);
+}
+
+/**
+ * One term's own brand verdict, from that term's own evidence.
+ *
+ * The widening advice is deliberately NOT repeated here. It is a fact about the
+ * run rather than about a term, the headline and the footer both carry it, and
+ * a per-term copy would put it on the page once per bucket.
+ */
+function missWhy(m: BrandMiss, brand: string): string {
+  const parts: string[] = [];
+  if (m.look) parts.push(`${m.look.looked} of ${m.look.matched} on its page`);
+  if (m.sweep) parts.push(`${m.sweep.swept} of ${m.sweep.categoryTotal} in its category`);
+  const searched = parts.length ? ` (${parts.join(", ")} searched)` : "";
+  if (m.returnedIn) {
+    const where = m.returnedIn === "sweep" ? "in the category around it" : "on its own page";
+    return searched
+      ? `${brand} is ${where} and nothing of it the look reached is buyable${searched}, for`
+      : `${brand} is ${where} and nothing of it is buyable here, for`;
+  }
+  return searched
+    ? `no ${brand} in what was searched${searched}, for`
+    : `D1 returned no ${brand} at all for`;
 }
 
 /** How many brands the near-miss hint lists before saying "and N more". */

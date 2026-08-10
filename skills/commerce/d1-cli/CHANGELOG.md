@@ -4,7 +4,7 @@ All notable changes to the **d1-cli** skill are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: [SemVer](https://semver.org).
 
 > **Not released.** `d1 basket --brand` is on this branch and has not passed its
-> review gate — seven cross-model rounds, each finding a live false sentence
+> review gate — nine cross-model rounds, each finding a live false sentence
 > against real D1. The history below is kept because it is the useful part.
 > Tracked on BRO-2079.
 
@@ -285,6 +285,107 @@ live and independent: sweep-only brands exist (`DULCRALIGHT`, `COOLTIVO` and
 brands exist (COPELIA, gotcha 12). The **conjunction** — a sweep-only brand with
 nothing of it priced — did not occur across twelve terms at that store, so it is
 rarer than rounds 5–7's defects, every one of which reproduced at default flags.
+
+### Fixed — round 9 (3/10, 6/10, 4/10): the second denominator, and one global sentence for eight terms
+
+Three fresh-context reviewers with different lenses — contradiction, vacuity,
+live truth. They overlapped on two findings; each one's best finding was
+invisible to the other two. Round 8 was mutation-proven 8/8 with 560 green
+tests, and still carried a blocker.
+
+**The blocker: a categorical claim over a partial CATEGORY sweep, exiting 3.**
+Round 6 scoped every claim to the term's search page. But `no-brand-match` is
+not decided by the page — the page finding nothing is what *starts* the category
+sweep, and the sweep is what decides. That second denominator had no reader at
+all, so with a complete page look **no qualifier printed anywhere**:
+
+```text
+d1 basket --brand QUAKER arroz --count 12 → "Nothing D1 returned for these terms is QUAKER."  exit 3
+d1 basket --brand QUAKER arroz            → arroz $ 4.950                                     exit 0
+```
+
+`AVENA EN HOJUELAS QUAKER 400 G` is in that category at $ 4.950 either way. The
+run's own `--json` carried the disproof: `partial: null` beside
+`swept: 10, categoryTotal: 41`. Three failures at once — a false claim about
+D1's shelf, exit 3 ("never worth retrying") on a run that widening fixes, and
+**`--count` being silently two knobs**: the search page defaults to 12, the
+sweep to 50, and forwarding the flag to both meant typing the page's own
+documented default cut the sweep to a quarter and inverted the answer.
+
+Fixed at all three points. `CrossBasket.sweepPartial` is the sweep's own
+shortfall and every categorical sentence reads it; `comparisonExit` treats it
+exactly as it already treated a partial page; and the basket's sweeps no longer
+take `--count` at all — the sweep's default is already the API's ceiling, so
+there was never anything for a flag to widen.
+
+**One global sentence printed over eight terms it was not true of.** Live:
+`--brand COPELIA --count 50 leche arroz` → *"COPELIA found but not buyable here,
+for: leche, arroz"* — true of `leche`, whose page carries COPELIA at `Price: 0`,
+false of `arroz`, which has none of it in either population at a complete look.
+Sixth recurrence of one root defect, in the line rounds 7 and 8 each rewrote,
+and it kept recurring because `onlyBase: string[]` has nowhere to put a per-term
+fact. It is `BrandMiss[]` now: each term carries the evidence its own verdict
+rests on, and the render groups terms by the sentence their evidence produces —
+so identical terms still share a line and differing ones cannot.
+
+Also fixed, all reproduced live at ordinary flags:
+
+- **A summed denominator printed as a per-term number** (found by two reviewers
+  independently). `--brand ALPIN leche arroz` produced `looked: 22` — 12 plus
+  10 — and two sentences read it as one term's own. No term fetched 22. The sum
+  now names its span, and the per-term sentences read per-term numbers.
+- **A repeated term counted one catalogue twice.** `--brand ALPIN leche leche`
+  said "D1 matched 58" about a term D1 matches 29 of. Denominators are summed
+  over distinct terms; the rows stay separate, because they are separate
+  outcomes.
+- **"Raise --count" at `--count`'s own ceiling.** `search` clamps to 50, so
+  `--count 50` and `--count 100` are byte-identical and two sentences instructed
+  the reader to do what the CLI refuses. The advice is checked against the same
+  clamp the request used, in `renderBasket` as well.
+- **A delta differencing two ranks computed on different axes.** `--brand LATTI
+  leche --count 50` reported LATTI $ 1.310 cheaper: the unconstrained side had
+  bought `PAN LECHE HORNEADITOS` — bread rolls, best on the page's dominant
+  `$/kg` — and the branded side milk, best on `$/L`. `chooseBest` filters by
+  brand before the measure census, so the constraint moves the axis. The table
+  printed numbers only, so nothing on screen let a reader catch it.
+- **A substituted price presented as the term's own.** `--brand DULCRALIGHT …
+  arroz` filled `arroz` with `ENDULZANTE FRASCO 180 GRS` and reported the brand
+  cheaper on rice. `renderComparison` never disclosed `replaces` and never
+  called `footerFor`, which has owned the exception clause all along.
+- **Accents decided the answer.** `--brand "TRADICION 1915"` denied a brand that
+  `--brand "TRADICIÓN 1915"` bought at $ 4.200. `normalizeBrand` folds combining
+  marks now. This makes `Ñ` and `N` the same letter, which in Spanish they are
+  not — accepted deliberately, because a filter that is too wide returns a
+  product the shopper reads and rejects, and one that is too narrow asserts D1
+  does not stock something it stocks.
+- **The twelve-brand hint could cut the brand it was asked about**, emitting the
+  exact pair the property test's first rule forbids. The requested brand is
+  ordered first.
+
+**And round 8's own named fix pinned a state live D1 cannot reach.** The
+`brandReturnedIn === "sweep"` arm needs an offer simultaneously *available* and
+*unpriced*; `findSubstitutes` admits only available candidates, and a
+910-product scan across all fourteen departments found none. Round 8 reported
+the conjunction merely absent across twelve terms; the correct statement was
+unreachable. The arm is kept — the type is still the honest one — but it is no
+longer described as verified.
+
+**Test integrity.** `crossOf` hand-assembled a `CrossBasket` literal, so every
+derived field in it was a copy of the logic under test; round 4 converted one of
+two, round 8 two of three, in the commit series that wrote down "convert every
+derived field". `compareBaskets` is now split into the part that fetches and
+`crossFromPlans`, the part that derives — the enumeration builds the two plans,
+which are data, and production derives the rest. There is nothing left to
+mirror. The enumeration also runs **two rows of different widths**: one row made
+per-term-versus-aggregate divergence, mixed buckets and duplicate terms
+structurally unreachable, and all three were live while it was passing. 4,704
+states, 228 distinct outputs, against 1,176 collapsing to 40.
+
+Two tests that could not fail are gone. The scope check gated on `/Raise --count/`
+read from the *output* — a marker the fix under test emits, so a faithful revert
+skipped the state and stayed green; it gates on production-derived state now.
+And `not.toContain("cannot be bought")` was checking for a string this module
+has never produced.
 
 ### Fixed — round 2 (5/10): three contradictions, and a fix that did not fix
 

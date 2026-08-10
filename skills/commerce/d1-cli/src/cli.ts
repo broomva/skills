@@ -292,7 +292,14 @@ export function comparisonExit(cmp: CrossBasket): number {
   // "Raise --count to widen the look", and widening it does fill the basket
   // (`--brand ALPIN leche` is empty at the default and $ 10.150 at --count 40).
   // An agent branching on 3 would record a fact the prose beside it denies.
-  if (code === 3 && cmp.partial) return 0;
+  //
+  // BOTH looks, because `no-brand-match` — the status that produces this 3 —
+  // is decided by the CATEGORY SWEEP and not by the page. Round 7 fixed the
+  // page axis and round 9 found the identical defect on the axis beside it:
+  // `--brand QUAKER arroz --count 12` swept 10 of 41, missed a QUAKER product
+  // priced at $ 4.950, and exited 3. The page look was complete, so `partial`
+  // was undefined and this guard did not fire. Same rule, second denominator.
+  if (code === 3 && (cmp.partial || cmp.sweepPartial)) return 0;
   return code;
 }
 
@@ -497,6 +504,19 @@ session token in a 0600 file (~/.config/d1-cli/session.json).`;
 // Commands
 // ---------------------------------------------------------------------------
 
+/**
+ * Exported at the foot of this file, so the exit codes can be pinned through
+ * the WHOLE command rather than through the extracted helper alone.
+ *
+ * Round 9's merge condition, and a fair one: `comparisonExit` was extracted to
+ * be testable and then only ever tested in isolation, against a `CrossBasket`
+ * a test had built. Nothing checked that `case "basket"` calls it at all, or
+ * calls it with the branded comparison rather than the plan — a mutation
+ * swapping the two would have to be caught here or not at all. The export
+ * already existed; nothing used it. `test/basket.test.ts` now drives it with
+ * `globalThis.fetch` replaced, which reaches the argument parsing and dispatch
+ * that a spawned process hides.
+ */
 async function main(argv: string[]): Promise<number> {
   const { positional, flags } = parseArgs(argv);
   const asJson = flags.json === true || flags.json === "true";
@@ -641,7 +661,7 @@ async function main(argv: string[]): Promise<number> {
       console.log(
         asJson
           ? json({ ...plan, regionId: region?.id })
-          : renderBasket(plan, { regionId: region?.id }),
+          : renderBasket(plan, { regionId: region?.id, count: opts.count }),
       );
       return basketExit(plan.lines);
     }

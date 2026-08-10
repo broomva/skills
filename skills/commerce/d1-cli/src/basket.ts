@@ -24,9 +24,35 @@
  * and value routinely disagree — the whole reason `--sort per-unit` exists. A
  * candidate with no published size cannot be compared that way and is not
  * silently ranked as though it could be.
+ *
+ * ## The sweep does not take `--count`
+ *
+ * A term is resolved in two stages against two different populations: the
+ * term's own SEARCH PAGE, and — only if that page fails — a sweep of one
+ * product's CATEGORY. `--count` used to be forwarded to both, and the two have
+ * different defaults: the search page 12, the sweep 50. So one flag was
+ * silently two knobs, and passing the search's own documented default narrowed
+ * the sweep to a quarter of its. Live:
+ *
+ * ```text
+ * d1 basket --brand QUAKER arroz            → arroz filled, $ 4.950   exit 0
+ * d1 basket --brand QUAKER arroz --count 12 → "Nothing D1 returned…"  exit 3
+ * ```
+ *
+ * `AVENA EN HOJUELAS QUAKER 400 G` is in that category either way. Typing a
+ * default explicitly is the one edit a reader can be certain is a no-op, and
+ * here it inverted the answer and set the exit code documented CLI-wide as
+ * "never worth retrying".
+ *
+ * So the basket's sweeps keep the sweep's own default, which is also its
+ * ceiling: `search` clamps to `MAX_COUNT`, and the default already equals it.
+ * There is nothing left for a flag to widen, which is why no output here
+ * suggests widening one. `d1 substitute` still honours `--count`, because there
+ * the sweep IS the thing being asked about rather than a fallback inside a
+ * larger question.
  */
 
-import { pickOffer, priced, search } from "./catalog.ts";
+import { pageCount, pickOffer, priced, search } from "./catalog.ts";
 import type { D1Client } from "./client.ts";
 import { sum } from "./money.ts";
 import { type Candidate, findSubstitutes } from "./substitute.ts";
@@ -126,6 +152,14 @@ export interface BasketLine {
   /** Distinct brands the CATEGORY sweep returned, when one ran. */
   sweepBrands?: readonly string[];
   /**
+   * The measure this line's pick was RANKED on — `kg`, `L`, `unit`, or absent
+   * when it fell back to pack price or was never ranked at all.
+   *
+   * Two lines ranked on different measures are answers to different questions,
+   * and subtracting one from the other is not a saving. See {@link Choice.measure}.
+   */
+  rankedOn?: string;
+  /**
    * How many of those runners-up WOULD have fitted in the money left when this
    * line was refused. Set only on an `over-budget` line, where it is the whole
    * point; meaningless anywhere else, so it is absent there rather than zero.
@@ -175,6 +209,20 @@ export interface Choice {
   byPackPrice: boolean;
   /** Whether ANY eligible product published a size, for an honest disclosure. */
   anySized?: boolean;
+  /**
+   * The measure this pick was RANKED on — `kg`, `L`, `unit`, or undefined for
+   * a pack-price fallback.
+   *
+   * Carried out of here because a comparison between two baskets can rank the
+   * two sides on DIFFERENT measures and then subtract the results. The census
+   * below runs after the brand filter, deliberately — but that means the brand
+   * can move the axis. Live: `--brand LATTI leche --count 50` ranked the
+   * unconstrained side on `$/kg`, where `PAN LECHE HORNEADITOS` (bread rolls,
+   * with "leche" in the name) wins, and the LATTI side on `$/L`, where milk
+   * wins. The delta then reported LATTI as $ 1.310 cheaper — a difference
+   * between bread and milk, printed as a saving on milk.
+   */
+  measure?: string;
   /**
    * Pack prices of the products this line weighed and did NOT pick.
    *
@@ -250,6 +298,7 @@ export function chooseBest(products: readonly Product[], brand?: string): Choice
         product,
         compared: comparable.length,
         byPackPrice: false,
+        measure: dominant,
         alternatives: packPrices(ranked.slice(1)),
       };
     }
@@ -303,10 +352,26 @@ export function chooseBest(products: readonly Product[], brand?: string): Choice
  * writes `Latti` — but inner punctuation is not, so nothing else is stripped.
  * A blank yields undefined, so `--brand ""` cannot become a filter that matches
  * only the products whose brand is also blank.
+ *
+ * ## Accents are noise too, and were not treated as such
+ *
+ * This is a Colombian catalogue typed at by Spanish speakers on keyboards that
+ * do not always make an accent easy. Live: `--brand "TRADICION 1915"` printed
+ * "Nothing D1 returned for these terms is TRADICION 1915" while
+ * `--brand "TRADICIÓN 1915"` filled the line at $ 4.200 — the same shelf, two
+ * opposite answers, decided by one keystroke. The near-miss hint could not
+ * rescue it either: the accented spelling sat past the twelve-brand cut.
+ *
+ * Folding combining marks makes `Ñ` and `N` the same letter, which in Spanish
+ * they are not. That is accepted deliberately, because the two failure modes
+ * are not symmetric. A filter that is too WIDE returns a product the shopper
+ * reads the name of and rejects in a second. A filter that is too NARROW
+ * asserts D1 does not stock something it stocks — and this command's whole
+ * output is built around not doing that.
  */
 export function normalizeBrand(brand?: string): string | undefined {
   if (typeof brand !== "string") return undefined;
-  const t = brand.trim().replace(/\s+/g, " ").toUpperCase();
+  const t = brand.normalize("NFD").replace(/\p{M}/gu, "").trim().replace(/\s+/g, " ").toUpperCase();
   return t.length ? t : undefined;
 }
 
@@ -557,6 +622,7 @@ export async function buildBasket(
         matched,
         byPackPrice: best.byPackPrice,
         anySized: best.anySized,
+        rankedOn: best.measure,
         alternatives: best.alternatives,
       });
       continue;
@@ -699,7 +765,8 @@ async function brandLine(
     const result = await findSubstitutes(client, source.skuId, {
       regionId: opts.regionId,
       salesChannel,
-      count: opts.count,
+      // `--count` is deliberately NOT forwarded — see "The sweep does not take
+      // --count" in this file's header.
       limit: Number.POSITIVE_INFINITY,
     });
     // Every brand the sweep returned, kept rather than discarded. `brandLine`
@@ -758,7 +825,9 @@ async function bestSubstitute(
     const result = await findSubstitutes(client, source.skuId, {
       regionId: opts.regionId,
       salesChannel,
-      count: opts.count,
+      // `--count` is deliberately NOT forwarded — see "The sweep does not take
+      // --count" in this file's header.
+      //
       // Unbounded, NOT 1. `findSubstitutes` slices to `limit` before returning,
       // so asking for one and then skipping unpriced candidates skipped the
       // only candidate there was — the "offer an unbuyable replacement" fix was
@@ -828,6 +897,41 @@ export interface BasketComparison {
   delta?: PriceHundredths;
 }
 
+/** A search-page shortfall, and how many terms it spans. */
+export interface Shortfall {
+  /** Distinct terms summed into the two numbers below. */
+  terms: number;
+  looked: number;
+  matched: number;
+}
+
+/** A category-sweep shortfall, and how many terms it spans. */
+export interface SweepShortfall {
+  /** Distinct terms summed into the two numbers below. */
+  terms: number;
+  swept: number;
+  categoryTotal: number;
+}
+
+/**
+ * One term the brand could not fill, with the evidence its own verdict rests on.
+ *
+ * Everything here is read from THAT term's two lines. Nothing is inherited from
+ * the comparison as a whole — that inheritance is the defect this type exists
+ * to remove, and it recurred in six consecutive review rounds because a
+ * `string[]` bucket has nowhere to put a per-term fact.
+ */
+export interface BrandMiss {
+  /** Row label, exactly as the table prints it — see {@link rowLabels}. */
+  term: string;
+  /** Where D1 returned the brand FOR THIS TERM, if anywhere. */
+  returnedIn?: "page" | "sweep";
+  /** This term's own page look, when narrower than what D1 matched for it. */
+  look?: { looked: number; matched: number };
+  /** This term's own category sweep, when narrower than that category. */
+  sweep?: { swept: number; categoryTotal: number };
+}
+
 export interface CrossBasket {
   /** The brand asked for, as typed. */
   brand: string;
@@ -849,8 +953,26 @@ export interface CrossBasket {
     altTotal: PriceHundredths;
     delta: PriceHundredths;
   };
-  /** Terms where D1 genuinely has nothing of the brand. */
-  onlyBase: string[];
+  /**
+   * Terms the base basket filled and the brand could not — each carrying the
+   * scope its OWN verdict rests on.
+   *
+   * Strings until round 10, and that is what made the bucket wrong three
+   * different ways at once. A per-term list rendered under one sentence
+   * inherits whatever global state that sentence reads, and every global fact
+   * here is false of at least one term in the list:
+   *
+   * ```text
+   * d1 basket --brand COPELIA --count 50 leche arroz
+   * → COPELIA found but not buyable here, for: leche, arroz.
+   * ```
+   *
+   * COPELIA is on `leche`'s page. It is absent from `arroz` in BOTH populations,
+   * at a complete 10-of-10 look — so "found but not buyable" is a true sentence
+   * about `leche` printed over the name of a term it is false about. Rounds 7
+   * and 8 each rewrote this line and each kept the global read.
+   */
+  onlyBase: BrandMiss[];
   /** Terms where the branded product exists and was priced, but did not fit. */
   altOverBudget: string[];
   /** Terms where the branded lookup never answered — unknown, not empty. */
@@ -862,13 +984,45 @@ export interface CrossBasket {
   /** Terms neither basket filled — not a brand difference, and not silent either. */
   neither: string[];
   /**
-   * How wide the look was, when it was narrower than what D1 matched.
+   * How wide the SEARCH-PAGE look was, when it was narrower than what D1
+   * matched — summed across DISTINCT terms.
    *
    * Undefined when every term's page held everything D1 had. Set, it is the
    * denominator every brand claim in this comparison is really scoped to, and
    * without it those claims are universals asserted over twelve products.
+   *
+   * `terms` is here because the sum is not a per-term number and was being
+   * printed as one. `--brand ALPIN leche arroz` produced `{looked: 22}` — 12
+   * for `leche` plus 10 for `arroz` — and two sentences then read it per term:
+   * "nothing of ALPIN among the 22 looked at, for: leche" (12 were) and "best
+   * among the 22 products fetched for its term" (no term fetched 22). Naming
+   * the span is what stops the number being read as a term's own.
+   *
+   * Distinct terms, because a repeated one is the SAME search. `--brand ALPIN
+   * leche leche` reported "D1 matched 58" for a shelf holding 29.
    */
-  partial?: { looked: number; matched: number };
+  partial?: Shortfall;
+  /**
+   * How wide the CATEGORY SWEEP was, when it was narrower than the category —
+   * summed across DISTINCT terms.
+   *
+   * The blocker round 9 found, and the reason it is a separate field rather
+   * than folded into {@link partial}. Round 6 scoped every claim to the search
+   * page; but `no-brand-match` is not decided by the page at all — the page
+   * failing is what STARTS the category sweep, and the sweep is what decides.
+   * That second denominator had no reader, so with a complete page look no
+   * qualifier printed anywhere and the render asserted a universal over a
+   * partial sweep, with exit 3 beside it. The run's own `--json` carried the
+   * disproof: `partial: null` next to `swept: 10, categoryTotal: 41`.
+   */
+  sweepPartial?: SweepShortfall;
+  /**
+   * The page size the term searches really ran at, after the clamp.
+   *
+   * Read by the render so "raise --count to widen it" is printed only when
+   * raising it does something. See {@link pageCount}.
+   */
+  count: number;
   /**
    * Brands D1 returned for these terms, when nothing of the requested one could
    * be bought. A typo is otherwise indistinguishable from a brand D1 does not
@@ -908,6 +1062,21 @@ export interface CrossBasket {
    * "One label, one population" has to hold for the CLAIM as well as the list,
    * so the render names the population it found the brand in and the two
    * sentences stop competing.
+   *
+   * ## `"sweep"` is not known to be reachable, and is kept anyway
+   *
+   * Round 8 reported the state merely absent across twelve terms. Round 9
+   * showed it is stronger than that: `"sweep"` needs the brand present in
+   * `sweepBrands` while the line is still `no-brand-match`, and that requires
+   * an offer simultaneously AVAILABLE and UNPRICED — `rankSubstitutes` admits
+   * only available candidates, `no-brand-match` requires no usable price. A
+   * scan of 910 products across all fourteen departments found none.
+   *
+   * Kept, because the alternative is a boolean, and a boolean here is exactly
+   * what produced the round-8 contradiction. If the state ever occurs the
+   * render is already right about it; collapsing the type would make the
+   * render wrong on the day it does, in a way nothing would notice. What is
+   * dropped is the CLAIM that this arm was verified — it was not.
    */
   brandReturnedIn?: "page" | "sweep";
 }
@@ -932,7 +1101,29 @@ export async function compareBaskets(
   }
   const base = await buildBasket(client, terms, budget, { ...opts, brand: undefined });
   const alt = await buildBasket(client, terms, budget, opts);
+  return crossFromPlans(terms, base, alt, opts);
+}
 
+/**
+ * Everything `compareBaskets` DERIVES, split from everything it fetches.
+ *
+ * Extracted for the reason round 9 gave for extracting it: `test/contradiction.test.ts`
+ * hand-assembled a `CrossBasket` literal, so every derived field in it was a
+ * copy of the logic under test. Round 4 found that and converted one field of
+ * two; round 8 converted two of three, inside the very commit series that wrote
+ * down "convert every derived field". A mirror that has to be maintained will
+ * drift; the fix that ends the class is having nothing to mirror.
+ *
+ * So the enumeration builds the two `BasketPlan`s — which are DATA, the thing a
+ * test is entitled to invent — and this function derives the rest exactly as
+ * production does, because it IS production.
+ */
+export function crossFromPlans(
+  terms: readonly string[],
+  base: BasketPlan,
+  alt: BasketPlan,
+  opts: { brand: string; count?: number },
+): CrossBasket {
   // Paired by POSITION, not by term.
   //
   // A Map keyed on the term is last-wins, so `d1 basket --brand X leche leche`
@@ -978,7 +1169,7 @@ export async function compareBaskets(
     // about D1's shelf.
     onlyBase: rows
       .filter((r) => filled(r.base) && !filled(r.alt) && r.alt?.status === "no-brand-match")
-      .map((r) => r.term),
+      .map((r) => brandMissFor(r, opts.brand)),
     altOverBudget: rows
       .filter((r) => filled(r.base) && r.alt?.status === "over-budget")
       .map((r) => r.term),
@@ -997,6 +1188,11 @@ export async function compareBaskets(
     // guess, which is the one thing this output is built not to do.
     neither: rows.filter((r) => !filled(r.base) && !filled(r.alt)).map((r) => r.term),
     partial: partialLook(alt.lines),
+    // The sweep's denominator, which had no reader at all — round 9's blocker.
+    // Read from the BRANDED lines: they are the ones a brand verdict rests on,
+    // and the unconstrained basket rarely sweeps a category at all.
+    sweepPartial: partialSweep(alt.lines),
+    count: pageCount(opts.count),
     // Offered only when every line looked for the brand and could not BUY one.
     // Whether D1 RETURNED it is a separate question, answered separately below.
     //
@@ -1164,9 +1360,7 @@ export function brandReturnedIn(
  * point of `--count` is that it moves this number, and a sentence that does not
  * mention it is a universal over whatever the default happened to be.
  */
-export function partialLook(
-  lines: readonly BasketLine[],
-): { looked: number; matched: number } | undefined {
+export function partialLook(lines: readonly BasketLine[]): Shortfall | undefined {
   // SUMMED across terms, not the narrowest term's own pair.
   //
   // Minimising on `looked` reported one term's shortfall as the whole
@@ -1176,16 +1370,90 @@ export function partialLook(
   // milk the whole example is about — went unmentioned, and reversing the two
   // arguments changed the number to 29. A denominator that depends on argument
   // order is not a denominator.
+  //
+  // ...and a sum is not a per-term number, so it carries the span it is a sum
+  // over. Both of its consumers read it as one term's own — see {@link
+  // CrossBasket.partial}. The scoped claims read per-term evidence now, and this
+  // is what remains: an honest total, labelled as a total.
   let looked = 0;
   let matched = 0;
+  let terms = 0;
   let anyPartial = false;
-  for (const l of lines) {
+  for (const l of distinctTerms(lines)) {
     if (l.looked === undefined) continue;
     looked += l.looked;
     matched += l.matched;
+    terms += 1;
     if (l.matched > l.looked) anyPartial = true;
   }
-  return anyPartial ? { looked, matched } : undefined;
+  return anyPartial ? { terms, looked, matched } : undefined;
+}
+
+/**
+ * The CATEGORY-sweep shortfall across a set of lines, over distinct terms.
+ *
+ * The counterpart to {@link partialLook}, and the denominator round 9's blocker
+ * was asserted over. A `no-brand-match` verdict is decided by the sweep, not by
+ * the page — the page failing is what starts the sweep — so a page-only
+ * qualifier leaves the deciding look unmentioned. `--brand QUAKER arroz
+ * --count 12` swept 10 of 41 and said "Nothing D1 returned for these terms is
+ * QUAKER", with no qualifier anywhere, because its page look was complete.
+ */
+export function partialSweep(lines: readonly BasketLine[]): SweepShortfall | undefined {
+  let swept = 0;
+  let categoryTotal = 0;
+  let terms = 0;
+  let anyPartial = false;
+  for (const l of distinctTerms(lines)) {
+    if (l.swept === undefined || l.categoryTotal === undefined) continue;
+    swept += l.swept;
+    categoryTotal += l.categoryTotal;
+    terms += 1;
+    if (l.categoryTotal > l.swept) anyPartial = true;
+  }
+  return anyPartial ? { terms, swept, categoryTotal } : undefined;
+}
+
+/**
+ * One line per distinct term, first occurrence winning.
+ *
+ * A repeated term is the SAME search against the same shelf, so summing both
+ * occurrences counts one catalogue twice: `--brand ALPIN leche leche` printed
+ * "D1 matched 58" about a term D1 matches 29 of, and "the look covered 24" of a
+ * page holding 12. The rows stay separate everywhere else — they are separate
+ * lines with separate outcomes — but a DENOMINATOR is a fact about the shelf,
+ * and the shelf was only ever asked once.
+ */
+function distinctTerms(lines: readonly BasketLine[]): BasketLine[] {
+  const seen = new Set<string>();
+  const out: BasketLine[] = [];
+  for (const l of lines) {
+    if (seen.has(l.term)) continue;
+    seen.add(l.term);
+    out.push(l);
+  }
+  return out;
+}
+
+/**
+ * The brand verdict for ONE row, from that row's own two lines.
+ *
+ * Exported so the render's per-term sentences and the property enumeration read
+ * the same derivation production does — {@link crossFromPlans} is built on the
+ * same principle and for the same reason.
+ */
+export function brandMissFor(row: BasketComparison, brand: string): BrandMiss {
+  const lines = [row.base, row.alt].filter((l): l is BasketLine => l !== undefined);
+  const al = row.alt;
+  const look =
+    al?.looked !== undefined && al.matched > al.looked
+      ? { looked: al.looked, matched: al.matched }
+      : undefined;
+  const sweep =
+    al?.swept !== undefined && al.categoryTotal !== undefined && al.categoryTotal > al.swept
+      ? { swept: al.swept, categoryTotal: al.categoryTotal }
+      : undefined;
+  return { term: row.term, returnedIn: brandReturnedIn(lines, brand), look, sweep };
 }
 
 /** Distinct, trimmed brands across a set of products, in a stable order. */

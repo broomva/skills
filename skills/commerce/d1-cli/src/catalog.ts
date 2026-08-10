@@ -43,6 +43,21 @@ import {
 export const MAX_PAGE = 50;
 /** Largest page size the API accepts. */
 export const MAX_COUNT = 50;
+/** Page size when `--count` is not given. */
+export const DEFAULT_COUNT = 12;
+
+/**
+ * The page size a `--count` really produces, after the clamp.
+ *
+ * Exported because prose depends on it. Two sentences in the basket render told
+ * the reader to "raise --count to widen it" while `search` was already clamping
+ * to {@link MAX_COUNT} — `--count 50` and `--count 100` are byte-identical, so
+ * the advice was an instruction the CLI refuses. A render cannot know whether
+ * widening is still available without asking the same clamp the request asked.
+ */
+export function pageCount(count?: number): number {
+  return clamp(count ?? DEFAULT_COUNT, 1, MAX_COUNT);
+}
 
 // ---------------------------------------------------------------------------
 // Wire shapes (partial)
@@ -387,7 +402,7 @@ export interface SearchOptions {
 
 export async function search(client: D1Client, opts: SearchOptions = {}): Promise<SearchPage> {
   const page = clamp(opts.page ?? 1, 1, MAX_PAGE);
-  const count = clamp(opts.count ?? 12, 1, MAX_COUNT);
+  const count = pageCount(opts.count);
   const channel = opts.salesChannel ?? DEFAULT_SALES_CHANNEL;
   // Kept on one line with a pre-computed suffix so the endpoint stays a simple
   // literal: `test/safety.test.ts` extracts every `/api/` path from the source
