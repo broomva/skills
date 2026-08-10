@@ -974,6 +974,22 @@ class TestBackfillRecordedMerges:
         bookkeeping.cmd_backfill_revisions(self._args())
         assert "has no entity file" in capsys.readouterr().out
 
+    def test_backfill_corrects_a_stamp_that_disagrees_with_the_merge_date(
+            self, temp_entities, frozen_today):
+        # A canonical revised by hand first carries the stamp of THAT edit. The
+        # recorded merge date is the more accurate answer to "when did the graph
+        # record this supersession", so the migration corrects it — otherwise a
+        # replay reports success while leaving a stamp it knows is wrong.
+        canon = self._merged_pair(temp_entities, merged_at="2026-06-09")
+        canon.write_text(canon.read_text().replace(
+            "related: []\n",
+            'related: []\nsupersedes: ["[[dupe]]"]\n'
+            'revision_link: ["research/entities/tool/dupe.md"]\n'
+            'recorded_at: "2026-08-01"\n'))
+        bookkeeping.cmd_backfill_revisions(self._args())
+        fm, _ = bookkeeping.parse_frontmatter(canon.read_text())
+        assert str(fm["recorded_at"]) == "2026-06-09"
+
     def test_aliases_are_not_treated_as_supersessions(
             self, temp_entities, frozen_today):
         # 88 of the live graph's aliases are `aka` search synonyms, not merges.
