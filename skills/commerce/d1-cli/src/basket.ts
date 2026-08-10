@@ -42,6 +42,14 @@ export type LineStatus =
   | "replacement-unknown"
   | "no-match";
 
+/**
+ * How narrowing the page to products NAMED after the term affected a line.
+ *
+ * Absent is the third state and the common one: narrowing did not move the
+ * answer, so there is nothing to disclose.
+ */
+export type TermFilter = "none-matched" | "changed-pick";
+
 /** The two statuses that put a product in the basket and spend money. */
 export const FILLED: readonly LineStatus[] = ["filled", "filled-by-substitute"];
 export const isFilled = (s: LineStatus) => FILLED.includes(s);
@@ -74,14 +82,30 @@ export interface BasketLine {
   /** Whether any candidate published a size — the disclosure must not overclaim. */
   anySized?: boolean;
   /**
-   * No product D1 returned for this term names the term, so the line was
-   * chosen from the unfiltered result set and may not be the thing asked for.
+   * How narrowing the page to products NAMED after the term affected this line.
    *
-   * Set only on the fallback path. Absent means the pick's name matched the
-   * term — it does NOT mean the pick is semantically right, only that the
-   * term appears in its name.
+   * - `"none-matched"` — nothing D1 returned carries the term, so the line was
+   *   chosen from the unfiltered set.
+   * - `"changed-pick"` — narrowing changed which product fills the line. The
+   *   dangerous case: enough products carry the word to keep the pool
+   *   non-empty while the ones that ARE the thing asked for do not.
+   *
+   * Absent means narrowing did not change the answer. It does NOT mean the
+   * pick is semantically right, only that the filter did not move it.
    */
-  offTerm?: boolean;
+  termFilter?: TermFilter;
+  /**
+   * What the line would have held WITHOUT the name narrowing, when narrowing
+   * moved it.
+   *
+   * Carried so the disclosure can state a fact the reader can act on instead of
+   * predicting wrongness. Narrowing changes the pick on every term where it
+   * helps as well as every term where it hurts, so a warning phrased as "this
+   * may not be what you meant" is false on the majority of the lines it fires
+   * on — and a guard that is itself false is the defect it was added to close.
+   * Naming the displaced product lets the reader decide in one glance.
+   */
+  widePick?: Product;
   /** `compared` counts a category sweep, not the search page for this term. */
   substituteSweep?: boolean;
   /**
@@ -543,10 +567,33 @@ export async function buildBasket(
     // marks it, so a term D1 answers only with differently-named products still
     // gets an answer and the answer says what it is.
     const onTerm = page.products.filter((p) => matchesTerm(p.name, term));
-    const offTerm = onTerm.length === 0;
-    const pool = offTerm ? page.products : onTerm;
+    const noneMatched = onTerm.length === 0;
+    const pool = noneMatched ? page.products : onTerm;
 
     const best = chooseBest(pool);
+
+    // Disclose whenever the narrowing AFFECTED the answer, not only when it
+    // excluded everything.
+    //
+    // The first version disclosed only the empty case, and that left the one
+    // state where narrowing is both wrong and silent: enough products carry the
+    // word to keep the pool non-empty, while the products that ARE the thing
+    // asked for do not carry it. `pasta` is the live case — D1 names dry pasta
+    // by shape (`Spaghetti`, `Fettuccine`), never "pasta", but four kitchen
+    // utensils do, so the filter kept a `Pinza para Pasta` and dropped the
+    // whole aisle. D1's own top hit for `pasta` is toothpaste, so relevance
+    // order cannot rescue it either.
+    //
+    // Comparing the two picks is the honest test: it asks the only question
+    // that matters to a reader — did filtering change what you are being
+    // handed? — instead of a proxy for it.
+    const wide = noneMatched ? best : chooseBest(page.products);
+    const termFilter: TermFilter | undefined = noneMatched
+      ? "none-matched"
+      : best?.product.skuId !== wide?.product.skuId
+        ? "changed-pick"
+        : undefined;
+
     if (best) {
       chosen.push({
         term,
@@ -557,7 +604,8 @@ export async function buildBasket(
         matched,
         byPackPrice: best.byPackPrice,
         anySized: best.anySized,
-        offTerm: offTerm || undefined,
+        termFilter,
+        widePick: termFilter === "changed-pick" ? wide?.product : undefined,
         alternatives: best.alternatives,
       });
       continue;
@@ -587,8 +635,12 @@ export async function buildBasket(
         term,
         status: "replacement-unknown",
         product: source,
-        compared: page.products.length,
+        // `pool`, not `page.products`. `product` above is `pool[0]`, so
+        // counting the unfiltered page here would report a numerator and a
+        // denominator drawn from two different populations.
+        compared: pool.length,
         matched,
+        termFilter,
       });
       continue;
     }
@@ -602,6 +654,7 @@ export async function buildBasket(
         swept: replacement.swept,
         categoryTotal: replacement.categoryTotal,
         matched,
+        termFilter,
         // The count came from the CATEGORY sweep, not this term's own search,
         // so it must be labelled as such here too — `compared` can otherwise
         // exceed `matched`, giving a denominator smaller than its numerator.
@@ -620,6 +673,11 @@ export async function buildBasket(
       categoryTotal: replacement.categoryTotal,
       matched,
       substituteSweep: true,
+      // The narrowing decided which product was SWEPT FROM, so it reaches this
+      // line too. Computing the flag and attaching it only to the direct-fill
+      // push left it set on the object and unprintable — a disclosure that
+      // exists and never renders.
+      termFilter,
       alternatives: replacement.alternatives,
       // `byPackPrice` is deliberately NOT set here. A substitute is ranked by
       // name similarity and price proximity — never by pack price — so the

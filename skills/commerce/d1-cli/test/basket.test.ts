@@ -1661,8 +1661,15 @@ describe("buildBasket — term relevance (BRO-2110)", () => {
     // The denominator still reports D1's whole answer, not the narrowed pool.
     expect(plan.lines[0]?.matched).toBe(139);
     // The pick names the term, so nothing is disclosed.
-    expect(plan.lines[0]?.offTerm).toBeUndefined();
-    expect(renderBasket(plan)).not.toContain("is named after it");
+    // Narrowing MOVED the pick here (the yogurt would have won), so the line
+    // says so and names what it displaced. This is the same disclosure the
+    // `pasta` regression gets — stated as a fact, because narrowing changes the
+    // pick on the terms it fixes as often as on the terms it breaks.
+    expect(plan.lines[0]?.termFilter).toBe("changed-pick");
+    expect(plan.lines[0]?.widePick?.skuId).toBe("yog");
+    expect(renderBasket(plan)).toContain(
+      "without that this line would be Yogurt Griego Natural Vita Latti 330 Gr",
+    );
   });
 
   test("a plural term matches the singular name D1 actually ships", () => {
@@ -1714,7 +1721,7 @@ describe("buildBasket — term relevance (BRO-2110)", () => {
     // named differently.
     expect(plan.lines[0]?.status).toBe("filled");
     expect(plan.lines[0]?.product?.skuId).toBe("ach");
-    expect(plan.lines[0]?.offTerm).toBe(true);
+    expect(plan.lines[0]?.termFilter).toBe("none-matched");
     // Asserted at the RENDER site: a flag nothing prints is a flag nobody sees.
     expect(renderBasket(plan)).toContain('nothing D1 returned for "milo" is named after it');
   });
@@ -1743,5 +1750,92 @@ describe("buildBasket — term relevance (BRO-2110)", () => {
     // the page — including the code that picks the substitute source.
     expect(plan.lines[0]?.replaces?.skuId).toBe("192");
     expect(plan.lines[0]?.product?.skuId).toBe("738");
+  });
+});
+
+// The state the FIRST version of this fix left silent: enough products carry
+// the word to keep the pool non-empty, while the products that ARE the thing
+// asked for do not. Live case is `pasta` — D1 names dry pasta by shape and
+// four kitchen utensils carry the word, so the filter kept a tong and dropped
+// the aisle. Disclosing only the empty case cannot reach this.
+describe("buildBasket — narrowing that changes the pick is disclosed (BRO-2110)", () => {
+  const pastaPage = [
+    // The real pasta. Neither is NAMED "pasta" — D1 names it by shape.
+    wire("295", "Spaghetti Deliziare 500 G", { price: 3990, unit: "Gr", value: "500" }),
+    wire("1543", "Spaguetti Caprissima 1000 G", { price: 3850, unit: "Gr", value: "1000" }),
+    // Carries the word, is not the thing asked for.
+    wire("302", "Pasta de Tomate Zev 200 Grs", { price: 2800, unit: "Gr", value: "200" }),
+  ];
+
+  test("the pick changing under narrowing is disclosed, and rendered", async () => {
+    const plan = await buildBasket(
+      fakeClient({ search: pastaPage, searchTotal: 24 }),
+      ["pasta"],
+      10_000_000,
+    );
+    // Unfiltered, the cheapest per kg is the 1000 g spaghetti. Narrowed, only
+    // the tomato paste carries the word, so the answer MOVES.
+    expect(plan.lines[0]?.product?.skuId).toBe("302");
+    expect(plan.lines[0]?.termFilter).toBe("changed-pick");
+    expect(plan.lines[0]?.widePick?.skuId).toBe("1543");
+    expect(renderBasket(plan)).toContain(
+      'narrowed to products named "pasta" — without that this line would be Spaguetti Caprissima 1000 G',
+    );
+  });
+
+  test("narrowing that does NOT move the answer discloses nothing", async () => {
+    // Same page, term the real product carries: narrowing drops the tomato
+    // paste, the spaghetti still wins, and there is nothing to tell the reader.
+    const plan = await buildBasket(
+      fakeClient({ search: pastaPage, searchTotal: 24 }),
+      ["spaguetti"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.product?.skuId).toBe("1543");
+    expect(plan.lines[0]?.termFilter).toBeUndefined();
+    expect(renderBasket(plan)).not.toContain("may not be what you meant");
+  });
+
+  test("the flag reaches a line filled by SUBSTITUTE, not only a direct fill", async () => {
+    // Computed on the direct-fill path and attached only there, the disclosure
+    // existed on the object and could never print.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [wire("192", "ARROZ BLANCO 500 G", { available: false, price: 1990 })],
+        searchTotal: 12,
+        sku: sourceSku("192", "ARROZ BLANCO 500 G"),
+        sweep: [
+          wire("192", "ARROZ BLANCO 500 G", { available: false, price: 1990 }),
+          wire("738", "ARROZ INTEGRAL 1000 G", { price: 4500, unit: "Gr", value: "1000" }),
+        ],
+      }),
+      ["milo"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("filled-by-substitute");
+    expect(plan.lines[0]?.termFilter).toBe("none-matched");
+    expect(renderBasket(plan)).toContain('nothing D1 returned for "milo" is named after it');
+  });
+
+  test("replacement-unknown counts the POOL it drew its product from", async () => {
+    // `product` is pool[0]; counting the unfiltered page here reported a
+    // numerator and denominator drawn from two different populations.
+    const plan = await buildBasket(
+      fakeClient({
+        search: [
+          wire("900", "SAL REFINADA REFISAL 1000 G", { price: 2000, unit: "Gr", value: "1000" }),
+          wire("901", "AZUCAR BLANCA 1000 G", { price: 2500, unit: "Gr", value: "1000" }),
+          wire("192", "ARROZ BLANCO 500 G", { available: false, price: 1990 }),
+        ],
+        searchTotal: 12,
+        skuThrows: true,
+      }),
+      ["arroz"],
+      10_000_000,
+    );
+    expect(plan.lines[0]?.status).toBe("replacement-unknown");
+    expect(plan.lines[0]?.product?.skuId).toBe("192");
+    // One product named "arroz", not the three on the page.
+    expect(plan.lines[0]?.compared).toBe(1);
   });
 });
