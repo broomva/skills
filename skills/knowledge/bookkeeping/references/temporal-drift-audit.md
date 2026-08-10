@@ -82,13 +82,35 @@ recall on independently judged cases.
 
 ## Status of that requirement — 2026-08-10
 
-The first two conditions are now met and the third is not.
+All three conditions have now been addressed, and the answer is still **no hard
+gate**. What changed is that this is now a measured conclusion rather than an
+absence of measurement.
 
 Typed write-side producers exist (`promote` stamps `recorded_at`; `revise` and
 `merge` emit `supersedes` + `revision_link`), and a non-blocking supersession
-validator ships alongside them — see `temporal-revision-envelope.md` for both.
+validator ships alongside them — see `temporal-revision-envelope.md`.
 
-Calibration does not. No entity in the live graph yet carries the envelope, so
-the new checks contribute zero findings by construction and their precision and
-recall on independently judged revisions are unmeasured. Those fields remain
-optional, every finding remains a warning, and nothing here is a gate.
+Calibration ran against a corpus built by `backfill-revisions` from the seven
+merge tombstones the graph had already recorded: **0/7 false positives, 12/12
+defect classes detected**. Full receipt:
+`supersession-calibration-2026-08-10.json`.
+
+Two findings decide the gate question, and neither is about the numbers being
+bad:
+
+**Most of these checks are not the kind of thing calibration measures.** Eleven
+of the twelve are decision procedures — is this string `[[slug]]`, does this
+file exist, does this date parse. Their precision is 1.0 by construction; a
+finding *is* the defect. Demanding a statistical measurement for a decision
+procedure is ritual, not evidence. The right bar for them is soundness, which
+the positive controls and the mutation proof establish.
+
+**The one genuine heuristic is unmeasurable on this corpus.** Timeline
+inversion reads the *superseded* record's `recorded_at`, and merge tombstones
+do not carry one — so the real corpus never exercises it. Its probe had to
+synthesise a stamp.
+
+The gate therefore stays open for a reason that is not "we lack data": with 5
+of 943 pages carrying the envelope, a hard gate would have almost nothing to
+protect and no operational history behind it. Revisit when the fields are
+widespread through ordinary `merge`/`revise` use rather than a migration.

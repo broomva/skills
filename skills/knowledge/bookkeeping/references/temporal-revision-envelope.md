@@ -160,9 +160,66 @@ on independently reviewed revisions showing useful precision and recall, plus an
 independent cross-review. Existing warnings are not evidence of that; they are
 the instrument that produces it.
 
-## Calibration receipt
+## Migration: replaying merges the graph already recorded
 
-`references/temporal-revision-calibration-2026-08-10.json` — the producer-phase
+```bash
+python3 scripts/bookkeeping.py backfill-revisions            # dry run
+python3 scripts/bookkeeping.py backfill-revisions --apply
+```
+
+A `status: merged` tombstone names the canonical (`merged_into`), dates the
+merge (`merged_at`), and is itself the record that authorized it.
+Reconstructing the envelope from those three is transcription, not inference,
+so this is the sanctioned way a pre-envelope page acquires the fields.
+
+`recorded_at` is stamped with the **historical** `merged_at`, not the migration
+date — the graph did not learn a June merge in August, and saying so would
+flatten the exact distinction the envelope exists to preserve. `updated` does
+move to today, because the file is genuinely being edited. The migration is
+idempotent, and a tombstone with no parseable date is reported rather than
+given an invented one.
+
+What it deliberately does **not** treat as a supersession: `aliases:` (88 in
+the live graph, almost all `aka` search synonyms rather than merged-away
+entities) and `contradicts:` edges with no recorded resolution. Deciding which
+of those were renames is the prose inference this envelope refuses.
+
+## Calibration
+
+Two receipts, answering different questions.
+
+`temporal-revision-calibration-2026-08-10.json` — the **producer-phase**
 receipt: candidate versus merged implementation over the live graph, confirming
-default lint and the temporal-audit baseline are unchanged and no entity yet
-carries the envelope.
+default lint and the temporal-audit baseline are unchanged. It proves parity,
+not precision.
+
+`supersession-calibration-2026-08-10.json` — the **audit** receipt, measured
+against a corpus this migration built from the seven recorded merges:
+
+| Measure | Result |
+|---|---|
+| Negative control (5 real migrated canonicals, untouched) | **0** envelope findings |
+| Positive control (one injected defect per class) | **12/12** detected, each on its specific field |
+| Observed false-positive rate | 0/7 — 95% upper bound ~43% at this n |
+
+The positive controls exist because zero findings on a clean corpus is
+ambiguous: a checker that never fires scores identically to a correct one.
+
+### Why there is still no hard gate
+
+**Eleven of the twelve checks are not the kind of thing calibration measures.**
+They are decision procedures — is this string `[[slug]]`, does this file exist,
+does this date parse. Precision is 1.0 by construction; a finding *is* the
+defect. Demanding a statistical measurement for a decision procedure is ritual.
+Their real bar is soundness, established by the positive controls plus the
+mutation proof.
+
+**The one genuine heuristic cannot be measured on this corpus.** Timeline
+inversion reads the *superseded* record's `recorded_at`; tombstones carry none,
+so the real corpus never exercises it.
+
+And with 5 of 943 pages carrying the envelope, a gate would have almost nothing
+to protect and no operational history behind it. Revisit when the fields are
+widespread through ordinary `merge`/`revise` use rather than a migration, when
+tombstones carry stamps, and when an independent reviewer has judged a set of
+real findings.

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0] — 2026-08-10
+- Added `backfill-revisions`: replays supersessions the graph already recorded (merge tombstones) into the typed envelope, stamping `recorded_at` with the HISTORICAL `merged_at` rather than the migration date. Idempotent; refuses to invent a date; never derives supersessions from `aliases:` (those are `aka` search synonyms) or from prose.
+- `_apply_revision_envelope` accepts an explicit `recorded_at`; the unchanged predicate distinguishes a SUPPLIED stamp from a defaulted one, so ordinary replay stays byte-identical across days.
+- Calibrated the supersession audit on the corpus that migration produces: 0/7 false positives, 12/12 defect classes detected. Positive controls are now permanent tests — zero findings on a clean corpus is otherwise indistinguishable from a checker that never fires.
+- **Decision: no hard gate.** 11 of 12 checks are decision procedures whose precision is 1.0 by construction; the 1 heuristic is unmeasurable on real data (tombstones carry no `recorded_at`); and 5 of 943 pages carrying the envelope is too little to gate on. Receipt: `references/supersession-calibration-2026-08-10.json`.
+
 ## [1.2.1] — 2026-08-10
 - `revise`/`merge` now write `updated` QUOTED. Emitting it bare un-quoted a page that already had `updated: "YYYY-MM-DD"`, so the repo's own unquoted-date lint warned on every page the command touched — the writer failing the gate it is supposed to satisfy. Found by dogfooding the merged CLI, not by the suite.
 - `valid_from` is written after `recorded_at` exists, so its `after=` anchor resolves instead of silently landing at the end of the frontmatter.

@@ -1,7 +1,7 @@
 ---
 name: bookkeeping
 category: knowledge
-version: 1.2.1
+version: 1.3.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -226,9 +226,10 @@ python3 scripts/bookkeeping.py query "concept-slug"   # Find and display entity 
 python3 scripts/bookkeeping.py merge dupe canonical   # Fold a dup into a canonical (tombstone)
 python3 scripts/bookkeeping.py revise --entity new --supersedes old \
         --revision-link REF                           # Record an explicit correction
+python3 scripts/bookkeeping.py backfill-revisions     # Replay recorded merges into the envelope
 ```
 
-The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, `lint --health`, `lint --temporal`, `merge`, and `revise` are *subcommands/flags*, not new pipeline stages.
+The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, `lint --health`, `lint --temporal`, `merge`, `revise`, and `backfill-revisions` are *subcommands/flags*, not new pipeline stages.
 
 All commands accept `--dry-run` to preview changes without writing. All commands write structured output to `~/.config/bookkeeping/run-log.jsonl`.
 
@@ -308,10 +309,21 @@ record. `revise` refuses (non-zero exit) on a missing entity, an unresolvable
 superseded slug, a self-supersession, or a non-ISO `--valid-from`, and is
 byte-identical on replay — repeated revisions union rather than overwrite.
 
-Envelope findings are warning-only and appear only under `--temporal`. They are
-not calibrated: no live entity carries these fields yet, so precision and recall
-on real revisions are unmeasured, and a hard gate stays blocked on that
-measurement plus an independent cross-review. Full contract:
+`backfill-revisions` replays supersessions the graph already recorded — a
+`status: merged` tombstone names the canonical, dates the merge, and is itself
+the authorizing record — stamping `recorded_at` with the HISTORICAL merge date.
+It is the sanctioned way a pre-envelope page acquires the fields, and it built
+the corpus the audit was calibrated on. It never derives supersessions from
+`aliases:` (those are `aka` search synonyms) or from prose.
+
+Envelope findings are warning-only and appear only under `--temporal`.
+Calibrated 2026-08-10 against that corpus: **0/7 false positives, 12/12 defect
+classes detected**. There is still **no hard gate**, for a measured reason — 11
+of the 12 checks are decision procedures whose precision is 1.0 by construction
+(calibrating them is ritual), the 1 genuine heuristic is unmeasurable on real
+data because tombstones carry no `recorded_at`, and 5 of 943 pages carrying the
+envelope is not enough operational history to gate on. Receipts:
+`references/supersession-calibration-2026-08-10.json`. Full contract:
 `references/temporal-revision-envelope.md`.
 
 ### `replay` — closes the shadow-dream corruption mode
@@ -612,6 +624,6 @@ Output format:
 | `references/entity-schema.md` | Complete entity page schema with all valid field values |
 | `references/promotion-workflow.md` | Layer definitions, promotion decision tree, status transitions |
 | `references/temporal-drift-audit.md` | `lint --temporal` drift detector: contract, precision boundary, calibration |
-| `references/temporal-revision-envelope.md` | Typed revision envelope: producer contract, provenance rules, `revise`, warning-only validation |
+| `references/temporal-revision-envelope.md` | Typed revision envelope: producer contract, provenance rules, `revise`, `backfill-revisions`, calibration + the no-hard-gate decision |
 | `templates/entity-page.md` | Canonical template for new entity pages |
 | `scripts/bookkeeping.py` | Main CLI implementation |

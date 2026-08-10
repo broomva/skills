@@ -1,0 +1,105 @@
+{
+  "phase": "calibration \u2014 supersession audit on real recorded revisions",
+  "issue": "https://github.com/broomva/skills/issues/160",
+  "closes": "the third pickup item of docs/handoffs/2026-08-10-filesystem-memory-temporal-semantics.md",
+  "date": "2026-08-10",
+  "corpus": {
+    "source": "merge tombstones (status: merged) \u2014 supersessions the graph already recorded",
+    "pinned_worktree_commit": "bae9508e87f8fd88015c4cd881a4bc22011a95c4",
+    "entity_pages": 943,
+    "tombstones": 7,
+    "distinct_superseded_slugs": 6,
+    "canonicals_migrated": 5,
+    "excluded": {
+      "aliases": "88 present; these are 'aka' search synonyms (BRO-1423), not merged-away entities. Deriving supersessions from them would be prose inference.",
+      "contradicts": "30 keys present, 1 non-empty; none carries a recorded resolution naming a superseding record."
+    },
+    "writes_to_live_graph": "none \u2014 all runs against a pinned detached worktree"
+  },
+  "check_taxonomy": {
+    "note": "A decision procedure has no precision to calibrate; demanding a statistical measurement for one is ritual, not evidence. Only one check in the audit is a heuristic.",
+    "decidable": [
+      "temporal_recorded_at (parses / not future)",
+      "temporal_valid_from (parses)",
+      "temporal_supersedes (list / string / [[wikilink]] form / self / target resolves)",
+      "temporal_revision_link (present / non-blank / string / orphan)"
+    ],
+    "heuristic": [
+      "temporal_supersedes / timeline inversion: the superseded target's recorded_at is newer than this record's"
+    ]
+  },
+  "measurements": {
+    "negative_control": {
+      "what": "the 5 real migrated canonicals, untouched",
+      "envelope_findings": 0,
+      "per_page": {
+        "concept/cryptographic-problem": [],
+        "discovery/jason-spielman": [],
+        "pattern/huxe-sunset": [],
+        "tool/kronos": [],
+        "tool/lago-event-journal": []
+      }
+    },
+    "positive_control": {
+      "what": "one injected defect per class, on a REAL migrated page; asserts the SPECIFIC field",
+      "detected": "12/12",
+      "detail": {
+        "supersedes_not_wikilink": true,
+        "supersedes_unresolvable": true,
+        "supersedes_not_a_list": true,
+        "supersedes_non_string_entry": true,
+        "supersedes_missing_link": true,
+        "revision_link_blank_entry": true,
+        "revision_link_non_string": true,
+        "revision_link_orphan": true,
+        "recorded_at_unparseable": true,
+        "recorded_at_in_future": true,
+        "valid_from_unparseable": true,
+        "timeline_inversion": true
+      }
+    },
+    "lint_after_migration": {
+      "default": {
+        "issues": 820,
+        "errors": 62,
+        "warnings": 758,
+        "temporal_updated": 0,
+        "temporal_as_of": 0,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      },
+      "temporal": {
+        "issues": 916,
+        "errors": 62,
+        "warnings": 854,
+        "temporal_updated": 67,
+        "temporal_as_of": 29,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      }
+    }
+  },
+  "power_limit": {
+    "observed_false_positive_rate": "0/7",
+    "ninety_five_pct_upper_bound": "~43% (rule of three at n=7)",
+    "meaning": "0/7 is consistent with a true FP rate up to ~43%. This corpus cannot support a hard gate for any HEURISTIC check.",
+    "timeline_inversion_unexercised": "timeline_inversion is NOT exercised by the real corpus: the check compares the superseded target's recorded_at, and merge tombstones do not carry one. Its probe above had to synthesise a stamp onto a tombstone. Calibrating it on real data would require the envelope on tombstones too \u2014 a design decision, not a measurement."
+  },
+  "decision": {
+    "promote_to_hard_gate": "NO \u2014 none.",
+    "rationale": [
+      "The 11 decidable checks meet a soundness bar (12/12 positive controls fire on the specific field; 0/7 false positives; 37 mutations killed) \u2014 but soundness is not a reason to gate NOW: only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect and no operational history behind it.",
+      "The 1 heuristic check (timeline inversion) is unmeasured on real data and cannot be measured on this corpus at all, because tombstones carry no recorded_at.",
+      "Everything stays warning-only and opt-in behind --temporal. Default lint is unchanged."
+    ],
+    "revisit_when": [
+      "the envelope is present on a substantial share of the graph through ordinary merge/revise use (not a migration), giving the decidable checks something to protect;",
+      "tombstones carry recorded_at, which is what would make timeline inversion measurable on real data;",
+      "an independent reviewer has judged a set of real supersession findings."
+    ]
+  }
+}
