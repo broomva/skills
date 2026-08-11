@@ -101,8 +101,15 @@ echo "=== lint_skill_md.py — the four ratchet rules ==="
 # Mutate the GATING BRANCH, not the message. Rewording the error still fails the
 # test (which asserts on message content) and reports KILLED while new over-cap
 # debt is in fact still rejected — a mutation that proves nothing.
-mutate "$LINT" "$LINT_TESTS" "rule 1: new over-cap debt accepted" \
-  "            if prior is None:" "            if False:"
+# Must change BEHAVIOUR, not crash. Two earlier attempts were vacuous: rewording
+# the error still failed the message assertion, and `if prior is None: -> if
+# False:` falls through to `dlen > prior` with prior=None and raises TypeError —
+# the suite went red on the crash, so it "KILLED" while proving nothing about
+# whether new debt is rejected. Defaulting `prior` to dlen makes a brand-new
+# over-cap skill look grandfathered-and-unchanged: silently backlogged, no crash.
+mutate "$LINT" "$LINT_TESTS" "rule 1: new over-cap debt silently accepted" \
+  "        dlen, prior = len(desc), grandfathered.get(key)" \
+  "        dlen, prior = len(desc), grandfathered.get(key, len(desc))"
 mutate "$LINT" "$LINT_TESTS" "rule 2: growth beyond the frozen length accepted" \
   "elif dlen > prior:" "elif False:"
 mutate "$LINT" "$LINT_TESTS" "rule 3: fixed-but-still-listed entry allowed to rot" \
@@ -163,6 +170,31 @@ mutate "$GATE" "$GATE_TESTS" "MINOR: when-clause counts negations" \
   "    desc_affirmative = desc_text"
 mutate "$GATE" "$GATE_TESTS" "MINOR: gotchas heading inside a fence counts" \
   "    body_prose = _strip_fences(body)" "    body_prose = body"
+
+echo "=== P20 round 2 (Codex verify) ==="
+mutate "$LINT" "$LINT_TESTS" "B1: first GRANDFATHERED binding shadows a second" \
+  "    if len(found) > 1:" "    if False:"
+mutate "$LINT" "$LINT_TESTS" "B1: post-assignment mutation of the baseline allowed" \
+  "    if mutated:" "    if False:"
+mutate "$LINT" "$LINT_TESTS" "M2: exclusions match every component again" \
+  "        ancestors = p.relative_to(root).parts[:-2]" \
+  "        ancestors = p.relative_to(root).parts"
+mutate "$GATE" "$GATE_TESTS" "B2: type validation fails open without PyYAML" \
+  '        return ["PyYAML unavailable — frontmatter types were NOT validated "' \
+  '        return [] or ["'
+mutate "$GATE" "$GATE_TESTS" "B3: empty corpus elements count as prompts" \
+  "                elif _is_real_corpus(v):" \
+  "                elif isinstance(v, (list, str)) and len(v) > 0:"
+mutate "$GATE" "$GATE_TESTS" "NEW: valued/corpus regexes overlap on a boolean literal" \
+  'r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'"'"'](?!(?:true|false)[\"'"'"'])\s*[^\"'"'"'\s][^\"'"'"']*[\"'"'"'])"' \
+  'r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'"'"'][^\"'"'"']+[\"'"'"'])"'
+mutate "$GATE" "$GATE_TESTS" "MINOR: negation window too narrow again" \
+  '(?:\w+[\s,]+){0,6}?' '(?:\w+\s+){0,2}?'
+mutate "$GATE" "$GATE_TESTS" "MINOR: tilde fences not stripped" \
+  '    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)' \
+  "    return md"
+mutate "$GATE" "$GATE_TESTS" "MINOR: negated heading only checked adjacent to the keyword" \
+  'r"\b(no|none|zero|without|nil|not|never)\b"' 'r"\b(zzz-never-matches)\b"'
 
 echo
 echo "killed=$killed survived=$survived"

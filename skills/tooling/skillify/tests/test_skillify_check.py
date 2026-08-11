@@ -891,6 +891,83 @@ def test_when_clause_negation_beyond_the_lookbehind(tmp_path):
     assert _sub(d, "1d")["status"] == "WARN"
 
 
+# --- P20 round 2 (Codex Strata A verify) -------------------------------------
+
+@pytest.mark.parametrize("payload", [
+    '{"should_trigger": [null], "should_not_trigger": [null]}',
+    '{"should_trigger": ["   "], "should_not_trigger": ["  "]}',
+    '{"should_trigger": [], "should_not_trigger": []}',
+    '{"should_trigger": "  ", "should_not_trigger": " "}',
+])
+def test_step5_empty_corpus_elements_assert_nothing(tmp_path, payload):
+    """`len(v) > 0` was the same presence-not-content hole one level down:
+    `[null]` and a whitespace string both have non-zero length."""
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "p.json").write_text(payload, encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+def test_step5_single_line_cannot_supply_both_polarities(tmp_path):
+    """The valued and corpus regexes overlapped, so `should_trigger = "false"`
+    matched both and one line satisfied a check requiring two cases."""
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "cases.toml").write_text('should_trigger = "false"\n', encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+def test_step5_textual_both_polarities_still_counts(tmp_path):
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "cases.toml").write_text(
+        'should_trigger = "true"\nshould_not_trigger = "true"\n', encoding="utf-8")
+    assert _step5(d)["status"] == "PASS"
+
+
+@pytest.mark.parametrize("bad_yaml", [
+    "---\nname: demo\ndescription: [unclosed\n---\n# b\n",
+    "---\nname: demo\n  bad: indent\ndescription: x\n---\n# b\n",
+])
+def test_malformed_yaml_frontmatter_fails_step1(tmp_path, bad_yaml):
+    """parse_frontmatter falls back to a scalar hand-roll when YAML fails, so a
+    malformed block could reach step 1 looking like valid frontmatter."""
+    d = tmp_path / "demo"
+    (d / "scripts").mkdir(parents=True)
+    (d / "SKILL.md").write_text(bad_yaml, encoding="utf-8")
+    (d / "scripts" / "do.py").write_text("print('x')\n", encoding="utf-8")
+    s = _step1(d)
+    assert s["status"] == "FAIL"
+
+
+def test_type_check_fails_loud_without_pyyaml(monkeypatch, tmp_path):
+    """Returning [] when PyYAML is missing is indistinguishable from 'validated'."""
+    d = _skill(tmp_path)
+    monkeypatch.setattr(mod, "yaml", None)
+    issues = mod._frontmatter_type_issues(d / "SKILL.md")
+    assert issues and "NOT validated" in issues[0]
+
+
+def test_when_clause_negation_with_a_long_hedge(tmp_path):
+    """'Do not under any circumstances use when …' is four intervening words;
+    a two-word window read it as affirmative."""
+    d = _skill(tmp_path, desc="Formats things. Do not under any circumstances use when offline.")
+    assert _sub(d, "1d")["status"] == "WARN"
+
+
+@pytest.mark.parametrize("heading", ["## No known gotchas", "## No remaining pitfalls"])
+def test_negated_gotchas_heading_with_words_between(tmp_path, heading):
+    d = _skill(tmp_path, body=f"# t\n\n{heading}\n\nnothing\n")
+    assert _sub(d, "1e")["status"] == "WARN"
+
+
+def test_gotchas_heading_inside_tilde_fence_is_not_a_section(tmp_path):
+    """CommonMark allows ~~~ fences; stripping only ``` left the other as a
+    hiding place."""
+    d = _skill(tmp_path, body="# t\n\n~~~markdown\n## Gotchas\n- sample\n~~~\n")
+    assert _sub(d, "1e")["status"] == "WARN"
+
+
 def test_gotchas_heading_inside_fence_is_not_a_section(tmp_path):
     d = _skill(tmp_path, body="# t\n\n```markdown\n## Gotchas\n- sample\n```\n")
     assert _sub(d, "1e")["status"] == "WARN"

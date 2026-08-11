@@ -98,9 +98,11 @@ _WHEN_CLAUSE_RE = re.compile(
     r"use\s+when|used\s+when|use\s+this\s+when|use\s+this\s+for|use\s+for|"
     r"triggers?\s+on|when\s+to\s+use|invoke\s+(?:for|when)|reach\s+for\s+(?:this\s+)?when"
     r")\b", re.I)
+# The window has to cover real hedging — "do not UNDER ANY CIRCUMSTANCES use
+# when …" is four words, and a two-word window let it read as affirmative.
 _WHEN_NEGATION_RE = re.compile(
-    r"\b(?:do\s+not|don't|never|avoid)\s+(?:\w+\s+){0,2}?"
-    r"(?:use|invoke|trigger)\b", re.I)
+    r"\b(?:do\s+not|does\s+not|don't|never|avoid|not)\s+(?:\w+[\s,]+){0,6}?"
+    r"(?:use|used|using|invoke|invoked|trigger|triggers|reach\s+for)\b", re.I)
 
 # Same source, practice 2: "the highest value section you can put in the skill
 # body is gotchas — environment-specific facts that defy reasonable assumptions.
@@ -111,6 +113,10 @@ _GOTCHA_SECTION_RE = re.compile(
     r"^#{1,6}\s.*\b(gotchas?|pitfalls?|anti-?rationaliz\w*|caveats?|"
     r"common\s+mistakes?|troubleshooting|known\s+issues?|failure\s+modes?|"
     r"red\s+flags?|what\s+goes\s+wrong)\b", re.I | re.M)
+# A heading that DENIES the section — "## No gotchas", "## No known gotchas" —
+# must not satisfy a check that the corrections were written down. Scanned
+# across the whole heading prefix, not just the word immediately before.
+_NEGATED_HEADING_RE = re.compile(r"\b(no|none|zero|without|nil|not|never)\b", re.I)
 
 
 # --- frontmatter -------------------------------------------------------------
@@ -161,7 +167,11 @@ def _frontmatter_type_issues(md_path: Path) -> list[str]:
     gates, one contract, opposite answers. Detect the raw shape here.
     """
     if yaml is None:
-        return []
+        # Fail LOUD, not open. Without a YAML parser this check cannot run, and
+        # silently returning "no issues" is indistinguishable from "validated" —
+        # the exact confusion the rest of this file exists to remove.
+        return ["PyYAML unavailable — frontmatter types were NOT validated "
+                "(install pyyaml, or run the registry linter which requires it)"]
     try:
         text = md_path.read_text(encoding="utf-8")
     except OSError:
@@ -550,9 +560,12 @@ _TRIGGER_ASSERTION_VALUED_RE = re.compile(
     r"[\"']?(true|false)\b", re.I)
 # Key-groups-prompts schema in unparsed text: the key is followed by a list or a
 # non-empty string rather than a boolean, so the key itself carries the polarity.
+# The quoted-scalar arm must EXCLUDE boolean literals, or `should_trigger =
+# "false"` matches both this and the valued regex and single-handedly supplies
+# both polarities — one line satisfying a check that exists to require two cases.
 _TRIGGER_ASSERTION_CORPUS_RE = re.compile(
     r"[\"']?(" + "|".join(sorted(TRIGGER_ASSERTION_KEYS)) + r")[\"']?\s*[:=]\s*"
-    r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'][^\"']+[\"'])", re.I)
+    r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'](?!(?:true|false)[\"'])\s*[^\"'\s][^\"']*[\"'])", re.I)
 
 
 def _textual_polarities(txt: str) -> set[bool]:
@@ -581,6 +594,24 @@ def _walk_for_trigger_keys(node: object, depth: int = 0) -> bool:
     return len(_trigger_polarities(node)) >= 2
 
 
+def _is_real_corpus(v: object) -> bool:
+    """True for a prompt corpus that actually contains a prompt.
+
+    `len(v) > 0` was too weak: `should_trigger: [null]` and `should_trigger: "  "`
+    both have non-zero length and assert nothing, which is the same
+    presence-not-content hole this check exists to close, one level down.
+    """
+    if isinstance(v, str):
+        return bool(v.strip())
+    if isinstance(v, (list, tuple)):
+        return any(
+            (isinstance(i, str) and i.strip())
+            or (isinstance(i, dict) and bool(i))
+            or (i is not None and not isinstance(i, (str, dict, list, tuple)))
+            for i in v)
+    return False
+
+
 def _trigger_polarities(node: object, depth: int = 0) -> set[bool]:
     """The set of case polarities asserted anywhere in the structure.
 
@@ -599,7 +630,7 @@ def _trigger_polarities(node: object, depth: int = 0) -> set[bool]:
                 if isinstance(v, bool):
                     # Case-per-object schema: {"prompt": "...", "should_trigger": true}
                     out.add(v if polarity else not v)
-                elif isinstance(v, (list, str)) and len(v) > 0:
+                elif _is_real_corpus(v):
                     # Key-groups-prompts schema, equally valid and widely used:
                     #   should_trigger:      ["prompt a", "prompt b"]
                     #   should_not_trigger:  ["prompt c"]
@@ -657,9 +688,11 @@ _SKIP_JSON_KEYS = {"description", "summary", "notes", "when_to_use", "trigger", 
 
 
 def _strip_fences(md: str) -> str:
-    """Drop fenced code blocks (``` … ```) — example commands and File-Structure
-    trees inside them are not live contract claims."""
-    return re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+    """Drop fenced code blocks — example commands and File-Structure trees inside
+    them are not live contract claims. CommonMark allows tilde fences as well as
+    backticks, and stripping only one kind leaves the other as a hiding place."""
+    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)
 
 
 def _ref_satisfied(skill_dir: Path, ref: str) -> bool:
@@ -824,8 +857,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     body_prose = _strip_fences(body)
     gotcha_hit = next(
         (m for m in _GOTCHA_SECTION_RE.finditer(body_prose)
-         if not re.search(r"\b(no|none|zero|without|nil)\b\s*$",
-                          m.group(0)[:m.group(0).lower().find(m.group(1).lower())], re.I)),
+         if not _NEGATED_HEADING_RE.search(
+             m.group(0)[:m.group(0).lower().find(m.group(1).lower())])),
         None)
     if gotcha_hit:
         add("1e", "Gotchas section", PASS, "body carries a gotchas/pitfalls/anti-rationalization section")

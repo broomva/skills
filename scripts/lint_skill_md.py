@@ -120,16 +120,38 @@ def extract_grandfathered(source: str) -> dict[str, int]:
     of this file from another commit, which must not execute.
     """
     tree = ast.parse(source)
-    for node in tree.body:
-        targets = (node.targets if isinstance(node, ast.Assign)
-                   else [node.target] if isinstance(node, ast.AnnAssign) else [])
-        for t in targets:
-            if isinstance(t, ast.Name) and t.id == "GRANDFATHERED":
-                value = node.value if isinstance(node, ast.Assign) else node.value
-                if value is None:
-                    continue
-                return ast.literal_eval(value)
-    raise ValueError("GRANDFATHERED not found in source")
+    found = []
+    mutated = False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name) and t.id == "GRANDFATHERED" and node.value is not None:
+                    found.append(ast.literal_eval(node.value))
+                # `GRANDFATHERED[k] = n` would let the runtime mapping differ
+                # from the literal this function reads.
+                if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
+                        and t.value.id == "GRANDFATHERED"):
+                    mutated = True
+        # `.update(...)`, `.pop(...)`, `.setdefault(...)` — same divergence.
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "GRANDFATHERED"):
+            mutated = True
+
+    if not found:
+        raise ValueError("GRANDFATHERED not found in source")
+    # Returning the FIRST of several bindings would let a benign first assignment
+    # shadow a second one carrying new debt: compare_ratchet would clear the
+    # decoy while lint() used the real mapping. One binding, no mutation, or the
+    # comparison is not measuring what runs.
+    if len(found) > 1:
+        raise ValueError(f"GRANDFATHERED is assigned {len(found)} times — "
+                         "the ratchet baseline must have exactly one binding")
+    if mutated:
+        raise ValueError("GRANDFATHERED is mutated after assignment — "
+                         "the ratchet baseline must be a single immutable literal")
+    return found[0]
 
 
 def compare_ratchet(base_src: str, head_src: str) -> list[str]:

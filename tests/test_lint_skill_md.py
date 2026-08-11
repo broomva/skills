@@ -307,6 +307,47 @@ def test_ratchet_allows_only_tightening(head):
     assert mod.compare_ratchet(_src({"a/SKILL.md": 1100}), _src(head)) == []
 
 
+def test_ratchet_rejects_multiple_bindings():
+    """Returning the FIRST binding let a benign decoy shadow a second assignment
+    carrying new debt — compare_ratchet clears the decoy, lint() uses the real one."""
+    two = _src({"a/SKILL.md": 1100}) + _src({"a/SKILL.md": 1100, "b/SKILL.md": 1500})
+    with pytest.raises(ValueError, match="assigned 2 times"):
+        mod.extract_grandfathered(two)
+
+
+@pytest.mark.parametrize("mutation", [
+    'GRANDFATHERED["b/SKILL.md"] = 1500\n',
+    'GRANDFATHERED.update({"b/SKILL.md": 1500})\n',
+    'GRANDFATHERED.setdefault("b/SKILL.md", 1500)\n',
+])
+def test_ratchet_rejects_post_assignment_mutation(mutation):
+    src = _src({"a/SKILL.md": 1100}) + mutation
+    with pytest.raises(ValueError, match="mutated after assignment"):
+        mod.extract_grandfathered(src)
+
+
+# `node_modules` is deliberately absent: the underscore makes it an illegal skill
+# name anyway, so it cannot exercise the ancestor-vs-component boundary.
+@pytest.mark.parametrize("skill_name", ["venv", "extensions", "site-packages"])
+def test_a_skill_may_be_named_like_a_vendored_dir(tmp_path, skill_name):
+    """The exclusion boundary is ANCESTORS ONLY. Matching every component would
+    silently unlint a legitimately-named skill — it would look healthy while
+    being invisible to the registry gate."""
+    _skill(tmp_path, skill_name)
+    errors, _, n = mod.lint(tmp_path, grandfathered={})
+    assert errors == [] and n == 1, f"{skill_name} must still be linted"
+
+
+def test_vendored_ancestor_still_excluded_with_same_names(tmp_path):
+    """The complement of the test above: as an ANCESTOR the same name excludes."""
+    _skill(tmp_path, "demo")
+    bad = tmp_path / "cat" / "demo" / "venv" / "pkg" / "theirs"
+    bad.mkdir(parents=True)
+    (bad / "SKILL.md").write_text("---\nname: WRONG\n---\n", encoding="utf-8")
+    errors, _, n = mod.lint(tmp_path, grandfathered={})
+    assert errors == [] and n == 1
+
+
 def test_ratchet_baseline_is_not_executed():
     """The baseline comes from another commit; it must be parsed, never imported."""
     poisoned = "raise SystemExit('baseline executed')\n" + _src({"a/SKILL.md": 1100})
