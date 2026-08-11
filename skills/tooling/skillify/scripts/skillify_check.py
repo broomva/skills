@@ -114,8 +114,12 @@ _WHEN_NEGATION_RE = re.compile(
 # Every time you correct the agent by hand, that correction is a gotcha."  A
 # skill distilled from a real session but carrying no corrections has thrown away
 # the only content the model could not have produced on its own.
+# CommonMark allows an ATX heading to be indented up to 3 spaces. Anchoring at
+# column zero meant an indented `## Gotchas` was not seen as a heading at all —
+# which also made the indented-fence test pass for the wrong reason: it was
+# proving "indented headings are invisible", not "fences are stripped".
 _GOTCHA_SECTION_RE = re.compile(
-    r"^#{1,6}\s.*\b(gotchas?|pitfalls?|anti-?rationaliz\w*|caveats?|"
+    r"^ {0,3}#{1,6}\s.*\b(gotchas?|pitfalls?|anti-?rationaliz\w*|caveats?|"
     r"common\s+mistakes?|troubleshooting|known\s+issues?|failure\s+modes?|"
     r"red\s+flags?|what\s+goes\s+wrong)\b", re.I | re.M)
 # A heading that DENIES the section — "## No gotchas", "## No known gotchas" —

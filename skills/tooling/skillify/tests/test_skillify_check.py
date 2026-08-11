@@ -1000,6 +1000,14 @@ def test_when_clause_not_only_is_affirmative(tmp_path):
     assert _sub(d, "1d")["status"] == "PASS"
 
 
+def test_indented_gotchas_heading_counts(tmp_path):
+    """Guard against the vacuity in the test below: an indented ATX heading is a
+    heading (CommonMark allows up to 3 spaces). Without this, the indented-fence
+    test would pass merely because indented headings were invisible."""
+    d = _skill(tmp_path, body="# t\n\n   ## Gotchas\n\n   - a real one\n")
+    assert _sub(d, "1e")["status"] == "PASS"
+
+
 @pytest.mark.parametrize("fence", ["```", "~~~"])
 def test_gotchas_heading_inside_indented_fence_is_not_a_section(tmp_path, fence):
     """CommonMark allows a fence indented up to 3 spaces; anchoring at column
