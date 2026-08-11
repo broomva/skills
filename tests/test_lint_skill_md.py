@@ -320,6 +320,7 @@ def test_ratchet_rejects_multiple_bindings():
     'GRANDFATHERED.update({"b/SKILL.md": 1500})\n',
     'GRANDFATHERED.setdefault("b/SKILL.md", 1500)\n',
     'GRANDFATHERED |= {"b/SKILL.md": 1500}\n',        # augmented assignment
+    'GRANDFATHERED["a/SKILL.md"] += 500\n',           # augmented SUBSCRIPT assignment
     'GRANDFATHERED.pop("a/SKILL.md")\n',
     'GRANDFATHERED.clear()\n',
 ])
@@ -333,6 +334,7 @@ def test_ratchet_rejects_post_assignment_mutation(mutation):
     'x = GRANDFATHERED.get("a/SKILL.md")\n',      # pure reads must not abort
     'y = GRANDFATHERED.copy()\n',
     'z = GRANDFATHERED.items()\n',
+    'w = GRANDFATHERED.fromkeys(["x"], 0)\n',    # returns a NEW dict; not a mutation
     'def f():\n    GRANDFATHERED = {}\n    return GRANDFATHERED\n',  # local shadow
 ])
 def test_ratchet_tolerates_reads_and_local_shadows(benign):

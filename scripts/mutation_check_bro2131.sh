@@ -42,7 +42,12 @@ echo "baseline: both suites green"
 # A killed run (timeout, Ctrl-C, CI cancel) must not leave an injected mutation
 # in the tree. Without this trap the last mutation survives as an uncommitted
 # edit that looks like real work — and the next commit could ship it.
-cleanup() { git checkout -- "$GATE" "$LINT" 2>/dev/null || true; }
+# Revert ONLY the file currently mid-mutation. A blanket `git checkout -- $GATE
+# $LINT` on exit also destroys edits someone made to those files while this ran
+# in the background — which is the very hazard this trap exists to prevent, just
+# pointed at the author instead of the script.
+IN_FLIGHT=""
+cleanup() { [ -n "$IN_FLIGHT" ] && git checkout -- "$IN_FLIGHT" 2>/dev/null; IN_FLIGHT=""; }
 trap cleanup EXIT INT TERM
 
 killed=0 survived=0
@@ -61,6 +66,7 @@ PY
     survived=$((survived + 1))
     return
   fi
+  IN_FLIGHT="$file"
   python3 - "$file" "$find" "$repl" <<'PY'
 import sys
 p, find, repl = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -75,6 +81,7 @@ PY
     killed=$((killed + 1))
   fi
   git checkout -- "$file"
+  IN_FLIGHT=""
 }
 
 echo "=== skillify_check.py — spec conformance (step 1) ==="

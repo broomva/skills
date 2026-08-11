@@ -993,6 +993,17 @@ def test_step5_one_line_never_supplies_both_polarities(tmp_path, line):
     assert _step5(d)["status"] == "WARN"
 
 
+@pytest.mark.parametrize("desc", [
+    "Formats things. You must not ever use when offline.",
+    "Formats things. It should not normally be used when offline.",
+    "Formats things. You cannot use when the file is binary.",
+])
+def test_when_clause_modal_negations(tmp_path, desc):
+    """Dropping bare `not` fixed 'Not only …' but lost explicit modal negations
+    with intervening words."""
+    assert _sub(_skill(tmp_path, desc=desc), "1d")["status"] == "WARN"
+
+
 def test_when_clause_not_only_is_affirmative(tmp_path):
     """A bare `not` in the negator set plus a six-word window swallowed
     affirmative constructions."""

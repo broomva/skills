@@ -138,14 +138,22 @@ def extract_grandfathered(source: str) -> dict[str, int]:
         elif isinstance(node, ast.AugAssign):
             # `GRANDFATHERED |= {...}` rewrites the runtime mapping while the
             # literal above it — the one this function returns — stays innocent.
-            if isinstance(node.target, ast.Name) and node.target.id == "GRANDFATHERED":
+            # The SUBSCRIPT form (`GRANDFATHERED["k"] += 500`) does the same for
+            # one entry, which is exactly a frozen-length raise.
+            tgt = node.target
+            if isinstance(tgt, ast.Name) and tgt.id == "GRANDFATHERED":
                 mutated = "GRANDFATHERED |= ... (augmented assignment)"
+            elif (isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "GRANDFATHERED"):
+                mutated = "GRANDFATHERED[...] += ... (augmented subscript assignment)"
 
     # Only genuinely MUTATING dict methods count. Flagging every attribute call
     # made `.get(...)` or `.copy()` — pure reads — abort the comparison. The set
     # of dict mutators is closed, so enumerate it instead of guessing.
-    _DICT_MUTATORS = {"update", "setdefault", "pop", "popitem", "clear", "__setitem__",
-                      "__delitem__", "fromkeys"}
+    # `fromkeys` is deliberately absent: it returns a NEW dict and leaves the
+    # receiver untouched, so classifying it as a mutator aborts on a pure read.
+    _DICT_MUTATORS = {"update", "setdefault", "pop", "popitem", "clear",
+                      "__setitem__", "__delitem__"}
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)

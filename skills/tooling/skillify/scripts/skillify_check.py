@@ -105,7 +105,8 @@ _WHEN_CLAUSE_RE = re.compile(
 # when offline". Every negator here is an explicit multi-word negation, which is
 # a closed set — unlike "any sentence containing 'not'", which is not.
 _WHEN_NEGATION_RE = re.compile(
-    r"\b(?:do\s+not|does\s+not|don't|doesn't|never|avoid|rather\s+than)\s+"
+    r"\b(?:do\s+not|does\s+not|don't|doesn't|never|avoid|rather\s+than|"
+    r"must\s+not|mustn't|should\s+not|shouldn't|cannot|can't|will\s+not|won't)\s+"
     r"(?:\w+[\s,]+){0,6}?"
     r"(?:use|used|using|invoke|invoked|trigger|triggers|reach\s+for)\b", re.I)
 
