@@ -226,9 +226,11 @@ mutate "$GATE" "$GATE_TESTS" "NEW: one line supplies both polarities again" \
   "            out.add(truthy if positive else not truthy)
             continue" \
   "            out.add(truthy if positive else not truthy)"
+# The negator line gained the modal alternates in round 4, so this anchor targets
+# its current text. Re-adding bare `not` must make "Not only … use when" WARN.
 mutate "$GATE" "$GATE_TESTS" "MINOR: bare 'not' back in the negator set" \
-  "r\"\\b(?:do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than)\\s+\"" \
-  "r\"\\b(?:do\\s+not|not)\\s+\""
+  "    r\"\\b(?:do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than|\"" \
+  "    r\"\\b(?:not|do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than|\""
 mutate "$GATE" "$GATE_TESTS" "MINOR: indented fences not stripped" \
   '    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)' \
   '    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)'
