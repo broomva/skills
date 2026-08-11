@@ -39,6 +39,12 @@ for t in "$GATE_TESTS" "$LINT_TESTS"; do
 done
 echo "baseline: both suites green"
 
+# A killed run (timeout, Ctrl-C, CI cancel) must not leave an injected mutation
+# in the tree. Without this trap the last mutation survives as an uncommitted
+# edit that looks like real work — and the next commit could ship it.
+cleanup() { git checkout -- "$GATE" "$LINT" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
 killed=0 survived=0
 
 # mutate <file> <tests> <label> <find> <replace>
