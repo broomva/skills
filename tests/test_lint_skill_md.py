@@ -268,6 +268,51 @@ def test_empty_tree_is_an_error(tmp_path):
     assert n == 0 and any("no SKILL.md found" in e for e in errors)
 
 
+# --- the ratchet baseline itself (BLOCKER 1) ---------------------------------
+
+def _src(entries: dict[str, int]) -> str:
+    return "GRANDFATHERED: dict[str, int] = " + repr(entries) + "\n"
+
+
+def test_extract_grandfathered_reads_the_literal():
+    assert mod.extract_grandfathered(_src({"a/SKILL.md": 1100})) == {"a/SKILL.md": 1100}
+    assert mod.extract_grandfathered(
+        Path(mod.__file__).read_text(encoding="utf-8")) == mod.GRANDFATHERED
+
+
+def test_extract_grandfathered_rejects_source_without_it():
+    with pytest.raises(ValueError):
+        mod.extract_grandfathered("X = 1\n")
+
+
+def test_ratchet_rejects_a_newly_frozen_entry():
+    """Without this the ratchet does not ratchet: a PR legalises its own new
+    over-cap debt by appending an entry, and every other check stays green."""
+    errs = mod.compare_ratchet(_src({"a/SKILL.md": 1100}),
+                               _src({"a/SKILL.md": 1100, "b/SKILL.md": 1500}))
+    assert len(errs) == 1 and "gained 'b/SKILL.md'" in errs[0]
+
+
+def test_ratchet_rejects_a_raised_frozen_length():
+    errs = mod.compare_ratchet(_src({"a/SKILL.md": 1100}), _src({"a/SKILL.md": 1300}))
+    assert len(errs) == 1 and "raised 'a/SKILL.md' 1100 -> 1300" in errs[0]
+
+
+@pytest.mark.parametrize("head", [
+    {"a/SKILL.md": 1100},              # unchanged
+    {"a/SKILL.md": 1050},              # shrunk
+    {},                                # fully burned down
+])
+def test_ratchet_allows_only_tightening(head):
+    assert mod.compare_ratchet(_src({"a/SKILL.md": 1100}), _src(head)) == []
+
+
+def test_ratchet_baseline_is_not_executed():
+    """The baseline comes from another commit; it must be parsed, never imported."""
+    poisoned = "raise SystemExit('baseline executed')\n" + _src({"a/SKILL.md": 1100})
+    assert mod.compare_ratchet(poisoned, _src({"a/SKILL.md": 1100})) == []
+
+
 # --- dogfood: the real registry ---------------------------------------------
 
 def test_real_repo_is_clean():

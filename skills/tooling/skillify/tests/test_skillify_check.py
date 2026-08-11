@@ -862,6 +862,35 @@ def test_when_clause_ignores_negations(tmp_path, desc, expected):
     assert _sub(_skill(tmp_path, desc=desc), "1d")["status"] == expected
 
 
+def test_empty_compatibility_fails_the_gate(tmp_path):
+    """Spec: 1-500 chars IF PROVIDED. `fm.get(...) or ""` collapsed
+    present-but-empty into absent, so the gate could not see it."""
+    d = _skill(tmp_path, extra_fm='compatibility: ""\n')
+    s = _step1(d)
+    assert s["status"] == "FAIL" and "present but empty" in s["detail"]
+
+
+def test_nested_code_makes_evals_not_required(tmp_path):
+    """The step-5 requirement keys on `not any_code`, not `not code`. With code
+    in src/, the skill is not purely latent and must not be forced into the
+    eval requirement — step 2's contradiction is the right failure there."""
+    d = _skill(tmp_path, scripts=False, tests=False, latent=True, evals=False)
+    (d / "src").mkdir()
+    (d / "src" / "core.py").write_text("print(1)\n", encoding="utf-8")
+    step5 = next(r for r in mod.run_checklist(
+        d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+        if r["step"] == 5)
+    assert step5["required"] is False
+
+
+def test_when_clause_negation_beyond_the_lookbehind(tmp_path):
+    """'do not EVER use when …' puts a word between the negator and the verb, so
+    the regex lookbehind alone cannot see it — the negation-stripping pass is
+    what catches it."""
+    d = _skill(tmp_path, desc="Generates reports. Do not ever use when the file is binary.")
+    assert _sub(d, "1d")["status"] == "WARN"
+
+
 def test_gotchas_heading_inside_fence_is_not_a_section(tmp_path):
     d = _skill(tmp_path, body="# t\n\n```markdown\n## Gotchas\n- sample\n```\n")
     assert _sub(d, "1e")["status"] == "WARN"

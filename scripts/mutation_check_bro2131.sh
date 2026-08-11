@@ -85,15 +85,15 @@ mutate "$GATE" "$GATE_TESTS" "silent-band wording dropped from message" \
 
 echo "=== skillify_check.py — the latent_only hole (step 5) ==="
 mutate "$GATE" "$GATE_TESTS" "purely-latent never requires a trigger eval" \
-  "purely_latent = bool(latent_only) and not code" "purely_latent = False"
+  "purely_latent = bool(latent_only) and not any_code" "purely_latent = False"
 mutate "$GATE" "$GATE_TESTS" "evals forced required for EVERY skill (over-correction)" \
-  "purely_latent = bool(latent_only) and not code" "purely_latent = True"
+  "purely_latent = bool(latent_only) and not any_code" "purely_latent = True"
 
 echo "=== skillify_check.py — advisory checks (1d / 1e / 1f) ==="
 mutate "$GATE" "$GATE_TESTS" "when-clause always considered present" \
-  "elif _WHEN_CLAUSE_RE.search(desc_text):" "elif True:"
+  "elif _WHEN_CLAUSE_RE.search(desc_affirmative):" "elif True:"
 mutate "$GATE" "$GATE_TESTS" "gotchas section always considered present" \
-  "if _GOTCHA_SECTION_RE.search(body):" "if True:"
+  "if gotcha_hit:" "if True:"
 mutate "$GATE" "$GATE_TESTS" "body budget never warns" \
   "if body_lines > SPEC_RECOMMENDED_BODY_LINES:" "if False:"
 
@@ -110,7 +110,7 @@ mutate "$LINT" "$LINT_TESTS" "rule 3: fixed-but-still-listed entry allowed to ro
 mutate "$LINT" "$LINT_TESTS" "rule 4: stale grandfather entry accepted" \
   "for stale in sorted(set(grandfathered) - seen):" "for stale in sorted(set()):"
 mutate "$LINT" "$LINT_TESTS" "vendored .venv skills linted after all" \
-  'if "extensions" in parts or VENDORED.intersection(parts):' "if False:"
+  'if "extensions" in ancestors or VENDORED.intersection(ancestors):' "if False:"
 mutate "$LINT" "$LINT_TESTS" "name-vs-parent-dir rule dropped" \
   "elif name != md.parent.name:" "elif False:"
 
@@ -131,7 +131,11 @@ mutate "$LINT" "$LINT_TESTS" "seen recorded after description validation (double
         fm, err = _parse(md)" \
   "        fm, err = _parse(md)"
 mutate "$GATE" "$GATE_TESTS" "gate accepts a truncating body delimiter again" \
-  'r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)"' 'r"^---\n(.*?)\n---"'
+  '(?:\n|$)", text, re.DOTALL)
+    if not m:
+        return None' 'x", text, re.DOTALL)
+    if not m:
+        return None'
 mutate "$GATE" "$GATE_TESTS" "gate accepts empty compatibility" \
   'if not compat.strip():' 'if False:'
 
