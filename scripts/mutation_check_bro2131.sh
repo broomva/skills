@@ -164,7 +164,7 @@ mutate "$GATE" "$GATE_TESTS" "BLOCKER: non-string frontmatter fields laundered a
   "        if field in data and not isinstance(data[field], str):" \
   "        if False:"
 mutate "$GATE" "$GATE_TESTS" "over-correction guard: key-groups-prompts schema rejected" \
-  "                elif isinstance(v, (list, str)) and len(v) > 0:" "                elif False:"
+  "                elif _is_real_corpus(v):" "                elif False:"
 mutate "$GATE" "$GATE_TESTS" "MINOR: when-clause counts negations" \
   "    desc_affirmative = _WHEN_NEGATION_RE.sub(\" \", desc_text)" \
   "    desc_affirmative = desc_text"
