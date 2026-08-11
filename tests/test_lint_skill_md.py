@@ -319,11 +319,27 @@ def test_ratchet_rejects_multiple_bindings():
     'GRANDFATHERED["b/SKILL.md"] = 1500\n',
     'GRANDFATHERED.update({"b/SKILL.md": 1500})\n',
     'GRANDFATHERED.setdefault("b/SKILL.md", 1500)\n',
+    'GRANDFATHERED |= {"b/SKILL.md": 1500}\n',        # augmented assignment
+    'GRANDFATHERED.pop("a/SKILL.md")\n',
+    'GRANDFATHERED.clear()\n',
 ])
 def test_ratchet_rejects_post_assignment_mutation(mutation):
     src = _src({"a/SKILL.md": 1100}) + mutation
     with pytest.raises(ValueError, match="mutated after assignment"):
         mod.extract_grandfathered(src)
+
+
+@pytest.mark.parametrize("benign", [
+    'x = GRANDFATHERED.get("a/SKILL.md")\n',      # pure reads must not abort
+    'y = GRANDFATHERED.copy()\n',
+    'z = GRANDFATHERED.items()\n',
+    'def f():\n    GRANDFATHERED = {}\n    return GRANDFATHERED\n',  # local shadow
+])
+def test_ratchet_tolerates_reads_and_local_shadows(benign):
+    """Flagging every attribute call made `.get()` abort the comparison, and a
+    scope-blind walk counted a function-local shadow as a second baseline."""
+    src = _src({"a/SKILL.md": 1100}) + benign
+    assert mod.extract_grandfathered(src) == {"a/SKILL.md": 1100}
 
 
 # `node_modules` is deliberately absent: the underscore makes it an illegal skill

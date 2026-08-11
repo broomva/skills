@@ -961,6 +961,53 @@ def test_negated_gotchas_heading_with_words_between(tmp_path, heading):
     assert _sub(d, "1e")["status"] == "WARN"
 
 
+# --- P20 round 3 (Codex verify) ----------------------------------------------
+
+@pytest.mark.parametrize("payload", [
+    '{"should_trigger": [false], "should_not_trigger": [false]}',
+    '{"should_trigger": [0], "should_not_trigger": [1]}',
+    '{"should_trigger": [{}], "should_not_trigger": [{}]}',
+    '{"should_trigger": [{"weight": 1}], "should_not_trigger": [{"weight": 2}]}',
+])
+def test_step5_non_text_corpus_elements_are_not_prompts(tmp_path, payload):
+    """A prompt is TEXT, or a case object carrying text. Accepting any non-null
+    scalar let `[false]` count as a prompt corpus."""
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "p.json").write_text(payload, encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+@pytest.mark.parametrize("line", [
+    'should_trigger = "false"\n',
+    'should_trigger = "false prompt"\n',
+    'should_trigger = "true story about failure"\n',
+])
+def test_step5_one_line_never_supplies_both_polarities(tmp_path, line):
+    """Two overlapping regexes let one line match both arms. Excluding exact
+    boolean literals was not enough — `"false prompt"` slipped through. The
+    value is now matched once and classified exclusively."""
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "cases.toml").write_text(line, encoding="utf-8")
+    assert _step5(d)["status"] == "WARN"
+
+
+def test_when_clause_not_only_is_affirmative(tmp_path):
+    """A bare `not` in the negator set plus a six-word window swallowed
+    affirmative constructions."""
+    d = _skill(tmp_path, desc="Formats things. Not only should you use when offline.")
+    assert _sub(d, "1d")["status"] == "PASS"
+
+
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+def test_gotchas_heading_inside_indented_fence_is_not_a_section(tmp_path, fence):
+    """CommonMark allows a fence indented up to 3 spaces; anchoring at column
+    zero left an indented fence as a hiding place."""
+    d = _skill(tmp_path, body=f"# t\n\n   {fence}\n   ## Gotchas\n   - sample\n   {fence}\n")
+    assert _sub(d, "1e")["status"] == "WARN"
+
+
 def test_gotchas_heading_inside_tilde_fence_is_not_a_section(tmp_path):
     """CommonMark allows ~~~ fences; stripping only ``` left the other as a
     hiding place."""

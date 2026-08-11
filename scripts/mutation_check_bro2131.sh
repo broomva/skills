@@ -196,6 +196,29 @@ mutate "$GATE" "$GATE_TESTS" "MINOR: tilde fences not stripped" \
 mutate "$GATE" "$GATE_TESTS" "MINOR: negated heading only checked adjacent to the keyword" \
   'r"\b(no|none|zero|without|nil|not|never)\b"' 'r"\b(zzz-never-matches)\b"'
 
+echo "=== P20 round 3 (Codex verify) — closed-form fixes ==="
+mutate "$LINT" "$LINT_TESTS" "B1: augmented assignment to the baseline allowed" \
+  "        elif isinstance(node, ast.AugAssign):" "        elif False:"
+mutate "$LINT" "$LINT_TESTS" "B1: scope-blind walk counts local shadows as bindings" \
+  "    for node in tree.body:" "    for node in ast.walk(tree):"
+mutate "$LINT" "$LINT_TESTS" "B1: every attribute call treated as a mutation (reads abort)" \
+  "                and node.func.attr in _DICT_MUTATORS):" "                ):"
+mutate "$GATE" "$GATE_TESTS" "B3: non-text scalars count as prompts again" \
+  "            (isinstance(i, str) and i.strip())
+            or (isinstance(i, dict) and any(
+                isinstance(x, str) and x.strip() for x in i.values()))
+            for i in v)" \
+  "            i is not None
+            for i in v)"
+mutate "$GATE" "$GATE_TESTS" "NEW: one line supplies both polarities again" \
+  "        m = _BOOL_LITERAL_RE.match(val)" "        m = None"
+mutate "$GATE" "$GATE_TESTS" "MINOR: bare 'not' back in the negator set" \
+  "r\"\\b(?:do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than)\\s+\"" \
+  "r\"\\b(?:do\\s+not|not)\\s+\""
+mutate "$GATE" "$GATE_TESTS" "MINOR: indented fences not stripped" \
+  '    md = re.sub(r"^ {0,3}```.*?^ {0,3}```", "", md, flags=re.DOTALL | re.M)' \
+  "    pass"
+
 echo
 echo "killed=$killed survived=$survived"
 if [ -n "$(git -c core.fsmonitor=false status --porcelain)" ]; then

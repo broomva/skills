@@ -100,8 +100,13 @@ _WHEN_CLAUSE_RE = re.compile(
     r")\b", re.I)
 # The window has to cover real hedging — "do not UNDER ANY CIRCUMSTANCES use
 # when …" is four words, and a two-word window let it read as affirmative.
+# A BARE `not` is deliberately absent from the negator set: with a six-word
+# window it swallows affirmative constructions like "Not only should you use
+# when offline". Every negator here is an explicit multi-word negation, which is
+# a closed set — unlike "any sentence containing 'not'", which is not.
 _WHEN_NEGATION_RE = re.compile(
-    r"\b(?:do\s+not|does\s+not|don't|never|avoid|not)\s+(?:\w+[\s,]+){0,6}?"
+    r"\b(?:do\s+not|does\s+not|don't|doesn't|never|avoid|rather\s+than)\s+"
+    r"(?:\w+[\s,]+){0,6}?"
     r"(?:use|used|using|invoke|invoked|trigger|triggers|reach\s+for)\b", re.I)
 
 # Same source, practice 2: "the highest value section you can put in the skill
@@ -555,28 +560,40 @@ _NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire", "negative_case"}
 # Textual analogue of _trigger_polarities, for code/markdown eval suites that
 # cannot be parsed structurally. Requires a boolean LITERAL on the key — a bare
 # `should_trigger:` mention asserts nothing.
-_TRIGGER_ASSERTION_VALUED_RE = re.compile(
+# ONE pass, then classify. Two overlapping regexes let a single line match both
+# and supply both polarities by itself — first `should_trigger = "false"`, then
+# `should_trigger = "false prompt"` once the exclusion only covered exact
+# literals. Chasing that with ever-more-precise lookaheads is unbounded; matching
+# the value ONCE and classifying it exclusively removes the class.
+_TRIGGER_ASSERTION_ANY_RE = re.compile(
     r"[\"']?(" + "|".join(sorted(TRIGGER_ASSERTION_KEYS)) + r")[\"']?\s*[:=]\s*"
-    r"[\"']?(true|false)\b", re.I)
-# Key-groups-prompts schema in unparsed text: the key is followed by a list or a
-# non-empty string rather than a boolean, so the key itself carries the polarity.
-# The quoted-scalar arm must EXCLUDE boolean literals, or `should_trigger =
-# "false"` matches both this and the valued regex and single-handedly supplies
-# both polarities — one line satisfying a check that exists to require two cases.
-_TRIGGER_ASSERTION_CORPUS_RE = re.compile(
-    r"[\"']?(" + "|".join(sorted(TRIGGER_ASSERTION_KEYS)) + r")[\"']?\s*[:=]\s*"
-    r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'](?!(?:true|false)[\"'])\s*[^\"'\s][^\"']*[\"'])", re.I)
+    r"(\[\s*[^\]\s][^\]]*\]|\[\s*\]|\n\s*-\s*\S|[\"'][^\"']*[\"']|[A-Za-z0-9_.+-]+)", re.I)
+_BOOL_LITERAL_RE = re.compile(r"^[\"']?(true|false)[\"']?$", re.I)
 
 
 def _textual_polarities(txt: str) -> set[bool]:
+    """Polarities asserted by `key: value` pairs in unparsed text.
+
+    Each match is classified into exactly one of three buckets:
+      * a boolean literal  -> the VALUE carries the polarity
+      * a real corpus      -> the KEY carries it (should_trigger: [prompts])
+      * anything else      -> asserts nothing
+    """
     out: set[bool] = set()
-    for rx in (_TRIGGER_ASSERTION_VALUED_RE, _TRIGGER_ASSERTION_CORPUS_RE):
-        for key, val in rx.findall(txt):
-            positive = key in _POSITIVE_KEYS
-            if rx is _TRIGGER_ASSERTION_VALUED_RE:
-                truthy = val.lower() == "true"
-                out.add(truthy if positive else not truthy)
-            else:
+    for key, raw in _TRIGGER_ASSERTION_ANY_RE.findall(txt):
+        positive = key in _POSITIVE_KEYS
+        val = raw.strip()
+        m = _BOOL_LITERAL_RE.match(val)
+        if m:
+            truthy = m.group(1).lower() == "true"
+            out.add(truthy if positive else not truthy)
+            continue
+        # Corpus arm: a quoted string with real content, or a non-empty list/item.
+        if val.startswith(("[", "-")):
+            if val not in ("[]", "[ ]", "-"):
+                out.add(positive)
+        elif val[:1] in "\"'":
+            if val.strip("\"'").strip():
                 out.add(positive)
     return out
 
@@ -604,10 +621,14 @@ def _is_real_corpus(v: object) -> bool:
     if isinstance(v, str):
         return bool(v.strip())
     if isinstance(v, (list, tuple)):
+        # A prompt is TEXT, or a case object carrying text. Accepting any
+        # non-null scalar let `[false]` and `[0]` count as a prompt corpus — the
+        # presence-not-content hole again, one level further down. Booleans and
+        # numbers are not prompts, so enumerate what is rather than what isn't.
         return any(
             (isinstance(i, str) and i.strip())
-            or (isinstance(i, dict) and bool(i))
-            or (i is not None and not isinstance(i, (str, dict, list, tuple)))
+            or (isinstance(i, dict) and any(
+                isinstance(x, str) and x.strip() for x in i.values()))
             for i in v)
     return False
 
@@ -691,8 +712,11 @@ def _strip_fences(md: str) -> str:
     """Drop fenced code blocks — example commands and File-Structure trees inside
     them are not live contract claims. CommonMark allows tilde fences as well as
     backticks, and stripping only one kind leaves the other as a hiding place."""
-    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
-    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)
+    # CommonMark allows a fence to be indented up to 3 spaces; anchoring at
+    # column zero left an indented fence as a hiding place.
+    md = re.sub(r"^ {0,3}```.*?^ {0,3}```", "", md, flags=re.DOTALL | re.M)
+    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)  # inline/unanchored leftovers
+    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)
 
 
 def _ref_satisfied(skill_dir: Path, ref: str) -> bool:

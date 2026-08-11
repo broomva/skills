@@ -121,23 +121,37 @@ def extract_grandfathered(source: str) -> dict[str, int]:
     """
     tree = ast.parse(source)
     found = []
-    mutated = False
-    for node in ast.walk(tree):
+    mutated: str | None = None
+
+    # MODULE LEVEL ONLY. A scope-blind ast.walk counts a harmless local shadow
+    # (`def f(): GRANDFATHERED = {}`) as a second baseline binding and rejects an
+    # otherwise-unchanged file. Only the module-level binding is the baseline.
+    for node in tree.body:
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for t in targets:
                 if isinstance(t, ast.Name) and t.id == "GRANDFATHERED" and node.value is not None:
                     found.append(ast.literal_eval(node.value))
-                # `GRANDFATHERED[k] = n` would let the runtime mapping differ
-                # from the literal this function reads.
                 if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
                         and t.value.id == "GRANDFATHERED"):
-                    mutated = True
-        # `.update(...)`, `.pop(...)`, `.setdefault(...)` — same divergence.
+                    mutated = "GRANDFATHERED[...] = ..."
+        elif isinstance(node, ast.AugAssign):
+            # `GRANDFATHERED |= {...}` rewrites the runtime mapping while the
+            # literal above it — the one this function returns — stays innocent.
+            if isinstance(node.target, ast.Name) and node.target.id == "GRANDFATHERED":
+                mutated = "GRANDFATHERED |= ... (augmented assignment)"
+
+    # Only genuinely MUTATING dict methods count. Flagging every attribute call
+    # made `.get(...)` or `.copy()` — pure reads — abort the comparison. The set
+    # of dict mutators is closed, so enumerate it instead of guessing.
+    _DICT_MUTATORS = {"update", "setdefault", "pop", "popitem", "clear", "__setitem__",
+                      "__delitem__", "fromkeys"}
+    for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "GRANDFATHERED"):
-            mutated = True
+                and node.func.value.id == "GRANDFATHERED"
+                and node.func.attr in _DICT_MUTATORS):
+            mutated = f"GRANDFATHERED.{node.func.attr}(...)"
 
     if not found:
         raise ValueError("GRANDFATHERED not found in source")
@@ -149,7 +163,7 @@ def extract_grandfathered(source: str) -> dict[str, int]:
         raise ValueError(f"GRANDFATHERED is assigned {len(found)} times — "
                          "the ratchet baseline must have exactly one binding")
     if mutated:
-        raise ValueError("GRANDFATHERED is mutated after assignment — "
+        raise ValueError(f"GRANDFATHERED is mutated after assignment ({mutated}) — "
                          "the ratchet baseline must be a single immutable literal")
     return found[0]
 
