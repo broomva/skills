@@ -1,0 +1,202 @@
+"""Tests for scripts/lint_skill_md.py — the registry-wide SKILL.md linter.
+
+The ratchet is gate logic, so it ships with tests proving each of its four rules
+can actually FAIL. A gate whose rules cannot fail is green for the wrong reason.
+Hermetic: every fixture is a tmp dir; the real `skills/` tree is touched by exactly
+one test (test_real_repo_is_clean), which is the dogfood.
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+SCRIPT = REPO / "scripts" / "lint_skill_md.py"
+_spec = importlib.util.spec_from_file_location("lint_skill_md", SCRIPT)
+assert _spec and _spec.loader
+mod = importlib.util.module_from_spec(_spec)
+sys.modules["lint_skill_md"] = mod
+_spec.loader.exec_module(mod)
+
+CAP = mod.MAX_DESC
+
+
+def _skill(root: Path, name: str, *, desc: str | None = None, extra: str = "",
+           fm_name: str | None = None) -> Path:
+    """Build skills/<cat>/<name>/SKILL.md under `root`."""
+    d = root / "cat" / name
+    d.mkdir(parents=True, exist_ok=True)
+    desc = "A demo skill." if desc is None else desc
+    fm = f"---\nname: {fm_name or name}\ndescription: {desc}\n{extra}---\n# body\n"
+    (d / "SKILL.md").write_text(fm, encoding="utf-8")
+    return d / "SKILL.md"
+
+
+def _key(name: str) -> str:
+    return f"cat/{name}/SKILL.md"
+
+
+# --- baseline ----------------------------------------------------------------
+
+def test_conforming_skill_passes(tmp_path):
+    _skill(tmp_path, "demo")
+    errors, backlog, n = mod.lint(tmp_path, grandfathered={})
+    assert errors == [] and backlog == [] and n == 1
+
+
+def test_description_at_cap_passes(tmp_path):
+    _skill(tmp_path, "demo", desc="u" * CAP)
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert errors == []
+
+
+# --- ratchet rule 1: new debt is rejected ------------------------------------
+
+def test_new_over_cap_skill_fails(tmp_path):
+    _skill(tmp_path, "demo", desc="u" * (CAP + 1))
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert len(errors) == 1
+    assert f"{CAP + 1} chars > {CAP} max" in errors[0]
+
+
+def test_silent_band_is_named_in_the_error(tmp_path):
+    """1025-1536 renders in full and is still invalid; the message must say so,
+    or the next author reads 'it renders' as 'it is fine'."""
+    _skill(tmp_path, "demo", desc="u" * ((CAP + mod.RENDER_CAP) // 2))
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert "silent band" in errors[0]
+
+
+# --- ratchet rule 2: grandfathered entries may only shrink -------------------
+
+def test_grandfathered_skill_is_backlogged_not_failed(tmp_path):
+    _skill(tmp_path, "demo", desc="u" * 1200)
+    errors, backlog, _ = mod.lint(tmp_path, grandfathered={_key("demo"): 1200})
+    assert errors == []
+    assert backlog == [(_key("demo"), 1200, 1200)]
+
+
+def test_grandfathered_skill_may_shrink(tmp_path):
+    _skill(tmp_path, "demo", desc="u" * 1100)
+    errors, backlog, _ = mod.lint(tmp_path, grandfathered={_key("demo"): 1200})
+    assert errors == []
+    assert backlog == [(_key("demo"), 1100, 1200)]
+
+
+def test_grandfathered_skill_may_not_grow(tmp_path):
+    _skill(tmp_path, "demo", desc="u" * 1300)
+    errors, _, _ = mod.lint(tmp_path, grandfathered={_key("demo"): 1200})
+    assert len(errors) == 1
+    assert "grew 1200 -> 1300" in errors[0]
+
+
+# --- ratchet rule 3: a fixed entry must be removed (no rot) ------------------
+
+def test_fixed_skill_still_listed_fails(tmp_path):
+    """Without this the list rots: every entry stays forever and the ratchet
+    silently stops measuring anything."""
+    _skill(tmp_path, "demo", desc="u" * 500)
+    errors, _, _ = mod.lint(tmp_path, grandfathered={_key("demo"): 1200})
+    assert len(errors) == 1
+    assert "now conforms" in errors[0] and "remove" in errors[0]
+
+
+# --- ratchet rule 4: stale entries are rejected ------------------------------
+
+def test_stale_grandfathered_path_fails(tmp_path):
+    _skill(tmp_path, "demo")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={"cat/deleted/SKILL.md": 1200})
+    assert len(errors) == 1
+    assert "matches no linted skill" in errors[0]
+
+
+# --- spec rules --------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", ["Demo", "demo--x", "-demo", "demo-", "demo_x"])
+def test_bad_name_fails(tmp_path, bad):
+    _skill(tmp_path, "demo", fm_name=bad)
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert errors, f"{bad!r} must be rejected"
+
+
+def test_name_must_match_parent_dir(tmp_path):
+    _skill(tmp_path, "demo", fm_name="other")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert len(errors) == 1 and "does not match parent dir" in errors[0]
+
+
+def test_over_long_name_fails(tmp_path):
+    long = "a" * (mod.MAX_NAME + 1)
+    _skill(tmp_path, long)
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert any(f"exceeds {mod.MAX_NAME}" in e for e in errors)
+
+
+def test_over_long_compatibility_fails(tmp_path):
+    _skill(tmp_path, "demo", extra="compatibility: " + "c" * (mod.MAX_COMPATIBILITY + 1) + "\n")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert any("compatibility" in e for e in errors)
+
+
+def test_missing_description_fails(tmp_path):
+    d = tmp_path / "cat" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: demo\n---\n# body\n", encoding="utf-8")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert any("missing required field `description`" in e for e in errors)
+
+
+@pytest.mark.parametrize("text,expect", [
+    ("no frontmatter at all\n", "missing YAML frontmatter"),
+    ("---\nname: demo\n", "unclosed YAML frontmatter"),
+    ("---\nname: [unclosed\n---\n", "malformed YAML"),
+    ("---\njust a string\n---\n", "not a mapping"),
+])
+def test_malformed_frontmatter_fails(tmp_path, text, expect):
+    d = tmp_path / "cat" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(text, encoding="utf-8")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert any(expect in e for e in errors), errors
+
+
+# --- discovery ---------------------------------------------------------------
+
+@pytest.mark.parametrize("vendor", [".venv", "node_modules", "site-packages", "venv"])
+def test_vendored_skills_are_not_linted(tmp_path, vendor):
+    """Third-party skills inside a virtualenv are gitignored, so CI never sees
+    them; excluding them is what makes a local run reproduce CI."""
+    _skill(tmp_path, "demo")
+    bad = tmp_path / "cat" / "demo" / vendor / "pkg" / "skills" / "theirs"
+    bad.mkdir(parents=True)
+    (bad / "SKILL.md").write_text("---\nname: WRONG\n---\n", encoding="utf-8")
+    errors, _, n = mod.lint(tmp_path, grandfathered={})
+    assert errors == [] and n == 1
+
+
+def test_extensions_are_not_linted(tmp_path):
+    _skill(tmp_path, "demo")
+    ext = tmp_path / "cat" / "demo" / "extensions" / "sub"
+    ext.mkdir(parents=True)
+    (ext / "SKILL.md").write_text("---\nname: WRONG\n---\n", encoding="utf-8")
+    errors, _, n = mod.lint(tmp_path, grandfathered={})
+    assert errors == [] and n == 1
+
+
+def test_empty_tree_is_an_error(tmp_path):
+    errors, _, n = mod.lint(tmp_path, grandfathered={})
+    assert n == 0 and any("no SKILL.md found" in e for e in errors)
+
+
+# --- dogfood: the real registry ---------------------------------------------
+
+def test_real_repo_is_clean():
+    """The shipped GRANDFATHERED list must exactly describe the real tree — no
+    new debt, no stale entries, no fixed-but-listed rot."""
+    errors, backlog, n = mod.lint(REPO / "skills")
+    assert errors == [], "\n".join(errors)
+    assert n > 50, f"discovery looks broken: only {n} skills found"
+    assert len(backlog) == len(mod.GRANDFATHERED)
