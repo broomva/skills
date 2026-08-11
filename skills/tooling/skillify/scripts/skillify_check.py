@@ -17,10 +17,19 @@ through. So this doctor *executes* what it cheaply can:
   construct (`def test_…`, `assert`, `it(`, `test(`, `describe(`, `@pytest`);
   with `--run-tests` it actually invokes pytest and gates on the result.
 - `latent_only: true` is only honored when NO deterministic code is present
-  (declaring it while shipping scripts is a contradiction → FAIL).
+  (declaring it while shipping scripts is a contradiction → FAIL), and it makes
+  step 5 (trigger evals) REQUIRED — a skill with no deterministic half has no
+  other gate on its behaviour at all.
+- Step 1 validates the frontmatter against the agentskills.io spec (description
+  ≤1024, name ≤64 + charset, compatibility ≤500), not merely that the fields
+  exist. Presence-as-validity was satisfiable by construction.
+
+Advisory sub-steps (WARN, never gate): 1d description carries a when-clause,
+1e body carries a gotchas section, 1f body under 500 lines.
 
 Required steps gate the exit code: 1 (SKILL.md contract), 2 (code syntax — unless
-genuinely latent), 3 (real unit tests, when code present). Workspace-aware steps
+genuinely latent), 3 (real unit tests, when code present), 5 (trigger evals, when
+purely latent). Workspace-aware steps
 (6 resolver trigger, 7 resolver eval, 10 brain filing) SKIP unless their path
 flag is supplied. `--strict` promotes 6/7 to required *and* fails if their path
 flag is missing (so strict can't pass while skipping the things strict is for).
@@ -47,6 +56,51 @@ except ImportError:  # pragma: no cover - exercised on stdlib-only machines
 CODE_EXTS = {".py", ".sh", ".mjs", ".js", ".ts"}
 _TEST_CODE_EXTS = ("py", "sh", "mjs", "js", "ts")
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
+
+# --- agentskills.io spec conformance -----------------------------------------
+# Normative limits, https://agentskills.io/specification (read verbatim 2026-08-10):
+#   name         Max 64 chars, lowercase [a-z0-9-], no leading/trailing/consecutive hyphen
+#   description  Max 1024 chars, non-empty
+#   compatibility  Max 500 chars (optional field)
+#
+# These are CONFORMANCE limits and they are TIGHTER than the render cap this host
+# happens to apply. BRO-2014 measured the observed cap at 1536 chars across 1,199
+# real skill_listing attachments — so a description of 1025..1536 renders in FULL
+# here and is still invalid under the standard. That gap is the "silent band": no
+# local signal fires, and the skill breaks only when some other conforming host
+# loads it. Conform to the tighter number; measure the looser one to know the slack.
+# See research/entities/concept/observed-limit-is-not-the-conformance-limit.md
+SPEC_MAX_DESCRIPTION = 1024
+SPEC_MAX_NAME = 64
+SPEC_MAX_COMPATIBILITY = 500
+SPEC_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+OBSERVED_RENDER_CAP = 1536  # measured, NOT normative — for message precision only
+
+# Body length is a DIFFERENT cost with a DIFFERENT schedule. The body loads only
+# on trigger, so an over-long body is a per-trigger *dilution* risk; the
+# description is billed on EVERY turn and gates triggering. Ranking skills by body
+# length audits the surface most of them never pay for, so this is a WARN and
+# never gates the exit code, while a spec-invalid description is a hard FAIL.
+# See research/entities/concept/trigger-surface-is-the-standing-cost.md
+SPEC_RECOMMENDED_BODY_LINES = 500
+
+# IBM Technology, "5 Best Practices for Building AI Agent Skills" (2026-08-10):
+# "the name and the description need to contain enough information by themselves
+# so that the agent knows when to use it … models tend to undertrigger."  A
+# description that says what a skill DOES but never when to USE it is the
+# single most common trigger defect, so require the when-clause to be present.
+_WHEN_CLAUSE_RE = re.compile(
+    r"\b(use\s+when|used\s+when|use\s+this\s+when|triggers?\s+on|when\s+to\s+use)\b", re.I)
+
+# Same source, practice 2: "the highest value section you can put in the skill
+# body is gotchas — environment-specific facts that defy reasonable assumptions.
+# Every time you correct the agent by hand, that correction is a gotcha."  A
+# skill distilled from a real session but carrying no corrections has thrown away
+# the only content the model could not have produced on its own.
+_GOTCHA_SECTION_RE = re.compile(
+    r"^#{1,6}\s.*\b(gotchas?|pitfalls?|anti-?rationaliz\w*|caveats?|"
+    r"common\s+mistakes?|troubleshooting|known\s+issues?|failure\s+modes?|"
+    r"red\s+flags?|what\s+goes\s+wrong)\b", re.I | re.M)
 
 
 # --- frontmatter -------------------------------------------------------------
@@ -81,6 +135,46 @@ def parse_frontmatter(md_path: Path) -> dict | None:
             key, _, val = line.partition(":")
             fm[key.strip()] = val.strip().strip("\"'")
     return fm
+
+
+def _spec_violations(fm: dict) -> list[str]:
+    """Hard agentskills.io violations — each makes the skill invalid under the
+    standard regardless of whether THIS host tolerates it.
+
+    Deliberately NOT checked here: the spec's `name` must-match-parent-directory
+    rule. `skillify_check` is routinely pointed at a scratch/temp/CI checkout
+    whose directory name is not the canonical one, so enforcing it here would
+    manufacture false positives. It is enforced where the canonical layout is
+    known — the registry-wide `.github/workflows/lint-skill-md.yml`.
+    """
+    out: list[str] = []
+    name = fm.get("name") or ""
+    desc = fm.get("description") or ""
+    compat = fm.get("compatibility") or ""
+
+    if len(desc) > SPEC_MAX_DESCRIPTION:
+        band = ("renders in full here but is non-conforming — the silent band"
+                if len(desc) <= OBSERVED_RENDER_CAP
+                else f"also truncated mid-sentence past {OBSERVED_RENDER_CAP} by the renderer")
+        out.append(f"description {len(desc)} chars > {SPEC_MAX_DESCRIPTION} spec max ({band})")
+    if len(name) > SPEC_MAX_NAME:
+        out.append(f"name {len(name)} chars > {SPEC_MAX_NAME} spec max")
+    elif not SPEC_NAME_RE.match(name):
+        out.append(f"name '{name}' must be lowercase [a-z0-9-] with no leading, "
+                   "trailing or consecutive hyphens")
+    if len(compat) > SPEC_MAX_COMPATIBILITY:
+        out.append(f"compatibility {len(compat)} chars > {SPEC_MAX_COMPATIBILITY} spec max")
+    return out
+
+
+def _body_after_frontmatter(skill_dir: Path) -> str:
+    """SKILL.md text with the YAML frontmatter stripped (empty string if absent)."""
+    try:
+        text = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.match(r"^---\n.*?\n---\n?", text, re.DOTALL)
+    return text[m.end():] if m else text
 
 
 # --- skills.sh installability (the publish target) ---------------------------
@@ -504,16 +598,27 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         results.append({"step": step, "label": label, "status": status,
                         "detail": detail, "required": required})
 
-    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable.
+    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable
+    # + VALID under the agentskills.io spec. The presence half of this check used
+    # to be the whole of it, which made it satisfiable by construction: a
+    # 2218-char description is truthy, so `kg` scored PASS at 2.2x the spec cap.
+    # A presence check standing in for a validity check is green for the wrong
+    # reason on every violation at once.
     gotcha = _skillsh_frontmatter_issue(skill_dir)
+    spec_issues = _spec_violations(fm) if fm else []
     if not (fm and fm.get("name") and fm.get("description")):
         add(1, "SKILL.md contract", FAIL,
             "SKILL.md missing" if fm is None else "frontmatter needs name + description", required=True)
     elif gotcha:
         add(1, "SKILL.md contract", FAIL,
             f"frontmatter breaks skills.sh parser (multi-quoted-string list item): {gotcha[:48]}", required=True)
+    elif spec_issues:
+        add(1, "SKILL.md contract", FAIL,
+            "agentskills.io spec — " + "; ".join(spec_issues), required=True)
     else:
-        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable)", required=True)
+        add(1, "SKILL.md contract", PASS,
+            f"name={fm['name']} ({len(fm['description'])}/{SPEC_MAX_DESCRIPTION} desc chars, "
+            "spec-valid, skills.sh-parseable)", required=True)
 
     # 1b — Installable layout (ADVISORY, not required). A top-level SKILL.md is
     # standard-valid (the agentskills.io spec + the skills.sh README list the repo
@@ -544,6 +649,44 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     else:
         add("1c", "Reference integrity", PASS,
             "every scripts/references/assets/templates reference resolves")
+
+    # 1d — Trigger clarity (ADVISORY). The description is the ONLY surface the
+    # model sees at startup, and it decides whether the skill ever runs. A
+    # description that says what the skill DOES but never when to USE it leans on
+    # the model to infer the trigger, and models undertrigger. Cheap deterministic
+    # proxy: require an explicit when-clause.
+    desc_text = (fm or {}).get("description") or ""
+    if not desc_text:
+        add("1d", "Trigger clarity", SKIP, "no description to grade")
+    elif _WHEN_CLAUSE_RE.search(desc_text):
+        add("1d", "Trigger clarity", PASS, "description carries an explicit when-clause")
+    else:
+        add("1d", "Trigger clarity", WARN,
+            "description never says WHEN to use the skill (add 'USE WHEN: …' / "
+            "'Triggers on …') — models undertrigger on what-only descriptions")
+
+    # 1e — Gotchas (ADVISORY). The corrections you made by hand while doing the
+    # task are the one part of a skill the model could not have generated itself;
+    # without them the body decays into generic mush the model already knew.
+    body = _body_after_frontmatter(skill_dir)
+    if _GOTCHA_SECTION_RE.search(body):
+        add("1e", "Gotchas section", PASS, "body carries a gotchas/pitfalls/anti-rationalization section")
+    else:
+        add("1e", "Gotchas section", WARN,
+            "no gotchas/pitfalls/anti-rationalization section — record the corrections "
+            "you made by hand, or the next agent repeats them")
+
+    # 1f — Body budget (ADVISORY, never gates). Per-trigger dilution, not standing
+    # cost: unlike the description this loads only when the skill fires, so it is
+    # deliberately a WARN even though an over-long body measurably degrades the
+    # skill's own performance when it does fire.
+    body_lines = len(body.splitlines())
+    if body_lines > SPEC_RECOMMENDED_BODY_LINES:
+        add("1f", "Body budget", WARN,
+            f"{body_lines} lines > {SPEC_RECOMMENDED_BODY_LINES} recommended — "
+            "split detail into references/ (progressive disclosure)")
+    else:
+        add("1f", "Body budget", PASS, f"{body_lines}/{SPEC_RECOMMENDED_BODY_LINES} lines")
 
     # 2 — Deterministic code: present + SYNTAX-VALID (required unless truly latent)
     if latent_only and code:
@@ -594,18 +737,33 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # with a single should_trigger case). A skill's LATENT half — does the
     # description fire, does it stay silent on a near-miss — is exactly the half
     # a presence check cannot see, so grade the CONTENT.
+    #
+    # REQUIRED for a purely-latent skill. `latent_only: true` with no scripts
+    # makes steps 2 and 3 SKIP ("no code to test"), so while this stayed advisory
+    # such a skill could pass the whole gate with ZERO required assertions about
+    # its behaviour. That inverts the risk exactly: a latent_only skill is not the
+    # low-risk case, it is the case where 100% of the behaviour is latent and the
+    # trigger eval is the only instrument that exists. Requiring tests only where
+    # scripts exist waives evals precisely where behaviour is unobservable.
     eval_files = _eval_files(skill_dir)
     trigger_evals = [f for f in eval_files if _is_trigger_eval(skill_dir / f)]
+    purely_latent = bool(latent_only) and not code
     if trigger_evals:
         add(5, "LLM evals", PASS,
-            f"{len(trigger_evals)} trigger eval(s): {', '.join(trigger_evals[:3])}", required=False)
+            f"{len(trigger_evals)} trigger eval(s): {', '.join(trigger_evals[:3])}",
+            required=purely_latent)
     elif eval_files:
-        add(5, "LLM evals", WARN,
+        add(5, "LLM evals", FAIL if purely_latent else WARN,
             f"{len(eval_files)} eval artifact(s) but none assert trigger behaviour "
-            f"({'/'.join(sorted(TRIGGER_ASSERTION_KEYS)[:3])}…) — latent half still ungated",
-            required=False)
+            f"({'/'.join(sorted(TRIGGER_ASSERTION_KEYS)[:3])}…) — latent half still ungated"
+            + (" and this skill is ALL latent half (latent_only, no scripts)" if purely_latent else ""),
+            required=purely_latent)
     else:
-        add(5, "LLM evals", WARN, "none (recommended for judgment-output skills)", required=False)
+        add(5, "LLM evals", FAIL if purely_latent else WARN,
+            "no trigger eval and the skill is all latent half (latent_only, no scripts) — "
+            "steps 2+3 cannot see it, so this is the only gate on its behaviour"
+            if purely_latent else "none (recommended for judgment-output skills)",
+            required=purely_latent)
 
     # 6 — Resolver trigger (workspace-aware; under --strict the missing path is
     # itself a FAIL — strict must not pass while skipping the checks it exists for)

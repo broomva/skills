@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parent.parent / "scripts" / "skillify_check.py"
 _spec = importlib.util.spec_from_file_location("skillify_check", SCRIPT)
 mod = importlib.util.module_from_spec(_spec)
@@ -21,19 +23,26 @@ _spec.loader.exec_module(mod)
 # --- fixture builders --------------------------------------------------------
 
 def _skill(tmp: Path, *, name="demo", scripts=True, tests=True, latent=False,
-           desc="A demo skill.") -> Path:
+           desc="A demo skill.", evals=False, body="# body\n", extra_fm="") -> Path:
     d = tmp / name
     (d / "scripts").mkdir(parents=True, exist_ok=True)
     (d / "tests").mkdir(parents=True, exist_ok=True)
     fm = f"---\nname: {name}\ndescription: {desc}\n"
     if latent:
         fm += "latent_only: true\n"
-    fm += "---\n# body\n"
+    fm += extra_fm
+    fm += "---\n" + body
     (d / "SKILL.md").write_text(fm, encoding="utf-8")
     if scripts:
         (d / "scripts" / "do.py").write_text("print('hi')\n", encoding="utf-8")
     if tests:
         (d / "tests" / "test_do.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    if evals:
+        (d / "evals").mkdir(parents=True, exist_ok=True)
+        (d / "evals" / "prompts.json").write_text(
+            json.dumps([{"prompt": "do the demo thing", "should_trigger": True},
+                        {"prompt": "unrelated request", "should_trigger": False}]),
+            encoding="utf-8")
     return d
 
 
@@ -57,11 +66,179 @@ def test_scripts_without_tests_fails(tmp_path):
 
 
 def test_latent_only_skill_exempt_from_code(tmp_path):
-    d = _skill(tmp_path, scripts=False, tests=False, latent=True)
+    # latent_only exempts a composition skill from shipping SCRIPTS — but not
+    # from gating its behaviour, so it must still carry a trigger eval to pass.
+    d = _skill(tmp_path, scripts=False, tests=False, latent=True, evals=True)
     res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
     step2 = next(r for r in res if r["step"] == 2)
     assert step2["status"] == "SKIP"  # composition skill — no scripts required
     assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
+
+
+def test_latent_only_without_trigger_eval_fails(tmp_path):
+    """The latent_only hole: steps 2 and 3 SKIP for a scriptless composition
+    skill, so before step 5 became required such a skill passed the entire gate
+    with ZERO required assertions about its behaviour."""
+    d = _skill(tmp_path, scripts=False, tests=False, latent=True, evals=False)
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    by_step = {r["step"]: r for r in res}
+    assert by_step[2]["status"] == "SKIP"
+    assert by_step[3]["status"] == "SKIP"     # the two steps that would have caught it
+    step5 = by_step[5]
+    assert step5["status"] == "FAIL" and step5["required"], \
+        "a purely-latent skill with no trigger eval must not pass the gate"
+
+
+def test_latent_only_with_scripts_does_not_require_evals(tmp_path):
+    """Scope guard: the step-5 requirement keys on latent_only AND no code. A
+    skill declaring latent_only while shipping scripts is already a step-2
+    contradiction; it must not ALSO be forced into the eval requirement."""
+    d = _skill(tmp_path, scripts=True, tests=True, latent=True, evals=False)
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step5 = next(r for r in res if r["step"] == 5)
+    assert step5["required"] is False
+
+
+def test_non_latent_skill_evals_stay_advisory(tmp_path):
+    """A normal skill with scripts+tests keeps evals as a WARN — the deterministic
+    half is gated by steps 2+3, so evals must not become a hard requirement."""
+    d = _skill(tmp_path, evals=False)
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step5 = next(r for r in res if r["step"] == 5)
+    assert step5["status"] == "WARN" and step5["required"] is False
+
+
+# --- agentskills.io spec conformance (step 1) --------------------------------
+
+def _step1(d):
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    return next(r for r in res if r["step"] == 1)
+
+
+def test_description_at_spec_limit_passes(tmp_path):
+    d = _skill(tmp_path, desc="u" * mod.SPEC_MAX_DESCRIPTION)
+    assert _step1(d)["status"] == "PASS"
+
+
+def test_description_one_over_spec_limit_fails(tmp_path):
+    d = _skill(tmp_path, desc="u" * (mod.SPEC_MAX_DESCRIPTION + 1))
+    s = _step1(d)
+    assert s["status"] == "FAIL" and s["required"]
+    assert "1025" in s["detail"] and "1024" in s["detail"]
+
+
+def test_silent_band_description_fails_and_is_named(tmp_path):
+    """1025..1536 renders in full in this host and is still non-conforming —
+    the band where no local signal fires. The message must say so."""
+    n = (mod.SPEC_MAX_DESCRIPTION + mod.OBSERVED_RENDER_CAP) // 2
+    d = _skill(tmp_path, desc="u" * n)
+    s = _step1(d)
+    assert s["status"] == "FAIL"
+    assert "silent band" in s["detail"]
+
+
+def test_beyond_render_cap_reports_truncation(tmp_path):
+    d = _skill(tmp_path, desc="u" * (mod.OBSERVED_RENDER_CAP + 10))
+    s = _step1(d)
+    assert s["status"] == "FAIL"
+    assert "truncated" in s["detail"]
+
+
+def test_over_long_name_fails_spec(tmp_path):
+    d = _skill(tmp_path, name="a" * (mod.SPEC_MAX_NAME + 1))
+    s = _step1(d)
+    assert s["status"] == "FAIL"
+    assert str(mod.SPEC_MAX_NAME) in s["detail"]
+
+
+@pytest.mark.parametrize("bad", ["Demo", "demo--x", "-demo", "demo-", "demo_x", "demo:x"])
+def test_bad_name_charset_fails_spec(tmp_path, bad):
+    d = _skill(tmp_path, name=bad)
+    assert _step1(d)["status"] == "FAIL"
+
+
+@pytest.mark.parametrize("good", ["demo", "demo-x", "d1", "a-b-c", "x9-y2"])
+def test_good_name_charset_passes_spec(tmp_path, good):
+    d = _skill(tmp_path, name=good)
+    assert _step1(d)["status"] == "PASS"
+
+
+def test_over_long_compatibility_fails_spec(tmp_path):
+    d = _skill(tmp_path, extra_fm="compatibility: " + "c" * (mod.SPEC_MAX_COMPATIBILITY + 1) + "\n")
+    s = _step1(d)
+    assert s["status"] == "FAIL" and "compatibility" in s["detail"]
+
+
+def test_compatibility_at_limit_passes(tmp_path):
+    d = _skill(tmp_path, extra_fm="compatibility: " + "c" * mod.SPEC_MAX_COMPATIBILITY + "\n")
+    assert _step1(d)["status"] == "PASS"
+
+
+# --- advisory description/body checks (1d / 1e / 1f) -------------------------
+
+def _sub(d, step):
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    return next(r for r in res if r["step"] == step)
+
+
+@pytest.mark.parametrize("desc", [
+    "Formats a report. USE WHEN: someone asks for the monthly filing.",
+    "Formats a report. Use when someone asks for the monthly filing.",
+    "Formats a report. Triggers on 'monthly filing'.",
+])
+def test_when_clause_detected(tmp_path, desc):
+    assert _sub(_skill(tmp_path, desc=desc), "1d")["status"] == "PASS"
+
+
+def test_missing_when_clause_warns_but_does_not_gate(tmp_path):
+    d = _skill(tmp_path, desc="Generates compliance reports.")
+    s = _sub(d, "1d")
+    assert s["status"] == "WARN" and s["required"] is False
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert not [r for r in res if r["required"] and r["status"] != "PASS"]
+
+
+@pytest.mark.parametrize("heading", [
+    "## Gotchas", "### Pitfalls", "## Anti-rationalization",
+    "## Common mistakes", "#### Known issues", "## Failure modes", "## Red flags",
+])
+def test_gotchas_section_detected(tmp_path, heading):
+    d = _skill(tmp_path, body=f"# t\n\n{heading}\n\n- a thing that bites\n")
+    assert _sub(d, "1e")["status"] == "PASS"
+
+
+def test_missing_gotchas_warns_but_does_not_gate(tmp_path):
+    d = _skill(tmp_path, body="# t\n\n## Usage\n\nrun it\n")
+    s = _sub(d, "1e")
+    assert s["status"] == "WARN" and s["required"] is False
+
+
+def test_gotchas_word_in_prose_is_not_a_section(tmp_path):
+    """Must key on a HEADING, not the word appearing anywhere in the body —
+    otherwise the check is satisfiable by mentioning it."""
+    d = _skill(tmp_path, body="# t\n\nThis skill has no gotchas to speak of.\n")
+    assert _sub(d, "1e")["status"] == "WARN"
+
+
+def test_body_budget_warns_over_recommended(tmp_path):
+    d = _skill(tmp_path, body="# t\n" + "line\n" * (mod.SPEC_RECOMMENDED_BODY_LINES + 5))
+    s = _sub(d, "1f")
+    assert s["status"] == "WARN"
+    assert str(mod.SPEC_RECOMMENDED_BODY_LINES) in s["detail"]
+
+
+def test_body_budget_never_gates_the_exit_code(tmp_path):
+    """Body length is per-trigger dilution, not standing cost — it must never
+    fail the gate, however long it gets."""
+    d = _skill(tmp_path, body="# t\n" + "line\n" * (mod.SPEC_RECOMMENDED_BODY_LINES * 4))
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert next(r for r in res if r["step"] == "1f")["required"] is False
+    assert not [r for r in res if r["required"] and r["status"] != "PASS"]
+
+
+def test_body_line_count_excludes_frontmatter(tmp_path):
+    d = _skill(tmp_path, desc="d " * 200, body="# t\nonly two\n")
+    assert "2/" in _sub(d, "1f")["detail"]
 
 
 def test_missing_skill_md_fails(tmp_path):
@@ -128,7 +305,7 @@ def test_cli_json(tmp_path):
     assert rc == 0
     payload = json.loads(out)
     assert payload["failed"] == 0
-    assert len(payload["results"]) == 12  # ten steps + 1b (installable layout) + 1c (reference integrity)
+    assert len(payload["results"]) == 15  # ten steps + 1b layout + 1c refs + 1d trigger + 1e gotchas + 1f body
 
 
 def test_cli_bad_dir_exit_2(tmp_path):

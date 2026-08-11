@@ -4,6 +4,7 @@ name: lint-skill-md
 #   - required frontmatter fields: name + description
 #   - `name` is lowercase + hyphens + ≤64 chars, no leading/trailing/consecutive hyphens
 #   - `name` matches parent directory name (per spec §Name)
+#   - `description` ≤1024 chars (per spec §Description) — RATCHETED, see below
 #   - nested sub-skills (e.g. skills/<x>/skills/<sub>/SKILL.md) checked the same way
 #
 # Fast (<3s). Hermetic (pure Python + PyYAML, no network).
@@ -42,8 +43,50 @@ jobs:
 
           NAME_RE = re.compile(r'^[a-z][a-z0-9]*(-[a-z0-9]+)*$')
           MAX_NAME = 64
+          MAX_DESC = 1024   # agentskills.io §Description — normative, NOT the render cap
+
+          # RATCHET. The description cap arrived after 25 of 93 skills already
+          # exceeded it, so a flag-day hard-fail would have blocked every
+          # subsequent PR. Instead: these are frozen at their current lengths and
+          # the list can only SHRINK. Four rules, all enforced below —
+          #   * a skill NOT listed that exceeds the cap                  -> FAIL (no new debt)
+          #   * a listed skill whose description GREW                    -> FAIL (no regression)
+          #   * a listed skill now at/under the cap                      -> FAIL (remove it; the list must not rot)
+          #   * a listed path that matches no skill (renamed/deleted)    -> FAIL (no stale entries)
+          # The remaining backlog is PRINTED on every run, never silent.
+          # Burndown is editorial, not truncation: a description is trigger
+          # surface, and cutting it badly stops the skill firing. BRO-2131.
+          GRANDFATHERED = {
+              "skills/knowledge/kg/SKILL.md": 2218,
+              "skills/orchestration/governed-autonomy-loop/SKILL.md": 1808,
+              "skills/knowledge/colombia-conflict/SKILL.md": 1782,
+              "skills/governance/architecture-design-principles/SKILL.md": 1709,
+              "skills/governance/dogfood/SKILL.md": 1691,
+              "skills/publishing/revenuecast/SKILL.md": 1601,
+              "skills/tooling/disambiguate/SKILL.md": 1516,
+              "skills/aerospace/sdr-satellite/SKILL.md": 1429,
+              "skills/governance/unhobble/SKILL.md": 1396,
+              "skills/design/design-distill/SKILL.md": 1390,
+              "skills/knowledge/comprehend/SKILL.md": 1390,
+              "skills/governance/keel/SKILL.md": 1356,
+              "skills/models/heretic-abliteration/SKILL.md": 1320,
+              "skills/video/video-cut/SKILL.md": 1298,
+              "skills/tooling/audit-harness-usage/SKILL.md": 1243,
+              "skills/research/checkit/SKILL.md": 1226,
+              "skills/knowledge/what/SKILL.md": 1222,
+              "skills/orchestration/p9/SKILL.md": 1137,
+              "skills/governance/bstack/SKILL.md": 1136,
+              "skills/design/tekton/SKILL.md": 1133,
+              "skills/orchestration/handoff/SKILL.md": 1116,
+              "skills/tooling/make-spec/SKILL.md": 1088,
+              "skills/compute/agentic-vps/SKILL.md": 1046,
+              "skills/commerce/d1-cli/SKILL.md": 1041,
+              "skills/knowledge/ccr/SKILL.md": 1027,
+          }
 
           errors = []
+          backlog = []
+          seen_paths = set()
           # Discover every SKILL.md under skills/ at ANY depth, so the linter
           # covers all canonical discoverable-skill layouts uniformly:
           #   - skills/<category>/<name>/SKILL.md      (category-bucketed skills, depth-2)
@@ -53,9 +96,15 @@ jobs:
           # they're skill-private extensions, not independently-installable skills.
           # (Keying on rglob rather than fixed-depth globs is what makes the
           # category-bucket layout — skills/<category>/<name>/ — lintable.)
+          # Third-party skills vendored inside virtualenvs / package dirs are not
+          # ours to lint. They are gitignored, so CI's fresh checkout never sees
+          # them — but a LOCAL run does, and would fail on someone else's skill.
+          # Excluding them here is what makes a local run reproduce CI exactly.
+          VENDORED = {".venv", "venv", "node_modules", "site-packages", ".git"}
           skill_mds = sorted(
               p for p in Path("skills").rglob("SKILL.md")
-              if "extensions" not in p.relative_to("skills").parts
+              if "extensions" not in (parts := p.relative_to("skills").parts)
+              and not VENDORED.intersection(parts)
           )
           if not skill_mds:
               print("ERROR: no SKILL.md found under skills/")
@@ -93,8 +142,42 @@ jobs:
                       errors.append(f"{md}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* (lowercase, hyphens, no leading/trailing/consecutive)")
                   elif name != parent:
                       errors.append(f"{md}: `name`='{name}' does not match parent dir '{parent}' (agentskills.io §Name)")
-              if not fm.get("description"):
+              desc = fm.get("description")
+              if not desc:
                   errors.append(f"{md}: missing required field `description`")
+              elif not isinstance(desc, str):
+                  errors.append(f"{md}: `description` must be a string, got {type(desc).__name__}")
+              else:
+                  key = md.as_posix()
+                  seen_paths.add(key)
+                  dlen, prior = len(desc), GRANDFATHERED.get(key)
+                  if dlen > MAX_DESC and prior is None:
+                      errors.append(
+                          f"{md}: `description` is {dlen} chars > {MAX_DESC} max "
+                          f"(agentskills.io §Description). Descriptions between {MAX_DESC} and 1536 "
+                          f"still render in full here — that is the silent band, not permission.")
+                  elif dlen > MAX_DESC and dlen > prior:
+                      errors.append(
+                          f"{md}: `description` grew {prior} -> {dlen} chars; grandfathered "
+                          f"skills may only shrink toward the {MAX_DESC} cap")
+                  elif dlen > MAX_DESC:
+                      backlog.append((key, dlen, prior))
+                  elif prior is not None:
+                      errors.append(
+                          f"{md}: `description` now conforms ({dlen} <= {MAX_DESC}) — "
+                          f"remove '{key}' from GRANDFATHERED so the list cannot rot")
+
+          for stale in sorted(set(GRANDFATHERED) - seen_paths):
+              errors.append(f"GRANDFATHERED entry '{stale}' matches no linted skill "
+                            "(renamed or deleted?) — remove it")
+
+          if backlog:
+              # Never silent: an unfixed cap is reported every run, with its gap.
+              print(f"description backlog — {len(backlog)} skill(s) still over the "
+                    f"{MAX_DESC}-char spec cap (frozen, may only shrink; BRO-2131):")
+              for key, dlen, prior in sorted(backlog, key=lambda r: -r[1]):
+                  print(f"  {dlen:>5} (cap+{dlen - MAX_DESC:<4}) {key}")
+              print()
 
           if errors:
               print("FAIL — frontmatter violations:\n")
@@ -102,5 +185,6 @@ jobs:
                   print(f"  {e}")
               print(f"\n{len(errors)} error(s) across {len(skill_mds)} skill(s)")
               sys.exit(1)
-          print(f"OK — {len(skill_mds)} SKILL.md files conform to agentskills.io spec")
+          print(f"OK — {len(skill_mds)} SKILL.md files conform to agentskills.io spec"
+                + (f" ({len(backlog)} grandfathered description(s) pending burndown)" if backlog else ""))
           PYEOF
