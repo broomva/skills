@@ -233,6 +233,17 @@ mutate "$GATE" "$GATE_TESTS" "MINOR: indented fences not stripped" \
   '    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)' \
   '    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)'
 
+echo "=== P20 round 4 (closed-form only; stopped at the plateau) ==="
+mutate "$LINT" "$LINT_TESTS" "fromkeys misclassified as a mutator (aborts on a read)" \
+  '                      "__setitem__", "__delitem__"}' \
+  '                      "__setitem__", "__delitem__", "fromkeys"}'
+mutate "$LINT" "$LINT_TESTS" "augmented SUBSCRIPT assignment bypasses the ratchet" \
+  "            elif (isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name)" \
+  "            elif (False and isinstance(tgt.value, ast.Name)"
+mutate "$GATE" "$GATE_TESTS" "modal negations dropped from the when-clause negators" \
+  "    r\"must\\s+not|mustn't|should\\s+not|shouldn't|cannot|can't|will\\s+not|won't)\\s+\"" \
+  "    r\"zzznomatch)\\s+\""
+
 echo
 echo "killed=$killed survived=$survived"
 if [ -n "$(git -c core.fsmonitor=false status --porcelain)" ]; then
