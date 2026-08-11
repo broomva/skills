@@ -185,13 +185,10 @@ mutate "$GATE" "$GATE_TESTS" "B2: type validation fails open without PyYAML" \
 mutate "$GATE" "$GATE_TESTS" "B3: empty corpus elements count as prompts" \
   "                elif _is_real_corpus(v):" \
   "                elif isinstance(v, (list, str)) and len(v) > 0:"
-mutate "$GATE" "$GATE_TESTS" "NEW: valued/corpus regexes overlap on a boolean literal" \
-  'r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'"'"'](?!(?:true|false)[\"'"'"'])\s*[^\"'"'"'\s][^\"'"'"']*[\"'"'"'])"' \
-  'r"(\[\s*[^\]\s]|\n\s*-\s*\S|[\"'"'"'][^\"'"'"']+[\"'"'"'])"'
 mutate "$GATE" "$GATE_TESTS" "MINOR: negation window too narrow again" \
   '(?:\w+[\s,]+){0,6}?' '(?:\w+\s+){0,2}?'
 mutate "$GATE" "$GATE_TESTS" "MINOR: tilde fences not stripped" \
-  '    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)' \
+  '    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)' \
   "    return md"
 mutate "$GATE" "$GATE_TESTS" "MINOR: negated heading only checked adjacent to the keyword" \
   'r"\b(no|none|zero|without|nil|not|never)\b"' 'r"\b(zzz-never-matches)\b"'
@@ -210,14 +207,18 @@ mutate "$GATE" "$GATE_TESTS" "B3: non-text scalars count as prompts again" \
             for i in v)" \
   "            i is not None
             for i in v)"
+# Dropping `continue` makes the boolean branch fall through into the corpus arm —
+# exactly the non-exclusive classification that let one line assert both polarities.
 mutate "$GATE" "$GATE_TESTS" "NEW: one line supplies both polarities again" \
-  "        m = _BOOL_LITERAL_RE.match(val)" "        m = None"
+  "            out.add(truthy if positive else not truthy)
+            continue" \
+  "            out.add(truthy if positive else not truthy)"
 mutate "$GATE" "$GATE_TESTS" "MINOR: bare 'not' back in the negator set" \
   "r\"\\b(?:do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than)\\s+\"" \
   "r\"\\b(?:do\\s+not|not)\\s+\""
 mutate "$GATE" "$GATE_TESTS" "MINOR: indented fences not stripped" \
-  '    md = re.sub(r"^ {0,3}```.*?^ {0,3}```", "", md, flags=re.DOTALL | re.M)' \
-  "    pass"
+  '    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)' \
+  '    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)'
 
 echo
 echo "killed=$killed survived=$survived"
