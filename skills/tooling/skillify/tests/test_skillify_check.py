@@ -759,7 +759,8 @@ def test_step5_role_x_resolver_eval_schema_counts(tmp_path):
     d = _skill(tmp_path)
     (d / "evals").mkdir()
     (d / "evals" / "cases.yaml").write_text(
-        "cases:\n  - prompt: do a thing\n    should_fire: true\n", encoding="utf-8")
+        "cases:\n  - prompt: do a thing\n    should_fire: true\n"
+        "  - prompt: unrelated\n    should_fire: false\n", encoding="utf-8")
     assert _step5(d)["status"] == "PASS"
 
 
@@ -774,8 +775,101 @@ def test_step5_nested_trigger_key_is_found(tmp_path):
     d = _skill(tmp_path)
     (d / "evals").mkdir()
     (d / "evals" / "p.json").write_text(
-        json.dumps({"suites": [{"group": {"cases": [{"should_trigger": False}]}}]}), encoding="utf-8")
+        json.dumps({"suites": [{"group": {"cases": [{"should_trigger": False},
+                                                    {"should_trigger": True}]}}]}), encoding="utf-8")
     assert _step5(d)["status"] == "PASS"
+
+
+# --- P20 round 1 (Codex Strata A): trigger evals must actually assert ---------
+
+@pytest.mark.parametrize("payload,why", [
+    ('{"should_trigger": null}', "key present, value asserts nothing"),
+    ('{"should_trigger": []}', "empty corpus asserts nothing"),
+    ('{"should_trigger": ""}', "empty string asserts nothing"),
+    ('[{"should_trigger": true}]', "positive-only: satisfied by a skill that always fires"),
+    ('[{"should_trigger": false}]', "negative-only: satisfied by a skill that never fires"),
+    ('{"should_not_trigger": ["a"]}', "negative-only corpus"),
+])
+def test_step5_vacuous_eval_is_not_coverage(tmp_path, payload, why):
+    """Once step 5 is REQUIRED for purely-latent skills, a token artifact would
+    be the only thing between such a skill and a green gate."""
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "p.json").write_text(payload, encoding="utf-8")
+    assert _step5(d)["status"] == "WARN", why
+
+
+@pytest.mark.parametrize("payload", [
+    '[{"should_trigger": true}, {"should_trigger": false}]',
+    '{"should_trigger": ["a", "b"], "should_not_trigger": ["c"]}',
+    '[{"should_trigger": true}, {"should_not_trigger": true}]',
+])
+def test_step5_both_polarities_is_coverage(tmp_path, payload):
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "p.json").write_text(payload, encoding="utf-8")
+    assert _step5(d)["status"] == "PASS"
+
+
+def test_step5_key_groups_prompts_schema_counts(tmp_path):
+    """The `should_trigger: [prompts]` schema (broomva-design/evals/trigger.yaml)
+    carries polarity on the KEY, not a boolean value. Demanding a bool reported
+    a real two-polarity suite as asserting nothing."""
+    d = _skill(tmp_path)
+    (d / "evals").mkdir()
+    (d / "evals" / "trigger.yaml").write_text(
+        'skill: demo\nshould_trigger:\n  - "do the thing"\n'
+        'should_not_trigger:\n  - "something else"\n', encoding="utf-8")
+    assert _step5(d)["status"] == "PASS"
+
+
+def test_purely_latent_with_nested_code_is_not_latent(tmp_path):
+    """`latent_only` is a claim about the WHOLE skill. Scoping the check to
+    scripts/ let code parked in src/ ship with steps 2+3 skipped."""
+    d = _skill(tmp_path, scripts=False, tests=False, latent=True, evals=True)
+    (d / "src").mkdir()
+    (d / "src" / "core.py").write_text("print(1)\n", encoding="utf-8")
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step2 = next(r for r in res if r["step"] == 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "src/core.py" in step2["detail"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("description", "[foo]"), ("name", "[bar]"), ("description", "{a: 1}"),
+])
+def test_non_string_frontmatter_fields_fail(tmp_path, field, value):
+    """parse_frontmatter stringifies non-str values, so `description: [foo]`
+    became the 7-char string "['foo']" and passed the 1024 check while the
+    registry linter rejected the same file. Two gates, one contract."""
+    d = _skill(tmp_path)
+    lines = {"name": "demo", "description": "A demo. USE WHEN asked."}
+    lines[field] = value
+    (d / "SKILL.md").write_text(
+        f"---\nname: {lines['name']}\ndescription: {lines['description']}\n---\n# b\n",
+        encoding="utf-8")
+    s = _step1(d)
+    assert s["status"] == "FAIL" and "must be a string" in s["detail"], s["detail"]
+
+
+@pytest.mark.parametrize("desc,expected", [
+    ("Generates reports. Do not use when the file is binary.", "WARN"),
+    ("Generates reports. Never use when offline.", "WARN"),
+    ("Generates reports. Invoke for the monthly filing.", "PASS"),
+    ("Generates reports. Use this for the monthly filing.", "PASS"),
+])
+def test_when_clause_ignores_negations(tmp_path, desc, expected):
+    assert _sub(_skill(tmp_path, desc=desc), "1d")["status"] == expected
+
+
+def test_gotchas_heading_inside_fence_is_not_a_section(tmp_path):
+    d = _skill(tmp_path, body="# t\n\n```markdown\n## Gotchas\n- sample\n```\n")
+    assert _sub(d, "1e")["status"] == "WARN"
+
+
+def test_negated_gotchas_heading_is_not_a_section(tmp_path):
+    d = _skill(tmp_path, body="# t\n\n## No gotchas\n\nnothing to report\n")
+    assert _sub(d, "1e")["status"] == "WARN"
 
 
 def test_step5_empty_file_in_evals_dir_is_not_coverage(tmp_path):

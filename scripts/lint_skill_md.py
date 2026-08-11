@@ -5,9 +5,10 @@ Validates every skill against the agentskills.io specification
 (https://agentskills.io/specification):
 
   name         required, <=64 chars, lowercase [a-z0-9-], no leading/trailing or
-               consecutive hyphens, and must match the parent directory name
+               consecutive hyphens, and must match the parent directory name.
+               A leading digit is legal (`1password`).
   description  required, non-empty, <=1024 chars
-  compatibility  optional, <=500 chars
+  compatibility  optional; when present must be 1-500 chars (empty is invalid)
 
 Nested sub-skills (skills/<x>/skills/<sub>/SKILL.md) are checked the same way.
 Skill-private `extensions/` and third-party skills vendored inside virtualenvs
@@ -42,13 +43,19 @@ Pure stdlib + PyYAML; no network. Exit 1 on any violation.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
 
 import yaml
 
-NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+# Spec §Name: "May only contain unicode lowercase alphanumeric characters (a-z,
+# 0-9) and hyphens (-)", no leading/trailing hyphen, no consecutive hyphens. A
+# LEADING DIGIT is therefore legal (`1password`), and this pattern must stay
+# byte-identical to skillify_check.SPEC_NAME_RE — two validators enforcing one
+# contract must not disagree, or a skill passes one gate and fails the other.
+NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_NAME = 64
 MAX_DESC = 1024          # agentskills.io §Description — normative, NOT the render cap
 MAX_COMPATIBILITY = 500  # agentskills.io §compatibility
@@ -90,26 +97,81 @@ GRANDFATHERED: dict[str, int] = {
 
 
 def discover(root: Path) -> list[Path]:
-    """Every independently-installable SKILL.md under `root`, sorted."""
+    """Every independently-installable SKILL.md under `root`, sorted.
+
+    Exclusions apply to ANCESTOR components only (`parts[:-2]`), never to the
+    skill's own directory name. Matching every component would silently unlint a
+    legitimately-named skill: `tooling/venv/SKILL.md` or `tooling/extensions/
+    SKILL.md` would vanish from the registry gate while looking perfectly healthy.
+    """
     out = []
     for p in root.rglob("SKILL.md"):
-        parts = p.relative_to(root).parts
-        if "extensions" in parts or VENDORED.intersection(parts):
+        ancestors = p.relative_to(root).parts[:-2]
+        if "extensions" in ancestors or VENDORED.intersection(ancestors):
             continue
         out.append(p)
     return sorted(out)
 
 
+def extract_grandfathered(source: str) -> dict[str, int]:
+    """Read the GRANDFATHERED literal out of a copy of this module's source.
+
+    Parsed with `ast`, never imported — the whole point is to inspect a version
+    of this file from another commit, which must not execute.
+    """
+    tree = ast.parse(source)
+    for node in tree.body:
+        targets = (node.targets if isinstance(node, ast.Assign)
+                   else [node.target] if isinstance(node, ast.AnnAssign) else [])
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id == "GRANDFATHERED":
+                value = node.value if isinstance(node, ast.Assign) else node.value
+                if value is None:
+                    continue
+                return ast.literal_eval(value)
+    raise ValueError("GRANDFATHERED not found in source")
+
+
+def compare_ratchet(base_src: str, head_src: str) -> list[str]:
+    """Errors if HEAD's ratchet is not monotonically tighter than BASE's.
+
+    Without this the ratchet does not ratchet. Every rule in `lint()` reads the
+    baseline out of the same file the PR is editing, so a PR can legalise new
+    over-cap debt simply by appending its own entry, or undo a shrink by raising
+    a frozen number — and every test still passes. The baseline is only a
+    baseline if it cannot be moved by the change being measured.
+    """
+    base, head = extract_grandfathered(base_src), extract_grandfathered(head_src)
+    errors = []
+    for key, length in sorted(head.items()):
+        if key not in base:
+            errors.append(
+                f"GRANDFATHERED gained '{key}' ({length}) — the ratchet may only "
+                "shrink. Bring the description under the cap instead of freezing it.")
+        elif length > base[key]:
+            errors.append(
+                f"GRANDFATHERED raised '{key}' {base[key]} -> {length} — frozen "
+                "lengths may only decrease.")
+    return errors
+
+
 def _parse(md: Path) -> tuple[dict | None, str | None]:
-    """(frontmatter, error). Exactly one is non-None."""
+    """(frontmatter, error). Exactly one is non-None.
+
+    Delimiters are matched as WHOLE LINES. A substring test (`startswith("---")`
+    / `find("\\n---")`) accepts `---invalid` as an opener and lets a body line
+    like `---8<---` terminate the block early, silently truncating the
+    frontmatter that everything downstream is validating.
+    """
     text = md.read_text(encoding="utf-8", errors="replace")
-    if not text.startswith("---"):
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
         return None, "missing YAML frontmatter (no leading ---)"
-    end = text.find("\n---", 3)
-    if end < 0:
+    close = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if close is None:
         return None, "unclosed YAML frontmatter"
     try:
-        fm = yaml.safe_load(text[3:end]) or {}
+        fm = yaml.safe_load("\n".join(lines[1:close])) or {}
     except yaml.YAMLError as e:
         return None, f"malformed YAML — {e}"
     if not isinstance(fm, dict):
@@ -132,6 +194,11 @@ def lint(root: Path, grandfathered: dict[str, int] | None = None,
     for md in skill_mds:
         rel = md.relative_to(root)
         key = rel.as_posix()
+        # Record the path as SEEN at discovery, not after the description
+        # validates. Otherwise a grandfathered skill with a malformed or missing
+        # description reports twice — once for the real defect and once as a
+        # bogus "stale grandfather entry" — pointing the author at the wrong file.
+        seen.add(key)
         fm, err = _parse(md)
         if err:
             errors.append(f"{key}: {err}")
@@ -147,17 +214,25 @@ def lint(root: Path, grandfathered: dict[str, int] | None = None,
             errors.append(f"{key}: `name` exceeds {MAX_NAME} chars ({len(name)})")
         elif not NAME_RE.match(name):
             errors.append(
-                f"{key}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* "
-                "(lowercase, hyphens, no leading/trailing/consecutive)")
+                f"{key}: `name`='{name}' must match {NAME_RE.pattern} "
+                "(lowercase a-z0-9 and hyphens, no leading/trailing/consecutive hyphen)")
         elif name != md.parent.name:
             errors.append(
                 f"{key}: `name`='{name}' does not match parent dir "
                 f"'{md.parent.name}' (agentskills.io §Name)")
 
-        compat = fm.get("compatibility")
-        if isinstance(compat, str) and len(compat) > MAX_COMPATIBILITY:
-            errors.append(
-                f"{key}: `compatibility` is {len(compat)} chars > {MAX_COMPATIBILITY} max")
+        # Spec §compatibility: "Must be 1-500 characters IF PROVIDED" — so a
+        # present-but-empty value is invalid, not merely absent.
+        if "compatibility" in fm:
+            compat = fm["compatibility"]
+            if not isinstance(compat, str):
+                errors.append(
+                    f"{key}: `compatibility` must be a string, got {type(compat).__name__}")
+            elif not compat.strip():
+                errors.append(f"{key}: `compatibility` is present but empty (spec: 1-500 chars)")
+            elif len(compat) > MAX_COMPATIBILITY:
+                errors.append(
+                    f"{key}: `compatibility` is {len(compat)} chars > {MAX_COMPATIBILITY} max")
 
         desc = fm.get("description")
         if not desc:
@@ -167,13 +242,12 @@ def lint(root: Path, grandfathered: dict[str, int] | None = None,
             errors.append(f"{key}: `description` must be a string, got {type(desc).__name__}")
             continue
 
-        seen.add(key)
         dlen, prior = len(desc), grandfathered.get(key)
         if dlen > MAX_DESC:
             if prior is None:
                 errors.append(
                     f"{key}: `description` is {dlen} chars > {MAX_DESC} max "
-                    f"(agentskills.io §Description). {MAX_DESC}-{RENDER_CAP} still renders "
+                    f"(agentskills.io §Description). {MAX_DESC + 1}-{RENDER_CAP} still renders "
                     "in full in Claude Code — that is the silent band, not permission.")
             elif dlen > prior:
                 errors.append(
@@ -198,7 +272,24 @@ def lint(root: Path, grandfathered: dict[str, int] | None = None,
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("--root", default="skills", help="directory to scan (default: skills)")
+    ap.add_argument("--compare-baseline", metavar="PATH", default=None,
+                    help="a copy of this file from the merge base; assert the ratchet "
+                         "only shrank (new/raised GRANDFATHERED entries are rejected)")
     args = ap.parse_args(argv)
+
+    if args.compare_baseline:
+        base = Path(args.compare_baseline)
+        if not base.is_file():
+            print(f"ERROR: baseline not found: {base}", file=sys.stderr)
+            return 2
+        drift = compare_ratchet(base.read_text(encoding="utf-8"),
+                                Path(__file__).read_text(encoding="utf-8"))
+        if drift:
+            print("FAIL — the ratchet moved the wrong way:\n")
+            for e in drift:
+                print(f"  {e}")
+            return 1
+        print("OK — GRANDFATHERED is monotonically tighter than the baseline")
 
     root = Path(args.root)
     if not root.is_dir():

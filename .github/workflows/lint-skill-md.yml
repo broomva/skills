@@ -45,5 +45,20 @@ jobs:
       - name: Lint SKILL.md frontmatter
         run: python3 scripts/lint_skill_md.py
 
+      # The ratchet's baseline lives in the same file a PR is allowed to edit, so
+      # on its own it does not ratchet: a PR could legalise new over-cap debt by
+      # appending its own GRANDFATHERED entry, or undo a shrink by raising a
+      # frozen number, and every other check would still pass. Compare against
+      # the merge base, which the PR cannot rewrite.
+      - name: Ratchet may only tighten (vs merge base)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git show "FETCH_HEAD:scripts/lint_skill_md.py" > /tmp/baseline_lint.py 2>/dev/null; then
+            python3 scripts/lint_skill_md.py --compare-baseline /tmp/baseline_lint.py
+          else
+            echo "no baseline on ${{ github.base_ref }} (first landing) — skipping"
+          fi
+
       - name: Self-test the linter (ratchet rules)
         run: python3 -m pytest tests/test_lint_skill_md.py -q

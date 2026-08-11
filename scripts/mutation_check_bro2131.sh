@@ -27,6 +27,18 @@ if [ -n "$(git -c core.fsmonitor=false status --porcelain)" ]; then
   exit 2
 fi
 
+# The baseline suite MUST be green before any mutation runs. Without this the
+# whole report inverts: one pre-existing failure makes every mutation "KILLED"
+# and the harness cheerfully prints "all mutations killed" while proving nothing.
+for t in "$GATE_TESTS" "$LINT_TESTS"; do
+  if ! python3 -m pytest "$t" -q >/dev/null 2>&1; then
+    echo "ABORT: baseline suite is RED before mutating ($t)."
+    echo "       Every mutation would report KILLED for the wrong reason."
+    exit 2
+  fi
+done
+echo "baseline: both suites green"
+
 killed=0 survived=0
 
 # mutate <file> <tests> <label> <find> <replace>
@@ -86,9 +98,11 @@ mutate "$GATE" "$GATE_TESTS" "body budget never warns" \
   "if body_lines > SPEC_RECOMMENDED_BODY_LINES:" "if False:"
 
 echo "=== lint_skill_md.py — the four ratchet rules ==="
+# Mutate the GATING BRANCH, not the message. Rewording the error still fails the
+# test (which asserts on message content) and reports KILLED while new over-cap
+# debt is in fact still rejected — a mutation that proves nothing.
 mutate "$LINT" "$LINT_TESTS" "rule 1: new over-cap debt accepted" \
-  'f"{key}: `description` is {dlen} chars > {MAX_DESC} max "' \
-  'f"{key}: BENIGN "'
+  "            if prior is None:" "            if False:"
 mutate "$LINT" "$LINT_TESTS" "rule 2: growth beyond the frozen length accepted" \
   "elif dlen > prior:" "elif False:"
 mutate "$LINT" "$LINT_TESTS" "rule 3: fixed-but-still-listed entry allowed to rot" \
@@ -99,6 +113,27 @@ mutate "$LINT" "$LINT_TESTS" "vendored .venv skills linted after all" \
   'if "extensions" in parts or VENDORED.intersection(parts):' "if False:"
 mutate "$LINT" "$LINT_TESTS" "name-vs-parent-dir rule dropped" \
   "elif name != md.parent.name:" "elif False:"
+
+echo "=== P20 round 1 fixes (CodeRabbit) ==="
+mutate "$LINT" "$LINT_TESTS" "name regex diverges from skillify_check (no leading digit)" \
+  'NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")' \
+  'NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")'
+mutate "$LINT" "$LINT_TESTS" "delimiters matched as substrings again" \
+  'close = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)' \
+  'close = next((i for i in range(1, len(lines)) if lines[i].startswith("---")), None)'
+mutate "$LINT" "$LINT_TESTS" "opening delimiter accepts a prefix again" \
+  'if not lines or lines[0].strip() != "---":' \
+  'if not lines or not lines[0].startswith("---"):'
+mutate "$LINT" "$LINT_TESTS" "empty compatibility accepted" \
+  'elif not compat.strip():' 'elif False:'
+mutate "$LINT" "$LINT_TESTS" "seen recorded after description validation (double-report)" \
+  "        seen.add(key)
+        fm, err = _parse(md)" \
+  "        fm, err = _parse(md)"
+mutate "$GATE" "$GATE_TESTS" "gate accepts a truncating body delimiter again" \
+  'r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)"' 'r"^---\n(.*?)\n---"'
+mutate "$GATE" "$GATE_TESTS" "gate accepts empty compatibility" \
+  'if not compat.strip():' 'if False:'
 
 echo
 echo "killed=$killed survived=$survived"

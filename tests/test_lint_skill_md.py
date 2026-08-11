@@ -163,6 +163,83 @@ def test_malformed_frontmatter_fails(tmp_path, text, expect):
     assert any(expect in e for e in errors), errors
 
 
+# --- P20 round 1 (CodeRabbit) ------------------------------------------------
+
+@pytest.mark.parametrize("name", ["1password", "7zip", "0x", "1-2-3"])
+def test_leading_digit_names_are_legal(tmp_path, name):
+    """Spec §Name allows [a-z0-9-]; a leading digit is legal. The old pattern
+    required a leading letter, which also made this linter DISAGREE with
+    skillify_check.SPEC_NAME_RE — two validators, one contract."""
+    _skill(tmp_path, name)
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert errors == [], errors
+
+
+def test_name_regex_matches_skillify_check():
+    """The two validators must enforce byte-identical name patterns, or a skill
+    passes one gate and fails the other."""
+    gate = REPO / "skills" / "tooling" / "skillify" / "scripts" / "skillify_check.py"
+    spec = importlib.util.spec_from_file_location("skillify_check", gate)
+    assert spec and spec.loader
+    sk = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sk)
+    assert sk.SPEC_NAME_RE.pattern == mod.NAME_RE.pattern
+    for here, there in [("MAX_NAME", "SPEC_MAX_NAME"),
+                        ("MAX_DESC", "SPEC_MAX_DESCRIPTION"),
+                        ("MAX_COMPATIBILITY", "SPEC_MAX_COMPATIBILITY"),
+                        ("RENDER_CAP", "OBSERVED_RENDER_CAP")]:
+        assert getattr(mod, here) == getattr(sk, there), f"{here} != {there}"
+
+
+@pytest.mark.parametrize("text", [
+    "---invalid\nname: demo\ndescription: d\n---\n",
+    "--- \nname: demo\ndescription: d\n---trailing\n",
+])
+def test_partial_delimiter_lines_are_rejected(tmp_path, text):
+    """`startswith('---')` accepted `---invalid`; `find('\\n---')` let a body
+    line close the block early."""
+    d = tmp_path / "cat" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(text, encoding="utf-8")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert errors, "malformed delimiters must not parse as valid frontmatter"
+
+
+def test_body_horizontal_rule_does_not_truncate_frontmatter(tmp_path):
+    """A `---` inside a fenced block or as a body rule must not be mistaken for
+    the closing delimiter of a still-open frontmatter."""
+    d = tmp_path / "cat" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: real desc\n---\n# body\n\n---\n\nmore\n", encoding="utf-8")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert errors == [], errors
+
+
+def test_empty_compatibility_is_rejected(tmp_path):
+    _skill(tmp_path, "demo", extra='compatibility: ""\n')
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert any("present but empty" in e for e in errors), errors
+
+
+def test_valid_compatibility_passes(tmp_path):
+    _skill(tmp_path, "demo", extra="compatibility: Requires git and jq\n")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={})
+    assert errors == []
+
+
+def test_grandfathered_skill_with_bad_description_reports_once(tmp_path):
+    """`seen` was populated only after the description validated, so a
+    grandfathered skill with a missing description ALSO reported as a stale
+    grandfather entry — two errors, one of them pointing at the wrong problem."""
+    d = tmp_path / "cat" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: demo\n---\n# b\n", encoding="utf-8")
+    errors, _, _ = mod.lint(tmp_path, grandfathered={_key("demo"): 1200})
+    assert len(errors) == 1, errors
+    assert "missing required field `description`" in errors[0]
+
+
 # --- discovery ---------------------------------------------------------------
 
 @pytest.mark.parametrize("vendor", [".venv", "node_modules", "site-packages", "venv"])
