@@ -135,6 +135,31 @@ mutate "$GATE" "$GATE_TESTS" "gate accepts a truncating body delimiter again" \
 mutate "$GATE" "$GATE_TESTS" "gate accepts empty compatibility" \
   'if not compat.strip():' 'if False:'
 
+echo "=== P20 round 1 blockers (Codex Strata A) ==="
+mutate "$LINT" "$LINT_TESTS" "BLOCKER: ratchet baseline no longer immutable (new entries allowed)" \
+  "        if key not in base:" "        if False:"
+mutate "$LINT" "$LINT_TESTS" "BLOCKER: frozen lengths allowed to rise" \
+  "        elif length > base[key]:" "        elif False:"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: trigger key presence counts as an assertion again" \
+  "    return len(_trigger_polarities(node)) >= 2" "    return _trigger_polarities(node) is not None"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: single polarity accepted (positive-only suite)" \
+  "    return len(_trigger_polarities(node)) >= 2" "    return len(_trigger_polarities(node)) >= 1"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: latent_only adjudicated on scripts/ only again" \
+  "    purely_latent = bool(latent_only) and not any_code" \
+  "    purely_latent = bool(latent_only) and not code"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: latent_only contradiction ignores nested code" \
+  "    if latent_only and any_code:" "    if latent_only and code:"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: non-string frontmatter fields laundered again" \
+  "        if field in data and not isinstance(data[field], str):" \
+  "        if False:"
+mutate "$GATE" "$GATE_TESTS" "over-correction guard: key-groups-prompts schema rejected" \
+  "                elif isinstance(v, (list, str)) and len(v) > 0:" "                elif False:"
+mutate "$GATE" "$GATE_TESTS" "MINOR: when-clause counts negations" \
+  "    desc_affirmative = _WHEN_NEGATION_RE.sub(\" \", desc_text)" \
+  "    desc_affirmative = desc_text"
+mutate "$GATE" "$GATE_TESTS" "MINOR: gotchas heading inside a fence counts" \
+  "    body_prose = _strip_fences(body)" "    body_prose = body"
+
 echo
 echo "killed=$killed survived=$survived"
 if [ -n "$(git -c core.fsmonitor=false status --porcelain)" ]; then
