@@ -327,10 +327,18 @@ def slice_scope(turns: list[Turn], scope: str) -> tuple[list[Turn], str]:
 # --------------------------------------------------------------------------
 
 FENCE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
+# Allows a leading blockquote marker: `> | a | b |` is still a quoted table.
+TABLE_ROW = re.compile(r"^[ \t]*>?[ \t]*\|.*\|[ \t]*$", re.MULTILINE)
 # Path stripping is done token-wise, NOT by regex. Any `\S*/\S*` form is quadratic on
 # a long slash-free run — every start position rescans the whole token hunting for a
 # slash — so one pasted JWT or hash list stalled the tool for 16s. Splitting on
 # whitespace first makes it linear, and a file path is by definition one token.
+# Markdown wrapping hid the extension from an end-anchored match, so `SKILL.md`
+# kept its stem and surfaced as the concept `SKILL`. TRAILING only: PATH_EXT is
+# `$`-anchored, so leading punctuation cannot affect it. An earlier comment here
+# claimed both ends were needed; a mutation proved the leading half inert.
+EDGE_PUNCT = "`*_'\"<>)]}.,;:!?"
+
 PATH_EXT = re.compile(
     r"\.(?:md|py|ts|tsx|js|jsx|json|ya?ml|toml|rs|sh|txt|html|css)$", re.IGNORECASE
 )
@@ -352,6 +360,10 @@ STOPWORDS = {
     "npm", "sdk", "mcp", "llm", "ast", "e2e", "qa", "vm", "ssh", "dns", "tls",
     "aws", "gcp", "us", "it", "the", "and", "for", "not", "but", "all", "any",
     "eof", "env", "cwd", "pwd", "tmp", "src", "lib", "bin", "dir", "repo",
+    # NOTE: only entries the extractor can actually emit belong here. ACRONYM caps
+    # at 6 chars and bare lowercase words match no pattern, so `session` and
+    # `prompts` were dead entries — removed rather than left as decoration.
+    "skill", "skills", "agent", "agents", "prompt",
     "up-to-date", "well-formed", "well-known", "read-only", "write-only",
     "end-to-end", "out-of-scope", "in-scope", "state-of-the-art", "so-called",
     "follow-up", "follow-ups", "trade-off", "trade-offs",
@@ -367,9 +379,24 @@ STOPWORDS = {
     "tool_use_id", "subagent_type", "is_file", "is_dir", "read_text",
     "write_text", "file_paths", "max_results", "timeout_ms",
     # shouted status labels — verdicts and log levels, not concepts
-    "fail", "pass", "warn", "skip", "major", "minor", "blocker", "critical",
+    "fail", "pass", "warn", "skip", "major", "minor",
     "done", "error", "debug", "info", "trace", "yes", "new", "old",
-    "important", "never", "always", "must", "only", "before", "after",
+    "never", "always", "must", "only", "before", "after",
+    # `blocker`, `critical` and `important` were removed with `session`/`prompts`:
+    # all are >6 chars, and ACRONYM caps total length at 6, so none could fire.
+}
+
+# The tail half of the same idea. A compound ending in one of these is an
+# adjectival/temporal/relational description, not a name for a thing:
+# `audit-time`, `cache-first`, `root-level`, `dev-like`, `long-lived`.
+# Deliberately excludes nouns that DO name things — `-table`, `-room`, `-prompt`,
+# `-layer`, `-contractor` — which is what keeps `cap-table` and `control-layer`.
+# Anything the knowledge graph recognises is exempt before this ever runs.
+SUFFIX_SEGMENTS = {
+    "like", "form", "aware", "level", "time", "first", "lived", "root", "heavy",
+    "model", "only", "you", "based", "driven", "ready", "wide", "wise", "free",
+    "safe", "less", "style", "specific", "agnostic", "friendly", "facing",
+    "aligned", "shaped", "sized", "long", "deep", "side", "bound",
 }
 
 # A two-segment compound starting with one of these is English hyphenation
@@ -385,15 +412,23 @@ PREFIX_SEGMENTS = {
 # Cap its contribution so the explanation-need signals decide the ranking.
 #
 # INVARIANT (asserted below, and pinned by test_scoring_constants_*): for two terms
-# of the same kind and the same agent_introduced value, a never-glossed ungrounded
-# term outranks an already-glossed grounded one at ANY frequency. That requires the
-# explanation-need advantage to exceed the largest frequency advantage:
+# of the same kind and the same agent_introduced value, AND NEITHER CARRYING A
+# GENERIC TAIL, a never-glossed ungrounded term outranks an already-glossed
+# grounded one at any frequency. The generic-tail exclusion is not a footnote: a
+# tailed term is deliberately demoted below a glossed grounded one, which is the
+# whole point of SUFFIX_PENALTY. Stating it unconditionally made this comment
+# false. That requires the explanation-need advantage to exceed the largest
+# frequency advantage:
 #     UNDEFINED_BONUS + (ungrounded - grounded) > FREQ_CAP
 # The first version shipped 2.0 + 0.5 = 2.5 against a cap of 4.0, so the headline
 # claim was false above ~15 uses.
 FREQ_WEIGHT = 1.2
 FREQ_CAP = 4.0
 UNDEFINED_BONUS = 5.0
+# Adjectival tails demote rather than delete (see SUFFIX_SEGMENTS). Large enough
+# to sink a generic below a real coinage, small enough that a heavily-used,
+# never-glossed term still outranks filler.
+SUFFIX_PENALTY = 3.5
 AGENT_INTRODUCED_BONUS = 3.0
 
 KIND_WEIGHT = {"primitive": 2.0, "kebab": 1.5, "camel": 1.0, "acronym": 1.0, "snake": 0.5}
@@ -409,9 +444,21 @@ MIN_LEN = {"kebab": 6, "snake": 6, "camel": 5, "acronym": 2}
 # ("gate", "loop", "state") match half the graph and mean nothing.
 PARTIAL_SEGMENT_MIN = 6
 
-assert UNDEFINED_BONUS + (COVERAGE_WEIGHT["ungrounded"] - COVERAGE_WEIGHT["grounded"]) > FREQ_CAP, (
+# The invariant is scoped to terms WITHOUT a generic tail. A generic-tail term is
+# deliberately demoted below a glossed grounded one — that is what the penalty is
+# for — so stating the invariant unconditionally made the module assert something
+# its own penalty falsified (`world-model` 8.332 vs `cross-review` 9.5).
+_EXPLANATION_NEED = UNDEFINED_BONUS + (COVERAGE_WEIGHT["ungrounded"] - COVERAGE_WEIGHT["grounded"])
+assert _EXPLANATION_NEED > FREQ_CAP, (
     "scoring constants violate the ranking invariant: a loud already-glossed term "
     "would outrank a quiet never-glossed one"
+)
+# Bounds one constant against another: a generic tail cannot fully cancel the
+# never-glossed bonus. That is ALL it establishes. Two earlier versions of this
+# comment inferred a ranking property from it and were both false — frequency and
+# coverage also move scores, so no two-constant inequality settles an ordering.
+assert SUFFIX_PENALTY < UNDEFINED_BONUS, (
+    "SUFFIX_PENALTY must not cancel the never-glossed bonus"
 )
 
 # A trailing run/ticket/version number makes the compound an identifier, not an
@@ -419,7 +466,7 @@ assert UNDEFINED_BONUS + (COVERAGE_WEIGHT["ungrounded"] - COVERAGE_WEIGHT["groun
 IDENT_TAIL = re.compile(r"[a-z]?\d+")
 
 
-def scrub(text: str, keep_code: bool) -> str:
+def scrub(text: str, keep_code: bool, strip_tables: bool = True) -> str:
     """Strip the surfaces that produce terms nobody chose: fences, URLs, paths.
 
     Whitespace is collapsed last so extraction and the `uses` recount see the same
@@ -428,12 +475,23 @@ def scrub(text: str, keep_code: bool) -> str:
     """
     if not keep_code:
         text = FENCE.sub(" ", text)
+    # A quoted markdown table is data being displayed, not vocabulary being used.
+    # Without this, quoting ANOTHER session's inventory makes every term in it
+    # look agent-introduced and never-glossed in your own.
+    # NEVER applied to human turns: a human who pastes a spec table would "never
+    # have said" those terms, flipping agent_introduced False->True and adding
+    # the bonus to exactly the wrong rows.
+    # Deliberately OUTSIDE the keep_code branch: --include-tools is about mining
+    # code, and nesting this under it silently disabled table scrubbing whenever
+    # that flag was passed.
+    if strip_tables:
+        text = TABLE_ROW.sub(" ", text)
     # No separate URL pass: every URL is one whitespace-delimited token containing
     # `/`, so the path filter already removes it. A dedicated `URL.sub` here was dead
     # code — deleting it left the whole suite green, which is how it was found.
     return " ".join(
         tok for tok in text.split()
-        if "/" not in tok and not PATH_EXT.search(tok.rstrip(".,;:)]}"))
+        if "/" not in tok and not PATH_EXT.search(tok.rstrip(EDGE_PUNCT))
     )
 
 
@@ -494,17 +552,22 @@ def extract_terms(text: str) -> dict[str, str]:
 
 
 def is_noise(
-    term: str, kind: str, stopwords: set[str], keep: set[str], grounded: bool = False
+    term: str, kind: str, stopwords: set[str], keep: set[str],
+    coverage: str = "ungrounded",
 ) -> bool:
-    """Heuristic filters, ordered so the knowledge graph always wins.
+    """Heuristic filters, ordered by how strong the evidence behind each is.
 
-    An explicit --keep-term outranks everything; a grounded term outranks every
-    heuristic below it. Only unrecognised terms are judged on shape.
+    `grounded` is an exact slug/alias/primitive match and bypasses everything.
+    `partial` is ONE shared >=6-char slug segment — weak evidence — so it bypasses
+    only the shape heuristics, never the stoplist. Letting it bypass the stoplist
+    silently disabled stoplist entries, including the tool-schema keys
+    `new_string`, `old_string` and `run_in_background` the stoplist exists to
+    remove. `test_partial_bypasses_shape_rules_but_never_the_stoplist` pins it.
     """
     low = term.lower()
     if low in keep:
         return False
-    if grounded:
+    if coverage == "grounded":
         return False
     if low in stopwords:
         return True
@@ -512,10 +575,18 @@ def is_noise(
         return True
     if kind in ("kebab", "snake"):
         segs = low.split("-" if kind == "kebab" else "_")
+        # Identifier shape is judged BEFORE the partial exemption: `dispatch-bro-1945`
+        # sharing a segment with some entity does not make a ticket id an idea. The
+        # exemption was added to rescue near-miss vocabulary from the ENGLISH-shape
+        # rules, and was sitting above this one only because it was convenient.
         if IDENT_TAIL.fullmatch(segs[-1]):
             return True  # round-2, board-m3, bro-2107 — an identifier, not an idea
+        if coverage == "partial":
+            return False
         if len(segs) == 2 and segs[0] in PREFIX_SEGMENTS:
             return True
+    elif coverage == "partial":
+        return False
     return False
 
 
@@ -680,15 +751,44 @@ class Concept:
     score: float
 
 
+def has_generic_tail(term: str, kind: str) -> bool:
+    """Compound ending in an adjectival/temporal/relational word.
+
+    Normalises first, so `WorldModel` is judged the same as `world-model`. Gating
+    this to kebab/snake let the CamelCase surface escape the penalty entirely, and
+    `dedupe` keeps the highest-scoring surface — so spelling a term both ways
+    recovered the full demotion.
+    """
+    if kind == "primitive":
+        return False
+    segs = normalize(term).split("-")
+    # TWO segments only, deliberately conservative. A wider variant was tried and
+    # reverted because cross-model review could not measure any effect on real
+    # transcripts. No figures here: this file states mechanisms, never
+    # measurements, after three rounds in which numbers written into comments
+    # turned out to be unreproducible.
+    return len(segs) == 2 and segs[-1] in SUFFIX_SEGMENTS
+
+
 def score_concept(uses: int, agent_introduced: bool, defined_inline: bool,
-                  kind: str, coverage: str) -> float:
-    """The ranking model, in one place so dedupe recomputes rather than inherits."""
+                  kind: str, coverage: str, term: str = "") -> float:
+    """The ranking model, in one place so dedupe recomputes rather than inherits.
+
+    `term` is only needed for the generic-tail penalty. On the CLI path it cannot
+    change the outcome — `dedupe` always recomputes, and the penalty is a constant
+    offset within a merge group — but `build_inventory` is called directly by
+    tests and by any embedder, and those callers must see real scores.
+    """
+    penalty = (SUFFIX_PENALTY
+               if (term and coverage == "ungrounded" and has_generic_tail(term, kind))
+               else 0.0)
     return round(
         min(FREQ_WEIGHT * math.log1p(uses), FREQ_CAP)
         + (AGENT_INTRODUCED_BONUS if agent_introduced else 0.0)
         + (0.0 if defined_inline else UNDEFINED_BONUS)
         + KIND_WEIGHT.get(kind, 0.5)
-        + COVERAGE_WEIGHT.get(coverage, 0.0),
+        + COVERAGE_WEIGHT.get(coverage, 0.0)
+        - penalty,
         3,
     )
 
@@ -707,7 +807,13 @@ def build_inventory(
     keep_terms = set() if keep_terms is None else keep_terms
 
     agent_text = scrub("\n".join(t.text for t in turns if t.role == "agent"), keep_code)
-    human_text = scrub("\n".join(t.text for t in turns if t.role == "human"), keep_code)
+    # Human tables ARE mined (strip_tables=False): a term the operator pasted is a
+    # term the operator has seen, so it is not agent-introduced and loses the
+    # bonus. That includes pasting a previous /what table back — those rows are
+    # already explained and should sink. Specified, and pinned by a test, because
+    # it silently moves the skill's headline signal.
+    human_text = scrub("\n".join(t.text for t in turns if t.role == "human"),
+                       keep_code, strip_tables=False)
     human_norm = {normalize(t) for t in extract_terms(human_text)}
 
     concepts: list[Concept] = []
@@ -715,7 +821,7 @@ def build_inventory(
         # Classify first: grounding is what rescues a real term from the shape
         # heuristics, so it has to be known before the filter runs.
         g = classify(term, entities, aliases, primitives)
-        if is_noise(term, kind, stopwords, keep_terms, grounded=g.coverage == "grounded"):
+        if is_noise(term, kind, stopwords, keep_terms, coverage=g.coverage):
             continue
         uses = count_uses(agent_text, term, kind)
         if uses < min_freq:
@@ -725,7 +831,8 @@ def build_inventory(
         concepts.append(
             Concept(term, kind, uses, agent_introduced, defined_inline,
                     g.coverage, g.path, g.claim,
-                    score_concept(uses, agent_introduced, defined_inline, kind, g.coverage))
+                    score_concept(uses, agent_introduced, defined_inline, kind,
+                                  g.coverage, term))
         )
     # Deterministic order: score desc, uses desc, term asc. Never mtime or set order.
     concepts.sort(key=lambda c: (-c.score, -c.uses, c.term))
@@ -758,7 +865,8 @@ def dedupe(concepts: Iterable[Concept]) -> list[Concept]:
         # use count, or it ranks against unmerged rows on a stale number.
         merged = Concept(**{
             **asdict(c), "uses": uses,
-            "score": score_concept(uses, c.agent_introduced, c.defined_inline, c.kind, c.coverage),
+            "score": score_concept(uses, c.agent_introduced, c.defined_inline,
+                                   c.kind, c.coverage, c.term),
         })
         out.append(merged)
     out.sort(key=lambda c: (-c.score, -c.uses, c.term))

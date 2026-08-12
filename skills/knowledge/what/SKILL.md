@@ -96,6 +96,12 @@ and returns each one with four facts that decide the explanation:
 Ranking is deliberately *not* frequency-first. A term said 200 times and
 already defined ranks below a term said twice and never defined.
 
+Generic compounds (`audit-time`, `cache-first`, `dev-like`) are **demoted, not
+removed**. A filter there could only ever fire on `ungrounded` terms — the
+un-filed coinages this skill exists to surface — so it would delete its own
+highest-value rows. `threat-model` and `sell-side` still appear; they just sit
+below real coinages.
+
 **`--include-tools` answers a different question.** By default only the agent's
 *prose* is mined, because prose is what the operator actually read. Adding
 `--include-tools` also mines the code the agent wrote, which changes the
@@ -126,8 +132,13 @@ whose contract is that it *never holds unscored items* (`CLAUDE.md`, Nous gate
 So: score first, file what clears the gate, report the rest.
 
 ```bash
-python3 ~/.claude/skills/bookkeeping/scripts/bookkeeping.py score --content "<term + what it meant here>"
+# `score` reads a raw-extract FILE (there is no --content flag). Write the
+# candidates out, score the file, file only what clears.
+python3 ~/.claude/skills/bookkeeping/scripts/bookkeeping.py score --file <raw-extract.md> --verbose
 ```
+
+If the gate reports `LLM unavailable, keeping heuristic`, it ran degraded — hold
+the candidates rather than filing on a heuristic-only score.
 
 Filing is still a reflex, not a question — you do not ask permission to run the
 gate. What you never do is skip it.
@@ -211,10 +222,10 @@ A `/what` answer is well-formed iff:
 - [ ] Each concept states what it is *not*
 - [ ] The short version contains no term from the inventory
 
-Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (90 tests).
+Script tests: `python3 -m pytest scripts/test_what_concepts.py -v` (114 tests).
 
-Every one of those tests is proven able to fail: `bash scripts/mutate.sh` breaks
-the implementation 39 ways and requires the suite to catch all 39. Run it after
+The suite is held honest by a mutation proof: `bash scripts/mutate.sh` breaks
+the implementation 57 ways and requires the suite to catch all 57. Run it after
 any change to `what_concepts.py`. It asserts a clean tree first, because its
 revert-to-HEAD baseline would otherwise destroy uncommitted work on line one.
 
@@ -223,6 +234,14 @@ revert-to-HEAD baseline would otherwise destroy uncommitted work on line one.
 - `scripts/what_concepts.py` — the deterministic inventory + knowledge-graph coverage classifier.
 - `scripts/test_what_concepts.py` — its unit suite (the step-3 skillify gate).
 - `scripts/mutate.sh` — the mutation proof that keeps that suite honest.
+
+A fixture-based precision gate was built alongside this suite over three rounds
+and then **deleted**. Cross-model review measured it catching strictly fewer
+degenerate implementations than the pytest suite it sat beside, while its own
+meta-properties — is the register padded, are the degenerates distinct, is the
+grading really absolute — failed review three times running. A second gate that
+is weaker than the first and harder to keep honest is not a gate; the mutation
+proof does that job.
 - Prior art: [`mattpocock/skills` `productivity/wait-what`](https://github.com/mattpocock/skills/tree/main/skills/productivity/wait-what)
   — the terse mid-conversation re-pitch. `/what` keeps its two best ideas (pin
   the register, pin the vocabulary source) and adds session scope plus

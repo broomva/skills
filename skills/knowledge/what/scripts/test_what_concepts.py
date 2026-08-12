@@ -397,8 +397,17 @@ def test_harness_keys_are_dropped_end_to_end_with_tools_included(tmp_path: Path)
 
 
 def test_shouted_status_labels_are_dropped():
-    for label in ("FAIL", "BLOCKER", "MAJOR", "WARN"):
+    """Only labels the extractor can actually emit.
+
+    `BLOCKER`/`CRITICAL`/`IMPORTANT` were asserted here on an unreachable path:
+    ACRONYM caps total length at 6, so they are never extracted and their
+    stopword entries could never fire. They have been removed from STOPWORDS.
+    """
+    for label in ("FAIL", "MAJOR", "WARN", "SKIP"):
+        assert label in wc.extract_terms(f"{label} and {label} again"), label
         assert wc.is_noise(label, "acronym", wc.STOPWORDS, set()), label
+    for unreachable in ("BLOCKER", "CRITICAL", "IMPORTANT"):
+        assert unreachable not in wc.extract_terms(f"{unreachable} {unreachable}"), unreachable
 
 
 def test_english_prefix_compounds_are_dropped():
@@ -424,10 +433,10 @@ def test_numeric_final_segments_are_dropped_as_identifiers():
 
 def test_grounding_rescues_a_term_the_heuristics_would_drop():
     """A term the knowledge graph names is real, whatever shape it has."""
-    assert wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set(), grounded=False)
-    assert not wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set(), grounded=True)
-    assert wc.is_noise("MAJOR", "acronym", wc.STOPWORDS, set(), grounded=False)
-    assert not wc.is_noise("MAJOR", "acronym", wc.STOPWORDS, set(), grounded=True)
+    assert wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set())
+    assert not wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set(), coverage="grounded")
+    assert wc.is_noise("MAJOR", "acronym", wc.STOPWORDS, set())
+    assert not wc.is_noise("MAJOR", "acronym", wc.STOPWORDS, set(), coverage="grounded")
 
 
 def test_grounded_terms_survive_the_filter_end_to_end():
@@ -918,3 +927,252 @@ def test_partial_tier_requires_a_long_shared_segment(kg):
     entities, aliases, prims = kg          # holds `linked-skill-inheritance`
     assert wc.classify("skill-gate", entities, aliases, prims).coverage == "ungrounded"
     assert wc.classify("inheritance-gate", entities, aliases, prims).coverage == "partial"
+
+
+# --------------------------------------------------------------------------
+# BRO-2129 precision round
+# --------------------------------------------------------------------------
+
+def test_generic_tails_are_demoted_not_deleted():
+    """The suffix rule scores, it does not filter.
+
+    A filter here could only ever fire on `ungrounded` terms — the un-filed
+    coinages the skill exists to surface — so it would delete exactly its own
+    highest-value rows. Demotion keeps them visible and sinks the filler.
+    """
+    for term in ("audit-time", "build-time", "cache-first", "root-level", "dev-like",
+                 "long-lived", "repo-root", "role-aware", "free-form", "server-side",
+                 "prose-only", "cross-model", "needs-you"):
+        assert wc.has_generic_tail(term, "kebab"), term
+        assert not wc.is_noise(term, "kebab", wc.STOPWORDS, set()), f"{term} must survive"
+    generic = wc.score_concept(4, True, False, "kebab", "ungrounded", "audit-time")
+    real = wc.score_concept(4, True, False, "kebab", "ungrounded", "expiry-aware-lease")
+    assert real > generic, (real, generic)
+
+
+def test_a_real_coinage_with_a_generic_tail_still_appears():
+    """`threat-model` and `sell-side` are vocabulary, not filler. Demoted, not gone."""
+    # `real-time` is deliberately absent: it is an explicit STOPWORDS entry, which
+    # is a stronger statement than "generic tail" and is meant to remove it.
+    for term in ("threat-model", "sell-side", "usage-based", "io-bound", "world-model"):
+        turns = [wc.Turn("agent", f"the {term} matters. {term} again.")]
+        assert term in {c.term for c in wc.build_inventory(turns, {}, {}, {})}, term
+
+
+def test_generic_tail_penalty_only_applies_to_ungrounded_terms():
+    a = wc.score_concept(4, True, False, "kebab", "grounded", "audit-time")
+    b = wc.score_concept(4, True, False, "kebab", "grounded", "expiry-aware-lease")
+    assert a == b, "a grounded term must not be penalised for its tail"
+
+
+def test_generic_tail_is_two_segments_only():
+    """Two segments only; a wider variant was tried and reverted."""
+    for term in ("audit-time", "cache-first", "dev-like", "root-level"):
+        assert wc.has_generic_tail(term, "kebab"), term
+    for term in ("not-cache-first", "ready-at-boot-time", "end-user-facing"):
+        assert not wc.has_generic_tail(term, "kebab"), term
+
+
+def test_a_noun_tail_is_never_generic_however_long():
+    for term in ("expiry-aware-lease", "gate-chain", "self-hosting-vacuous-pass",
+                 "grounded-vs-ungrounded-improvement"):
+        assert not wc.has_generic_tail(term, "kebab"), term
+
+
+def test_suffix_stoplist_keeps_noun_tailed_compounds():
+    """`-table`/`-room`/`-layer`/`-contractor` name things; they must survive."""
+    # `counter-metric` is deliberately absent: `counter-` is in PREFIX_SEGMENTS, so
+    # it is prefix-filtered unless the graph knows it.
+    #
+    # This asserts on has_generic_tail, not is_noise. is_noise contains no suffix
+    # logic at all, so the earlier version held identically for `audit-time` — the
+    # exact term its docstring says must be treated differently — and adding
+    # `table`/`room`/`layer` to SUFFIX_SEGMENTS left the whole suite green.
+    for term in ("cap-table", "clean-room", "control-layer", "independent-contractor",
+                 "disguised-employment", "force-graph", "cost-per-node"):
+        assert not wc.is_noise(term, "kebab", wc.STOPWORDS, set()), term
+        assert not wc.has_generic_tail(term, "kebab"), f"{term} must not read as generic"
+    assert wc.has_generic_tail("audit-time", "kebab"), "control: a real generic tail"
+
+
+def test_partial_bypasses_shape_rules_but_never_the_stoplist():
+    """Partial is ONE shared >=6-char segment — weak evidence.
+
+    Letting it bypass the stoplist silently disabled entries, including the
+    tool-schema keys the stoplist exists to remove.
+    """
+    assert wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set())
+    assert not wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set(), coverage="partial")
+    for key in ("new_string", "old_string", "run_in_background", "file_path", "agents"):
+        assert wc.is_noise(key, "snake", wc.STOPWORDS, set(), coverage="partial"), key
+    assert not wc.is_noise("new_string", "snake", wc.STOPWORDS, set(), coverage="grounded")
+
+
+def test_partial_coverage_is_exempt_end_to_end():
+    """Uses a term the shape rules WOULD drop, so deleting the exemption fails.
+
+    The earlier version picked `append-only`, which clears `is_noise` on shape
+    alone — so it passed with the exemption removed and tested nothing.
+    """
+    text = "#### entrancy-guard [pattern·entity]\nclaim\npath: pattern/entrancy-guard.md\n"
+    entities, aliases = wc.parse_catalog(text)
+    # `re-entrancy` is a two-segment compound with the `re-` prefix: dropped by the
+    # shape heuristics unless partial coverage exempts it.
+    assert wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set())
+    turns = [wc.Turn("agent", "the re-entrancy bug bit us. re-entrancy again.")]
+    assert "re-entrancy" in {c.term for c in wc.build_inventory(turns, entities, aliases, {})}
+
+
+def test_quoted_markdown_tables_are_not_mined():
+    """Quoting another session's inventory made every term in it look new here."""
+    prose = ("Results below.\n"
+             "| # | Term | Uses |\n"
+             "|---|---|---|\n"
+             "| 1 | `zzz-contamination` | 9 |\n"
+             "| 2 | `yyy-contamination` | 7 |\n"
+             "That is the table.")
+    out = wc.scrub(prose, keep_code=False)
+    assert "zzz-contamination" not in out
+    assert "yyy-contamination" not in out
+    assert "Results below." in out and "That is the table." in out
+
+
+def test_markdown_punctuation_no_longer_hides_a_path_suffix():
+    """A backticked filename kept its stem, so `SKILL.md` surfaced as `SKILL`."""
+    for src in ("see `SKILL.md` now", "see SKILL.md now", "(see `loop-prompt.md`)",
+                "**`README.md`**"):
+        out = wc.scrub(src, keep_code=False)
+        assert "SKILL" not in out and "loop-prompt" not in out and "README" not in out, src
+
+
+def test_filename_stems_do_not_enter_the_inventory():
+    turns = [wc.Turn("agent", "Edit `loop-prompt.md` then `loop-prompt.md` again.")]
+    assert wc.build_inventory(turns, {}, {}, {}, min_freq=1) == []
+
+
+def test_table_rows_are_never_scrubbed_from_human_turns():
+    """A human pasting a spec table must not make those terms agent-introduced."""
+    table = "| Field | Note |\n|---|---|\n| disguised-employment | flag it |"
+    turns = [wc.Turn("human", table),
+             wc.Turn("agent", "disguised-employment is the exposure. "
+                              "disguised-employment again, disguised-employment.")]
+    row = next(c for c in wc.build_inventory(turns, {}, {}, {})
+               if c.term == "disguised-employment")
+    assert row.agent_introduced is False, "the human said it inside a table"
+
+
+def test_agent_authored_tables_are_still_scrubbed():
+    turns = [wc.Turn("agent", "| # | Term |\n|---|---|\n| 1 | `zzz-widget` |\n"
+                              "| 2 | `zzz-widget` |")]
+    assert "zzz-widget" not in {c.term for c in wc.build_inventory(turns, {}, {}, {}, min_freq=1)}
+
+
+def test_harness_stopwords_are_documented_and_live():
+    """The seven added in the precision round. Inert once `partial` bypassed them."""
+    # `session` and `prompts` are 7 chars; ACRONYM caps at 6 and no other pattern
+    # emits a bare lowercase word, so they were dead entries and are gone. Every
+    # entry asserted here is reachable: the (term, kind) pair below is one the
+    # extractor can really produce.
+    for w in ("skill", "skills", "agent", "agents", "prompt"):
+        assert w in wc.STOPWORDS, w
+        assert w.upper() in wc.extract_terms(f"{w.upper()} and {w.upper()} again"), w
+        assert wc.is_noise(w.upper(), "acronym", wc.STOPWORDS, set(), coverage="partial"), w
+    for dead in ("session", "prompts"):
+        assert dead not in wc.STOPWORDS, f"{dead} is unreachable; do not re-add it"
+
+
+def test_table_scrub_keeps_prose_that_merely_contains_a_pipe():
+    """Over-breadth guard: only a full `| ... |` row is a table row."""
+    out = wc.scrub("run a | b to pipe it, and shell-pipeline shell-pipeline", keep_code=False)
+    assert "shell-pipeline" in out
+    assert "pipe" in out
+
+
+def test_suffix_list_excludes_nouns_that_name_things():
+    """Over-breadth guard: widening the list to real nouns must break this."""
+    for tail_noun in ("expiry-aware-lease", "gate-chain", "error-budget",
+                      "trust-boundary", "attack-surface", "context-window"):
+        assert not wc.has_generic_tail(tail_noun, "kebab"), tail_noun
+
+
+def test_agent_introduced_bonus_decides_the_ranking():
+    """The skill's headline signal had no test and no mutation pinning its weight.
+
+    Nothing asserted that the field changes the ORDER, so zeroing the bonus was
+    green everywhere.
+    """
+    assert wc.AGENT_INTRODUCED_BONUS > 0
+    mine = wc.score_concept(4, True, False, "kebab", "ungrounded", "shadow-lease")
+    theirs = wc.score_concept(4, False, False, "kebab", "ungrounded", "quorum-drift")
+    assert mine > theirs, (mine, theirs)
+    # and it must survive a frequency deficit, or the signal is decorative
+    loud_theirs = wc.score_concept(500, False, False, "kebab", "ungrounded", "quorum-drift")
+    assert mine > loud_theirs, (mine, loud_theirs)
+
+
+def test_generic_tail_applies_to_snake_case_too():
+    """camel was pinned last round; the identical snake escape was not, and
+    `dedupe` recovers the penalty from whichever surface scores highest."""
+    assert wc.has_generic_tail("build_time", "snake")
+    assert not wc.has_generic_tail("cache_layer", "snake")
+    penalised = wc.score_concept(4, True, False, "snake", "ungrounded", "build_time")
+    plain = wc.score_concept(4, True, False, "snake", "ungrounded", "cache_layer")
+    assert penalised < plain, (penalised, plain)
+
+
+def test_generic_technology_acronyms_stay_stoplisted():
+    """These are industry vocabulary, not this workspace's jargon."""
+    for acronym in ("LLM", "MCP", "SDK", "API", "SSH", "DNS"):
+        assert wc.is_noise(acronym, "acronym", wc.STOPWORDS, set()), acronym
+
+
+def test_camelcase_surface_cannot_escape_the_generic_tail_penalty():
+    """`dedupe` keeps the highest-scoring surface, so a kind-gated penalty let
+    spelling a term both ways recover the full demotion."""
+    assert wc.has_generic_tail("WorldModel", "camel")
+    assert not wc.has_generic_tail("CapTable", "camel")
+    kebab = wc.score_concept(4, True, False, "kebab", "ungrounded", "world-model")
+    turns = [wc.Turn("agent", "world-model world-model WorldModel WorldModel")]
+    merged = wc.dedupe(wc.build_inventory(turns, {}, {}, {}))
+    row = next(c for c in merged if wc.normalize(c.term) == "world-model")
+    assert row.score <= kebab, f"dedupe recovered the penalty: {row.score} vs {kebab}"
+
+
+def test_stoplist_holds_no_unreachable_entries():
+    """Every acronym-shaped stopword must be one the extractor can emit.
+
+    ACRONYM caps total length at 6. Longer bare-word entries are decoration and
+    were silently accumulating (`session`, `prompts`, `blocker`, `critical`,
+    `important`).
+    """
+    too_long = sorted(w for w in wc.STOPWORDS
+                      if w.isalpha() and len(w) > 6 and "-" not in w and "_" not in w)
+    assert not too_long, f"unreachable acronym-shaped stopwords: {too_long}"
+
+
+def test_partial_coverage_does_not_rescue_identifier_shapes():
+    """Grounding says a term is vocabulary; it does not say a ticket id is an idea.
+
+    The exemption was added to rescue near-miss vocabulary from the English-shape
+    rules and was sitting above the identifier filter purely by placement.
+    """
+    for ident in ("dispatch-bro-1945", "round-2", "board-m3", "run-264"):
+        assert wc.is_noise(ident, "kebab", wc.STOPWORDS, set()), ident
+        assert wc.is_noise(ident, "kebab", wc.STOPWORDS, set(), coverage="partial"), ident
+    # ...while still rescuing what it was added for
+    assert not wc.is_noise("re-entrancy", "kebab", wc.STOPWORDS, set(), coverage="partial")
+    # a stoplisted acronym stays stopped whatever its coverage
+    assert wc.is_noise("MAJOR", "acronym", wc.STOPWORDS, set(), coverage="partial")
+
+
+def test_table_scrub_survives_include_tools():
+    """`--include-tools` is about mining CODE; nesting the scrub under it silently
+    disabled table scrubbing whenever that flag was passed."""
+    table = "| # | Term |\n|---|---|\n| 1 | `zzz-widget` |\n| 2 | `zzz-widget` |"
+    for keep_code in (False, True):
+        assert "zzz-widget" not in wc.scrub(table, keep_code=keep_code), keep_code
+
+
+def test_blockquoted_tables_are_scrubbed_too():
+    quoted = "> | # | Term |\n> |---|---|\n> | 1 | `zzz-widget` |\n> | 2 | `zzz-widget` |"
+    assert "zzz-widget" not in wc.scrub(quoted, keep_code=False)
