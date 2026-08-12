@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "broomva-health"
-version = "0.11.0"
+version = "0.12.0"
 description = "Broomva-stack Health skill — personal health knowledge graph with hex-architecture trace ingest"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -74,6 +74,11 @@ select = ["E", "F", "W", "I", "N", "B", "UP", "S", "A", "C4", "PT", "RET", "SIM"
 ignore = [
   "S101",     # asserts OK
   "PLR0913",  # too-many-arguments — DI is unavoidable here
+  "PLR0917",  # too-many-positional-arguments — sibling of PLR0913; every Typer
+              # CLI flag is a function parameter, so command signatures trip it
+              # by construction. (Stabilized in a later ruff than the one this
+              # repo was last green on; `ruff>=0.4` is unpinned, so it surfaced
+              # on unchanged files.)
   "PLR2004",  # magic numbers in tests
   "E501",     # line-too-long — we prefer readable docstrings
   "RUF002",   # ambiguous unicode — em-dashes in prose are intentional

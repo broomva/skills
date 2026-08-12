@@ -124,6 +124,29 @@ Exit codes: `0` OK · `1` error · `2` auth-required (re-run `auth login`).
 
 ---
 
+## Agents
+
+The skill ships its reasoning layer as data in [`agents/`](agents/). `install.sh`
+links each spec into `~/.claude/agents/`, so one install gives you the CLI, the
+skill, and the agent — and upgrading the skill upgrades the agent.
+
+| Agent | Ask it |
+|---|---|
+| [`health-analyst`](agents/health-analyst.md) | "how's my recovery?" · "am I overreached?" · "what's my HRV trend?" · "summarize my last month" |
+
+```bash
+# after install.sh — restart your agent session so it discovers the spec
+BROOMVA_HEALTH_NO_AGENTS=1 bash install.sh   # opt out of linking
+BROOMVA_HEALTH_AGENTS_DIR=~/other/agents bash install.sh   # custom target
+```
+
+The agent reaches data **only** through the `health` CLI — never Garmin, never
+the SQLite store. Skill = retrieval substrate, agent = reasoning layer: ingest
+is never duplicated, every answer traces to a command, and large reads stay in
+the subagent's context instead of your main thread.
+
+---
+
 ## Architecture (5-layer hex)
 
 ```

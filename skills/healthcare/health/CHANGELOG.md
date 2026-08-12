@@ -10,6 +10,52 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-12
+
+### Added
+
+- **`agents/health-analyst.md` — the skill now ships its reasoning layer.**
+  An authored Claude Code subagent (prompt-as-data, versioned + released with
+  the skill) that answers questions about the user's recorded health data by
+  wielding the `health` CLI. Tools are `Bash, Read, Grep` — it reaches data
+  **only** through the CLI, never Garmin or the SQLite store directly, keeping
+  the split: skill = retrieval substrate, agent = reasoning layer. Encodes the
+  dataset's real caveats (VO2max is a meaningless carried-forward land-sport
+  estimate for this athlete; CTL/ATL/TSB are Garmin EPOC-load EWMAs, not Coggan
+  power-TSS; rising TSB during rest is freshness, not fitness).
+- **`install.sh` links `agents/*.md` into `~/.claude/agents/`** so one install
+  yields CLI + skill + agent, and a skill upgrade upgrades the agent. Opt out
+  with `BROOMVA_HEALTH_NO_AGENTS=1`; override the target with
+  `BROOMVA_HEALTH_AGENTS_DIR`.
+  The spec was hardened over two adversarial validation rounds plus a targeted
+  probe, each run against the real store. Round 1 found `--format` documented
+  as a per-subcommand flag when it is global (6 failed calls) and no
+  staleness discipline; round 2 found the decay tell stated as a *conjunction*
+  (`recovery_score` **and** `hrv_cv_30d` null) when the two drain ~30 days
+  apart — silently disabling the guard across the 1–29-day window, where TSB
+  flips from a real −10.22 to a fake +4.52 within seven days. The tell is now
+  disjunctive (`recovery_score: null` alone is sufficient); the probe confirms
+  the prior wording would have advised training hard on an unrecovered load.
+- `tests/unit/test_agent_specs.py` — pins the subagent contract (frontmatter
+  parses, `name` matches filename, description long enough to route on, `Bash`
+  present, no direct-DB/Garmin-access instructions). A malformed spec fails
+  silently at the harness, so it is caught in CI instead.
+
+### Fixed
+
+- **Curl-piped install was broken by the monorepo restructure.** `install.sh`
+  sparse-checked-out `skills/health`, which no longer exists after skills were
+  bucketed into category folders (BRO-1570) — the one-shot
+  `curl … | bash` path could not find `pyproject.toml`. It now checks out both
+  `skills/healthcare/health` and `skills/health` and resolves whichever exists.
+- Stale docs URL in the install summary (pre-restructure path).
+- **Unpinned-linter drift.** `ruff>=0.4` resolves to whatever is latest at CI
+  time; a newer ruff stabilized `PLR0917` (too-many-positional-arguments),
+  which fires on unchanged Typer command signatures — every CLI flag is a
+  function parameter. Ignored alongside its sibling `PLR0913`, matching the
+  existing `B008` "Typer/Pydantic pattern" carve-out.
+
+
 ## [0.11.0] — 2026-06-13
 
 Closes 3 gaps a full-capability dogfood surfaced.
@@ -165,7 +211,8 @@ Closes 3 gaps a full-capability dogfood surfaced.
   daily-note projection, and the synthesis modules (HRV-CV, CTL/ATL/TSB,
   VO2max arc, recovery).
 
-[Unreleased]: https://github.com/broomva/skills/compare/health-v0.11.0...HEAD
+[Unreleased]: https://github.com/broomva/skills/compare/health-v0.12.0...HEAD
+[0.12.0]: https://github.com/broomva/skills/releases/tag/health-v0.12.0
 [0.11.0]: https://github.com/broomva/skills/releases/tag/health-v0.11.0
 [0.10.1]: https://github.com/broomva/skills/releases/tag/health-v0.10.1
 [0.10.0]: https://github.com/broomva/skills/releases/tag/health-v0.10.0
