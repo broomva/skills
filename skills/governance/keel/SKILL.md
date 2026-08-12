@@ -46,6 +46,27 @@ what an LLM wrote. A doc is validated against another doc. A status field says
 "passed" because something set it to "passed". The pipeline is green and
 nothing has been verified.
 
+## Where the predicate comes from
+
+Silver & Sutton (*Welcome to the Era of Experience*, 2025) argue that agents
+must replace human-prejudged reward with **grounded** signals, "that arise from
+the environment itself", because a human rater imposes "an impenetrable ceiling
+on the agent's performance" and, ungrounded, an agent "will become an echo
+chamber of existing human knowledge."
+
+Grounded and independent are not the same property, and the paper only asks for
+the first. Its own signal inventory — "cost, error rates … profit, sales …
+visits, yields, stocks, likes … accuracy" — mixes producers the actor cannot
+touch with producers it operates; and the success case it cites, **execution
+feedback** ("the agent actually runs code and observes what happens"), is
+maximally grounded *and* the canonical reward-hack surface, because the agent
+writes the test.
+
+Keel asks the second question — *and can the thing being measured write to it?*
+That is the classification predicate below, and the reason `unknown` fails
+closed: an abundance of grounded signals is not an abundance of independent
+ones.
+
 ## The classification
 
 Every verification edge gets exactly one class. The question is never "is this

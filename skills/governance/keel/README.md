@@ -29,6 +29,36 @@ what an LLM wrote. A doc is validated against another doc. A status field reads
 "passed" because something set it to "passed". The pipeline is green and
 nothing has been verified.
 
+## Where the predicate comes from
+
+Silver & Sutton's [*Welcome to the Era of Experience*](https://storage.googleapis.com/deepmind-media/Era-of-Experience%20/The%20Era%20of%20Experience%20Paper.pdf)
+makes the case that agents have to leave human-prejudged reward behind for
+**grounded** signals — ones "that arise from the environment itself" — because
+relying on a human rater "usually leads to an impenetrable ceiling on the
+agent's performance", and without grounding an agent "will become an echo
+chamber of existing human knowledge."
+
+That argument is right, and it stops one question short. **Grounded and
+independent are different properties.** The paper's own inventory of available
+signals — "cost, error rates … profit, sales … visits, yields, stocks, likes …
+accuracy, power, distance, speed, efficiency" — mixes producers an actor cannot
+touch (a payment that settled, a customer who churned) with producers it
+operates itself (its own analytics, its own test suite). Its clearest example
+is the sharpest case: coding agents improved on **execution feedback**, "where
+the agent actually runs code and observes what happens" — maximally grounded,
+and the canonical reward-hack surface in agentic coding, because the agent
+writes the test.
+
+So Keel asks the second question:
+
+| | asks |
+|---|---|
+| *Era of Experience* | is this signal from the environment? |
+| **Keel** | **and can the thing being measured write to it?** |
+
+An abundance of grounded signals is not an abundance of independent ones. Keel
+measures the difference.
+
 ## What it does
 
 Keel walks a target's verification edges — CI steps, test targets, review
