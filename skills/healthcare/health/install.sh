@@ -68,10 +68,17 @@ resolve_source() {
       https://github.com/broomva/skills.git "$tmp" 2>/dev/null \
     || git clone --depth 1 --quiet https://github.com/broomva/skills.git "$tmp" \
     || fail "git clone of broomva/skills failed" 3
-  git -C "$tmp" sparse-checkout set skills/health 2>/dev/null || true
-  BROOMVA_HEALTH_SRC="$tmp/skills/health"
-  [ -f "$BROOMVA_HEALTH_SRC/pyproject.toml" ] \
-    || fail "cloned broomva/skills but skills/health/pyproject.toml is missing" 3
+  # The monorepo bucketed skills into category folders (BRO-1570), moving this
+  # skill to skills/healthcare/health. Check out BOTH paths and resolve
+  # whichever exists so the curl-pipe install works pre- and post-restructure.
+  git -C "$tmp" sparse-checkout set skills/healthcare/health skills/health 2>/dev/null || true
+  if [ -f "$tmp/skills/healthcare/health/pyproject.toml" ]; then
+    BROOMVA_HEALTH_SRC="$tmp/skills/healthcare/health"
+  elif [ -f "$tmp/skills/health/pyproject.toml" ]; then
+    BROOMVA_HEALTH_SRC="$tmp/skills/health"
+  else
+    fail "cloned broomva/skills but no health pyproject.toml at skills/healthcare/health or skills/health" 3
+  fi
   ok "Source: $BROOMVA_HEALTH_SRC (temp clone of broomva/skills)"
 }
 
@@ -209,6 +216,31 @@ case ":$PATH:" in
     ;;
 esac
 
+# ─── agents ──────────────────────────────────────────────────────────────────
+# The skill ships authored agents (agents/<name>.md) — the reasoning layer that
+# wields this CLI. Claude Code discovers subagents from ~/.claude/agents/, so
+# link them there: one install yields CLI + skill + agent. Source of truth stays
+# versioned with the skill; the link means a skill upgrade upgrades the agent.
+# Opt out with BROOMVA_HEALTH_NO_AGENTS=1.
+AGENTS_SRC="$BROOMVA_HEALTH_SRC/agents"
+AGENTS_DIR="${BROOMVA_HEALTH_AGENTS_DIR:-$HOME/.claude/agents}"
+if [ -z "${BROOMVA_HEALTH_NO_AGENTS:-}" ] && [ -d "$AGENTS_SRC" ]; then
+  mkdir -p "$AGENTS_DIR"
+  agent_count=0
+  for agent_md in "$AGENTS_SRC"/*.md; do
+    [ -e "$agent_md" ] || continue
+    agent_target="$AGENTS_DIR/$(basename "$agent_md")"
+    if [ -L "$agent_target" ] || [ -e "$agent_target" ]; then
+      rm -f "$agent_target"
+    fi
+    ln -s "$agent_md" "$agent_target"
+    agent_count=$((agent_count + 1))
+  done
+  if [ "$agent_count" -gt 0 ]; then
+    ok "Linked $agent_count agent(s) into $AGENTS_DIR"
+  fi
+fi
+
 # ─── verify ──────────────────────────────────────────────────────────────────
 log "Verifying installation..."
 "$TARGET" --version >/dev/null 2>&1 \
@@ -221,4 +253,6 @@ printf "  1. ${C_INFO}health auth login${C_OFF}         — one-time Garmin logi
 printf "  2. ${C_INFO}health doctor${C_OFF}             — verify paths, tokens, repo migration\n"
 printf "  3. ${C_INFO}health --format json status${C_OFF} — reflexive snapshot\n"
 printf "  4. ${C_INFO}health sync${C_OFF}                — incremental pull\n"
-printf "\nSee ${C_INFO}https://github.com/broomva/skills/tree/main/skills/health${C_OFF} for docs.\n"
+printf "  5. Ask your agent: ${C_INFO}\"how's my recovery?\"${C_OFF} — the health-analyst agent\n"
+printf "     reads this CLI for you (restart your agent session to pick it up).\n"
+printf "\nSee ${C_INFO}https://github.com/broomva/skills/tree/main/skills/healthcare/health${C_OFF} for docs.\n"

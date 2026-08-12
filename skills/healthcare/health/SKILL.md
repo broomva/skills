@@ -1,7 +1,7 @@
 ---
 name: health
 category: healthcare
-version: 0.11.0
+version: 0.12.0
 primitive_candidate: P22  # not promoted; candidate per bstack-engine rule-of-three
 description: Personal health knowledge graph — local-first ingest of Garmin (Apple Health, Whoop, Oura, CGM in v2+) traces into SQLite, projected to Obsidian daily-note frontmatter, synthesized into validated longevity-proxy metrics (HRV-CV, CTL/ATL/TSB, VO2max arc). Hex architecture so new sources drop in as adapters. NOT a coaching surface in v1.
 author: broomva
@@ -47,6 +47,33 @@ place; never touches global Python.
 > **Agent:** if `command -v health` fails, run `bash <skill-dir>/install.sh`
 > (resolve `<skill-dir>` to the directory containing this `SKILL.md`) **before**
 > the first `health` command, then proceed. Re-run it after updating the skill.
+
+---
+
+## Agents (the reasoning layer)
+
+This skill ships authored agents in [`agents/`](agents/) — prompts as versioned
+data, released with the skill. `install.sh` links them into `~/.claude/agents/`,
+so one install yields **CLI + skill + agent**.
+
+| Agent | Invoke for | Tools |
+|---|---|---|
+| [`health-analyst`](agents/health-analyst.md) | "how did I sleep", "how's my recovery", "am I overreached", "what's my HRV trend", "summarize my last month" | `Bash`, `Read`, `Grep` |
+
+**Invocation paths:** auto-delegation (the host agent routes on the spec's
+`description`) · explicit (`Agent(subagent_type: "health-analyst", …)` or "use
+the health-analyst agent") · parallel fan-out (one per metric domain) ·
+scheduled (cron / `/loop`) for digests.
+
+**The split that makes this work:** the skill is the *retrieval substrate*
+(raw → structured → series → synthesis); the agent is the *reasoning layer*. An
+agent reaches data **only** through the `health` CLI — never Garmin, never the
+SQLite store — so ingest is never duplicated and every answer traces to a
+command. It also keeps large reads (a `raw` dump over months) inside the
+subagent's own context instead of the main thread.
+
+> New agents are a one-file PR: add `agents/<name>.md`, and
+> `tests/unit/test_agent_specs.py` pins the contract.
 
 ---
 
