@@ -143,9 +143,9 @@ mutate "definitional-always-false" \
 
 # 9. grounding no longer rescues a term from the shape heuristics
 mutate "grounding-does-not-rescue" \
-  '    if grounded:
+  '    if coverage == "grounded":
         return False' \
-  '    if grounded and False:
+  '    if coverage == "grounded" and False:
         return False'
 
 # 10. prefix-compound filter removed
@@ -273,7 +273,8 @@ mutate "definitional-treats-a-bare-hyphen-as-a-gloss" \
   'rf"{t}\s*[—–:=-]\s*\w",'
 
 mutate "dedupe-does-not-recompute-score" \
-  '            "score": score_concept(uses, c.agent_introduced, c.defined_inline, c.kind, c.coverage),' \
+  '            "score": score_concept(uses, c.agent_introduced, c.defined_inline,
+                                   c.kind, c.coverage, c.term),' \
   '            "score": c.score,'
 
 mutate "dedupe-keeps-first-not-best" \
@@ -289,8 +290,101 @@ mutate "partial-tier-accepts-short-generic-segments" \
   'PARTIAL_SEGMENT_MIN = 1'
 
 mutate "path-token-filter-removed" \
-  'if "/" not in tok and not PATH_EXT.search(tok.rstrip(".,;:)]}"))' \
+  'if "/" not in tok and not PATH_EXT.search(tok.rstrip(EDGE_PUNCT))' \
   'if True'
+
+# --- BRO-2129 precision round ---
+
+
+mutate "partial-coverage-no-longer-rescues" \
+  '        if is_noise(term, kind, stopwords, keep_terms, coverage=g.coverage):' \
+  '        if is_noise(term, kind, stopwords, keep_terms, coverage="ungrounded"):'
+
+mutate "quoted-tables-mined-again" \
+  '        text = TABLE_ROW.sub(" ", text)' \
+  '        pass'
+
+mutate "markdown-punctuation-hides-path-suffix" \
+  'PATH_EXT.search(tok.rstrip(EDGE_PUNCT))' \
+  'PATH_EXT.search(tok)'
+
+# --- P20 round-2: behaviours the review found unmutated ---
+
+mutate "harness-stopwords-removed" \
+  '    "skill", "skills", "agent", "agents", "prompt",' \
+  ''
+
+mutate "edge-punct-strips-leading-only" \
+  'PATH_EXT.search(tok.rstrip(EDGE_PUNCT))' \
+  'PATH_EXT.search(tok.lstrip(EDGE_PUNCT))'
+
+mutate "table-row-eats-any-line-with-a-pipe" \
+  'TABLE_ROW = re.compile(r"^[ \t]*>?[ \t]*\|.*\|[ \t]*$", re.MULTILINE)' \
+  'TABLE_ROW = re.compile(r"^.*\|.*$", re.MULTILINE)'
+
+mutate "table-row-applied-to-human-turns" \
+  '                       keep_code, strip_tables=False)' \
+  '                       keep_code, strip_tables=True)'
+
+mutate "suffix-penalty-zeroed" \
+  'SUFFIX_PENALTY = 3.5' \
+  'SUFFIX_PENALTY = 0.0'
+
+mutate "suffix-penalty-hits-grounded-terms" \
+  'if (term and coverage == "ungrounded" and has_generic_tail(term, kind))' \
+  'if (term and has_generic_tail(term, kind))'
+
+mutate "suffix-list-widened-to-real-nouns" \
+  '    "aligned", "shaped", "sized", "long", "deep", "side", "bound",' \
+  '    "aligned", "shaped", "sized", "long", "deep", "side", "bound", "lease", "chain",'
+
+mutate "partial-bypasses-the-stoplist-again" \
+  '    if low in stopwords:
+        return True
+    if len(term) < MIN_LEN.get(kind, 0):' \
+  '    if coverage == "partial":
+        return False
+    if len(term) < MIN_LEN.get(kind, 0):'
+
+# --- round-3 additions ---
+
+mutate "generic-tail-detection-removed" \
+  '    return len(segs) == 2 and segs[-1] in SUFFIX_SEGMENTS' \
+  '    return False'
+
+mutate "generic-tail-kind-gate-excludes-camel" \
+  '    if kind == "primitive":
+        return False
+    segs = normalize(term).split("-")' \
+  '    if kind not in ("kebab", "snake"):
+        return False
+    segs = normalize(term).split("-")'
+
+mutate "unreachable-stopwords-readded" \
+  '    "fail", "pass", "warn", "skip", "major", "minor",' \
+  '    "fail", "pass", "warn", "skip", "major", "minor", "blocker", "critical",'
+
+# --- round-4: the headline signal and two escapes had no mutation ---
+
+mutate "agent-introduced-bonus-zeroed" \
+  'AGENT_INTRODUCED_BONUS = 3.0' \
+  'AGENT_INTRODUCED_BONUS = 0.0'
+
+mutate "generic-tail-skips-snake" \
+  '    if kind == "primitive":
+        return False
+    segs = normalize(term).split("-")' \
+  '    if kind in ("primitive", "snake"):
+        return False
+    segs = normalize(term).split("-")'
+
+mutate "tech-acronym-stopwords-removed" \
+  '    "npm", "sdk", "mcp", "llm", "ast", "e2e", "qa", "vm", "ssh", "dns", "tls",' \
+  ''
+
+mutate "generic-tail-boundary-widened" \
+  '    return len(segs) == 2 and segs[-1] in SUFFIX_SEGMENTS' \
+  '    return len(segs) >= 2 and segs[-1] in SUFFIX_SEGMENTS'
 
 git checkout -q -- scripts/what_concepts.py
 echo
