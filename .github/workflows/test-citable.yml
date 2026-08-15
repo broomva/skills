@@ -1,0 +1,62 @@
+name: test-citable
+
+# Python test gate for the `citable` skill (skills/publishing/citable/).
+# Path-filtered so it runs ONLY when the skill changes.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/publishing/citable/**'
+      - '.github/workflows/test-citable.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/publishing/citable/**'
+      - '.github/workflows/test-citable.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-citable-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/publishing/citable
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install deps
+        run: pip install pytest
+      - name: Tests
+        run: python -m pytest -v
+
+  dogfood:
+    name: the gate must accept real publishable content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Exemplar article passes (exit 0)
+        working-directory: skills/publishing/citable
+        run: python3 scripts/citable_check.py tests/fixtures/exemplar-article.md --surface article
+      - name: Degenerate post is rejected (exit 1)
+        working-directory: skills/publishing/citable
+        run: |
+          if python3 scripts/citable_check.py tests/fixtures/degenerate-post.md --surface prose; then
+            echo "::error::degenerate fixture passed the gate — the gate is inert"
+            exit 1
+          fi
