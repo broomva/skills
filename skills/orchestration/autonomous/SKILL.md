@@ -106,7 +106,7 @@ The role contract is necessary but not sufficient. The skill adds three things t
 
 > The user invoked `/autonomous` to **stop instructing the agent on bstack discipline**. Asking them to confirm "should I check git status? should I update docs? should I open a PR? should I auto-merge?" violates the contract. The disciplines below are unconditional defaults. If a discipline cannot be applied, the agent states why in the response — but does not ask permission to apply it.
 
-## The 21-reflex pipeline
+## The 23-reflex pipeline
 
 When invoked, the agent runs this pipeline by default. Steps may be skipped only with explicit justification stated in the response.
 
@@ -120,16 +120,18 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
    | **Internal trigger** | **`/goal <condition>`** | **`/loop <interval>`** |
 
    Decision logic:
-   - Verifiable end state + bounded session + condition <4000 chars → invoke `/goal "<20-reflex-pipeline-completion-condition>"` as the first action; the goal owns the arc
+   - Verifiable end state + bounded session + condition <4000 chars → invoke `/goal "<23-reflex-pipeline-completion-condition>"` as the first action; the goal owns the arc
    - External completion event blocking (CI green, deploy verified) → P7 `p9 watch <pr> --background`
    - >1h work OR cross-session needed → P12 `persist iterate PROMPT.md` (then per-iteration agent runs `/autonomous` under `/goal` for its sub-task)
    - Time-triggered recurring routine → `/loop`
 
-   **Default for `/autonomous` invocation on substantive in-session work**: set `/goal "20-reflex pipeline complete: final response contains 9-item output contract, PR merged, git status clean, no unresolved PR comments"`. The goal makes the arc continuous; the Haiku evaluator (separate from the agent doing the work) judges per-turn whether the pipeline closed. Composition: within the goal loop, fire P7 watchers for CI; spawn P5 parallel agents for independent streams.
+   **Default for `/autonomous` invocation on substantive in-session work**: set `/goal "23-reflex pipeline complete: final response leads with the handback ask block if anything is open, carries the 9-item receipt, PR merged, git status clean, no unresolved PR comments, no unblocked lane left unrun"`. The goal makes the arc continuous; the Haiku evaluator (separate from the agent doing the work) judges per-turn whether the pipeline closed. Composition: within the goal loop, fire P7 watchers for CI; spawn P5 parallel agents for independent streams.
 
    **State the chosen mechanism + 2×2 quadrant in your response.** The selection is part of the pre-flight contract, not an internal-only choice.
 
 1. **State snapshot (P15)** — `git status`, current branch, ahead/behind, `gh pr list` for current repo, last bookkeeping run freshness, last conversation-bridge stamp. Surface what was loaded in the response.
+
+1b. **Ask ledger (P14 applied to humans)** — enumerate the *human* dependency chain the same way step 3 enumerates the code one: every input the arc will need that only a person can supply, with its class (`credential` / `authority` / `decision` / `artifact` / `scope` / `external`), the lanes it gates, and a safe default. Write it to `.control/asks/<arc>.yaml`. **Check `.control/preauth.yaml` first** — a standing grant means the question is already answered and must not be re-raised. Then **batch every pre-answerable ask into ONE `AskUserQuestion` at hour 0**, while the human is awake, with recommended defaults pre-selected. Measured: 81% of blocked sessions named at least one blocker class that was knowable before the arc started; credentials alone are 65%. An ask discovered mid-arc is *never* asked interactively — the human is gone by then; it is appended to the ledger, notified, and rendered at exit.
 
 2. **role/x intake (P17)** — score `roles/*.md` lens registry against signals from step 1 (touched files, current branch, prompt keywords, Linear labels); threshold ≥2 matches selects a lens; walk `extends:` chain to `_meta`; decide mode (`augment` default / `rewrite` if prompt ambiguous / `decompose` if ≥2 independent domains). **State the lens(es) + mode in your response.** The lens's `quality_bar` becomes the P14 dep-chain template for step 4; the lens's `context_loaders` informs P11 validation surfaces for step 6. If no lens scores ≥2, apply `_meta` only — that's the workspace's baseline identity, not a fallback. CLI helpers available: `python3 ~/.agents/skills/role-x/scripts/role-x.py {list, validate, index}`.
 3. **Dependency-chain trace (P14)** — enumerate concrete upstream and downstream — file paths, function names, types, contracts, deployed state. Not "I considered dependencies" — actual list.
@@ -180,6 +182,8 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
 20. **Janitor (P9, P10)** — `make janitor` immediately after merge. Worktree pruned, branch deleted, clean tree. **Concrete test**: `git status` is clean AND `git worktree list` shows no orphans AND the merged branch is gone from both `git branch` and `git branch -r`.
 
 21. **Dogfood receipt (P11)** — Final response contains the 9-item output contract with multi-modal evidence: screenshot, log snippet, deploy URL, transcript line, or PR diff. The receipt is the cohesion glue — what makes P11's "validate by interacting" durable across the session boundary.
+
+22. **Handback, only when the unblocked set is empty (BRO-2179)** — **blocked is a LANE state, not an ARC state.** When an ask fires: park the lanes it gates, emit the ask (push it if outside 08:00–23:00 in the ledger's `tz`), and continue on the next unblocked lane. Schedule lanes carrying pre-answerable asks *during waking hours* and pure agent-executable lanes into the unattended window — the inversion of the measured default. Terminate only when no lane can run, and terminate through `skills/orchestration/handback`. **Asking is the last resort, not the interface:** no ask may exist until the seven-rung autonomy ladder (read → standing grant → delegate to a fresh agent → reroute the mechanism → loop → take a reversible default → ask) has been climbed and recorded in the row's `exhausted` list. Rung 6 is where most asks should die: a choice undoable with one commit warrants a line in the receipt, not a stopped arc.
 
 ## When to invoke
 
@@ -295,7 +299,16 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 
 ## Output contract (canonical from the role-contract final-output spec)
 
-When the agent runs autonomous on a work unit, the **final response** provides the 9-item final summary from the canonical prompt, with bstack-specific evidence:
+**Ordering is part of the contract (BRO-2179).** When the arc ends with anything the
+human must decide, the final response opens with the `handback` ask block and the
+nine items follow *underneath it*, unchanged. When nothing is open, the nine items
+lead as before. The free-form narrative — "what happened", review sagas,
+corrections-to-my-own-work prose — does **not** belong in the chat message; it goes
+to `docs/handoffs/<arc>.md`. Measured: across 100 long sessions the ask landed at
+~80% depth and 0 of 31 blocked messages contained a single imperative addressed to
+the reader. See `skills/orchestration/handback/SKILL.md`.
+
+The **final response** provides the 9-item final summary from the canonical prompt, with bstack-specific evidence:
 
 1. **Dependency chain identified** — concrete upstream + downstream (P14 enumeration)
 2. **Execution plan followed** — what was planned vs what was done; deviations explained
