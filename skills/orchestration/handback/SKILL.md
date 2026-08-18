@@ -4,9 +4,10 @@ category: orchestration
 description: |
   Terminal-message contract for an autonomous arc that has run out of
   agent-executable work and genuinely needs a human. Produces a WORK ORDER —
-  asks first, each one an imperative addressed to the reader, each carrying a
-  default so silence is never fatal — followed by the unchanged nine-item
-  receipt. Distinct from `handoff` (same arc, different reader: `handoff`
+  asks first, each one an imperative addressed to the reader, carrying a default
+  so silence is never fatal (the exception is narrow and must be named:
+  irreversible, externally visible, or spends money) — followed by the unchanged
+  nine-item receipt. Distinct from `handoff` (same arc, different reader: `handoff`
   writes `docs/handoffs/` for the NEXT AGENT; `handback` writes the chat
   message for the HUMAN AS DECISION-MAKER).
   Asking is the last resort, not the interface: no ask may exist until the
@@ -30,13 +31,22 @@ wall-clock and ≥150 assistant turns):
 
 | | |
 |---|---|
-| Long arcs ending on a blocker | **31 / 100** |
+| Long arcs whose final message mentions a blocker at all | 31 / 100 |
+| Long arcs **halting on a human** (terminal-stance phrasing) | **18 / 100** |
+| …of those 18, containing a conforming ask block | **0 / 18** |
+| …containing an imperative anywhere in the message | 3 / 18 |
 | …containing any `?` at all | 13% |
 | …with the question next to the blocker it describes | 6% |
-| …containing an imperative addressed to the reader | **0 / 31** |
 | Stating a default if the human stays silent | 5% of all 100 |
 | Ever emitting a push notification | **0 / 100** |
 | Blockers knowable before the arc started | **81%** |
+
+The two blocker rows differ on purpose. The broad count (31) includes messages
+that merely *mention* being blocked — "the pre-commit hook blocked it", "#381
+remains blocked by the hang". The narrow count (18) is the defensible one: a
+terminal message that stops the arc **on a person**. The enforcement gate keys on
+the narrow definition, because refusing a healthy receipt that happens to contain
+the word "blocked" would fight the operator.
 
 The ask usually exists. It is placed last, written in the indicative ("Not
 merged — auto-merge correctly blocked"), and carries no default, so the arc
@@ -71,7 +81,7 @@ continue on the next unblocked lane. Run `handback` only when the unblocked set
 is empty. An arc that halts with runnable work left is the failure this skill
 exists to prevent.
 
-## The shape — four blocks, always in this order
+## The shape — five blocks, always in this order
 
 ```
 ## ⛔ Blocked on you — N items, ~M min
@@ -102,7 +112,7 @@ Each is derived from a measured failure, not a style preference.
    *Measured: the ask lands around p80 of the message.*
 2. **Every row is an imperative addressed to "you"** — a command to run, a link
    to click, a value to paste, or a one-line answer to a closed question.
-   *Measured: 0 of 31 blocked messages contained one.*
+   *Measured: 0 of the 18 halting messages contained a conforming ask block.*
 3. **A decision row offers options, not an open question.** Two or three
    concrete choices, each with its consequence in one line, one marked as the
    recommendation. Never "what should we do about X?" — always "A, B, or C; I

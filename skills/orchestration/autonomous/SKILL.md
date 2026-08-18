@@ -98,7 +98,7 @@ The role contract's 10 execution requirements map to bstack primitives. The skil
 
 The role contract is necessary but not sufficient. The skill adds three things the prompt cannot specify (because they are workspace-specific):
 
-1. **Concrete reflex triggers** (the 19-step pipeline below) — when each primitive fires, in what order
+1. **Concrete reflex triggers** (the 23-step pipeline below) — when each primitive fires, in what order
 2. **Anti-rationalization table** — the excuses agents make under pressure to skip steps, with explicit counters
 3. **Red-flags STOP list** — symptoms of impending skill violation, with the corrective action
 
@@ -107,6 +107,10 @@ The role contract is necessary but not sufficient. The skill adds three things t
 > The user invoked `/autonomous` to **stop instructing the agent on bstack discipline**. Asking them to confirm "should I check git status? should I update docs? should I open a PR? should I auto-merge?" violates the contract. The disciplines below are unconditional defaults. If a discipline cannot be applied, the agent states why in the response — but does not ask permission to apply it.
 
 ## The 23-reflex pipeline
+
+> Numbering note: the list runs 1 … 22 and includes the interstitial steps `1b`
+> (ask ledger) and `15.5` (cross-model review), so there are 23 reflexes across 22
+> ordinals. Every count in this file refers to reflexes, not ordinals.
 
 When invoked, the agent runs this pipeline by default. Steps may be skipped only with explicit justification stated in the response.
 
