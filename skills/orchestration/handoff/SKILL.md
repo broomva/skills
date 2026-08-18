@@ -241,6 +241,7 @@ This too is a reflex, not a request.
 | **`bookkeeping`** | When the handoff cites lessons that should also live as entity pages (`research/entities/pattern/<lesson>.md`). File the lesson via `bookkeeping file` AFTER the handoff is written; reference the entity in the handoff's "Related context" section. |
 | **`make-spec`** | When the handoff is dense enough that a separate HTML companion (spec / plan) is warranted. The handoff stays markdown; the companion is HTML. P18 audience rule: handoff is agent-loaded → markdown. |
 | **`/p9 watch`** | If the handoff is being written mid-CI (after a push, before merge), include the watch command + PR number so the next agent doesn't restart the wait. |
+| **`handback`** | Whenever the arc is stopping on something only a *person* can resolve. The two are siblings with different readers: `handback` is the chat message the **human** acts on (asks first, each with a default); this handoff is what the **next agent** loads. The handback's Detail block links here, and the narrative — the review sagas, the corrections, the what-happened prose — belongs in this document rather than in that message. |
 
 ## Validation (handoff self-test)
 
