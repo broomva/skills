@@ -98,7 +98,7 @@ The role contract's 10 execution requirements map to bstack primitives. The skil
 
 The role contract is necessary but not sufficient. The skill adds three things the prompt cannot specify (because they are workspace-specific):
 
-1. **Concrete reflex triggers** (the 23-step pipeline below) — when each primitive fires, in what order
+1. **Concrete reflex triggers** (the 24-step pipeline below) — when each primitive fires, in what order
 2. **Anti-rationalization table** — the excuses agents make under pressure to skip steps, with explicit counters
 3. **Red-flags STOP list** — symptoms of impending skill violation, with the corrective action
 
@@ -106,11 +106,13 @@ The role contract is necessary but not sufficient. The skill adds three things t
 
 > The user invoked `/autonomous` to **stop instructing the agent on bstack discipline**. Asking them to confirm "should I check git status? should I update docs? should I open a PR? should I auto-merge?" violates the contract. The disciplines below are unconditional defaults. If a discipline cannot be applied, the agent states why in the response — but does not ask permission to apply it.
 
-## The 23-reflex pipeline
+## The 24-reflex pipeline
 
 > Numbering note: the list runs 1 … 22 and includes the interstitial steps `1b`
-> (ask ledger) and `15.5` (cross-model review), so there are 23 reflexes across 22
-> ordinals. Every count in this file refers to reflexes, not ordinals.
+> (ask ledger) and `15.5` (cross-model review), so there are **24 reflexes across 22
+> ordinals** — 22 + 2. Every count in this file refers to reflexes, not ordinals.
+> (The first correction of this said 23 and was still off by one; cross-model
+> review caught the arithmetic, not just the drift.)
 
 When invoked, the agent runs this pipeline by default. Steps may be skipped only with explicit justification stated in the response.
 
@@ -124,12 +126,12 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
    | **Internal trigger** | **`/goal <condition>`** | **`/loop <interval>`** |
 
    Decision logic:
-   - Verifiable end state + bounded session + condition <4000 chars → invoke `/goal "<23-reflex-pipeline-completion-condition>"` as the first action; the goal owns the arc
+   - Verifiable end state + bounded session + condition <4000 chars → invoke `/goal "<24-reflex-pipeline-completion-condition>"` as the first action; the goal owns the arc
    - External completion event blocking (CI green, deploy verified) → P7 `p9 watch <pr> --background`
    - >1h work OR cross-session needed → P12 `persist iterate PROMPT.md` (then per-iteration agent runs `/autonomous` under `/goal` for its sub-task)
    - Time-triggered recurring routine → `/loop`
 
-   **Default for `/autonomous` invocation on substantive in-session work**: set `/goal "23-reflex pipeline complete: final response leads with the handback ask block if anything is open, carries the 9-item receipt, PR merged, git status clean, no unresolved PR comments, no unblocked lane left unrun"`. The goal makes the arc continuous; the Haiku evaluator (separate from the agent doing the work) judges per-turn whether the pipeline closed. Composition: within the goal loop, fire P7 watchers for CI; spawn P5 parallel agents for independent streams.
+   **Default for `/autonomous` invocation on substantive in-session work**: set `/goal "24-reflex pipeline complete: final response leads with the handback ask block if anything is open, carries the 9-item receipt, PR merged, git status clean, no unresolved PR comments, no unblocked lane left unrun"`. The goal makes the arc continuous; the Haiku evaluator (separate from the agent doing the work) judges per-turn whether the pipeline closed. Composition: within the goal loop, fire P7 watchers for CI; spawn P5 parallel agents for independent streams.
 
    **State the chosen mechanism + 2×2 quadrant in your response.** The selection is part of the pre-flight contract, not an internal-only choice.
 
@@ -309,8 +311,8 @@ nine items follow *underneath it*, unchanged. When nothing is open, the nine ite
 lead as before. The free-form narrative — "what happened", review sagas,
 corrections-to-my-own-work prose — does **not** belong in the chat message; it goes
 to `docs/handoffs/<arc>.md`. Measured: across 100 long sessions the ask landed at
-~80% depth and 0 of 31 blocked messages contained a single imperative addressed to
-the reader. See `skills/orchestration/handback/SKILL.md`.
+~80% depth and none of the 18 messages that halted the arc on a human carried an
+ask block a person could act on. See `skills/orchestration/handback/SKILL.md`.
 
 The **final response** provides the 9-item final summary from the canonical prompt, with bstack-specific evidence:
 
@@ -323,6 +325,8 @@ The **final response** provides the 9-item final summary from the canonical prom
 7. **Validation and CI/CD results** — test runs, lint, typecheck, build, P11 multi-modal evidence (screenshots, log snippets, browser session transcripts)
 8. **Merge result** — branch merged, branch deleted, worktree pruned (P9, P10); auto-merge gate decision (P4 + P7)
 9. **Remaining follow-up items** — tickets created, candidates logged in `bstack-engine.md` ledger, knowledge promoted (P6)
+
+> Measurement behind the ordering clause (BRO-2179): of 100 long sessions, **18 halted the arc on a human** and **none of the 18** carried an ask block a person could act on; 5% said what happens if the human stays silent. The broader "31 mention a blocker" figure counts healthy receipts that merely describe something being blocked, and is not the number this contract keys on.
 
 If any field is genuinely N/A for the work unit, state why explicitly. *"N/A"* without reason violates the role contract's "do not declare completion unless the whole chain is validated."
 
