@@ -37,8 +37,9 @@ tags:
 # Omit this field entirely if the entity is domain-agnostic.
 module: "{project-or-domain}"
 
-# 3 for Layer-3 entity pages (the common case); Layer-4 synthesis pages use 4.
-# Independent of `status` — the lifecycle applies the same at both layers.
+# 3 for Layer-3 entity pages (the common case); 4 for Layer-4 pages.
+# Independent of `status` — the lifecycle applies the same at both layers, so a
+# `layer: 4` page is promoted to `status: entity` like any other.
 layer: 3
 
 # ── PROVENANCE ────────────────────────────────────────────────────────────────
