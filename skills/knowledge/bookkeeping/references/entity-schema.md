@@ -45,8 +45,16 @@ module: "{project-or-domain}"
 # Omit if the entity is domain-agnostic.
 
 layer: 3
-# Required. Always 3 for entity pages (Layer 3 in the knowledge lifecycle).
-# Layer 4 synthesis notes use their own template and always have layer: 4.
+# Required. 3 for Layer-3 entity pages (the common case).
+# Layer-4 synthesis pages carry `layer: 4` and use their own template.
+#
+# `layer` records WHAT A PAGE IS; `status` records HOW FAR ALONG IT IS. The two
+# are independent axes, and the §3 status lifecycle applies unchanged at BOTH
+# layers — a `layer: 4` page is promoted to `status: entity` by the same trigger
+# as a `layer: 3` one. (Before 2026-08-18 this comment read "Always 3 for entity
+# pages", which was read as forbidding `layer: 4` + `status: entity` and left all
+# three Layer-4 pages permanently stuck at `candidate` with no reachable terminal
+# state. BRO-2180.)
 
 # ── PROVENANCE ────────────────────────────────────────────────────────────────
 sources:
@@ -201,8 +209,8 @@ raw → candidate → entity → synthesis → archived
 |--------|---------|-------------------|
 | **raw** | Extracted but not yet reviewed. May have errors. | Created by automated extraction or Pass 1 heuristic. |
 | **candidate** | Promoted by LLM judge with `confidence: low`. Needs human verification. | Pass 2 judge outputs `confidence: low` + `decision: promote`. |
-| **entity** | Verified, clean, ready to participate in graph traversal. | Human or high-confidence judge confirms. |
-| **synthesis** | Entity has been incorporated into a Layer 4 synthesis note. | Synthesis note lists this entity in `compounds_from`. |
+| **entity** | Verified, clean, ready to participate in graph traversal. Valid at `layer: 3` and `layer: 4` alike. | Human or high-confidence judge confirms. |
+| **synthesis** | Entity has been **incorporated into** a Layer-4 synthesis note. Note this describes being *cited by* one — it is not the status of a page that *is* a Layer-4 synthesis; such a page uses `entity` like any other. | Synthesis note lists this entity in `compounds_from`. |
 | **archived** | Superseded, disproved, or no longer relevant. Kept for provenance. | Manual decision; add `archived_reason` field when archiving. |
 
 ---
