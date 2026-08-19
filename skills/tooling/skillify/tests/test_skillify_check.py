@@ -1263,3 +1263,32 @@ def test_survey_plus_positional_is_rejected_not_silently_ignored(tmp_path):
     d = _skill(tmp_path, name="x", tier="D")
     rc, out, err = _run(str(d), "--survey", str(tmp_path))
     assert rc == 2 and "different modes" in err
+
+
+# --- mutation survivors from the round-1 proof -------------------------------
+# Both tests below exist because a mutant SURVIVED: the tests written alongside the
+# fix passed for a reason other than the one they claimed to pin.
+
+def test_non_boolean_trigger_values_do_not_establish_polarity(tmp_path):
+    """M10 survived: `{"should_fire": null}` fails for the wrong reason (None is
+    falsy, so the positive arm stays unset either way). The value that actually
+    distinguishes a real-boolean check from a truthiness check is a non-boolean
+    truthy/falsy PAIR — under a truthiness reading `1`/`0` looks like both polarities.
+    A YAML author writing `should_fire: 1` must not buy a lens gate."""
+    d = _l(tmp_path, [{"should_fire": 1}, {"should_fire": 0}])
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "no routing eval" in step2["detail"]
+
+
+def test_non_case_files_with_content_are_not_held_out_cases(tmp_path):
+    """M16 survived: `.gitkeep` and `README.md` are both rejected by *other* clauses
+    (empty content, and the readme stem list), so neither pinned the dotfile or
+    extension guards. A non-empty dotfile and a non-empty `.log` do."""
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / ".DS_Store").write_text("binary-ish content\n", encoding="utf-8")
+    (ho / "scratch.log").write_text("some run output\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
