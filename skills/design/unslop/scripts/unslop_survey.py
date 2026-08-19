@@ -746,7 +746,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             for i, line in enumerate(lines, 1):
                 # values inside @keyframes are animation states (pulse rings), not vocabulary
                 if "@keyframes" in line:
-                    in_keyframes = 1 + line.count("{") - line.count("}")
+                    in_keyframes = max(0, line.count("{") - line.count("}"))   # 0 when the block closes on the same line
                     continue
                 if in_keyframes:
                     in_keyframes += line.count("{") - line.count("}")
