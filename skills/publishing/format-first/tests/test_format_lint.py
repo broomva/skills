@@ -634,3 +634,14 @@ def test_crlf_input_behaves_identically_to_lf():
 def test_a_closer_with_trailing_whitespace_still_closes():
     dirty = "Mosseri said the polished, perfect aesthetic is dead."
     assert "unclosed-fence" not in ids("```\n" + dirty + "\n```   \n")
+
+
+def test_cadence_folklore_in_the_past_tense():
+    """"...is how the account grew" is the same claim; only the tense differed."""
+    for phrasing in ("Posting each day is how the account grew.",
+                     "The account grew because I was posting every day."):
+        assert "post-daily" in ids(phrasing + "\n"), phrasing
+
+
+def test_past_tense_widening_does_not_flag_an_unrelated_growth_sentence():
+    assert "post-daily" not in ids("The account grew after I switched to one format.\n")
