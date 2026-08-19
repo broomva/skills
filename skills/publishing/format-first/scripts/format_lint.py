@@ -226,6 +226,7 @@ LEDGER_KEYS = frozenset(
     {"_meta", "refuted", "folklore", "hypothesis_as_fact", "precision_without_source"}
 )
 RULE_KEYS = frozenset({"id", "pattern", "message", "instead", "grade", "citation_resolves"})
+PRECISION_KEYS = frozenset({"pattern", "marker_regex", "message", "instead", "window_lines"})
 
 
 def _validate_schema(data: dict, _fail) -> None:
@@ -295,6 +296,15 @@ def _validate_schema(data: dict, _fail) -> None:
         pws = data["precision_without_source"]
         if not isinstance(pws, dict):
             _fail(f"'precision_without_source' must be an object, got {type(pws).__name__}")
+        stray = sorted(set(pws) - PRECISION_KEYS)
+        if stray:
+            # Third level, same failure shape: a typo that REMOVES a required key is caught
+            # by the required-field check, but `window_liness` just falls back to the
+            # default window and changes the rule's reach without saying so.
+            _fail(
+                f"'precision_without_source' has unknown key(s) {stray} — expected only "
+                f"{sorted(PRECISION_KEYS)}"
+            )
         for field in ("pattern", "marker_regex", "message"):
             if not isinstance(pws.get(field), str) or not pws[field].strip():
                 _fail(f"precision_without_source needs a non-empty string '{field}'")

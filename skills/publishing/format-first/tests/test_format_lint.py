@@ -1935,3 +1935,34 @@ def test_the_shipped_ledger_uses_only_known_keys():
     for cat in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger[cat]:
             assert set(rule) <= fl.RULE_KEYS, (rule["id"], sorted(set(rule) - fl.RULE_KEYS))
+
+
+def test_a_misspelled_precision_key_is_rejected():
+    """Third level, same shape. A typo that REMOVES a required key is caught by the
+    required-field check, but `window_liness` silently falls back to the default window
+    and changes the rule's reach without saying so."""
+    import pytest
+
+    def typo(led):
+        led["precision_without_source"]["window_liness"] = 40
+
+    with pytest.raises(fl.LedgerError, match="unknown key"):
+        fl.load_ledger(_ledger_with(typo))
+
+
+def test_the_allow_lists_exactly_cover_the_shipped_ledger():
+    """Both directions: no legitimate key rejected, and no allowance that nothing uses.
+
+    An unused allowance is a key the schema permits but the ledger never exercises — which
+    is where a typo would land next.
+    """
+    ledger = json.loads(fl.LEDGER.read_text(encoding="utf-8"))
+    assert set(ledger) == fl.LEDGER_KEYS
+
+    used = set()
+    for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+        for rule in ledger[cat]:
+            used |= set(rule)
+    assert used == fl.RULE_KEYS, sorted(fl.RULE_KEYS ^ used)
+
+    assert set(ledger["precision_without_source"]) <= fl.PRECISION_KEYS
