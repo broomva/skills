@@ -1,0 +1,19 @@
+{
+  "skill": "unslop",
+  "version": 1,
+  "notes": "12 cases: 7 positive / 5 negative. Positives cover the vocabulary the discourse actually uses (vibecoded, AI-generated look, generic/templated, premium/crafted, de-slop) plus a pre-ship gate framing; the literal skill name is kept out of prompts so this measures description-matching. Negatives are the NOT-FOR clause as genuine near-misses: new-surface design, a11y audit alone, backend repo, one-line tweak, and prose slop (not UI).",
+  "cases": [
+    {"id": "golden-01", "prompt": "our landing page looks vibecoded, everyone says so. can you go through the whole repo and fix it properly, not just the hero", "should_trigger": true, "origin": "golden", "rationale": "the canonical trigger phrase + whole-repo scope"},
+    {"id": "golden-02", "prompt": "the app looks like every other AI-generated site — inter, purple gradients, three cards. make it feel premium and crafted with care, and prove it", "should_trigger": true, "origin": "golden", "rationale": "names the tells + the crafted bar + proof"},
+    {"id": "golden-03", "prompt": "before we ship this dashboard can you run whatever checks make sure it doesn't read as slop, and fix what you find at the source", "should_trigger": true, "origin": "golden", "rationale": "pre-ship gate framing, fix-at-source"},
+    {"id": "golden-04", "prompt": "de-slop apps/kleos-engine end to end, root causes not band-aids, then open a PR with screenshots", "should_trigger": true, "origin": "golden", "rationale": "de-slop verb + traversal + PR + evidence"},
+    {"id": "golden-05", "prompt": "this feels generic and templated. i want the fonts, colors, spacing, copy and loading states to feel intentional across the whole product", "should_trigger": true, "origin": "golden", "rationale": "generic/templated + cross-cutting scope incl. states"},
+    {"id": "golden-06", "prompt": "does this site pass the vibecoded test? if not, address it autonomously", "should_trigger": true, "origin": "golden", "rationale": "the 'test' framing + autonomy"},
+    {"id": "golden-07", "prompt": "the marketing site has no privacy page, lorem in two sections and stock photos. it also looks like claude made it. clean the whole thing up so it feels real", "should_trigger": true, "origin": "golden", "rationale": "substance tells + look tells together"},
+    {"id": "neg-01", "prompt": "design a brand-new pricing page for us from scratch, bold and different", "should_trigger": false, "origin": "negative", "rationale": "new surface → impeccable new-work / frontend-design"},
+    {"id": "neg-02", "prompt": "run an accessibility and performance audit on the checkout flow", "should_trigger": false, "origin": "negative", "rationale": "a11y/perf audit alone → impeccable audit"},
+    {"id": "neg-03", "prompt": "the API responses feel sloppy, refactor the handlers so the code is cleaner", "should_trigger": false, "origin": "negative", "rationale": "backend-only, 'sloppy' about code not UI"},
+    {"id": "neg-04", "prompt": "make the primary button a bit darker blue", "should_trigger": false, "origin": "negative", "rationale": "one-line style tweak"},
+    {"id": "neg-05", "prompt": "this blog post reads like AI wrote it, too many em dashes — rewrite it in my voice", "should_trigger": false, "origin": "negative", "rationale": "prose slop, not a UI codebase"}
+  ]
+}

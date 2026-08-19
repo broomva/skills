@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**86 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**87 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -77,7 +77,7 @@ npx skills add broomva/skills --skill '*'
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 86 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 87 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -157,6 +157,7 @@ npx skills add broomva/skills --skill '*'
 | [`design-distill`](skills/design/design-distill/) | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill that fires existing tools in sequence rather than reimplementing them |
 | [`design-engineering`](skills/design/design-engineering/) | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE… |
 | [`tekton`](skills/design/tekton/) | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
+| [`unslop`](skills/design/unslop/) | Remove the vibecoded / AI-slop look from any frontend codebase at the root, autonomously — full-repo survey with root-cause attribution, substance tells (legal, loading states, placeholders, real product evidence), and a deterministic crafted-floor gate; composes the impeccable detector |
 
 ### Finance & payments — `skills/finance/`
 
@@ -255,7 +256,7 @@ The 86 skills bucket into 22 single-noun categories — one row per `skills/<cat
 | Publishing & growth | `skills/publishing/` | 5 |
 | Video & multimedia | `skills/video/` | 6 |
 | Audio & music | `skills/audio/` | 2 |
-| Design & brand | `skills/design/` | 6 |
+| Design & brand | `skills/design/` | 7 |
 | Finance & payments | `skills/finance/` | 4 |
 | Compute infrastructure | `skills/compute/` | 3 |
 | Model runtimes | `skills/models/` | 2 |
