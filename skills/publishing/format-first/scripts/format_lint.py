@@ -203,6 +203,26 @@ def load_ledger(path: Path = LEDGER) -> dict:
     def _fail(what: str) -> None:
         raise LedgerError(f"format_lint: ledger at {path}: {what}")
 
+    try:
+        _validate_schema(data, _fail)
+    except LedgerError:
+        raise
+    except MemoryError:
+        raise
+    except Exception as exc:                       # noqa: BLE001
+        # A backstop, not a substitute for the explicit guards above. Every check in
+        # `_validate_schema` is written to reject hostile input politely; this catches the
+        # one that was missed. Four rounds each found a different unguarded operation, so
+        # the guarantee "this tool never tracebacks on a bad ledger" needed to stop
+        # depending on my having thought of every field.
+        raise LedgerError(
+            f"format_lint: ledger at {path} is malformed: {type(exc).__name__}: {exc}"
+        ) from None
+
+    return data
+
+
+def _validate_schema(data: dict, _fail) -> None:
     for cat in ("refuted", "folklore", "hypothesis_as_fact"):
         rules = data.get(cat, [])
         if not isinstance(rules, list):
@@ -213,9 +233,13 @@ def load_ledger(path: Path = LEDGER) -> dict:
             for field in ("id", "pattern", "message"):
                 if not isinstance(r.get(field), str) or not r[field].strip():
                     _fail(f"'{cat}'[{n}] needs a non-empty string '{field}'")
-            if r.get("grade") not in GRADE_SEVERITY:
+            grade = r.get("grade")
+            # isinstance BEFORE membership: `in` on an unhashable value (a JSON array or
+            # object) raises TypeError, and a schema check that crashes on hostile input is
+            # the thing this whole function exists to prevent.
+            if not isinstance(grade, str) or grade not in GRADE_SEVERITY:
                 _fail(
-                    f"rule {r['id']} has unknown grade {r.get('grade')!r} — a typo must "
+                    f"rule {r['id']} has unknown grade {grade!r} — a typo must "
                     "not silently downgrade severity"
                 )
             if "citation_resolves" in r and not isinstance(r["citation_resolves"], bool):
@@ -246,8 +270,6 @@ def load_ledger(path: Path = LEDGER) -> dict:
                 " — a window wide enough to span the document makes any citation anywhere"
                 " suppress every precision finding"
             )
-
-    return data
 
 
 def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:

@@ -1624,3 +1624,168 @@ def test_a_memory_error_while_decoding_still_propagates(monkeypatch):
     monkeypatch.setattr(type(path), "read_bytes", lambda self: _OomBytes(b"{}"))
     with pytest.raises(MemoryError):
         fl.load_ledger(path)
+
+
+# ---------- the schema space, swept rather than sampled ----------
+
+HOSTILE_VALUES = {
+    "list": [], "dict": {}, "int": 1, "float": 1.5, "none": None,
+    "bool": True, "empty string": "", "nested list": [[1]], "arbitrary string": "zzz",
+}
+
+
+def _ledger_with(mutate):
+    base = json.loads(fl.LEDGER.read_text(encoding="utf-8"))
+    mutate(base)
+    path = Path(tempfile.mkdtemp()) / "l.json"
+    path.write_text(json.dumps(base), encoding="utf-8")
+    return path
+
+
+# What each field legitimately accepts. Everything else in HOSTILE_VALUES must be rejected.
+# Declaring the VALID set rather than guessing the hostile one matters: the first version of
+# this sweep called `"zzz"` hostile for every field and failed on `id`, where any non-empty
+# string is correct. That was the test being wrong, not the code.
+VALID_FOR = {
+    "rule.id": {"arbitrary string"},
+    "rule.pattern": {"arbitrary string"},
+    "rule.message": {"arbitrary string"},
+    "rule.grade": set(),                     # only the five known grades, none of them here
+    "rule.citation_resolves": {"bool"},
+    "precision.pattern": {"arbitrary string"},
+    "precision.marker_regex": {"arbitrary string"},
+    "precision.message": {"arbitrary string"},
+    "precision.window_lines": {"int"},
+    # A category IS a list, and an empty one is a ledger with no rules in that grade.
+    "category": {"list"},
+}
+
+
+def test_every_schema_field_rejects_every_hostile_type():
+    """Field x type, swept in one test instead of one field per review round.
+
+    Four rounds each found a different unguarded operation in this function — a null rule,
+    a numeric pattern, a scalar precision block, an unhashable grade. Each fix closed one
+    field. Sweeping the product closes the space: any escape here is a traceback and exit 1
+    on a bad ledger, which is exactly what this function exists to prevent.
+    """
+    def expect_ledger_error(path, label):
+        """And expect an EXPLICIT guard, not the backstop.
+
+        The backstop converts any unforeseen crash in the validator into a LedgerError,
+        which means "did it raise LedgerError?" can no longer distinguish a field that is
+        properly checked from one that merely fails loudly. Mutation testing showed exactly
+        that: deleting the isinstance guard on `grade` changed no test, because the
+        backstop caught the TypeError instead. Asserting the MESSAGE restores the
+        distinction — the backstop's wording must not appear for any known shape.
+        """
+        try:
+            fl.load_ledger(path)
+        except fl.LedgerError as exc:
+            assert "is malformed:" not in str(exc), (
+                f"{label} reached the backstop instead of an explicit guard: {exc}"
+            )
+            return
+        except Exception as exc:                   # noqa: BLE001
+            raise AssertionError(f"{label} escaped as {type(exc).__name__}") from exc
+        raise AssertionError(f"{label} was accepted")
+
+    checked = 0
+    for scope, fields in (
+        ("rule", ("id", "pattern", "message", "grade", "citation_resolves")),
+        ("precision", ("pattern", "marker_regex", "message", "window_lines")),
+    ):
+        for field in fields:
+            allowed = VALID_FOR[f"{scope}.{field}"]
+            for name, value in HOSTILE_VALUES.items():
+                if name in allowed:
+                    continue
+                if scope == "rule":
+                    def mutate(led, f=field, v=value):
+                        led["refuted"][0][f] = v
+                else:
+                    def mutate(led, f=field, v=value):
+                        led["precision_without_source"][f] = v
+                expect_ledger_error(_ledger_with(mutate), f"{scope}.{field}={name}")
+                checked += 1
+
+    for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+        for name, value in HOSTILE_VALUES.items():
+            if name in VALID_FOR["category"]:
+                continue
+            def mutate(led, c=cat, v=value):
+                led[c] = v
+            expect_ledger_error(_ledger_with(mutate), f"{cat}={name}")
+            checked += 1
+
+    assert checked > 90, f"only {checked} combinations were exercised"
+
+
+def test_the_values_declared_valid_really_are_accepted():
+    """The inverse control. A validator that rejects everything would pass the sweep above."""
+    accepted = {
+        "rule.id": ("id", "some-rule-id"),
+        "rule.pattern": ("pattern", "zzz"),
+        "rule.message": ("message", "some message"),
+        "rule.citation_resolves": ("citation_resolves", True),
+    }
+    for label, (field, value) in accepted.items():
+        def mutate(led, f=field, v=value):
+            led["refuted"][0][f] = v
+        assert fl.load_ledger(_ledger_with(mutate))["refuted"], label
+
+    for field, value in (("window_lines", 7), ("message", "m"), ("marker_regex", "zzz")):
+        def mutate(led, f=field, v=value):
+            led["precision_without_source"][f] = v
+        assert fl.load_ledger(_ledger_with(mutate))["precision_without_source"], field
+
+    # An empty category is a ledger with no rules of that grade, not a malformed one.
+    def empty_category(led):
+        led["folklore"] = []
+
+    assert fl.load_ledger(_ledger_with(empty_category))["folklore"] == []
+
+
+def test_the_schema_backstop_converts_an_unforeseen_crash(monkeypatch):
+    """The explicit guards are the design; the backstop is the guarantee.
+
+    "This tool never tracebacks on a bad ledger" had been depending on my having thought of
+    every field, and four rounds showed I had not.
+    """
+    import pytest
+
+    def exploding_validator(_data, _fail):
+        raise TypeError("unhashable type: 'list'")
+
+    monkeypatch.setattr(fl, "_validate_schema", exploding_validator)
+    with pytest.raises(fl.LedgerError, match="malformed"):
+        fl.load_ledger()
+
+
+def test_the_backstop_does_not_swallow_memory_errors(monkeypatch):
+    import pytest
+
+    def oom(_data, _fail):
+        raise MemoryError("oom")
+
+    monkeypatch.setattr(fl, "_validate_schema", oom)
+    with pytest.raises(MemoryError):
+        fl.load_ledger()
+
+
+def test_an_arbitrary_parse_failure_is_bad_input(monkeypatch):
+    """Mirrors the decode-phase shim. The parse tests pinned only the MemoryError
+    exclusion, so a finite catch of JSONDecodeError/RecursionError/ValueError would have
+    survived — a reviewer caught that the two phases were tested asymmetrically."""
+    import pytest
+
+    class _OddJson:
+        @staticmethod
+        def loads(*_a, **_k):
+            raise LookupError("something unforeseen")
+
+    monkeypatch.setattr(fl, "json", _OddJson)
+    path = Path(tempfile.mkdtemp()) / "l.json"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(fl.LedgerError, match="not valid JSON"):
+        fl.load_ledger(path)
