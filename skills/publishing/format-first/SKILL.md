@@ -5,9 +5,10 @@ description: >
   circulates as fact. Encodes a claim set traced to primary sources — Meta's own
   engineering writeup and Transparency Center system cards, Mosseri's actual posts,
   and the psychology literature behind "hooks" and repetition — separating what is
-  documented, what is hypothesis, and what is refuted. Ships a linter that fails a
-  draft repeating any of six debunked claims or asserting a precise figure with no
-  loadable source. The core move is choosing a FORMAT (visual grammar x script
+  documented, what is hypothesis, and what is unsupported. Ships a linter that GRADES
+  each claim — refuted, contested, unverified, folklore — and errors only on the ones
+  contradicted by a primary source that was actually loaded, because "no source found"
+  is a statement about a search, not about the world. The core move is choosing a FORMAT (visual grammar x script
   structure) as the invariant and letting topic vary, rather than the reverse.
   Use when, PRE-PRODUCTION: (1) choosing what shape a piece should take before it
   is written, (2) deciding how often to repeat a format and when to rotate it,
@@ -19,7 +20,7 @@ description: >
   length, or citation by AI answer engines — that is citable, including the
   short-post-vs-long-article decision.** Triggers on "what format should I use",
   "is the algorithm punishing me", "should I post daily", "does this algorithm
-  claim hold up", "why do my posts flop", "3-second hook", "verify this platform
+  claim hold up", "which format should I repeat", "3-second hook", "verify this platform
   claim".
 ---
 
@@ -40,7 +41,9 @@ This skill separates three grades, and the separation is the point:
 |---|---|---|
 | **Documented** | The operator publishes it | ANN retrieval over item embeddings; `"similarity to other reels"` is a named input signal |
 | **Hypothesis** | Plausible, no source establishes it | that format consistency lowers embedding variance and thereby improves retrieval | <!-- format-lint: allow=embedding-variance-asserted -->
-| **Refuted** | Traced and found false or unlocatable | six claims in `references/claims-ledger.json` |
+| **Refuted** | Contradicted by a primary source that was loaded | the misquoted "polished aesthetic" line |
+| **Contested** | The literature genuinely disagrees | whether subliminal exposure is stronger |
+| **Unverified** | Origin could not be located — **not** proof of falsity | the 3–5x sends weighting; a widely-quoted effect size |
 
 The single most important line: **format-level clustering is not documented anywhere.**
 The negative claim (no format-keyed favor state exists) is well supported. The positive
