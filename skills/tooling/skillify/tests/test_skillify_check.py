@@ -1648,3 +1648,23 @@ def test_unterminated_html_comment_hides_an_example_outcome(tmp_path):
         encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "no outcome" in step2["detail"]
+
+
+def test_comment_only_shell_script_is_not_a_deterministic_core(tmp_path):
+    """The non-Python branch of `_has_executable_content`. After the verify round
+    Python routes through AST, leaving the line-prefix loop covered by nothing —
+    mutant M19 survived until this test existed."""
+    d = _skill(tmp_path, tier="D")
+    for f in (d / "scripts").glob("*"):
+        f.unlink()
+    (d / "scripts" / "do.sh").write_text("#!/bin/bash\n# TODO: implement\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_a_real_shell_script_still_counts(tmp_path):
+    d = _skill(tmp_path, tier="D")
+    for f in (d / "scripts").glob("*"):
+        f.unlink()
+    (d / "scripts" / "do.sh").write_text("#!/bin/bash\n# does a thing\necho hi\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"

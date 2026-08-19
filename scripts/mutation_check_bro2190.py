@@ -102,7 +102,7 @@ MUTANTS = [
     ("M19 comment-only script accepted as a deterministic core",
      '        if not t.startswith(_COMMENT_PREFIXES):\n            return True',
      '        return True',
-     "test_comment_only_script_is_not_a_deterministic_core"),
+     "test_comment_only_shell_script_is_not_a_deterministic_core"),
     ("M20 polarity read recursively from the whole document again",
      '    pos = neg = False\n    for k, v in data.items():',
      '    pos = neg = False\n    def _w(n):\n        nonlocal pos, neg\n        if isinstance(n, dict):\n            a, b = _case_polarity(n)\n            pos, neg = pos or a, neg or b\n            for vv in n.values(): _w(vv)\n        elif isinstance(n, list):\n            for vv in n: _w(vv)\n    _w(data)\n    for k, v in data.items():',
@@ -162,6 +162,10 @@ MUTANTS = [
      "test_top_level_list_eval_is_visible_not_invisible"),
 
     # --- verify round -------------------------------------------------------
+    ("M38 python AST emptiness check always reports content",
+     '        return bool(body)',
+     '        return True',
+     "test_comment_only_script_is_not_a_deterministic_core"),
     ("M34 docstring-only script accepted as a deterministic core",
      '            body = body[1:]  # drop the module docstring',
      '            pass',
@@ -176,7 +180,7 @@ MUTANTS = [
      "test_unterminated_html_comment_hides_an_example_outcome"),
     ("M37 rejection scanned as a bare word again (the false-FAIL regression)",
      '    for m in _OUTCOME_LABEL_RE.finditer(raw):',
-     '    for m in re.finditer(r"()(?=rejected)", raw, re.IGNORECASE):',
+     '    for m in re.finditer(r"(rejected)", raw, re.IGNORECASE):',
      "test_ordinary_prose_mentioning_rejection_is_not_a_rejected_verdict"),
 ]
 
