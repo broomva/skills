@@ -332,3 +332,19 @@ def test_webp_evidence_needs_parseable_dimensions(tmp_path):
     vp8x_small = b"RIFF" + (9000).to_bytes(4, "little") + b"WEBPVP8X" + (10).to_bytes(4, "little") + b"\x00" * 4 + (389).to_bytes(3, "little") + (799).to_bytes(3, "little")
     (ev / "index-1280.webp").write_bytes(vp8x_small + b"\x00" * 9000)
     assert _gate(root, evidence_dir=ev)["evidence.render"].status == "FAIL"
+
+
+def test_copy_module_predicate_ignores_test_and_story_files(tmp_path):
+    root = _repo(tmp_path, "cmtest", {
+        "src/content.test.ts": 'expect(x).toBe("Lorem ipsum John Doe");',
+        "src/content.stories.ts": 'export const Default = { args: { name: "Acme Inc." } };',
+        "src/content.ts": 'export const hero = "Lorem ipsum";',
+    })
+    ph = us.survey(root)["substance"]["placeholders"]
+    assert "john-jane-doe" not in ph and "acme" not in ph
+    assert "lorem-ipsum" in ph and all("content.ts" in x for x in ph["lorem-ipsum"])
+
+
+def test_jsx_expression_string_attrs_count_as_copy(tmp_path):
+    root = _repo(tmp_path, "attrx", {"src/Hero.tsx": '<img alt={"Effortless onboarding"} className="w-full" />'})
+    assert us.survey(root)["copy_tells"]["buzzwords"]["count"] == 1

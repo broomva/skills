@@ -49,7 +49,7 @@ SKIP_DIRS = {
     "lighthouse", ".lighthouseci", "reports", ".svelte-kit", ".parcel-cache", ".angular", ".expo",
 }
 # .ts/.js modules that carry landing/marketing copy — scanned for copy + substance tells like UI files
-RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo)(\.[a-z]+)*\.[cm]?[jt]s$", re.I)
+RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo)(\.(?!test|spec|stories|d)[a-z]+)*\.[cm]?[jt]s$", re.I)
 # server-side / non-surface files that can never carry a loading state
 RE_SERVER_SIDE_UI = re.compile(r"(^|/)(api|server|middleware|workers?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]sx?$", re.I)
 RE_SERVER_SIDE = re.compile(r"(^|/)(api|server|db|lib|utils?|hooks?|middleware|workers?|scripts?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]s$|(^|/)use-[a-z-]+\.[jt]sx?$", re.I)
@@ -138,7 +138,8 @@ RE_CODE_ONLY_LINE = re.compile(r"^\s*(import\s|//|/\*|\*|\{/\*|@apply|[.#@][\w-]
 RE_JSX_ATTR = re.compile(r"""\b[\w:-]+\s*=\s*(?:"[^"]*"|'[^']*'|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})""")
 
 
-RE_COPY_ATTR_VALUES = re.compile(r"""\b(?:title|alt|placeholder|aria-label|label|description|subtitle|heading|tagline|caption)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+# quoted literals only — `alt={"…"}` / `alt={t("key")}` JSX-expression copy is a known gap (i18n keys are not copy anyway)
+RE_COPY_ATTR_VALUES = re.compile(r"""\b(?:title|alt|placeholder|aria-label|label|description|subtitle|heading|tagline|caption)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"([^"]*)"\s*\}|\{\s*'([^']*)'\s*\})""", re.I)
 RE_TAG = re.compile(r"<[^<>]*>")
 
 
@@ -576,7 +577,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         if "/components/ui/" in ("/" + rp) or rp.startswith("components/ui/"):
             component_libs.add("shadcn?(components/ui)")
 
-        # copy tells — UI files and .ts/.js *copy modules* (content/site/marketing/i18n…), never build/lib code
+        # copy tells — UI files and .ts/.js *copy modules* (content/site/marketing/i18n…, incl. src/lib/content.ts); never api/server/hook code
         # a .ts/.js module is a *copy module* when its basename (content.ts, site.ts, testimonials.ts, locales.ts…)
         # or a path segment (content/ data/ copy/ locales/ i18n/ messages/ marketing/) says so. `src/lib/content.ts`
         # IS scanned — lib/ is where this copy usually lives. API routes, server modules, middleware and hooks are
