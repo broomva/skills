@@ -1,5 +1,6 @@
 ---
 name: audit-harness-usage
+tier: D
 description: >-
   Audit token usage and estimated API-equivalent cost across local agent
   harness traces from Codex CLI, Claude Code, Gemini CLI, and Cursor usage

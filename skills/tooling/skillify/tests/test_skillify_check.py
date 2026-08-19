@@ -21,13 +21,15 @@ _spec.loader.exec_module(mod)
 # --- fixture builders --------------------------------------------------------
 
 def _skill(tmp: Path, *, name="demo", scripts=True, tests=True, latent=False,
-           desc="A demo skill.") -> Path:
+           desc="A demo skill.", tier=None) -> Path:
     d = tmp / name
     (d / "scripts").mkdir(parents=True, exist_ok=True)
     (d / "tests").mkdir(parents=True, exist_ok=True)
     fm = f"---\nname: {name}\ndescription: {desc}\n"
     if latent:
         fm += "latent_only: true\n"
+    if tier is not None:
+        fm += f"tier: {tier}\n"
     fm += "---\n# body\n"
     (d / "SKILL.md").write_text(fm, encoding="utf-8")
     if scripts:
@@ -56,11 +58,25 @@ def test_scripts_without_tests_fails(tmp_path):
     assert step3["status"] == "FAIL" and step3["required"]
 
 
-def test_latent_only_skill_exempt_from_code(tmp_path):
+def test_latent_only_no_longer_buys_a_blanket_exemption(tmp_path):
+    """BRO-2190: `latent_only: true` used to SKIP step 2 and step 3, so the branch
+    built to accommodate non-deterministic skills gated NOTHING. It must now still
+    satisfy a tier (J or L)."""
     d = _skill(tmp_path, scripts=False, tests=False, latent=True)
     res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
     step2 = next(r for r in res if r["step"] == 2)
-    assert step2["status"] == "SKIP"  # composition skill — no scripts required
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "cannot classify" in step2["detail"]
+
+
+def test_latent_only_with_a_real_tier_passes(tmp_path):
+    """The loosening is real: the same skill declaring tier L with a routing eval
+    passes, so closing the amnesty did not just make the gate stricter."""
+    d = _skill(tmp_path, scripts=False, tests=False, latent=True, tier="L")
+    _routing_eval(d)
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step2 = next(r for r in res if r["step"] == 2)
+    assert step2["status"] == "PASS"
     assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
 
 
@@ -128,7 +144,7 @@ def test_cli_json(tmp_path):
     assert rc == 0
     payload = json.loads(out)
     assert payload["failed"] == 0
-    assert len(payload["results"]) == 12  # ten steps + 1b (installable layout) + 1c (reference integrity)
+    assert len(payload["results"]) == 13  # ten steps + 1b + 1c + 2t (tier declaration)
 
 
 def test_cli_bad_dir_exit_2(tmp_path):
@@ -616,3 +632,306 @@ def test_step5_is_advisory_never_blocks(tmp_path):
     s5 = _step5(d)
     assert s5["status"] == "WARN"
     assert s5.get("required") is not True
+
+
+# ===========================================================================
+# Tiers — D / J / L (BRO-2190)
+# ===========================================================================
+
+def _routing_eval(d: Path, *, both_polarities=True) -> Path:
+    """A tier-L core: an eval asserting the skill fires and stays silent."""
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    cases = [{"prompt": "do the thing", "should_fire": True}]
+    if both_polarities:
+        cases.append({"prompt": "unrelated", "should_not_fire": True})
+    f = d / "evals" / "prompts.json"
+    f.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    return f
+
+
+def _judgment_evals(d: Path, *, admission="admitted", rubric=True, held_out=1,
+                    judge_model="gpt-5", under_model="haiku",
+                    floor=0.7, measured=True) -> None:
+    """A complete tier-J core, with each part individually removable."""
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    if admission is not None:
+        (d / "evals" / "admission.md").write_text(
+            "# Admission test\n\nTwo agents, same input, both outputs judged valid.\n\n"
+            f"Outcome: {admission}\n", encoding="utf-8")
+    if rubric:
+        (d / "evals" / "rubric.md").write_text("# Rubric\n\n- engages the argument\n",
+                                               encoding="utf-8")
+    judge = {"model": judge_model}
+    if floor is not None:
+        judge["agreement_floor"] = floor
+        if measured:
+            judge["agreement_measured"] = {
+                "value": floor, "method": "3 judges x 40 held-out cases, Krippendorff alpha",
+                "date": "2026-08-19"}
+    blob = {
+        "cases": [{"prompt": f"case {i}", "held_out": True} for i in range(held_out)],
+        "judge": judge,
+        "execution_contract": {"model": under_model},
+    }
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+
+
+def _step(res, step):
+    return next(r for r in res if r["step"] == step)
+
+
+def _check(d, **kw):
+    kw.setdefault("roles_dir", None)
+    kw.setdefault("registry", None)
+    kw.setdefault("entities_dir", None)
+    kw.setdefault("strict", False)
+    return mod.run_checklist(d, **kw)
+
+
+# --- tier D ------------------------------------------------------------------
+
+def test_tier_d_declared_with_code_passes(tmp_path):
+    d = _skill(tmp_path, tier="D")
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS"
+    assert "declared" in _step(res, 2)["detail"]
+
+
+def test_tier_d_declared_without_code_fails(tmp_path):
+    """Declaring a tier whose core you did not ship is the one thing the gate
+    must not permit — otherwise `tier:` is a self-issued exemption."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="D")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "no scripts" in step2["detail"]
+
+
+def test_tests_required_whenever_code_ships_regardless_of_tier(tmp_path):
+    """The old expression routed step 3 through latent_only, so a skill could ship
+    scripts and buy out of testing them. Tier L + scripts must still need tests."""
+    d = _skill(tmp_path, tests=False, tier="L")
+    _routing_eval(d)
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL" and step3["required"]
+
+
+# --- tier J ------------------------------------------------------------------
+
+def test_tier_j_complete_passes(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d)
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS", _step(res, 2)["detail"]
+    assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
+
+
+def test_tier_j_without_admission_record_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, admission=None)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "admission" in step2["detail"]
+
+
+def test_tier_j_admission_without_an_outcome_fails(tmp_path):
+    """Presence is not correctness: a file that describes the admission test but
+    never records its result leaves the skill unadmitted."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d)
+    (d / "evals" / "admission.md").write_text(
+        "# Admission test\n\nWe thought hard about whether two agents agree.\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "no outcome" in step2["detail"]
+
+
+def test_tier_j_admission_rejected_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, admission="rejected")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "rejected" in step2["detail"]
+
+
+def test_tier_j_self_judging_fails(tmp_path):
+    """A judge sharing the generator's substrate inflates confidence rather than
+    testing it — identical model is the degenerate case and must not pass."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, judge_model="haiku", under_model="haiku")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "self-judging" in step2["detail"]
+
+
+def test_tier_j_same_family_judge_warns_but_does_not_block(tmp_path):
+    """Distinct names, correlated substrate. The gate cannot honestly prove
+    cross-vendor from a bare string, so it warns rather than pretending."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, judge_model="opus", under_model="haiku")
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS"
+    warn = _step(res, "2j")
+    assert warn["status"] == "WARN" and "family" in warn["detail"]
+
+
+def test_tier_j_floor_without_measurement_fails(tmp_path):
+    """The whole point: an agreement floor nobody measured is an authored number.
+    This is the clamp the post-mortem that produced these tiers asked for."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, measured=False)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "agreement_measured" in step2["detail"]
+
+
+def test_tier_j_missing_floor_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, floor=None)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "agreement_floor" in step2["detail"]
+
+
+def test_tier_j_without_held_out_cases_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, held_out=0)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "held-out" in step2["detail"]
+
+
+def test_tier_j_without_rubric_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, rubric=False)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "rubric" in step2["detail"]
+
+
+def test_judge_execution_is_never_reported_as_a_pass(tmp_path):
+    """The anti-vacuity assertion. The LLM judge is a declared, unbuilt seam
+    (checks.py make_judge_check raises). A tier that certified itself through an
+    unimplemented judge would be exactly the false PASS this gate exists to stop —
+    so the judge RUN is a named SKIP even when every artifact is perfect."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d)
+    row = _step(_check(d), "2j*")
+    assert row["status"] == "SKIP"
+    assert row["status"] != "PASS"
+    assert "make_judge_check" in row["detail"]
+    assert not row["required"]
+
+
+# --- tier L ------------------------------------------------------------------
+
+def test_tier_l_with_routing_eval_passes(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    _routing_eval(d)
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS"
+    assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
+
+
+def test_tier_l_without_routing_eval_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "no routing eval" in step2["detail"]
+
+
+def test_tier_l_requires_resolver_eval_when_roles_dir_given(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    _routing_eval(d)
+    roles = tmp_path / "roles"
+    roles.mkdir()
+    step7 = _step(_check(d, roles_dir=roles), 7)
+    assert step7["status"] == "FAIL" and step7["required"]
+    (roles / "demo.eval.yaml").write_text("cases: []\n", encoding="utf-8")
+    assert _step(_check(d, roles_dir=roles), 7)["status"] == "PASS"
+
+
+def test_tier_l_resolver_eval_not_required_without_roles_dir(tmp_path):
+    """Absence of a FLAG must never be scored as absence of an EVAL."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    _routing_eval(d)
+    step7 = _step(_check(d), 7)
+    assert step7["status"] == "SKIP" and not step7["required"]
+
+
+# --- classification ----------------------------------------------------------
+
+def test_unclassifiable_skill_still_fails(tmp_path):
+    """Inference decides WHICH gate, never WHETHER one applies. A skill with no
+    code, no eval and no admission record is as ungated as before and must fail."""
+    d = _skill(tmp_path, scripts=False, tests=False)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_unclassifiable_message_names_the_procedure_residue(tmp_path):
+    """The 41/94 uncarved skills are procedure skills; telling them to pick one of
+    three tiers that do not fit would be confidently wrong advice (BRO-2192)."""
+    d = _skill(tmp_path, scripts=False, tests=False)
+    assert "BRO-2192" in _step(_check(d), 2)["detail"]
+
+
+def test_inferred_tier_warns(tmp_path):
+    d = _skill(tmp_path)  # ships code, no tier: declared
+    row = _step(_check(d), "2t")
+    assert row["status"] == "WARN" and not row["required"]
+    assert "inferred" in row["detail"]
+
+
+def test_declared_tier_emits_no_inference_warning(tmp_path):
+    d = _skill(tmp_path, tier="D")
+    assert not [r for r in _check(d) if r["step"] == "2t"]
+
+
+def test_invalid_tier_value_fails(tmp_path):
+    d = _skill(tmp_path, tier="X")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "not one of D/J/L" in step2["detail"]
+
+
+def test_latent_only_with_scripts_is_still_a_contradiction(tmp_path):
+    d = _skill(tmp_path, latent=True)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "contradiction" in step2["detail"]
+
+
+# --- survey ------------------------------------------------------------------
+
+def test_survey_tallies_by_tier(tmp_path):
+    _skill(tmp_path, name="ddd", tier="D")
+    lll = _skill(tmp_path, name="lll", scripts=False, tests=False, tier="L")
+    _routing_eval(lll)
+    _skill(tmp_path, name="nope", scripts=False, tests=False)
+    rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 3
+    assert rep["by_tier"]["D"] == 1
+    assert rep["by_tier"]["L"] == 1
+    assert rep["by_tier"]["unclassified (inferred)"] == 1
+    assert rep["passing"] == 2 and rep["failing"] == 1
+
+
+def test_survey_reports_but_does_not_gate(tmp_path):
+    """A survey over a roster with known debt must not turn every CI run red — the
+    per-skill invocation is the gate."""
+    _skill(tmp_path, name="nope", scripts=False, tests=False)
+    rc, out, err = _run("--survey", str(tmp_path))
+    assert rc == 0
+    assert "1 skill(s)" in out and "0 pass" in out
+
+
+def test_trigger_eval_alone_does_not_infer_a_lens(tmp_path):
+    """The backfill's finding, pinned. Inferring L from "no code + a trigger eval"
+    labelled `autonomous`, `handoff` and `checkit` as lenses; all three run
+    pipelines. A routing eval is tier L's core, not its signature — every tier can
+    carry one — so L must be declared, never inferred (BRO-2192)."""
+    d = _skill(tmp_path, scripts=False, tests=False)
+    _routing_eval(d)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "must be declared" in step2["detail"]

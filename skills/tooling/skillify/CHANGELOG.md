@@ -5,6 +5,53 @@ All notable changes to `skillify` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-19
+
+Stop letting testability decide expressibility — **the D / J / L tier model** (BRO-2190).
+
+- **Step 2 is now "Tier + core", and it dispatches.** The gate used to ask one
+  question — *is there a deterministic core?* — and treat *no* as either a failure or,
+  via `latent_only: true`, a blanket exemption. That let a testability question decide
+  an expressibility question. Step 2 now asks what **kind** of thing the skill is and
+  applies that tier's gate:
+  - **D** (deterministic) — `scripts/` present and syntax-valid; step 3 unit tests.
+  - **J** (judgment) — `evals/admission.md` recording the admission test *and its
+    outcome*, a rubric, held-out cases, a judge config whose model differs from the
+    model under eval, and `agreement_floor` accompanied by `agreement_measured`.
+  - **L** (lens) — a routing eval; step 7's resolver eval becomes required when
+    `--roles-dir` is supplied.
+- **The `latent_only` amnesty is closed.** It used to SKIP steps 2 *and* 3, so the
+  branch built to accommodate non-deterministic skills gated **nothing**. It still
+  parses and still means "not tier D", but it must now satisfy J or L. Measured
+  effect over the 94-skill roster: 28 → 26 passing, and both losses are skills that
+  were passing only through the amnesty.
+- **Tests are required whenever code ships**, whatever the tier. The old expression
+  routed step 3 through `latent_only`, so a skill could ship scripts and buy out of
+  testing them.
+- **Inference is deliberately narrow: D only.** J and L must be declared. The obvious
+  second rule — *no code but has a trigger eval → L* — was implemented, run over the
+  roster, and **withdrawn**: it labelled `autonomous`, `handoff` and `checkit` as
+  lenses, and all three run pipelines. A routing eval is tier L's *core*, not its
+  *signature*. A confidently wrong tier is worse than an absent one.
+- **The agreement floor is not set here.** Nobody has measured it, and asserting a
+  threshold no committed process regenerates is the failure that produced this tier
+  model. The gate enforces the *shape*: declare a floor **and** carry the measurement
+  that produced it. A floor with no `agreement_measured` is a FAIL, not a warning.
+- **The judge run is never a PASS.** The LLM judge is a declared, unbuilt seam
+  (`skill_evals/checks.py:make_judge_check` raises rather than stubbing a permissive
+  pass). Tier J gates *artifacts*; the judge *execution* reports as a named SKIP even
+  when every artifact is perfect. A tier certifying itself through an unimplemented
+  judge is the vacuity this gate exists to prevent.
+- **New `--survey ROOT`** — runs the whole checklist over every `SKILL.md` under
+  `ROOT` and tallies by tier. It is the same gate over a population, not a second
+  gate, and it is what regenerates every roster count in `SKILL.md`. It reports; it
+  does not gate.
+- **Tiers backfilled on 11 skills** whose pure function *is* their contract.
+- **Known gap, filed as BRO-2192:** D/J/L does not carve the roster. 44 of 94 skills
+  are neither judgment nor lens — they are procedures binding an external capability
+  (`d1-cli`, `colab-remote`, `haima`, `weekly-review`). Step 2's failure message names
+  that residue rather than advising them to pick one of three tiers that do not fit.
+
 ## [0.3.0] — 2026-06-28
 
 Close the gate's blind spot — **contract honesty**.

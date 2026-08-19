@@ -1,5 +1,6 @@
 ---
 name: citable
+tier: D
 description: >
   Make authored content survive the two selection surfaces it now faces: human
   engagement and LLM retrieval for citation. These partially anti-correlate, and

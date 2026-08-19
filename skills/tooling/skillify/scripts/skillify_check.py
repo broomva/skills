@@ -491,6 +491,199 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     return out
 
 
+# --- tiers (D / J / L) -------------------------------------------------------
+#
+# The gate used to ask "is there a deterministic core?" and treat *no* as either a
+# failure or, with `latent_only: true`, a total exemption. That made a testability
+# question decide an expressibility question: a judgment skill (`critique`) and a
+# lens (`look-back`) have no pure function and are unambiguously skills. Worse, the
+# exemption branch gated NOTHING — the accommodation was an amnesty.
+#
+# Three tiers replace the binary. Each names what the skill IS and therefore which
+# gate applies. Inference decides *which* gate, never *whether* one applies: a skill
+# the gate cannot classify still fails.
+TIER_D, TIER_J, TIER_L = "D", "J", "L"
+TIERS = (TIER_D, TIER_J, TIER_L)
+
+# Model families, for the cross-model-judge check. A judge sharing the generator's
+# substrate inflates confidence rather than testing it, so J requires the judge model
+# to differ from the model under eval. Exact inequality is REQUIRED; same-family is a
+# WARN — detecting true cross-vendor from a bare string is not something this gate can
+# do honestly, and pretending otherwise would be the vacuity it exists to prevent.
+_MODEL_FAMILIES = {
+    "anthropic": ("claude", "opus", "sonnet", "haiku", "fable"),
+    "openai": ("gpt", "o1", "o3", "o4", "codex"),
+    "google": ("gemini", "palm"),
+    "meta": ("llama",),
+    "mistral": ("mistral", "mixtral"),
+}
+
+
+def _model_family(model: str) -> str | None:
+    m = (model or "").lower()
+    for fam, toks in _MODEL_FAMILIES.items():
+        if any(t in m for t in toks):
+            return fam
+    return None
+
+
+def _load_data(path: Path) -> object | None:
+    """Parse a JSON/YAML artifact, or None if unreadable/unparseable."""
+    try:
+        txt = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if path.suffix == ".json":
+        try:
+            return json.loads(txt)
+        except ValueError:
+            return None
+    if path.suffix in {".yaml", ".yml"} and yaml is not None:
+        try:
+            return yaml.safe_load(txt)
+        except Exception:
+            return None
+    return None
+
+
+def _eval_blobs(skill_dir: Path) -> list[tuple[Path, dict]]:
+    """Every parseable mapping under evals/ — where J's declarations may live."""
+    out: list[tuple[Path, dict]] = []
+    d = skill_dir / "evals"
+    if not d.is_dir():
+        return out
+    for f in sorted(d.rglob("*")):
+        if not f.is_file() or f.suffix not in {".json", ".yaml", ".yml"}:
+            continue
+        data = _load_data(f)
+        if isinstance(data, dict):
+            out.append((f, data))
+    return out
+
+
+def _dig(blobs: list[tuple[Path, dict]], key: str) -> object | None:
+    """First top-level value for `key` across the eval blobs."""
+    for _, data in blobs:
+        if key in data:
+            return data[key]
+    return None
+
+
+_ADMITTED_RE = re.compile(r"^\s*(?:[-*>#\s]*)?\**\s*(?:outcome|verdict|result)\s*\**\s*[:\-]\s*\**\s*(admitted|rejected)\b",
+                          re.IGNORECASE | re.MULTILINE)
+
+
+def _admission_issue(skill_dir: Path) -> str | None:
+    """Tier J's hard gate. `evals/admission.md` must record the admission test AND
+    its outcome: given the same input, can two independent agents produce outputs a
+    third party judges BOTH valid? If they contradict with no tiebreak the skill is
+    underspecified, not probabilistic, and is not admissible.
+
+    A file with no explicit outcome line is NOT admitted — an unrecorded admission
+    test is an unadmitted skill, and treating 'the file exists' as the outcome is the
+    presence-is-not-correctness trap this whole gate is built against.
+    """
+    f = skill_dir / "evals" / "admission.md"
+    if not f.is_file():
+        return "no evals/admission.md (record the admission test and its outcome)"
+    txt = f.read_text(encoding="utf-8", errors="replace")
+    if not txt.strip():
+        return "evals/admission.md is empty"
+    m = _ADMITTED_RE.search(txt)
+    if not m:
+        return ("evals/admission.md records no outcome — needs a line like "
+                "`Outcome: admitted` (or `rejected`)")
+    if m.group(1).lower() == "rejected":
+        return "evals/admission.md records `rejected` — an underspecified skill is not admissible"
+    return None
+
+
+def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
+    """Held-out cases: a dedicated evals/held-out/ dir, or cases flagged held_out."""
+    d = skill_dir / "evals" / "held-out"
+    n = len([f for f in d.rglob("*") if f.is_file()]) if d.is_dir() else 0
+    for _, data in blobs:
+        cases = data.get("cases")
+        if isinstance(cases, list):
+            n += sum(1 for c in cases if isinstance(c, dict)
+                     and str(c.get("held_out", "")).lower() in ("true", "yes", "1"))
+    return n
+
+
+def _judge_issues(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]:
+    """Validate tier J's judge declaration. Returns (failures, warnings).
+
+    Required: a `judge` mapping with a `model`; that model must DIFFER from the model
+    under eval (cross-model is structural for J — a judge sharing the generator's
+    substrate inflates confidence rather than testing it); and an
+    `agreement_floor` that is accompanied by an `agreement_measured` record.
+
+    The floor's VALUE is deliberately not constrained here. Nobody has measured what
+    it should be, and hard-coding one would be asserting a number no committed process
+    regenerates — the exact failure that produced this tier model. The gate enforces
+    the shape: declare a floor, and show the measurement that produced it.
+    """
+    fails: list[str] = []
+    warns: list[str] = []
+    judge = _dig(blobs, "judge")
+    if not isinstance(judge, dict):
+        return ["no `judge` config in evals/ (tier J needs a cross-model judge declaration)"], warns
+
+    jm = judge.get("model")
+    if not isinstance(jm, str) or not jm.strip():
+        fails.append("judge.model missing")
+        jm = ""
+
+    # the model under eval: skill_evals' execution_contract.model, else the harness default
+    under = ""
+    ec = _dig(blobs, "execution_contract")
+    if isinstance(ec, dict) and isinstance(ec.get("model"), str):
+        under = ec["model"]
+    if jm and under:
+        if jm.strip().lower() == under.strip().lower():
+            fails.append(f"judge.model == model under eval ({jm!r}) — self-judging is not a gate")
+        elif _model_family(jm) and _model_family(jm) == _model_family(under):
+            warns.append(f"judge.model {jm!r} and model-under-eval {under!r} share a family "
+                         f"({_model_family(jm)}) — distinct names, correlated substrate")
+    elif jm and not under:
+        warns.append("no execution_contract.model to compare judge.model against — "
+                     "cross-model distinctness unverified")
+
+    floor = judge.get("agreement_floor")
+    measured = judge.get("agreement_measured")
+    if floor is None:
+        fails.append("judge.agreement_floor not declared")
+    elif not isinstance(measured, dict) or not measured.get("value") or not measured.get("method"):
+        fails.append(f"judge.agreement_floor={floor} declared with no agreement_measured "
+                     "{value, method} — an unmeasured floor is an authored number")
+    return fails, warns
+
+
+def _tier_of(skill_dir: Path, fm: dict, code: list[str],
+             blobs: list[tuple[Path, dict]]) -> tuple[str | None, bool, str]:
+    """Return (tier, declared, why). Declared wins; otherwise infer.
+
+    Inference exists so a 94-skill roster does not break the day tiers ship — NOT to
+    let an unclassifiable skill through. `None` means the gate could not tell what
+    kind of thing this is, and that is a FAIL, same as before.
+    """
+    raw = str(fm.get("tier", "")).strip().upper()
+    if raw in TIERS:
+        return raw, True, "declared"
+    if raw:
+        return None, False, f"tier: {raw!r} is not one of D/J/L"
+    # Inference fires for D ONLY. Shipping a pure function is definitionally tier D,
+    # so that one is safe. The tempting second rule — "has a trigger eval, no code
+    # -> L" — is NOT: a routing eval is tier L's *core*, not its *signature*, and
+    # every tier can carry one. Backfilling the roster with that rule labelled
+    # `autonomous`, `handoff` and `checkit` as lenses; all three run pipelines and
+    # none of them is a lens. A confidently wrong tier is worse than an absent one,
+    # because it makes the taxonomy look like it carves when it does not (BRO-2192).
+    if code:
+        return TIER_D, False, "inferred: ships scripts/ code"
+    return None, False, "no tier: declared and no scripts/ code (J and L must be declared)"
+
+
 def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | None,
                   entities_dir: Path | None, strict: bool, run_tests: bool = False,
                   skills_sh: str | None = None) -> list[dict]:
@@ -498,6 +691,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     name = (fm or {}).get("name") or skill_dir.resolve().name
     latent_only = str((fm or {}).get("latent_only", "")).lower() in ("true", "yes", "1")
     code = _code_files(skill_dir)
+    blobs = _eval_blobs(skill_dir)
+    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, code, blobs)
     results: list[dict] = []
 
     def add(step, label, status, detail, required=False):
@@ -545,26 +740,75 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         add("1c", "Reference integrity", PASS,
             "every scripts/references/assets/templates reference resolves")
 
-    # 2 — Deterministic code: present + SYNTAX-VALID (required unless truly latent)
-    if latent_only and code:
-        add(2, "Deterministic code", FAIL,
+    # 2 — Tier + its core (required). The gate no longer asks the single question
+    # "is there a deterministic core?" — that let a testability question decide an
+    # expressibility question, and it gated NOTHING on the `latent_only` branch.
+    # Step 2 now asks what KIND of skill this is and applies that tier's gate.
+    # Inference picks WHICH gate when `tier:` is absent; it never waives one.
+    tag = "tier " + (tier or "?") + (" (declared)" if tier_declared else f" ({tier_why})")
+    if tier is None:
+        add(2, "Tier + core", FAIL,
+            f"cannot classify — {tier_why}. Declare `tier: D` (ship scripts/), "
+            "`tier: J` (ship evals/admission.md + rubric + held-out cases + judge config), "
+            "or `tier: L` (ship a both-polarity routing eval). If this skill is a "
+            "PROCEDURE binding an external capability (a CLI, an API, a hosted runtime) "
+            "it is none of the three — that residue is BRO-2192, and until it lands the "
+            "honest options are an integration test (step 4) or an explicit tier", required=True)
+    elif latent_only and code:
+        add(2, "Tier + core", FAIL,
             f"latent_only:true but {len(code)} script(s) present — contradiction", required=True)
-    elif latent_only:
-        add(2, "Deterministic code", SKIP, "latent_only: true — composition skill, no scripts")
-    elif code:
-        broken = [(c, e) for c in code if (e := _script_syntax_error(skill_dir / c))]
-        if broken:
-            add(2, "Deterministic code", FAIL,
-                "; ".join(f"{c}: {e}" for c, e in broken[:3]), required=True)
+    elif tier == TIER_D:
+        if not code:
+            add(2, "Tier + core", FAIL, "tier D declared but no scripts/ code", required=True)
+        elif (broken := [(c, e) for c in code if (e := _script_syntax_error(skill_dir / c))]):
+            add(2, "Tier + core", FAIL,
+                f"{tag}: " + "; ".join(f"{c}: {e}" for c, e in broken[:3]), required=True)
         else:
-            add(2, "Deterministic code", PASS,
-                f"{len(code)} script(s), syntax ok: {', '.join(code[:3])}", required=True)
-    else:
-        add(2, "Deterministic code", FAIL,
-            "no scripts/ code (set latent_only: true for a pure composition skill)", required=True)
+            add(2, "Tier + core", PASS,
+                f"{tag}: {len(code)} script(s), syntax ok: {', '.join(code[:3])}", required=True)
+    elif tier == TIER_J:
+        issues: list[str] = []
+        if (adm := _admission_issue(skill_dir)):
+            issues.append(adm)
+        if not (_dig(blobs, "rubric") or (skill_dir / "evals" / "rubric.md").is_file()):
+            issues.append("no rubric (evals/rubric.md or a `rubric` key in evals/)")
+        if (n_held := _held_out_count(skill_dir, blobs)) == 0:
+            issues.append("no held-out cases (evals/held-out/ or cases flagged held_out)")
+        jf, jw = _judge_issues(skill_dir, blobs)
+        issues += jf
+        for w in jw:
+            add("2j", "Judge distinctness", WARN, w)
+        if issues:
+            shown = "; ".join(issues[:3]) + ("; …" if len(issues) > 3 else "")
+            add(2, "Tier + core", FAIL, f"{tag}: {len(issues)} gap(s): {shown}", required=True)
+        else:
+            add(2, "Tier + core", PASS,
+                f"{tag}: admission recorded, rubric + {n_held} held-out case(s), "
+                "cross-model judge with a measured floor", required=True)
+        # The judge itself is an unbuilt seam. Reporting its RUN as a PASS because the
+        # artifacts exist would be exactly the vacuous pass this harness exists to
+        # prevent, so it is a named SKIP either way.
+        add("2j*", "Judge execution", SKIP,
+            "LLM judge is a declared seam — skill_evals/checks.py:make_judge_check "
+            "raises rather than stubbing a pass; tier J gates artifacts, not judged output")
+    else:  # TIER_L
+        trig = [f for f in _eval_files(skill_dir) if _is_trigger_eval(skill_dir / f)]
+        if trig:
+            add(2, "Tier + core", PASS,
+                f"{tag}: {len(trig)} routing eval(s): {', '.join(trig[:2])}", required=True)
+        else:
+            add(2, "Tier + core", FAIL,
+                f"{tag}: no routing eval — a lens is gated on firing on the right requests "
+                "and staying silent on near-misses", required=True)
+    if tier and not tier_declared:
+        add("2t", "Tier declaration", WARN,
+            f"no `tier:` in frontmatter; {tier_why} → treated as {tier}. Declare it explicitly.")
 
     # 3 — Unit tests: present + REAL (non-empty, test construct) [+ run if asked]
-    require_tests = bool(code) and not latent_only or (latent_only and code)
+    # Tests are required whenever deterministic code ships, whatever the tier. The
+    # old expression routed through `latent_only`, which is how a skill could ship
+    # scripts and buy its way out of testing them.
+    require_tests = bool(code)
     all_tests = _test_files(skill_dir)
     real_tests = [t for t in all_tests if _is_real_test(skill_dir / t)]
     if not require_tests:
@@ -594,6 +838,11 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # with a single should_trigger case). A skill's LATENT half — does the
     # description fire, does it stay silent on a near-miss — is exactly the half
     # a presence check cannot see, so grade the CONTENT.
+    #
+    # Tier J's eval artifacts (rubric / held-out cases / judge) are gated in step 2,
+    # NOT here. Step 5 grades the TRIGGER surface; re-requiring it for J would be a
+    # second gate over the same evidence, and a weaker one — step 2 validates the
+    # judge is cross-model and the floor is measured, which a presence scan cannot.
     eval_files = _eval_files(skill_dir)
     trigger_evals = [f for f in eval_files if _is_trigger_eval(skill_dir / f)]
     if trigger_evals:
@@ -616,15 +865,23 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     else:
         add(6, "Resolver trigger", *(_check_registry(registry, name)), required=strict)
 
-    # 7 — Resolver eval (workspace-aware; missing path FAILs under --strict)
+    # 7 — Resolver eval (workspace-aware; missing path FAILs under --strict).
+    # Required for tier L *when a roles dir is supplied*: a lens whose whole claim is
+    # "it changes what you attend to" is gated on routing. It is NOT made required
+    # when --roles-dir is absent — that would fail every lens on a repo-local run for
+    # the absence of a flag rather than the absence of an eval.
+    l_needs_resolver = tier == TIER_L and roles_dir is not None
     if roles_dir is None:
         add(7, "Resolver eval", FAIL if strict else SKIP,
             "(--strict) requires --roles-dir" if strict else "pass --roles-dir to check", required=strict)
     else:
         evalf = roles_dir / f"{name}.eval.yaml"
         ok = evalf.is_file()
-        add(7, "Resolver eval", PASS if ok else (FAIL if strict else WARN),
-            f"{evalf.name} present" if ok else f"no {name}.eval.yaml (skillify step 7)", required=strict)
+        req = strict or l_needs_resolver
+        add(7, "Resolver eval", PASS if ok else (FAIL if req else WARN),
+            f"{evalf.name} present" if ok
+            else f"no {name}.eval.yaml (skillify step 7)" + (" — required for tier L" if l_needs_resolver else ""),
+            required=req)
 
     # 8 — check-resolvable + DRY (external registry-wide tool)
     add(8, "Check-resolvable + DRY", SKIP, "run `bstack skills audit` (registry-wide, not per-skill)")
@@ -676,11 +933,63 @@ def _check_registry(registry: Path, name: str) -> tuple[str, str]:
     return FAIL, f"'{name}' not a registry entry in {registry.name} (prose/backtick mention ≠ registered)"
 
 
+def survey(root: Path, **kw) -> dict:
+    """Run the checklist over every SKILL.md under `root` and tally by tier.
+
+    This is the SAME gate over a population, not a second gate — the distinction
+    matters, because a bespoke measurement apparatus built alongside a gate ends up
+    being the thing that gets hardened. Every roster count in SKILL.md is regenerated
+    by this, so a claim about the roster is never a number someone remembered.
+    """
+    rows: list[dict] = []
+    for md in sorted(root.rglob("SKILL.md")):
+        d = md.parent
+        if any(part in {"node_modules", ".git", "__pycache__", ".pytest_cache", ".worktrees"}
+               for part in d.parts):
+            continue
+        fm = parse_frontmatter(md) or {}
+        code = _code_files(d)
+        blobs = _eval_blobs(d)
+        tier, declared, why = _tier_of(d, fm, code, blobs)
+        res = run_checklist(d, **kw)
+        failed = [r for r in res if r["required"] and r["status"] != PASS]
+        rows.append({
+            "skill": fm.get("name") or d.name,
+            "path": str(d.relative_to(root)) if d.is_relative_to(root) else str(d),
+            "tier": tier, "declared": declared, "why": why,
+            "failed": [f"{r['step']} {r['label']}" for r in failed],
+            "ok": not failed,
+        })
+    by_tier: dict[str, int] = {}
+    for r in rows:
+        key = (r["tier"] or "unclassified") + ("" if r["declared"] else " (inferred)")
+        by_tier[key] = by_tier.get(key, 0) + 1
+    return {"root": str(root), "total": len(rows), "by_tier": by_tier,
+            "passing": sum(1 for r in rows if r["ok"]),
+            "failing": sum(1 for r in rows if not r["ok"]), "rows": rows}
+
+
+def _print_survey(rep: dict) -> None:
+    print(f"skillify tier survey — {rep['root']}\n")
+    print(f"  {rep['total']} skill(s); {rep['passing']} pass the gate, {rep['failing']} fail\n")
+    for k in sorted(rep["by_tier"]):
+        print(f"    {k:<24} {rep['by_tier'][k]:>4}")
+    print()
+    failing = [r for r in rep["rows"] if not r["ok"]]
+    if failing:
+        print("  failing:")
+        for r in failing:
+            print(f"    ✗ {r['skill']:<28} tier={r['tier'] or '?':<3} {', '.join(r['failed'][:2])}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="skillify-check",
         description="Run the 10-step skillify readiness checklist on a skill directory.")
-    ap.add_argument("skill_dir", help="path to the skill directory (contains SKILL.md)")
+    ap.add_argument("skill_dir", nargs="?", help="path to the skill directory (contains SKILL.md)")
+    ap.add_argument("--survey", metavar="ROOT",
+                    help="run the checklist over every SKILL.md under ROOT and tally by tier "
+                         "(the same gate over a population — regenerates the roster counts)")
     ap.add_argument("--roles-dir", default=None, help="workspace roles/ dir (enables step 7)")
     ap.add_argument("--registry", default=None, help="AGENTS.md or registry file (enables step 6)")
     ap.add_argument("--entities-dir", default=None, help="research/entities dir (enables step 10)")
@@ -691,17 +1000,32 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
 
+    common = dict(
+        roles_dir=Path(args.roles_dir) if args.roles_dir else None,
+        registry=Path(args.registry) if args.registry else None,
+        entities_dir=Path(args.entities_dir) if args.entities_dir else None,
+        strict=args.strict, run_tests=args.run_tests, skills_sh=args.skills_sh)
+
+    if args.survey:
+        root = Path(args.survey)
+        if not root.is_dir():
+            print(f"[skillify] not a directory: {root}", file=sys.stderr)
+            return 2
+        rep = survey(root, **common)
+        print(json.dumps(rep, indent=2) if args.json else "", end="")
+        if not args.json:
+            _print_survey(rep)
+        return 0  # a survey REPORTS; it does not gate. Use the per-skill run to gate.
+
+    if not args.skill_dir:
+        print("[skillify] need a skill_dir (or --survey ROOT)", file=sys.stderr)
+        return 2
     skill_dir = Path(args.skill_dir)
     if not skill_dir.is_dir():
         print(f"[skillify] not a directory: {skill_dir}", file=sys.stderr)
         return 2
 
-    results = run_checklist(
-        skill_dir,
-        roles_dir=Path(args.roles_dir) if args.roles_dir else None,
-        registry=Path(args.registry) if args.registry else None,
-        entities_dir=Path(args.entities_dir) if args.entities_dir else None,
-        strict=args.strict, run_tests=args.run_tests, skills_sh=args.skills_sh)
+    results = run_checklist(skill_dir, **common)
 
     # A required step fails the gate unless it PASSed (SKIP only counts as
     # non-failing for non-required steps; a required SKIP can't happen — required
