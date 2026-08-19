@@ -30,6 +30,15 @@ from pathlib import Path
 
 LEDGER = Path(__file__).resolve().parent.parent / "references" / "claims-ledger.json"
 
+class LedgerError(Exception):
+    """A ledger is malformed. Catchable — `load_ledger` must not kill an embedding host.
+
+    But it is deliberately NOT caught by `corpus_sweep.scan`'s crash handler, which
+    re-raises it. A ledger that cannot be loaded is not "this file crashed"; treating it
+    that way is what let a broken comparison ledger report every finding as new coverage.
+    """
+
+
 GRADE_SEVERITY = {
     "refuted": "ERROR",
     "contested": "WARN",
@@ -84,7 +93,7 @@ NEGATION_RX = re.compile(
 
 def load_ledger(path: Path = LEDGER) -> dict:
     if not path.exists():
-        raise SystemExit(f"format_lint: ledger not found at {path}")
+        raise LedgerError(f"format_lint: ledger not found at {path}")
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
     bad = [
@@ -94,7 +103,7 @@ def load_ledger(path: Path = LEDGER) -> dict:
         if r.get("grade") not in GRADE_SEVERITY
     ]
     if bad:
-        raise SystemExit(
+        raise LedgerError(
             "format_lint: unknown grade(s) in ledger — a typo must not silently "
             f"downgrade severity: {bad}"
         )
@@ -109,7 +118,7 @@ def load_ledger(path: Path = LEDGER) -> dict:
         if "citation_resolves" in r and not isinstance(r["citation_resolves"], bool)
     ]
     if mistyped:
-        raise SystemExit(
+        raise LedgerError(
             "format_lint: citation_resolves must be a JSON boolean — a non-boolean is "
             f"truthy and would silently suppress findings: {mistyped}"
         )
@@ -122,14 +131,14 @@ def load_ledger(path: Path = LEDGER) -> dict:
             try:
                 re.compile(r["pattern"])
             except re.error as exc:
-                raise SystemExit(f"format_lint: rule {r.get('id', '?')} has an invalid pattern: {exc}")
+                raise LedgerError(f"format_lint: rule {r.get('id', '?')} has an invalid pattern: {exc}")
     pws = data.get("precision_without_source") or {}
     for field in ("pattern", "marker_regex"):
         if pws.get(field):
             try:
                 re.compile(pws[field])
             except re.error as exc:
-                raise SystemExit(f"format_lint: precision_without_source.{field} is invalid: {exc}")
+                raise LedgerError(f"format_lint: precision_without_source.{field} is invalid: {exc}")
     return data
 
 
@@ -201,6 +210,22 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
     return exempt, problems
 
 
+def _is_lintable(i: int, line: str, exempt: set[int]) -> bool:
+    """Could this line carry a claim?
+
+    The single predicate for "prose", shared by the block joiner and the whole-file
+    coverage guard. They disagreed once, and both directions were defects: counting
+    lint's own marker lines as body let a document pad itself past the coverage
+    threshold, and counting them as *covered* inflated the ratio into a false ERROR on
+    a legitimately scoped suppression.
+    """
+    if i in exempt or not line.strip():
+        return False
+    if CONTROL_RX.match(line):
+        return False
+    return bool(MARKER_BLANK_RX.sub("", line).strip())
+
+
 def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[set[int], list[dict]]:
     """`<!-- format-lint: disable -->` … `enable`, as an exact standalone comment.
 
@@ -248,11 +273,12 @@ def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[
             }
         )
 
-    # Denominator = LINTABLE lines only. Counting frontmatter and fenced code as body let
-    # a document pad itself past the threshold: eight frontmatter fields around a disabled
-    # claim dropped coverage under 80% and the whole-file guard went quiet, which is
-    # exactly the silent total bypass it exists to catch.
-    body = [i for i, l in enumerate(lines) if l.strip() and i not in fenced]
+    # Coverage is measured over PROSE, in both the numerator and the denominator. Counting
+    # anything else was wrong twice over: frontmatter, fenced code and stray allow-markers
+    # padded the denominator until a fully-suppressed document slipped under the threshold,
+    # and the disable/enable markers themselves padded the numerator until three disabled
+    # lines beside one live line reported a false whole-file bypass.
+    body = [i for i, l in enumerate(lines) if _is_lintable(i, l, fenced)]
     if body:
         covered = sum(1 for i in body if i in off)
         if covered / len(body) > 0.8:
@@ -439,7 +465,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ledger", type=Path, default=LEDGER)
     args = ap.parse_args(argv)
 
-    ledger = load_ledger(args.ledger)
+    try:
+        ledger = load_ledger(args.ledger)
+    except LedgerError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     results: dict[str, list[dict]] = {}
     for spec in args.files:
         if spec == "-":

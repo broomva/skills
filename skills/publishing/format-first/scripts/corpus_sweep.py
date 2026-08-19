@@ -38,6 +38,10 @@ def scan(files: list[Path], ledger: dict) -> tuple[set, int]:
     for f in files:
         try:
             found = fl.lint_text(f.read_text(encoding="utf-8", errors="replace"), ledger)
+        except fl.LedgerError:
+            # A malformed ledger is not "this file crashed". Swallowing it here is exactly
+            # how a broken comparison ledger reported every current finding as new coverage.
+            raise
         except Exception:
             crashes += 1
             continue
@@ -60,7 +64,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"corpus_sweep: no *{args.ext} under {args.roots}", file=sys.stderr)
         return 2
 
-    new, crashes = scan(files, fl.load_ledger(args.ledger))
+    try:
+        new, crashes = scan(files, fl.load_ledger(args.ledger))
+    except fl.LedgerError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     by_rule = collections.Counter(k[2] for k in new)
     report: dict = {
         "files": len(files),
@@ -70,7 +78,11 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.compare:
-        old, old_crashes = scan(files, fl.load_ledger(args.compare))
+        try:
+            old, old_crashes = scan(files, fl.load_ledger(args.compare))
+        except fl.LedgerError as exc:
+            print(f"corpus_sweep: comparison ledger unusable — {exc}", file=sys.stderr)
+            return 2
         # NEVER discard this. If the old ledger crashes on every file its finding set is
         # empty, so every current finding reads as newly ADDED and a widening that bought
         # nothing certifies itself as pure gain.

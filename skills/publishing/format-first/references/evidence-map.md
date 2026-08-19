@@ -30,7 +30,7 @@ Note the negative term on `see less`. **Scope: Explore only.** Reels publishes n
 
 **Content similarity is a named input signal.** `[HIGH]` The Reels Chaining system card
 (Transparency Center, updated 2025-11-11) lists `"similarity to other reels"` explicitly,
-alongside `"the length of the reel"`. It publishes **no numeric weights**.
+alongside `"the length of the reel"`. That system card publishes **no numeric weights**.
 Source: `transparency.meta.com/features/explaining-ranking/ig-reels-chaining/`
 
 **Each surface has its own algorithm.** `[HIGH]` Mosseri, `about.instagram.com`:

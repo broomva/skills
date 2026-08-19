@@ -345,7 +345,7 @@ def test_unknown_grade_fails_loudly(tmp_path):
     p.write_text(json.dumps(bad), encoding="utf-8")
     try:
         fl.load_ledger(p)
-    except SystemExit as e:
+    except fl.LedgerError as e:
         assert "unknown grade" in str(e)
     else:
         raise AssertionError("bad grade was accepted")
@@ -956,7 +956,7 @@ def test_a_non_boolean_citation_resolves_is_rejected_at_load(tmp_path):
             r["citation_resolves"] = "false"
     path = tmp_path / "bad.json"
     path.write_text(json.dumps(bad))
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(fl.LedgerError) as exc:
         fl.load_ledger(path)
     assert "citation_resolves" in str(exc.value)
 
@@ -966,6 +966,35 @@ def test_a_boolean_citation_resolves_loads_fine(tmp_path):
     path = tmp_path / "good.json"
     path.write_text(json.dumps(good))
     assert fl.load_ledger(path)["refuted"]
+
+
+def test_marker_only_lines_do_not_pad_the_denominator():
+    """Eight stray allow-markers around a fully-disabled document is still a full bypass.
+
+    `_blocks` blanks lint's own markers as metadata; the coverage guard counted them as
+    body. The two now share `_is_lintable`, because a predicate that exists twice will
+    disagree eventually and both directions were live defects.
+    """
+    text = (
+        "<!-- format-lint: allow=post-daily -->\n" * 8
+        + "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    assert "whole-file-disable" in ids(text)
+
+
+def test_control_markers_do_not_inflate_the_covered_count():
+    """Three disabled prose lines beside one live line is 3/4, not 5/6.
+
+    Counting the disable/enable markers as covered body produced a false ERROR on a
+    legitimately scoped suppression — a regression introduced by the previous fix to this
+    same guard, and caught by the round that verified it.
+    """
+    text = (
+        "<!-- format-lint: disable -->\nalpha one\nbeta two\ngamma three\n"
+        "<!-- format-lint: enable -->\nlive prose line\n"
+    )
+    assert "whole-file-disable" not in ids(text)
 
 
 def test_the_new_denominator_does_not_manufacture_whole_file_findings():

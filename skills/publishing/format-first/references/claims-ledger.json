@@ -18,7 +18,7 @@
       "id": "sends-3-5x-likes",
       "pattern": "(?i)\\bsends?\\b(?=[^.\\n]{0,80}\\blikes?\\b)[^.\\n]{0,80}\\b(3\\s*(?:-|–|—|to)\\s*5|three\\s+to\\s+five)\\s*(?:x|×|times)",
       "message": "No primary source for a 3-5x sends:likes weighting was located in a documented search (Mosseri's accounts, Instagram blog, Meta newsroom, Transparency Center). Absence in a searched set is not proof it does not exist — but you cannot cite it.",
-      "instead": "Mosseri (2025-01-21): likes are 'slightly' more important for connected reach, sends 'slightly' more for unconnected. The asymmetry runs both ways and no numeric ratio is published.",
+      "instead": "Mosseri (2025-01-21): likes are 'slightly' more important for connected reach, sends 'slightly' more for unconnected. The asymmetry runs both ways, and that post publishes no numeric ratio; none was located in the documented search.",
       "grade": "unverified",
       "citation_resolves": true
     },
@@ -94,7 +94,7 @@
       "id": "embedding-variance-asserted",
       "pattern": "(?i)(?:format\\s+)?(?:consistency|consistent|repeating|repetition)[^.\\n]{0,60}(?:lowers?|reduces?|shrinks?|narrows?|tightens?|compress\\w*|decreas\\w*)[^.\\n]{0,30}embedding[^.\\n]{0,20}variance",
       "message": "This mechanism is a HYPOTHESIS. No source located here establishes that 'format' is a dimension of the learned representation.",
-      "instead": "Label it: 'a plausible mechanism no cited source establishes'. The better-supported claim is the negative one: no format-keyed favor state appears in the documentation searched (references/evidence-map.md \u00a71).",
+      "instead": "Label it: 'a plausible mechanism no cited source establishes'. The better-supported claim is the negative one: no format-keyed favor state appears in the documentation searched (references/evidence-map.md §1).",
       "grade": "hypothesis_as_fact",
       "citation_resolves": false
     },

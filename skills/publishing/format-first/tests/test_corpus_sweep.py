@@ -109,7 +109,7 @@ def test_an_uncompilable_pattern_is_rejected_at_load_not_swallowed_per_file(tmp_
     broken["refuted"][0]["pattern"] = "("
     path = tmp_path / "broken.json"
     path.write_text(json.dumps(broken))
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(fl.LedgerError) as exc:
         fl.load_ledger(path)
     assert "invalid pattern" in str(exc.value)
 
@@ -179,11 +179,49 @@ def test_a_ledger_error_is_not_swallowed_as_a_per_file_crash(tmp_path):
     path.write_text(json.dumps(broken))
     _tree(tmp_path, {"a.md": DIRTY})
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(fl.LedgerError):
         cs.scan(cs.walk([str(tmp_path)], ".md"), fl.load_ledger(path))
 
 
-def test_system_exit_is_not_catchable_as_exception():
-    """Pins the property the test above depends on, so a refactor cannot quietly break it."""
-    assert issubclass(SystemExit, BaseException)
-    assert not issubclass(SystemExit, Exception)
+def test_ledger_error_is_catchable_but_not_swallowed():
+    """Two properties, both load-bearing, and they pull in opposite directions.
+
+    CATCHABLE: `load_ledger` is imported by other code. Raising SystemExit — a
+    BaseException — would terminate an embedding host that wrapped the call in
+    `except Exception`, which is a real cost for a validation failure.
+
+    NOT SWALLOWED: `scan` counts per-file exceptions as crashes. If a LedgerError landed
+    in that counter, an unusable comparison ledger would report zero findings and make
+    every current finding look like new coverage — the round-5 defect. `scan` therefore
+    re-raises it explicitly.
+    """
+    assert issubclass(fl.LedgerError, Exception), "an embedder must be able to catch it"
+    src = (Path(cs.__file__).read_text())
+    assert "except fl.LedgerError:" in src and "raise" in src, "scan must re-raise it"
+
+
+def test_a_malformed_ledger_exits_two_not_one(tmp_path):
+    """Exit 2 is this CLI's "bad input" code; 1 means findings were present."""
+    _tree(tmp_path, {"a.md": DIRTY})
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"refuted": [{"id": "x", "pattern": "(", "message": "m", "grade": "refuted"}]}')
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--ledger", str(bad)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 2, out
+    assert "invalid pattern" in out.stderr
+
+
+def test_a_malformed_comparison_ledger_also_exits_two(tmp_path):
+    _tree(tmp_path, {"a.md": DIRTY})
+    bad = tmp_path / "bad.json"
+    broken = json.loads(json.dumps(LEDGER))
+    broken["refuted"][0]["pattern"] = "("
+    bad.write_text(json.dumps(broken))
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--compare", str(bad)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 2, out
+    assert "comparison ledger unusable" in out.stderr
