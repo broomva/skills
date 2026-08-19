@@ -14,7 +14,7 @@ First release (BRO-2184).
   gradient / glass → declaring file + blast radius + the single fix); copy tells; **substance** tells
   (legal routes, async loading/error/empty coverage, placeholders, testimonials, pricing scaffold,
   product evidence, reduced-motion, design docs); composes the impeccable detector via `--detect`.
-- `scripts/unslop_gate.py` — the crafted floor: 20 checks, PASS/WARN/FAIL/SKIP, waivers with mandatory
+- `scripts/unslop_gate.py` — the crafted floor: 23 checks (4 conditional), PASS/WARN/FAIL/SKIP, waivers with mandatory
   reasons, `--strict`, `--profile persuade|operate|auto`, render-evidence check (desktop + mobile).
 - `references/` — arc, crafted floor (sourced, [M]/[J]-tagged), dated tells list, root-cause playbook.
-- 27 tests, both polarities.
+- 51 tests, both polarities (see the P20 hardening entry below).

@@ -9,6 +9,9 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so tests can `from helpers import png_bytes`
+
+from helpers import png_bytes  # noqa: E402
 
 
 def _w(root: Path, rel: str, text: str) -> Path:
@@ -114,7 +117,7 @@ export default function Ledger() {
     ev.mkdir(parents=True)
     for name in ("index-1280.png", "index-390.png", "ledger-1280.png", "ledger-390.png",
                  "terms-1280.png", "terms-390.png", "privacy-1280.png", "privacy-390.png"):
-        (ev / name).write_bytes(b"\x89PNG" + b"\x00" * 9000)
+        (ev / name).write_bytes(png_bytes(1280 if "1280" in name else 390))
     return root
 
 

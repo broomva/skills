@@ -46,7 +46,7 @@ Waivers need a reason (≥20 chars): `{"waivers":[{"check":"fonts.deliberate","v
 | `references/crafted-floor.md` | The operational definition of "crafted", every rule [M]/[J]-tagged and sourced |
 | `references/tells.md` | The dated, regenerable list of current LLM defaults (reel → class → check) |
 | `references/root-cause-playbook.md` | Where each default lives and the one edit that fixes it |
-| `tests/` | pytest — both polarities, waivers, strict, evidence, CLI |
+| `tests/` | pytest — both polarities, waivers, strict, evidence, CLI, and one regression per P20 finding (real-repo false positives) |
 
 ## Provenance
 

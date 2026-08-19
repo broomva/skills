@@ -122,7 +122,8 @@ def test_copy_tells(sloppy_repo, crafted_repo):
 def test_substance_legal_async_placeholders(sloppy_repo, crafted_repo):
     s = us.survey(sloppy_repo)["substance"]
     assert s["legal"]["terms_route"] is None and s["legal"]["privacy_route"] is None
-    assert s["async_surfaces"]["count"] >= 2 and s["async_surfaces"]["with_loading_state"] == 0
+    assert s["async_surfaces"]["count"] >= 1 and s["async_surfaces"]["with_loading_state"] == 0
+    assert "src/lib/api.ts" not in s["async_surfaces"]["files"]  # a lib module is not a surface
     ph = s["placeholders"]
     assert {"lorem-ipsum", "john-jane-doe", "acme", "stock-image-host", "fake-metrics"} <= set(ph)
     assert s["testimonials"]["verify_real"] is True
@@ -221,7 +222,7 @@ export default function L({children}) { return <html className={signifier.variab
     m = us.survey(root)
     assert "signifier" in m["fonts"]["families"] and "signifier" in m["fonts"]["self_hosted"]
     assert m["fonts"]["default_families_in_use"] == []
-    assert any(x.startswith("local:signifier@") for x in m["fonts"]["next_font_imports"])
+    assert any(x.startswith("local:signifier=signifier@") for x in m["fonts"]["next_font_imports"])
     r = [r for r in m["roots"] if r["kind"] == "font" and r["value"] == "signifier"][0]
     assert r["self_hosted"] is True and r["default"] is False and r["root_file"].endswith("layout.tsx")
 

@@ -43,7 +43,15 @@ SKIP_DIRS = {
     "dist", "build", "out", "coverage", ".turbo", ".vercel", ".cache", "vendor",
     "target", "venv", ".venv", "__pycache__", ".pytest_cache", "storybook-static",
     ".impeccable", ".unslop",
+    # generated test/report artefacts — playwright-report/index.html alone contributed 1,358 hex literals
+    # to one real app before this list existed
+    "playwright-report", "test-results", ".playwright", "cypress", "__snapshots__", ".nyc_output",
+    "lighthouse", ".lighthouseci", "reports", ".svelte-kit", ".parcel-cache", ".angular", ".expo",
 }
+# .ts/.js modules that carry landing/marketing copy — scanned for copy + substance tells like UI files
+RE_COPY_MODULE = re.compile(r"(content|copy|site|marketing|landing|messages|i18n|locale|testimonial|pricing|faq|features|hero|constants|strings)", re.I)
+# server-side / non-surface files that can never carry a loading state
+RE_SERVER_SIDE = re.compile(r"(^|/)(api|server|db|lib|utils?|hooks?|middleware|workers?|scripts?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]s$|(^|/)use-[a-z-]+\.[jt]sx?$", re.I)
 UI_EXT = {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".htm", ".mdx"}
 SCRIPT_EXT = {".ts", ".js", ".mjs", ".cjs"}
 STYLE_EXT = {".css", ".scss", ".sass", ".less", ".pcss"}
@@ -58,12 +66,42 @@ RE_NEXT_FONT = re.compile(r"from\s+['\"]next/font/(google|local)['\"]")
 RE_NEXT_FONT_NAMES = re.compile(r"import\s*\{([^}]+)\}\s*from\s*['\"]next/font/google['\"]")
 # next/font/local: `import localFont from "next/font/local"` then `const brand = localFont({ src: …, variable: "--font-brand" })`
 RE_NEXT_FONT_LOCAL_IMPORT = re.compile(r"import\s+(\w+)\s+from\s*['\"]next/font/local['\"]")
-RE_NEXT_FONT_LOCAL_CALL = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\(\s*\{([^}]*)\}", re.S)
-RE_FONT_LOCAL_SRC = re.compile(r"src\s*:\s*['\"]?[^'\"\]]*?([A-Za-z0-9_-]+)\.(?:woff2?|otf|ttf)", re.I)
+RE_NEXT_FONT_LOCAL_CALL_START = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\(")
+# any font file path inside the call — `src: "./x.woff2"`, `src: [{ path: "../fonts/X-Regular.woff2" }]`, `url(...)`
+RE_FONT_FILE = re.compile(r"([A-Za-z0-9_-]+)\.(?:woff2?|otf|ttf)\b", re.I)
+
+
+def _balanced_call(txt: str, open_idx: int) -> str:
+    """Return the text inside the parentheses that open at txt[open_idx] ('('), honouring nesting and quotes."""
+    depth = 0
+    i = open_idx
+    quote = None
+    while i < len(txt):
+        c = txt[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "'\"`":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return txt[open_idx + 1:i]
+        i += 1
+    return txt[open_idx + 1:]
 RE_GOOGLE_FONTS = re.compile(r"fonts\.googleapis\.com/css2?\?family=([^&\"'\s>]+)")
 RE_FONT_FACE = re.compile(r"@font-face\s*\{[^}]*font-family\s*:\s*['\"]?([^;'\"}]+)", re.I | re.S)
 RE_TW_FONT = re.compile(r"fontFamily\s*:\s*\{([^}]*)\}", re.S)
-RE_CSS_VAR_FONT = re.compile(r"--font-[a-z0-9-]+\s*:\s*([^;]+);", re.I)
+# `--font-sans: Inter, …` is a family; `--font-size-lg: 1.25rem` / `--font-weight-bold: 700` are not.
+RE_CSS_VAR_FONT = re.compile(r"--font-(?!size|weight|style|feature|variant|stretch|smoothing|synthesis|kerning|optical|leading|tracking|line)[a-z0-9-]*\s*:\s*([^;{}]+);", re.I)
+RE_FONT_VALUE_LOOKS_LIKE_FAMILY = re.compile(r"^[a-z][a-z0-9 .'\"-]*$", re.I)
+# object-style CSS-in-JS / MUI createTheme: fontFamily: "Inter, sans-serif"
+RE_OBJ_FONT_FAMILY = re.compile(r"""fontFamily\s*:\s*['"`]([^'"`]+)['"`]""")
 
 ICON_LIBS = {
     "lucide-react": "lucide", "lucide": "lucide", "lucide-vue-next": "lucide", "lucide-svelte": "lucide",
@@ -81,7 +119,7 @@ RE_IMPORT_FROM = re.compile(r"""(?:from|require\()\s*['"]([^'"]+)['"]""")
 
 RE_EM_DASH = re.compile("—")
 RE_EMOJI = re.compile(
-    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF✅✨⚡\U0001F525\U0001F680\U0001F4A1\U0001F389]"
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
 )
 RE_CHECKMARK = re.compile("[✓✔✅☑]")
 RE_NOT_X_BUT_Y = re.compile(
@@ -89,10 +127,12 @@ RE_NOT_X_BUT_Y = re.compile(
     re.I,
 )
 BUZZWORDS = [
-    "supercharge", "unleash", "revolutioni", "seamless", "effortless", "next-gen", "10x", "game-chang",
-    "cutting-edge", "state-of-the-art", "empower", "unlock", "elevate", "streamline", "harness the power",
+    r"supercharge\w*", r"unleash\w*", r"revolutioni[sz]\w*", r"seamless(?:ly)?", r"effortless(?:ly)?", r"next-gen",
+    r"10x", r"game-chang\w*", r"cutting-edge", r"state-of-the-art", r"empower\w*", r"unlock\w*", r"elevate\w*",
+    r"streamline\w*", r"harness the power",
 ]
-RE_BUZZ = re.compile("|".join(re.escape(b) for b in BUZZWORDS), re.I)
+RE_BUZZ = re.compile(r"\b(?:" + "|".join(BUZZWORDS) + r")\b", re.I)
+RE_CODE_LINE = re.compile(r"^\s*(import|export|const|let|var|function|return|//|/\*|\*|\{/\*)|className=|var\(--|@apply|^\s*[.#@]")
 
 # --- substance -------------------------------------------------------------
 LEGAL_TERMS = re.compile(r"(^|/)(terms(-of-(service|use))?|tos|terms-and-conditions|legal/terms|conditions)(/|\.|$)", re.I)
@@ -106,7 +146,7 @@ RE_ASYNC = re.compile(
 RE_LOADING_STATE = re.compile(
     r"Skeleton|animate-pulse|aria-busy|isLoading|isPending|isFetching|loading\s*[?&]|<Spinner|<Loader|status\s*===?\s*['\"]loading['\"]|\{#await|v-if=\"(loading|pending)\"|Suspense|fallback=",
 )
-RE_ERROR_STATE = re.compile(r"ErrorBoundary|isError|error\s*\?\s*|error\.tsx|<Alert|catch\s*\(|status\s*===?\s*['\"]error['\"]|onError")
+RE_ERROR_STATE = re.compile(r"""ErrorBoundary|isError|error\.tsx|<Alert\b|role=["']alert["']|status\s*===?\s*['"]error['"]|onError=|\berror\s*&&|\{#if error|v-if=["']error["']""")
 RE_EMPTY_STATE = re.compile(r"length\s*===?\s*0|\.length\s*\?|No\s+(results|items|data|projects|messages|orders)|Nothing\s+(here|yet|to show)|empty[-_ ]?state|EmptyState", re.I)
 
 PLACEHOLDER_PATTERNS = {
@@ -124,7 +164,8 @@ RE_LANDING = re.compile(r"<Hero|className=\"hero|id=\"hero|Get started( free)?|S
 RE_TESTIMONIAL = re.compile(r"testimonial|what (our )?(customers|users|clients) (say|are saying)|<Quote|Reviews?Section|CustomerQuote", re.I)
 RE_PRICING = re.compile(r"pricing|PricingTier|PricingCard|PricingTable|/pricing", re.I)
 RE_TIER_WORDS = re.compile(r"\b(Free|Starter|Basic|Hobby|Pro|Team|Business|Enterprise|Premium|Plus|Growth|Scale)\b")
-RE_VIDEO = re.compile(r"<video|\.mp4\b|\.webm\b|youtube\.com/embed|player\.vimeo|loom\.com/embed|<iframe", re.I)
+# real product video: a <video> element, a media src, or a known video embed — never a bare <iframe> or an accept=".mp4"
+RE_VIDEO = re.compile(r"""<video\b|src\s*=\s*['"{][^'"}]*\.(?:mp4|webm|mov)\b|youtube(?:-nocookie)?\.com/embed|player\.vimeo\.com|loom\.com/embed|<mux-player|<MuxPlayer""", re.I)
 RE_LOCAL_IMG = re.compile(r"""(?:src|href|url)\s*[=(:]\s*['"(]?(/?(?:public/|assets/|images?/|img/|screenshots?/|static/|media/)[^'"\s)]+\.(?:png|jpe?g|webp|avif|gif|svg))""", re.I)
 # A local raster counts as *product evidence* only if it is not obviously decorative (logo, icon, favicon, avatar,
 # og image, illustration, pattern, background) — svg never counts; a screenshots|demo|product|app path always does.
@@ -132,15 +173,34 @@ RE_IMG_DECORATIVE = re.compile(r"(logo|icon|favicon|avatar|og[-_.]|opengraph|ill
 RE_IMG_EVIDENCE_PATH = re.compile(r"(screenshot|screen|demo|product|app[-_./]|dashboard|ui[-_./]|preview|capture)", re.I)
 RE_STOCK_IMG = PLACEHOLDER_PATTERNS["stock-image-host"]
 
-RE_HEX = re.compile(r"#(?:[0-9a-fA-F]{3}){1,2}\b")
-RE_RADIUS_TW = re.compile(r"\brounded(?:-(?:none|sm|md|lg|xl|2xl|3xl|full|\[[^\]]+\]))?\b")
-RE_RADIUS_CSS = re.compile(r"border-radius\s*:\s*([^;}{]+)", re.I)
-RE_SHADOW_TW = re.compile(r"\bshadow(?:-(?:sm|md|lg|xl|2xl|inner|none|\[[^\]]+\]))?\b")
-RE_SHADOW_CSS = re.compile(r"box-shadow\s*:\s*([^;}{]+)", re.I)
+# a hex colour literal in a style/attribute/CSS context — not `// issue #123`, not `href="#add-item"`, not `/docs#123456`
+RE_HEX = re.compile(r"""(?<![\w/#&?=-])(?<!href=["'])(?<!href=\{["'])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b(?![\w-])""")
+RE_HREF_HASH_LINE = re.compile(r"""href\s*=\s*['"{]#""")
+TOKEN_BASENAMES = {"globals.css", "global.css", "app.css", "index.css", "styles.css", "variables.css", "main.css", "tokens.css", "theme.css", "tokens.ts", "tokens.js", "theme.ts", "theme.js"}
+TOKEN_SEGMENTS = {"tokens", "theme", "themes", "design-system", "design-tokens", "styles"}
+
+
+def is_token_file(rp: str) -> bool:
+    parts = rp.replace("\\", "/").split("/")
+    name = parts[-1].lower()
+    return name in TOKEN_BASENAMES or name.startswith("tailwind.config") or any(seg.lower() in TOKEN_SEGMENTS for seg in parts[:-1])
+RE_RADIUS_TW = re.compile(r"(?<![\w-])rounded(?:-(?:[trbl]{1,2}|ss|se|ee|es))?(?:-(?:none|xs|sm|md|lg|xl|2xl|3xl|4xl|full|\[[^\]]+\]))?(?![\w-])")
+RE_RADIUS_CSS = re.compile(r"(?<![\w-])border-radius\s*:\s*([^;}{]+)", re.I)
+RE_SHADOW_TW = re.compile(r"(?<![\w-])(?<!drop-)shadow(?:-(?:xs|sm|md|lg|xl|2xl|inner|none|\[[^\]]+\]))?(?![\w-])")
+RE_SHADOW_CSS = re.compile(r"(?<![\w-])box-shadow\s*:\s*([^;}{]+)", re.I)
+RE_TOKEN_DECL_LINE = re.compile(r"^\s*--[a-z0-9-]+\s*:", re.I)
+
+
+def _norm_radius_class(cls: str) -> str:
+    """rounded-t-md → rounded-md; rounded-ss-lg → rounded-lg (the *value* is the vocabulary, not the side)."""
+    return re.sub(r"^rounded-(?:[trbl]{1,2}|ss|se|ee|es)(?=-|$)", "rounded", cls)
 RE_GRADIENT_TW = re.compile(r"\bbg-gradient-to-[trbl]{1,2}\b|\bfrom-(?:purple|violet|fuchsia|pink|indigo)-\d{3}\b")
 RE_GRADIENT_CSS = re.compile(r"(?:linear|radial|conic)-gradient\(", re.I)
 RE_BACKDROP = re.compile(r"backdrop-filter|backdrop-blur", re.I)
-RE_KEYFRAMES = re.compile(r"@keyframes|animate-\w+|framer-motion|motion\.\w+|transition-all", re.I)
+# authored motion (keyframes, framer/motion, transition-all, decorative animate-* utilities) needs a reduced-motion
+# story; essential utilities (spin/pulse/ping — spinners, skeletons) do not by themselves
+RE_KEYFRAMES = re.compile(r"@keyframes|framer-motion|from\s+['\"]motion(?:/react)?['\"]|<motion\.\w+|transition-all|animate-(?!spin\b|pulse\b|ping\b|none\b)[a-z-]+", re.I)
+RE_MOTION_ESSENTIAL = re.compile(r"animate-(?:spin|pulse|ping)\b")
 RE_REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|motion-reduce:", re.I)
 
 # The faces every AI-generated UI converges on (impeccable's overused-font list ∪ the reel's #10 ∪ common LLM picks).
@@ -152,7 +212,6 @@ AI_DEFAULT_WEB_FONTS = {
 # The platform stack — a legitimate, deliberate choice (broomva-design uses it) but only when *stated*.
 SYSTEM_STACK = {"system-ui", "-apple-system", "blinkmacsystemfont", "segoe ui", "arial", "helvetica", "helvetica neue", "sans-serif", "ui-sans-serif"}
 DEFAULT_FONTS = AI_DEFAULT_WEB_FONTS | SYSTEM_STACK
-TOKEN_FILE_HINTS = ("globals.css", "global.css", "app.css", "index.css", "tokens", "theme", "tailwind.config", "design-system", "styles.css", "variables.css", "main.css")
 
 
 SKIPPED: dict = {"oversized": [], "unreadable": []}
@@ -171,11 +230,43 @@ def _read(p: Path) -> str:
         return ""
 
 
+def _git_files(root: Path) -> list[Path] | None:
+    """Tracked + untracked-but-not-ignored files when `root` is inside a git work tree; None otherwise.
+    Honouring .gitignore is what keeps generated artefacts (reports, build output) out of the survey."""
+    if not shutil.which("git"):
+        return None
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                              capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = []
+    for raw in proc.stdout.split(b"\0"):
+        if not raw:
+            continue
+        rel_ = raw.decode("utf-8", errors="ignore")
+        parts = rel_.split("/")
+        if any(seg in SKIP_DIRS for seg in parts[:-1]):
+            continue
+        p = root / rel_
+        if p.is_file() and not p.is_symlink():
+            out.append(p)
+    return out
+
+
 def walk(root: Path):
-    for dirpath, dirnames, filenames in os.walk(root):
+    git = _git_files(root)
+    if git is not None:
+        yield from git
+        return
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")] if dirpath != str(root) else [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
-            yield Path(dirpath) / fn
+            p = Path(dirpath) / fn
+            if not p.is_symlink():
+                yield p
 
 
 def rel(root: Path, p: Path) -> str:
@@ -238,7 +329,6 @@ def derive_routes(root: Path, fw: dict, ui_files: list[Path]) -> list[dict]:
         r = rel(root, f).replace("\\", "/")
         route = None
         if name == "next" and router == "app":
-            m = re.match(r"^(?:src/)?app/(.*?)(?:^|/)?(page|layout|loading|error|not-found|template|route)\.(tsx|jsx|js|ts|mdx)$", r)
             m2 = re.match(r"^(?:src/)?app/(.*/)?(page|loading|error|not-found)\.(tsx|jsx|js|ts|mdx)$", r)
             if m2:
                 seg = (m2.group(1) or "").rstrip("/")
@@ -290,8 +380,28 @@ def derive_routes(root: Path, fw: dict, ui_files: list[Path]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Main survey
 # ---------------------------------------------------------------------------
-def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) -> dict:
+def find_app_root(root: Path) -> Path:
+    """If `root` has no package.json but exactly one nested app (depth ≤ 2) does and declares a known
+    framework, survey that app instead — monorepos with `app/` or `apps/web/` are the common shape."""
+    if (root / "package.json").exists():
+        return root
+    cands = []
+    for depth in (1, 2):
+        for pj in root.glob("/".join(["*"] * depth) + "/package.json"):
+            if any(seg in SKIP_DIRS for seg in pj.relative_to(root).parts):
+                continue
+            fw = detect_framework(pj.parent, load_package_json(pj.parent))
+            if fw["name"] not in ("unknown", "static-html"):
+                cands.append(pj.parent)
+        if cands:
+            break
+    return cands[0] if len(cands) == 1 else root
+
+
+def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, detector_timeout: int = 600) -> dict:
     root = root.resolve()
+    survey_root_arg = root
+    root = find_app_root(root)
     SKIPPED["oversized"].clear()
     SKIPPED["unreadable"].clear()
     pkg = load_package_json(root)
@@ -326,7 +436,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
     component_libs: set[str] = set()
     for dep in deps_all:
         for lib, tag in COMPONENT_LIBS.items():
-            if dep == lib or dep.startswith(lib + "/") or dep.startswith(lib):
+            if dep == lib or dep.startswith(lib + "/"):
                 component_libs.add(tag)
     copy_tells = {"em_dash": [], "emoji": [], "not_x_but_y": [], "checkmark_bullets": [], "buzzwords": []}
     legal = {"terms_route": None, "privacy_route": None, "terms_link_sites": [], "privacy_link_sites": []}
@@ -342,6 +452,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
     gradient_sites: list[str] = []
     backdrop_sites: list[str] = []
     motion_sites: list[str] = []
+    motion_essential_sites: list[str] = []
     reduced_motion_sites: list[str] = []
     loading_files_next: list[str] = []
     error_files_next: list[str] = []
@@ -386,18 +497,20 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
         lf = RE_NEXT_FONT_LOCAL_IMPORT.search(txt)
         if lf:
             fn = lf.group(1)
-            for m in RE_NEXT_FONT_LOCAL_CALL.finditer(txt):
+            for m in RE_NEXT_FONT_LOCAL_CALL_START.finditer(txt):
                 if m.group(2) != fn:
                     continue
                 var = m.group(1)
-                body = m.group(3)
-                srcm = RE_FONT_LOCAL_SRC.search(body)
-                fam = (srcm.group(1) if srcm else var).replace("_", " ").replace("-", " ").strip().lower()
-                fam = re.sub(r"\s+(regular|variable|vf|bold|medium|light|italic)$", "", fam) or var.lower()
+                body = _balanced_call(txt, m.end() - 1)          # nested {…[{ path: … }]…} handled
+                srcm = RE_FONT_FILE.search(body)
+                raw = srcm.group(1) if srcm else var
+                fam = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", raw)          # GeistMono → Geist Mono
+                fam = re.sub(r"[_-]+", " ", fam).strip().lower()         # Signifier-Regular → signifier regular
+                fam = re.sub(r"(\s+(regular|variable|vf|bold|medium|light|italic|semibold|black|thin|display))+$", "", fam).strip() or var.lower()
                 ln = txt.count("\n", 0, m.start()) + 1
                 font_sites[fam].append(site(p, ln))
                 font_face_selfhosted.add(fam)
-                next_font_imports.append(f"local:{var}@{rp}")
+                next_font_imports.append(f"local:{var}={fam}@{rp}")
         for m in RE_NEXT_FONT_NAMES.finditer(txt):
             for name in m.group(1).split(","):
                 n = name.strip().split(" as ")[0].strip()
@@ -417,10 +530,20 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
                     font_sites[fm.group(1).lower()].append(site(p, txt.count("\n", 0, m.start()) + 1))
         if is_style:
             for m in RE_CSS_VAR_FONT.finditer(txt):
-                for fam in m.group(1).split(","):
-                    fam = fam.strip().strip("'\"").lower()
-                    if fam and not fam.startswith("var("):
-                        font_sites[fam].append(site(p, txt.count("\n", 0, m.start()) + 1))
+                fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
+                fams = [f for f in fams if f and not f.startswith("var(") and RE_FONT_VALUE_LOOKS_LIKE_FAMILY.match(f) and not re.search(r"\d", f)]
+                if fams:
+                    font_sites[fams[0]].append(site(p, txt.count("\n", 0, m.start()) + 1))
+                    for fam in fams[1:]:
+                        font_fallbacks[fam] += 1
+        if is_ui or p.suffix.lower() in SCRIPT_EXT:
+            for m in RE_OBJ_FONT_FAMILY.finditer(txt):
+                fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
+                fams = [f for f in fams if f and not f.startswith("var(")]
+                if fams:
+                    font_sites[fams[0]].append(site(p, txt.count("\n", 0, m.start()) + 1))
+                    for fam in fams[1:]:
+                        font_fallbacks[fam] += 1
 
         # icons + component libs
         for m in RE_IMPORT_FROM.finditer(txt):
@@ -429,25 +552,39 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
                 if mod == lib or mod.startswith(lib + "/"):
                     icon_imports[tag].append(rp)
             for lib, tag in COMPONENT_LIBS.items():
-                if mod == lib or mod.startswith(lib + "/") or mod.startswith(lib):
+                if mod == lib or mod.startswith(lib + "/"):
                     component_libs.add(tag)
         if "/components/ui/" in ("/" + rp) or rp.startswith("components/ui/"):
-            component_libs.add("shadcn(components/ui)")
+            component_libs.add("shadcn?(components/ui)")
 
-        # copy tells (UI files only, skip pure scripts/styles)
-        if is_ui:
+        # copy tells — UI files and .ts/.js *copy modules* (content/site/marketing/i18n…), never build/lib code
+        # a .ts/.js module is a *copy module* when its basename or a path segment says so (content.ts, config/site.ts,
+        # data/testimonials.ts, locales/en.ts); API routes / server / middleware / hooks never are, even under those names
+        _segs = rp.replace("\\", "/").split("/")
+        is_copy_module = (
+            p.suffix.lower() in SCRIPT_EXT
+            and (bool(RE_COPY_MODULE.search(_segs[-1])) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
+            and not re.search(r"(^|/)(api|server|middleware|hooks?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|(^|/)use-[a-z-]+\.[jt]sx?$", rp, re.I)
+        )
+        is_prose_mdx = p.suffix.lower() == ".mdx" and re.search(r"(^|/)(content|docs?|blog|posts?|articles?)(/|$)", rp, re.I)
+        if (is_ui and not is_prose_mdx) or is_copy_module:
             for i, line in enumerate(lines, 1):
-                if RE_EM_DASH.search(line) and not line.lstrip().startswith(("//", "/*", "*", "{/*", "<!--")):
+                st = line.lstrip()
+                if st.startswith(("//", "/*", "*", "{/*", "<!--", "import ")):
+                    continue
+                code_free = re.sub(r"//.*$|\{/\*.*?\*/\}|/\*.*?\*/", "", line)  # strip trailing comments
+                if RE_EM_DASH.search(code_free):
                     copy_tells["em_dash"].append(site(p, i))
-                if RE_EMOJI.search(line):
+                if RE_EMOJI.search(code_free):
                     copy_tells["emoji"].append(site(p, i))
-                if RE_CHECKMARK.search(line):
+                if RE_CHECKMARK.search(code_free):
                     copy_tells["checkmark_bullets"].append(site(p, i))
-                if RE_BUZZ.search(line):
+                if not RE_CODE_LINE.search(line) and RE_BUZZ.search(code_free):
                     copy_tells["buzzwords"].append(site(p, i))
             for m in RE_NOT_X_BUT_Y.finditer(txt):
                 copy_tells["not_x_but_y"].append(site(p, txt.count("\n", 0, m.start()) + 1))
 
+        if is_ui or is_copy_module:
             # legal links
             for m in RE_HREF_TERMS.finditer(txt):
                 legal["terms_link_sites"].append(site(p, txt.count("\n", 0, m.start()) + 1))
@@ -474,8 +611,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
             for m in RE_STOCK_IMG.finditer(txt):
                 evidence["stock_image_sites"].append(site(p, txt.count("\n", 0, m.start()) + 1))
 
-        # async surfaces + states (UI + scripts)
-        if is_ui or (p.suffix.lower() in SCRIPT_EXT and not is_config):
+        # async *surfaces* — UI files only; API routes, server modules, hooks and libs cannot carry a skeleton
+        if is_ui and not RE_SERVER_SIDE.search(rp):
             if RE_ASYNC.search(txt):
                 async_files[rp] = {
                     "loading": bool(RE_LOADING_STATE.search(txt)),
@@ -483,29 +620,42 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
                     "empty": bool(RE_EMPTY_STATE.search(txt)),
                 }
 
-        # placeholders (UI + copy)
-        if is_ui:
+        # placeholders (UI + copy modules)
+        if is_ui or is_copy_module:
             for key, rx in PLACEHOLDER_PATTERNS.items():
                 for m in rx.finditer(txt):
                     placeholders[key].append(site(p, txt.count("\n", 0, m.start()) + 1))
 
         # visual vocabulary
         if is_ui or is_style:
-            is_token_file = any(h in rp.lower() for h in TOKEN_FILE_HINTS)
-            for m in RE_HEX.finditer(txt):
-                if not is_token_file:
-                    hex_sites[m.group(0).lower()].append(site(p, txt.count("\n", 0, m.start()) + 1))
+            token_file = is_token_file(rp)
+            if not token_file:
+                for i, line in enumerate(lines, 1):
+                    st = line.lstrip()
+                    if st.startswith(("//", "/*", "*", "{/*", "<!--")) or RE_HREF_HASH_LINE.search(line):
+                        continue
+                    for m in RE_HEX.finditer(line):
+                        hex_sites[m.group(0).lower()].append(site(p, i))
             for m in RE_RADIUS_TW.finditer(txt):
-                radius_values[m.group(0)] += 1
-                radius_sites[m.group(0)].append(rp)
-            for m in RE_RADIUS_CSS.finditer(txt):
-                v = m.group(1).strip()
-                radius_values[f"css:{v}"] += 1
-                radius_sites[f"css:{v}"].append(rp)
+                k = _norm_radius_class(m.group(0))
+                radius_values[k] += 1
+                radius_sites[k].append(rp)
+            for i, line in enumerate(lines, 1):
+                if RE_TOKEN_DECL_LINE.match(line):
+                    continue  # `--radius-md: 0.5rem;` is the vocabulary itself, not drift
+                for m in RE_RADIUS_CSS.finditer(line):
+                    v = m.group(1).strip()
+                    if v.startswith("var("):
+                        continue  # a token reference is the fix, not a value
+                    radius_values[f"css:{v}"] += 1
+                    radius_sites[f"css:{v}"].append(rp)
+                for m in RE_SHADOW_CSS.finditer(line):
+                    v = m.group(1).strip()
+                    if v.startswith("var(") or v == "none":
+                        continue
+                    shadow_values[f"css:{v[:60]}"] += 1
             for m in RE_SHADOW_TW.finditer(txt):
                 shadow_values[m.group(0)] += 1
-            for m in RE_SHADOW_CSS.finditer(txt):
-                shadow_values[f"css:{m.group(1).strip()[:60]}"] += 1
             for m in RE_GRADIENT_TW.finditer(txt):
                 gradient_sites.append(site(p, txt.count("\n", 0, m.start()) + 1))
             for m in RE_GRADIENT_CSS.finditer(txt):
@@ -514,6 +664,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
                 backdrop_sites.append(rp)
             if RE_KEYFRAMES.search(txt):
                 motion_sites.append(rp)
+            elif RE_MOTION_ESSENTIAL.search(txt):
+                motion_essential_sites.append(rp)
             if RE_REDUCED_MOTION.search(txt):
                 reduced_motion_sites.append(rp)
 
@@ -546,7 +698,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
         root_file = declared_in.most_common(1)[0][0]
         # prefer a token/config file as the root if any site is one
         for f in declared_in:
-            if any(h in f.lower() for h in TOKEN_FILE_HINTS) or "layout." in f or "_app." in f or "+layout" in f:
+            if is_token_file(f) or "layout." in f or "_app." in f or "+layout" in f:
                 root_file = f
                 break
         roots.append({
@@ -638,7 +790,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
             # svg / logos / icons / og images never count; a video or a non-decorative local raster does
             "has_real_evidence": bool(evidence["video_sites"]) or len(evidence["evidence_image_sites"]) > 0,
         },
-        "motion": {"files_with_motion": len(motion_sites), "files_with_reduced_motion": len(reduced_motion_sites),
+        "motion": {"files_with_motion": len(motion_sites), "files_with_essential_motion_only": len(motion_essential_sites),
+                    "files_with_reduced_motion": len(reduced_motion_sites),
                     "reduced_motion_respected": (not motion_sites) or bool(reduced_motion_sites)},
         "design_docs": design_docs,
     }
@@ -647,6 +800,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
         "schema": SCHEMA,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "repo": str(root),
+        "app_root_rerooted_from": str(survey_root_arg) if survey_root_arg != root else None,
         "framework": fw,
         "counts": {"ui_files": len(ui_files), "style_files": len(style_files), "script_files": len(script_files), "copy_files": len(copy_files), "routes": len(routes),
                    "skipped": {"oversized": len(SKIPPED["oversized"]), "unreadable": len(SKIPPED["unreadable"]),
@@ -672,7 +826,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
     }
 
     if detect:
-        manifest["detector"] = run_detector(root, detector_cmd)
+        manifest["detector"] = run_detector(root, detector_cmd, timeout=detector_timeout)
     return manifest
 
 
@@ -699,14 +853,17 @@ def find_detector() -> list[str] | None:
     return None
 
 
-def run_detector(root: Path, detector_cmd: str | None = None) -> dict:
+def run_detector(root: Path, detector_cmd: str | None = None, timeout: int = 600) -> dict:
     cmd = detector_cmd.split() if detector_cmd else find_detector()
     if not cmd:
         return {"status": "unavailable", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0,
                 "note": "impeccable detector not found (install the impeccable skill or set UNSLOP_DETECTOR)"}
     try:
-        proc = subprocess.run(cmd + ["--json", str(root)], capture_output=True, text=True, timeout=600, cwd=str(root))
-    except (subprocess.TimeoutExpired, OSError) as e:  # pragma: no cover - environment
+        proc = subprocess.run(cmd + ["--json", str(root)], capture_output=True, text=True, timeout=timeout, cwd=str(root))
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0,
+                "note": f"detector timed out after {timeout}s (raise --detector-timeout)"}
+    except OSError as e:
         return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0, "note": str(e)}
     out = proc.stdout.strip()
     # impeccable exits 0 (clean) or 2 (primary findings present); anything else is a crash, and an
@@ -799,6 +956,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("repo", help="path to the frontend repo (or a subdir)")
     ap.add_argument("--detect", action="store_true", help="also run the impeccable detector (composed; optional)")
     ap.add_argument("--detector-cmd", default=None, help="override detector command, e.g. 'node /path/detect.mjs'")
+    ap.add_argument("--detector-timeout", type=int, default=600, help="seconds before the detector subprocess is abandoned (default 600)")
     ap.add_argument("--json", dest="json_out", default=None, help="write manifest JSON here (default: stdout)")
     ap.add_argument("--md", dest="md_out", default=None, help="also write a markdown summary here")
     ap.add_argument("--quiet", action="store_true", help="suppress the markdown summary on stderr")
@@ -808,17 +966,21 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         print(f"error: {root} is not a directory", file=sys.stderr)
         return 2
-    m = survey(root, detect=args.detect, detector_cmd=args.detector_cmd)
+    m = survey(root, detect=args.detect, detector_cmd=args.detector_cmd, detector_timeout=args.detector_timeout)
     payload = json.dumps(m, indent=2, ensure_ascii=False)
-    if args.json_out:
-        Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.json_out).write_text(payload + "\n", encoding="utf-8")
-    else:
-        print(payload)
     md = to_markdown(m)
-    if args.md_out:
-        Path(args.md_out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.md_out).write_text(md, encoding="utf-8")
+    try:
+        if args.json_out:
+            Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.json_out).write_text(payload + "\n", encoding="utf-8")
+        else:
+            print(payload)
+        if args.md_out:
+            Path(args.md_out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.md_out).write_text(md, encoding="utf-8")
+    except OSError as e:
+        print(f"error: cannot write output: {e}", file=sys.stderr)
+        return 2
     if not args.quiet:
         print(md, file=sys.stderr)
     return 0

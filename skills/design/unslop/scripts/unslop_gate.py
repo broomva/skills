@@ -24,7 +24,9 @@ The gate checks PROPERTIES, not a ban-list:
   evidence.render           screenshots at desktop + mobile widths exist and are non-blank (P11)
 
 Waivers (JSON): {"waivers": [{"check": "copy.em-dash", "reason": "≥20 chars", "value": "optional"}]}
-A waiver without a real reason is rejected — the floor is waivable, not silent.
+A waiver without a real reason is rejected — the floor is waivable, not silent. `detector.rule` and
+`fonts.deliberate` waivers must name a `value`; `evidence.render` and `direction.authored` cannot be waived.
+23 check ids (4 conditional: stock-imagery, claims, testimonials, pricing).
 
     python3 unslop_gate.py <repo> [--manifest M | --detect] [--evidence DIR] [--waivers FILE]
                            [--profile auto|persuade|operate] [--strict] [--no-render] [--json OUT]
@@ -57,6 +59,42 @@ AI_DEFAULT_WEB_FONTS = getattr(unslop_survey, "AI_DEFAULT_WEB_FONTS", {"inter", 
 SYSTEM_STACK = getattr(unslop_survey, "SYSTEM_STACK", {"system-ui", "-apple-system", "arial", "helvetica", "sans-serif"})
 MIN_REASON = 20
 MIN_SCREENSHOT_BYTES = 8_000
+# every check id the gate can emit — waivers naming anything else are rejected, and two are never waivable
+KNOWN_CHECKS = {
+    "direction.authored", "detector.clean", "detector.rule", "fonts.deliberate", "icons.single-system",
+    "tokens.color", "tokens.radius", "tokens.shadow",
+    "copy.em-dash", "copy.emoji", "copy.checkmark-bullets", "copy.not-x-but-y", "copy.buzzwords",
+    "substance.legal", "substance.loading-states", "substance.error-states", "substance.placeholders",
+    "substance.stock-imagery", "substance.claims", "substance.testimonials", "substance.pricing",
+    "substance.product-evidence", "motion.reduced-motion", "evidence.render",
+}
+NON_WAIVABLE = {"evidence.render", "direction.authored"}          # screenshots or it did not happen; a direction is the root
+VALUE_REQUIRED = {"detector.rule", "fonts.deliberate"}            # a valueless waiver here would waive every rule / every face
+
+
+def _image_dims(path: Path) -> tuple[int, int] | None:
+    """(width, height) from PNG IHDR / JPEG SOF / WebP VP8 headers, or None if the bytes are not an image."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(32)
+            if head.startswith(b"\x89PNG\r\n\x1a\n") and head[12:16] == b"IHDR":
+                return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+            if head.startswith(b"\xff\xd8"):
+                fh.seek(2)
+                while True:
+                    marker = fh.read(2)
+                    if len(marker) < 2 or marker[0] != 0xFF:
+                        return None
+                    if marker[1] in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                        seg = fh.read(7)
+                        return int.from_bytes(seg[5:7], "big"), int.from_bytes(seg[3:5], "big")
+                    ln = int.from_bytes(fh.read(2), "big")
+                    fh.seek(ln - 2, 1)
+            if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+                return (0, 0)  # accepted as an image; dimensions not parsed
+    except OSError:
+        return None
+    return None
 
 
 @dataclass
@@ -102,6 +140,8 @@ class Gate:
         return None
 
     def add(self, check: str, status: str, detail: str, evidence: list | None = None, value: str | None = None, waivable: bool = True):
+        if check in NON_WAIVABLE:
+            waivable = False
         w = self.waiver_for(check, value) if waivable and status in ("FAIL", "WARN") else None
         waived = False
         if w:
@@ -274,8 +314,11 @@ class Gate:
 
         # motion
         mo = s.get("motion", {})
-        if mo.get("files_with_motion", 0) == 0:
+        if mo.get("files_with_motion", 0) == 0 and mo.get("files_with_essential_motion_only", 0) == 0:
             self.add("motion.reduced-motion", "SKIP", "no motion detected")
+        elif mo.get("files_with_motion", 0) == 0:
+            self.add("motion.reduced-motion", "WARN" if not mo.get("files_with_reduced_motion") else "PASS",
+                     f"only essential motion utilities (spin/pulse/ping) in {mo['files_with_essential_motion_only']} file(s); a prefers-reduced-motion block is still good practice")
         elif mo.get("reduced_motion_respected"):
             self.add("motion.reduced-motion", "PASS", f"motion in {mo['files_with_motion']} file(s); prefers-reduced-motion respected")
         else:
@@ -296,10 +339,23 @@ class Gate:
             self.add("evidence.render", "FAIL", f"evidence dir {self.evidence_dir} does not exist")
             return
         shots = [p for p in self.evidence_dir.rglob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
-        ok = [p for p in shots if p.stat().st_size >= MIN_SCREENSHOT_BYTES]
-        blank = [p.name for p in shots if p.stat().st_size < MIN_SCREENSHOT_BYTES]
         is_desktop = lambda p: re.search(r"(1280|1440|1920|desktop|wide)", p.name, re.I) is not None
         is_mobile = lambda p: re.search(r"(390|375|412|mobile|narrow)", p.name, re.I) is not None
+        ok, blank = [], []
+        for p in shots:
+            dims = _image_dims(p)
+            if p.stat().st_size < MIN_SCREENSHOT_BYTES or dims is None:
+                blank.append(f"{p.name} (not a real image or < {MIN_SCREENSHOT_BYTES} bytes)")
+                continue
+            w = dims[0]
+            # the width in the filename must be plausible against the pixels — a 390 file that is 1280 wide is mislabeled
+            if w and is_desktop(p) and w < 1000:
+                blank.append(f"{p.name} (desktop file only {w}px wide)")
+                continue
+            if w and is_mobile(p) and not (300 <= w <= 600):
+                blank.append(f"{p.name} (mobile file {w}px wide)")
+                continue
+            ok.append(p)
         desktop = [p for p in ok if is_desktop(p)]
         mobile = [p for p in ok if is_mobile(p)]
         pages = [r for r in m.get("routes", []) if r.get("kind") == "page"]
@@ -311,7 +367,7 @@ class Gate:
             mo = any(slug in p.name for p in mobile)
             (full if d and mo else partial if (d or mo) else none).append(r["route"])
         if not ok:
-            self.add("evidence.render", "FAIL", f"no non-blank screenshots in {self.evidence_dir}", evidence=blank[:6])
+            self.add("evidence.render", "FAIL", f"no valid screenshots in {self.evidence_dir} (need real PNG/JPEG ≥ {MIN_SCREENSHOT_BYTES} B with plausible width)", evidence=blank[:6])
         elif not desktop or not mobile:
             self.add("evidence.render", "FAIL", f"need both widths: desktop={len(desktop)} mobile={len(mobile)} (name files with 1280/390 or desktop/mobile)")
         elif pages and not full:
@@ -337,6 +393,15 @@ def load_waivers(path: Path | None) -> dict:
     bad = [w for w in data.get("waivers", []) if not isinstance(w, dict) or len((w.get("reason") or "").strip()) < MIN_REASON or not w.get("check")]
     if bad:
         raise SystemExit(f"error: {len(bad)} waiver(s) lack a check or a reason ≥{MIN_REASON} chars — a silent waiver is not a waiver: {bad[:3]}")
+    unknown = [w["check"] for w in data["waivers"] if w["check"] not in KNOWN_CHECKS]
+    if unknown:
+        raise SystemExit(f"error: unknown waiver check id(s) {sorted(set(unknown))} — known: {sorted(KNOWN_CHECKS)}")
+    nonwaivable = [w["check"] for w in data["waivers"] if w["check"] in NON_WAIVABLE]
+    if nonwaivable:
+        raise SystemExit(f"error: {sorted(set(nonwaivable))} cannot be waived — use --no-render (WARN) or author DESIGN.md")
+    valueless = [w["check"] for w in data["waivers"] if w["check"] in VALUE_REQUIRED and not (w.get("value") or "").strip()]
+    if valueless:
+        raise SystemExit(f"error: waivers for {sorted(set(valueless))} must name a `value` (a rule id / a font family) — a bare waiver would waive everything")
     return data
 
 
@@ -402,8 +467,12 @@ def main(argv: list[str] | None = None) -> int:
         out = {"schema": "unslop-gate/1", "repo": str(repo), "profile": args.profile if args.profile != "auto" else manifest.get("profile_hint"),
                "strict": args.strict, "results": [asdict(r) for r in results],
                "clear": all(r.status != "FAIL" for r in results)}
-        Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.json_out).write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        try:
+            Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.json_out).write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        except OSError as e:
+            print(f"error: cannot write --json output: {e}", file=sys.stderr)
+            return 2
     return 0 if all(r.status != "FAIL" for r in results) else 1
 
 

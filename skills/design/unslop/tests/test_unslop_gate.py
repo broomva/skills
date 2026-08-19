@@ -10,6 +10,7 @@ import pytest
 
 import unslop_gate as ug
 import unslop_survey as us
+from helpers import png_bytes
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "unslop_gate.py"
 
@@ -105,21 +106,21 @@ def test_strict_promotes_warn_to_fail(crafted_repo, evidence_dir):
 def test_render_evidence_requires_both_widths_and_non_blank(crafted_repo, tmp_path):
     ev = tmp_path / "ev"
     ev.mkdir()
-    (ev / "index-1280.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
+    (ev / "index-1280.png").write_bytes(png_bytes(1280))
     r = _run(crafted_repo, evidence_dir=ev)
     assert r["evidence.render"].status == "FAIL" and "mobile=0" in r["evidence.render"].detail
     (ev / "index-390.png").write_bytes(b"\x89PNG")  # blank/too small
     r = _run(crafted_repo, evidence_dir=ev)
     assert r["evidence.render"].status == "FAIL"
-    (ev / "index-390.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
+    (ev / "index-390.png").write_bytes(png_bytes(390))
     r = _run(crafted_repo, evidence_dir=ev)
     assert r["evidence.render"].status == "WARN"  # index covered at both widths; ledger/terms/privacy are not
     assert "1/4 page routes" in r["evidence.render"].detail
     # a width present globally but never for the same route as the other width → FAIL (no route has both)
     ev2 = tmp_path / "ev2"
     ev2.mkdir()
-    (ev2 / "index-1280.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
-    (ev2 / "ledger-390.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
+    (ev2 / "index-1280.png").write_bytes(png_bytes(1280))
+    (ev2 / "ledger-390.png").write_bytes(png_bytes(390))
     r = _run(crafted_repo, evidence_dir=ev2)
     assert r["evidence.render"].status == "FAIL" and "no page route has both widths" in r["evidence.render"].detail
 

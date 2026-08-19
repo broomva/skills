@@ -100,7 +100,8 @@ world and say so. Never fabricate substance (policy text, testimonials, demos) t
 
 ## Validation (skill self-test)
 
-- `python3 -m pytest tests/` green (survey + gate, both polarities, waivers, strict, evidence, CLI).
+- `python3 -m pytest tests/` green (survey + gate, both polarities, waivers, strict, evidence, CLI, and one
+  regression per P20 finding — every case a false positive or fail-open a reviewer hit on a real repo).
 - Dogfood: `scripts/unslop_survey.py <a real repo> --detect` produces roots with a `root_file`; the
   detector status is `ok` when impeccable is installed and `unavailable` (never a silent pass) when not.
 - `unslop_gate.py` on the crafted fixture exits 0 with evidence; on the sloppy fixture exits 1 naming
