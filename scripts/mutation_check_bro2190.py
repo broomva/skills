@@ -195,9 +195,9 @@ MUTANTS = [
      "test_measurement_fields_are_checked_structurally_only"),
 
     # --- round 6: the substance floor, and the frontmatter contract ----------
-    ("M51 body strip requires a newline after the closing fence again",
-     "    m = re.match(r\"^\\ufeff?---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)\", raw, re.DOTALL)",
-     "    m = re.match(r\"^---\\n(.*?)\\n---\\n\", raw, re.DOTALL)",
+    ("M51 body extraction fails OPEN when the frontmatter match misses",
+     '    body = raw[m.end():] if m else ""',
+     '    body = raw[m.end():] if m else raw',
      "test_non_canonical_closing_fences_do_not_defeat_the_body_check"),
     ("M52 a UTF-8 BOM hides frontmatter again",
      '    text = text.lstrip("\\ufeff")  # a BOM made the ^--- match fail, hiding frontmatter',

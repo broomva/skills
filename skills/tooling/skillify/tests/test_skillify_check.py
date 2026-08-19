@@ -1693,6 +1693,10 @@ def test_the_documented_template_parses_without_pyyaml(tmp_path, monkeypatch):
     rejected` is the form in `_ADMISSION_TEMPLATE` and in SKILL.md, and the stdlib
     fallback never stripped the YAML comment — so an author copying the remediation
     message was told to add what they already had."""
+    # `parse_frontmatter` does a LOCAL `import yaml`, so patching the module
+    # attribute does not reach it — an earlier version of this test passed through
+    # pyyaml and never exercised the fallback at all (mutant M53 survived on it).
+    monkeypatch.setitem(sys.modules, "yaml", None)
     monkeypatch.setattr(mod, "yaml", None)
     d = _j(tmp_path)
     (d / "evals" / "admission.md").write_text(
@@ -1704,8 +1708,8 @@ def test_the_documented_template_parses_without_pyyaml(tmp_path, monkeypatch):
 def test_a_hash_inside_a_quoted_value_is_not_a_comment(tmp_path, monkeypatch):
     """Control on the comment strip: YAML only starts a comment at ` #` on a PLAIN
     scalar, so a quoted value keeps its hash."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
     monkeypatch.setattr(mod, "yaml", None)
-    fm = mod.parse_frontmatter_from_text if hasattr(mod, "parse_frontmatter_from_text") else None
     d = _skill(tmp_path, name="hashy", tier="D")
     (d / "SKILL.md").write_text(
         '---\nname: hashy\ndescription: "issue #42 handling"\ntier: D\n---\n# b\n',
