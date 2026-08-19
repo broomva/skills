@@ -664,24 +664,6 @@ _MODEL_FAMILIES = {
 # ANYWHERE in the value. Deliberately a typo-catcher, NOT an authenticity gate — see
 # the "what this cannot check" note in SKILL.md. No regex can tell whether 40 cases
 # were really labelled; that is what the P20 review layer is for.
-# Two classes, because they behave differently inside honest prose.
-#
-# INSTRUCTION tokens are an author talking to themselves — "TODO: write case" is not a
-# case no matter how many words follow it, so leading position alone decides.
-_INSTRUCTION_RE = re.compile(
-    r"^\W*(tbd|todo|fixme|xxx|wip|write ?me|fill ?(?:this )?in|coming soon"
-    r"|to ?be ?(?:done|written|measured|determined))\b", re.IGNORECASE)
-#
-# WEAK tokens appear constantly inside legitimate description — "excluded 3 cases with
-# unknown labels", "n/a for the control arm", "placeholder rows were removed before
-# scoring". They mark an unfilled field only when almost nothing else is there.
-_PLACEHOLDER_RE = re.compile(
-    r"\b(tbd|todo|fixme|xxx|n/?a|unmeasured|unknown|vibes|placeholder|guess(?:ed)?|"
-    r"pending|none|coming soon|to ?be ?(?:done|measured|determined)"
-    r"|not ?(?:yet )?(?:measured|run|done))\b"
-    r"|^\W*(?:\?+|[-\u2010-\u2015]+|\.+)\W*$", re.IGNORECASE)
-
-
 def _model_family(model: str) -> str | None:
     m = (model or "").lower()
     for fam, toks in _MODEL_FAMILIES.items():
@@ -699,46 +681,26 @@ def _is_num(x: object) -> bool:
 
 
 def _substantive(x: object) -> bool:
-    """Non-blank content that is not a placeholder.
+    """Structural presence only: a finite number, or a non-empty string.
 
-    A measured value of **0** is a genuine measurement, so truthiness is the wrong
-    test in both directions: `0` must pass and `"TBD"` must fail. An earlier draft
-    used `not measured.get("value")` and got exactly that pair backwards.
+    This used to try to detect placeholder CONTENT — "TBD", "vibes", "n/a" — and it was
+    rebuilt five times. Every rebuild produced a fresh crop of FALSE REJECTS on honest
+    prose: "Write me a concise incident report from these logs.", "excluded 3 cases
+    with unknown labels", "Unknown cause.", "TBD is not an acceptable answer; explain
+    why." Each fix bought one shape and broke another, because the question it asked —
+    is this text evasive or descriptive? — is the same undecidable question as "is this
+    measurement real?", which SKILL.md already declares out of scope.
+
+    So it is gone. A field that is present and non-empty passes; whether its contents
+    mean anything is the review layer's job, which is where that judgement was always
+    going to have to live. Deleting the heuristic removed eight false-reject classes at
+    once, along with about eighty lines of regex.
     """
-    if _is_num(x):
-        return True
-    if isinstance(x, str):
-        t = x.strip()
-        return bool(t) and not _is_placeholder(t)
-    return False
-
-
-def _is_placeholder(t: str) -> bool:
-    """True when the value is essentially nothing but a placeholder token.
-
-    Position-anchored matching missed "TBD later"; an unanchored scan then FALSE-
-    REJECTED ordinary method prose — "excluded 3 cases with unknown labels",
-    "n/a for the control arm". Both directions were wrong because the question being
-    asked was undecidable: is this prose evasive or descriptive?
-
-    So the check is narrowed to what IS decidable, in two classes. An INSTRUCTION at
-    the head ("TODO: write case") is an author talking to themselves, and is a
-    placeholder however many words follow. A WEAK token marks an unfilled field only
-    when almost nothing else is there — remove every such token, and if the residue is
-    tiny it was a placeholder. So "n/a" is caught and "n/a for the control arm" is not.
-
-    Longer prose is ACCEPTED even when it contains a weak token, because
-    telling an evasive sentence from a descriptive one is the authenticity problem this
-    gate explicitly does not attempt (see SKILL.md). "result TBD later" therefore
-    passes, and that is the deliberate trade: a false accept is a fake nobody claimed
-    to catch; a false reject blocks honest work.
-    """
-    if _INSTRUCTION_RE.match(t):
-        return True  # an instruction to write content is not content
-    if not _PLACEHOLDER_RE.search(t):
-        return False  # no evasion token at all — a short value is not a placeholder
-    residue = re.sub(r"[^0-9a-z]", "", _PLACEHOLDER_RE.sub(" ", t.lower()))
-    return len(residue) <= 6
+    if isinstance(x, bool):
+        return False
+    if isinstance(x, (int, float)):
+        return math.isfinite(x)
+    return isinstance(x, str) and bool(x.strip())
 
 
 def _read(path: Path) -> str | None:
@@ -825,106 +787,52 @@ def _dig_all(blobs: list[tuple[Path, dict]], key: str) -> list[tuple[Path, objec
 # "Correction: on rerun the final Outcome: rejected." carries the verdict mid-line.
 # Requiring a LABEL is what keeps ordinary prose — "Neither candidate was rejected by
 # the judge." — from tripping it, which a bare word scan did.
-_REJECTED_MSG = ("evals/admission.md records a `rejected` verdict — an underspecified "
-                 "skill is not admissible (an example verdict is indistinguishable "
-                 "from a real one, so it blocks too)")
-
-# A verdict sits immediately after its label, modulo markdown decoration.
-_VERDICT_HEAD_RE = re.compile(r"^[\s*`|_>-]*(admitted|not admitted|rejected)\b",
-                              re.IGNORECASE)
-
-# An UNFILLED row offers both verdicts as alternatives: "admitted / rejected",
-# "admitted | rejected", "admitted or rejected". Mere co-occurrence on the line is
-# not that — "Outcome: admitted — both outputs were valid; neither was rejected." is
-# an ordinary filled-in record, and reading it as a template was a false FAIL.
-_UNFILLED_ROW_RE = re.compile(
-    r"\b(?:admitted)\s*(?:/|\||,|\bor\b|\bvs\.?\b)\s*(?:not\s+admitted|rejected)\b"
-    r"|\b(?:rejected|not\s+admitted)\s*(?:/|\||,|\bor\b|\bvs\.?\b)\s*admitted\b",
-    re.IGNORECASE)
-
-_OUTCOME_LABEL_RE = re.compile(
-    r"\b(?:outcome|verdict|admission|result)\b\s*\**\s*[:\-\u2013\u2014|]+([^\n]*)",
-    re.IGNORECASE)
-
-_OUTCOME_RE = re.compile(
-    r"(?:^|\n)[^\S\n]*[>|*\-#\s]*\**\s*(?:outcome|verdict|admission|result)\s*\**\s*"
-    r"[:\-\u2013\u2014|]+\s*\**\s*(admitted|rejected|not admitted)\b",
-    re.IGNORECASE)
-_OUTCOME_HEADING_RE = re.compile(
-    r"(?:^|\n)#{1,6}\s*(?:outcome|verdict|admission|result)\s*\n+\s*\**\s*"
-    r"(admitted|rejected|not admitted)\b", re.IGNORECASE)
+_ADMISSION_TEMPLATE = (
+    "---\noutcome: admitted   # or: rejected\n---\n\n"
+    "<what two agents were given, and what the third party judged>\n")
 
 
 def _admission_issue(skill_dir: Path) -> str | None:
-    """Tier J's hard gate. `evals/admission.md` must record the admission test AND its
-    outcome: given the same input, can two independent agents produce outputs a third
-    party judges BOTH valid? If they contradict with no tiebreak the skill is
-    underspecified, not probabilistic, and is not admissible.
+    """Tier J's hard gate, read from a DECLARED field rather than from prose.
 
-    What it checks, stated at the strength it actually holds:
-      * an outcome inside ```…``` / ~~~…~~~ / <!--…--> is an EXAMPLE, not a record
-      * a LABELLED rejection anywhere — including a later "Correction: … Outcome:
-        rejected." and including inside a fence — blocks; first-match cannot bury it
-      * an unfilled "admitted / rejected" alternatives row blocks
-      * a line marked TODO / not-yet-run disqualifies the file
-      * unreadable fails closed instead of raising
+    `evals/admission.md` must open with YAML frontmatter carrying `outcome: admitted`
+    (or `rejected`). The admission test itself — given the same input, can two
+    independent agents produce outputs a competent third party judges BOTH valid? — is
+    written in the body, for a human to read.
 
-    NARROWED, and deliberately so: an UNLABELLED correction ("Correction: on rerun the
-    skill was rejected.") no longer blocks. The earlier version did, by scanning for
-    the bare word, and that also rejected "Neither candidate was rejected by the
-    judge." — a false FAIL on an ordinary sentence. Requiring a label is what buys the
-    prose back, and the cost is stated here rather than left as a docstring claiming
-    the old guarantee.
+    Earlier versions scanned the prose for the verdict and were rebuilt four times.
+    Each rebuild false-rejected honest records: "Neither candidate was rejected by the
+    judge.", "Outcome: admitted — both outputs were judged valid; neither was
+    rejected.", a markdown table of results, a record quoting another skill's rejected
+    outcome, a backticked `admitted`, a body opening "The planned protocol was
+    completed". Natural language has no reliable surface for this, and a gate that
+    guesses at it teaches people to write for the regex instead of for the reader.
+
+    A declared field is decidable, states the contract plainly, and cannot be
+    misparsed. It does not prove the test happened — nothing static can, and SKILL.md
+    says so — but it makes the author's own verdict unambiguous.
     """
     f = skill_dir / "evals" / "admission.md"
     if not f.is_file():
-        return "no evals/admission.md (record the admission test and its outcome)"
+        return ("no evals/admission.md — record the admission test and declare its "
+                f"outcome in frontmatter:\n{_ADMISSION_TEMPLATE}")
     raw = _read(f)
     if raw is None:
         return "evals/admission.md is unreadable"
-    if not raw.strip():
-        return "evals/admission.md is empty"
-    txt = _strip_fences(raw)
-    # Scan the RAW text (fences included) for outcome-LABELLED verdicts. Round 3 used
-    # a bare `\brejected\b` substring scan, which blocked the perfectly ordinary
-    # sentence "Neither candidate was rejected by the judge." — a false FAIL, the
-    # worst class of gate defect. Matching a labelled verdict keeps the property
-    # (a rejection anywhere, fences included, blocks) without eating prose.
-    for m in _OUTCOME_LABEL_RE.finditer(raw):
-        tail = m.group(1)
-        if _UNFILLED_ROW_RE.search(tail):
-            return ("evals/admission.md has an unfilled outcome row "
-                    "(`admitted / rejected` — delete one)")
-        # A VERDICT follows its label immediately ("Outcome: rejected"). Prose does not
-        # ("Result: neither candidate was rejected by the judge."). And only the head
-        # token is the verdict — the rest of the line is justification, which may
-        # legitimately mention the other word ("admitted; nothing was rejected").
-        vm = _VERDICT_HEAD_RE.match(tail)
-        if not vm:
-            continue
-        if vm.group(1).lower() != "admitted":
-            return _REJECTED_MSG
-    for m in _OUTCOME_HEADING_RE.finditer(raw):
-        if m.group(1).lower() != "admitted":
-            return _REJECTED_MSG
-    hits = [m.group(1).lower() for m in _OUTCOME_RE.finditer(txt)]
-    hits += [m.group(1).lower() for m in _OUTCOME_HEADING_RE.finditer(txt)]
-    if not hits:
-        return ("evals/admission.md records no outcome — needs a line like "
-                "`Outcome: admitted` (or `rejected`)")
-    if _PLANNED_RE.search(txt):
-        return ("evals/admission.md is marked planned/not-yet-run — an unrun admission "
-                "test is not an outcome")
-    # A verdict alone is not a record. The file must also say WHAT was run. This is a
-    # floor on substance, NOT a check that the test really happened — see the
-    # "what this cannot check" note in SKILL.md.
-    prose = [ln for ln in txt.splitlines()
-             if ln.strip()
-             and not _OUTCOME_RE.search("\n" + ln)
-             and not _OUTCOME_HEADING_RE.search("\n" + ln)]
-    if len("".join(prose).strip()) < 40:
-        return ("evals/admission.md records a verdict but not the test — say what two "
-                "agents were given and what a third party judged")
+    fm = parse_frontmatter(f)
+    outcome = str((fm or {}).get("outcome", "")).strip().lower()
+    if not outcome:
+        return ("evals/admission.md declares no `outcome` in frontmatter — add:\n"
+                f"{_ADMISSION_TEMPLATE}")
+    if outcome not in ("admitted", "rejected"):
+        return f"evals/admission.md outcome: {outcome!r} — must be `admitted` or `rejected`"
+    if outcome == "rejected":
+        return ("evals/admission.md declares `outcome: rejected` — an underspecified "
+                "skill is not admissible")
+    body = re.sub(r"^---\n.*?\n---\n", "", raw, flags=re.DOTALL)
+    if not body.strip():
+        return ("evals/admission.md declares an outcome but records nothing — write "
+                "what two agents were given and what a third party judged")
     return None
 
 

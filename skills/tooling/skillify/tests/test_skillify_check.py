@@ -656,8 +656,9 @@ def _judgment_evals(d: Path, *, admission="admitted", rubric=True, held_out=1,
     (d / "evals").mkdir(parents=True, exist_ok=True)
     if admission is not None:
         (d / "evals" / "admission.md").write_text(
-            "# Admission test\n\nTwo agents, same input, both outputs judged valid.\n\n"
-            f"Outcome: {admission}\n", encoding="utf-8")
+            f"---\noutcome: {admission}\n---\n\n"
+            "Two agents, same input, both outputs judged valid by a third reader.\n",
+            encoding="utf-8")
     if rubric:
         (d / "evals" / "rubric.md").write_text("# Rubric\n\n- engages the argument\n",
                                                encoding="utf-8")
@@ -731,27 +732,6 @@ def test_tier_j_without_admission_record_fails(tmp_path):
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and step2["required"]
     assert "admission" in step2["detail"]
-
-
-def test_tier_j_admission_without_an_outcome_fails(tmp_path):
-    """Presence is not correctness: a file that describes the admission test but
-    never records its result leaves the skill unadmitted."""
-    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
-    _judgment_evals(d)
-    (d / "evals" / "admission.md").write_text(
-        "# Admission test\n\nWe thought hard about whether two agents agree.\n",
-        encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL"
-    assert "no outcome" in step2["detail"]
-
-
-def test_tier_j_admission_rejected_fails(tmp_path):
-    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
-    _judgment_evals(d, admission="rejected")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL"
-    assert "rejected" in step2["detail"]
 
 
 def test_tier_j_self_judging_fails(tmp_path):
@@ -1098,24 +1078,6 @@ def test_blank_floor_and_whitespace_measurement_fail(tmp_path):
     assert step2["status"] == "FAIL"
 
 
-def test_placeholder_measurement_is_not_a_measurement(tmp_path):
-    """Strata B blocker 1: `{value: TBD, method: TBD}` passed as 'a measured floor'."""
-    d = _j(tmp_path)
-    blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["judge"]["agreement_measured"] = {"value": "TBD", "method": "TBD"}
-    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "placeholder" in step2["detail"]
-
-
-def test_vibes_as_a_method_is_not_a_measurement(tmp_path):
-    d = _j(tmp_path)
-    blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["judge"]["agreement_measured"] = {"value": "unmeasured", "method": "vibes"}
-    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "FAIL"
-
-
 def test_a_measured_agreement_of_zero_is_a_real_measurement(tmp_path):
     """Strata B major 7, the inverse direction. Truthiness got this pair backwards:
     a genuine 0 was reported as 'no measurement' while 'unmeasured' passed."""
@@ -1136,49 +1098,6 @@ def test_non_numeric_floor_fails(tmp_path):
 
 
 # --- admission record (codex blocker 4, Strata B major 3) ---------------------
-
-def test_admission_outcome_inside_a_code_fence_is_an_example_not_a_record(tmp_path):
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "# Admission\n\nWrite the outcome like this:\n\n```yaml\nOutcome: admitted\n```\n",
-        encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "no outcome" in step2["detail"]
-
-
-def test_a_superseding_rejection_is_not_buried_by_an_earlier_admitted(tmp_path):
-    """First-match-wins meant a correction below an earlier `admitted` was invisible."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Outcome: admitted\n\nCorrection 2026-08-19 — re-run.\n\nVerdict: rejected\n",
-        encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "rejected" in step2["detail"]
-
-
-def test_admission_marked_not_yet_run_is_not_an_outcome(tmp_path):
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Outcome: admitted\n\nTODO: actually run this against two agents.\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL"
-
-
-def test_admission_accepts_plausible_phrasings(tmp_path):
-    """Strata B measured 5/7 false REJECTS on ordinary markdown. A gate that only
-    accepts one phrasing trains people to write for the regex."""
-    record = ("Two agents were given the same design doc and asked to critique it. "
-              "A third reader judged both critiques defensible on the rubric.\n\n")
-    for i, verdict in enumerate(("Outcome — admitted\n",
-                                 "## Outcome\n\nAdmitted.\n",
-                                 "**Outcome: admitted**\n",
-                                 "| Outcome | admitted |\n",
-                                 "> Outcome: admitted\n",
-                                 "- Verdict: admitted\n")):
-        d = _j(tmp_path / f"phrasing{i}")
-        (d / "evals" / "admission.md").write_text(record + verdict, encoding="utf-8")
-        assert _step(_check(d), 2)["status"] == "PASS", f"rejected: {verdict!r}"
-
 
 def test_unreadable_admission_fails_closed_without_a_traceback(tmp_path):
     """codex major 2 / Strata B major 5: an uncaught PermissionError instead of a
@@ -1207,17 +1126,6 @@ def test_heading_only_rubric_does_not_count(tmp_path):
     (d / "evals" / "rubric.md").write_text("# Rubric\n\n## Dimensions\n", encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
-
-
-def test_gitkeep_and_readme_are_not_held_out_cases(tmp_path):
-    """`touch evals/held-out/.gitkeep` satisfied 'a held-out case set'."""
-    d = _j(tmp_path, held_out=0)
-    ho = d / "evals" / "held-out"
-    ho.mkdir(parents=True, exist_ok=True)
-    (ho / ".gitkeep").write_text("", encoding="utf-8")
-    (ho / "README.md").write_text("cases go here\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
 
 
 def test_a_real_held_out_case_file_counts(tmp_path):
@@ -1283,21 +1191,6 @@ def test_non_boolean_trigger_values_do_not_establish_polarity(tmp_path):
     assert "no routing eval" in step2["detail"]
 
 
-def test_non_case_files_with_content_are_not_held_out_cases(tmp_path):
-    """M16 survived: `.gitkeep` and `README.md` are both rejected by *other* clauses
-    (empty content, and the readme stem list), so neither pinned the dotfile or
-    extension guards. A non-empty dotfile and a non-empty `.log` do."""
-    d = _j(tmp_path, held_out=0)
-    ho = d / "evals" / "held-out"
-    ho.mkdir(parents=True, exist_ok=True)
-    (ho / ".DS_Store").write_text("binary-ish content\n", encoding="utf-8")
-    (ho / "scratch.log").write_text("some run output\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
-
-
-# --- P20 round 2 --------------------------------------------------------------
-
 def test_comment_only_script_is_not_a_deterministic_core(tmp_path):
     """Round-2 blocker 1: the round-1 empty-file fix rejected only zero-byte and
     whitespace files, so `# TODO: implement core` still satisfied tier D. A floor on
@@ -1355,27 +1248,6 @@ def test_nan_agreement_floor_is_not_a_number(tmp_path):
     assert step2["status"] == "FAIL" and "must be a number" in step2["detail"]
 
 
-def test_decorated_placeholders_are_still_placeholders(tmp_path):
-    """Round-2 blocker 5: the anchored regex matched "TBD" but not "TBD later"."""
-    for value, method in (("TBD later", "vibes only"), ("0.9", "to be measured"),
-                          ("guessed", "40 cases")):
-        d = _j(tmp_path / f"ph{abs(hash((value, method))) % 9999}")
-        blob = json.loads((d / "evals" / "suite.json").read_text())
-        blob["judge"]["agreement_measured"] = {"value": value, "method": method}
-        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted {value!r}/{method!r}"
-
-
-def test_held_out_marker_object_without_an_input_is_not_a_case(tmp_path):
-    """Round-2 blocker 6: `cases: [{"held_out": true}]` satisfied the gate."""
-    d = _j(tmp_path, held_out=0)
-    blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["cases"] = [{"held_out": True}]
-    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
-
-
 def test_invalid_utf8_in_skill_md_fails_closed_without_a_traceback(tmp_path):
     """Round-2 blocker 7: one 0xFF byte aborted the entire --survey run."""
     d = tmp_path / "badbytes"
@@ -1386,37 +1258,6 @@ def test_invalid_utf8_in_skill_md_fails_closed_without_a_traceback(tmp_path):
     assert step1["status"] in ("PASS", "FAIL")  # a verdict, not an exception
     rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
     assert rep["total"] == 1
-
-
-def test_tilde_and_unterminated_fences_hide_an_example_outcome(tmp_path):
-    """Round-2 blocker 4: only ``` fences were stripped."""
-    record = ("Two agents were given the same brief and a third reader judged both "
-              "outputs defensible.\n\n")
-    for fenced in ("~~~yaml\nOutcome: admitted\n~~~\n",
-                   "```yaml\nOutcome: admitted\n",
-                   "<!--\nOutcome: admitted\n-->\n"):
-        d = _j(tmp_path / f"f{abs(hash(fenced)) % 9999}")
-        (d / "evals" / "admission.md").write_text(record + fenced, encoding="utf-8")
-        step2 = _step(_check(d), 2)
-        assert step2["status"] == "FAIL", f"accepted example outcome in {fenced!r}"
-
-
-def test_admission_verdict_without_a_record_is_not_enough(tmp_path):
-    """Round-2 major 3: a file containing only `Outcome: admitted` recorded no test."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text("Outcome: admitted\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "not the test" in step2["detail"]
-
-
-def test_placeholder_keyed_rubric_is_not_a_rubric(tmp_path):
-    """Round-2 major 1: any nonempty mapping counted as a rubric."""
-    d = _j(tmp_path, rubric=False)
-    blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["rubric"] = {"TODO": None}
-    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
 
 
 # ===========================================================================
@@ -1489,18 +1330,6 @@ def test_top_level_list_eval_is_visible_not_invisible(tmp_path):
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
-def test_placeholder_held_out_case_file_is_not_a_case(tmp_path):
-    """Round-3 blocker 2: the round-2 placeholder guard landed on the `cases:` path
-    only; the FILE path still accepted any non-blank content, so a case file whose
-    entire content was `TBD` counted. `_substantive` was three lines away."""
-    d = _j(tmp_path, held_out=0)
-    ho = d / "evals" / "held-out"
-    ho.mkdir(parents=True, exist_ok=True)
-    (ho / "case-01.md").write_text("TBD\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
-
-
 def test_extensionless_python_script_is_syntax_checked(tmp_path):
     """Round-3 blocker 5: making extensionless files COUNT as code without extending
     the syntax check meant the gate printed `syntax ok` about a file nothing examined."""
@@ -1524,21 +1353,6 @@ def test_fish_shebang_is_not_checked_with_bash(tmp_path):
     # and it must NOT claim it checked what it could not check
     assert "syntax ok" not in step2["detail"]
     assert "unchecked" in step2["detail"]
-
-
-def test_rejection_inside_a_fence_still_blocks(tmp_path):
-    """Round-3 blocker 6: the docstring claimed 'ANY rejected anywhere wins' and the
-    code stripped fences first, so a superseding rejection in an example was invisible.
-    Failing closed on ambiguity is the correct direction for a gate."""
-    record = ("Two agents were given the same brief and a third reader judged both "
-              "outputs defensible.\n\n")
-    for body in ("Outcome: admitted\n\n```\nOutcome: rejected\n```\n",
-                 "Outcome: admitted\n\nCorrection: on rerun the final Outcome: rejected.\n",
-                 "| Outcome | admitted / rejected |\n"):
-        d = _j(tmp_path / f"rej{abs(hash(body)) % 9999}")
-        (d / "evals" / "admission.md").write_text(record + body, encoding="utf-8")
-        step2 = _step(_check(d), 2)
-        assert step2["status"] == "FAIL", f"accepted a rejection in {body!r}"
 
 
 def test_unreadable_template_yaml_fails_closed(tmp_path):
@@ -1572,32 +1386,6 @@ def test_survey_does_not_tally_a_crashed_skill_as_unclassified(tmp_path):
 # P20 verify round — 4 blockers, one of them a false FAIL introduced in round 3.
 # ===========================================================================
 
-def test_ordinary_prose_mentioning_rejection_is_not_a_rejected_verdict(tmp_path):
-    """THE false FAIL, and the worst class of gate defect: rejecting a real, correct
-    artifact. Round 3 replaced a fence-stripped verdict scan with a bare
-    `\\brejected\\b` substring scan over raw text, which blocked the perfectly
-    ordinary sentence below. Requiring an outcome LABEL keeps the property without
-    eating prose."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Two independent agents received the same design and a third party found both "
-        "answers valid under the written rubric.\n"
-        "Neither candidate was rejected by the judge.\n\n"
-        "Outcome: admitted\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "PASS", step2["detail"]
-
-
-def test_mid_line_superseding_rejection_still_blocks(tmp_path):
-    """...and the property it was protecting must survive the fix."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Two agents were given the same brief and a third reader judged both valid.\n\n"
-        "Outcome: admitted\n\nCorrection: on rerun the final Outcome: rejected.\n",
-        encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "FAIL"
-
-
 def test_docstring_only_script_is_not_a_deterministic_core(tmp_path):
     """Verify-round blocker 1: the round-2 fix checked line PREFIXES, and a module
     docstring's body lines carry none, so a docstring-only file read as executable."""
@@ -1615,73 +1403,6 @@ def test_a_real_python_script_with_a_docstring_still_counts(tmp_path):
     (d / "scripts" / "do.py").write_text(
         '"""Does a thing."""\n\n\ndef go():\n    return 1\n', encoding="utf-8")
     assert _step(_check(d), 2)["status"] == "PASS"
-
-
-def test_a_value_that_is_nothing_but_a_placeholder_is_caught(tmp_path):
-    """Position-anchored matching missed "TBD later"; an unanchored scan then FALSE-
-    REJECTED ordinary prose. The check is now narrowed to the decidable question — is
-    the field empty of anything but the evasion?"""
-    d = _j(tmp_path)
-    blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["judge"]["agreement_measured"] = {"value": "TBD later",
-                                           "method": "40 dual-labelled cases"}
-    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "FAIL"
-
-
-def test_legitimate_method_prose_containing_a_placeholder_word_is_accepted(tmp_path):
-    """The paired control, and the blocker that forced the narrowing: both of these
-    are ordinary descriptions of a real method and were being rejected.
-
-    "result TBD later" now PASSES, and that is the deliberate trade — telling evasive
-    prose from descriptive prose is the authenticity question this gate explicitly does
-    not attempt. A false accept is a fake nobody claimed to catch; a false reject
-    blocks honest work."""
-    for method in ("excluded 3 cases with unknown labels",
-                   "n/a for the control arm",
-                   "pending review by a second labeller",
-                   "40 dual-labelled cases, Krippendorff alpha"):
-        d = _j(tmp_path / f"m{abs(hash(method)) % 9999}")
-        blob = json.loads((d / "evals" / "suite.json").read_text())
-        blob["judge"]["agreement_measured"] = {"value": 0.91, "method": method}
-        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-        assert _step(_check(d), 2)["status"] == "PASS", f"false-rejected {method!r}"
-
-
-def test_a_held_out_case_that_is_only_a_placeholder_is_caught(tmp_path):
-    d = _j(tmp_path, held_out=0)
-    ho = d / "evals" / "held-out"
-    ho.mkdir(parents=True, exist_ok=True)
-    (ho / "case-01.md").write_text("TBD later\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
-
-
-def test_a_short_but_real_held_out_case_counts(tmp_path):
-    """Control: the residue rule must not treat *short* as *placeholder*. An earlier
-    draft of it rejected the fixture's own `case 0` prompts.
-
-    The value here is deliberately SHORT — six residue characters, right at the
-    threshold — because a longer one does not exercise the guard at all. With
-    "Critique this API." (15 residue chars) this test passed even with the guard
-    removed, so mutant M39 died to unrelated tests and its coverage was unproven."""
-    d = _j(tmp_path, held_out=0)
-    ho = d / "evals" / "held-out"
-    ho.mkdir(parents=True, exist_ok=True)
-    (ho / "case-01.md").write_text("Sort it.\n", encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "PASS"
-
-
-def test_unterminated_html_comment_hides_an_example_outcome(tmp_path):
-    """Verify-round blocker 3: round 3 handled unterminated code fences but not
-    unterminated HTML comments."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Two independent agents received the same design and a third party found both "
-        "answers valid under the written rubric.\n<!--\nOutcome: admitted\n",
-        encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "no outcome" in step2["detail"]
 
 
 def test_comment_only_shell_script_is_not_a_deterministic_core(tmp_path):
@@ -1704,30 +1425,6 @@ def test_a_real_shell_script_still_counts(tmp_path):
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
-def test_heading_form_rejection_blocks(tmp_path):
-    """Final-round blocker 2: `## Outcome` newline `Rejected` carries no separator, so
-    the labelled scan never saw it."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Two agents were given the same brief and a third reader judged both valid.\n\n"
-        "## Outcome\n\nRejected\n", encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "FAIL"
-
-
-def test_labelled_prose_mentioning_rejection_is_not_a_verdict(tmp_path):
-    """Final-round blocker 3, the second false FAIL: the label was there, so the whole
-    tail was scanned and ordinary prose after it read as a verdict. A verdict follows
-    its label immediately; prose does not."""
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "Two independent agents received the same design and a third party found both "
-        "answers valid under the written rubric.\n"
-        "Result: neither candidate was rejected by the judge.\n\n"
-        "Outcome: admitted\n", encoding="utf-8")
-    step2 = _step(_check(d), 2)
-    assert step2["status"] == "PASS", step2["detail"]
-
-
 # ===========================================================================
 # CONTROL TABLES. The final review's sharpest point was methodological: each
 # previous fix was pinned by the ONE sentence from the report, so the next round
@@ -1737,75 +1434,36 @@ def test_labelled_prose_mentioning_rejection_is_not_a_verdict(tmp_path):
 _RECORD = ("Two independent agents received the same design and a third party found "
            "both answers valid under the written rubric.\n")
 
-# Natural, filled-in admission records that must all PASS. Every one of these was
-# rejected by at least one earlier draft of the verdict scan.
-ADMISSION_MUST_PASS = [
-    "Outcome: admitted\n",
-    "Outcome: admitted — both outputs were judged valid; neither was rejected.\n",
-    "Outcome: admitted (no output was rejected)\n",
-    "Outcome: admitted. The judge rejected neither candidate.\n",
-    "**Outcome:** admitted — zero rejected runs across 12 trials.\n",
-    "Verdict: admitted; the alternative framing was rejected as out of scope.\n",
-    "Outcome: admitted\nResult: agent A and agent B agreed; no output was rejected.\n",
-    "Outcome — admitted\n",
-    "## Outcome\n\nAdmitted.\n",
-    "| Outcome | admitted |\n",
-    "> Outcome: admitted\n",
-    "- Verdict: admitted\n",
-]
-
-# Records that must all FAIL: a real rejection, or an unfilled template row.
-ADMISSION_MUST_FAIL = [
-    "Outcome: rejected\n",
-    "Outcome: not admitted\n",
-    "Verdict: rejected — the two agents contradicted each other.\n",
-    "Outcome: admitted\n\nCorrection: on rerun the final Outcome: rejected.\n",
-    "## Outcome\n\nRejected\n",
-    "| Outcome | admitted / rejected |\n",
-    "Outcome: admitted or rejected (delete one)\n",
-    "Outcome: rejected | admitted\n",
-]
 
 
-def test_admission_control_table_accepts_every_natural_record(tmp_path):
-    """The direction that matters most. A gate that rejects honest work trains people
-    to write for the regex."""
-    for i, body in enumerate(ADMISSION_MUST_PASS):
-        d = _j(tmp_path / f"ok{i}")
-        (d / "evals" / "admission.md").write_text(_RECORD + body, encoding="utf-8")
-        step2 = _step(_check(d), 2)
-        assert step2["status"] == "PASS", f"false-rejected {body!r}: {step2['detail']}"
 
+# ===========================================================================
+# The simplification: prose heuristics deleted. These pin the new contract AND
+# stand as permanent regression guards for the eight false-reject classes that
+# five rounds of patching kept reintroducing.
+# ===========================================================================
 
-def test_admission_control_table_blocks_every_rejection_and_template(tmp_path):
-    for i, body in enumerate(ADMISSION_MUST_FAIL):
-        d = _j(tmp_path / f"no{i}")
-        (d / "evals" / "admission.md").write_text(_RECORD + body, encoding="utf-8")
-        step2 = _step(_check(d), 2)
-        assert step2["status"] == "FAIL", f"accepted {body!r}"
-
-
-# Method / case prose. The placeholder check must catch a field left unfilled and
-# must not touch a field that merely uses one of those words descriptively.
-METHOD_MUST_PASS = [
+# Every one of these was rejected by some earlier draft of the placeholder or
+# admission heuristics. They are ordinary things an honest author writes.
+FORMERLY_FALSE_REJECTED_METHODS = [
     "Cohen's kappa over 40 held-out cases, excluding 3 with unknown labels",
     "excluded 3 cases with unknown labels",
     "n/a for the control arm",
     "pending review by a second labeller",
-    "40 dual-labelled cases, Krippendorff alpha",
-    "two raters, disagreements resolved by a third; 2 cases marked unknown",
     "we guessed nothing: every label was adjudicated",
     "placeholder rows were removed before scoring",
+    "Unknown cause.",
+    "Write me a concise incident report from these logs.",
+    "TBD is not an acceptable answer; explain why.",
 ]
-METHOD_MUST_FAIL = ["TBD", "TBD later", "todo", "vibes", "vibes only",
-                    "unmeasured", "n/a", "???", "—", "to be measured"]
 
 
-def test_method_control_table_accepts_legitimate_prose(tmp_path):
-    """Eight sentences an honest author would really write. An unanchored scan
-    rejected half of them."""
-    for i, method in enumerate(METHOD_MUST_PASS):
-        d = _j(tmp_path / f"mok{i}")
+def test_no_method_prose_is_ever_false_rejected(tmp_path):
+    """The regression guard for the whole class. A gate that refuses honest work
+    trains people to write for the regex; five rounds of trying to detect evasive
+    prose produced a new false reject every time, so the detection was deleted."""
+    for i, method in enumerate(FORMERLY_FALSE_REJECTED_METHODS):
+        d = _j(tmp_path / f"fm{i}")
         blob = json.loads((d / "evals" / "suite.json").read_text())
         blob["judge"]["agreement_measured"] = {"value": 0.84, "method": method}
         (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
@@ -1813,41 +1471,77 @@ def test_method_control_table_accepts_legitimate_prose(tmp_path):
         assert step2["status"] == "PASS", f"false-rejected {method!r}: {step2['detail']}"
 
 
-def test_method_control_table_blocks_unfilled_fields(tmp_path):
-    for i, method in enumerate(METHOD_MUST_FAIL):
-        d = _j(tmp_path / f"mno{i}")
-        blob = json.loads((d / "evals" / "suite.json").read_text())
-        blob["judge"]["agreement_measured"] = {"value": 0.84, "method": method}
-        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted {method!r}"
-
-
-def test_held_out_case_control_table(tmp_path):
-    """Same class, on the FILE path — where the placeholder guard once landed at one
-    site while the correct helper sat three lines away."""
-    real = ["A user reports an outage whose root cause is unknown and asks for a triage plan.",
-            "Critique this API design.",
-            "Rewrite the onboarding copy; the current version is n/a for mobile."]
-    fake = ["TBD", "TODO: write case", "TBD later", "   "]
-    for i, text in enumerate(real):
-        d = _j(tmp_path / f"hok{i}", held_out=0)
-        ho = d / "evals" / "held-out"; ho.mkdir(parents=True, exist_ok=True)
-        (ho / "case-01.md").write_text(text + "\n", encoding="utf-8")
-        step2 = _step(_check(d), 2)
-        assert step2["status"] == "PASS", f"false-rejected case {text!r}: {step2['detail']}"
-    for i, text in enumerate(fake):
-        d = _j(tmp_path / f"hno{i}", held_out=0)
-        ho = d / "evals" / "held-out"; ho.mkdir(parents=True, exist_ok=True)
-        (ho / "case-01.md").write_text(text + "\n", encoding="utf-8")
-        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted case {text!r}"
-
-
-def test_fenced_example_before_a_real_record_does_not_swallow_it(tmp_path):
-    """Final-round minor 1: the greedy unterminated-HTML-comment strip ran before
-    fence stripping, so a `<!--` inside a fenced EXAMPLE deleted every entry below."""
+def test_measurement_fields_are_checked_structurally_only(tmp_path):
+    """What survives: present and non-empty. `TBD` now PASSES, deliberately — whether
+    a filled-in field is honest is the review layer's job, and SKILL.md says so."""
     d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        _RECORD + "\nTemplate for future authors:\n\n```\n<!--\nOutcome: admitted\n-->\n```\n\n"
-        "Outcome: admitted\n", encoding="utf-8")
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": 0.9, "method": "TBD"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+    for bad in ("", "   ", None):
+        blob["judge"]["agreement_measured"] = {"value": 0.9, "method": bad}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted method={bad!r}"
+
+
+# --- the declared-outcome contract -------------------------------------------
+
+def _admission(d, text):
+    (d / "evals" / "admission.md").write_text(text, encoding="utf-8")
+
+
+_BODY = "\nTwo agents got the same brief; a third reader judged both answers valid.\n"
+
+
+def test_declared_outcome_admitted_passes(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: admitted\n---\n" + _BODY)
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_declared_outcome_rejected_blocks(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: rejected\n---\n" + _BODY)
     step2 = _step(_check(d), 2)
-    assert step2["status"] == "PASS", step2["detail"]
+    assert step2["status"] == "FAIL" and "rejected" in step2["detail"]
+
+
+def test_missing_outcome_field_fails_with_the_template(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "# Admission\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "outcome: admitted" in step2["detail"]
+
+
+def test_invalid_outcome_value_fails(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: maybe\n---\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "must be" in step2["detail"]
+
+
+def test_declared_outcome_with_an_empty_body_fails(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: admitted\n---\n\n")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "records nothing" in step2["detail"]
+
+
+def test_prose_that_broke_every_earlier_scanner_now_passes(tmp_path):
+    """The other half of the regression guard. Each body below false-FAILed under some
+    earlier draft: a verdict with justification, a quoted rejection from another skill,
+    a results table, a body opening "The planned protocol", a backticked verdict."""
+    bodies = [
+        "Outcome: admitted — both outputs were judged valid; neither was rejected.\n",
+        "For comparison, the legacy skill recorded \u201cOutcome: rejected\u201d after its two agents disagreed.\n",
+        "| Test | Outcome | Reason |\n|---|---|---|\n| Same prompt | Admitted | Both met the rubric |\n",
+        "The planned protocol was completed: two agents, one brief, both answers valid.\n",
+        "Result: `admitted`.\n",
+        "Neither candidate was rejected by the judge.\n",
+    ]
+    for i, body in enumerate(bodies):
+        d = _j(tmp_path / f"pr{i}")
+        _admission(d, "---\noutcome: admitted\n---\n\n" + body)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected {body!r}: {step2['detail']}"

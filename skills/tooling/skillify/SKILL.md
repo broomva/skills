@@ -129,8 +129,25 @@ model does not make J cheap. It makes J expressible and its debt visible.
   them. This is the concrete case that produced these tiers; the four-round record is
   in `research/notes/2026-08-19-recall-dressed-as-a-sweep-postmortem.md`.
 
-A Tier-J skill records the admission test **and its outcome** in `evals/admission.md`.
-The gate requires that record: an unrecorded admission test is an unadmitted skill.
+A Tier-J skill records the admission test in `evals/admission.md`, and **declares its
+outcome in frontmatter**:
+
+```markdown
+---
+outcome: admitted   # or: rejected
+---
+
+Two agents were given <the input>. A third reader judged <what>, and found both
+answers <valid / contradictory>.
+```
+
+The gate reads the **declared field**, never the prose. Earlier versions scanned the
+body for the verdict and were rebuilt four times; each rebuild rejected honest records
+— a verdict followed by its justification, a results table, a quoted rejection from
+another skill, a backticked verdict, a body opening *"The planned protocol was
+completed"*. Natural language has no reliable surface for this, and a gate that guesses
+at it teaches people to write for the regex instead of for the reader. A declared field
+is decidable and states the contract plainly.
 
 ### The agreement floor is deliberately unset
 
@@ -160,15 +177,25 @@ So the boundary is stated rather than blurred:
 | the artifacts exist, parse, and are structurally complete | that they describe something that happened |
 | the judge model differs from every declared model under eval | that the judge was ever run |
 | the floor is a finite number carrying a `value` + `method` | that the measurement produced *that* floor |
-| the case has an input and is not a placeholder | that the case is a good case |
+| the case has an input | that the case is a good case |
 | a script has a non-comment line | that the code does anything useful |
 
-The placeholder checks (`TBD`, `vibes`, `not measured`, …) are a **typo-catcher, not
-an authenticity gate.** They catch a field someone forgot to fill in. They do not catch
-a field someone filled in falsely, and they are not meant to. That judgement belongs to
-the **P20 review layer**, where a human or a second model reads the artifact — and
-pretending a regex can do it would be exactly the vacuity this whole gate exists to
-prevent.
+There were once placeholder checks — `TBD`, `vibes`, `n/a` — sold as a "typo-catcher".
+**They are gone.** They were rebuilt five times and every rebuild produced a fresh crop
+of false rejects on ordinary prose: *"excluded 3 cases with unknown labels"*,
+*"Write me a concise incident report from these logs."*, *"Unknown cause."*,
+*"TBD is not an acceptable answer; explain why."*
+
+The reason is the same one in the table above. *Is this text evasive or descriptive?*
+is not a different question from *is this measurement real?* — it is that question in
+different clothes, and it is equally undecidable. A field that is present and non-empty
+now passes, `TBD` included. Whether it means anything is the **P20 review layer's** job,
+where a human or a second model reads the artifact.
+
+Deleting the heuristic removed eight false-reject classes at once and about eighty
+lines of regex. **A gate that refuses honest work is worse than one that accepts a fake
+nobody claimed it could catch** — the false accept was always out of scope; the false
+reject blocks real people.
 
 ### Neither J nor L has a real user yet
 
