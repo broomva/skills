@@ -198,7 +198,7 @@ MUTANTS = [
     ("M51 body extraction fails OPEN when the frontmatter match misses",
      '    body = raw[m.end():] if m else ""',
      '    body = raw[m.end():] if m else raw',
-     "test_non_canonical_closing_fences_do_not_defeat_the_body_check"),
+     "test_malformed_closing_fence_fails_closed_not_open"),
     ("M52 a UTF-8 BOM hides frontmatter again",
      '    text = text.lstrip("\\ufeff")  # a BOM made the ^--- match fail, hiding frontmatter',
      '    pass',
