@@ -175,7 +175,8 @@ PLACEHOLDER_PATTERNS = {
     "john-jane-doe": re.compile(r"\b(john|jane)\s+doe\b", re.I),
     "acme": re.compile(r"\bAcme(\s+(Inc|Corp|Co)\.?)?\b"),
     "your-company": re.compile(r"\b(your|the)\s+company\s+name\b|\[?your\s+(company|name|product|brand)\]?", re.I),
-    "insert-here": re.compile(r"\[(?:insert|add|your|placeholder)\s+[a-z][^\]]{2,}\]|\bcoming soon\b|\bTBD\b", re.I),
+    # "Coming soon" is the honest label for an unshipped feature (the arc recommends it over a fake demo) — not counted
+    "insert-here": re.compile(r"\[(?:insert|add|your|placeholder)\s+[a-z][^\]]{2,}\]|\bTBD\b", re.I),
     "todo-in-copy": re.compile(r">\s*(TODO|FIXME|XXX)\b|['\"](TODO|FIXME)[:\s]"),
     "stock-image-host": re.compile(r"(images\.unsplash\.com|source\.unsplash\.com|picsum\.photos|placehold\.co|placeholder\.com|via\.placeholder|placekitten|dummyimage\.com|loremflickr|pravatar\.cc|randomuser\.me|ui-avatars\.com|i\.pravatar)", re.I),
     "example-domain": re.compile(r"\b[a-z0-9.-]*example\.(com|org|net)\b", re.I),
@@ -772,6 +773,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
     for p in copy_files:
         if p.name in ("package.json", "package-lock.json", "tsconfig.json", "bun.lock", "pnpm-lock.yaml") or p.suffix == ".json" and "lock" in p.name:
             continue
+        if re.search(r"(^|/)(docs?|_drafts?|drafts?|specs?|plans?|adrs?|handoffs?|\.github|node_modules)(/|$)", rel(root, p), re.I):
+            continue  # internal documentation / drafts are not shipped copy
         if p.suffix == ".json" and not any(k in rel(root, p).lower() for k in ("content", "copy", "locale", "messages", "i18n", "data")):
             continue
         txt = _read(p)

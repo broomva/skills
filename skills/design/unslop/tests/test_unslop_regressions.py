@@ -579,3 +579,15 @@ def test_ai_default_face_stated_in_design_md_passes(tmp_path):
     root2 = _repo(tmp_path, "inter", {"DESIGN.md": "# Brand\nBody: Geist.\n", "src/app/layout.tsx": 'import { Inter } from "next/font/google";\nconst i = Inter({ subsets: ["latin"] });'})
     r2 = _gate(root2, no_render=True)
     assert r2["fonts.deliberate"].status == "FAIL" and "inter" in r2["fonts.deliberate"].detail
+
+
+def test_coming_soon_and_internal_docs_are_not_placeholders(tmp_path):
+    root = _repo(tmp_path, "cs", {
+        "src/app/lago/page.tsx": "<div>Coming soon</div>",
+        "docs/specs/plan.md": "[Insert your plan here] lorem ipsum",
+        "content/writing/_drafts/x.md": "[Insert tagline here]",
+        "src/app/page.tsx": "<p>[Insert your tagline here]</p>",
+    })
+    ph = us.survey(root)["substance"]["placeholders"]
+    assert ph.get("insert-here") and all("src/app/page.tsx" in x for x in ph["insert-here"])
+    assert "lorem-ipsum" not in ph
