@@ -935,3 +935,14 @@ def test_trigger_eval_alone_does_not_infer_a_lens(tmp_path):
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and step2["required"]
     assert "must be declared" in step2["detail"]
+
+
+def test_latent_only_plus_scripts_still_requires_tests(tmp_path):
+    """Pins `require_tests = bool(code)`. The old expression was
+    `bool(code) and not latent_only or (latent_only and code)`; routing step 3
+    through latent_only at all is what let a skill ship scripts and buy out of
+    testing them. Step 2 also fails here (contradiction) — this asserts step 3
+    independently, so reverting the expression cannot pass unnoticed."""
+    d = _skill(tmp_path, tests=False, latent=True)
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL" and step3["required"]
