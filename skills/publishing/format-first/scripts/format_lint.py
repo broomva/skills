@@ -40,6 +40,7 @@ GRADE_SEVERITY = {
 
 ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
 CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
+MARKER_BLANK_RX = re.compile(r"<!--\s*format-lint:.*?-->")
 
 # A rule must not fire when the sentence denies, corrects, or attributes the claim —
 # otherwise the linter punishes the corrections it exists to promote.
@@ -202,6 +203,48 @@ def _allowed_ids(lines: list[str], idx: int) -> set[str]:
     return {s.strip() for s in m.group(1).split(",") if s.strip()} if m else set()
 
 
+def _blocks(lines: list[str], skip: set[int]) -> list[tuple[str, list[int]]]:
+    """Join hard-wrapped lines into paragraph blocks, keeping a char->line map.
+
+    Real markdown wraps at ~90 columns, so a claim routinely straddles a newline. Matching
+    per raw line silently misses those — which is how a real-world article containing the
+    exact fabrication this linter was built to catch came back clean.
+    """
+    out: list[tuple[str, list[int]]] = []
+    buf: list[str] = []
+    owner: list[int] = []
+
+    def flush() -> None:
+        if buf:
+            joined = " ".join(buf)
+            assert len(joined) == len(owner), "char->line map desynchronised"
+            out.append((joined, owner[:]))
+
+    for i, line in enumerate(lines):
+        if i in skip or not line.strip():
+            flush()
+            buf, owner = [], []
+            continue
+        # Blank out format-lint's own control/allow comments, offset-preserving. They are
+        # metadata, not prose — and a rule id such as `sends-3-5x-likes` literally contains
+        # the pattern it names, so an unblanked marker matches itself.
+        seg = MARKER_BLANK_RX.sub(lambda m: " " * len(m.group(0)), line).strip()
+        if not seg:
+            flush()
+            buf, owner = [], []
+            continue
+        if buf:
+            owner.append(i)  # the joining space belongs to the line it pulls in
+        buf.append(seg)
+        owner.extend([i] * len(seg))
+    flush()
+    return out
+
+
+def _line_of(owner: list[int], offset: int) -> int:
+    return owner[min(offset, len(owner) - 1)] if owner else 0
+
+
 def lint_text(text: str, ledger: dict) -> list[dict]:
     lines = text.splitlines()
     exempt, problems = _fence_and_frontmatter(lines)
@@ -209,24 +252,30 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
     skip = exempt | ctrl_off
     findings: list[dict] = list(problems) + list(ctrl_problems)
 
+    blocks = _blocks(lines, skip)
+
     for category in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger.get(category, []):
             grade = rule.get("grade", category)
             severity = GRADE_SEVERITY.get(grade, "WARN")
             rx = re.compile(rule["pattern"])
-            for i, line in enumerate(lines):
-                if i in skip or rule["id"] in _allowed_ids(lines, i):
-                    continue
-                m = rx.search(line)
-                if not m or _negated_at(line, m.start()):
-                    continue
-                findings.append(
-                    {
-                        "line": i + 1, "severity": severity, "category": category,
-                        "grade": grade, "id": rule["id"], "matched": m.group(0)[:80],
-                        "message": rule["message"], "instead": rule.get("instead", ""),
-                    }
-                )
+            for btext, owner in blocks:
+                for m in rx.finditer(btext):
+                    if _negated_at(btext, m.start()):
+                        continue
+                    lo = _line_of(owner, m.start())
+                    hi = _line_of(owner, m.end() - 1)
+                    spanned = range(lo, hi + 1)
+                    if any(rule["id"] in _allowed_ids(lines, k) for k in spanned):
+                        continue
+                    findings.append(
+                        {
+                            "line": lo + 1, "severity": severity, "category": category,
+                            "grade": grade, "id": rule["id"],
+                            "matched": " ".join(m.group(0).split())[:80],
+                            "message": rule["message"], "instead": rule.get("instead", ""),
+                        }
+                    )
 
     pws = ledger.get("precision_without_source")
     if pws:
@@ -235,21 +284,23 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
         # A marker must look like a RESOLVABLE locator. A bare "https://" or the
         # substring "PMC" is not a citation.
         marker_rx = re.compile(pws["marker_regex"], re.I)
-        for i, line in enumerate(lines):
-            if i in skip or "unsourced-precision" in _allowed_ids(lines, i):
-                continue
-
-            blob = "\n".join(lines[max(0, i - window) : min(len(lines), i + window + 1)])
-            if marker_rx.search(blob):
-                continue
-            for m in rx.finditer(line):
-                if _negated_at(line, m.start()):
+        for btext, owner in blocks:
+            for m in rx.finditer(btext):
+                if _negated_at(btext, m.start()):
+                    continue
+                lo = _line_of(owner, m.start())
+                hi = _line_of(owner, m.end() - 1)
+                if any("unsourced-precision" in _allowed_ids(lines, k) for k in range(lo, hi + 1)):
+                    continue
+                blob = "\n".join(lines[max(0, lo - window) : min(len(lines), hi + window + 1)])
+                if marker_rx.search(blob):
                     continue
                 findings.append(
                     {
-                        "line": i + 1, "severity": "WARN",
+                        "line": lo + 1, "severity": "WARN",
                         "category": "precision_without_source", "grade": "unverified",
-                        "id": "unsourced-precision", "matched": m.group(0)[:80],
+                        "id": "unsourced-precision",
+                        "matched": " ".join(m.group(0).split())[:80],
                         "message": pws["message"],
                         "instead": "Cite a resolvable URL or DOI containing that figure, or make the claim qualitative.",
                     }

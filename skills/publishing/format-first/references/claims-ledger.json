@@ -59,7 +59,7 @@
   "folklore": [
     {
       "id": "three-second-hook",
-      "pattern": "(?i)\\b(?:first|3|three)[\\s-]*seconds?\\b[^.\\n]{0,30}\\b(?:hook|rule)\\b|\\bhook\\b[^.\\n]{0,30}\\bfirst\\s+(?:3|three)\\s+seconds\\b",
+      "pattern": "(?i)\\bhooks?\\b[^.\\n]{0,40}\\bfirst\\s+(?:one\\s+to\\s+)?(?:1|2|3|one|two|three)(?:\\s*(?:-|–|to)\\s*(?:2|3|three))?\\s*seconds?\\b|\\bfirst\\s+(?:one\\s+to\\s+)?(?:1|2|3|one|two|three)(?:\\s*(?:-|–|to)\\s*(?:2|3|three))?\\s*seconds?\\b[^.\\n]{0,40}\\b(?:hooks?|rule)\\b|\\b(?:3|three)[\\s-]*seconds?\\s+(?:hook|rule)\\b",
       "message": "The '3-second hook rule' has no peer-reviewed basis. A targeted search returned only content farms, SEO blogs, and platform-vendor marketing.",
       "instead": "Real short-form research is descriptive (Zannettou et al. CHI'24) or recsys-internal; none identifies human-legible creative features.",
       "grade": "folklore"

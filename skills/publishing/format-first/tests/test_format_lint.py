@@ -369,3 +369,37 @@ def test_bare_pmc_substring_is_not_a_citation():
 
 def test_resolvable_doi_is_a_citation():
     assert "unsourced-precision" not in ids("Completion is 45%.\nhttps://doi.org/10.1145/3613904.3642433\n")
+
+
+# ---------- dogfood regressions (found by running the linter on a real article) ----------
+
+def test_claim_wrapped_across_lines_is_caught():
+    """Real markdown hard-wraps. A per-line matcher missed the exact fabrication this
+    linter exists to catch, on the very article it was traced to."""
+    text = (
+        "Sends per reach is the strongest signal for new audiences, with sends\n"
+        "carrying roughly three to five times more weight than likes when ranking.\n"
+    )
+    assert "sends-3-5x-likes" in ids(text)
+
+
+def test_wrapping_does_not_join_across_a_blank_line():
+    """Paragraph joining must stop at blank lines, or unrelated sentences fuse."""
+    text = "Sends are important and so are\n\nthree to five times more likes.\n"
+    assert "sends-3-5x-likes" not in ids(text)
+
+
+def test_marker_comment_does_not_match_itself():
+    """A rule id like `sends-3-5x-likes` contains the pattern it names."""
+    text = "Nothing to see here. <!-- format-lint: allow=sends-3-5x-likes -->\n"
+    assert fl.lint_text(text, LEDGER) == []
+
+
+def test_hook_variant_first_one_to_three_seconds():
+    assert "three-second-hook" in ids("Lead with a strong hook in the first one to three seconds.\n")
+
+
+def test_reported_line_is_where_the_claim_starts():
+    text = "intro line\nSends carrying roughly three to five\ntimes more weight than likes.\n"
+    f = find(text, "sends-3-5x-likes")
+    assert f and f[0]["line"] == 2
