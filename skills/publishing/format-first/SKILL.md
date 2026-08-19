@@ -142,7 +142,7 @@ a gate you cannot reason about:
 |---|---|---|
 | `<!-- format-lint: allow=<id> -->` | that line, that rule | quoting a claim in order to correct it |
 | `<!-- format-lint: disable -->` … `enable` | the region | a block quotation; whole-file coverage is itself an ERROR |
-| a resolvable URL/DOI in the same paragraph | that finding, **`unverified` + `folklore` only** | see below |
+| a resolvable URL/DOI in the same paragraph | that finding, **only for rules that opt in** | see below |
 | an unclosed fence | everything after it | which is why it is an ERROR |
 
 The third is the one to watch. A WARN-grade rule asserts *"this circulates with no located
@@ -159,12 +159,23 @@ backticked bare domains — that house style is *not* a suppression marker, deli
 bypass should be narrower than a citation convention, not wider. The consequence is that a
 resolvable link in the same paragraph silences those two grades' claims in that paragraph.
 
-The cut is **by grade, not by severity**, and the distinction is load-bearing. It does not
-silence `contested` — that grade means the literature genuinely disagrees, and citing one
-side of a disagreement does not settle it. It does not silence `hypothesis_as_fact` — a
-citation does not turn a mechanism into an established one. It does not silence `refuted` —
-a misquotation with a link attached is still a misquotation. Keying this on severity swept
-all three in, which a cross-model review caught; each boundary is now pinned by a test.
+The cut is **per rule**, declared as `citation_resolves` in the ledger, and the question it
+answers is narrow: *does supplying a source answer THIS rule's complaint?* Four of eleven
+rules say yes. The rest say no, for three different reasons:
+
+- **The literature disagrees** (`contested`). Citing one side does not settle a
+  disagreement.
+- **A mechanism is asserted as established** (`hypothesis_as_fact`). A citation does not
+  make it so.
+- **The complaint is about source QUALITY, not source existence.** `three-second-hook`'s
+  finding is that every located source is a content farm — so a URL would satisfy the
+  bypass while *confirming* the complaint. A regex cannot tell a content farm from a
+  journal, so this rule does not opt in.
+
+Two coarser cuts were tried and both were wrong. Keying on **severity** swept in
+`contested` and `hypothesis_as_fact`, which a cross-model review caught. Keying on
+**grade** still swept in `three-second-hook` and `post-daily`, which probing the fix
+caught. An absent key means no bypass: it must be opted into, never inherited.
 
 The scope is the **paragraph**, deliberately narrower than the ±3-line window the precision
 rule uses. A line window let a URL in a *different* paragraph — even one **above** the

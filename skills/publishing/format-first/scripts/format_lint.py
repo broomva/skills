@@ -38,16 +38,6 @@ GRADE_SEVERITY = {
     "hypothesis_as_fact": "WARN",
 }
 
-# Grades whose complaint IS "no source could be located". For these, and ONLY these, a
-# supplied source is the correction the rule asks for, so a citation suppresses.
-#
-# NOT `contested`: that grade means the literature disagrees, and citing one side of a
-# disagreement does not settle it. NOT `hypothesis_as_fact`: citing a source does not turn
-# a mechanism into an established one. NOT `refuted`: a misquotation with a link attached
-# is still a misquotation. Keying this on SEVERITY instead of grade silently swept
-# `contested` and `hypothesis_as_fact` in, which a cross-model review caught.
-CITATION_ANSWERS = {"unverified", "folklore"}
-
 ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
 CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
 MARKER_BLANK_RX = re.compile(r"<!--\s*format-lint:.*?-->")
@@ -326,13 +316,13 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
 
     blocks = _blocks(lines, skip)
 
-    # An `unverified`/`folklore` rule says "this circulates with no located source". A
-    # sentence that SUPPLIES a resolvable source is the correction the rule asks for, so
-    # it must not fire — "According to Instagram, its algorithm demotes non-original
-    # accounts: <link>" is true, cited, and was flagged as folklore until this existed.
+    # Some rules complain "this circulates with no located source". For THOSE, a sentence
+    # supplying a resolvable source is the correction the rule asks for, so it must not
+    # fire — "According to Instagram, its algorithm demotes non-original accounts: <link>"
+    # is true, cited, and was flagged as folklore until this existed.
     #
-    # THIS IS A DELIBERATE, DOCUMENTED BYPASS, scoped by GRADE (see CITATION_ANSWERS) and
-    # by PARAGRAPH: a resolvable URL in a claim's own paragraph silences that claim.
+    # THIS IS A DELIBERATE, DOCUMENTED BYPASS, opted into PER RULE (`citation_resolves`)
+    # and scoped to the claim's own PARAGRAPH.
     pws_cfg = ledger.get("precision_without_source") or {}
     cite_rx = re.compile(pws_cfg["marker_regex"], re.I) if pws_cfg.get("marker_regex") else None
 
@@ -360,7 +350,11 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
                     spanned = range(lo, hi + 1)
                     if any(rule["id"] in _allowed_ids(lines, k) for k in spanned):
                         continue
-                    if grade in CITATION_ANSWERS and _cited_in(btext):
+                    # Opt-in, PER RULE — see `citation_resolves` in the ledger. Grade was
+                    # too coarse: `three-second-hook`'s complaint is that every located
+                    # source is a content farm, so a URL satisfies the bypass while
+                    # confirming the complaint. Absent key = no bypass.
+                    if rule.get("citation_resolves") and _cited_in(btext):
                         continue
                     findings.append(
                         {

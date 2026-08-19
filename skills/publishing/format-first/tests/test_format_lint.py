@@ -710,12 +710,36 @@ def test_a_citation_does_not_establish_a_hypothesis():
     assert "embedding-variance-asserted" in ids(text)
 
 
-def test_suppression_is_keyed_to_grade_not_severity():
-    """The cut is semantic: only grades whose complaint IS "no source located"."""
-    assert fl.CITATION_ANSWERS == {"unverified", "folklore"}
-    assert "contested" not in fl.CITATION_ANSWERS
-    assert "hypothesis_as_fact" not in fl.CITATION_ANSWERS
-    assert "refuted" not in fl.CITATION_ANSWERS
+def test_citation_bypass_is_opt_in_per_rule():
+    """Grade was still too coarse. The bypass is now declared rule by rule.
+
+    `three-second-hook` is graded `folklore`, but its complaint is that every located
+    source is a CONTENT FARM — so a URL satisfies the bypass while confirming the
+    complaint. Only rules whose complaint is "the origin could not be located" opt in.
+    """
+    resolves = {r["id"] for r in RULES if r.get("citation_resolves")}
+    assert resolves == {
+        "sends-3-5x-likes", "mere-exposure-r-026",
+        "algorithm-favorites-list", "algorithm-punishes",
+    }
+    for rid in ("three-second-hook", "post-daily", "bornstein-208-studies",
+                "subliminal-stronger", "embedding-variance-asserted",
+                "pollutes-embeddings", "polished-aesthetic-dead"):
+        assert rid not in resolves, rid
+
+
+def test_every_rule_declares_the_bypass_explicitly():
+    """An absent key means no bypass, but silence should not be how a rule gets one."""
+    for r in RULES:
+        assert isinstance(r.get("citation_resolves"), bool), f"{r['id']} does not declare it"
+
+
+def test_a_content_farm_link_does_not_answer_a_source_quality_complaint():
+    for text in (
+        "Use a 3-second hook. Source: https://contentfarm.example/blog/hooks\n",
+        "Posting each day is how the account grew. See https://someblog.example/x\n",
+    ):
+        assert ids(text), text
 
 
 def test_a_citation_does_not_suppress_a_refuted_claim():
@@ -729,12 +753,13 @@ def test_a_citation_does_not_suppress_a_refuted_claim():
 
 
 def test_citation_suppression_reaches_across_a_hard_wrap():
+    """Uses a rule that OPTS IN — `post-daily` deliberately does not, so it cannot show this."""
     text = (
-        "Posting each day is how the\n"
-        "account grew.\n"
-        "See https://example.com/study/12345\n"
+        "According to Instagram, its algorithm demotes\n"
+        "primarily non-original accounts.\n"
+        "See https://creators.instagram.com/blog/rewarding-original-creators-on-instagram\n"
     )
-    assert "post-daily" not in ids(text)
+    assert "algorithm-punishes" not in ids(text)
 
 
 def test_an_unresolvable_marker_does_not_suppress():
