@@ -111,10 +111,23 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
     exempt: set[int] = set()
     problems: list[dict] = []
 
+    # Frontmatter is resolved FIRST and the fence scan starts after it. Ordering matters:
+    # a bare ``` inside a YAML value used to open a fence that no `---` could close, so the
+    # whole document became exempt and every live claim in it was silently missed.
+    body_start = 0
+    if lines and lines[0].strip() == "---":
+        close = next((j for j in range(1, len(lines)) if lines[j].strip() == "---"), None)
+        if close is not None and any(
+            re.match(r"^[A-Za-z_][\w-]*\s*:", lines[j]) for j in range(1, close)
+        ):
+            exempt |= set(range(0, close + 1))
+            body_start = close + 1
+
     open_at: int | None = None
     open_char = ""
     open_len = 0
-    for i, line in enumerate(lines):
+    for i in range(body_start, len(lines)):
+        line = lines[i]
         m = FENCE_RX.match(line)
         if open_at is None:
             # A backtick opener's info string may not contain a backtick (CommonMark), so
@@ -150,12 +163,6 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
             }
         )
 
-    if lines and lines[0].strip() == "---":
-        close = next((j for j in range(1, len(lines)) if lines[j].strip() == "---"), None)
-        if close is not None and any(
-            re.match(r"^[A-Za-z_][\w-]*\s*:", lines[j]) for j in range(1, close)
-        ):
-            exempt |= set(range(0, close + 1))
     return exempt, problems
 
 

@@ -582,3 +582,55 @@ def test_a_multiplier_in_a_measurement_context_still_fires():
                   "Carousels get a threefold increase in reach.",
                   "Consistency boosts reach by fourfold."):
         assert "unsourced-precision" in ids(claim + "\n"), claim
+
+
+# ---------- frontmatter / fence ordering (round-4, found by edge probing) ----------
+
+def test_a_fence_inside_frontmatter_does_not_swallow_the_document():
+    """The worst failure this gate has: a silent FALSE NEGATIVE on a live claim.
+
+    A bare ``` in a YAML value opened a fence that no `---` could close, so every line
+    after the frontmatter was exempt and the document came back clean.
+    """
+    text = (
+        "---\nname: x\nexample:\n  ```\n---\n"
+        "Mosseri said the polished, perfect aesthetic is dead.\n"
+    )
+    got = ids(text)
+    assert "polished-aesthetic-dead" in got, "the live claim after frontmatter must fire"
+    assert "unclosed-fence" not in got, "a ``` inside frontmatter is a value, not a fence"
+
+
+def test_a_real_fence_after_frontmatter_still_exempts():
+    text = (
+        "---\nname: x\n---\n"
+        "```\nMosseri said the polished, perfect aesthetic is dead.\n```\n"
+    )
+    assert "polished-aesthetic-dead" not in ids(text)
+
+
+def test_an_unclosed_fence_after_frontmatter_is_still_reported():
+    text = "---\nname: x\n---\n```\nMosseri said the polished, perfect aesthetic is dead.\n"
+    assert "unclosed-fence" in ids(text)
+
+
+def test_a_malformed_document_fails_loudly_rather_than_silently():
+    """An unclosed fence swallowing an enable directive must not read as a clean file."""
+    text = (
+        "<!-- format-lint: disable -->\n```\nquoted\n<!-- format-lint: enable -->\n"
+        "Mosseri said the polished, perfect aesthetic is dead.\n"
+    )
+    findings = fl.lint_text(text, LEDGER)
+    assert any(f["severity"] == "ERROR" for f in findings), "silence here would hide a claim"
+
+
+def test_crlf_input_behaves_identically_to_lf():
+    dirty = "Mosseri said the polished, perfect aesthetic is dead."
+    assert ids(dirty + "\r\n") == ids(dirty + "\n")
+    assert ids("```\r\n" + dirty + "\r\n```\r\n") == ids("```\n" + dirty + "\n```\n")
+    assert "unclosed-fence" in ids("```\r\n" + dirty + "\r\n")
+
+
+def test_a_closer_with_trailing_whitespace_still_closes():
+    dirty = "Mosseri said the polished, perfect aesthetic is dead."
+    assert "unclosed-fence" not in ids("```\n" + dirty + "\n```   \n")
