@@ -99,8 +99,10 @@ def _compile_or_fail(pattern: str, what: str, fail) -> None:
     the two that were reported would leave the next one to escape as a traceback and exit 1
     — the code that means "findings were present".
 
-    `Exception`, not `BaseException`, is deliberate: KeyboardInterrupt and SystemExit are
-    BaseExceptions and still propagate, so a broad catch here cannot swallow an interrupt.
+    `Exception`, not `BaseException`, is deliberate: KeyboardInterrupt, SystemExit and
+    GeneratorExit are BaseExceptions and propagate on their own. MemoryError does NOT —
+    it subclasses Exception — so it is re-raised explicitly above, because resource
+    exhaustion is an operational failure and not a malformed ledger.
 
     WHAT THIS CANNOT SEE: a pattern that compiles and then explodes at MATCH time —
     `(a+)+$` is valid, loads cleanly, and hangs on the first adversarial input. Validating
@@ -110,6 +112,11 @@ def _compile_or_fail(pattern: str, what: str, fail) -> None:
     """
     try:
         re.compile(pattern)
+    except MemoryError:
+        # Resource exhaustion is an OPERATIONAL failure, not bad input. Reporting it as an
+        # invalid ledger sends the reader to fix a pattern that is fine, and exits 2 ("bad
+        # input") for a condition that is nothing of the sort.
+        raise
     except Exception as exc:                       # noqa: BLE001 — see docstring
         fail(f"{what}: {type(exc).__name__}: {exc}")
 

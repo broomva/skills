@@ -1315,6 +1315,16 @@ def test_an_empty_region_reports_nothing():
     assert ids("<!-- format-lint: disable -->\n<!-- format-lint: enable -->\n") == set()
 
 
+class _ExhaustedRe:
+    """A `re` stand-in whose compile raises MemoryError."""
+
+    error = Exception
+
+    @staticmethod
+    def compile(_pattern, *_a, **_k):
+        raise MemoryError("oom")
+
+
 class _InterruptingRe:
     """A stand-in for the `re` module whose compile always raises a BaseException.
 
@@ -1350,3 +1360,26 @@ def test_an_ordinary_compile_failure_is_still_converted(monkeypatch):
     seen = []
     fl._compile_or_fail("(", "context", seen.append)
     assert seen and "context" in seen[0] and "error" in seen[0].lower()
+
+
+def test_memory_error_is_not_reported_as_a_bad_ledger(monkeypatch):
+    """MemoryError subclasses Exception, unlike the other things that must propagate.
+
+    Resource exhaustion is an OPERATIONAL failure. Converting it to LedgerError sends the
+    reader to fix a pattern that is fine, and exits 2 ("bad input") for a condition that is
+    nothing of the sort. KeyboardInterrupt, SystemExit and GeneratorExit propagate on their
+    own because they are BaseExceptions; MemoryError needs an explicit re-raise.
+    """
+    import pytest
+
+    monkeypatch.setattr(fl, "re", _ExhaustedRe)
+    with pytest.raises(MemoryError):
+        fl._compile_or_fail("anything", "context", lambda msg: None)
+
+
+def test_every_base_exception_still_propagates_from_the_compile_site():
+    """Documents WHY only MemoryError needed the explicit clause."""
+    propagate_on_their_own = (KeyboardInterrupt, SystemExit, GeneratorExit)
+    for exc in propagate_on_their_own:
+        assert not issubclass(exc, Exception), exc.__name__
+    assert issubclass(MemoryError, Exception), "this is why it needs an explicit re-raise"
