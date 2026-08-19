@@ -440,3 +440,145 @@ def test_wrapped_prose_still_joins_after_structural_fix():
 def test_numbered_list_items_do_not_fuse():
     text = "1. Embrace a polished aesthetic\n2. Minimalism is dead\n"
     assert "polished-aesthetic-dead" not in ids(text)
+
+
+# ---------- fence delimiters (round-4: a fence is a char AND a length) ----------
+
+def test_inner_shorter_fence_does_not_close_an_outer_fence():
+    """A ```` block quoting ``` must stay exempt to its real end.
+
+    Tracking only "starts with ``` " closed the block at the inner line, so everything
+    after it was linted as prose while the author believed it was quoted.
+    """
+    text = (
+        "````\n"
+        "```\n"
+        "Sends are 3-5x more than likes.\n"
+        "```\n"
+        "````\n"
+        "Live prose: sends are 3-5x more than likes.\n"
+    )
+    hits = find(text, "sends-3-5x-likes")
+    assert len(hits) == 1, "only the line outside the ```` block may fire"
+    assert hits[0]["line"] == 6
+
+
+def test_a_tilde_run_cannot_close_a_backtick_fence():
+    text = "```\nSends are 3-5x more than likes.\n~~~\n"
+    got = ids(text)
+    assert "unclosed-fence" in got
+    assert "sends-3-5x-likes" not in got
+
+
+def test_a_closing_run_must_be_at_least_as_long_as_the_opener():
+    text = "````\nSends are 3-5x more than likes.\n```\n"
+    assert "unclosed-fence" in ids(text)
+
+
+def test_a_run_with_an_info_string_does_not_close():
+    text = "```\nSends are 3-5x more than likes.\n```python\n"
+    assert "unclosed-fence" in ids(text)
+
+
+def test_unclosed_fence_reports_the_delimiter_it_saw():
+    assert find("~~~~\nSends are 3-5x likes.\n", "unclosed-fence")[0]["matched"] == "~~~~"
+    assert find("```\nSends are 3-5x likes.\n", "unclosed-fence")[0]["matched"] == "```"
+
+
+def test_a_backtick_run_with_backticks_after_it_is_prose_not_a_fence():
+    """CommonMark: a backtick opener's info string may not contain a backtick."""
+    text = "```code``` — sends are 3-5x more than likes.\n"
+    assert "sends-3-5x-likes" in ids(text)
+
+
+def test_indented_fence_up_to_three_spaces_still_opens():
+    assert "sends-3-5x-likes" not in ids("   ```\n   Sends are 3-5x likes.\n   ```\n")
+
+
+def test_a_deeply_indented_fence_inside_a_list_is_still_a_fence():
+    """CommonMark caps fence indent at 3 spaces; a fence nested in a list exceeds that.
+
+    Mutation testing caught this: bounding the indent to {0,3} changed no test, i.e. the
+    bound was unproven either way. For a gate that ERRORs, linting quoted code as prose is
+    the worse failure, so indentation is unbounded and that choice is now pinned.
+    """
+    text = "- item\n\n      ```\n      Sends are 3-5x more than likes.\n      ```\n"
+    assert "sends-3-5x-likes" not in ids(text)
+
+
+# ---------- paraphrase coverage (round-4) ----------
+# Every widening below was a documented known-open: the claim was made in different words
+# and passed clean. Each positive is paired with an adjacent negative, because a widened
+# pattern is exactly where a fix opens the next defect.
+
+def test_anthropomorphic_verbs_beyond_punish_are_caught():
+    for verb in ("demotes", "suppresses", "throttles", "shadowbans", "buries",
+                 "deprioritises", "penalises"):
+        assert "algorithm-punishes" in ids(f"The algorithm {verb} inconsistent formats.\n"), verb
+
+
+def test_a_documented_demotion_can_still_be_written_with_attribution():
+    """Instagram's originality gate IS a real demotion — the negation guard must let it through."""
+    text = "Instagram claims that its algorithm demotes primarily non-original accounts.\n"
+    assert "algorithm-punishes" not in ids(text)
+
+
+def test_a_neutral_ranking_sentence_does_not_trip_the_widened_verbs():
+    assert "algorithm-punishes" not in ids(
+        "Ranking is a weighted sum; a low predicted value simply loses the auction.\n"
+    )
+
+
+def test_cadence_folklore_in_other_phrasings():
+    for phrasing in ("Posting each day is how you grow.",
+                     "Posting every single day drives reach.",
+                     "Posting seven days a week feeds the algorithm."):
+        assert "post-daily" in ids(phrasing + "\n"), phrasing
+
+
+def test_a_cadence_sentence_without_a_growth_claim_is_clean():
+    assert "post-daily" not in ids("I post daily because I enjoy it.\n")
+
+
+def test_variance_hypothesis_in_other_verbs():
+    for verb in ("shrinks", "narrows", "tightens", "compresses", "decreases"):
+        assert "embedding-variance-asserted" in ids(
+            f"Format consistency {verb} item embedding variance.\n"
+        ), verb
+
+
+def test_variance_sentence_labelled_as_hypothesis_is_clean():
+    assert "embedding-variance-asserted" not in ids(
+        "It is not established that format consistency reduces embedding variance.\n"
+    )
+
+
+def test_word_form_multipliers_count_as_precision():
+    assert "unsourced-precision" in ids("Sends carry a fivefold weighting.\n")
+
+
+def test_a_cited_word_form_multiplier_is_clean():
+    text = (
+        "Sends carry a fivefold weighting.\n"
+        "Source: https://doi.org/10.1145/3613904.3642433\n"
+    )
+    assert "unsourced-precision" not in ids(text)
+
+
+def test_the_enumeration_idiom_is_not_a_multiplier():
+    """"The problem is threefold:" enumerates; it does not measure.
+
+    The first version of the word-form widening fired on exactly this, twice in a
+    3327-file sweep — 2 of its 3 new hits were this idiom. See scripts/corpus_sweep.py.
+    """
+    for idiom in ("The non-tautological content is threefold: (i) one, (ii) two.",
+                  "Your job is twofold: bootstrap, then maintain.",
+                  "The benefit here is fivefold and hard to summarise."):
+        assert "unsourced-precision" not in ids(idiom + "\n"), idiom
+
+
+def test_a_multiplier_in_a_measurement_context_still_fires():
+    for claim in ("Sends carry a fivefold weighting.",
+                  "Carousels get a threefold increase in reach.",
+                  "Consistency boosts reach by fourfold."):
+        assert "unsourced-precision" in ids(claim + "\n"), claim

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "provenance": "broomva/workspace BRO-2145 (PR #376, merged 195a9e54). Claims verified against primary sources on 2026-08-12; see research/entities/pattern/format-consistency-is-retrieval-reliability.md and research/notes/2026-08-12-short-form-format-strategy-synthesis.md",
-    "review": "Upstream research arc (BRO-2145): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 6/10. THIS SKILL (BRO-2185): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 5/10, plus a dogfood pass on a real unseen article that found 2 defects the tests missed. Ships with known-open findings; see SKILL.md Provenance.",
+    "review": "Upstream research arc (BRO-2145): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 6/10. THIS SKILL (BRO-2185): P20 Strata A, rounds 2/10 -> 5/10 -> 5/10, then a dogfood pass on a real unseen article that found 2 defects the tests missed, then a round-4 pass fixing fence-delimiter tracking, four universal-absence overstatements, and the paraphrase gap. Widenings were swept against 3,328 real files via scripts/corpus_sweep.py (net +1 finding, a true positive; 0 regressions). Known-open: regex-over-text still misses unlisted paraphrases; block boundaries are line-structural. See SKILL.md Provenance.",
     "recheck_after": "2027-02-12",
     "grades": {
       "refuted": "ERROR — contradicted by a primary source that was loaded and read",
@@ -51,7 +51,7 @@
     {
       "id": "algorithm-favorites-list",
       "pattern": "(?i)(?:algorithm|instagram|tiktok)[^.\\n]{0,60}\\b(?:excluded|rejected|blacklist|black-?list|naughty)\\s+list\\b|\\b(?:algorithm(?:'s)?|its)\\s+(?:secret\\s+)?(?:favou?rites?)\\s+list\\b|\\b(?:favou?rites?|excluded|blacklist)\\s+list\\s+of\\s+formats?\\b",
-      "message": "No format-keyed favor or penalty state appears in any PUBLIC documentation. The systems are proprietary, so this is undocumented rather than disproven.",
+      "message": "No format-keyed favor or penalty state appears in the public documentation searched (see references/evidence-map.md §1). The systems are proprietary, so this is undocumented rather than disproven.",
       "instead": "The one documented account-level gate is keyed to ORIGINALITY (de-recommends primarily non-original reposting), not to format choice.",
       "grade": "unverified"
     }
@@ -66,15 +66,15 @@
     },
     {
       "id": "post-daily",
-      "pattern": "(?i)post(ing)?\\s+(every\\s+day|daily)[^.\\n]{0,40}(grow|growth|reach|algorithm)|(grow|growth)[^.\\n]{0,30}post(ing)?\\s+(every\\s+day|daily)",
+      "pattern": "(?i)post(?:ing)?\\s+(?:every\\s+(?:single\\s+)?day|each\\s+day|daily|seven\\s+days\\s+a\\s+week|7\\s*x\\s*(?:a|per)\\s*week)[^.\\n]{0,40}(?:grow|growth|reach|algorithm)|(?:grow|growth)[^.\\n]{0,30}post(?:ing)?\\s+(?:every\\s+(?:single\\s+)?day|each\\s+day|daily)",
       "message": "Volume-as-growth-strategy is unevidenced, and is the specific error the source case study spent two years and 800 posts disproving.",
       "instead": "Format quality and consistency, not cadence. Publish less, with a validated format.",
       "grade": "folklore"
     },
     {
       "id": "algorithm-punishes",
-      "pattern": "(?i)\\balgorithm\\b[^.\\n]{0,25}\\b(?:punish\\w*|hates?|sabotag\\w*|penaliz\\w*)\\b",
-      "message": "Anthropomorphic framing with no documented referent. There is no per-format punitive state.",
+      "pattern": "(?i)\\balgorithm\\b[^.\\n]{0,25}\\b(?:punish\\w*|hates?|sabotag\\w*|penali[sz]\\w*|demot\\w*|suppress\\w*|throttl\\w*|shadow-?ban\\w*|deprioriti[sz]\\w*|bur(?:y|ies|ied))\\b",
+      "message": "Anthropomorphic framing with no documented referent. There is no per-format punitive state. The ONE documented demotion is account-level and keyed to originality (non-original reposting), not to format — if that is what you mean, name it and cite it.",
       "instead": "Describe the actual mechanism: predicted-value scoring and retrieval proximity, or say you do not know.",
       "grade": "folklore"
     }
@@ -82,7 +82,7 @@
   "hypothesis_as_fact": [
     {
       "id": "embedding-variance-asserted",
-      "pattern": "(?i)(?:format\\s+)?(?:consistency|repeating|repetition)[^.\\n]{0,60}(?:lowers?|reduces?)[^.\\n]{0,20}embedding[^.\\n]{0,20}variance",
+      "pattern": "(?i)(?:format\\s+)?(?:consistency|consistent|repeating|repetition)[^.\\n]{0,60}(?:lowers?|reduces?|shrinks?|narrows?|tightens?|compress\\w*|decreas\\w*)[^.\\n]{0,30}embedding[^.\\n]{0,20}variance",
       "message": "This mechanism is a HYPOTHESIS. No source establishes that 'format' is a dimension of the learned representation.",
       "instead": "Label it: 'a plausible mechanism no cited source establishes'. The supported claim is the negative one (no documented format-keyed favor state).",
       "grade": "hypothesis_as_fact"
@@ -96,7 +96,7 @@
     }
   ],
   "precision_without_source": {
-    "pattern": "(?<![\\w.])(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?\\s*%|\\d+\\s*(?:-|–)\\s*\\d+\\s*(?:x|times)\\b|r\\s*[=≈]\\s*[01]?\\.\\d+|\\d{1,3}(?:,\\d{3})+\\s+(?:studies|papers|experiments|participants|users)|\\d{2,}\\s+(?:studies|papers|experiments|participants|users))",
+    "pattern": "(?<![\\w.])(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?\\s*%|\\d+\\s*(?:-|–)\\s*\\d+\\s*(?:x|times)\\b|r\\s*[=≈]\\s*[01]?\\.\\d+|\\d{1,3}(?:,\\d{3})+\\s+(?:studies|papers|experiments|participants|users)|\\d{2,}\\s+(?:studies|papers|experiments|participants|users)|\\b(?:two|three|four|five|six|seven|eight|nine|ten)-?fold\\s+(?:increase|decrease|boost|lift|gain|drop|rise|jump|weighting|weight|difference|improvement|advantage|reach|growth|more|less|higher|lower)\\b|\\b(?:increas|decreas|boost|multipl|weight|amplif|reduc)\\w*[^.\\n]{0,25}?\\b(?:by\\s+)?(?:two|three|four|five|six|seven|eight|nine|ten)-?fold\\b)",
     "citation_markers": [
       "http://",
       "https://",

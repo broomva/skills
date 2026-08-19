@@ -51,6 +51,12 @@ STANDALONE_RX = re.compile(r"^\s*(?:#{1,6}\s|\||>|-{3,}\s*$|\*{3,}\s*$)")
 # otherwise the linter punishes the corrections it exists to promote.
 SENT_SPLIT_RX = re.compile(r"(?<=[.!?;])\s+")
 
+# A fence is a run of 3+ of ONE delimiter, then an info string. Indentation is NOT bounded
+# to CommonMark's 3 spaces: a fence nested in a list is legitimately indented further, and
+# for a gate that ERRORs, wrongly linting quoted code is worse than exempting one extra
+# block — an opener that swallows the rest of the file is already caught as unclosed-fence.
+FENCE_RX = re.compile(r"^[ 	]*(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+
 
 def _negated_at(line: str, start: int) -> bool:
     """True when the SENTENCE containing `start` denies/corrects/attributes the claim.
@@ -105,24 +111,42 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
     exempt: set[int] = set()
     problems: list[dict] = []
 
-    fence_open_at: int | None = None
+    open_at: int | None = None
+    open_char = ""
+    open_len = 0
     for i, line in enumerate(lines):
-        if line.lstrip().startswith("```") or line.lstrip().startswith("~~~"):
-            fence_open_at = None if fence_open_at is not None else i
-            exempt.add(i)
+        m = FENCE_RX.match(line)
+        if open_at is None:
+            # A backtick opener's info string may not contain a backtick (CommonMark), so
+            # a prose line like ``` `a` vs `b` ``` is text, not the start of a code block.
+            if m and not (m.group("fence")[0] == "`" and "`" in m.group("info")):
+                open_at = i
+                open_char = m.group("fence")[0]
+                open_len = len(m.group("fence"))
+                exempt.add(i)
             continue
-        if fence_open_at is not None:
-            exempt.add(i)
-    if fence_open_at is not None:
+        exempt.add(i)
+        # Closing needs the SAME character, a run at least as long, and nothing after it.
+        # Tracking only "starts with ``` or ~~~" let a ``` line inside a ```` block close
+        # it early — the remainder of the block was then linted as prose, and a ~~~ could
+        # close a ``` fence.
+        if (
+            m
+            and m.group("fence")[0] == open_char
+            and len(m.group("fence")) >= open_len
+            and not m.group("info").strip()
+        ):
+            open_at = None
+    if open_at is not None:
         problems.append(
             {
-                "line": fence_open_at + 1,
+                "line": open_at + 1,
                 "severity": "ERROR",
                 "category": "lint_control",
                 "id": "unclosed-fence",
-                "matched": "```",
+                "matched": open_char * open_len,
                 "message": "An unclosed code fence exempts every line to end of file.",
-                "instead": "Close the fence.",
+                "instead": f"Close the fence with {open_char * open_len} on its own line.",
             }
         )
 

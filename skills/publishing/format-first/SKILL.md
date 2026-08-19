@@ -45,9 +45,17 @@ This skill separates these grades, and the separation is the point:
 | **Contested** | The literature genuinely disagrees | whether subliminal exposure is stronger | <!-- format-lint: allow=subliminal-stronger -->
 | **Unverified** | Origin could not be located — **not** proof of falsity | the 3–5x sends weighting; a widely-quoted effect size |
 
-The single most important line: **format-level clustering is not documented anywhere.**
-The negative claim (no format-keyed favor state exists) is well supported. The positive
-mechanism is a working hypothesis with a plausibility argument. Say so.
+The single most important line: **no source in the set searched here describes
+format-level clustering.** That set is Meta's own published material — the Explore
+engineering writeup, the Reels Chaining system card, `about.instagram.com`, Mosseri's
+accounts, the Transparency Center — enumerated in `references/evidence-map.md` §1.
+
+By this skill's own grades that is `unverified`, not `refuted`. Absence from an operator's
+own description of its system is real evidence and stronger than a failed keyword search,
+because those pages exist to enumerate ranking inputs. It is not proof: the systems are
+proprietary and nothing obliges the published descriptions to be complete. The positive
+mechanism — that consistency improves retrieval — is a working hypothesis with a
+plausibility argument. Say so, in both directions.
 
 ## The loop
 
@@ -130,6 +138,21 @@ an unclosed, nested, or whole-file region is itself reported as an ERROR.
 Extend it by editing `references/claims-ledger.json` — pattern, message, and the
 correct replacement. Every rule needs both polarities in `tests/`.
 
+**Before you trust it, sweep your own archive.**
+
+```bash
+python3 scripts/corpus_sweep.py ~/writing                       # what fires, per rule
+python3 scripts/corpus_sweep.py ~/writing --compare old.json    # what a ledger edit changed
+```
+
+A rule that fires on a third of your existing work is a rule you will learn to ignore, and
+a widened pattern is where the next false positive comes from. `--compare` runs both
+ledgers over the same tree and prints only the delta; every *added* finding has to be a
+true positive or the coverage was bought with noise. That check is not decorative — the
+first draft of the word-form-multiplier rule added three findings across 3,328 files and
+**two of them were the enumeration idiom** ("the problem is threefold"), which is why the
+rule now requires a measurement context. Rerun the command to regenerate those numbers.
+
 ## Anti-rationalization
 
 | Excuse | Reality |
@@ -149,12 +172,27 @@ load-bearing claim traced to a primary source. **That upstream research arc** wa
 cross-reviewed over three rounds scoring 2/10 -> 5/10 -> 6/10, catching two genuine errors
 in it.
 
-**This skill's own review record is separate and worse:** three adversarial rounds scoring
+**This skill's own review record is separate and worse:** adversarial rounds scoring
 **2/10 -> 5/10 -> 5/10**, plus a dogfood pass against a real unseen article that found two
-defects all 47 tests had missed. It ships with known-open findings — chiefly that the
-matcher is regex-over-text, so paraphrase coverage is incomplete, and that block boundaries
-are line-structural rather than a real Markdown parse. Do not read a clean run as proof a
-document is sound; read it as proof it contains none of the specific strings in the ledger.
-Full graded claim set: `references/evidence-map.md`.
+defects all 47 tests had missed, plus a fourth round that fixed the three findings below.
+
+- **Fence tracking** treated any ` ``` ` or `~~~` as a toggle, so a ` ``` ` inside a
+  ` ```` ` block closed it early and the rest was linted as prose. A fence is now a
+  character *and* a length, and a closing run must carry no info string.
+- **Universal-absence phrasing.** Four sites said format-level clustering is "documented
+  nowhere" / absent from "any PUBLIC documentation". Those are claims about a search, which
+  is the exact grade this skill defines as `unverified` — it was grading its own claim above
+  its evidence. All four now name the source set.
+- **Paraphrase coverage**, widened where it was cheap and honest: anthropomorphic verbs
+  beyond "punish" (demote/suppress/throttle/shadowban/bury/deprioritise), cadence phrased
+  as "each day" or "seven days a week", the variance hypothesis in five more verbs, and
+  word-form multipliers. Each widening carries a paired negative fixture and was swept
+  against 3,328 real files.
+
+**Still known-open.** The matcher is regex-over-text, so a claim stated in words the ledger
+does not list still passes; the widenings above narrow that gap, they do not close it.
+Block boundaries are line-structural, not a real Markdown parse. Do not read a clean run as
+proof a document is sound; read it as proof it contains none of the specific strings in the
+ledger. Full graded claim set: `references/evidence-map.md`.
 
 Recheck the ledger after **2027-02-12** — platform documentation moves.

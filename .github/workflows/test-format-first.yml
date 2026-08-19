@@ -44,5 +44,39 @@ jobs:
         run: python -m pytest tests/ -v
       - name: Ledger is valid JSON
         run: python -c "import json;json.load(open('references/claims-ledger.json'))"
+      - name: Every ledger pattern compiles
+        run: |
+          python - <<'PY'
+          import json, re
+          d = json.load(open("references/claims-ledger.json"))
+          n = 0
+          for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+              for r in d[cat]:
+                  re.compile(r["pattern"]); n += 1
+          re.compile(d["precision_without_source"]["pattern"])
+          re.compile(d["precision_without_source"]["marker_regex"])
+          print(f"{n + 2} patterns compile")
+          PY
       - name: Dogfood — the skill's own docs must pass its own gate
         run: python scripts/format_lint.py SKILL.md references/evidence-map.md --strict
+      - name: The gate can actually go red
+        # A dogfood step that only ever asserts CLEAN passes just as well when the linter
+        # is broken and finds nothing. Prove the red path from CI, not from a local memory.
+        run: |
+          printf 'Mosseri said the polished, perfect aesthetic is dead.\n' > /tmp/dirty.md
+          set +e
+          python scripts/format_lint.py /tmp/dirty.md
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "::error::expected exit 1 on a refuted claim, got $code"; exit 1; }
+      - name: corpus_sweep runs end-to-end with zero crashes
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys
+          out = subprocess.run([sys.executable, "scripts/corpus_sweep.py", ".", "--json"],
+                               capture_output=True, text=True, check=True)
+          rep = json.loads(out.stdout)
+          assert rep["crashes"] == 0, rep
+          assert rep["files"] > 0, rep
+          print(f"swept {rep['files']} files, {rep['findings']} findings, 0 crashes")
+          PY

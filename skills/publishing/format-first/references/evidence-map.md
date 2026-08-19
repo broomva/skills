@@ -81,9 +81,16 @@ source establishes** that "format" is a dimension of that representation, that c
 measurably reduces variance, or that any of it produces a reach effect of a given size.
 The similarity space is trained on engagement, not on human-legible production style.
 
-**Format-level clustering is documented nowhere.** No Meta source describes format
-(talking-head vs b-roll, hook style, cut rate) as a clustering dimension or ranking
-feature. The nearest published item is `"the length of the reel"` — a scalar.
+**No source searched here describes format-level clustering.** Format (talking-head vs
+b-roll, hook style, cut rate) appears as a clustering dimension or ranking feature in none
+of the sources in §1 above — the Explore engineering writeup, the Reels Chaining system
+card, `about.instagram.com`, Mosseri's accounts, the Transparency Center. The nearest
+published item is `"the length of the reel"` — a scalar.
+
+Graded `unverified`, not `refuted`. These are the operator's own descriptions of its own
+system, so an absence in them carries weight a failed keyword search would not; but the
+systems are proprietary and the descriptions are not obliged to be complete, so the
+absence is evidence and not proof.
 
 **How you would test it:** hold topic constant across structurally-identical vs varied
 items and compare per-item reach variance. Not done here.
@@ -107,7 +114,7 @@ grade, so only `refuted` exits non-zero.
 | Bornstein "208 studies" — **contested** | Near-primary sources describe **134 studies reporting 208 contrasts** (Grybinas, Kantner & Dobbins 2019, *Memory & Cognition* 47:1314–1327). The phrasing conflates studies with contrasts; the article is paywalled and the exact framing is disputed. |
 | Mere-exposure `r = .26` — **unverified** | Not found in the paywalled article, its abstract, Crossref, PubMed, Google Books, or full text across 41 open-access papers; proximate source appears to be Wikipedia. A cross-model reviewer asserted it is genuine but cited only paywalled sources. **Unresolved in both directions** — load the primary before using it. |
 | "Subliminal exposure is stronger" — **contested** | Bornstein & D'Agostino (1992) report larger effects at 5ms; de Zilva et al. (2013) find none under continuous flash suppression. One method does not erase the other — state the conditions, not a verdict. |
-| Algorithm "favorites / excluded list" of formats — **unverified** | No format-keyed favor or penalty state appears in any PUBLIC documentation. The systems are proprietary, so this is undocumented rather than disproven. |
+| Algorithm "favorites / excluded list" of formats — **unverified** | No format-keyed favor or penalty state appears in the public documentation searched (§1). The systems are proprietary, so this is undocumented rather than disproven. |
 
 <!-- format-lint: enable -->
 
