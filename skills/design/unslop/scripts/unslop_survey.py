@@ -417,6 +417,33 @@ def derive_routes(root: Path, fw: dict, ui_files: list[Path]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Main survey
 # ---------------------------------------------------------------------------
+def git_toplevel(root: Path) -> Path | None:
+    if not shutil.which("git"):
+        return None
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return Path(proc.stdout.strip()) if proc.returncode == 0 and proc.stdout.strip() else None
+
+
+def find_design_docs(root: Path) -> dict:
+    """DESIGN.md / PRODUCT.md at the app root, or in a parent up to the git toplevel (monorepos keep the
+    design contract at the repo root — apps/web/ must not read as 'no direction')."""
+    top = git_toplevel(root)
+    out = {"DESIGN.md": False, "PRODUCT.md": False, "paths": {}}
+    cur = root
+    for _ in range(6):
+        for name in ("DESIGN.md", "PRODUCT.md"):
+            if not out[name] and (cur / name).is_file():
+                out[name] = True
+                out["paths"][name] = str(cur / name)
+        if (top and cur == top) or cur.parent == cur:
+            break
+        cur = cur.parent
+    return out
+
+
 def find_app_root(root: Path) -> Path:
     """If `root` has no package.json but exactly one nested app (depth ≤ 2) does and declares a known
     framework, survey that app instead — monorepos with `app/` or `apps/web/` are the common shape."""
@@ -511,7 +538,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
     reduced_motion_sites: list[str] = []
     loading_files_next: list[str] = []
     error_files_next: list[str] = []
-    design_docs = {"DESIGN.md": (root / "DESIGN.md").exists(), "PRODUCT.md": (root / "PRODUCT.md").exists()}
+    design_docs = find_design_docs(root)
 
     def site(p: Path, ln: int) -> str:
         return f"{rel(root, p)}:{ln}"

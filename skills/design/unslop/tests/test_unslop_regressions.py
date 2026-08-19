@@ -516,3 +516,27 @@ def test_reroot_candidate_under_nested_build_dir_is_allowed(tmp_path):
     (root / "packages" / "build" / "src" / "app" / "page.tsx").write_text("<main/>")
     m = us.survey(root)
     assert m["framework"]["name"] == "next" and m["app_root_rerooted_from"] == str(root.resolve())
+
+
+# ---------------------------------------------------------------- dogfood (broomva.tech): DESIGN.md at the repo root of a monorepo
+def test_design_docs_found_at_git_toplevel_above_the_app(tmp_path):
+    root = tmp_path / "mono"
+    (root / "apps" / "web" / "src" / "app").mkdir(parents=True)
+    (root / "DESIGN.md").write_text("# House\nIcons: Lucide, deliberate. Body uses the system stack deliberately.\n")
+    (root / "apps" / "web" / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19", "lucide-react": "1"}}))
+    (root / "apps" / "web" / "src" / "app" / "page.tsx").write_text('import { X } from "lucide-react"; export default () => <main style={{fontFamily: "system-ui"}}/>;')
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    m = us.survey(root / "apps" / "web")
+    dd = m["substance"]["design_docs"]
+    assert dd["DESIGN.md"] is True and dd["paths"]["DESIGN.md"].endswith("mono/DESIGN.md")
+    r = _gate(root / "apps" / "web", manifest=m, no_render=True)
+    assert r["direction.authored"].status == "PASS" and "mono/DESIGN.md" in r["direction.authored"].detail
+    assert r["icons.single-system"].status == "PASS"      # the repo-root DESIGN.md states the Lucide decision
+    # …but never above the git toplevel: a DESIGN.md in tmp_path (outside the repo) is not the app's
+    (tmp_path / "DESIGN.md").write_text("# not yours")
+    root2 = tmp_path / "mono2"
+    (root2 / "src").mkdir(parents=True)
+    (root2 / "package.json").write_text(json.dumps({"dependencies": {"react": "19"}}))
+    (root2 / "src" / "A.tsx").write_text("<b/>")
+    subprocess.run(["git", "init", "-q"], cwd=root2, check=True)
+    assert us.survey(root2)["substance"]["design_docs"]["DESIGN.md"] is False

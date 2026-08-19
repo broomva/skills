@@ -137,9 +137,12 @@ class Gate:
 
     # ------------------------------------------------------------------ utils
     def _read_design_docs(self) -> str:
+        """The design contract may live at the app root or a parent up to the git toplevel (monorepos);
+        the manifest's substance.design_docs.paths says where the survey found it."""
         out = []
-        for name in ("DESIGN.md", "PRODUCT.md"):
-            p = self.repo / name
+        paths = ((self.m.get("substance", {}).get("design_docs", {}) or {}).get("paths") or {})
+        cands = [Path(v) for v in paths.values()] or [self.repo / n for n in ("DESIGN.md", "PRODUCT.md")]
+        for p in cands:
             if p.exists():
                 try:
                     out.append(p.read_text(encoding="utf-8", errors="ignore").lower())
@@ -182,7 +185,8 @@ class Gate:
         # direction.authored
         dd = s.get("design_docs", {})
         if dd.get("DESIGN.md") or dd.get("PRODUCT.md"):
-            self.add("direction.authored", "PASS", f"design docs present: {', '.join(k for k, v in dd.items() if v)}")
+            where = dd.get("paths") or {}
+            self.add("direction.authored", "PASS", "design docs present: " + ", ".join(f"{k} ({where.get(k, 'app root')})" for k, v in dd.items() if v is True))
         else:
             self.add("direction.authored", "FAIL", "no DESIGN.md / PRODUCT.md — the direction was never decided; author it (impeccable `document`/`init`) before fixing surfaces")
 
