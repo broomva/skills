@@ -50,10 +50,38 @@ def test_only_refuted_is_error():
         assert (sev == "ERROR") == (r["grade"] == "refuted"), r["id"]
 
 
-def test_citation_markers_are_resolvable_forms_only():
-    """A self-authored tag like [HIGH] is not a source. Regression on a real finding."""
-    for mk in LEDGER["precision_without_source"]["citation_markers"]:
-        assert any(t in mk for t in ("http", "doi", "arxiv", "pubmed", "PMC")), mk
+def test_only_resolvable_locators_count_as_citations():
+    """A self-authored tag like [HIGH] is not a source. Regression on a real finding.
+
+    This asserts against `marker_regex`, the field the linter actually compiles. The
+    earlier version of this test validated a `citation_markers` LIST that no code path
+    ever read — it passed whatever the linter did, which is the definition of a vacuous
+    guard. The dead field has been removed.
+    """
+    import re as _re
+
+    rx = _re.compile(LEDGER["precision_without_source"]["marker_regex"], _re.I)
+
+    resolvable = [
+        "https://doi.org/10.1145/3613904.3642433",
+        "see https://example.com/page for detail",
+        "doi:10.1037/0033-2909.106.2.265",
+        "https://arxiv.org/abs/2301.00001",
+        "https://pubmed.ncbi.nlm.nih.gov/1234567/",
+        "PMC1234567",
+    ]
+    degenerate = [
+        "https://",                 # a scheme is not a locator
+        "PMC",                      # the substring alone
+        "[HIGH]",                   # a self-authored confidence tag
+        "doi:",
+        "source: my notes",
+        "example.com/page",         # bare domain, deliberately not a marker
+    ]
+    for good in resolvable:
+        assert rx.search(good), good
+    for bad in degenerate:
+        assert not rx.search(bad), bad
 
 
 # ---------- POSITIVE + NEGATIVE for every rule ----------
@@ -710,3 +738,47 @@ def test_precision_rule_keeps_its_own_line_window():
     """The precision rule's +/-3-line window is unchanged; only claim rules were narrowed."""
     text = "Reels get a threefold increase in reach.\n\nSource: https://doi.org/10.1145/3613904.3642433\n"
     assert "unsourced-precision" not in ids(text)
+
+
+# ---------- fuzz (round-5) ----------
+
+def test_arbitrary_markdown_soup_never_raises():
+    """This gate gets pointed at documents nobody wrote for it.
+
+    The block joiner carries a char->line map guarded by an assert, and the fence and
+    control-region machines are stateful — a crash on hostile input is a real outage, and
+    an AssertionError there would be a silent desync in every finding's line number.
+    Deterministic seed so a failure is reproducible from the message alone.
+    """
+    import random
+
+    tokens = [
+        "```", "````", "~~~", "~~~~", "---", "# h", "## h", "- item", "1. item",
+        "| a | b |", "> quote", "***", "<!-- format-lint: disable -->",
+        "<!-- format-lint: enable -->", "<!-- format-lint: allow=post-daily -->",
+        "The algorithm punishes formats.", "Sends are 3-5x likes.", "name: value",
+        "https://example.com/x", "", "   ", "\ttab", "```python", "text ``` text",
+    ]
+    rng = random.Random(20260819)
+    for i in range(400):
+        doc = "\n".join(rng.choice(tokens) for _ in range(rng.randint(1, 25)))
+        try:
+            fl.lint_text(doc, LEDGER)
+        except Exception as exc:  # noqa: BLE001 — the point is to catch everything
+            raise AssertionError(f"iteration {i} raised {exc!r} on:\n{doc}") from exc
+
+
+def test_every_finding_points_at_a_real_line():
+    """An off-by-one in the char->line map would send a reader to the wrong line."""
+    import random
+
+    tokens = [
+        "The algorithm punishes formats.", "Sends are 3-5x likes.", "- Posting daily grows reach.",
+        "", "```", "```", "# heading", "Format consistency lowers embedding variance.",
+    ]
+    rng = random.Random(4242)
+    for _ in range(200):
+        lines = [rng.choice(tokens) for _ in range(rng.randint(1, 15))]
+        doc = "\n".join(lines)
+        for f in fl.lint_text(doc, LEDGER):
+            assert 1 <= f["line"] <= len(lines), (f, doc)
