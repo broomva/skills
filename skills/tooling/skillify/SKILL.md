@@ -60,11 +60,12 @@ Run the sweep:
 python3 scripts/skillify_check.py --survey skills/
 ```
 
-At the commit that introduced this section it reported **94 skills, 44 of them
+At the commit that introduced this section it reported **96 skills, 44 of them
 unclassified** — every one ships no `scripts/` code, and the old gate called every one
 "not a skill yet, just code that works today". It was wrong about all 44. Re-run it;
 the number is whatever the roster now says, which is the point of shipping a command
-rather than a sentence.
+rather than a sentence — the roster grew by two while this branch was in review, and
+the count moved with it.
 
 Worse, the **2** skills that took the `latent_only: true` exemption bought their way
 out of steps 2 **and** 3, and were then gated on nothing at all. The binary did not
@@ -73,10 +74,11 @@ amnesty.
 
 > **Reproducibility note.** The *absolute* pass count moves by one depending on whether
 > `node` is installed, because step 2's `.ts` syntax check is skipped when it is not
-> (`keel` passes without node, fails with it). The **delta** is what this change claims
-> and it is invariant: old gate → new gate is **−2 passing** with node present (28 → 26)
-> and with node absent (29 → 27). Both losses are the two `latent_only` skills. Quote
-> the delta, not the absolute.
+> (`keel` passes without node, fails with it), and it moves again whenever a skill is
+> added. The **delta** is what this change claims and it is invariant: old gate → new
+> gate is **−2 passing**, measured over an identical tree, with node present and
+> absent, at 94 skills and again at 96. Both losses are the two `latent_only` skills —
+> `brand-icons` and `bstack`. Quote the delta, not the absolute.
 
 Three tiers replace the binary. **Declare one in frontmatter** (`tier: D`). Only **D**
 is inferred, from shipped code; **J and L must be declared** (see below for why).
