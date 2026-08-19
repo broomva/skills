@@ -290,8 +290,15 @@ found two defects all 47 tests had missed. What each round found:
   five more verbs, and word-form multipliers. Each widening carries a paired negative
   fixture and was swept against 3,328 real files.
 
-**Still known-open.** The matcher is regex-over-text, so a claim stated in words the ledger
-does not list still passes; the widenings above narrow that gap, they do not close it.
+**Still known-open.** A ledger is **trusted configuration**. Its patterns are validated at
+load — malformed JSON, missing fields, unknown grades, non-boolean flags and patterns that
+fail to compile all exit 2 with no traceback — but a pattern that *compiles* and then
+explodes at match time (`(a+)+$`) loads cleanly and will hang the run. Detecting that is a
+halting problem in miniature, and a heuristic for it would be a weaker gate than the one it
+guards. Treat a ledger the way you treat a linter config: as code you are choosing to run.
+
+The matcher is regex-over-text, so a claim stated in words the ledger does not list still
+passes; the widenings above narrow that gap, they do not close it.
 Block boundaries are line-structural, not a real Markdown parse. Do not read a clean run as
 proof a document is sound; read it as proof it contains none of the specific strings in the
 ledger. Full graded claim set: `references/evidence-map.md`.

@@ -1313,3 +1313,40 @@ def test_a_fence_inside_a_region_is_exempt_by_the_fence_not_hidden_by_the_region
 
 def test_an_empty_region_reports_nothing():
     assert ids("<!-- format-lint: disable -->\n<!-- format-lint: enable -->\n") == set()
+
+
+class _InterruptingRe:
+    """A stand-in for the `re` module whose compile always raises a BaseException.
+
+    Swapping the MODULE REFERENCE inside format_lint, rather than patching `re.compile`
+    globally, matters: the global patch broke pytest's own machinery and truncated the run
+    from 144 collected tests to 126 — which read as a surviving mutant when it was really a
+    broken harness.
+    """
+
+    error = Exception
+
+    @staticmethod
+    def compile(_pattern, *_a, **_k):
+        raise KeyboardInterrupt
+
+
+def test_the_broad_compile_catch_does_not_swallow_an_interrupt(monkeypatch):
+    """`except Exception` is deliberate, and the reasoning is worth pinning.
+
+    KeyboardInterrupt and SystemExit derive from BaseException, so a broad catch at the
+    compile site cannot swallow them. Narrowing BaseException in by mistake would report an
+    interrupt during a long sweep as an invalid ledger pattern.
+    """
+    import pytest
+
+    monkeypatch.setattr(fl, "re", _InterruptingRe)
+    with pytest.raises(KeyboardInterrupt):
+        fl._compile_or_fail("anything", "context", lambda msg: None)
+
+
+def test_an_ordinary_compile_failure_is_still_converted(monkeypatch):
+    """The inverse control, so the test above cannot pass by the catch being absent."""
+    seen = []
+    fl._compile_or_fail("(", "context", seen.append)
+    assert seen and "context" in seen[0] and "error" in seen[0].lower()

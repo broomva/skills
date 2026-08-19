@@ -98,6 +98,15 @@ def _compile_or_fail(pattern: str, what: str, fail) -> None:
     RecursionError on deep nesting, and the set is not fixed across Python versions. Naming
     the two that were reported would leave the next one to escape as a traceback and exit 1
     — the code that means "findings were present".
+
+    `Exception`, not `BaseException`, is deliberate: KeyboardInterrupt and SystemExit are
+    BaseExceptions and still propagate, so a broad catch here cannot swallow an interrupt.
+
+    WHAT THIS CANNOT SEE: a pattern that compiles and then explodes at MATCH time —
+    `(a+)+$` is valid, loads cleanly, and hangs on the first adversarial input. Validating
+    that is a halting problem in miniature, and a heuristic for it would be a weaker gate
+    than the one it guards. A ledger is trusted configuration, authored by whoever runs the
+    tool; this is stated in SKILL.md rather than papered over.
     """
     try:
         re.compile(pattern)
