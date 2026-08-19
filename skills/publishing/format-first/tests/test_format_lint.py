@@ -856,3 +856,45 @@ def test_the_body_after_such_frontmatter_is_still_linted():
 
 def test_a_leading_horizontal_rule_still_exempts_nothing():
     assert "algorithm-punishes" in ids("---\nThe algorithm punishes formats.\n")
+
+
+# ---------- three-machine interaction (round-6 self-probe) ----------
+# frontmatter x fences x control regions is the densest area in this file, and a fix in
+# one has twice opened a defect in another. These pin the whole grid.
+
+INTERACTION_CASES = [
+    # (label, text, rule id, should_fire)
+    ("a disable directive inside frontmatter does not control the body",
+     "---\nname: x\nnote: <!-- format-lint: disable -->\n---\n{D}\n", True),
+    ("frontmatter, then a closed fence, then a live claim",
+     "---\nname: x\n---\n```\nq\n```\n{D}\n", True),
+    ("a fence opened before frontmatter-looking lines swallows them, not the body",
+     "```\n---\nname: z\n---\n```\n{D}\n", True),
+    ("frontmatter with no closing delimiter exempts nothing",
+     "---\nname: x\n{D}\n", True),
+    # The discriminating case: a claim BETWEEN two `---` rules. Without the key-line
+    # requirement this reads as frontmatter and the claim is silently exempt. The earlier
+    # fixture ("---\n---\nclaim") could NOT see that — mutation testing caught it surviving.
+    ("--- with no key line is a horizontal rule, not frontmatter",
+     "---\n{D}\n---\nbody\n", True),
+    ("the same shape WITH a key line is real frontmatter and is exempt",
+     "---\nname: x\nnote: {D}\n---\nbody\n", False),
+    ("a claim inside well-formed frontmatter is exempt",
+     "---\nname: x\nnote: {D}\n---\nbody\n", False),
+    ("CRLF frontmatter still exempts its own content",
+     "---\r\nname: x\r\nnote: {D}\r\n---\r\nbody\r\n", False),
+    ("CRLF frontmatter still lints the body",
+     "---\r\nname: x\r\n---\r\n{D}\r\n", True),
+    ("delimiters with trailing whitespace still delimit",
+     "---   \nname: x\nnote: {D}\n---   \nbody\n", False),
+    ("a tab after the delimiter still delimits",
+     "---\t\nname: x\nnote: {D}\n---\t\nbody\n", False),
+]
+
+
+def test_frontmatter_fence_and_control_region_interactions():
+    claim = "Mosseri said the polished, perfect aesthetic is dead."
+    for label, template, should_fire in INTERACTION_CASES:
+        got = ids(template.replace("{D}", claim))
+        fired = "polished-aesthetic-dead" in got
+        assert fired == should_fire, f"{label}: expected fire={should_fire}, got {got}"
