@@ -1385,27 +1385,94 @@ def test_every_base_exception_still_propagates_from_the_compile_site():
     assert issubclass(MemoryError, Exception), "this is why it needs an explicit re-raise"
 
 
-def test_the_read_path_classifies_failures_the_same_way_the_compile_path_does():
-    """"Cannot read the ledger you named" is bad input. "Out of memory" is not.
 
-    OSError is treated as bad input even where its cause is operational, because whatever
-    happened, the named ledger is unusable and the message carries the underlying error.
-    MemoryError is not an OSError and propagates, since running out of memory says nothing
-    about whether the ledger is valid.
+
+# ---------- the ledger error space, enumerated ----------
+# Loading a ledger failed four different ways across four review rounds — JSONDecodeError,
+# MemoryError, UnicodeDecodeError, then OSError(EIO) — each found one at a time after the
+# previous was fixed. This is the space enumerated instead: every failure is classified by
+# WHAT IT SAYS, because the exit code is the operator's only signal.
+
+import errno as _errno
+
+INPUT_FAILURES = {
+    "missing file": FileNotFoundError(_errno.ENOENT, "No such file"),
+    "permission denied": PermissionError(_errno.EACCES, "Permission denied"),
+    "not permitted": PermissionError(_errno.EPERM, "Operation not permitted"),
+    "path is a directory": IsADirectoryError(_errno.EISDIR, "Is a directory"),
+    "parent is not a directory": NotADirectoryError(_errno.ENOTDIR, "Not a directory"),
+    "name too long": OSError(_errno.ENAMETOOLONG, "File name too long"),
+    "symlink loop": OSError(_errno.ELOOP, "Too many levels of symbolic links"),
+}
+
+OPERATIONAL_FAILURES = {
+    "disk I/O error": OSError(_errno.EIO, "Input/output error"),
+    "no space left": OSError(_errno.ENOSPC, "No space left on device"),
+    "out of memory": MemoryError("oom"),
+    "errno-less OSError": OSError("something went wrong"),
+}
+
+
+def _ledger_whose_read_raises(exc):
+    class P(type(Path())):
+        def read_bytes(self):
+            raise exc
+
+    return P("ledger.json")
+
+
+def test_input_class_read_failures_become_ledger_errors():
+    """These say something about the PATH THE OPERATOR SUPPLIED. Exit 2, fix the ledger."""
+    import pytest
+
+    for label, exc in INPUT_FAILURES.items():
+        with pytest.raises(fl.LedgerError):
+            fl.load_ledger(_ledger_whose_read_raises(exc))
+
+
+def test_operational_read_failures_propagate_with_their_real_traceback():
+    """These say something about the MACHINE.
+
+    Calling a failing disk "bad input" sends the operator to edit a ledger that is fine.
+    An errno-less OSError is in this set deliberately: unknown means unclassified, and
+    unclassified must not be silently relabelled as the operator's mistake.
     """
     import pytest
 
-    def loading_raises(exc):
-        class P(type(Path())):
-            def open(self, *_a, **_k):
-                raise exc
+    for label, exc in OPERATIONAL_FAILURES.items():
+        with pytest.raises(type(exc)) as caught:
+            fl.load_ledger(_ledger_whose_read_raises(exc))
+        assert not isinstance(caught.value, fl.LedgerError), label
 
-        return P("ledger.json")
 
-    for exc in (FileNotFoundError("nope"), PermissionError("denied"),
-                IsADirectoryError("dir"), OSError("I/O error")):
-        with pytest.raises(fl.LedgerError):
-            fl.load_ledger(loading_raises(exc))
+def test_a_ledger_that_is_not_utf8_is_a_ledger_error(tmp_path):
+    """Content, not the machine: exit 2. Escaped as UnicodeDecodeError until now."""
+    import pytest
 
-    with pytest.raises(MemoryError):
-        fl.load_ledger(loading_raises(MemoryError("oom")))
+    path = tmp_path / "bad.json"
+    path.write_bytes(b'{"refuted": [\xff]}')
+    with pytest.raises(fl.LedgerError, match="not valid UTF-8"):
+        fl.load_ledger(path)
+
+
+def test_the_cli_exits_two_on_a_non_utf8_ledger(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_bytes(b"\xff")
+    doc = tmp_path / "d.md"
+    doc.write_text("prose\n")
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(doc), "--ledger", str(bad)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 2, out
+    assert "not valid UTF-8" in out.stderr
+    assert "Traceback" not in out.stderr
+
+
+def test_the_classification_sets_do_not_overlap():
+    """A membership test that would otherwise drift as errnos are added."""
+    for exc in OPERATIONAL_FAILURES.values():
+        code = getattr(exc, "errno", None)
+        assert code not in fl.INPUT_ERRNOS, exc
+    for exc in INPUT_FAILURES.values():
+        assert exc.errno in fl.INPUT_ERRNOS, exc

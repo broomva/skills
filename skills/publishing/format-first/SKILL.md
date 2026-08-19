@@ -290,9 +290,17 @@ found two defects all 47 tests had missed. What each round found:
   five more verbs, and word-form multipliers. Each widening carries a paired negative
   fixture and was swept against 3,328 real files.
 
+**The exit code is the only signal, so it is classified deliberately.** `0` clean, `1`
+findings, `2` bad input. A ledger fails to load in three unrelated ways and they are not
+conflated: anything about the **path or content you supplied** (missing, permission-denied,
+a directory, not UTF-8, not JSON, schema-invalid, a pattern that will not compile) exits 2
+with no traceback, because you fix the ledger; anything about the **machine** (out of
+memory, a failing disk) propagates with its real traceback, because calling that "bad
+input" would send you to edit a ledger that is fine; and `KeyboardInterrupt` is never
+caught at all.
+
 **Still known-open.** A ledger is **trusted configuration**. Its patterns are validated at
-load — malformed JSON, missing fields, unknown grades, non-boolean flags and patterns that
-fail to compile all exit 2 with no traceback — but a pattern that *compiles* and then
+load, but a pattern that *compiles* and then
 explodes at match time (`(a+)+$`) loads cleanly and will hang the run. Detecting that is a
 halting problem in miniature, and a heuristic for it would be a weaker gate than the one it
 guards. Treat a ledger the way you treat a linter config: as code you are choosing to run.

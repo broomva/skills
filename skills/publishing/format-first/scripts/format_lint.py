@@ -23,12 +23,22 @@ Exit: 0 clean/warnings, 1 on ERROR (or any finding under --strict), 2 on bad inp
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import re
 import sys
 from pathlib import Path
 
 LEDGER = Path(__file__).resolve().parent.parent / "references" / "claims-ledger.json"
+
+# errno values that describe the PATH THE OPERATOR SUPPLIED rather than the machine.
+# Anything outside this set is operational and propagates with its real traceback.
+INPUT_ERRNOS = frozenset(
+    getattr(errno, name)
+    for name in ("ENOENT", "EACCES", "EPERM", "EISDIR", "ENOTDIR", "ENAMETOOLONG", "ELOOP")
+    if hasattr(errno, name)
+)
+
 
 class LedgerError(Exception):
     """A ledger is malformed. Catchable — `load_ledger` must not kill an embedding host.
@@ -122,24 +132,44 @@ def _compile_or_fail(pattern: str, what: str, fail) -> None:
 
 
 def load_ledger(path: Path = LEDGER) -> dict:
-    # EVERY way a ledger can be unusable becomes LedgerError, including malformed JSON and
-    # unreadable files. Leaving JSONDecodeError to escape meant `--ledger` on a broken file
-    # printed a traceback and exited 1 — the code that means "findings were present".
+    # THE ERROR SPACE, ENUMERATED ONCE. Loading a ledger can fail in three unrelated ways
+    # and they must not be conflated, because the exit code is the operator's only signal:
     #
-    # OSError is deliberately in that set even though some of its members (a failing disk)
-    # are operational: whatever the cause, the ledger you named cannot be read, and the
-    # message carries the underlying error. MemoryError is deliberately NOT — it is not an
-    # OSError, so it propagates, because running out of memory says nothing about whether
-    # this ledger is valid. Same distinction as at the compile site.
+    #   ABOUT THE PATH OR CONTENT YOU SUPPLIED -> LedgerError -> exit 2 ("bad input")
+    #       missing, unreadable-by-permission, a directory, not UTF-8, not JSON, not an
+    #       object, or schema-invalid. The operator fixes the ledger.
+    #
+    #   ABOUT THE MACHINE -> propagate -> the real traceback
+    #       MemoryError, and any OSError whose errno is not one of the input-class codes
+    #       below (EIO on a failing disk, ENOSPC, ENOMEM...). The operator fixes the host,
+    #       and calling that "bad input" would send them to edit a ledger that is fine.
+    #
+    #   ABOUT THE OPERATOR -> propagate untouched
+    #       KeyboardInterrupt, SystemExit, GeneratorExit — BaseExceptions, never caught.
+    #
+    # Each of these was learned from a separate escape: JSONDecodeError, then MemoryError,
+    # then UnicodeDecodeError, then EIO. Enumerating beats patching one edge per round.
     try:
-        with path.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+        raw = path.read_bytes()
     except FileNotFoundError:
         raise LedgerError(f"format_lint: ledger not found at {path}") from None
     except OSError as exc:
-        raise LedgerError(f"format_lint: ledger at {path} could not be read: {exc}") from None
+        if exc.errno not in INPUT_ERRNOS:
+            raise                                  # operational: not a claim about input
+        raise LedgerError(
+            f"format_lint: ledger at {path} could not be read: {exc}"
+        ) from None
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LedgerError(f"format_lint: ledger at {path} is not valid UTF-8: {exc}") from None
+
+    try:
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise LedgerError(f"format_lint: ledger at {path} is not valid JSON: {exc}") from None
+
     if not isinstance(data, dict):
         raise LedgerError(
             f"format_lint: ledger at {path} must be a JSON object, got {type(data).__name__}"
