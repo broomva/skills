@@ -1,0 +1,48 @@
+name: test-format-first
+
+# Python test gate for the `format-first` skill (skills/publishing/format-first/).
+# Path-filtered so it runs ONLY when that skill changes — the monorepo's
+# tests-optional default (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/publishing/format-first/**'
+      - '.github/workflows/test-format-first.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/publishing/format-first/**'
+      - '.github/workflows/test-format-first.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-format-first-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/publishing/format-first
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install pytest
+      - name: Unit tests (format_lint deterministic core)
+        run: python -m pytest tests/ -v
+      - name: Ledger is valid JSON
+        run: python -c "import json;json.load(open('references/claims-ledger.json'))"
+      - name: Dogfood — the skill's own docs must pass its own gate
+        run: python scripts/format_lint.py SKILL.md references/evidence-map.md

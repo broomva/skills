@@ -124,6 +124,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`blog-post`](skills/publishing/blog-post/) | Full-stack blog post production — turns a topic, idea, or brief into a complete publishing package across written, social, and multimedia surfaces |
 | [`citable`](skills/publishing/citable/) | Make authored content survive both selection surfaces — human engagement and LLM retrieval for citation — with a linter encoding measured effect sizes |
+| [`format-first`](skills/publishing/format-first/) | Decide what SHAPE of content to make; refuses platform folklore with a linter encoding six claims traced to primary sources |
 | [`content-creation`](skills/publishing/content-creation/) | Full-stack content creation pipeline: idea or reference to published blog post, audio narration, video, and social media distribution |
 | [`revenuecast`](skills/publishing/revenuecast/) | revenuecast — turn a real-world capability into a self-demonstrating, high-throughput generative-AI revenue engine (the "Kleos" method) |
 | [`seo-llmeo`](skills/publishing/seo-llmeo/) | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
