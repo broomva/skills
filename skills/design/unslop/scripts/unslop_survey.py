@@ -727,8 +727,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                         continue
                     placeholders[key].append(site(p, ln))
 
-        # visual vocabulary
-        if is_ui or is_style:
+        # visual vocabulary — the product's token surface; prose MDX (embedded article figures) is content
+        if (is_ui and not is_prose_mdx) or is_style:
             token_file = is_token_file(rp)
             if not token_file:
                 for i, line in enumerate(lines, 1):

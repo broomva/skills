@@ -620,3 +620,14 @@ def test_keyframe_frames_are_not_shadow_or_radius_drift(tmp_path):
 def test_em_dash_entities_and_escapes_count(tmp_path):
     root = _repo(tmp_path, "ent", {"src/A.tsx": '<p>Four services &mdash; Arcan</p>\n<p>{"a \\u2014 b"}</p>\n<p>x &#8212; y</p>'})
     assert us.survey(root)["copy_tells"]["em_dash"]["count"] == 3
+
+
+def test_article_mdx_figures_are_not_token_drift(tmp_path):
+    root = _repo(tmp_path, "mdxfig", {
+        "content/writing/essay.mdx": '<div style="border-radius: 12px; box-shadow: 0 4px 9px #00000040; background: #123456">figure</div>',
+        "src/app/page.tsx": '<main className="rounded-md" />',
+    })
+    m = us.survey(root)
+    kinds = {r["kind"]: r for r in m["roots"]}
+    assert "color" not in kinds and "shadow" not in kinds
+    assert int(kinds["radius"]["value"].split()[0]) == 1
