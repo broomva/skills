@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 86 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 90 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**87 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**90 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -76,8 +76,9 @@ npx skills add broomva/skills --skill '*'
 | [`disambiguate`](skills/tooling/disambiguate/) | Rewrite a requirement so it can only be read one way — distilled from ASD-STE100 Simplified Technical English, with a stdlib checker for the mechanical ambiguity |
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
+| [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 87 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 90 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -124,6 +125,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`blog-post`](skills/publishing/blog-post/) | Full-stack blog post production — turns a topic, idea, or brief into a complete publishing package across written, social, and multimedia surfaces |
 | [`citable`](skills/publishing/citable/) | Make authored content survive both selection surfaces — human engagement and LLM retrieval for citation — with a linter encoding measured effect sizes |
+| [`format-first`](skills/publishing/format-first/) | Decide what SHAPE of content to make; refuses platform folklore with a linter encoding six claims traced to primary sources |
 | [`content-creation`](skills/publishing/content-creation/) | Full-stack content creation pipeline: idea or reference to published blog post, audio narration, video, and social media distribution |
 | [`revenuecast`](skills/publishing/revenuecast/) | revenuecast — turn a real-world capability into a self-demonstrating, high-throughput generative-AI revenue engine (the "Kleos" method) |
 | [`seo-llmeo`](skills/publishing/seo-llmeo/) | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
@@ -242,18 +244,18 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 86 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
+The 90 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
 | Governance & control | `skills/governance/` | 8 |
-| Orchestration & autonomy | `skills/orchestration/` | 7 |
-| Skill & prompt tooling | `skills/tooling/` | 7 |
+| Orchestration & autonomy | `skills/orchestration/` | 8 |
+| Skill & prompt tooling | `skills/tooling/` | 8 |
 | Knowledge & memory | `skills/knowledge/` | 8 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 5 |
 | Operating cadence | `skills/cadence/` | 4 |
-| Publishing & growth | `skills/publishing/` | 5 |
+| Publishing & growth | `skills/publishing/` | 6 |
 | Video & multimedia | `skills/video/` | 6 |
 | Audio & music | `skills/audio/` | 2 |
 | Design & brand | `skills/design/` | 7 |
