@@ -1871,7 +1871,7 @@ def test_a_malformed_closing_fence_does_not_run_on_to_a_later_one(tmp_path):
     (d / "evals" / "admission.md").write_text(
         "---\noutcome: admitted\n---xyz\nrecord\n---\nmore record\n", encoding="utf-8")
     step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "malformed frontmatter" in step2["detail"]
+    assert step2["status"] == "FAIL" and "does not parse as YAML" in step2["detail"]
 
 
 def test_empty_outcome_message_is_reachable_without_pyyaml(tmp_path, monkeypatch):
@@ -1905,3 +1905,51 @@ def test_a_file_with_no_frontmatter_at_all_fails_distinctly(tmp_path):
     _admission(d, "# Admission\n" + _BODY)
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "no frontmatter block" in step2["detail"]
+
+
+# ===========================================================================
+# Round 9. The line-based key walker was replaced by the YAML parser. These are
+# the false rejects it produced — every one is valid YAML an author could write.
+# ===========================================================================
+
+VALID_FRONTMATTER_MUST_PASS = [
+    # a multi-line quoted scalar whose continuation line contains "outcome:"
+    'notes: "The prior evaluator recorded\noutcome: rejected"\noutcome: admitted',
+    # a key whose VALUE starts with --- (the old ---in-block rule false-rejected this)
+    "outcome: admitted\n---source: author-record",
+    # nested mappings, flow mappings, and list items are not top-level declarations
+    "outcome: admitted\nmetadata:\n  outcome: rejected",
+    "outcome: admitted\nprior: {outcome: rejected}",
+    "outcome: admitted\nruns:\n  - outcome: rejected",
+    "outcome: admitted\nhistory:\n  - {outcome: rejected, date: 2026-08-01}",
+    # a block scalar whose body is unindented-looking
+    "outcome: admitted\nlog: |\n  outcome: rejected was the first attempt",
+]
+
+
+def test_valid_yaml_frontmatter_is_never_false_rejected(tmp_path):
+    """The regression guard for the whole class. A hand-rolled scanner cannot read a
+    structured language — it counted keys inside quoted scalars, missed flow mappings
+    and list items, and needed an indentation rule that broke on something else. Each
+    of these is valid YAML that some earlier draft rejected."""
+    for i, block in enumerate(VALID_FRONTMATTER_MUST_PASS):
+        d = _j(tmp_path / f"vy{i}")
+        (d / "evals" / "admission.md").write_text(
+            f"---\n{block}\n---\n\nTwo agents, one brief; both valid.\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected valid YAML {block!r}: {step2['detail']}"
+
+
+def test_duplicate_detection_is_skipped_not_guessed_without_pyyaml(tmp_path, monkeypatch):
+    """Honest degradation: with no parser the gate cannot answer the question, so it
+    does not answer it. Guessing with a regex is what produced every false reject
+    above."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    monkeypatch.setattr(mod, "yaml", None)
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\nOutcome: rejected\n---\n\nTwo agents, one brief.\n",
+        encoding="utf-8")
+    # the duplicate goes undetected, and that is the stated trade — but the record is
+    # still read and a declared rejection would still block
+    assert mod._count_top_level_key("outcome: admitted", "outcome") is None

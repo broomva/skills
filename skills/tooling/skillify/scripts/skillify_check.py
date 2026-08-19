@@ -55,26 +55,33 @@ PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 _FRONTMATTER_RE = re.compile(r"^\ufeff?---\n(.*?)\n---[^\S\n]*(?:\n|$)", re.DOTALL)
 
 
-_TOP_LEVEL_KEY_RE = re.compile(r"""^(['"]?)([A-Za-z0-9_.\- ]+)\1[ \t]*:""")
+def _count_top_level_key(block: str, key: str) -> int | None:
+    """Occurrences of `key` at the TOP LEVEL of a frontmatter block.
 
+    Returns None when it cannot be determined (no pyyaml, or the block does not
+    parse) — the caller must then report the check as unperformed rather than guess.
 
-def _top_level_keys(block: str) -> list[str]:
-    """Normalised top-level keys of a frontmatter block, indentation- and quote-aware.
+    This was a line-walking regex, twice. Both versions lost the same way, and it is
+    the same way the deleted prose heuristics lost: a hand-rolled scanner cannot read
+    a structured language. It counted `outcome:` appearing inside a multi-line quoted
+    scalar, missed a flow mapping `{outcome: rejected}`, missed a list item, and could
+    not tell a nested key from a top-level one without an indentation rule that then
+    broke on something else. Every one of those was a FALSE REJECT of valid YAML.
 
-    Counting keys with `(?mi)^[ \t]*outcome[ \t]*:` was wrong in both directions: it
-    read a NESTED `metadata:\n  outcome: rejected` as a second top-level declaration
-    (a false reject of a valid file), and it missed a quoted `"Outcome": rejected`
-    (a false accept of contradictory declarations). Indentation decides nesting and
-    quotes are not part of the key, so both have to be handled structurally.
+    `yaml.compose()` returns the node tree with duplicate keys PRESERVED (unlike
+    `safe_load`, which silently keeps the last), so the question is answered by the
+    parser that defines the language rather than by a pattern approximating it.
     """
-    keys = []
-    for ln in block.splitlines():
-        if not ln.strip() or ln[:1] in (" ", "\t") or ln.lstrip().startswith("#"):
-            continue  # blank, nested, or comment
-        m = _TOP_LEVEL_KEY_RE.match(ln)
-        if m:
-            keys.append(m.group(2).strip().lower())
-    return keys
+    if yaml is None:
+        return None
+    try:
+        node = yaml.compose(block)
+    except Exception:
+        return None
+    if not isinstance(node, getattr(yaml, "MappingNode", ())):
+        return 0
+    return sum(1 for k, _ in node.value
+               if str(getattr(k, "value", "")).strip().lower() == key)
 
 
 def _frontmatter_match(text: str):
@@ -873,12 +880,6 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if m is None:
         return ("evals/admission.md has no frontmatter block — add:\n"
                 f"{_ADMISSION_TEMPLATE}")
-    if any(ln.startswith("---") for ln in m.group(1).splitlines()):
-        # A `---` inside the block means the intended closing fence was malformed
-        # (`---xyz`) and the match ran on to a later one, swallowing body text as
-        # frontmatter.
-        return ("evals/admission.md has a malformed frontmatter block — a `---` line "
-                "inside it; the closing fence must be `---` alone on its line")
     fm = parse_frontmatter(f) or {}
     # Case-insensitive KEY lookup: the value was already compared case-insensitively,
     # so `Outcome: admitted` failing with "declares no outcome" was an undocumented
@@ -896,9 +897,15 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if outcome == "rejected":
         return ("evals/admission.md declares `outcome: rejected` — an underspecified "
                 "skill is not admissible")
-    declared = [k for k in _top_level_keys(m.group(1)) if k == "outcome"]
-    if len(declared) > 1:
-        return (f"evals/admission.md declares `outcome` {len(declared)} times — "
+    # A block that does not parse as a YAML mapping is malformed frontmatter — which
+    # is also how `---xyz` (a fence the matcher ran past) surfaces, without a
+    # hand-rolled `---`-in-block rule that false-rejected `---source: author-record`.
+    declared = _count_top_level_key(m.group(1), "outcome")
+    if declared is None and yaml is not None:
+        return ("evals/admission.md frontmatter does not parse as YAML — the closing "
+                "fence must be `---` alone on its line")
+    if declared is not None and declared > 1:
+        return (f"evals/admission.md declares `outcome` {declared} times — "
                 "contradictory declarations; keep exactly one")
     body = raw[m.end():]
     if not body.strip():

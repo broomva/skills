@@ -208,7 +208,7 @@ MUTANTS = [
      '                pass',
      "test_the_documented_template_parses_without_pyyaml"),
     ("M54 duplicate outcome declarations accepted",
-     '    if len(declared) > 1:',
+     '    if declared is not None and declared > 1:',
      '    if False:',
      "test_duplicate_contradictory_outcome_declarations_fail"),
     ("M55 outcome key matched case-sensitively again",
@@ -225,25 +225,24 @@ MUTANTS = [
      "test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent"),
 
     # --- round 7: one matcher, and the sibling sites -------------------------
-    ("M58 duplicate detection reverts to a raw indent-insensitive regex",
-     '    declared = [k for k in _top_level_keys(m.group(1)) if k == "outcome"]',
-     '    declared = re.findall(r"(?mi)^[ \\t]*outcome[ \\t]*:", m.group(1))',
-     "test_a_nested_outcome_key_is_not_a_duplicate"),
     ("M59 empty-outcome message unreachable on the stdlib path again",
      '    if present and outcome in ("", "none", "null"):',
      '    if False:',
      "test_empty_outcome_message_is_reachable_without_pyyaml"),
 
-    ("M60 top-level key detection ignores indentation again",
-     '        if not ln.strip() or ln[:1] in (" ", "\\t") or ln.lstrip().startswith("#"):',
-     '        if not ln.strip() or ln.lstrip().startswith("#"):',
-     "test_a_nested_outcome_key_is_not_a_duplicate"),
-    ("M61 quoted keys stop being normalised",
-     '_TOP_LEVEL_KEY_RE = re.compile(r"""^([\'"]?)([A-Za-z0-9_.\\- ]+)\\1[ \\t]*:""")',
-     '_TOP_LEVEL_KEY_RE = re.compile(r"""^()([A-Za-z0-9_.\\- ]+)[ \\t]*:""")',
+
+    # M58/M60/M61/M62 retired with the line-based key walker they targeted; the
+    # property they approximated is now answered by the YAML parser itself.
+    ("M63 duplicate detection guesses instead of using the parser",
+     '    if yaml is None:\n        return None',
+     '    if yaml is None:\n        return 0',
+     "test_duplicate_detection_is_skipped_not_guessed_without_pyyaml"),
+    ("M64 duplicate keys collapse (safe_load) instead of composing the node tree",
+     '        node = yaml.compose(block)',
+     '        node = yaml.compose("a: 1")',
      "test_duplicate_top_level_outcome_declarations_fail"),
-    ("M62 a --- line inside the block stops being malformed",
-     '    if any(ln.startswith("---") for ln in m.group(1).splitlines()):',
+    ("M65 an unparseable frontmatter block stops being reported",
+     '    if declared is None and yaml is not None:',
      '    if False:',
      "test_a_malformed_closing_fence_does_not_run_on_to_a_later_one"),
 ]
