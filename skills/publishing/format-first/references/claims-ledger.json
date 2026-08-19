@@ -15,7 +15,7 @@
   "refuted": [
     {
       "id": "sends-3-5x-likes",
-      "pattern": "(?i)\\bsends?\\b(?=[^.\\n]{0,80}\\blikes?\\b)[^.\\n]{0,80}\\b(3\\s*(?:-|–|—|to)\\s*5|three\\s+to\\s+five)\\s*(?:x|times)",
+      "pattern": "(?i)\\bsends?\\b(?=[^.\\n]{0,80}\\blikes?\\b)[^.\\n]{0,80}\\b(3\\s*(?:-|–|—|to)\\s*5|three\\s+to\\s+five)\\s*(?:x|×|times)",
       "message": "No primary source for a 3-5x sends:likes weighting was located in a documented search (Mosseri's accounts, Instagram blog, Meta newsroom, Transparency Center). Absence in a searched set is not proof it does not exist — but you cannot cite it.",
       "instead": "Mosseri (2025-01-21): likes are 'slightly' more important for connected reach, sends 'slightly' more for unconnected. The asymmetry runs both ways and no numeric ratio is published.",
       "grade": "unverified"
@@ -36,7 +36,7 @@
     },
     {
       "id": "mere-exposure-r-026",
-      "pattern": "(?i)\\br\\s*[=≈~]\\s*[.0]\\.?26\\b(?![0-9])",
+      "pattern": "(?i)\\br\\s*[=≈~]\\s*0?\\.26\\b(?![0-9])",
       "message": "The r = .26 figure could not be located in a documented search (paywalled article, its abstract, Crossref, PubMed, Google Books, full-text across 41 open-access mere-exposure papers). A reviewer asserted it is genuine but cited only paywalled sources. UNRESOLVED — not established false.",
       "instead": "Either load the primary and cite a page, or make the claim qualitative: repeated supraliminal visual exposure increases liking, up to a point.",
       "grade": "unverified"
@@ -50,7 +50,7 @@
     },
     {
       "id": "algorithm-favorites-list",
-      "pattern": "(?i)(?:algorithm|instagram|tiktok)[^.\\n]{0,60}\\b(?:favou?rites?|excluded|rejected|blacklist|black-?list|naughty)\\s+list\\b|\\b(?:favou?rites?|excluded|rejected|blacklist|black-?list)\\s+list\\b[^.\\n]{0,60}(?:algorithm|instagram|tiktok)",
+      "pattern": "(?i)(?:algorithm|instagram|tiktok)[^.\\n]{0,60}\\b(?:excluded|rejected|blacklist|black-?list|naughty)\\s+list\\b|\\b(?:algorithm(?:'s)?|its)\\s+(?:secret\\s+)?(?:favou?rites?)\\s+list\\b|\\b(?:favou?rites?|excluded|blacklist)\\s+list\\s+of\\s+formats?\\b",
       "message": "No format-keyed favor or penalty state appears in any PUBLIC documentation. The systems are proprietary, so this is undocumented rather than disproven.",
       "instead": "The one documented account-level gate is keyed to ORIGINALITY (de-recommends primarily non-original reposting), not to format choice.",
       "grade": "unverified"
@@ -102,11 +102,12 @@
       "https://",
       "doi.org/",
       "doi:10.",
-      "arxiv.org",
-      "pubmed",
+      "arxiv.org/",
+      "pubmed.ncbi",
       "PMC"
     ],
     "window_lines": 3,
-    "message": "Precise figure with no resolvable citation (URL/DOI) within 3 lines. Precision is rhetorical and does not entail that a measurement occurred. Self-authored confidence tags do not count as sources."
+    "message": "Precise figure with no resolvable citation (URL/DOI) within 3 lines. Precision is rhetorical and does not entail that a measurement occurred. Self-authored confidence tags do not count as sources.",
+    "marker_regex": "https?://[\\w.-]+\\.[a-z]{2,}/\\S|doi\\.org/10\\.\\d{4,}/\\S|doi:\\s*10\\.\\d{4,}/\\S|arxiv\\.org/abs/\\d|pubmed\\.ncbi\\.nlm\\.nih\\.gov/\\d|PMC\\d{4,}"
   }
 }

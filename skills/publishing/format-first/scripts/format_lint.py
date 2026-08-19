@@ -43,6 +43,26 @@ CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
 
 # A rule must not fire when the sentence denies, corrects, or attributes the claim —
 # otherwise the linter punishes the corrections it exists to promote.
+SENT_SPLIT_RX = re.compile(r"(?<=[.!?;])\s+")
+
+
+def _negated_at(line: str, start: int) -> bool:
+    """True when the SENTENCE containing `start` denies/corrects/attributes the claim.
+
+    Line-level scoping was too coarse: an unrelated "This is not complicated." earlier on
+    the same line suppressed a live assertion after it.
+    """
+    pos = 0
+    for sent in SENT_SPLIT_RX.split(line):
+        seg = line.find(sent, pos)
+        if seg == -1:
+            seg = pos
+        if seg <= start < seg + len(sent):
+            return bool(NEGATION_RX.search(sent))
+        pos = seg + len(sent)
+    return bool(NEGATION_RX.search(line))
+
+
 NEGATION_RX = re.compile(
     r"(?i)\b(?:not|never|no longer|isn't|is ?n't|aren't|doesn't|does not|don't|do not|"
     r"myth|false|untrue|debunk\w*|misquot\w*|misattribut\w*|unfounded|no evidence|"
@@ -54,7 +74,19 @@ def load_ledger(path: Path = LEDGER) -> dict:
     if not path.exists():
         raise SystemExit(f"format_lint: ledger not found at {path}")
     with path.open(encoding="utf-8") as fh:
-        return json.load(fh)
+        data = json.load(fh)
+    bad = [
+        (r.get("id", "?"), r.get("grade"))
+        for cat in ("refuted", "folklore", "hypothesis_as_fact")
+        for r in data.get(cat, [])
+        if r.get("grade") not in GRADE_SEVERITY
+    ]
+    if bad:
+        raise SystemExit(
+            "format_lint: unknown grade(s) in ledger — a typo must not silently "
+            f"downgrade severity: {bad}"
+        )
+    return data
 
 
 def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
@@ -69,7 +101,7 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
 
     fence_open_at: int | None = None
     for i, line in enumerate(lines):
-        if line.lstrip().startswith("```"):
+        if line.lstrip().startswith("```") or line.lstrip().startswith("~~~"):
             fence_open_at = None if fence_open_at is not None else i
             exempt.add(i)
             continue
@@ -97,7 +129,7 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
     return exempt, problems
 
 
-def _control_regions(lines: list[str]) -> tuple[set[int], list[dict]]:
+def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[set[int], list[dict]]:
     """`<!-- format-lint: disable -->` … `enable`, as an exact standalone comment.
 
     Guards: an unclosed region is an ERROR; a nested disable is an ERROR; and a region
@@ -109,8 +141,9 @@ def _control_regions(lines: list[str]) -> tuple[set[int], list[dict]]:
     open_at: int | None = None
     spans: list[tuple[int, int]] = []
 
+    fenced = fenced or set()
     for i, line in enumerate(lines):
-        m = CONTROL_RX.match(line)
+        m = None if i in fenced else CONTROL_RX.match(line)
         if not m:
             if open_at is not None:
                 off.add(i)
@@ -146,7 +179,7 @@ def _control_regions(lines: list[str]) -> tuple[set[int], list[dict]]:
     body = [i for i, l in enumerate(lines) if l.strip()]
     if body:
         covered = sum(1 for i in body if i in off)
-        if covered / len(body) > 0.8 and covered > 5:
+        if covered / len(body) > 0.8:
             problems.append(
                 {
                     "line": (spans[0][0] + 1) if spans else 1,
@@ -172,7 +205,7 @@ def _allowed_ids(lines: list[str], idx: int) -> set[str]:
 def lint_text(text: str, ledger: dict) -> list[dict]:
     lines = text.splitlines()
     exempt, problems = _fence_and_frontmatter(lines)
-    ctrl_off, ctrl_problems = _control_regions(lines)
+    ctrl_off, ctrl_problems = _control_regions(lines, exempt)
     skip = exempt | ctrl_off
     findings: list[dict] = list(problems) + list(ctrl_problems)
 
@@ -185,7 +218,7 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
                 if i in skip or rule["id"] in _allowed_ids(lines, i):
                     continue
                 m = rx.search(line)
-                if not m or NEGATION_RX.search(line):
+                if not m or _negated_at(line, m.start()):
                     continue
                 findings.append(
                     {
@@ -198,16 +231,20 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
     pws = ledger.get("precision_without_source")
     if pws:
         rx = re.compile(pws["pattern"])
-        markers, window = pws["citation_markers"], int(pws.get("window_lines", 3))
+        window = int(pws.get("window_lines", 3))
+        # A marker must look like a RESOLVABLE locator. A bare "https://" or the
+        # substring "PMC" is not a citation.
+        marker_rx = re.compile(pws["marker_regex"], re.I)
         for i, line in enumerate(lines):
             if i in skip or "unsourced-precision" in _allowed_ids(lines, i):
                 continue
-            if NEGATION_RX.search(line):
-                continue
+
             blob = "\n".join(lines[max(0, i - window) : min(len(lines), i + window + 1)])
-            if any(mk in blob for mk in markers):
+            if marker_rx.search(blob):
                 continue
             for m in rx.finditer(line):
+                if _negated_at(line, m.start()):
+                    continue
                 findings.append(
                     {
                         "line": i + 1, "severity": "WARN",

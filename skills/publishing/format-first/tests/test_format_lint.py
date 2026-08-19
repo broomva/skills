@@ -294,3 +294,78 @@ def test_cli_missing_file_exits_2(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(tmp_path / "nope.md")],
                        capture_output=True, text=True)
     assert r.returncode == 2
+
+
+# ---------- round-2 review regressions ----------
+
+def test_unrelated_negation_earlier_in_line_does_not_suppress():
+    """Regression: a line-scoped guard let 'This is not complicated.' excuse a live claim."""
+    text = "This is not complicated. Sends are weighted 3-5x more than likes.\n"
+    assert "sends-3-5x-likes" in ids(text)
+
+
+def test_negation_in_the_same_sentence_still_suppresses():
+    assert "sends-3-5x-likes" not in ids("Sends are not weighted 3-5x more than likes.\n")
+
+
+def test_unknown_grade_fails_loudly(tmp_path):
+    """A typo in a grade must not silently downgrade an ERROR to WARN."""
+    import copy
+    bad = copy.deepcopy(LEDGER)
+    bad["refuted"][0]["grade"] = "refutde"
+    p = tmp_path / "bad.json"
+    p.write_text(json.dumps(bad), encoding="utf-8")
+    try:
+        fl.load_ledger(p)
+    except SystemExit as e:
+        assert "unknown grade" in str(e)
+    else:
+        raise AssertionError("bad grade was accepted")
+
+
+def test_malformed_r_value_does_not_match():
+    assert "mere-exposure-r-026" not in ids("The coefficient was r=026 in the table.\n")
+
+
+def test_instagram_favorites_feed_is_not_flagged():
+    assert "algorithm-favorites-list" not in ids("Add them to your Instagram Favorites list.\n")
+
+
+def test_algorithm_favorites_list_of_formats_still_flags():
+    assert "algorithm-favorites-list" in ids("The algorithm's secret favorites list decides reach.\n")
+
+
+def test_unicode_multiplication_sign_matches():
+    assert "sends-3-5x-likes" in ids("Sends are weighted 3–5× more than likes.\n")
+
+
+def test_tilde_fence_is_exempt_and_unclosed_is_reported():
+    assert "sends-3-5x-likes" not in ids("~~~\nSends are 3-5x more than likes.\n~~~\n")
+    assert "unclosed-fence" in ids("~~~\nSends are 3-5x more than likes.\n")
+
+
+def test_directive_inside_a_fence_does_not_control_the_linter():
+    """Documenting the directive must not switch the gate off for live prose."""
+    text = (
+        "```\n<!-- format-lint: disable -->\n```\n"
+        "Mosseri announced the polished, perfect aesthetic is dead.\n"
+    )
+    assert "polished-aesthetic-dead" in ids(text)
+
+
+def test_short_whole_file_disable_is_still_an_error():
+    """The coverage guard previously exempted files under six lines."""
+    text = "<!-- format-lint: disable -->\nSends are 3-5x likes.\n<!-- format-lint: enable -->\n"
+    assert "whole-file-disable" in ids(text)
+
+
+def test_bare_scheme_is_not_a_citation():
+    assert "unsourced-precision" in ids("Completion is 45%.\nsee https:// for details\n")
+
+
+def test_bare_pmc_substring_is_not_a_citation():
+    assert "unsourced-precision" in ids("Completion is 45%.\nPMC has it somewhere\n")
+
+
+def test_resolvable_doi_is_a_citation():
+    assert "unsourced-precision" not in ids("Completion is 45%.\nhttps://doi.org/10.1145/3613904.3642433\n")
