@@ -1019,3 +1019,77 @@ def test_the_new_denominator_does_not_manufacture_whole_file_findings():
     assert "whole-file-disable" in ids(
         "---\nname: x\n---\n<!-- format-lint: disable -->\nq\n<!-- format-lint: enable -->\n"
     )
+
+
+# ---------- padding bypasses, exhaustively (round-8 self-probe) ----------
+
+PADDINGS = {
+    "horizontal rules": "---\n" * 8,
+    "bare list bullets": "-\n" * 8,
+    "table separators": "|---|---|\n" * 8,
+    "blockquote markers": ">\n" * 8,
+    "bare heading hashes": "#\n" * 8,
+    "allow markers": "<!-- format-lint: allow=post-daily -->\n" * 8,
+    "frontmatter fields": "---\n" + "".join(f"k{i}: v\n" for i in range(8)) + "---\n",
+    "fenced code": "```\n" + "x\n" * 8 + "```\n",
+}
+
+
+def test_no_padding_shape_defeats_the_whole_file_guard():
+    """Enumerate the padding space rather than patching one shape at a time.
+
+    Each fix to this guard has been followed by another way to dilute it: fenced code,
+    then frontmatter, then marker-only lines, then five kinds of bare markdown structure.
+    The predicate is now "does this line contain a word or a number", and this test is the
+    list of things that are NOT prose.
+    """
+    claim = "The algorithm punishes formats."
+    for label, pad in PADDINGS.items():
+        text = (
+            pad + f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
+        )
+        assert "whole-file-disable" in ids(text), label
+
+
+def test_ordinary_structured_prose_is_still_body():
+    """The inverse control: tightening the predicate must not manufacture findings."""
+    text = (
+        "# Heading\n\nRanking is a weighted sum.\n\n- Retrieval is nearest-neighbour.\n"
+        "- Each surface has its own algorithm.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+        "<!-- format-lint: disable -->\nquoted claim\n<!-- format-lint: enable -->\n"
+    )
+    assert "whole-file-disable" not in ids(text)
+
+
+def test_is_lintable_classifies_structure_and_prose():
+    """Direct unit coverage of the shared predicate, both polarities."""
+    not_prose = ["---", "-", "*", "|---|---|", ">", "#", "   ", "***", "===",
+                 "<!-- format-lint: allow=post-daily -->", "<!-- format-lint: disable -->"]
+    prose = ["The algorithm punishes formats.", "- Posting daily grows reach.",
+             "# Real heading text", "| a | b |", "> a quoted sentence", "50%",
+             "1. an ordered item"]
+    for line in not_prose:
+        assert not fl._is_lintable(0, line, set()), line
+    for line in prose:
+        assert fl._is_lintable(0, line, set()), line
+
+
+def test_the_whole_file_threshold_is_pinned_at_its_boundary():
+    """A magic number no test constrains is undocumented behaviour.
+
+    Mutation testing found 0.8 could be moved to 0.99 without turning anything red — the
+    padding tests all sit at ratio 1.0 and the control at 0.75, so nothing in between was
+    exercised. These three cases straddle the boundary.
+    """
+    def doc(live, dead):
+        return (
+            "live prose line\n" * live
+            + "<!-- format-lint: disable -->\n"
+            + "dead prose line\n" * dead
+            + "<!-- format-lint: enable -->\n"
+        )
+
+    assert fl.WHOLE_FILE_THRESHOLD == 0.8
+    assert "whole-file-disable" not in ids(doc(1, 4)), "0.80 is not OVER the threshold"
+    assert "whole-file-disable" in ids(doc(1, 5)), "0.83 is"
+    assert "whole-file-disable" in ids(doc(1, 9)), "0.90 is"

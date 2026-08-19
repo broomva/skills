@@ -47,6 +47,12 @@ GRADE_SEVERITY = {
     "hypothesis_as_fact": "WARN",
 }
 
+# A disable region covering more than this share of a document's PROSE is treated as a
+# whole-file bypass. Not a tuned value: it is "almost everything", chosen loose enough that
+# a document quoting several claims in one block is not punished. The guard's job is to
+# catch a suppression that swallows the document, not to police proportion.
+WHOLE_FILE_THRESHOLD = 0.8
+
 ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
 CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
 MARKER_BLANK_RX = re.compile(r"<!--\s*format-lint:.*?-->")
@@ -210,20 +216,32 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
     return exempt, problems
 
 
+# Leading markdown structure — blockquote arrows, list bullets, heading hashes, ordered
+# markers — carries no claim on its own.
+STRUCTURE_PREFIX_RX = re.compile(r"^[\s>]*(?:#{1,6}\s*|[-*+]\s*|\d+[.)]\s*)*")
+
+
 def _is_lintable(i: int, line: str, exempt: set[int]) -> bool:
     """Could this line carry a claim?
 
     The single predicate for "prose", shared by the block joiner and the whole-file
-    coverage guard. They disagreed once, and both directions were defects: counting
-    lint's own marker lines as body let a document pad itself past the coverage
-    threshold, and counting them as *covered* inflated the ratio into a false ERROR on
-    a legitimately scoped suppression.
+    coverage guard. They disagreed once and both directions were live defects: counting
+    lint's own marker lines as body let a document pad past the coverage threshold, and
+    counting them as *covered* inflated the ratio into a false ERROR on a legitimately
+    scoped suppression.
+
+    Structure alone is not prose either. A run of `---`, bare `-` bullets, `|---|---|`
+    separators, `>` or `#` was counted as body and diluted the ratio the same way — five
+    more padding bypasses of the same guard, found by probing the fix that closed the
+    first two.
     """
     if i in exempt or not line.strip():
         return False
     if CONTROL_RX.match(line):
         return False
-    return bool(MARKER_BLANK_RX.sub("", line).strip())
+    text = MARKER_BLANK_RX.sub("", line)
+    text = STRUCTURE_PREFIX_RX.sub("", text).replace("|", " ").strip(" \t-=~*_")
+    return bool(re.search(r"[A-Za-z0-9]", text))
 
 
 def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[set[int], list[dict]]:
@@ -281,7 +299,7 @@ def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[
     body = [i for i, l in enumerate(lines) if _is_lintable(i, l, fenced)]
     if body:
         covered = sum(1 for i in body if i in off)
-        if covered / len(body) > 0.8:
+        if covered / len(body) > WHOLE_FILE_THRESHOLD:
             problems.append(
                 {
                     "line": (spans[0][0] + 1) if spans else 1,
