@@ -483,3 +483,36 @@ def test_manifest_is_actually_used_by_the_gate(tmp_path, sloppy_repo):
     subprocess.run([sys.executable, str(scripts / "unslop_gate.py"), str(sloppy_repo), "--manifest", str(mp), "--no-render", "--quiet", "--json", str(out)], capture_output=True, text=True)
     res = {x["check"]: x["status"] for x in json.loads(out.read_text())["results"]}
     assert res["copy.emoji"] == "PASS" and res["direction.authored"] == "PASS"   # only true if the tampered manifest was used
+
+
+# ---------------------------------------------------------------- round-6 (codex r5): edges round 5 opened
+def test_hyphenated_buzzword_prose_still_counts(tmp_path):
+    root = _repo(tmp_path, "hy", {
+        "src/Hero.tsx": "<p>A next-gen, state-of-the-art, cutting-edge, game-changing platform</p>",
+        "src/Card.tsx": 'const s = { backgroundColor: "var(--color-surface-elevated)" }; <div className="elevate-card next-gen-badge" />',
+    })
+    ct = us.survey(root)["copy_tells"]["buzzwords"]
+    assert ct["count"] == 1 and "Hero.tsx" in ct["sites"][0]
+
+
+def test_tailwind_var_arbitrary_values_are_token_refs_not_drift(tmp_path):
+    root = _repo(tmp_path, "tvar", {"src/A.tsx": '<div className="rounded-[var(--radius)] rounded-[var(--radius-lg)] shadow-[var(--shadow-card)] rounded-[13px]" />'})
+    kinds = {r["kind"]: r for r in us.survey(root)["roots"]}
+    assert kinds["radius"]["arbitrary"] == 1 and kinds["shadow"]["arbitrary"] == 0
+
+
+def test_css_var_font_keywords_are_not_families(tmp_path):
+    root = _repo(tmp_path, "fk", {"src/styles/a.css": ":root { --font-body: inherit; --font-display: unset; --font-sans: 'Fraunces', serif; }"})
+    fams = us.survey(root)["fonts"]["families"]
+    assert set(fams) == {"fraunces"}
+
+
+def test_reroot_candidate_under_nested_build_dir_is_allowed(tmp_path):
+    """SKIP_TOP_LEVEL_DIRS applies to the ROOT child only when choosing a candidate app."""
+    root = tmp_path / "ws2"
+    (root / "packages" / "build" / "src" / "app").mkdir(parents=True)     # 'build' is a package name here, not an artefact
+    (root / "package.json").write_text(json.dumps({"name": "ws2", "devDependencies": {"turbo": "2"}}))
+    (root / "packages" / "build" / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "packages" / "build" / "src" / "app" / "page.tsx").write_text("<main/>")
+    m = us.survey(root)
+    assert m["framework"]["name"] == "next" and m["app_root_rerooted_from"] == str(root.resolve())

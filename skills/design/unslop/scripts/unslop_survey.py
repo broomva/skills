@@ -135,7 +135,7 @@ BUZZWORDS = [
     r"harness the power",
 ]
 RE_BUZZ = re.compile(r"(?<![\w-])(?:" + "|".join(BUZZWORDS) + r")(?![\w-])", re.I)
-RE_CSS_TOKENS = re.compile(r"var\([^)]*\)|--[\w-]+|\b[\w]+(?:-[\w]+)+\b")   # var(--x), --x, kebab-case class tokens
+RE_CSS_TOKENS = re.compile(r"var\([^)]*\)|--[\w-]+")   # var(--x) and --x custom properties only — hyphenated PROSE ("next-gen") stays
 RE_CODE_ONLY_LINE = re.compile(r"^\s*(import\s|//|/\*|\*|\{/\*|@apply|[.#@][\w-]+\s*\{)")
 # `<h1 className="text-xl">Supercharge…</h1>` must still be scanned: strip attribute payloads, keep the text
 RE_JSX_ATTR = re.compile(r"""\b[\w:-]+\s*=\s*(?:"[^"]*"|'[^']*'|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})""")
@@ -152,7 +152,7 @@ def _strip_attrs(line: str) -> str:
     kept = " ".join(v for pair in RE_COPY_ATTR_VALUES.findall(line) for v in pair if v)
     body = RE_JSX_ATTR.sub(" ", line)
     body = RE_TAG.sub(" ", body)
-    body = RE_CSS_TOKENS.sub(" ", body)     # backgroundColor: "var(--color-surface-elevated)" is not copy
+    body = RE_CSS_TOKENS.sub(" ", body)     # backgroundColor: "var(--color-surface-elevated)" is not copy; "next-gen" prose survives
     return f"{body} {kept}"
 
 # --- substance -------------------------------------------------------------
@@ -442,7 +442,8 @@ def find_app_root(root: Path) -> Path:
     cands = []
     for depth in (1, 2):
         for pj in root.glob("/".join(["*"] * depth) + "/package.json"):
-            if any(seg in SKIP_DIRS or seg in SKIP_TOP_LEVEL_DIRS for seg in pj.relative_to(root).parts):
+            parts = pj.relative_to(root).parts
+            if any(seg in SKIP_DIRS for seg in parts) or parts[0] in SKIP_TOP_LEVEL_DIRS:
                 continue
             fw = detect_framework(pj.parent, load_package_json(pj.parent))
             if fw["name"] not in ("unknown", "static-html") and has_ui(pj.parent):
@@ -587,7 +588,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         if is_style:
             for m in RE_CSS_VAR_FONT.finditer(txt):
                 fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
-                fams = [f for f in fams if f and not f.startswith("var(") and RE_FONT_VALUE_LOOKS_LIKE_FAMILY.match(f) and not re.search(r"\d", f)]
+                fams = [f for f in fams if f and not f.startswith("var(") and f not in FONT_KEYWORDS and RE_FONT_VALUE_LOOKS_LIKE_FAMILY.match(f) and not re.search(r"\d", f)]
                 if fams:
                     font_sites[fams[0]].append(site(p, txt.count("\n", 0, m.start()) + 1))
                     for fam in fams[1:]:
@@ -797,7 +798,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         })
     if radius_values:
         distinct = [k for k in radius_values if radius_values[k] > 0]
-        arbitrary = [k for k in distinct if k.startswith("css:") or "[" in k]      # raw px / rounded-[13px] — not the scale
+        arbitrary = [k for k in distinct if (k.startswith("css:") or "[" in k) and "var(" not in k]   # rounded-[13px] / raw px; rounded-[var(--radius)] is a token ref
         roots.append({
             "kind": "radius", "value": f"{len(distinct)} distinct radius values", "default": len(distinct) > 4,
             "arbitrary": len(arbitrary),
@@ -806,7 +807,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             "fix": "One radius vocabulary (e.g. control / card / dialog) declared as tokens; arbitrary values are drift, many scale steps are a decision to make.",
         })
     if shadow_values:
-        arbitrary_s = [k for k in shadow_values if k.startswith("css:") or "[" in k]
+        arbitrary_s = [k for k in shadow_values if (k.startswith("css:") or "[" in k) and "var(" not in k]
         roots.append({
             "kind": "shadow", "value": f"{len(shadow_values)} distinct shadow values", "default": len(shadow_values) > 4,
             "arbitrary": len(arbitrary_s),
