@@ -38,16 +38,16 @@ from pathlib import Path
 
 SCHEMA = "unslop-survey/1"
 
+# skipped at ANY depth — never source
 SKIP_DIRS = {
-    ".git", "node_modules", ".next", ".nuxt", ".svelte-kit", ".astro", ".output",
-    "dist", "build", "out", "coverage", ".turbo", ".vercel", ".cache", "vendor",
-    "target", "venv", ".venv", "__pycache__", ".pytest_cache", "storybook-static",
-    ".impeccable", ".unslop",
-    # generated test/report artefacts — playwright-report/index.html alone contributed 1,358 hex literals
-    # to one real app before this list existed
-    "playwright-report", "test-results", ".playwright", "cypress", "__snapshots__", ".nyc_output",
-    "lighthouse", ".lighthouseci", "reports", ".svelte-kit", ".parcel-cache", ".angular", ".expo",
+    ".git", "node_modules", ".next", ".nuxt", ".svelte-kit", ".astro", ".output", "coverage", ".turbo",
+    ".vercel", ".cache", "vendor", "target", "venv", ".venv", "__pycache__", ".pytest_cache",
+    "storybook-static", ".impeccable", ".unslop", "playwright-report", "test-results", ".playwright",
+    "__snapshots__", ".nyc_output", ".lighthouseci", ".parcel-cache", ".angular", ".expo",
 }
+# skipped only as a TOP-LEVEL child of the repo — `src/app/reports/page.tsx` and `app/build/` are routes,
+# `<root>/reports/` and `<root>/build/` are artefacts (a real app lost its /reports route to this list once)
+SKIP_TOP_LEVEL_DIRS = {"dist", "build", "out", "reports", "lighthouse", "cypress", "tmp", "temp"}
 # .ts/.js modules that carry landing/marketing copy — scanned for copy + substance tells like UI files
 RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo)(\.(?!test|spec|stories|d)[a-z]+)*\.[cm]?[jt]s$", re.I)
 # server-side / non-surface files that can never carry a loading state
@@ -95,12 +95,13 @@ def _balanced_call(txt: str, open_idx: int) -> str:
                 return txt[open_idx + 1:i]
         i += 1
     return txt[open_idx + 1:]
-RE_GOOGLE_FONTS = re.compile(r"fonts\.googleapis\.com/css2?\?family=([^&\"'\s>]+)")
+RE_GOOGLE_FONTS = re.compile(r"""fonts\.googleapis\.com/css2?\?([^"'\s)>]+)""")   # whole query: every family= param
 RE_FONT_FACE = re.compile(r"@font-face\s*\{[^}]*font-family\s*:\s*['\"]?([^;'\"}]+)", re.I | re.S)
 RE_TW_FONT = re.compile(r"fontFamily\s*:\s*\{([^}]*)\}", re.S)
 # `--font-sans: Inter, …` is a family; `--font-size-lg: 1.25rem` / `--font-weight-bold: 700` are not.
 RE_CSS_VAR_FONT = re.compile(r"--font-(?!size|weight|style|feature|variant|stretch|smoothing|synthesis|kerning|optical|leading|tracking|line)[a-z0-9-]*\s*:\s*([^;{}]+);", re.I)
-RE_FONT_VALUE_LOOKS_LIKE_FAMILY = re.compile(r"^[a-z][a-z0-9 .'\"-]*$", re.I)
+RE_FONT_VALUE_LOOKS_LIKE_FAMILY = re.compile(r"^-?[a-z][a-z0-9 .'\"-]*$", re.I)     # -apple-system is a family
+FONT_KEYWORDS = {"inherit", "initial", "unset", "revert", "revert-layer"}
 # object-style CSS-in-JS / MUI createTheme: fontFamily: "Inter, sans-serif"
 RE_OBJ_FONT_FAMILY = re.compile(r"""fontFamily\s*:\s*['"`]([^'"`]+)['"`]""")
 
@@ -120,7 +121,7 @@ RE_IMPORT_FROM = re.compile(r"""(?:from|require\()\s*['"]([^'"]+)['"]""")
 
 RE_EM_DASH = re.compile("—")
 RE_EMOJI = re.compile(
-    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B00-\U00002BFF\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B50\U00002B55\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
 )
 RE_CHECKMARK = re.compile("[✓✔✅☑]")
 RE_NOT_X_BUT_Y = re.compile(
@@ -128,11 +129,13 @@ RE_NOT_X_BUT_Y = re.compile(
     re.I,
 )
 BUZZWORDS = [
-    r"supercharge\w*", r"unleash\w*", r"revolutioni[sz]\w*", r"seamless(?:ly)?", r"effortless(?:ly)?", r"next-gen",
-    r"10x", r"game-chang\w*", r"cutting-edge", r"state-of-the-art", r"empower\w*", r"unlock\w*", r"elevate\w*",
-    r"streamline\w*", r"harness the power",
+    r"supercharg(?:e|ed|es|ing)", r"unleash(?:ed|es|ing)?", r"revolutioni[sz](?:e|ed|es|ing)", r"seamless(?:ly)?",
+    r"effortless(?:ly)?", r"next-gen", r"10x", r"game-chang(?:er|ers|ing)", r"cutting-edge", r"state-of-the-art",
+    r"empower(?:s|ed|ing|ment)?", r"unlock(?:s|ed|ing)?", r"elevat(?:e|es|ed|ing)", r"streamlin(?:e|es|ed|ing)",
+    r"harness the power",
 ]
-RE_BUZZ = re.compile(r"\b(?:" + "|".join(BUZZWORDS) + r")\b", re.I)
+RE_BUZZ = re.compile(r"(?<![\w-])(?:" + "|".join(BUZZWORDS) + r")(?![\w-])", re.I)
+RE_CSS_TOKENS = re.compile(r"var\([^)]*\)|--[\w-]+|\b[\w]+(?:-[\w]+)+\b")   # var(--x), --x, kebab-case class tokens
 RE_CODE_ONLY_LINE = re.compile(r"^\s*(import\s|//|/\*|\*|\{/\*|@apply|[.#@][\w-]+\s*\{)")
 # `<h1 className="text-xl">Supercharge…</h1>` must still be scanned: strip attribute payloads, keep the text
 RE_JSX_ATTR = re.compile(r"""\b[\w:-]+\s*=\s*(?:"[^"]*"|'[^']*'|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})""")
@@ -149,6 +152,7 @@ def _strip_attrs(line: str) -> str:
     kept = " ".join(v for pair in RE_COPY_ATTR_VALUES.findall(line) for v in pair if v)
     body = RE_JSX_ATTR.sub(" ", line)
     body = RE_TAG.sub(" ", body)
+    body = RE_CSS_TOKENS.sub(" ", body)     # backgroundColor: "var(--color-surface-elevated)" is not copy
     return f"{body} {kept}"
 
 # --- substance -------------------------------------------------------------
@@ -167,7 +171,7 @@ RE_ERROR_STATE = re.compile(r"""ErrorBoundary|isError|error\.tsx|<Alert\b|role=[
 RE_EMPTY_STATE = re.compile(r"length\s*===?\s*0|\.length\s*\?|No\s+(results|items|data|projects|messages|orders)|Nothing\s+(here|yet|to show)|empty[-_ ]?state|EmptyState", re.I)
 
 PLACEHOLDER_PATTERNS = {
-    "lorem-ipsum": re.compile(r"lorem ipsum|dolor sit amet", re.I),
+    "lorem-ipsum": re.compile(r"lorem ipsum(?:\s+dolor sit amet)?|dolor sit amet", re.I),
     "john-jane-doe": re.compile(r"\b(john|jane)\s+doe\b", re.I),
     "acme": re.compile(r"\bAcme(\s+(Inc|Corp|Co)\.?)?\b"),
     "your-company": re.compile(r"\b(your|the)\s+company\s+name\b|\[?your\s+(company|name|product|brand)\]?", re.I),
@@ -216,8 +220,10 @@ RE_GRADIENT_CSS = re.compile(r"(?:linear|radial|conic)-gradient\(", re.I)
 RE_BACKDROP = re.compile(r"backdrop-filter|backdrop-blur", re.I)
 # authored motion (keyframes, framer/motion, transition-all, decorative animate-* utilities) needs a reduced-motion
 # story; essential utilities (spin/pulse/ping — spinners, skeletons) do not by themselves
-RE_KEYFRAMES = re.compile(r"@keyframes|framer-motion|from\s+['\"]motion(?:/react)?['\"]|<motion\.\w+|transition-all|animate-(?!spin\b|pulse\b|ping\b|none\b)[a-z-]+", re.I)
-RE_MOTION_ESSENTIAL = re.compile(r"animate-(?:spin|pulse|ping)\b")
+RE_KEYFRAMES = re.compile(r"@keyframes|framer-motion|from\s+['\"]motion(?:/react)?['\"]|<motion\.\w+|transition-all|animate-(?!spin\b|pulse\b|ping\b|none\b|in\b|out\b)[a-z-]+", re.I)
+# essential utilities (spinners, skeletons) and component-library presets (tw-animate-css `animate-in/out`,
+# `fade-in-0`, `zoom-in-95`, `slide-in-from-*` — every shadcn dialog/tooltip) are library motion: WARN, not FAIL
+RE_MOTION_ESSENTIAL = re.compile(r"animate-(?:spin|pulse|ping|in|out)\b|\b(?:fade|zoom|slide)-(?:in|out)(?:-|\b)")
 RE_REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|motion-reduce:", re.I)
 
 # The faces every AI-generated UI converges on (impeccable's overused-font list ∪ the reel's #10 ∪ common LLM picks).
@@ -265,7 +271,12 @@ def _git_files(root: Path) -> list[Path] | None:
             continue
         rel_ = raw.decode("utf-8", errors="ignore")
         parts = rel_.split("/")
-        if any(seg in SKIP_DIRS for seg in parts[:-1]):
+        dirs = parts[:-1]
+        if any(seg in SKIP_DIRS for seg in dirs):
+            continue
+        if dirs and dirs[0] in SKIP_TOP_LEVEL_DIRS:
+            continue
+        if any(seg.startswith(".") for seg in dirs):       # same dot-dir rule as walk mode (src/.storybook)
             continue
         p = root / rel_
         if p.is_file() and not p.is_symlink():
@@ -273,13 +284,22 @@ def _git_files(root: Path) -> list[Path] | None:
     return out
 
 
+WALK_MODE = {"mode": "walk"}
+
+
 def walk(root: Path):
     git = _git_files(root)
-    if git is not None:
+    # git inventory with no UI/style file at all (nested .git, submodule, sparse checkout) → fall back to a walk
+    if git and any(p.suffix.lower() in UI_EXT | STYLE_EXT for p in git):
+        WALK_MODE["mode"] = "git"
         yield from git
         return
+    WALK_MODE["mode"] = "walk"
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")] if dirpath != str(root) else [d for d in dirnames if d not in SKIP_DIRS]
+        if dirpath == str(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and d not in SKIP_TOP_LEVEL_DIRS]
+        else:
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         for fn in filenames:
             p = Path(dirpath) / fn
             if not p.is_symlink():
@@ -405,13 +425,27 @@ def find_app_root(root: Path) -> Path:
         if root_fw["name"] not in ("unknown", "static-html"):
             return root                       # the root IS the app
         # a workspace root with its own manifest (tooling only) — look for the single nested frontend app
+    def has_ui(d: Path, limit: int = 3) -> bool:
+        n = 0
+        for dp, dn, fns in os.walk(d):
+            dn[:] = [x for x in dn if x not in SKIP_DIRS and not x.startswith(".")]
+            if dp[len(str(d)):].count(os.sep) > limit:
+                dn[:] = []
+            if any(Path(f).suffix.lower() in UI_EXT for f in fns):
+                return True
+            n += 1
+            if n > 400:
+                break
+        return False
+    if any((root / f).exists() for f in ("index.html",)) or has_ui(root, limit=1):
+        return root                                       # the root itself carries UI — never re-root away from it
     cands = []
     for depth in (1, 2):
         for pj in root.glob("/".join(["*"] * depth) + "/package.json"):
-            if any(seg in SKIP_DIRS for seg in pj.relative_to(root).parts):
+            if any(seg in SKIP_DIRS or seg in SKIP_TOP_LEVEL_DIRS for seg in pj.relative_to(root).parts):
                 continue
             fw = detect_framework(pj.parent, load_package_json(pj.parent))
-            if fw["name"] not in ("unknown", "static-html"):
+            if fw["name"] not in ("unknown", "static-html") and has_ui(pj.parent):
                 cands.append(pj.parent)
         if cands:
             break
@@ -506,7 +540,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         for m in RE_FONT_FAMILY.finditer(txt):
             ln = txt.count("\n", 0, m.start()) + 1
             fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
-            fams = [f for f in fams if f and not f.startswith("var(") and f not in ("inherit", "initial", "unset")]
+            fams = [f for f in fams if f and not f.startswith("var(") and f not in FONT_KEYWORDS]
             if not fams:
                 continue
             font_sites[fams[0]].append(site(p, ln))          # primary face
@@ -539,9 +573,11 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     fam = re.sub(r"_", " ", n).lower()
                     font_sites[fam].append(site(p, txt.count("\n", 0, m.start()) + 1))
         for m in RE_GOOGLE_FONTS.finditer(txt):
-            google_font_links.append(f"{m.group(1)}@{rp}")
-            for fam in m.group(1).split("&family="):
-                fam = fam.split(":")[0].replace("+", " ").lower()
+            query = m.group(1).replace("&amp;", "&")
+            fams_ = [q[len("family="):] for q in query.split("&") if q.startswith("family=")]
+            google_font_links.append(f"{'+'.join(fams_)}@{rp}")
+            for fam in fams_:
+                fam = fam.split(":")[0].replace("+", " ").replace("%20", " ").strip().lower()
                 if fam:
                     font_sites[fam].append(site(p, txt.count("\n", 0, m.start()) + 1))
         if is_config:
@@ -559,7 +595,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         if is_ui or p.suffix.lower() in SCRIPT_EXT:
             for m in RE_OBJ_FONT_FAMILY.finditer(txt):
                 fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
-                fams = [f for f in fams if f and not f.startswith("var(")]
+                fams = [f for f in fams if f and not f.startswith("var(") and f not in FONT_KEYWORDS]
                 if fams:
                     font_sites[fams[0]].append(site(p, txt.count("\n", 0, m.start()) + 1))
                     for fam in fams[1:]:
@@ -761,15 +797,19 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         })
     if radius_values:
         distinct = [k for k in radius_values if radius_values[k] > 0]
+        arbitrary = [k for k in distinct if k.startswith("css:") or "[" in k]      # raw px / rounded-[13px] — not the scale
         roots.append({
             "kind": "radius", "value": f"{len(distinct)} distinct radius values", "default": len(distinct) > 4,
+            "arbitrary": len(arbitrary),
             "sites": sum(radius_values.values()), "root_file": None,
             "top_values": [f"{k}×{v}" for k, v in radius_values.most_common(8)],
-            "fix": "One radius vocabulary (e.g. control / card / dialog) declared as tokens; more than ~4 distinct radii is drift.",
+            "fix": "One radius vocabulary (e.g. control / card / dialog) declared as tokens; arbitrary values are drift, many scale steps are a decision to make.",
         })
     if shadow_values:
+        arbitrary_s = [k for k in shadow_values if k.startswith("css:") or "[" in k]
         roots.append({
             "kind": "shadow", "value": f"{len(shadow_values)} distinct shadow values", "default": len(shadow_values) > 4,
+            "arbitrary": len(arbitrary_s),
             "sites": sum(shadow_values.values()), "root_file": None,
             "top_values": [f"{k}×{v}" for k, v in shadow_values.most_common(8)],
             "fix": "Declare elevation once (border OR shadow per level); shadows carry offset + soft blur; no glow halos.",
@@ -827,6 +867,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         "app_root_rerooted_from": str(survey_root_arg) if survey_root_arg != root else None,
         "framework": fw,
         "counts": {"ui_files": len(ui_files), "style_files": len(style_files), "script_files": len(script_files), "copy_files": len(copy_files), "routes": len(routes),
+                   "walk_mode": WALK_MODE["mode"],
                    "skipped": {"oversized": len(SKIPPED["oversized"]), "unreadable": len(SKIPPED["unreadable"]),
                                "examples": [rel(root, Path(x)) for x in (SKIPPED["oversized"] + SKIPPED["unreadable"])[:6]]}},
         "routes": routes,

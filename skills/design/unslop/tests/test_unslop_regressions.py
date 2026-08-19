@@ -348,3 +348,138 @@ def test_copy_module_predicate_ignores_test_and_story_files(tmp_path):
 def test_jsx_expression_string_attrs_count_as_copy(tmp_path):
     root = _repo(tmp_path, "attrx", {"src/Hero.tsx": '<img alt={"Effortless onboarding"} className="w-full" />'})
     assert us.survey(root)["copy_tells"]["buzzwords"]["count"] == 1
+
+
+# ---------------------------------------------------------------- round-5 (Strata B r2 residuals)
+def test_reports_route_dir_is_surveyed_but_top_level_reports_is_not(tmp_path):
+    root = _repo(tmp_path, "rep", {
+        "src/app/reports/page.tsx": "<h1>Lorem ipsum —</h1>",
+        "reports/lighthouse.html": "<div style='color:#111111;background:#222222;border:#333333;outline:#444444;fill:#555555;stroke:#666666;color:#777777;color:#888888;color:#999999;color:#aaaaaa;color:#bbbbbb;color:#cccccc;color:#dddddd'>—</div>",
+        "src/app/page.tsx": "<main/>",
+    })
+    m = us.survey(root)
+    assert "/reports" in {r["route"] for r in m["routes"]}
+    assert "lorem-ipsum" in m["substance"]["placeholders"] and m["copy_tells"]["em_dash"]["count"] == 1
+    assert "color" not in {r["kind"] for r in m["roots"]}
+
+
+def test_nested_git_repo_falls_back_to_walk(tmp_path):
+    root = tmp_path / "ws"
+    (root / "web" / "src" / "app").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"name": "ws", "workspaces": ["web"], "dependencies": {"next": "15"}}))
+    (root / "web" / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "web" / "src" / "app" / "page.tsx").write_text("<h1>hello —</h1>")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=root / "web", check=True)   # nested repo: root ls-files sees nothing under web/
+    m = us.survey(root)
+    assert m["counts"]["walk_mode"] == "walk" and m["counts"]["ui_files"] == 1 and m["copy_tells"]["em_dash"]["count"] == 1
+
+
+def test_git_mode_and_walk_mode_agree_on_dot_dirs(tmp_path):
+    files = {"src/app/page.tsx": "<main/>", "src/.storybook/preview.tsx": "<p>— story</p>"}
+    a = _repo(tmp_path, "nogit", files)
+    b = _repo(tmp_path, "git", files)
+    subprocess.run(["git", "init", "-q"], cwd=b, check=True)
+    ma, mb = us.survey(a), us.survey(b)
+    assert ma["counts"]["walk_mode"] == "walk" and mb["counts"]["walk_mode"] == "git"
+    assert ma["copy_tells"]["em_dash"]["count"] == mb["copy_tells"]["em_dash"]["count"] == 0
+
+
+def test_buzzwords_css_tokens_camelcase_and_inline_script_identifiers(tmp_path):
+    root = _repo(tmp_path, "buzz2", {
+        "src/A.tsx": 'const s = { backgroundColor: "var(--color-surface-elevated)" };',
+        "src/B.tsx": '<div className="elevate-card unlockScroll" />',
+        "src/index.html": "<script>if (!unlockedFired) { go(); }</script><p>Unlock seamless growth</p>",
+        "src/C.tsx": '<iframe seamless src="/e" />',
+    })
+    ct = us.survey(root)["copy_tells"]["buzzwords"]
+    assert ct["count"] == 1 and "index.html" in ct["sites"][0]
+
+
+def test_apple_system_is_a_family_and_inherit_is_not(tmp_path):
+    root = _repo(tmp_path, "fam", {
+        "src/styles/a.css": ":root { --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }",
+        "src/theme.tsx": 'createTheme({ typography: { fontFamily: "inherit" } })',
+    })
+    fams = us.survey(root)["fonts"]["families"]
+    assert "-apple-system" in fams and "inherit" not in fams and "blinkmacsystemfont" not in fams
+
+
+def test_google_fonts_link_yields_every_family(tmp_path):
+    root = _repo(tmp_path, "gf", {
+        "src/app/layout.tsx": '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Space+Grotesk&display=swap" rel="stylesheet" />',
+        "src/styles/g.css": "@import url('https://fonts.googleapis.com/css?family=Poppins&family=DM+Sans');",
+    })
+    fams = us.survey(root)["fonts"]["families"]
+    assert {"inter", "space grotesk", "poppins", "dm sans"} <= set(fams)
+
+
+def test_shadcn_animate_in_out_is_library_motion_warn(tmp_path):
+    root = _repo(tmp_path, "shad", {"src/components/ui/dialog.tsx": '<div className="animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out" />'})
+    r = _gate(root, no_render=True)
+    assert r["motion.reduced-motion"].status == "WARN"
+
+
+def test_static_site_root_is_never_rerooted_into_a_tooling_app(tmp_path):
+    root = tmp_path / "static"
+    (root / "tools" / "gen" / "src").mkdir(parents=True)
+    (root / "index.html").write_text("<html><body><h1>Real site —</h1></body></html>")
+    (root / "tools" / "gen" / "package.json").write_text(json.dumps({"dependencies": {"react": "19"}}))
+    (root / "tools" / "gen" / "src" / "index.tsx").write_text("<b/>")
+    m = us.survey(root)
+    assert m["framework"]["name"] == "static-html" and m["app_root_rerooted_from"] is None and m["copy_tells"]["em_dash"]["count"] == 1
+
+
+def test_ui_arrows_are_not_emoji_but_star_is(tmp_path):
+    root = _repo(tmp_path, "arrows", {"src/T.tsx": "<span>Split Right ⬌</span><span>Split Down ⬍</span>", "src/S.tsx": "<span>⭐⭐⭐⭐⭐</span>"})
+    ct = us.survey(root)["copy_tells"]["emoji"]
+    assert ct["count"] == 1 and "S.tsx" in ct["sites"][0]
+
+
+def test_star_waiver_value_does_not_wildcard(tmp_path):
+    w = tmp_path / "w.json"
+    w.write_text(json.dumps({"waivers": [{"check": "detector.rule", "value": "*", "reason": "x" * 30}]}))
+    with pytest.raises(SystemExit, match="must name a `value`"):
+        ug.load_waivers(w)
+    root = _repo(tmp_path, "starw", {"src/app/page.tsx": "<main/>"})
+    manifest = us.survey(root)
+    manifest["detector"] = us.summarize_detector([{"antipattern": "gradient-text", "severity": "warning", "file": "a", "line": 1}])
+    r = _gate(root, manifest=manifest, no_render=True, waivers={"waivers": [{"check": "detector.rule", "value": "*", "reason": "x" * 30}]})
+    assert r["detector.clean"].status == "FAIL"   # in-memory "*" ignored too
+
+
+# ---------------------------------------------------------------- gate-level assertions that were missing
+def test_gate_tokens_radius_shadow_buzz_claims_error_states_both_polarities(tmp_path):
+    bad = _repo(tmp_path, "tokbad", {
+        "src/A.tsx": '<div className="rounded-[13px] rounded-[7px] rounded-[21px] shadow-[0_0_40px_#f0f] shadow-[0_2px_4px_#000] shadow-[0_8px_30px_#0af]">\n<p>Supercharge your team</p>\n<p>Unleash and empower</p>\n<p>Elevate the game-changing next-gen 99.9% uptime for 10,000+ users</p>\n</div>',
+        "src/B.tsx": "export default async function P() { const d = await fetch('/x'); return <ul/>; }",
+    })
+    r = _gate(bad, no_render=True)
+    assert r["tokens.radius"].status == "FAIL" and "3 arbitrary" in r["tokens.radius"].detail
+    assert r["tokens.shadow"].status == "FAIL"
+    assert r["copy.buzzwords"].status == "WARN"
+    assert r["substance.claims"].status == "WARN" and "fake-metrics" in r["substance.claims"].detail
+    assert r["substance.error-states"].status == "WARN"
+    good = _repo(tmp_path, "tokgood", {
+        "src/A.tsx": '<div className="rounded-md shadow-sm">Bookkeeping for two-person studios</div>',
+        "src/B.tsx": "export default function P() { const { data, isError } = useQuery({ queryFn: () => fetch('/x') }); if (isError) return <p role=\"alert\">Could not load</p>; return <ul/>; }",
+    })
+    r = _gate(good, no_render=True)
+    assert r["tokens.radius"].status == "PASS" and r["tokens.shadow"].status == "PASS"
+    assert r["copy.buzzwords"].status == "PASS" and "substance.claims" not in r
+    assert r["substance.error-states"].status == "PASS"
+
+
+def test_manifest_is_actually_used_by_the_gate(tmp_path, sloppy_repo):
+    """A tampered manifest must change the verdict — proves --manifest is read, not the survey re-run."""
+    from pathlib import Path
+    scripts = Path(us.__file__).resolve().parent
+    m = us.survey(sloppy_repo)
+    m["copy_tells"]["emoji"] = {"count": 0, "sites": []}
+    m["substance"]["design_docs"] = {"DESIGN.md": True, "PRODUCT.md": True}
+    mp = tmp_path / "m.json"
+    mp.write_text(json.dumps(m))
+    out = tmp_path / "g.json"
+    subprocess.run([sys.executable, str(scripts / "unslop_gate.py"), str(sloppy_repo), "--manifest", str(mp), "--no-render", "--quiet", "--json", str(out)], capture_output=True, text=True)
+    res = {x["check"]: x["status"] for x in json.loads(out.read_text())["results"]}
+    assert res["copy.emoji"] == "PASS" and res["direction.authored"] == "PASS"   # only true if the tampered manifest was used

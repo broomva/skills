@@ -151,7 +151,10 @@ class Gate:
         for w in self.waivers.get("waivers", []):
             if w.get("check") != check:
                 continue
-            if value is not None and w.get("value") not in (None, "*", value):
+            wv = (w.get("value") or "").strip()
+            if check in VALUE_REQUIRED and (not wv or wv == "*"):
+                continue                       # a bare or "*" waiver here would waive every rule / face — ignored even in-memory
+            if value is not None and wv not in ("", "*", value):
                 continue
             return w
         return None
@@ -217,7 +220,7 @@ class Gate:
             else:
                 self.add("fonts.deliberate", "PASS", f"default faces waived with reasons: {', '.join(ai_defaults)}", waivable=False)
                 self.results[-1].waived = True
-        elif sys_primary and not any(k in self.design_text for k in ("system font", "system-ui", "system typography", "system stack", "platform sans", "native font")):
+        elif sys_primary and not re.search(r"(system|platform|native|os)[- ](ui|font|fonts|stack|typeface|typography|default|sans)|os default typeface|-apple-system", self.design_text):
             self.add("fonts.deliberate", "WARN", f"system stack as primary ({', '.join(sys_primary)}) with no stated decision in DESIGN.md/PRODUCT.md — deliberate or default?")
         elif not fam:
             self.add("fonts.deliberate", "WARN", "no font-family declaration found — the browser default is not a decision")
@@ -247,11 +250,13 @@ class Gate:
                 else:
                     self.add("tokens.color", "PASS", "no hard-coded colors outside token files")
             if r["kind"] == "radius":
-                n = _lead_int(r["value"])
-                self.add("tokens.radius", "FAIL" if n > 8 else ("WARN" if n > 5 else "PASS"), f"{n} distinct radius values — {', '.join(r.get('top_values', [])[:6])}")
+                n = _lead_int(r["value"]); arb = int(r.get("arbitrary", 0))
+                st = "FAIL" if (arb >= 3 or n > 10) else ("WARN" if (n > 5 or arb > 0) else "PASS")
+                self.add("tokens.radius", st, f"{n} distinct radius values ({arb} arbitrary) — {', '.join(r.get('top_values', [])[:6])}")
             if r["kind"] == "shadow":
-                n = _lead_int(r["value"])
-                self.add("tokens.shadow", "FAIL" if n > 8 else ("WARN" if n > 5 else "PASS"), f"{n} distinct shadow values — {', '.join(r.get('top_values', [])[:6])}")
+                n = _lead_int(r["value"]); arb = int(r.get("arbitrary", 0))
+                st = "FAIL" if (arb >= 3 or n > 10) else ("WARN" if (n > 5 or arb > 0) else "PASS")
+                self.add("tokens.shadow", st, f"{n} distinct shadow values ({arb} arbitrary) — {', '.join(r.get('top_values', [])[:6])}")
         if not any(r["kind"] == "color" for r in m.get("roots", [])):
             self.add("tokens.color", "PASS", "no hard-coded colors outside token files")
 
@@ -416,7 +421,7 @@ def load_waivers(path: Path | None) -> dict:
     nonwaivable = [w["check"] for w in data["waivers"] if w["check"] in NON_WAIVABLE]
     if nonwaivable:
         raise SystemExit(f"error: {sorted(set(nonwaivable))} cannot be waived — use --no-render (WARN) or author DESIGN.md")
-    valueless = [w["check"] for w in data["waivers"] if w["check"] in VALUE_REQUIRED and not (w.get("value") or "").strip()]
+    valueless = [w["check"] for w in data["waivers"] if w["check"] in VALUE_REQUIRED and (w.get("value") or "").strip() in ("", "*")]
     if valueless:
         raise SystemExit(f"error: waivers for {sorted(set(valueless))} must name a `value` (a rule id / a font family) — a bare waiver would waive everything")
     return data
