@@ -249,15 +249,19 @@ CITATION_RX = re.compile(
         [A-Za-z]{2,}                                     # TLD
         (?::\d+)?                                        # optional port
         /\S                                              # and at least one path character
-    | \bdoi:\s*10\.\d{4,9}/\S                            # DOI, prefixed form
-    | \bdoi\.org/10\.\d{4,9}/\S                          # DOI, URL form (bare host)
-    | \barxiv\.org/abs/\d{4}\.\d{4,5}(?:v\d+)?           # arXiv URL, modern id
-    | \barxiv\.org/abs/[a-z-]+(?:\.[A-Z]{2})?/\d{7}       # arXiv URL, legacy id
-    | \barXiv:\s*\d{4}\.\d{4,5}(?:v\d+)?                 # canonical arXiv id
-    | \barXiv:\s*[a-z-]+(?:\.[A-Z]{2})?/\d{7}             # canonical arXiv legacy id
-    | \bpubmed\.ncbi\.nlm\.nih\.gov/\d{4,}
-    | \bPMID:?\s*\d{4,}\b                                 # canonical PubMed id
-    | \bPMC\d{4,}\b                                       # PMC id
+    # Bare-host forms need a LEFT boundary too, or `fake-doi.org/10.1/x` and
+    # `not-arxiv.org/abs/2301.00001` match on their suffixes and silence the finding.
+    | (?<![\w.-]) doi\.org/10\.\d{4,9}/\S
+    | (?<![\w.-]) arxiv\.org/abs/ (?: \d{4}\.\d{4,5}(?:v[1-9]\d*)?
+                                    | [a-z-]+(?:\.[A-Z]{2})?/\d{7} ) (?![\w.])
+    | (?<![\w.-]) pubmed\.ncbi\.nlm\.nih\.gov/[1-9]\d* (?![\w.])
+    # Prefixed identifier forms. Terminal boundaries matter as much as leading ones:
+    # `arXiv:2301.00001junk` is not an identifier, and `v0` is not a valid version.
+    | \b doi:\s*10\.\d{4,9}/\S
+    | \b arXiv:\s* (?: \d{4}\.\d{4,5}(?:v[1-9]\d*)?
+                     | [a-z-]+(?:\.[A-Z]{2})?/\d{7} ) (?![\w.])
+    | \b PMID:?\s*[1-9]\d* \b                            # any real PubMed id, incl. PMID 1
+    | \b PMC[1-9]\d* \b                                  # PMC id
     """,
     re.I | re.X,
 )

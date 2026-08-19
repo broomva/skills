@@ -71,12 +71,19 @@ RESOLVABLE_LOCATORS = [
     "https://pubmed.ncbi.nlm.nih.gov/1234567/",
     "PMID: 12345678",
     "PMID12345678",
+    "PMID: 1",                              # a real PubMed record; digit-count floors reject it
+    "doi.org/10.1145/3613904.3642433",      # bare-host DOI, no scheme
+    "arxiv.org/abs/2301.00001",
+    "pubmed.ncbi.nlm.nih.gov/1234567",
     "PMC1234567",
+    # Short ids are real records. The 4-digit floor here was as arbitrary as the PMID one a
+    # reviewer flagged — "how many digits" is not what makes an identifier resolvable.
+    "PMC12",
     "https://engineering.fb.com/2023/08/09/ml-applications/x",
 ]
 NOT_LOCATORS = [
     "https://", "http://",                 # a scheme is not a locator
-    "PMC", "PMC12",                        # the substring, and too few digits
+    "PMC",                                 # the bare substring
     "doi:", "doi:10", "doi:10.1/x",        # incomplete DOIs
     "example.com/page", "www.example.com",  # bare domains
     "10.1145/3613904",                     # a bare DOI suffix
@@ -87,6 +94,11 @@ NOT_LOCATORS = [
     # The reviewer's cases: malformed hosts and identifiers embedded in other words.
     "https://..com/path", "https://.com/p", "https://-x.com/p", "https://x-.com/p",
     "NOTPMC1234", "PMIDX 12345678",
+    # Round 20: bare-host forms need a LEFT boundary or they match on a suffix, and
+    # identifiers need a terminal one. `v0` is not a valid arXiv version.
+    "fake-doi.org/10.1234/x", "not-arxiv.org/abs/2301.00001",
+    "xpubmed.ncbi.nlm.nih.gov/123", "arXiv:2301.00001junk", "arXiv:2301.00001v0",
+    "PMC0", "PMID: 0",
     # And two real uncited precision claims, which must never look cited.
     "The review covered 2024 studies.",
     "The effect size was r = 0.26.",
