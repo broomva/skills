@@ -41,6 +41,11 @@ GRADE_SEVERITY = {
 ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
 CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
 MARKER_BLANK_RX = re.compile(r"<!--\s*format-lint:.*?-->")
+# Markdown lines that begin a new logical unit and must not fuse with the previous one.
+STRUCTURAL_RX = re.compile(r"^\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>|-{3,}\s*$|\*{3,}\s*$)")
+# Headings, table rows, blockquotes and rules are self-contained: following prose is a
+# separate thought. List items are NOT — an indented continuation belongs to its bullet.
+STANDALONE_RX = re.compile(r"^\s*(?:#{1,6}\s|\||>|-{3,}\s*$|\*{3,}\s*$)")
 
 # A rule must not fire when the sentence denies, corrects, or attributes the claim —
 # otherwise the linter punishes the corrections it exists to promote.
@@ -221,10 +226,14 @@ def _blocks(lines: list[str], skip: set[int]) -> list[tuple[str, list[int]]]:
             out.append((joined, owner[:]))
 
     for i, line in enumerate(lines):
-        if i in skip or not line.strip():
+        if i in skip or not line.strip() or STRUCTURAL_RX.match(line):
+            # A heading, list item, table row, blockquote or rule starts a NEW block.
+            # Fusing them would let "- polished aesthetic" + "- minimalism is dead" read as
+            # one claim, and would let a negation in one bullet excuse the next.
             flush()
             buf, owner = [], []
-            continue
+            if i in skip or not line.strip():
+                continue
         # Blank out format-lint's own control/allow comments, offset-preserving. They are
         # metadata, not prose — and a rule id such as `sends-3-5x-likes` literally contains
         # the pattern it names, so an unblanked marker matches itself.
@@ -237,6 +246,9 @@ def _blocks(lines: list[str], skip: set[int]) -> list[tuple[str, list[int]]]:
             owner.append(i)  # the joining space belongs to the line it pulls in
         buf.append(seg)
         owner.extend([i] * len(seg))
+        if STANDALONE_RX.match(line):
+            flush()
+            buf, owner = [], []
     flush()
     return out
 

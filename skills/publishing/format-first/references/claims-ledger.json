@@ -1,7 +1,7 @@
 {
   "_meta": {
     "provenance": "broomva/workspace BRO-2145 (PR #376, merged 195a9e54). Claims verified against primary sources on 2026-08-12; see research/entities/pattern/format-consistency-is-retrieval-reliability.md and research/notes/2026-08-12-short-form-format-strategy-synthesis.md",
-    "review": "P20 Strata A (codex), 3 rounds: 2/10 -> 5/10 -> 6/10",
+    "review": "Upstream research arc (BRO-2145): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 6/10. THIS SKILL (BRO-2185): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 5/10, plus a dogfood pass on a real unseen article that found 2 defects the tests missed. Ships with known-open findings; see SKILL.md Provenance.",
     "recheck_after": "2027-02-12",
     "grades": {
       "refuted": "ERROR — contradicted by a primary source that was loaded and read",

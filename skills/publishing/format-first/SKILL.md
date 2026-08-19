@@ -35,7 +35,7 @@ single word — and it is the thing almost nobody chooses deliberately.
 
 ## Epistemic stance (read this before quoting anything)
 
-This skill separates three grades, and the separation is the point:
+This skill separates these grades, and the separation is the point:
 
 | Grade | Meaning | Example |
 |---|---|---|
@@ -113,8 +113,10 @@ python3 scripts/format_lint.py DRAFT.md --strict   # warnings fail too
 python3 scripts/format_lint.py - --json            # stdin, machine-readable
 ```
 
-Severity follows the ledger's **grade**, and only `refuted` (contradicted by a primary
-source that was loaded) exits non-zero. `contested`, `unverified`, `folklore` and
+Severity follows the ledger's **grade**: of the claim rules, only `refuted` (contradicted
+by a primary source that was loaded) exits non-zero. Malformed lint controls — an unclosed
+fence, an unclosed/nested/whole-file `disable` — also exit non-zero, because a silently
+disabled gate is worse than a noisy one. `contested`, `unverified`, `folklore` and
 `hypothesis_as_fact` are WARN — because "I could not find a source" is a statement about a
 search, not about the world, and a gate that conflates the two manufactures the false
 confidence it exists to prevent. Use `--strict` to fail on warnings too.
@@ -143,8 +145,16 @@ correct replacement. Every rule needs both polarities in `tests/`.
 
 Derived from `broomva/workspace` BRO-2145 (PR #376, merged `195a9e54`): a full ingest of
 a paid-acquisition funnel plus its 36:56 sales video, transcribed locally, with every
-load-bearing claim traced to a primary source. Cross-reviewed adversarially over three
-rounds (2/10 -> 5/10 -> 6/10), which caught two genuine errors in the original writeup.
+load-bearing claim traced to a primary source. **That upstream research arc** was
+cross-reviewed over three rounds scoring 2/10 -> 5/10 -> 6/10, catching two genuine errors
+in it.
+
+**This skill's own review record is separate and worse:** three adversarial rounds scoring
+**2/10 -> 5/10 -> 5/10**, plus a dogfood pass against a real unseen article that found two
+defects all 47 tests had missed. It ships with known-open findings — chiefly that the
+matcher is regex-over-text, so paraphrase coverage is incomplete, and that block boundaries
+are line-structural rather than a real Markdown parse. Do not read a clean run as proof a
+document is sound; read it as proof it contains none of the specific strings in the ledger.
 Full graded claim set: `references/evidence-map.md`.
 
 Recheck the ledger after **2027-02-12** — platform documentation moves.

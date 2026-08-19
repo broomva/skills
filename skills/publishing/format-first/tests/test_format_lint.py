@@ -403,3 +403,40 @@ def test_reported_line_is_where_the_claim_starts():
     text = "intro line\nSends carrying roughly three to five\ntimes more weight than likes.\n"
     f = find(text, "sends-3-5x-likes")
     assert f and f[0]["line"] == 2
+
+
+# ---------- markdown structural boundaries (round-3 blocker) ----------
+
+def test_adjacent_list_items_do_not_fuse():
+    """`- polished aesthetic` + `- minimalism is dead` must not read as one claim."""
+    text = "- Embrace a polished aesthetic\n- Minimalism is dead\n"
+    assert "polished-aesthetic-dead" not in ids(text)
+
+
+def test_negation_in_one_bullet_does_not_excuse_the_next():
+    text = "- This is not a myth\n- The algorithm punishes quiet accounts\n"
+    assert "algorithm-punishes" in ids(text)
+
+
+def test_heading_does_not_fuse_with_following_prose():
+    text = "## The polished aesthetic\nis dead, some say.\n"
+    assert "polished-aesthetic-dead" not in ids(text)
+
+
+def test_table_rows_do_not_fuse():
+    text = "| a | polished aesthetic |\n| b | is dead |\n"
+    assert "polished-aesthetic-dead" not in ids(text)
+
+
+def test_wrapped_prose_still_joins_after_structural_fix():
+    """The structural boundary must not undo the wrapped-prose fix."""
+    text = (
+        "Sends per reach is the strongest signal, with sends carrying roughly three to five\n"
+        "times more weight than likes when ranking.\n"
+    )
+    assert "sends-3-5x-likes" in ids(text)
+
+
+def test_numbered_list_items_do_not_fuse():
+    text = "1. Embrace a polished aesthetic\n2. Minimalism is dead\n"
+    assert "polished-aesthetic-dead" not in ids(text)
