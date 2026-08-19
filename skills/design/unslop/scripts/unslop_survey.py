@@ -49,8 +49,9 @@ SKIP_DIRS = {
     "lighthouse", ".lighthouseci", "reports", ".svelte-kit", ".parcel-cache", ".angular", ".expo",
 }
 # .ts/.js modules that carry landing/marketing copy — scanned for copy + substance tells like UI files
-RE_COPY_MODULE = re.compile(r"(content|copy|site|marketing|landing|messages|i18n|locale|testimonial|pricing|faq|features|hero|constants|strings)", re.I)
+RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo)(\.[a-z]+)*\.[cm]?[jt]s$", re.I)
 # server-side / non-surface files that can never carry a loading state
+RE_SERVER_SIDE_UI = re.compile(r"(^|/)(api|server|middleware|workers?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]sx?$", re.I)
 RE_SERVER_SIDE = re.compile(r"(^|/)(api|server|db|lib|utils?|hooks?|middleware|workers?|scripts?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]s$|(^|/)use-[a-z-]+\.[jt]sx?$", re.I)
 UI_EXT = {".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".htm", ".mdx"}
 SCRIPT_EXT = {".ts", ".js", ".mjs", ".cjs"}
@@ -132,7 +133,22 @@ BUZZWORDS = [
     r"streamline\w*", r"harness the power",
 ]
 RE_BUZZ = re.compile(r"\b(?:" + "|".join(BUZZWORDS) + r")\b", re.I)
-RE_CODE_LINE = re.compile(r"^\s*(import|export|const|let|var|function|return|//|/\*|\*|\{/\*)|className=|var\(--|@apply|^\s*[.#@]")
+RE_CODE_ONLY_LINE = re.compile(r"^\s*(import\s|//|/\*|\*|\{/\*|@apply|[.#@][\w-]+\s*\{)")
+# `<h1 className="text-xl">Supercharge…</h1>` must still be scanned: strip attribute payloads, keep the text
+RE_JSX_ATTR = re.compile(r"""\b[\w:-]+\s*=\s*(?:"[^"]*"|'[^']*'|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})""")
+
+
+RE_COPY_ATTR_VALUES = re.compile(r"""\b(?:title|alt|placeholder|aria-label|label|description|subtitle|heading|tagline|caption)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+RE_TAG = re.compile(r"<[^<>]*>")
+
+
+def _strip_attrs(line: str) -> str:
+    """Keep the copy, drop the markup: copy-bearing attribute values are kept, every other attribute payload,
+    bare boolean attributes (`<iframe seamless>`) and tag names are removed."""
+    kept = " ".join(v for pair in RE_COPY_ATTR_VALUES.findall(line) for v in pair if v)
+    body = RE_JSX_ATTR.sub(" ", line)
+    body = RE_TAG.sub(" ", body)
+    return f"{body} {kept}"
 
 # --- substance -------------------------------------------------------------
 LEGAL_TERMS = re.compile(r"(^|/)(terms(-of-(service|use))?|tos|terms-and-conditions|legal/terms|conditions)(/|\.|$)", re.I)
@@ -175,7 +191,7 @@ RE_STOCK_IMG = PLACEHOLDER_PATTERNS["stock-image-host"]
 
 # a hex colour literal in a style/attribute/CSS context — not `// issue #123`, not `href="#add-item"`, not `/docs#123456`
 RE_HEX = re.compile(r"""(?<![\w/#&?=-])(?<!href=["'])(?<!href=\{["'])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b(?![\w-])""")
-RE_HREF_HASH_LINE = re.compile(r"""href\s*=\s*['"{]#""")
+RE_HREF_HASH_ATTR = re.compile(r"""href\s*=\s*(?:"#[^"]*"|'#[^']*'|\{[^}]*\})""")
 TOKEN_BASENAMES = {"globals.css", "global.css", "app.css", "index.css", "styles.css", "variables.css", "main.css", "tokens.css", "theme.css", "tokens.ts", "tokens.js", "theme.ts", "theme.js"}
 TOKEN_SEGMENTS = {"tokens", "theme", "themes", "design-system", "design-tokens", "styles"}
 
@@ -384,7 +400,10 @@ def find_app_root(root: Path) -> Path:
     """If `root` has no package.json but exactly one nested app (depth ≤ 2) does and declares a known
     framework, survey that app instead — monorepos with `app/` or `apps/web/` are the common shape."""
     if (root / "package.json").exists():
-        return root
+        root_fw = detect_framework(root, load_package_json(root))
+        if root_fw["name"] not in ("unknown", "static-html"):
+            return root                       # the root IS the app
+        # a workspace root with its own manifest (tooling only) — look for the single nested frontend app
     cands = []
     for depth in (1, 2):
         for pj in root.glob("/".join(["*"] * depth) + "/package.json"):
@@ -558,12 +577,14 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             component_libs.add("shadcn?(components/ui)")
 
         # copy tells — UI files and .ts/.js *copy modules* (content/site/marketing/i18n…), never build/lib code
-        # a .ts/.js module is a *copy module* when its basename or a path segment says so (content.ts, config/site.ts,
-        # data/testimonials.ts, locales/en.ts); API routes / server / middleware / hooks never are, even under those names
+        # a .ts/.js module is a *copy module* when its basename (content.ts, site.ts, testimonials.ts, locales.ts…)
+        # or a path segment (content/ data/ copy/ locales/ i18n/ messages/ marketing/) says so. `src/lib/content.ts`
+        # IS scanned — lib/ is where this copy usually lives. API routes, server modules, middleware and hooks are
+        # never copy modules, whatever they are named.
         _segs = rp.replace("\\", "/").split("/")
         is_copy_module = (
             p.suffix.lower() in SCRIPT_EXT
-            and (bool(RE_COPY_MODULE.search(_segs[-1])) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
+            and (bool(RE_COPY_MODULE.match(_segs[-1])) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
             and not re.search(r"(^|/)(api|server|middleware|hooks?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|(^|/)use-[a-z-]+\.[jt]sx?$", rp, re.I)
         )
         is_prose_mdx = p.suffix.lower() == ".mdx" and re.search(r"(^|/)(content|docs?|blog|posts?|articles?)(/|$)", rp, re.I)
@@ -579,7 +600,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     copy_tells["emoji"].append(site(p, i))
                 if RE_CHECKMARK.search(code_free):
                     copy_tells["checkmark_bullets"].append(site(p, i))
-                if not RE_CODE_LINE.search(line) and RE_BUZZ.search(code_free):
+                if not RE_CODE_ONLY_LINE.search(line) and RE_BUZZ.search(_strip_attrs(code_free)):
                     copy_tells["buzzwords"].append(site(p, i))
             for m in RE_NOT_X_BUT_Y.finditer(txt):
                 copy_tells["not_x_but_y"].append(site(p, txt.count("\n", 0, m.start()) + 1))
@@ -611,8 +632,9 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             for m in RE_STOCK_IMG.finditer(txt):
                 evidence["stock_image_sites"].append(site(p, txt.count("\n", 0, m.start()) + 1))
 
-        # async *surfaces* — UI files only; API routes, server modules, hooks and libs cannot carry a skeleton
-        if is_ui and not RE_SERVER_SIDE.search(rp):
+        # async *surfaces* — UI files only; API routes / server modules / middleware cannot carry a skeleton
+        # (a .tsx under lib/ or hooks/ is still a component and still counts)
+        if is_ui and not RE_SERVER_SIDE_UI.search(rp):
             if RE_ASYNC.search(txt):
                 async_files[rp] = {
                     "loading": bool(RE_LOADING_STATE.search(txt)),
@@ -632,9 +654,10 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             if not token_file:
                 for i, line in enumerate(lines, 1):
                     st = line.lstrip()
-                    if st.startswith(("//", "/*", "*", "{/*", "<!--")) or RE_HREF_HASH_LINE.search(line):
+                    if st.startswith(("//", "/*", "*", "{/*", "<!--")):
                         continue
-                    for m in RE_HEX.finditer(line):
+                    scan = RE_HREF_HASH_ATTR.sub(" ", line)   # drop href="#anchor" payloads, keep the rest of the line
+                    for m in RE_HEX.finditer(scan):
                         hex_sites[m.group(0).lower()].append(site(p, i))
             for m in RE_RADIUS_TW.finditer(txt):
                 k = _norm_radius_class(m.group(0))

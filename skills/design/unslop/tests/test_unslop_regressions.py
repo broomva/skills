@@ -250,3 +250,85 @@ def test_unwritable_json_output_exits_2(tmp_path):
         assert r.returncode == 2 and "cannot write" in r.stderr
     finally:
         ro.chmod(0o700)
+
+
+# ---------------------------------------------------------------- round-3 (codex r3): edges the round-2 fixes opened
+def test_buzzwords_on_styled_jsx_lines_are_still_caught(tmp_path):
+    """Round-2 skipped any line with className= — that lost real copy on styled elements."""
+    root = _repo(tmp_path, "styled", {
+        "src/components/Hero.tsx": '<h1 className="text-5xl font-bold">Supercharge your workflow</h1><img alt="Effortless onboarding" className="w-full" /><div style={{ color: "var(--color-surface-elevated)" }} className="unlockScroll"><iframe seamless src="/e" /></div>',
+    })
+    ct = us.survey(root)["copy_tells"]["buzzwords"]
+    assert ct["count"] == 1  # 'Supercharge' (h1) — the alt copy is on the same line so it is one line; markup words do not count
+    root2 = _repo(tmp_path, "styled2", {"src/components/Hero.tsx": '<div className="elevate-card unlockScroll" data-x="seamless" />'})
+    assert us.survey(root2)["copy_tells"]["buzzwords"]["count"] == 0
+
+
+def test_ui_components_under_lib_or_hooks_are_still_surfaces(tmp_path):
+    root = _repo(tmp_path, "libui", {
+        "src/lib/components/Feed.tsx": "export function Feed() { const { data, isLoading } = useQuery({ queryFn: () => fetch('/f') }); return isLoading ? <Skeleton/> : <ul/>; }",
+        "src/app/api/feed/route.ts": "export async function GET() { return fetch('/x'); }",
+    })
+    a = us.survey(root)["substance"]["async_surfaces"]
+    assert set(a["files"]) == {"src/lib/components/Feed.tsx"} and a["with_loading_state"] == 1
+
+
+def test_copy_module_predicate_is_honest(tmp_path):
+    """lib/content.ts is a copy module; lib/constants.ts and lib/features.ts (feature flags) are not."""
+    root = _repo(tmp_path, "cm2", {
+        "src/lib/content.ts": 'export const hero = "Lorem ipsum — supercharge";',
+        "src/lib/constants.ts": 'export const NAME = "John Doe"; // fixture author',
+        "src/lib/features.ts": 'export const flags = { acme: true }; // Acme tenant flag',
+        "src/config/site.ts": 'export const siteConfig = { name: "Acme Inc.", tagline: "It\'s not a tool, it\'s a movement" };',
+    })
+    m = us.survey(root)
+    ph = m["substance"]["placeholders"]
+    assert "lorem-ipsum" in ph and any("content.ts" in x for x in ph["lorem-ipsum"])
+    assert "acme" in ph and all("site.ts" in x for x in ph["acme"])           # not features.ts
+    assert "john-jane-doe" not in ph                                          # constants.ts is not scanned
+    assert m["copy_tells"]["not_x_but_y"]["count"] == 1
+
+
+def test_workspace_root_with_tooling_manifest_still_finds_the_app(tmp_path):
+    root = tmp_path / "ws"
+    (root / "apps" / "web" / "src" / "app").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"name": "ws", "private": True, "devDependencies": {"turbo": "2", "biome": "1"}}))
+    (root / "apps" / "web" / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "apps" / "web" / "src" / "app" / "page.tsx").write_text("<main/>")
+    m = us.survey(root)
+    assert m["framework"]["name"] == "next" and m["app_root_rerooted_from"] == str(root.resolve())
+    # a root that IS the app is never re-rooted even if it has a nested app
+    root2 = tmp_path / "isapp"
+    (root2 / "src" / "app").mkdir(parents=True)
+    (root2 / "docs-site").mkdir()
+    (root2 / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root2 / "docs-site" / "package.json").write_text(json.dumps({"dependencies": {"astro": "5"}}))
+    (root2 / "src" / "app" / "page.tsx").write_text("<main/>")
+    m2 = us.survey(root2)
+    assert m2["framework"]["name"] == "next" and m2["app_root_rerooted_from"] is None
+
+
+def test_hex_on_a_line_with_an_anchor_href_is_still_counted(tmp_path):
+    root = _repo(tmp_path, "hex2", {"src/Nav.tsx": '<a href="#add-item" style={{ color: "#c0ffee" }}>go</a>'})
+    kinds = {r["kind"]: r for r in us.survey(root)["roots"]}
+    assert kinds["color"]["top_values"] == ["#c0ffee"]
+
+
+def test_webp_evidence_needs_parseable_dimensions(tmp_path):
+    root = _repo(tmp_path, "webp", {"src/app/page.tsx": "<main/>", "DESIGN.md": "x"})
+    ev = tmp_path / "ev"
+    ev.mkdir()
+    # a RIFF/WEBP header with an unknown chunk → not an image → FAIL
+    (ev / "index-1280.webp").write_bytes(b"RIFF" + (9000).to_bytes(4, "little") + b"WEBPXXXX" + b"\x00" * 9000)
+    (ev / "index-390.png").write_bytes(png_bytes(390))
+    r = _gate(root, evidence_dir=ev)
+    assert r["evidence.render"].status == "FAIL"
+    # a VP8X WebP with a 1280×800 canvas → accepted
+    vp8x = b"RIFF" + (9000).to_bytes(4, "little") + b"WEBPVP8X" + (10).to_bytes(4, "little") + b"\x00" * 4 + (1279).to_bytes(3, "little") + (799).to_bytes(3, "little")
+    (ev / "index-1280.webp").write_bytes(vp8x + b"\x00" * 9000)
+    r = _gate(root, evidence_dir=ev)
+    assert r["evidence.render"].status == "PASS", r["evidence.render"].detail
+    # …and a VP8X claiming 390 wide but named -1280 → mislabeled → FAIL
+    vp8x_small = b"RIFF" + (9000).to_bytes(4, "little") + b"WEBPVP8X" + (10).to_bytes(4, "little") + b"\x00" * 4 + (389).to_bytes(3, "little") + (799).to_bytes(3, "little")
+    (ev / "index-1280.webp").write_bytes(vp8x_small + b"\x00" * 9000)
+    assert _gate(root, evidence_dir=ev)["evidence.render"].status == "FAIL"

@@ -91,7 +91,24 @@ def _image_dims(path: Path) -> tuple[int, int] | None:
                     ln = int.from_bytes(fh.read(2), "big")
                     fh.seek(ln - 2, 1)
             if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-                return (0, 0)  # accepted as an image; dimensions not parsed
+                chunk = head[12:16]
+                if chunk == b"VP8X":                       # extended: canvas size, 24-bit LE minus one
+                    fh.seek(24)
+                    b = fh.read(6)
+                    if len(b) == 6:
+                        return 1 + int.from_bytes(b[0:3], "little"), 1 + int.from_bytes(b[3:6], "little")
+                if chunk == b"VP8L":                       # lossless: 14-bit fields after signature byte 0x2f
+                    fh.seek(21)
+                    b = fh.read(4)
+                    if len(b) == 4:
+                        bits = int.from_bytes(b, "little")
+                        return 1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF)
+                if chunk == b"VP8 ":                       # lossy: frame header, 14-bit width at bytes 26-27
+                    fh.seek(26)
+                    b = fh.read(4)
+                    if len(b) == 4:
+                        return int.from_bytes(b[0:2], "little") & 0x3FFF, int.from_bytes(b[2:4], "little") & 0x3FFF
+                return None                                # WebP we cannot size is not accepted as evidence
     except OSError:
         return None
     return None

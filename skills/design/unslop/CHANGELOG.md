@@ -17,4 +17,4 @@ First release (BRO-2184).
 - `scripts/unslop_gate.py` — the crafted floor: 23 checks (4 conditional), PASS/WARN/FAIL/SKIP, waivers with mandatory
   reasons, `--strict`, `--profile persuade|operate|auto`, render-evidence check (desktop + mobile).
 - `references/` — arc, crafted floor (sourced, [M]/[J]-tagged), dated tells list, root-cause playbook.
-- 51 tests, both polarities (see the P20 hardening entry below).
+- 57 tests, both polarities (see the P20 hardening entry below).
