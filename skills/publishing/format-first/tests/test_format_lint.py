@@ -943,20 +943,6 @@ PADDINGS = {
 
 
 
-def test_is_lintable_classifies_structure_and_prose():
-    """Direct unit coverage of the shared predicate, both polarities."""
-    not_prose = ["---", "-", "*", "|---|---|", ">", "#", "   ", "***", "===",
-                 "<!-- format-lint: allow=post-daily -->", "<!-- format-lint: disable -->"]
-    prose = ["The algorithm punishes formats.", "- Posting daily grows reach.",
-             "# Real heading text", "| a | b |", "> a quoted sentence", "50%",
-             "1. an ordered item"]
-    for line in not_prose:
-        assert not fl._is_lintable(0, line, set()), line
-    for line in prose:
-        assert fl._is_lintable(0, line, set()), line
-
-
-
 
 # ---------- suppression is reported as a FACT, not judged as a ratio ----------
 # A coverage-ratio guard lived here and was defeated in six consecutive review rounds, each
@@ -1078,30 +1064,66 @@ def test_structural_control_errors_survived_the_removal():
     assert "unclosed-fence" in ids("```\nprose\n")
 
 
-def test_a_malformed_ledger_is_always_a_ledger_error(tmp_path):
-    """Every way a ledger can be unusable, normalised to one catchable type.
+MALFORMED_LEDGERS = {
+    "invalid json": "{",
+    "root is a list": "[1,2,3]",
+    "category is not a list": '{"refuted": {"a": 1}}',
+    "rule is null": '{"refuted":[null]}',
+    "rule is a string": '{"refuted":["x"]}',
+    "numeric pattern": '{"refuted":[{"id":"x","pattern":123,"message":"m","grade":"refuted"}]}',
+    "empty id": '{"refuted":[{"id":"","pattern":"x","message":"m","grade":"refuted"}]}',
+    "missing message": '{"refuted":[{"id":"x","pattern":"x","grade":"refuted"}]}',
+    "missing pattern": '{"refuted":[{"id":"x","message":"m","grade":"refuted"}]}',
+    "unknown grade": '{"refuted":[{"id":"x","pattern":"x","message":"m","grade":"nope"}]}',
+    "citation_resolves as a string":
+        '{"refuted":[{"id":"x","pattern":"x","message":"m","grade":"refuted","citation_resolves":"false"}]}',
+    "uncompilable pattern": '{"refuted":[{"id":"x","pattern":"(","message":"m","grade":"refuted"}]}',
+    "precision is a scalar": '{"precision_without_source": 7}',
+    "precision missing marker_regex": '{"precision_without_source": {"pattern":"x","message":"m"}}',
+    "precision has a bad regex":
+        '{"precision_without_source": {"pattern":"(","marker_regex":"x","message":"m"}}',
+    "window_lines is a string":
+        '{"precision_without_source": {"pattern":"x","marker_regex":"y","message":"m","window_lines":"3"}}',
+}
 
-    Invalid JSON escaped as JSONDecodeError, so `--ledger` on a broken file printed a
-    traceback and exited 1 — the code meaning "findings were present".
+
+def test_every_malformed_ledger_shape_is_a_ledger_error(tmp_path):
+    """The space is ENUMERATED, not discovered one crash at a time.
+
+    Anything that escapes `load_ledger` becomes a traceback and exit 1 — the code that
+    means "findings were present" — so a reviewer found `{"refuted":[null]}` raising
+    AttributeError, a numeric pattern raising TypeError, and a scalar precision block
+    raising AttributeError, after two earlier rounds had each fixed one shape.
     """
     import pytest
 
-    cases = {
-        "invalid json": "{",
-        "not an object": "[1, 2, 3]",
-        "rule missing a pattern": '{"refuted": [{"id": "x", "message": "m", "grade": "refuted"}]}',
-        "rule missing an id": '{"refuted": [{"pattern": "x", "message": "m", "grade": "refuted"}]}',
-        "uncompilable pattern": '{"refuted": [{"id": "x", "pattern": "(", "message": "m", "grade": "refuted"}]}',
-        "unknown grade": '{"refuted": [{"id": "x", "pattern": "x", "message": "m", "grade": "nope"}]}',
-    }
-    for label, body in cases.items():
+    for label, body in MALFORMED_LEDGERS.items():
         path = tmp_path / f"{abs(hash(label))}.json"
         path.write_text(body)
-        with pytest.raises(fl.LedgerError):
+        with pytest.raises(fl.LedgerError, match="format_lint"):
             fl.load_ledger(path)
 
     with pytest.raises(fl.LedgerError):
         fl.load_ledger(tmp_path / "does-not-exist.json")
+
+
+def test_no_malformed_ledger_leaks_a_non_ledger_exception(tmp_path):
+    """The property that matters is the TYPE, not that something was raised."""
+    for label, body in MALFORMED_LEDGERS.items():
+        path = tmp_path / f"t{abs(hash(label))}.json"
+        path.write_text(body)
+        try:
+            fl.load_ledger(path)
+        except fl.LedgerError:
+            continue
+        except Exception as exc:                       # noqa: BLE001
+            raise AssertionError(f"{label} leaked {type(exc).__name__}") from exc
+        raise AssertionError(f"{label} was accepted")
+
+
+def test_the_shipped_ledger_survives_the_stricter_schema():
+    """A validator strict enough to reject the shipped ledger would be its own defect."""
+    assert fl.load_ledger()["refuted"]
 
 
 def test_the_cli_exits_two_on_a_bad_ledger_not_one(tmp_path):
@@ -1160,3 +1182,68 @@ def test_a_structural_error_inside_a_region_is_not_reported_as_hidden_content():
     got = ids(text)
     assert "nested-disable" in got
     assert "suppressed-findings" not in got, "no claim was hidden — only a directive error"
+
+
+def test_suppressing_an_error_is_itself_an_error():
+    """Deleting the coverage heuristic dropped ENFORCEMENT, not just a heuristic.
+
+    A document whose only content was a disabled `refuted` claim went from exit 1 to
+    exit 0 — the gate stopped failing on a misquotation simply because it was wrapped.
+    Severity now inherits from the worst thing the region hides.
+    """
+    text = (
+        "<!-- format-lint: disable -->\n"
+        "Mosseri said the polished, perfect aesthetic is dead.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    hits = find(text, "suppressed-findings")
+    assert hits and hits[0]["severity"] == "ERROR"
+    assert "One of them is an ERROR." in hits[0]["message"]
+
+
+def test_suppressing_only_warnings_stays_a_warning():
+    """The inverse: quoting a folklore claim to correct it must not fail the build."""
+    text = (
+        "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    hits = find(text, "suppressed-findings")
+    assert hits and hits[0]["severity"] == "WARN"
+
+
+def test_the_cli_fails_on_a_hidden_error_and_passes_on_a_hidden_warning(tmp_path):
+    """End-to-end on exit codes, because that is the property that regressed."""
+    hidden_error = tmp_path / "e.md"
+    hidden_error.write_text(
+        "<!-- format-lint: disable -->\n"
+        "Mosseri said the polished, perfect aesthetic is dead.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    hidden_warn = tmp_path / "w.md"
+    hidden_warn.write_text(
+        "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    assert fl.main([str(hidden_error)]) == 1
+    assert fl.main([str(hidden_warn)]) == 0
+
+
+def test_region_filtering_is_linear_in_the_number_of_regions():
+    """Per-region rescans of the full finding list were quadratic: 4x time for 2x input."""
+    import time
+
+    def build(n):
+        return (
+            "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+            "<!-- format-lint: enable -->\n"
+        ) * n
+
+    def timed(n):
+        doc = build(n)
+        t0 = time.perf_counter()
+        fl.lint_text(doc, LEDGER)
+        return time.perf_counter() - t0
+
+    timed(200)                      # warm any lazy compilation
+    small, large = timed(1000), timed(2000)
+    assert large < small * 3, f"2x regions took {large / max(small, 1e-9):.1f}x the time"

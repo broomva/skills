@@ -105,55 +105,56 @@ def load_ledger(path: Path = LEDGER) -> dict:
     except json.JSONDecodeError as exc:
         raise LedgerError(f"format_lint: ledger at {path} is not valid JSON: {exc}") from None
     if not isinstance(data, dict):
-        raise LedgerError(f"format_lint: ledger at {path} must be a JSON object, got {type(data).__name__}")
-    bad = [
-        (r.get("id", "?"), r.get("grade"))
-        for cat in ("refuted", "folklore", "hypothesis_as_fact")
-        for r in data.get(cat, [])
-        if r.get("grade") not in GRADE_SEVERITY
-    ]
-    if bad:
         raise LedgerError(
-            "format_lint: unknown grade(s) in ledger — a typo must not silently "
-            f"downgrade severity: {bad}"
-        )
-    # `citation_resolves` gates a bypass that can silence findings, so it must be an actual
-    # boolean. Read through truthiness, the string "false" is TRUE and silently suppresses
-    # a refuted ERROR — and an external ledger passed via --ledger never saw the suite's
-    # shipped-ledger check.
-    mistyped = [
-        (r.get("id", "?"), r["citation_resolves"])
-        for cat in ("refuted", "folklore", "hypothesis_as_fact")
-        for r in data.get(cat, [])
-        if "citation_resolves" in r and not isinstance(r["citation_resolves"], bool)
-    ]
-    if mistyped:
-        raise LedgerError(
-            "format_lint: citation_resolves must be a JSON boolean — a non-boolean is "
-            f"truthy and would silently suppress findings: {mistyped}"
+            f"format_lint: ledger at {path} must be a JSON object, got {type(data).__name__}"
         )
 
-    # Compile every pattern HERE, not lazily per block. A rule whose regex does not compile
-    # otherwise raises once per file, which a batch caller can catch and discard — turning
-    # a broken ledger into "this ledger found nothing" instead of an error.
+    # SCHEMA VALIDATION, enumerated rather than discovered one crash at a time. Every
+    # malformed shape must surface as LedgerError at LOAD, because anything that escapes
+    # here becomes a traceback and exit 1 — the code that means "findings were present".
+    def _fail(what: str) -> None:
+        raise LedgerError(f"format_lint: ledger at {path}: {what}")
+
     for cat in ("refuted", "folklore", "hypothesis_as_fact"):
-        for r in data.get(cat, []):
-            missing = [k for k in ("id", "pattern", "message") if not r.get(k)]
-            if missing:
-                raise LedgerError(
-                    f"format_lint: rule {r.get('id', '?')} in '{cat}' is missing {missing}"
+        rules = data.get(cat, [])
+        if not isinstance(rules, list):
+            _fail(f"'{cat}' must be a list, got {type(rules).__name__}")
+        for n, r in enumerate(rules):
+            if not isinstance(r, dict):
+                _fail(f"'{cat}'[{n}] must be an object, got {type(r).__name__}")
+            for field in ("id", "pattern", "message"):
+                if not isinstance(r.get(field), str) or not r[field].strip():
+                    _fail(f"'{cat}'[{n}] needs a non-empty string '{field}'")
+            if r.get("grade") not in GRADE_SEVERITY:
+                _fail(
+                    f"rule {r['id']} has unknown grade {r.get('grade')!r} — a typo must "
+                    "not silently downgrade severity"
+                )
+            if "citation_resolves" in r and not isinstance(r["citation_resolves"], bool):
+                _fail(
+                    f"rule {r['id']}: citation_resolves must be a JSON boolean — a "
+                    "non-boolean is truthy and would silently suppress findings"
                 )
             try:
                 re.compile(r["pattern"])
             except re.error as exc:
-                raise LedgerError(f"format_lint: rule {r.get('id', '?')} has an invalid pattern: {exc}")
-    pws = data.get("precision_without_source") or {}
-    for field in ("pattern", "marker_regex"):
-        if pws.get(field):
+                _fail(f"rule {r['id']} has an invalid pattern: {exc}")
+
+    pws = data.get("precision_without_source")
+    if pws is not None:
+        if not isinstance(pws, dict):
+            _fail(f"'precision_without_source' must be an object, got {type(pws).__name__}")
+        for field in ("pattern", "marker_regex", "message"):
+            if not isinstance(pws.get(field), str) or not pws[field].strip():
+                _fail(f"precision_without_source needs a non-empty string '{field}'")
+        for field in ("pattern", "marker_regex"):
             try:
                 re.compile(pws[field])
             except re.error as exc:
-                raise LedgerError(f"format_lint: precision_without_source.{field} is invalid: {exc}")
+                _fail(f"precision_without_source.{field} is invalid: {exc}")
+        if "window_lines" in pws and not isinstance(pws["window_lines"], int):
+            _fail("precision_without_source.window_lines must be an integer")
+
     return data
 
 
@@ -224,33 +225,6 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
 
     return exempt, problems
 
-
-# Leading markdown structure — blockquote arrows, list bullets, heading hashes, ordered
-# markers — carries no claim on its own.
-STRUCTURE_PREFIX_RX = re.compile(r"^[\s>]*(?:#{1,6}\s*|[-*+]\s*|\d+[.)]\s*)*")
-
-
-def _is_lintable(i: int, line: str, exempt: set[int]) -> bool:
-    """Could this line carry a claim?
-
-    The single predicate for "prose", shared by the block joiner and the whole-file
-    coverage guard. They disagreed once and both directions were live defects: counting
-    lint's own marker lines as body let a document pad past the coverage threshold, and
-    counting them as *covered* inflated the ratio into a false ERROR on a legitimately
-    scoped suppression.
-
-    Structure alone is not prose either. A run of `---`, bare `-` bullets, `|---|---|`
-    separators, `>` or `#` was counted as body and diluted the ratio the same way — five
-    more padding bypasses of the same guard, found by probing the fix that closed the
-    first two.
-    """
-    if i in exempt or not line.strip():
-        return False
-    if CONTROL_RX.match(line):
-        return False
-    text = MARKER_BLANK_RX.sub("", line)
-    text = STRUCTURE_PREFIX_RX.sub("", text).replace("|", " ").strip(" \t-=~*_")
-    return bool(re.search(r"[A-Za-z0-9]", text))
 
 
 def _control_regions(
@@ -395,22 +369,38 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
     # given a verdict about how much of the file it was.
     if _honour_regions and spans:
         uncensored = lint_text(text, ledger, _honour_regions=False)
+        # Bucket by line ONCE. Filtering the whole list per region is quadratic, and a
+        # document with thousands of regions is exactly the shape a batch sweep produces
+        # (measured: 4x the time for 2x the regions before this).
+        #
+        # No lint_control filter is needed: the inner pass returns claim findings only
+        # (see the `if _honour_regions else []` above), so filtering them would be dead
+        # code — and a mutant that removed it could not be killed, which is how it was found.
+        by_line: dict[int, list[dict]] = {}
+        for f in uncensored:
+            by_line.setdefault(f["line"], []).append(f)
         for lo, hi in spans:
-            # No lint_control filter here: the inner pass returns claim findings only
-            # (see the `if _honour_regions else []` above), so filtering them would be
-            # dead code — and a mutant that removed it could not be killed, which is how
-            # it was found.
-            hidden = [f for f in uncensored if lo + 1 <= f["line"] <= hi + 1]
+            hidden = [f for ln in range(lo + 2, hi + 1) for f in by_line.get(ln, ())]
             if hidden:
                 ids_ = ", ".join(sorted({f["id"] for f in hidden}))
+                hides_error = any(f["severity"] == "ERROR" for f in hidden)
                 findings.append(
                     {
-                        "line": lo + 1, "severity": "WARN", "category": "lint_control",
+                        "line": lo + 1,
+                        # Severity is INHERITED from the worst thing the region hides.
+                        # Suppressing a WARN is ordinary editorial practice; suppressing an
+                        # ERROR must not turn a failing document into a passing one.
+                        # Removing the old coverage heuristic dropped this by accident: a
+                        # file whose only content was a disabled `refuted` claim went from
+                        # exit 1 to exit 0.
+                        "severity": "ERROR" if hides_error else "WARN",
+                        "category": "lint_control",
                         "id": "suppressed-findings",
                         "matched": "format-lint: disable",
                         "message": (
                             f"This region hides {len(hidden)} finding(s) on lines "
                             f"{lo + 2}-{hi}: {ids_}."
+                            + (" One of them is an ERROR." if hides_error else "")
                         ),
                         "instead": (
                             "Legitimate when you are quoting a claim in order to correct it. "

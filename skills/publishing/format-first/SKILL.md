@@ -147,9 +147,14 @@ a gate you cannot reason about:
 | an unclosed fence | everything after it | which is why it is an ERROR |
 
 **A disable region cannot hide anything quietly.** Whatever it suppresses is reported as
-`suppressed-findings`, naming the rules and the line range. That is a WARN, not an ERROR —
-quoting a claim in order to correct it is exactly what the region is for — and it is the
-one guard here with no threshold in it.
+`suppressed-findings`, naming the rules and the line range — *"This region hides 2
+finding(s) on lines 3-4: algorithm-punishes, three-second-hook."* It is the one guard here
+with no threshold in it.
+
+Its severity is **inherited from the worst thing it hides**. Suppressing warnings is
+ordinary editorial practice and stays a WARN; suppressing an ERROR is itself an ERROR, so
+wrapping a refuted misquotation in a disable region cannot turn a failing document into a
+passing one.
 
 That is deliberate. A coverage-ratio guard used to live here, erroring when a region
 covered "most" of a document, and six consecutive review rounds defeated it with six
