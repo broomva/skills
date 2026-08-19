@@ -1889,3 +1889,49 @@ def test_the_shipped_ledger_satisfies_all_three_invariants():
     pws = ledger["precision_without_source"]
     assert not re.compile(pws["marker_regex"]).search("")
     assert not re.compile(pws["pattern"]).search("")
+
+
+def test_a_misspelled_container_is_rejected_not_silently_ignored():
+    """One letter — `precision_without_sourceS` — switched off an entire rule class.
+
+    The run then reported documents as clean. A typo that changes what is checked without
+    changing what is said is the worst outcome this tool has, and unknown keys are far more
+    often that than deliberate extension.
+    """
+    import pytest
+
+    def typo(led):
+        led["precision_without_sources"] = led.pop("precision_without_source")
+
+    with pytest.raises(fl.LedgerError, match="unknown top-level key"):
+        fl.load_ledger(_ledger_with(typo))
+
+
+def test_a_misspelled_category_is_rejected():
+    import pytest
+
+    def typo(led):
+        led["refuted_claims"] = led.pop("refuted")
+
+    with pytest.raises(fl.LedgerError, match="unknown top-level key"):
+        fl.load_ledger(_ledger_with(typo))
+
+
+def test_a_misspelled_rule_key_is_rejected():
+    """`citation_resolve` without the `s` would silently mean "no bypass"."""
+    import pytest
+
+    def typo(led):
+        led["refuted"][0]["citation_resolve"] = True
+
+    with pytest.raises(fl.LedgerError, match="unknown key"):
+        fl.load_ledger(_ledger_with(typo))
+
+
+def test_the_shipped_ledger_uses_only_known_keys():
+    """The inverse control: a key allow-list that rejects the shipped ledger is a defect."""
+    ledger = fl.load_ledger()
+    assert set(ledger) <= fl.LEDGER_KEYS, sorted(set(ledger) - fl.LEDGER_KEYS)
+    for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+        for rule in ledger[cat]:
+            assert set(rule) <= fl.RULE_KEYS, (rule["id"], sorted(set(rule) - fl.RULE_KEYS))

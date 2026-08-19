@@ -222,7 +222,25 @@ def load_ledger(path: Path = LEDGER) -> dict:
     return data
 
 
+LEDGER_KEYS = frozenset(
+    {"_meta", "refuted", "folklore", "hypothesis_as_fact", "precision_without_source"}
+)
+RULE_KEYS = frozenset({"id", "pattern", "message", "instead", "grade", "citation_resolves"})
+
+
 def _validate_schema(data: dict, _fail) -> None:
+    # UNKNOWN KEYS ARE REJECTED, because the failure mode of accepting them is silent.
+    # `precision_without_sources` — one letter — loaded cleanly and switched off the entire
+    # precision rule class, and the run then reported a document as clean. A typo that
+    # changes what is checked, without changing what is said, is the worst outcome this
+    # tool has; unknown keys are far more often that than deliberate extension.
+    unknown = sorted(set(data) - LEDGER_KEYS)
+    if unknown:
+        _fail(
+            f"unknown top-level key(s) {unknown} — expected only {sorted(LEDGER_KEYS)}. "
+            "A misspelled container silently disables its whole rule class"
+        )
+
     for cat in ("refuted", "folklore", "hypothesis_as_fact"):
         rules = data.get(cat, [])
         if not isinstance(rules, list):
@@ -233,6 +251,13 @@ def _validate_schema(data: dict, _fail) -> None:
             for field in ("id", "pattern", "message"):
                 if not isinstance(r.get(field), str) or not r[field].strip():
                     _fail(f"'{cat}'[{n}] needs a non-empty string '{field}'")
+            stray = sorted(set(r) - RULE_KEYS)
+            if stray:
+                _fail(
+                    f"'{cat}'[{n}] has unknown key(s) {stray} — expected only "
+                    f"{sorted(RULE_KEYS)}. A misspelled `citation_resolves` or `grade` "
+                    "changes what the rule does without changing what it says"
+                )
             grade = r.get("grade")
             # isinstance BEFORE membership: `in` on an unhashable value (a JSON array or
             # object) raises TypeError, and a schema check that crashes on hostile input is

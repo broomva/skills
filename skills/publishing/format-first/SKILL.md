@@ -215,6 +215,14 @@ Block scope still spans a hard wrap, which is the only thing it ever needed to s
 Extend it by editing `references/claims-ledger.json` — pattern, message, and the
 correct replacement. Every rule needs both polarities in `tests/`.
 
+**The ledger is validated strictly, including its key names.** An unknown top-level key or
+rule key is an error, not an extension point: `precision_without_sources`, one letter off,
+would otherwise load cleanly and switch off an entire rule class while the run kept
+reporting documents as clean. Nothing may quietly change *what is checked* without changing
+*what is said*. Nor may a `refuted` rule opt into the citation bypass, nor a pattern or
+citation marker match the empty string — each of those is a way to configure the gate into
+silence, and each is refused at load.
+
 **Before you trust it, sweep your own archive.**
 
 ```bash
