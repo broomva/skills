@@ -93,6 +93,14 @@ RESOLVABLE_LOCATORS = [
     "(PMID: 12345678)",
     "arXiv:2301.00001, and more follows",
     "See PMC1234567; it is open access.",
+    # Markdown links: the form a citation most often takes in a Markdown document, and the
+    # reason the opener rule permits `](` specifically.
+    "[the announcement](https://example.com/page)",
+    "See [Mosseri](https://example.com/post) for the quote.",
+    "- [source](https://doi.org/10.1145/3613904.3642433)",
+    "<https://example.com/page>",
+    "“https://example.com/page”",
+    "Source — https://example.com/page",
 ]
 NOT_LOCATORS = [
     "https://", "http://",                 # a scheme is not a locator
@@ -111,6 +119,11 @@ NOT_LOCATORS = [
     # found one branch missing a boundary, so boundaries stopped being per-branch.
     "xhttps://example.com/page", "PMID: 1.2", "PMC123abc", "adoi:10.1037/abc",
     "zzhttps://example.com/page",
+    # An OPENER only counts when it is itself properly placed. Found by probing the
+    # aligner: allowing any opener as left context let a word-embedded one through.
+    "see[https://example.com/p", "a(https://x.com/p", "email:me@https://x.com/p",
+    "1https://example.com/p", "-https://example.com/p", "/https://example.com/p",
+    "_PMC1234567", "PMC1234567_", "PMC1234567abc", "arXiv:2301.00001x", "PMID:12345678x",
     # Round 20: bare-host forms need a LEFT boundary or they match on a suffix, and
     # identifiers need a terminal one. `v0` is not a valid arXiv version.
     "fake-doi.org/10.1234/x", "not-arxiv.org/abs/2301.00001",

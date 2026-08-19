@@ -287,7 +287,16 @@ def _has_citation(text: str) -> bool:
         lo, hi = m.span()
         if lo > 0:
             prev = text[lo - 1]
-            if not (prev.isspace() or prev in _OPENERS):
+            if prev.isspace():
+                pass
+            elif prev in _OPENERS:
+                # An opener only counts when IT is properly placed. `see[https://…` and
+                # `a(https://…` are word-embedded and must not pass; `](https://…` must,
+                # because that is a Markdown link and this is a Markdown linter.
+                before = text[lo - 2] if lo >= 2 else " "
+                if not (before.isspace() or before == "]"):
+                    continue
+            else:
                 continue
         rest = text[hi:]
         if rest and not rest[0].isspace():
