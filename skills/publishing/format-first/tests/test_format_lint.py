@@ -1229,8 +1229,17 @@ def test_the_cli_fails_on_a_hidden_error_and_passes_on_a_hidden_warning(tmp_path
 
 
 def test_region_filtering_is_linear_in_the_number_of_regions():
-    """Per-region rescans of the full finding list were quadratic: 4x time for 2x input."""
+    """Per-region rescans of the full finding list were quadratic: 4x time for 2x input.
+
+    A wall-clock test is noisy on shared CI, so this is built not to flake: it warms up
+    first, takes the BEST of three runs at each size (noise only ever adds time), uses a
+    4x input step where quadratic would cost ~16x, and allows 6x. It also skips rather
+    than fails when the baseline is too small to measure, since a sub-millisecond
+    denominator turns scheduler jitter into a ratio.
+    """
     import time
+
+    import pytest
 
     def build(n):
         return (
@@ -1238,12 +1247,62 @@ def test_region_filtering_is_linear_in_the_number_of_regions():
             "<!-- format-lint: enable -->\n"
         ) * n
 
-    def timed(n):
+    def best_of_three(n):
         doc = build(n)
-        t0 = time.perf_counter()
-        fl.lint_text(doc, LEDGER)
-        return time.perf_counter() - t0
+        times = []
+        for _ in range(3):
+            t0 = time.perf_counter()
+            fl.lint_text(doc, LEDGER)
+            times.append(time.perf_counter() - t0)
+        return min(times)
 
-    timed(200)                      # warm any lazy compilation
-    small, large = timed(1000), timed(2000)
-    assert large < small * 3, f"2x regions took {large / max(small, 1e-9):.1f}x the time"
+    best_of_three(100)                       # warm lazy compilation
+    small = best_of_three(500)
+    if small < 0.005:
+        pytest.skip(f"baseline {small * 1000:.2f}ms is too small to compare against")
+    large = best_of_three(2000)              # 4x the input
+    ratio = large / small
+    assert ratio < 6, f"4x regions took {ratio:.1f}x the time (quadratic would be ~16x)"
+
+
+# ---------- severity inheritance, across the region edge cases ----------
+
+def test_no_region_shape_lets_a_hidden_error_pass():
+    """Exit-0-on-a-hidden-ERROR is the exact regression this property was added for."""
+    err = "Mosseri said the polished, perfect aesthetic is dead."
+    shapes = {
+        "region at end of file with no trailing newline":
+            f"<!-- format-lint: disable -->\n{err}\n<!-- format-lint: enable -->",
+        "two regions, the ERROR in the first":
+            f"<!-- format-lint: disable -->\n{err}\n<!-- format-lint: enable -->\nx\n"
+            "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+            "<!-- format-lint: enable -->\n",
+        "region after frontmatter":
+            f"---\nname: x\n---\n<!-- format-lint: disable -->\n{err}\n"
+            "<!-- format-lint: enable -->\n",
+        "claim sharing a line with other prose":
+            f"<!-- format-lint: disable -->\nintro. {err} tail.\n<!-- format-lint: enable -->\n",
+        "claim hard-wrapped inside the region":
+            "<!-- format-lint: disable -->\nMosseri said the polished,\n"
+            "perfect aesthetic is dead.\n<!-- format-lint: enable -->\n",
+        "nested region":
+            f"<!-- format-lint: disable -->\n{err}\n<!-- format-lint: disable -->\ny\n"
+            "<!-- format-lint: enable -->\n",
+    }
+    for label, text in shapes.items():
+        findings = fl.lint_text(text, LEDGER)
+        assert any(f["severity"] == "ERROR" for f in findings), label
+
+
+def test_a_fence_inside_a_region_is_exempt_by_the_fence_not_hidden_by_the_region():
+    """Nothing was suppressed: fenced code was never going to be linted."""
+    text = (
+        "<!-- format-lint: disable -->\n```\n"
+        "Mosseri said the polished, perfect aesthetic is dead.\n```\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    assert ids(text) == set()
+
+
+def test_an_empty_region_reports_nothing():
+    assert ids("<!-- format-lint: disable -->\n<!-- format-lint: enable -->\n") == set()
