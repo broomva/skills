@@ -42,7 +42,7 @@ This skill separates three grades, and the separation is the point:
 | **Documented** | The operator publishes it | ANN retrieval over item embeddings; `"similarity to other reels"` is a named input signal |
 | **Hypothesis** | Plausible, no source establishes it | that format consistency lowers embedding variance and thereby improves retrieval | <!-- format-lint: allow=embedding-variance-asserted -->
 | **Refuted** | Contradicted by a primary source that was loaded | the misquoted "polished aesthetic" line |
-| **Contested** | The literature genuinely disagrees | whether subliminal exposure is stronger |
+| **Contested** | The literature genuinely disagrees | whether subliminal exposure is stronger | <!-- format-lint: allow=subliminal-stronger -->
 | **Unverified** | Origin could not be located — **not** proof of falsity | the 3–5x sends weighting; a widely-quoted effect size |
 
 The single most important line: **format-level clustering is not documented anywhere.**
