@@ -267,17 +267,26 @@ load-bearing claim traced to a primary source. **That upstream research arc** wa
 cross-reviewed over three rounds scoring 2/10 -> 5/10 -> 6/10, catching two genuine errors
 in it.
 
-**This skill's own review record is separate, longer, and worse.** Fifteen cross-model
-adversarial rounds, scoring **2, 5, 5, 5, 6, 6, 5, 5, 6, 6, 5, 6, 5, 6** (one round timed
-out before rendering a verdict, though it produced a real finding), plus a dogfood pass
-against a real unseen article that found two defects all 47 tests had missed. **It never
-reached the 7/10 bar.** The score oscillated in the 5-6 band because every round found
-something — which is itself the most useful thing to know about this artifact: its input
-surface is arbitrary markdown and an arbitrary JSON config, and a surface that size does
-not run out of edges.
+**This skill's own review record is separate, and long.** Twenty-two cross-model
+adversarial rounds, scoring **2, 5, 5, 5, 6, 6, 5, 5, 6, 6, 5, 6, 5, 6, 6, 6, 6, 6, 6, 6,
+8** (one round timed out before rendering a verdict, though it produced a real finding),
+plus a dogfood pass against a real unseen article that found two defects all 47 tests had
+missed. It passed on the twenty-second.
 
-The number that moved was not the score but the coverage: 47 tests to 166, with a mutation
-proof for every fix. What each round found:
+**Eighteen rounds sat at 5-6, and the reason is the most useful thing here.** At round 21
+the reviewer was asked directly whether that reflected a defective artifact or a surface a
+finite review cannot exhaust, and answered: *defective* — "twenty rounds finding repeated
+silent bypasses in the same core detector is not merely arbitrary-input
+inexhaustibility." It was right. Three consecutive rounds had each found one branch of the
+citation-locator alternation missing a boundary condition, and I had been adding the missing
+boundary each time. A rule spelled out per branch is a rule you can forget once per branch.
+
+Replacing the per-branch boundaries with a single token-alignment invariant — applied to
+every match whichever branch produced it, so that adding a branch cannot reintroduce the
+bug — moved the score from 6 to 8 in one round, and the reviewer withdrew the diagnosis:
+"the defective per-branch shape is gone."
+
+Coverage went 47 tests to 184, with a mutation proof for every fix. What the rounds found:
 
 - **Universal-absence phrasing** — the defect this skill exists to prevent, in this skill.
   Sites throughout asserted absence as a property of the world rather than of a search:

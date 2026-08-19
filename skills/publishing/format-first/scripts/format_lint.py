@@ -271,6 +271,11 @@ CITATION_RX = re.compile(
 
 # Punctuation that may legitimately sit against a locator in prose.
 _OPENERS = set("([{<\"'“‘")
+# Separators a writer may put directly against a locator with no space — `Source:https://…`
+# and `Evidence—https://…` are ordinary prose, and refusing them makes the gate cry wolf.
+# NOT a plain hyphen: `ref-https://…` reads as one malformed token, where `Evidence—…`
+# with an em dash reads as prose. Typographic dashes only.
+_LEAD_SEPARATORS = set(":—–|>")
 _CLOSERS = set(")]}>\"'”’,;:!?.…")
 
 
@@ -287,7 +292,7 @@ def _has_citation(text: str) -> bool:
         lo, hi = m.span()
         if lo > 0:
             prev = text[lo - 1]
-            if prev.isspace():
+            if prev.isspace() or prev in _LEAD_SEPARATORS:
                 pass
             elif prev in _OPENERS:
                 # An opener only counts when IT is properly placed. `see[https://…` and

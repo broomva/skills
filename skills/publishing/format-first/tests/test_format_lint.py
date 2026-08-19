@@ -101,6 +101,12 @@ RESOLVABLE_LOCATORS = [
     "<https://example.com/page>",
     "“https://example.com/page”",
     "Source — https://example.com/page",
+    # Separators written directly against the locator, with no space. Ordinary prose;
+    # refusing them made the gate cry wolf on a document that HAD cited its source.
+    "Evidence—https://example.com/page",
+    "Source:https://example.com/page",
+    "Source–https://example.com/page",
+    "> https://example.com/page",
 ]
 NOT_LOCATORS = [
     "https://", "http://",                 # a scheme is not a locator
