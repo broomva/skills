@@ -10,6 +10,7 @@ did not have it, which a cross-model review caught):
    because "I could not find a source" is a claim about a search, not about the world.
 """
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -1832,3 +1833,59 @@ def test_omitting_the_precision_block_entirely_is_still_legitimate():
             "Mosseri said the polished, perfect aesthetic is dead.\n", ledger
         )
     }
+
+
+# ---------- documented invariants, made structural ----------
+# The last class of defect worth chasing here is not a crash but a SILENT one: the tool
+# quietly not checking, or the docs promising something the code does not enforce. A
+# traceback is loud and survivable; a gate that stops checking without saying so is not.
+
+def test_a_refuted_rule_cannot_opt_into_the_citation_bypass():
+    """SKILL.md promises a citation never silences a `refuted` claim.
+
+    Nothing stopped a ledger from opting one in, so that was a promise the code did not
+    keep — a link would have suppressed an ERROR. The invariant is now enforced at load.
+    """
+    import pytest
+
+    def opt_in(led):
+        led["refuted"][1]["citation_resolves"] = True
+
+    with pytest.raises(fl.LedgerError, match="un-refute"):
+        fl.load_ledger(_ledger_with(opt_in))
+
+
+def test_a_marker_regex_that_matches_everything_is_rejected():
+    """`.*` makes every block count as cited, switching the precision rule off silently."""
+    import pytest
+
+    def match_all(led):
+        led["precision_without_source"]["marker_regex"] = ".*"
+
+    with pytest.raises(fl.LedgerError, match="empty string"):
+        fl.load_ledger(_ledger_with(match_all))
+
+
+def test_a_rule_pattern_that_matches_everything_is_rejected():
+    """The inverse degenerate case: a rule that fires on every block regardless of content."""
+    import pytest
+
+    for pattern in ("x*", "", "(?:)"):
+        def degenerate(led, p=pattern):
+            led["refuted"][0]["pattern"] = p
+
+        with pytest.raises(fl.LedgerError):
+            fl.load_ledger(_ledger_with(degenerate))
+
+
+def test_the_shipped_ledger_satisfies_all_three_invariants():
+    """A guard strict enough to reject the shipped ledger would be its own defect."""
+    ledger = fl.load_ledger()
+    for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+        for rule in ledger[cat]:
+            assert not re.compile(rule["pattern"]).search(""), rule["id"]
+            if rule["grade"] == "refuted":
+                assert not rule.get("citation_resolves"), rule["id"]
+    pws = ledger["precision_without_source"]
+    assert not re.compile(pws["marker_regex"]).search("")
+    assert not re.compile(pws["pattern"]).search("")

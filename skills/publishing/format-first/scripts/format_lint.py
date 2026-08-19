@@ -247,7 +247,21 @@ def _validate_schema(data: dict, _fail) -> None:
                     f"rule {r['id']}: citation_resolves must be a JSON boolean — a "
                     "non-boolean is truthy and would silently suppress findings"
                 )
+            # The documented invariant, made structural. SKILL.md promises a citation never
+            # silences a `refuted` claim, because a misquotation with a link attached is
+            # still a misquotation — but nothing stopped a ledger from opting one in, which
+            # is a promise the code did not keep.
+            if grade == "refuted" and r.get("citation_resolves"):
+                _fail(
+                    f"rule {r['id']}: a `refuted` rule must not set citation_resolves — a "
+                    "citation cannot un-refute a claim contradicted by a loaded source"
+                )
             _compile_or_fail(r["pattern"], f"rule {r['id']} has an invalid pattern", _fail)
+            if re.compile(r["pattern"]).search(""):
+                _fail(
+                    f"rule {r['id']}: pattern matches the empty string, so it fires on "
+                    "every block regardless of content"
+                )
 
     # ABSENT and PRESENT-BUT-NULL are different things, and `.get()` conflates them.
     # `{"precision_without_source": null}` loaded cleanly and silently disabled an entire
@@ -263,6 +277,16 @@ def _validate_schema(data: dict, _fail) -> None:
             _compile_or_fail(
                 pws[field], f"precision_without_source.{field} is invalid", _fail
             )
+        # A marker_regex matching the empty string is satisfied by every block, which
+        # silently switches the whole precision rule off. A gate that stops checking
+        # without saying so is the failure this skill exists to prevent.
+        if re.compile(pws["marker_regex"]).search(""):
+            _fail(
+                "precision_without_source.marker_regex matches the empty string, so every "
+                "block counts as cited and the rule can never fire"
+            )
+        if re.compile(pws["pattern"]).search(""):
+            _fail("precision_without_source.pattern matches the empty string")
         window = pws.get("window_lines", 3)
         # bool is an int subclass, and a window of `True` is a silent 1.
         if "window_lines" in pws and (not isinstance(window, int) or isinstance(window, bool)):
