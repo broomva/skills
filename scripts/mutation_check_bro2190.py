@@ -180,7 +180,7 @@ MUTANTS = [
     ("M47 a missing outcome field is accepted",
      '    if not outcome:',
      '    if False:',
-     "test_missing_outcome_field_fails_with_the_template"),
+     "test_frontmatter_without_an_outcome_key_fails"),
     ("M48 any outcome value accepted",
      '    if outcome not in ("admitted", "rejected"):',
      '    if False:',
@@ -226,8 +226,8 @@ MUTANTS = [
 
     # --- round 7: one matcher, and the sibling sites -------------------------
     ("M58 duplicate outcome detection becomes case-sensitive again",
-     "     declared = re.findall(r\"(?mi)^[ \\t]*outcome[ \\t]*:\", block)".strip(),
-     'declared = re.findall(r"(?m)^outcome[ \\t]*:", block)',
+     '    declared = re.findall(r"(?mi)^[ \\t]*outcome[ \\t]*:", m.group(1))',
+     '    declared = re.findall(r"(?m)^outcome[ \\t]*:", m.group(1))',
      "test_duplicate_outcome_detection_is_case_and_indent_insensitive"),
     ("M59 empty-outcome message unreachable on the stdlib path again",
      '    if present and outcome in ("", "none", "null"):',

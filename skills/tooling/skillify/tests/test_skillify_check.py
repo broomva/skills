@@ -1855,3 +1855,23 @@ def test_empty_outcome_message_is_reachable_without_pyyaml(tmp_path, monkeypatch
         "---\noutcome:\n---\n\nTwo agents received the same brief.\n", encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "empty `outcome`" in step2["detail"]
+
+
+def test_frontmatter_without_an_outcome_key_fails(tmp_path):
+    """M47 survived: the existing test's file has NO frontmatter at all, so it exits
+    at the earlier "has no frontmatter block" guard and never reaches the
+    missing-key branch. Valid frontmatter that simply lacks `outcome` is the input
+    that exercises it."""
+    d = _j(tmp_path)
+    _admission(d, "---\nauthor: someone\n---\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "declares no `outcome`" in step2["detail"]
+
+
+def test_a_file_with_no_frontmatter_at_all_fails_distinctly(tmp_path):
+    """Paired control: the two failure modes must report differently, or the message
+    sends the author looking in the wrong place."""
+    d = _j(tmp_path)
+    _admission(d, "# Admission\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "no frontmatter block" in step2["detail"]
