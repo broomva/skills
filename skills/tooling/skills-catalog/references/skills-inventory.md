@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 87 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-18.
+> 90 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-18.
 
 ## Governance & control — `skills/governance/` (8)
 
@@ -27,7 +27,7 @@
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
 
-## Skill & prompt tooling — `skills/tooling/` (7)
+## Skill & prompt tooling — `skills/tooling/` (8)
 
 | Skill | What it does |
 |---|---|
@@ -36,8 +36,9 @@
 | `disambiguate` | Rewrite a requirement so it can only be read one way, with a deterministic ambiguity checker for the mechanical layer |
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
+- **`attempt-audit`** — find absence-assertions that carry no attempt-record: code returning the same empty value whether the work ran and found nothing or was skipped entirely
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 87 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 90 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
