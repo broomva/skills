@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1821,20 +1822,27 @@ def test_every_frontmatter_call_site_shares_one_matcher(tmp_path):
     seen identically by the frontmatter parser, the skills.sh detector, and the
     admission reader. Three near-copies of the same regex is what let a fix land at
     one of them twice."""
-    src = (Path(mod.__file__).read_text(encoding="utf-8")
-           if getattr(mod, "__file__", None) else SCRIPT.read_text(encoding="utf-8"))
+    src = SCRIPT.read_text(encoding="utf-8")
+    # Catch the PATTERN, not one spelling of it: `re.match(...)`, `re.compile(...)`
+    # and a BOM-prefixed variant are all ways to reintroduce a second matcher.
     live = [ln for ln in src.splitlines()
-            if 're.match(r"^---' in ln and not ln.lstrip().startswith("#")
+            if "---" in ln and re.search(r'r"[^"]*---', ln)
+            and not ln.lstrip().startswith("#")
+            and "_FRONTMATTER_RE = " not in ln
             and "There used to be" not in ln]
-    assert live == [], f"a second frontmatter matcher reappeared: {live}"
+    assert live == [], f"a second frontmatter pattern reappeared: {live}"
 
 
-def test_duplicate_outcome_detection_is_case_and_indent_insensitive(tmp_path):
-    """The outcome LOOKUP was made case-insensitive; the duplicate DETECTION was not,
-    so `outcome: admitted` + `Outcome: rejected` passed. Indented duplicates bypassed
-    the count too."""
-    for i, block in enumerate(["outcome: admitted\nOutcome: rejected",
-                               "outcome: admitted\n  outcome: rejected",
+def test_duplicate_top_level_outcome_declarations_fail(tmp_path):
+    """Duplicates are counted structurally. Case and quoting are not part of a key;
+    indentation IS, because it means nesting.
+
+    An earlier version of this test asserted that an INDENTED `  outcome: rejected`
+    counted as a duplicate — it encoded the bug rather than the contract, and shipped
+    a false reject of a perfectly valid nested key."""
+    for i, block in enumerate(['outcome: admitted\nOutcome: rejected',
+                               'outcome: admitted\n"Outcome": rejected',
+                               "outcome: admitted\n'outcome': admitted",
                                "OUTCOME: admitted\noutcome: admitted"]):
         d = _j(tmp_path / f"dup{i}")
         (d / "evals" / "admission.md").write_text(
@@ -1842,6 +1850,28 @@ def test_duplicate_outcome_detection_is_case_and_indent_insensitive(tmp_path):
         step2 = _step(_check(d), 2)
         assert step2["status"] == "FAIL", f"accepted duplicate declarations: {block!r}"
         assert "declares `outcome`" in step2["detail"]
+
+
+def test_a_nested_outcome_key_is_not_a_duplicate(tmp_path):
+    """THE false reject this round found, and it was self-inflicted: making duplicate
+    detection indent-insensitive turned a valid nested key into a contradiction."""
+    for i, block in enumerate(["outcome: admitted\nmetadata:\n  outcome: rejected",
+                               "outcome: admitted\nprior_run:\n  outcome: rejected\n  date: 2026-08-01"]):
+        d = _j(tmp_path / f"nest{i}")
+        (d / "evals" / "admission.md").write_text(
+            f"---\n{block}\n---\n\nTwo agents, one brief; both valid.\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected nested key: {step2['detail']}"
+
+
+def test_a_malformed_closing_fence_does_not_run_on_to_a_later_one(tmp_path):
+    """`---xyz` is not a closing fence, so the match ran on to the next real `---`
+    and swallowed body text as frontmatter."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n---xyz\nrecord\n---\nmore record\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "malformed frontmatter" in step2["detail"]
 
 
 def test_empty_outcome_message_is_reachable_without_pyyaml(tmp_path, monkeypatch):

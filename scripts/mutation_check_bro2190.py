@@ -225,14 +225,27 @@ MUTANTS = [
      "test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent"),
 
     # --- round 7: one matcher, and the sibling sites -------------------------
-    ("M58 duplicate outcome detection becomes case-sensitive again",
+    ("M58 duplicate detection reverts to a raw indent-insensitive regex",
+     '    declared = [k for k in _top_level_keys(m.group(1)) if k == "outcome"]',
      '    declared = re.findall(r"(?mi)^[ \\t]*outcome[ \\t]*:", m.group(1))',
-     '    declared = re.findall(r"(?m)^outcome[ \\t]*:", m.group(1))',
-     "test_duplicate_outcome_detection_is_case_and_indent_insensitive"),
+     "test_a_nested_outcome_key_is_not_a_duplicate"),
     ("M59 empty-outcome message unreachable on the stdlib path again",
      '    if present and outcome in ("", "none", "null"):',
      '    if False:',
      "test_empty_outcome_message_is_reachable_without_pyyaml"),
+
+    ("M60 top-level key detection ignores indentation again",
+     '        if not ln.strip() or ln[:1] in (" ", "\\t") or ln.lstrip().startswith("#"):',
+     '        if not ln.strip() or ln.lstrip().startswith("#"):',
+     "test_a_nested_outcome_key_is_not_a_duplicate"),
+    ("M61 quoted keys stop being normalised",
+     '_TOP_LEVEL_KEY_RE = re.compile(r"""^([\'"]?)([A-Za-z0-9_.\\- ]+)\\1[ \\t]*:""")',
+     '_TOP_LEVEL_KEY_RE = re.compile(r"""^()([A-Za-z0-9_.\\- ]+)[ \\t]*:""")',
+     "test_duplicate_top_level_outcome_declarations_fail"),
+    ("M62 a --- line inside the block stops being malformed",
+     '    if any(ln.startswith("---") for ln in m.group(1).splitlines()):',
+     '    if False:',
+     "test_a_malformed_closing_fence_does_not_run_on_to_a_later_one"),
 ]
 
 
