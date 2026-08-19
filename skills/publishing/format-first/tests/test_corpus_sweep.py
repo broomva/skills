@@ -165,22 +165,38 @@ def test_current_side_crashes_also_fail(tmp_path, monkeypatch):
     assert cs.main([str(tmp_path), "--json"]) == 1
 
 
-def test_a_ledger_error_is_not_swallowed_as_a_per_file_crash(tmp_path):
-    """`load_ledger` raises SystemExit deliberately, and that choice is load-bearing.
+def test_scan_re_raises_a_ledger_error_instead_of_counting_it_as_a_crash(tmp_path, monkeypatch):
+    """BEHAVIOURAL. The previous version of this test was vacuous and a reviewer caught it.
 
-    SystemExit derives from BaseException, so `scan`'s `except Exception` cannot catch it.
-    Downgrading it to a normal exception would send a broken ledger straight back into the
-    crash counter — which is the round-5 defect where an unusable comparison ledger made
-    every current finding look like new coverage.
+    It called `cs.scan(files, fl.load_ledger(broken))` — and `load_ledger` raised before
+    `scan` was ever entered, so `scan`'s handling was never exercised. Written in the same
+    commit that removed a different vacuous guard.
+
+    Here `lint_text` itself raises LedgerError inside the loop, which is the only way to
+    reach the branch. If `scan` swallowed it, the call would return a crash count instead
+    of propagating, and a broken comparison ledger would once again report zero findings —
+    making every current finding look like new coverage.
     """
-    broken = json.loads(json.dumps(LEDGER))
-    broken["refuted"][0]["pattern"] = "("
-    path = tmp_path / "broken.json"
-    path.write_text(json.dumps(broken))
-    _tree(tmp_path, {"a.md": DIRTY})
+    _tree(tmp_path, {"a.md": DIRTY, "b.md": DIRTY})
 
-    with pytest.raises(fl.LedgerError):
-        cs.scan(cs.walk([str(tmp_path)], ".md"), fl.load_ledger(path))
+    def raise_ledger_error(*_a, **_k):
+        raise fl.LedgerError("ledger went bad mid-scan")
+
+    monkeypatch.setattr(cs.fl, "lint_text", raise_ledger_error)
+    with pytest.raises(fl.LedgerError, match="went bad mid-scan"):
+        cs.scan(cs.walk([str(tmp_path)], ".md"), LEDGER)
+
+
+def test_scan_still_counts_ordinary_exceptions_as_crashes(tmp_path, monkeypatch):
+    """The inverse: re-raising LedgerError must not have disabled the crash counter."""
+    _tree(tmp_path, {"a.md": DIRTY, "b.md": DIRTY})
+
+    def boom(*_a, **_k):
+        raise RuntimeError("ordinary failure")
+
+    monkeypatch.setattr(cs.fl, "lint_text", boom)
+    keys, crashes = cs.scan(cs.walk([str(tmp_path)], ".md"), LEDGER)
+    assert (len(keys), crashes) == (0, 2)
 
 
 def test_ledger_error_is_catchable_but_not_swallowed():
@@ -196,8 +212,7 @@ def test_ledger_error_is_catchable_but_not_swallowed():
     re-raises it explicitly.
     """
     assert issubclass(fl.LedgerError, Exception), "an embedder must be able to catch it"
-    src = (Path(cs.__file__).read_text())
-    assert "except fl.LedgerError:" in src and "raise" in src, "scan must re-raise it"
+    assert not issubclass(fl.LedgerError, SystemExit), "it must not terminate a host"
 
 
 def test_a_malformed_ledger_exits_two_not_one(tmp_path):

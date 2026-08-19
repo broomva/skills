@@ -240,12 +240,6 @@ def test_nested_disable_is_an_error():
     assert "nested-disable" in ids(text)
 
 
-def test_whole_file_disable_is_an_error():
-    """A CLOSED region covering the document is still a total bypass."""
-    body = "\n".join(f"Sends are 3-5x likes line {i}." for i in range(12))
-    text = f"<!-- format-lint: disable -->\n{body}\n<!-- format-lint: enable -->\n"
-    assert "whole-file-disable" in ids(text)
-
 
 def test_control_must_be_a_standalone_comment():
     """Prose mentioning the directive must not switch the linter off."""
@@ -380,11 +374,6 @@ def test_directive_inside_a_fence_does_not_control_the_linter():
     )
     assert "polished-aesthetic-dead" in ids(text)
 
-
-def test_short_whole_file_disable_is_still_an_error():
-    """The coverage guard previously exempted files under six lines."""
-    text = "<!-- format-lint: disable -->\nSends are 3-5x likes.\n<!-- format-lint: enable -->\n"
-    assert "whole-file-disable" in ids(text)
 
 
 def test_bare_scheme_is_not_a_citation():
@@ -907,39 +896,6 @@ def test_frontmatter_fence_and_control_region_interactions():
 
 # ---------- round-6 findings ----------
 
-def test_exempt_padding_cannot_defeat_the_whole_file_guard():
-    """Frontmatter and fenced code are not body.
-
-    Counting them in the coverage denominator let a document pad itself past the 80%
-    threshold: eight frontmatter fields around a disabled claim, and the guard went quiet.
-    Found by cross-model review.
-    """
-    claim = "The algorithm punishes formats."
-    frontmatter_padded = (
-        "---\n" + "".join(f"k{i}: v\n" for i in range(8)) + "---\n"
-        f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
-    )
-    fence_padded = (
-        "```\n" + "x\n" * 8 + "```\n"
-        f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
-    )
-    for text in (frontmatter_padded, fence_padded):
-        assert "whole-file-disable" in ids(text), text
-
-
-def test_real_prose_around_a_scoped_disable_is_not_a_whole_file_bypass():
-    """The guard must still distinguish a legitimate scoped suppression."""
-    text = (
-        "Ranking is a weighted sum of predicted engagement probabilities.\n"
-        "Retrieval is nearest-neighbour over item embeddings.\n"
-        "Each surface has its own algorithm.\n"
-        "The value model carries a negative term on see-less.\n"
-        "<!-- format-lint: disable -->\n"
-        "Mosseri said the polished, perfect aesthetic is dead.\n"
-        "<!-- format-lint: enable -->\n"
-        "That quotation is a misattribution and is not used here.\n"
-    )
-    assert "whole-file-disable" not in ids(text)
 
 
 def test_a_non_boolean_citation_resolves_is_rejected_at_load(tmp_path):
@@ -968,57 +924,7 @@ def test_a_boolean_citation_resolves_loads_fine(tmp_path):
     assert fl.load_ledger(path)["refuted"]
 
 
-def test_marker_only_lines_do_not_pad_the_denominator():
-    """Eight stray allow-markers around a fully-disabled document is still a full bypass.
 
-    `_blocks` blanks lint's own markers as metadata; the coverage guard counted them as
-    body. The two now share `_is_lintable`, because a predicate that exists twice will
-    disagree eventually and both directions were live defects.
-    """
-    text = (
-        "<!-- format-lint: allow=post-daily -->\n" * 8
-        + "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
-        "<!-- format-lint: enable -->\n"
-    )
-    assert "whole-file-disable" in ids(text)
-
-
-def test_control_markers_do_not_inflate_the_covered_count():
-    """Three disabled prose lines beside one live line is 3/4, not 5/6.
-
-    Counting the disable/enable markers as covered body produced a false ERROR on a
-    legitimately scoped suppression — a regression introduced by the previous fix to this
-    same guard, and caught by the round that verified it.
-    """
-    text = (
-        "<!-- format-lint: disable -->\nalpha one\nbeta two\ngamma three\n"
-        "<!-- format-lint: enable -->\nlive prose line\n"
-    )
-    assert "whole-file-disable" not in ids(text)
-
-
-def test_the_new_denominator_does_not_manufacture_whole_file_findings():
-    """Excluding exempt lines tightened the guard; it must not now fire on ordinary docs."""
-    clean = {
-        "mostly fenced code with one scoped disable":
-            "```\ncode\ncode\ncode\n```\nReal prose sentence one.\nReal prose sentence two.\n"
-            "<!-- format-lint: disable -->\nquoted claim\n<!-- format-lint: enable -->\n"
-            "Real prose sentence three.\nReal prose sentence four.\n",
-        "frontmatter and a short body, no disable at all":
-            "---\nname: x\ntags: [a]\n---\nOne sentence of prose.\n",
-        "a document that is only a fence":
-            "```\ncode\n```\n",
-        "four live lines against four disabled ones":
-            "a b c\nd e f\ng h i\nj k l\n"
-            "<!-- format-lint: disable -->\nm\nn\no\n<!-- format-lint: enable -->\n",
-    }
-    for label, text in clean.items():
-        assert "whole-file-disable" not in ids(text), label
-
-    # ...but a document whose ENTIRE lintable body is disabled still is one.
-    assert "whole-file-disable" in ids(
-        "---\nname: x\n---\n<!-- format-lint: disable -->\nq\n<!-- format-lint: enable -->\n"
-    )
 
 
 # ---------- padding bypasses, exhaustively (round-8 self-probe) ----------
@@ -1035,30 +941,6 @@ PADDINGS = {
 }
 
 
-def test_no_padding_shape_defeats_the_whole_file_guard():
-    """Enumerate the padding space rather than patching one shape at a time.
-
-    Each fix to this guard has been followed by another way to dilute it: fenced code,
-    then frontmatter, then marker-only lines, then five kinds of bare markdown structure.
-    The predicate is now "does this line contain a word or a number", and this test is the
-    list of things that are NOT prose.
-    """
-    claim = "The algorithm punishes formats."
-    for label, pad in PADDINGS.items():
-        text = (
-            pad + f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
-        )
-        assert "whole-file-disable" in ids(text), label
-
-
-def test_ordinary_structured_prose_is_still_body():
-    """The inverse control: tightening the predicate must not manufacture findings."""
-    text = (
-        "# Heading\n\nRanking is a weighted sum.\n\n- Retrieval is nearest-neighbour.\n"
-        "- Each surface has its own algorithm.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
-        "<!-- format-lint: disable -->\nquoted claim\n<!-- format-lint: enable -->\n"
-    )
-    assert "whole-file-disable" not in ids(text)
 
 
 def test_is_lintable_classifies_structure_and_prose():
@@ -1074,22 +956,122 @@ def test_is_lintable_classifies_structure_and_prose():
         assert fl._is_lintable(0, line, set()), line
 
 
-def test_the_whole_file_threshold_is_pinned_at_its_boundary():
-    """A magic number no test constrains is undocumented behaviour.
 
-    Mutation testing found 0.8 could be moved to 0.99 without turning anything red — the
-    padding tests all sit at ratio 1.0 and the control at 0.75, so nothing in between was
-    exercised. These three cases straddle the boundary.
+
+# ---------- suppression is reported as a FACT, not judged as a ratio ----------
+# A coverage-ratio guard lived here and was defeated in six consecutive review rounds, each
+# by a different way of padding the denominator. The replacement reports what a disable
+# region hides. Padding cannot change a fact, so the whole class is closed by construction
+# rather than one shape per round.
+
+PADDINGS = {
+    "html comments": "<!-- inert metadata -->\n" * 8,
+    "horizontal rules": "---\n" * 8,
+    "bare list bullets": "-\n" * 8,
+    "table separators": "|---|---|\n" * 8,
+    "blockquote markers": ">\n" * 8,
+    "bare heading hashes": "#\n" * 8,
+    "allow markers": "<!-- format-lint: allow=post-daily -->\n" * 8,
+    "frontmatter fields": "---\n" + "".join(f"k{i}: v\n" for i in range(8)) + "---\n",
+    "fenced code": "```\n" + "x\n" * 8 + "```\n",
+    "no padding at all": "",
+    "a thousand comment lines": "<!-- pad -->\n" * 1000,
+}
+
+
+def test_no_amount_of_padding_hides_a_suppression():
+    claim = "The algorithm punishes formats."
+    for label, pad in PADDINGS.items():
+        text = pad + f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
+        assert "suppressed-findings" in ids(text), label
+
+
+def test_a_region_that_hides_nothing_is_silent():
+    """Suppression is only worth reporting when something was actually suppressed."""
+    text = (
+        "<!-- format-lint: disable -->\nan ordinary sentence\n<!-- format-lint: enable -->\n"
+        "more ordinary prose\n"
+    )
+    assert ids(text) == set()
+
+
+def test_the_report_names_what_was_hidden_and_where():
+    text = (
+        "intro\n<!-- format-lint: disable -->\n"
+        "The algorithm punishes formats.\n"
+        "Use a 3-second hook.\n"
+        "<!-- format-lint: enable -->\ntail\n"
+    )
+    hits = find(text, "suppressed-findings")
+    assert len(hits) == 1
+    msg = hits[0]["message"]
+    assert "algorithm-punishes" in msg and "three-second-hook" in msg
+    assert "2 finding" in msg
+    assert hits[0]["severity"] == "WARN", "suppressing to quote a claim is legitimate"
+
+
+def test_two_regions_are_reported_separately():
+    text = (
+        "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\nmiddle prose\n"
+        "<!-- format-lint: disable -->\nUse a 3-second hook.\n<!-- format-lint: enable -->\n"
+    )
+    assert len(find(text, "suppressed-findings")) == 2
+
+
+def test_suppression_reporting_does_not_recurse_forever():
+    """The reporter re-lints the document; a missing guard would loop."""
+    text = "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n<!-- format-lint: enable -->\n"
+    assert fl.lint_text(text, LEDGER, _report_suppressed=False) == []
+    assert ids(text) == {"suppressed-findings"}
+
+
+def test_structural_control_errors_survived_the_removal():
+    """Deleting the ratio heuristic must not have taken the real guards with it."""
+    assert "unclosed-disable" in ids("<!-- format-lint: disable -->\nprose\n")
+    assert "nested-disable" in ids(
+        "<!-- format-lint: disable -->\na\n<!-- format-lint: disable -->\nb\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    assert "unclosed-fence" in ids("```\nprose\n")
+
+
+def test_a_malformed_ledger_is_always_a_ledger_error(tmp_path):
+    """Every way a ledger can be unusable, normalised to one catchable type.
+
+    Invalid JSON escaped as JSONDecodeError, so `--ledger` on a broken file printed a
+    traceback and exited 1 — the code meaning "findings were present".
     """
-    def doc(live, dead):
-        return (
-            "live prose line\n" * live
-            + "<!-- format-lint: disable -->\n"
-            + "dead prose line\n" * dead
-            + "<!-- format-lint: enable -->\n"
-        )
+    import pytest
 
-    assert fl.WHOLE_FILE_THRESHOLD == 0.8
-    assert "whole-file-disable" not in ids(doc(1, 4)), "0.80 is not OVER the threshold"
-    assert "whole-file-disable" in ids(doc(1, 5)), "0.83 is"
-    assert "whole-file-disable" in ids(doc(1, 9)), "0.90 is"
+    cases = {
+        "invalid json": "{",
+        "not an object": "[1, 2, 3]",
+        "rule missing a pattern": '{"refuted": [{"id": "x", "message": "m", "grade": "refuted"}]}',
+        "rule missing an id": '{"refuted": [{"pattern": "x", "message": "m", "grade": "refuted"}]}',
+        "uncompilable pattern": '{"refuted": [{"id": "x", "pattern": "(", "message": "m", "grade": "refuted"}]}',
+        "unknown grade": '{"refuted": [{"id": "x", "pattern": "x", "message": "m", "grade": "nope"}]}',
+    }
+    for label, body in cases.items():
+        path = tmp_path / f"{abs(hash(label))}.json"
+        path.write_text(body)
+        with pytest.raises(fl.LedgerError):
+            fl.load_ledger(path)
+
+    with pytest.raises(fl.LedgerError):
+        fl.load_ledger(tmp_path / "does-not-exist.json")
+
+
+def test_the_cli_exits_two_on_a_bad_ledger_not_one(tmp_path):
+    """Exit 2 is bad input; exit 1 means findings. Conflating them misreports a broken run."""
+    bad = tmp_path / "bad.json"
+    bad.write_text("{")
+    doc = tmp_path / "d.md"
+    doc.write_text("prose\n")
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(doc), "--ledger", str(bad)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 2, out
+    assert "not valid JSON" in out.stderr
+    assert "Traceback" not in out.stderr

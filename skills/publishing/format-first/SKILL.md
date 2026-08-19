@@ -123,8 +123,8 @@ python3 scripts/format_lint.py - --json            # stdin, machine-readable
 
 Severity follows the ledger's **grade**: of the claim rules, only `refuted` (contradicted
 by a primary source that was loaded) exits non-zero. Malformed lint controls — an unclosed
-fence, an unclosed/nested/whole-file `disable` — also exit non-zero, because a silently
-disabled gate is worse than a noisy one. `contested`, `unverified`, `folklore` and
+fence, an unclosed or nested `disable` — also exit non-zero, because a silently disabled
+gate is worse than a noisy one. `contested`, `unverified`, `folklore` and
 `hypothesis_as_fact` are WARN — because "I could not find a source" is a statement about a
 search, not about the world, and a gate that conflates the two manufactures the false
 confidence it exists to prevent. Use `--strict` to fail on warnings too.
@@ -133,7 +133,8 @@ Sentences that **negate, correct, or attribute** a claim do not fire, so the lin
 not punish the corrections it exists to promote. Fenced blocks and well-formed YAML
 frontmatter are exempt; a leading `---` horizontal rule is not. Suppress narrowly with
 `<!-- format-lint: allow=<rule-id> -->` (that line only) or a `disable`/`enable` region —
-an unclosed, nested, or whole-file region is itself reported as an ERROR.
+an unclosed or nested region is itself an ERROR, and any region that hides a finding is
+reported as one (`suppressed-findings`, naming what it hid and where).
 
 **The bypasses, stated plainly**, because a gate whose escape hatches are undocumented is
 a gate you cannot reason about:
@@ -141,11 +142,25 @@ a gate you cannot reason about:
 | Bypass | Scope | Why it exists |
 |---|---|---|
 | `<!-- format-lint: allow=<id> -->` | that line, that rule | quoting a claim in order to correct it |
-| `<!-- format-lint: disable -->` … `enable` | the region | a block quotation; whole-file coverage is itself an ERROR |
+| `<!-- format-lint: disable -->` … `enable` | the region | a block quotation; the region reports what it hides |
 | a resolvable URL/DOI in the same paragraph | that finding, **only for rules that opt in** | see below |
 | an unclosed fence | everything after it | which is why it is an ERROR |
 
-The third is the one to watch. A WARN-grade rule asserts *"this circulates with no located
+**A disable region cannot hide anything quietly.** Whatever it suppresses is reported as
+`suppressed-findings`, naming the rules and the line range. That is a WARN, not an ERROR —
+quoting a claim in order to correct it is exactly what the region is for — and it is the
+one guard here with no threshold in it.
+
+That is deliberate. A coverage-ratio guard used to live here, erroring when a region
+covered "most" of a document, and six consecutive review rounds defeated it with six
+different ways of padding the denominator: fenced code, frontmatter, lint's own markers,
+bare `---` rules, `-` bullets, `|---|---|` separators, `>`, `#`, and finally ordinary HTML
+comments. Each round closed one shape and left the class open, because a ratio over
+"prose" invites an argument about what counts as prose and every answer was wrong at a new
+edge. Reporting the fact instead ends the argument: padding cannot change what a region
+hid.
+
+The citation bypass is the one to watch. A WARN-grade rule asserts *"this circulates with no located
 source"*, so a sentence that **supplies** a source has already done what the rule asks —
 `"According to Instagram, its algorithm demotes primarily non-original accounts:
 https://creators.instagram.com/blog/rewarding-original-creators-on-instagram"` is true,

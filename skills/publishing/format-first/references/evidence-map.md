@@ -121,23 +121,19 @@ rest are `contested` (the literature disagrees) or `unverified` (the origin coul
 located, which is a statement about a search, not about the world). Severity follows the
 grade, so only `refuted` exits non-zero.
 
-<!-- format-lint: disable -->
 
 | Claim | Finding |
 |---|---|
-| Sends weighted 3–5x likes — **unverified** | No primary source located in any venue searched. A search tool returned it *in quote form*, traceable to an SEO blog. Not established false; simply not citable. |
-| "The polished aesthetic is dead" (Mosseri memo) | Real post, materially distorted. A public Threads essay, not a memo. The line is *"That feed is dead"* about personal sharing moving to DMs. Announces **no** ranking change and explicitly defers. |
-| Bornstein "208 studies" — **contested** | Near-primary sources describe **134 studies reporting 208 contrasts** (Grybinas, Kantner & Dobbins 2019, *Memory & Cognition* 47:1314–1327). The phrasing conflates studies with contrasts; the article is paywalled and the exact framing is disputed. |
+| Sends weighted 3–5x likes — **unverified** | No primary source located in any venue searched. A search tool returned it *in quote form*, traceable to an SEO blog. Not established false; simply not citable. | <!-- format-lint: allow=sends-3-5x-likes,unsourced-precision -->
+| "The polished aesthetic is dead" (Mosseri memo) | Real post, materially distorted. A public Threads essay, not a memo. The line is *"That feed is dead"* about personal sharing moving to DMs. Announces **no** ranking change and explicitly defers. | <!-- format-lint: allow=polished-aesthetic-dead -->
+| Bornstein "208 studies" — **contested** | Near-primary sources describe **134 studies reporting 208 contrasts** (Grybinas, Kantner & Dobbins 2019, *Memory & Cognition* 47:1314–1327). The phrasing conflates studies with contrasts; the article is paywalled and the exact framing is disputed. | <!-- format-lint: allow=bornstein-208-studies,unsourced-precision -->
 | Mere-exposure `r = .26` — **unverified** | Not found in the paywalled article, its abstract, Crossref, PubMed, Google Books, or full text across 41 open-access papers; proximate source appears to be Wikipedia. A cross-model reviewer asserted it is genuine but cited only paywalled sources. **Unresolved in both directions** — load the primary before using it. |
-| "Subliminal exposure is stronger" — **contested** | Bornstein & D'Agostino (1992) report larger effects at 5ms; de Zilva et al. (2013) find none under continuous flash suppression. One method does not erase the other — state the conditions, not a verdict. |
-| Algorithm "favorites / excluded list" of formats — **unverified** | No format-keyed favor or penalty state appears in the public documentation searched (§1). The systems are proprietary, so this is undocumented rather than disproven. |
+| "Subliminal exposure is stronger" — **contested** | Bornstein & D'Agostino (1992) report larger effects at 5ms; de Zilva et al. (2013) find none under continuous flash suppression. One method does not erase the other — state the conditions, not a verdict. | <!-- format-lint: allow=subliminal-stronger -->
+| Algorithm "favorites / excluded list" of formats — **unverified** | No format-keyed favor or penalty state appears in the public documentation searched (§1). The systems are proprietary, so this is undocumented rather than disproven. | <!-- format-lint: allow=algorithm-favorites-list -->
 
-<!-- format-lint: enable -->
 
-<!-- format-lint: disable -->
-**Also unlocated in the sources searched here** (WARN-grade in the linter): the 3-second hook rule, posting-daily as
-a growth strategy, and anthropomorphic "the algorithm punishes you" framing.
-<!-- format-lint: enable -->
+**Also unlocated in the sources searched here** (WARN-grade in the linter): the 3-second hook rule, posting-daily as <!-- format-lint: allow=three-second-hook -->
+a growth strategy, and anthropomorphic "the algorithm punishes you" framing. <!-- format-lint: allow=algorithm-punishes -->
 
 A targeted search for peer-reviewed work on what *structurally* predicts short-form retention
 returned only content farms and vendor marketing.

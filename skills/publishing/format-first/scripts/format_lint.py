@@ -47,12 +47,6 @@ GRADE_SEVERITY = {
     "hypothesis_as_fact": "WARN",
 }
 
-# A disable region covering more than this share of a document's PROSE is treated as a
-# whole-file bypass. Not a tuned value: it is "almost everything", chosen loose enough that
-# a document quoting several claims in one block is not punished. The guard's job is to
-# catch a suppression that swallows the document, not to police proportion.
-WHOLE_FILE_THRESHOLD = 0.8
-
 ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
 CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
 MARKER_BLANK_RX = re.compile(r"<!--\s*format-lint:.*?-->")
@@ -98,10 +92,20 @@ NEGATION_RX = re.compile(
 
 
 def load_ledger(path: Path = LEDGER) -> dict:
-    if not path.exists():
-        raise LedgerError(f"format_lint: ledger not found at {path}")
-    with path.open(encoding="utf-8") as fh:
-        data = json.load(fh)
+    # EVERY way a ledger can be unusable becomes LedgerError, including malformed JSON and
+    # unreadable files. Leaving JSONDecodeError to escape meant `--ledger` on a broken file
+    # printed a traceback and exited 1 — the code that means "findings were present".
+    try:
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        raise LedgerError(f"format_lint: ledger not found at {path}") from None
+    except OSError as exc:
+        raise LedgerError(f"format_lint: ledger at {path} could not be read: {exc}") from None
+    except json.JSONDecodeError as exc:
+        raise LedgerError(f"format_lint: ledger at {path} is not valid JSON: {exc}") from None
+    if not isinstance(data, dict):
+        raise LedgerError(f"format_lint: ledger at {path} must be a JSON object, got {type(data).__name__}")
     bad = [
         (r.get("id", "?"), r.get("grade"))
         for cat in ("refuted", "folklore", "hypothesis_as_fact")
@@ -134,6 +138,11 @@ def load_ledger(path: Path = LEDGER) -> dict:
     # a broken ledger into "this ledger found nothing" instead of an error.
     for cat in ("refuted", "folklore", "hypothesis_as_fact"):
         for r in data.get(cat, []):
+            missing = [k for k in ("id", "pattern", "message") if not r.get(k)]
+            if missing:
+                raise LedgerError(
+                    f"format_lint: rule {r.get('id', '?')} in '{cat}' is missing {missing}"
+                )
             try:
                 re.compile(r["pattern"])
             except re.error as exc:
@@ -244,12 +253,24 @@ def _is_lintable(i: int, line: str, exempt: set[int]) -> bool:
     return bool(re.search(r"[A-Za-z0-9]", text))
 
 
-def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[set[int], list[dict]]:
+def _control_regions(
+    lines: list[str], fenced: set[int] | None = None
+) -> tuple[set[int], list[dict], list[tuple[int, int]]]:
     """`<!-- format-lint: disable -->` … `enable`, as an exact standalone comment.
 
-    Guards: an unclosed region is an ERROR; a nested disable is an ERROR; and a region
-    spanning effectively the whole document is an ERROR, because a closed whole-file
-    region would otherwise be a silent total bypass.
+    Returns (suppressed line indices, structural problems, region spans).
+
+    Guards: an unclosed region is an ERROR and a nested disable is an ERROR — both are
+    malformed, and both silently extend suppression.
+
+    There is deliberately NO "this region covers most of the document" heuristic. One
+    existed and was defeated six times in six review rounds, each by a different way of
+    padding the denominator: fenced code, frontmatter, lint's own markers, bare `---`
+    rules, `-` bullets, `|---|---|` separators, `>`, `#`, and finally ordinary HTML
+    comments. A ratio over "prose" invites an argument about what counts as prose, and
+    every answer to that argument was wrong at a new edge. What the reader actually needs
+    is not a verdict about proportion but the fact itself, which is reported instead: see
+    `suppressed-findings`. A fact cannot be padded.
     """
     off: set[int] = set()
     problems: list[dict] = []
@@ -291,25 +312,7 @@ def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[
             }
         )
 
-    # Coverage is measured over PROSE, in both the numerator and the denominator. Counting
-    # anything else was wrong twice over: frontmatter, fenced code and stray allow-markers
-    # padded the denominator until a fully-suppressed document slipped under the threshold,
-    # and the disable/enable markers themselves padded the numerator until three disabled
-    # lines beside one live line reported a false whole-file bypass.
-    body = [i for i, l in enumerate(lines) if _is_lintable(i, l, fenced)]
-    if body:
-        covered = sum(1 for i in body if i in off)
-        if covered / len(body) > WHOLE_FILE_THRESHOLD:
-            problems.append(
-                {
-                    "line": (spans[0][0] + 1) if spans else 1,
-                    "severity": "ERROR", "category": "lint_control",
-                    "id": "whole-file-disable", "matched": "format-lint: disable",
-                    "message": f"Disable regions cover {covered}/{len(body)} non-blank lines — effectively a whole-file bypass.",
-                    "instead": "Scope suppressions to the quoted material, or use inline allow=<rule-id> markers.",
-                }
-            )
-    return off, problems
+    return off, problems, spans
 
 
 def _allowed_ids(lines: list[str], idx: int) -> set[str]:
@@ -371,12 +374,42 @@ def _line_of(owner: list[int], offset: int) -> int:
     return owner[min(offset, len(owner) - 1)] if owner else 0
 
 
-def lint_text(text: str, ledger: dict) -> list[dict]:
+def lint_text(text: str, ledger: dict, _report_suppressed: bool = True) -> list[dict]:
     lines = text.splitlines()
     exempt, problems = _fence_and_frontmatter(lines)
-    ctrl_off, ctrl_problems = _control_regions(lines, exempt)
+    ctrl_off, ctrl_problems, spans = _control_regions(lines, exempt)
     skip = exempt | ctrl_off
     findings: list[dict] = list(problems) + list(ctrl_problems)
+
+    # What did each disable region actually hide? Re-lint with the regions inactive and
+    # diff. This replaces a coverage-ratio heuristic that six review rounds defeated with
+    # six different kinds of padding: the reader is told what was suppressed rather than
+    # given a verdict about how much of the file it was.
+    if _report_suppressed and spans:
+        uncensored = lint_text(text.replace("<!-- format-lint: disable -->", "<!-- x -->")
+                                   .replace("<!-- format-lint: enable -->", "<!-- x -->"),
+                               ledger, _report_suppressed=False)
+        for lo, hi in spans:
+            hidden = [f for f in uncensored if lo + 1 <= f["line"] <= hi + 1
+                      and f["category"] != "lint_control"]
+            if hidden:
+                ids_ = ", ".join(sorted({f["id"] for f in hidden}))
+                findings.append(
+                    {
+                        "line": lo + 1, "severity": "WARN", "category": "lint_control",
+                        "id": "suppressed-findings",
+                        "matched": "format-lint: disable",
+                        "message": (
+                            f"This region hides {len(hidden)} finding(s) on lines "
+                            f"{lo + 2}-{hi}: {ids_}."
+                        ),
+                        "instead": (
+                            "Legitimate when you are quoting a claim in order to correct it. "
+                            "Scope it to the quotation, and prefer an inline "
+                            "`allow=<rule-id>` marker so the suppression names what it hides."
+                        ),
+                    }
+                )
 
     blocks = _blocks(lines, skip)
 
