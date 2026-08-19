@@ -228,7 +228,7 @@ MUTANTS = [
     ("M59 empty-outcome message unreachable on the stdlib path again",
      '    if present and outcome in ("", "none", "null"):',
      '    if False:',
-     "test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse"),
+     "test_empty_outcome_value_reports_what_the_author_typed"),
 
 
     # M58/M60/M61/M62 retired with the line-based key walker they targeted; the
