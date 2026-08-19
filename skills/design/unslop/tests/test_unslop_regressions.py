@@ -540,3 +540,42 @@ def test_design_docs_found_at_git_toplevel_above_the_app(tmp_path):
     (root2 / "src" / "A.tsx").write_text("<b/>")
     subprocess.run(["git", "init", "-q"], cwd=root2, check=True)
     assert us.survey(root2)["substance"]["design_docs"]["DESIGN.md"] is False
+
+
+def test_input_placeholder_examples_and_prose_mdx_are_not_fake_content(tmp_path):
+    root = _repo(tmp_path, "ph2", {
+        "src/components/login-form.tsx": '<input placeholder="you@example.com" /><input placeholder="Acme Labs" />',
+        "content/writing/essay.mdx": "As I told your company last year, testimonials matter. Pricing: Free, Pro, Enterprise. 99.9% of the time. Lorem ipsum.",
+        "src/app/page.tsx": "<main/>",
+    })
+    s = us.survey(root)["substance"]
+    assert "example-domain" not in s["placeholders"] and "acme" not in s["placeholders"]
+    assert "your-company" not in s["placeholders"] and "fake-metrics" not in s["placeholders"]
+    assert "lorem-ipsum" in s["placeholders"]                    # prose still counts lorem
+    assert s["testimonials"]["files"] == [] and s["pricing"]["files"] == []
+
+
+def test_tests_scripts_and_og_image_routes_are_not_ui_surfaces(tmp_path):
+    root = _repo(tmp_path, "nonsurf", {
+        "src/app/page.tsx": "<main>Real copy</main>",
+        "src/app/opengraph-image.tsx": 'export default () => <div style={{ color: "#111111", background: "#222222", border: "#333333 #444444 #555555 #666666 #777777 #888888 #999999 #aaaaaa #bbbbbb #cccccc #dddddd" }}>— ✨</div>;',
+        "src/components/Foo.test.tsx": "expect(<p>— ✨ ✓ Lorem ipsum</p>)",
+        "scripts/gen.ts": 'console.log("✓ done — supercharge")',
+        "tests/e2e/home.spec.ts": 'test("—", () => {})',
+    })
+    m = us.survey(root)
+    assert all(v["count"] == 0 for v in m["copy_tells"].values())
+    assert "color" not in {r["kind"] for r in m["roots"]}
+    assert "lorem-ipsum" not in m["substance"]["placeholders"]
+
+
+def test_ai_default_face_stated_in_design_md_passes(tmp_path):
+    root = _repo(tmp_path, "geist", {
+        "DESIGN.md": "# Brand\n\nBody: Geist (Google Fonts, via next/font) — deliberate; Monospace: Geist Mono.\n",
+        "src/app/layout.tsx": 'import { Geist, Geist_Mono } from "next/font/google";\nconst g = Geist({ subsets: ["latin"] });',
+    })
+    r = _gate(root, no_render=True)
+    assert r["fonts.deliberate"].status == "PASS" and "stated as the decision" in r["fonts.deliberate"].detail
+    root2 = _repo(tmp_path, "inter", {"DESIGN.md": "# Brand\nBody: Geist.\n", "src/app/layout.tsx": 'import { Inter } from "next/font/google";\nconst i = Inter({ subsets: ["latin"] });'})
+    r2 = _gate(root2, no_render=True)
+    assert r2["fonts.deliberate"].status == "FAIL" and "inter" in r2["fonts.deliberate"].detail

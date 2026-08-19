@@ -561,6 +561,10 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         rp = rel(root, p)
         is_style = p.suffix.lower() in STYLE_EXT
         is_ui = p.suffix.lower() in UI_EXT
+        # tests, stories, scripts and generated-image routes are code, not the product's copy or token surface
+        is_non_surface = bool(re.search(r"(\.(test|spec|stories|e2e)\.[cm]?[jt]sx?$)|(^|/)(__tests__|tests?|e2e|scripts?|__mocks__|fixtures?)(/|$)|(^|/)(opengraph-image|twitter-image|apple-icon|icon)\.[jt]sx?$", rp, re.I))
+        if is_ui and is_non_surface:
+            is_ui = False
         is_config = "tailwind.config" in p.name or p.name in ("postcss.config.js", "postcss.config.mjs")
         lines = txt.splitlines()
 
@@ -648,7 +652,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         # never copy modules, whatever they are named.
         _segs = rp.replace("\\", "/").split("/")
         is_copy_module = (
-            p.suffix.lower() in SCRIPT_EXT
+            not is_non_surface
+            and p.suffix.lower() in SCRIPT_EXT
             and (bool(RE_COPY_MODULE.match(_segs[-1])) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
             and not re.search(r"(^|/)(api|server|middleware|hooks?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|(^|/)use-[a-z-]+\.[jt]sx?$", rp, re.I)
         )
@@ -680,9 +685,9 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             # substance: landing / testimonials / pricing / evidence
             if RE_LANDING.search(txt):
                 landing_hints.append(rp)
-            if RE_TESTIMONIAL.search(txt):
+            if RE_TESTIMONIAL.search(txt) and not is_prose_mdx:
                 testimonials.append(rp)
-            if RE_PRICING.search(txt) or "pricing" in rp.lower():
+            if (RE_PRICING.search(txt) or "pricing" in rp.lower()) and not is_prose_mdx:
                 pricing["files"].append(rp)
                 for m in RE_TIER_WORDS.finditer(txt):
                     pricing["tier_word_hits"][m.group(1)] += 1
@@ -707,11 +712,17 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     "empty": bool(RE_EMPTY_STATE.search(txt)),
                 }
 
-        # placeholders (UI + copy modules)
+        # placeholders (UI + copy modules). `placeholder="you@example.com"` / "Acme Labs" on an input is an example
+        # value, not fake content; prose MDX (articles) only counts lorem / John Doe.
         if is_ui or is_copy_module:
             for key, rx in PLACEHOLDER_PATTERNS.items():
+                if is_prose_mdx and key not in ("lorem-ipsum", "john-jane-doe"):
+                    continue
                 for m in rx.finditer(txt):
-                    placeholders[key].append(site(p, txt.count("\n", 0, m.start()) + 1))
+                    ln = txt.count("\n", 0, m.start()) + 1
+                    if key in ("example-domain", "acme", "your-company") and re.search(r"placeholder\s*=", lines[ln - 1] if ln - 1 < len(lines) else ""):
+                        continue
+                    placeholders[key].append(site(p, ln))
 
         # visual vocabulary
         if is_ui or is_style:
@@ -912,7 +923,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         },
         "icons": {k: len(v) for k, v in icon_imports.items()},
         "component_libs": sorted(component_libs),
-        "copy_tells": {k: {"count": len(v), "sites": v[:12]} for k, v in copy_tells.items()},
+        "copy_tells": {k: {"count": len(v), "sites": v[:200]} for k, v in copy_tells.items()},
         "substance": substance,
         "roots": roots,
         "detector": {"status": "not-run", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0},
