@@ -182,9 +182,11 @@ https://creators.instagram.com/blog/rewarding-original-creators-on-instagram"` i
 cited, and was flagged as folklore until this existed — the sentence you just read is
 itself suppressed by the rule it describes.
 
-The citation must be a **resolvable locator** (`https://…/…`, `doi.org/10.…`, `doi:10.…`,
-an arXiv, PubMed or PMC id). A bare `example.com/page` does not suppress, and neither does
-a naked `https://` or the substring `PMC`. Note that `references/evidence-map.md` cites several sources as
+The citation must be a **resolvable locator**: an http(s) URL with a real host and a path,
+a DOI in either form, or an arXiv / PubMed / PMC identifier — `arXiv:2301.00001` and
+`PMID: 12345678` included, not only their URL forms. A bare `example.com/page` does not
+suppress, and neither does a naked `https://`, a malformed host like `https://..com/path`,
+or an identifier embedded in another word like `NOTPMC1234`. Note that `references/evidence-map.md` cites several sources as
 backticked bare domains — that house style is *not* a suppression marker, deliberately: a
 bypass should be narrower than a citation convention, not wider. The consequence is that a
 resolvable link in the same paragraph silences those two grades' claims in that paragraph.

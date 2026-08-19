@@ -243,13 +243,23 @@ PRECISION_KEYS = frozenset({"pattern", "message", "instead", "window_lines"})
 # DOI, an arXiv id, a PubMed id, or a PMC id. Making that configurable was letting the gate
 # be configured into silence, which contradicts the one claim this skill actually makes.
 CITATION_RX = re.compile(
-    r"https?://[\w.-]+\.[a-z]{2,}/\S"
-    r"|doi\.org/10\.\d{4,}/\S"
-    r"|doi:\s*10\.\d{4,}/\S"
-    r"|arxiv\.org/abs/\d"
-    r"|pubmed\.ncbi\.nlm\.nih\.gov/\d"
-    r"|PMC\d{4,}",
-    re.I,
+    r"""
+      https?://                                          # a URL with a real host and a path
+        (?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+  # labels: alnum-bounded, no empty ones
+        [A-Za-z]{2,}                                     # TLD
+        (?::\d+)?                                        # optional port
+        /\S                                              # and at least one path character
+    | \bdoi:\s*10\.\d{4,9}/\S                            # DOI, prefixed form
+    | \bdoi\.org/10\.\d{4,9}/\S                          # DOI, URL form (bare host)
+    | \barxiv\.org/abs/\d{4}\.\d{4,5}(?:v\d+)?           # arXiv URL, modern id
+    | \barxiv\.org/abs/[a-z-]+(?:\.[A-Z]{2})?/\d{7}       # arXiv URL, legacy id
+    | \barXiv:\s*\d{4}\.\d{4,5}(?:v\d+)?                 # canonical arXiv id
+    | \barXiv:\s*[a-z-]+(?:\.[A-Z]{2})?/\d{7}             # canonical arXiv legacy id
+    | \bpubmed\.ncbi\.nlm\.nih\.gov/\d{4,}
+    | \bPMID:?\s*\d{4,}\b                                 # canonical PubMed id
+    | \bPMC\d{4,}\b                                       # PMC id
+    """,
+    re.I | re.X,
 )
 
 

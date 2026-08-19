@@ -52,6 +52,47 @@ def test_only_refuted_is_error():
         assert (sev == "ERROR") == (r["grade"] == "refuted"), r["id"]
 
 
+# The canonical detector's full polarity table. It is code now, so its correctness is no
+# longer something a ledger can weaken — and no longer something a ledger author can be
+# blamed for either, which is why the table is exhaustive rather than illustrative.
+RESOLVABLE_LOCATORS = [
+    "https://example.com/page",
+    "http://example.org/x/y",
+    "https://example.com:8080/path",
+    "see https://example.com/page for detail",
+    "https://doi.org/10.1145/3613904.3642433",
+    "doi:10.1037/0033-2909.106.2.265",
+    "doi: 10.1037/abc",
+    "https://arxiv.org/abs/2301.00001",
+    "https://arxiv.org/abs/2301.00001v2",
+    "arXiv:2301.00001",
+    "arXiv: 2301.00001v3",
+    "arXiv:math.GT/0309136",
+    "https://pubmed.ncbi.nlm.nih.gov/1234567/",
+    "PMID: 12345678",
+    "PMID12345678",
+    "PMC1234567",
+    "https://engineering.fb.com/2023/08/09/ml-applications/x",
+]
+NOT_LOCATORS = [
+    "https://", "http://",                 # a scheme is not a locator
+    "PMC", "PMC12",                        # the substring, and too few digits
+    "doi:", "doi:10", "doi:10.1/x",        # incomplete DOIs
+    "example.com/page", "www.example.com",  # bare domains
+    "10.1145/3613904",                     # a bare DOI suffix
+    "[HIGH]", "source: my notes",          # self-authored tags
+    "https://a.b/",                        # single-character TLD
+    "arxiv.org/abs/", "arxiv.org/abs/2",   # incomplete arXiv
+    "pubmed.ncbi.nlm.nih.gov/",            # no id
+    # The reviewer's cases: malformed hosts and identifiers embedded in other words.
+    "https://..com/path", "https://.com/p", "https://-x.com/p", "https://x-.com/p",
+    "NOTPMC1234", "PMIDX 12345678",
+    # And two real uncited precision claims, which must never look cited.
+    "The review covered 2024 studies.",
+    "The effect size was r = 0.26.",
+]
+
+
 def test_only_resolvable_locators_count_as_citations():
     """A self-authored tag like [HIGH] is not a source. Regression on a real finding.
 
@@ -61,28 +102,10 @@ def test_only_resolvable_locators_count_as_citations():
     been removed — guarding a configurable detector proved impossible, because any finite
     fixture set is either evadable or over-strict.
     """
-    rx = fl.CITATION_RX
-
-    resolvable = [
-        "https://doi.org/10.1145/3613904.3642433",
-        "see https://example.com/page for detail",
-        "doi:10.1037/0033-2909.106.2.265",
-        "https://arxiv.org/abs/2301.00001",
-        "https://pubmed.ncbi.nlm.nih.gov/1234567/",
-        "PMC1234567",
-    ]
-    degenerate = [
-        "https://",                 # a scheme is not a locator
-        "PMC",                      # the substring alone
-        "[HIGH]",                   # a self-authored confidence tag
-        "doi:",
-        "source: my notes",
-        "example.com/page",         # bare domain, deliberately not a marker
-    ]
-    for good in resolvable:
-        assert rx.search(good), good
-    for bad in degenerate:
-        assert not rx.search(bad), bad
+    for good in RESOLVABLE_LOCATORS:
+        assert fl.CITATION_RX.search(good), good
+    for bad in NOT_LOCATORS:
+        assert not fl.CITATION_RX.search(bad), bad
 
 
 # ---------- POSITIVE + NEGATIVE for every rule ----------
@@ -2032,3 +2055,26 @@ def test_an_empty_instead_is_rejected_at_both_levels():
             fl.load_ledger(_ledger_with(rule_level))
         with pytest.raises(fl.LedgerError, match="instead"):
             fl.load_ledger(_ledger_with(precision_level))
+
+
+def test_the_locator_table_holds_through_lint_text_not_only_the_regex():
+    """BEHAVIOURAL. A regex-level assertion cannot show that suppression actually follows.
+
+    The reviewer's cases were reported through `lint_text`, so they are checked there: a
+    malformed host must not silence a precision claim, and a real locator must.
+    """
+    claim = "The review covered 2024 studies."
+    for locator in RESOLVABLE_LOCATORS:
+        assert "unsourced-precision" not in ids(f"{claim} {locator}\n"), locator
+    for non_locator in NOT_LOCATORS:
+        if "2024 studies" in non_locator or "r = 0.26" in non_locator:
+            continue                       # those ARE the claim, not an accompanying token
+        assert "unsourced-precision" in ids(f"{claim} {non_locator}\n"), non_locator
+
+
+def test_the_same_table_governs_the_claim_rule_bypass():
+    """The detector serves two consumers; a fix to one must not diverge from the other."""
+    folklore = "According to Instagram, its algorithm demotes non-original accounts."
+    assert "algorithm-punishes" not in ids(f"{folklore} https://example.com/page\n")
+    assert "algorithm-punishes" in ids(f"{folklore} https://..com/path\n")
+    assert "algorithm-punishes" in ids(f"{folklore} NOTPMC1234\n")
