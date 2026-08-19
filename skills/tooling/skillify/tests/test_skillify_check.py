@@ -1659,11 +1659,16 @@ def test_a_held_out_case_that_is_only_a_placeholder_is_caught(tmp_path):
 
 def test_a_short_but_real_held_out_case_counts(tmp_path):
     """Control: the residue rule must not treat *short* as *placeholder*. An earlier
-    draft of it rejected the fixture's own `case 0` prompts."""
+    draft of it rejected the fixture's own `case 0` prompts.
+
+    The value here is deliberately SHORT — six residue characters, right at the
+    threshold — because a longer one does not exercise the guard at all. With
+    "Critique this API." (15 residue chars) this test passed even with the guard
+    removed, so mutant M39 died to unrelated tests and its coverage was unproven."""
     d = _j(tmp_path, held_out=0)
     ho = d / "evals" / "held-out"
     ho.mkdir(parents=True, exist_ok=True)
-    (ho / "case-01.md").write_text("Critique this API.\n", encoding="utf-8")
+    (ho / "case-01.md").write_text("Sort it.\n", encoding="utf-8")
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
