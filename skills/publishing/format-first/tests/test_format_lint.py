@@ -1867,7 +1867,9 @@ def test_a_marker_regex_must_discriminate_in_both_directions():
     """
     import pytest
 
-    too_loose = (".*", ".", r"\s*", "https?://", "[a-z]")
+    # `\.\w` is the one that slipped the first fixture set — six of seven degenerate
+    # markers were caught, and a decimal-figure fixture closed the seventh.
+    too_loose = (".*", ".", r"\s*", "https?://", "[a-z]", "[A-Z]", r"\.\w", r"\d+\.\d+")
     for pattern in too_loose:
         def loose(led, p=pattern):
             led["precision_without_source"]["marker_regex"] = p
@@ -1884,12 +1886,24 @@ def test_a_marker_regex_must_discriminate_in_both_directions():
             fl.load_ledger(_ledger_with(tight))
 
 
-def test_a_reasonable_custom_marker_still_loads():
-    """The guard must reject degenerate markers, not customisation."""
-    def custom(led):
-        led["precision_without_source"]["marker_regex"] = r"https?://\S+|doi\.org/\S+"
+def test_reasonable_custom_markers_still_load():
+    """The guard must reject degeneracy, not customisation.
 
-    assert fl.load_ledger(_ledger_with(custom))["precision_without_source"]
+    Five realistic marker styles, because a guard tightened until it only accepts the
+    shipped value is not a guard, it is a hardcode with extra steps.
+    """
+    for label, pattern in {
+        "urls only": r"https?://[\w.-]+\.[a-z]{2,}/\S",
+        "url or doi": r"https?://\S+|doi\.org/10\.\d{4,}/\S",
+        "url, doi or arxiv": r"https?://\S+|doi:10\.\S+|arxiv\.org/abs/\d",
+        "footnote style": r"https?://\S+|\[\^\d+\]",
+        "shipped": json.loads(fl.LEDGER.read_text(encoding="utf-8"))
+                       ["precision_without_source"]["marker_regex"],
+    }.items():
+        def custom(led, p=pattern):
+            led["precision_without_source"]["marker_regex"] = p
+
+        assert fl.load_ledger(_ledger_with(custom))["precision_without_source"], label
 
 
 def test_a_custom_instead_is_honoured_not_ignored():

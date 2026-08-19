@@ -237,6 +237,9 @@ MARKER_MUST_NOT_MATCH = (
     "Sends are weighted 3-5x more than likes.",
     "[HIGH] confidence, per my own notes.",
     "https://",
+    # A decimal figure: the shape a precision claim most often takes, and the one that
+    # slipped a marker of `\.\w` past the other fixtures.
+    "The effect size was r = 0.26 across the studies.",
 )
 MARKER_MUST_MATCH = (
     "https://doi.org/10.1145/3613904.3642433",
