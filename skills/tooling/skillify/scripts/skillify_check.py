@@ -52,7 +52,7 @@ PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
 # --- frontmatter -------------------------------------------------------------
 
-_FRONTMATTER_RE = re.compile(r"^\ufeff?---\n(.*?)\n---[^\S\n]*(?:\n|$)", re.DOTALL)
+_FRONTMATTER_RE = re.compile(r"^\ufeff?---[^\S\n]*\n(.*?)\n---[^\S\n]*(?:\n|$)", re.DOTALL)
 
 
 def _count_top_level_key(block: str, key: str) -> int | None:
@@ -760,6 +760,8 @@ def _substantive(x: object) -> bool:
         return False
     if isinstance(x, (int, float)):
         return math.isfinite(x)
+    if isinstance(x, (dict, list, tuple, set)):
+        return bool(x)  # a structured value is a value
     return isinstance(x, str) and bool(x.strip())
 
 
@@ -869,6 +871,10 @@ def _admission_issue(skill_dir: Path) -> str | None:
     misparsed. It does not prove the test happened — nothing static can, and SKILL.md
     says so — but it makes the author's own verdict unambiguous.
     """
+    if yaml is None:
+        return ("tier J's admission record is a YAML contract and this build has no "
+                "yaml module — `pip install pyyaml`; the gate will not pass frontmatter "
+                "it cannot parse")
     f = skill_dir / "evals" / "admission.md"
     if not f.is_file():
         return ("no evals/admission.md — record the admission test and declare its "

@@ -1690,20 +1690,22 @@ def test_utf8_bom_does_not_hide_frontmatter(tmp_path):
 
 
 def test_the_documented_template_parses_without_pyyaml(tmp_path, monkeypatch):
-    """The gate rejected the template it prints itself. `outcome: admitted # or:
-    rejected` is the form in `_ADMISSION_TEMPLATE` and in SKILL.md, and the stdlib
-    fallback never stripped the YAML comment — so an author copying the remediation
-    message was told to add what they already had."""
-    # `parse_frontmatter` does a LOCAL `import yaml`, so patching the module
-    # attribute does not reach it — an earlier version of this test passed through
-    # pyyaml and never exercised the fallback at all (mutant M53 survived on it).
+    """The stdlib fallback must still strip a plain-scalar YAML comment: the template
+    this skill prints — `outcome: admitted   # or: rejected` — and `tier: J  # judgment`
+    in a SKILL.md both hit that path.
+
+    Tier J's admission record now requires pyyaml outright (a YAML contract cannot be
+    gated without a YAML parser), so this asserts against `parse_frontmatter` directly
+    rather than through the admission check."""
     monkeypatch.setitem(sys.modules, "yaml", None)
     monkeypatch.setattr(mod, "yaml", None)
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "---\noutcome: admitted   # or: rejected\n---\n\nTwo agents, one brief.\n",
-        encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "PASS"
+    f = tmp_path / "SKILL.md"
+    f.write_text("---\nname: demo\noutcome: admitted   # or: rejected\ntier: D  # deterministic\n---\n# b\n",
+                 encoding="utf-8")
+    fm = mod.parse_frontmatter(f)
+    assert fm["outcome"] == "admitted"
+    assert fm["tier"] == "D"
+
 
 
 def test_a_hash_inside_a_quoted_value_is_not_a_comment(tmp_path, monkeypatch):
@@ -1874,17 +1876,25 @@ def test_a_malformed_closing_fence_does_not_run_on_to_a_later_one(tmp_path):
     assert step2["status"] == "FAIL" and "does not parse as YAML" in step2["detail"]
 
 
-def test_empty_outcome_message_is_reachable_without_pyyaml(tmp_path, monkeypatch):
-    """On the stdlib path an empty `outcome:` yielded "", indistinguishable from an
-    absent key, so the accurate message was unreachable exactly where the fallback
-    parser is in use."""
+def test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse(tmp_path, monkeypatch):
+    """The FALSE ACCEPT that ended the review: without pyyaml the duplicate check was
+    unavailable AND the hand-rolled parser resolved duplicates last-wins, so
+
+        outcome: rejected
+        outcome: admitted
+
+    PASSED — a declared rejection admitted on a stdlib-only box. "Skip rather than
+    guess" was right not to guess and wrong about the direction; the gate now refuses
+    to pass what it cannot verify."""
     monkeypatch.setitem(sys.modules, "yaml", None)
     monkeypatch.setattr(mod, "yaml", None)
     d = _j(tmp_path)
     (d / "evals" / "admission.md").write_text(
-        "---\noutcome:\n---\n\nTwo agents received the same brief.\n", encoding="utf-8")
+        "---\noutcome: rejected\noutcome: admitted\n---\n\nTwo agents, one brief.\n",
+        encoding="utf-8")
     step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "empty `outcome`" in step2["detail"]
+    assert step2["status"] == "FAIL" and "pyyaml" in step2["detail"]
+
 
 
 def test_frontmatter_without_an_outcome_key_fails(tmp_path):
@@ -1953,3 +1963,36 @@ def test_duplicate_detection_is_skipped_not_guessed_without_pyyaml(tmp_path, mon
     # the duplicate goes undetected, and that is the stated trade — but the record is
     # still read and a declared rejection would still block
     assert mod._count_top_level_key("outcome: admitted", "outcome") is None
+
+
+def test_structured_values_are_substantive(tmp_path):
+    """Final-round blockers 2 and 3: `_substantive` returned False for dicts and lists,
+    so `method: {metric: …, judges: 3}` read as "missing a method" and
+    `input: {messages: […]}` read as "not a case". Ordinary YAML, both refused."""
+    d = _j(tmp_path, held_out=0)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {
+        "value": 0.84,
+        "method": {"metric": "Krippendorff alpha", "judges": 3, "cases": 40}}
+    blob["cases"] = [{"held_out": True,
+                      "input": {"messages": [{"role": "user", "content": "Summarize."}]}}]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]
+
+
+def test_empty_structured_values_are_not_substantive(tmp_path):
+    """Paired control: accepting structure must not accept EMPTY structure."""
+    assert mod._substantive({}) is False
+    assert mod._substantive([]) is False
+    assert mod._substantive({"a": 1}) is True
+
+
+def test_trailing_whitespace_on_the_opening_fence_is_accepted(tmp_path):
+    """Final-round major: `---  \n` is an ordinary opening fence and was refused as
+    "has no frontmatter block"."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---  \noutcome: admitted\n---\n\nTwo agents, one brief; both valid.\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"

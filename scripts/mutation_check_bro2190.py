@@ -200,8 +200,8 @@ MUTANTS = [
     # branch was deleted and replaced by an explicit early return; a mutant that
     # can never die is dishonest bookkeeping, not coverage.
     ("M52 a UTF-8 BOM hides frontmatter again",
-     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
-     '_FRONTMATTER_RE = re.compile(r"^---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
      "test_bom_reaches_the_second_frontmatter_parser_too"),
     ("M53 the stdlib fallback stops stripping YAML comments",
      '                val = re.split(r"\\s+#", val, 1)[0].strip()',
@@ -228,7 +228,7 @@ MUTANTS = [
     ("M59 empty-outcome message unreachable on the stdlib path again",
      '    if present and outcome in ("", "none", "null"):',
      '    if False:',
-     "test_empty_outcome_message_is_reachable_without_pyyaml"),
+     "test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse"),
 
 
     # M58/M60/M61/M62 retired with the line-based key walker they targeted; the
@@ -245,6 +245,19 @@ MUTANTS = [
      '    if declared is None and yaml is not None:',
      '    if False:',
      "test_a_malformed_closing_fence_does_not_run_on_to_a_later_one"),
+
+    ("M66 tier J passes frontmatter it cannot parse (the final false accept)",
+     '    if yaml is None:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
+     '    if False:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
+     "test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse"),
+    ("M67 structured values stop counting as values",
+     '    if isinstance(x, (dict, list, tuple, set)):\n        return bool(x)  # a structured value is a value',
+     '    if isinstance(x, (dict, list, tuple, set)):\n        return False',
+     "test_structured_values_are_substantive"),
+    ("M68 opening fence stops tolerating trailing whitespace",
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     "test_trailing_whitespace_on_the_opening_fence_is_accepted"),
 ]
 
 
