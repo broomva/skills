@@ -417,6 +417,24 @@ def _walk_for_trigger_keys(node: object, depth: int = 0) -> bool:
     return False
 
 
+def _syntax_checkable(path: Path) -> bool:
+    """Whether this build can actually syntax-check the file. Used so the PASS line
+    never claims `syntax ok` about something nothing examined."""
+    if path.suffix in (".py", ".sh"):
+        return True
+    if path.suffix in (".mjs", ".js", ".ts"):
+        return bool(shutil.which("node"))
+    if not path.suffix:
+        head = (_read(path) or "").splitlines()[:1]
+        m = _SHEBANG_RE.match(head[0]) if head else None
+        if not m:
+            return False
+        i = m.group(1).lower()
+        return (i in _SH_INTERPRETERS or i in _PY_INTERPRETERS
+                or (i in _NODE_INTERPRETERS and bool(shutil.which("node"))))
+    return False
+
+
 def _script_syntax_error(path: Path) -> str | None:
     """Return an error string if the script has a syntax error, else None.
     .mjs/.js/.ts checked only when `node` is present; otherwise not blocked."""
@@ -433,11 +451,45 @@ def _script_syntax_error(path: Path) -> str | None:
         r = subprocess.run(["node", "--check", str(path)], capture_output=True)
         return None if r.returncode == 0 else "node syntax error"
     if not path.suffix:
-        # extensionless executable: check it only if its shebang says how
-        head = (_read(path) or "").splitlines()[:1]
-        if head and head[0].startswith("#!") and ("sh" in head[0] or "bash" in head[0]):
-            r = subprocess.run(["bash", "-n", str(path)], capture_output=True)
-            return None if r.returncode == 0 else "shell syntax error"
+        return _shebang_syntax_error(path)
+    return None
+
+
+_SHEBANG_RE = re.compile(r"^#!\s*(?:\S*/)?(?:env\s+)?([\w.-]+)")
+# Word-boundary interpreter names. `"sh" in shebang` substring-matched `fish` and
+# `zsh`, running `bash -n` over a fish script and reporting a false syntax error.
+_SH_INTERPRETERS = {"sh", "bash", "dash", "ksh"}
+_PY_INTERPRETERS = {"python", "python2", "python3"}
+_NODE_INTERPRETERS = {"node", "nodejs"}
+
+
+def _shebang_syntax_error(path: Path) -> str | None:
+    """Syntax-check an extensionless executable by its shebang.
+
+    Counting a file as code without checking it was worse than not counting it: the
+    gate printed `syntax ok` about a file whose syntax was never examined. Anything
+    with an interpreter we cannot check returns the SKIPPED sentinel so the caller
+    does not claim otherwise.
+    """
+    head = (_read(path) or "").splitlines()[:1]
+    if not head:
+        return None
+    m = _SHEBANG_RE.match(head[0])
+    if not m:
+        return None
+    interp = m.group(1).lower()
+    if interp in _SH_INTERPRETERS:
+        r = subprocess.run(["bash", "-n", str(path)], capture_output=True)
+        return None if r.returncode == 0 else "shell syntax error"
+    if interp in _PY_INTERPRETERS:
+        try:
+            ast.parse(_read(path) or "")
+        except SyntaxError:
+            return "python syntax error"
+        return None
+    if interp in _NODE_INTERPRETERS and shutil.which("node"):
+        r = subprocess.run(["node", "--check", str(path)], capture_output=True)
+        return None if r.returncode == 0 else "node syntax error"
     return None
 
 
@@ -498,7 +550,7 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     issues: list[str] = []
     md = skill_dir / "SKILL.md"
     if md.is_file():
-        body = _strip_fences(md.read_text(encoding="utf-8", errors="replace"))
+        body = _strip_fences(_read(md) or "")
         for ln in body.splitlines():
             planned = bool(_PLANNED_RE.search(ln))
             for m in _REF_RE.finditer(ln):
@@ -533,7 +585,7 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     tdir = skill_dir / "templates"
     if tdir.is_dir():
         for y in sorted([*tdir.rglob("*.yaml"), *tdir.rglob("*.yml")]):
-            for ln in y.read_text(encoding="utf-8", errors="replace").splitlines():
+            for ln in (_read(y) or "").splitlines():
                 planned = bool(_PLANNED_RE.search(ln))
                 for m in _REF_RE.finditer(ln):  # all 4 subdir prefixes, not just scripts/
                     ref = m.group(1)
@@ -682,6 +734,11 @@ def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[Path]]:
             bad.append(f)
         elif isinstance(data, dict):
             out.append((f, data))
+        elif isinstance(data, list):
+            # A top-level list is an ordinary prompt set. Keeping only dicts made it
+            # INVISIBLE, so the gate reported "no routing eval" about a file that was
+            # present and well-formed. Wrap it so polarity can still be read.
+            out.append((f, {"cases": data}))
     return out, bad
 
 
@@ -727,13 +784,20 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if not raw.strip():
         return "evals/admission.md is empty"
     txt = _strip_fences(raw)
+    # A rejection ANYWHERE in the raw file blocks — including inside a fence, and
+    # including "admitted / rejected (delete one)" template rows. The docstring
+    # claimed this and the code did not: fence-stripping ran first, so a superseding
+    # rejection in an example was invisible. Failing closed on ambiguity is the
+    # correct direction for a gate; write examples without a rejection verdict.
+    if re.search(r"\brejected\b|\bnot admitted\b", raw, re.IGNORECASE):
+        return ("evals/admission.md contains a `rejected` verdict — an underspecified "
+                "skill is not admissible (and an example verdict is indistinguishable "
+                "from a real one, so it blocks too)")
     hits = [m.group(1).lower() for m in _OUTCOME_RE.finditer(txt)]
     hits += [m.group(1).lower() for m in _OUTCOME_HEADING_RE.finditer(txt)]
     if not hits:
         return ("evals/admission.md records no outcome — needs a line like "
                 "`Outcome: admitted` (or `rejected`)")
-    if any(h != "admitted" for h in hits):
-        return "evals/admission.md records `rejected` — an underspecified skill is not admissible"
     if _PLANNED_RE.search(txt):
         return ("evals/admission.md is marked planned/not-yet-run — an unrun admission "
                 "test is not an outcome")
@@ -789,7 +853,7 @@ def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
     draft's "held-out case set".
     """
     n = 0
-    d = skill_dir / "held-out" if False else skill_dir / "evals" / "held-out"
+    d = skill_dir / "evals" / "held-out"
     if d.is_dir():
         for f in d.rglob("*"):
             if not f.is_file() or f.name.startswith(".") or f.suffix not in _CASE_EXTS:
@@ -797,7 +861,7 @@ def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
             if f.stem.lower() in {"readme", "index", "template", "example"}:
                 continue
             txt = _read(f)
-            if txt and txt.strip():
+            if _substantive(txt):
                 n += 1
     for _, data in blobs:
         cases = data.get("cases")
@@ -892,31 +956,53 @@ _POSITIVE_KEYS = {"should_trigger", "shouldTrigger", "should_fire"}
 _NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire", "negative_case"}
 
 
-def _polarity_seen(node: object, depth: int = 0) -> tuple[bool, bool]:
-    """(has a real positive assertion, has a real negative assertion).
-
-    'Real' means an actual boolean, not merely the key's presence.
-    `{"should_fire": null}` satisfied an earlier draft — the same weak-check-made-
-    load-bearing defect a sibling PR had already documented for step 5, repeated here
-    because tier L made the weak check *required*.
-    """
+def _case_polarity(case: object) -> tuple[bool, bool]:
+    """(positive, negative) for ONE case in the per-case boolean shape."""
     pos = neg = False
-    if depth > 40:
-        return pos, neg
-    if isinstance(node, dict):
-        for k, v in node.items():
+    if isinstance(case, dict):
+        for k, v in case.items():
             ks = str(k)
             if ks in _POSITIVE_KEYS and isinstance(v, bool):
                 pos, neg = (pos or v), (neg or not v)
             elif ks in _NEGATIVE_KEYS and isinstance(v, bool):
                 neg = neg or v
-            else:
-                p, n = _polarity_seen(v, depth + 1)
-                pos, neg = pos or p, neg or n
-    elif isinstance(node, list):
-        for v in node:
-            p, n = _polarity_seen(v, depth + 1)
-            pos, neg = pos or p, neg or n
+    return pos, neg
+
+
+def _blob_polarity(data: dict) -> tuple[bool, bool]:
+    """(positive, negative) for one eval document, across BOTH shapes in use here.
+
+    Shape A — role-x resolver evals, the only routing-eval format this repo actually
+    ships (14 files under roles/): top-level `should_fire:` / `should_not_fire:` each
+    mapping to a LIST of prompts. An earlier draft required booleans and would have
+    rejected every one of them — while step 5 reported the same file as a valid
+    trigger eval, the gate contradicting itself about one file. Tier L was proven
+    only against a fixture shape that existed nowhere but its own tests.
+
+    Shape B — Schmid prompt sets: a `cases` list whose entries carry boolean
+    `should_trigger` / `should_fire` / `should_not_fire`.
+
+    In shape B the two polarities must come from DIFFERENT cases. One case asserting
+    `should_fire: true` AND `should_not_fire: true` is self-contradictory and used to
+    satisfy "both polarities" on its own.
+    """
+    pos = neg = False
+    for k, v in data.items():
+        if isinstance(v, list) and v:
+            ks = str(k)
+            if ks in _POSITIVE_KEYS:
+                pos = True
+            elif ks in _NEGATIVE_KEYS:
+                neg = True
+    for key in ("cases", "prompts", "tests"):
+        cases = data.get(key)
+        if not isinstance(cases, list):
+            continue
+        for case in cases:
+            cp, cn = _case_polarity(case)
+            if cp and cn:
+                continue  # one case cannot be both; it asserts nothing
+            pos, neg = pos or cp, neg or cn
     return pos, neg
 
 
@@ -934,13 +1020,8 @@ def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
     # tier L with no routing cases at all.
     pos = neg = False
     for _, data in blobs:
-        for key in ("cases", "prompts", "tests"):
-            cases = data.get(key)
-            if not isinstance(cases, list):
-                continue
-            for case in cases:
-                cp, cn = _polarity_seen(case)
-                pos, neg = pos or cp, neg or cn
+        bp, bn = _blob_polarity(data)
+        pos, neg = pos or bp, neg or bn
     if pos and neg:
         return None
     if not pos and not neg:
@@ -1030,7 +1111,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
             required=True)
     else:
         add("1c", "Reference integrity", PASS,
-            "every scripts/references/assets/templates reference resolves")
+            "every scripts/references/assets/templates reference resolves", required=True)
 
     # 2 — Tier + its core (required). The gate no longer asks the single question
     # "is there a deterministic core?" — that let a testability question decide an
@@ -1072,8 +1153,11 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         if not code:
             add(2, "Tier + core", FAIL, "tier D declared but no scripts/ code", required=True)
         else:
-            add(2, "Tier + core", PASS,
-                f"{tag}: {len(code)} script(s), syntax ok: {', '.join(code[:3])}", required=True)
+            checked = [c for c in code if _syntax_checkable(skill_dir / c)]
+            claim = (f"{len(code)} script(s), syntax ok" if len(checked) == len(code)
+                     else f"{len(code)} script(s), {len(checked)} syntax-checked "
+                          f"({len(code) - len(checked)} unchecked: no checker for their type)")
+            add(2, "Tier + core", PASS, f"{tag}: {claim}: {', '.join(code[:3])}", required=True)
     elif tier == TIER_J:
         issues: list[str] = []
         if unparseable_evals:
@@ -1214,7 +1298,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         add(10, "Brain filing rules", SKIP, "pass --entities-dir to check KG provenance")
     else:
         prov = entities_dir.is_dir() and any(
-            re.search(rf"\b{re.escape(name)}\b", p.read_text(encoding="utf-8", errors="replace"))
+            re.search(rf"\b{re.escape(name)}\b", _read(p) or "")
             for p in entities_dir.rglob("*.md"))
         add(10, "Brain filing rules", PASS if prov else WARN,
             f"'{name}' referenced in knowledge graph" if prov else f"no KG entity references '{name}'", required=False)
@@ -1272,7 +1356,7 @@ def survey(root: Path, **kw) -> dict:
             failed = [f"{r['step']} {r['label']}" for r in res
                       if r["required"] and r["status"] != PASS]
         except Exception as exc:  # a skill that cannot be checked is not a skill that passed
-            fm, tier, declared, why = {}, None, False, f"errored: {type(exc).__name__}"
+            fm, tier, declared, why = {}, "errored", False, f"errored: {type(exc).__name__}"
             failed = [f"error: {type(exc).__name__}: {exc}"[:120]]
         rows.append({
             "skill": fm.get("name") or d.name,

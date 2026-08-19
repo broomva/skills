@@ -91,7 +91,7 @@ MUTANTS = [
      '            if not f.is_file():',
      "test_gitkeep_and_readme_are_not_held_out_cases"),
     ("M17 empty script accepted as a deterministic core",
-     '    empty_code = [c for c in code if not (_read(skill_dir / c) or "").strip()]',
+     '    empty_code = [c for c in code if not _has_executable_content(skill_dir / c)]',
      '    empty_code = []',
      "test_empty_script_is_not_a_deterministic_core"),
     ("M18 unparseable eval artifacts become invisible instead of failing closed",
@@ -105,8 +105,8 @@ MUTANTS = [
      '        return True',
      "test_comment_only_script_is_not_a_deterministic_core"),
     ("M20 polarity read from the whole document again",
-     '            for case in cases:\n                cp, cn = _polarity_seen(case)',
-     '            for case in [data]:\n                cp, cn = _polarity_seen(case)',
+     '        for key in ("cases", "prompts", "tests"):',
+     '        for key in ():\n            pass\n        if True:\n            cp, cn = _polarity_seen(data)\n            pos, neg = pos or cp, neg or cn\n        for key in ():',
      "test_unrelated_nested_metadata_does_not_supply_polarity"),
     ("M21 malformed judge declarations dropped from the ambiguity count",
      '    if len(judges) > 1:',
@@ -132,6 +132,36 @@ MUTANTS = [
      '        text = md_path.read_text(encoding="utf-8", errors="replace")',
      '        text = md_path.read_text(encoding="utf-8")',
      "test_invalid_utf8_in_skill_md_fails_closed_without_a_traceback"),
+
+    # --- round 3 -----------------------------------------------------------
+    ("M27 tier L requires booleans again (rejects the real roles/*.eval.yaml shape)",
+     '        if isinstance(v, list) and v:',
+     '        if False:',
+     "test_tier_l_accepts_the_real_roles_eval_shape"),
+    ("M28 one self-contradictory case satisfies both polarities",
+     '            if cp and cn:\n                continue  # one case cannot be both; it asserts nothing',
+     '            pass',
+     "test_one_self_contradictory_case_does_not_satisfy_both_polarities"),
+    ("M29 held-out FILE path drops the placeholder guard again (the one-site fix)",
+     '            txt = _read(f)\n            if _substantive(txt):',
+     '            txt = _read(f)\n            if txt and txt.strip():',
+     "test_placeholder_held_out_case_file_is_not_a_case"),
+    ("M30 extensionless python script counted but not syntax-checked",
+     '    if interp in _PY_INTERPRETERS:',
+     '    if False:',
+     "test_extensionless_python_script_is_syntax_checked"),
+    ("M31 shebang interpreter matched by substring again (fish/zsh)",
+     '    if interp in _SH_INTERPRETERS:',
+     '    if "sh" in interp:',
+     "test_fish_shebang_is_not_checked_with_bash"),
+    ("M32 a rejection inside a fence stops blocking",
+     '    if re.search(r"\\brejected\\b|\\bnot admitted\\b", raw, re.IGNORECASE):',
+     '    if False:',
+     "test_rejection_inside_a_fence_still_blocks"),
+    ("M33 top-level-list eval artifacts become invisible again",
+     '        elif isinstance(data, list):',
+     '        elif False:',
+     "test_top_level_list_eval_is_visible_not_invisible"),
 ]
 
 
@@ -151,7 +181,7 @@ if rc != 0:
     sys.exit(f"ABORT: baseline suite is not green ({failed})")
 print(f"baseline: green, clean tree\n")
 
-killed = survived = stale = 0
+killed = survived = stale = missed = 0
 for name, old, new, expect in MUTANTS:
     src = GATE.read_text(encoding="utf-8")
     n = src.count(old)
@@ -172,16 +202,21 @@ for name, old, new, expect in MUTANTS:
     elif err:
         print(f"  !! CRASH   {name} — suite errored, not a behavioural kill")
         survived += 1
+    elif expect not in failed:
+        # The mutant died, but NOT to the test that claims to cover it. That is
+        # unproven coverage, not a kill: the named test passes for some other
+        # reason and the predicate is guarded by something incidental.
+        print(f"  MISSED    {name}")
+        print(f"            died, but targeted test did NOT fail: {expect}")
+        print(f"            actual: {failed[:4]}")
+        missed += 1
     else:
-        hit = expect in failed
-        print(f"  KILLED    {name}")
-        print(f"            by {len(failed)} test(s); targeted test {'HIT' if hit else 'MISSED -> suspect'}: {expect}")
-        if not hit:
-            print(f"            actual: {failed[:4]}")
+        print(f"  KILLED    {name}  (by {len(failed)} test(s))")
         killed += 1
 
 total = len(MUTANTS)
 print(f"\n{killed}/{total} mutants killed"
       + (f"; {survived} SURVIVED" if survived else "")
+      + (f"; {missed} MISSED (died to the wrong test — coverage unproven)" if missed else "")
       + (f"; {stale} STALE (anchor no longer matches — coverage unproven)" if stale else ""))
-sys.exit(0 if (survived == 0 and stale == 0 and killed == total) else 1)
+sys.exit(0 if killed == total else 1)

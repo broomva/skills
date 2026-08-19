@@ -78,13 +78,13 @@ amnesty.
 > and with node absent (29 → 27). Both losses are the two `latent_only` skills. Quote
 > the delta, not the absolute.
 
-Three tiers replace the binary. **Declare one in frontmatter** (`tier: D`); absent, the
-gate infers it and warns.
+Three tiers replace the binary. **Declare one in frontmatter** (`tier: D`). Only **D**
+is inferred, from shipped code; **J and L must be declared** (see below for why).
 
 | Tier | What it is | What the gate requires |
 |---|---|---|
 | **D** — deterministic | there is a pure function in here (`unslop_gate.py`; a lint) | `scripts/` + real unit tests (a mutation proof is required discipline, but is **not** machine-checked — the gate cannot see one) |
-| **J** — judgment | a well-posed question whose valid answers vary (`critique`, `impeccable`, `devils-advocate`) | the admission record, a rubric, a held-out case set, a **cross-model** judge config, and a **measured** agreement floor |
+| **J** — judgment | a well-posed question whose valid answers vary (`critique`, `impeccable`, `devils-advocate` — all installed globally, none in this monorepo) | the admission record, a rubric, a held-out case set, a **cross-model** judge config, and a floor carrying its own measurement |
 | **L** — lens | it changes what you attend to, not what you do | a routing eval in **both polarities** — fires on the right requests, stays silent on near-misses |
 
 A skill is often more than one thing. Declare the tier whose gate is **hardest** for
@@ -143,6 +143,32 @@ So the gate enforces the *shape* instead of a number: a Tier-J skill must declar
 `judge.agreement_floor` **and** carry `judge.agreement_measured` recording the value,
 the method, and the date that produced it. A floor declared with no measurement is a
 **FAIL**, not a warning. Pick your own floor; show your work.
+
+### What this gate cannot check, and does not pretend to
+
+Two adversarial review rounds spent most of their findings on one question: *can the
+gate tell a real artifact from a convincing fake?* The answer is **no, and no static
+gate can.** Whether a rubric was thought about, whether forty cases were really
+dual-labelled, whether the admission test actually ran — none of that is recoverable
+from the bytes on disk. A gate that claims otherwise invites an arms race it loses
+every round, one plausible-looking placeholder at a time.
+
+So the boundary is stated rather than blurred:
+
+| The gate checks | The gate cannot check |
+|---|---|
+| the artifacts exist, parse, and are structurally complete | that they describe something that happened |
+| the judge model differs from every declared model under eval | that the judge was ever run |
+| the floor is a finite number carrying a `value` + `method` | that the measurement produced *that* floor |
+| the case has an input and is not a placeholder | that the case is a good case |
+| a script has a non-comment line | that the code does anything useful |
+
+The placeholder checks (`TBD`, `vibes`, `not measured`, …) are a **typo-catcher, not
+an authenticity gate.** They catch a field someone forgot to fill in. They do not catch
+a field someone filled in falsely, and they are not meant to. That judgement belongs to
+the **P20 review layer**, where a human or a second model reads the artifact — and
+pretending a regex can do it would be exactly the vacuity this whole gate exists to
+prevent.
 
 ### Neither J nor L has a real user yet
 

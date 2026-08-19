@@ -1417,3 +1417,152 @@ def test_placeholder_keyed_rubric_is_not_a_rubric(tmp_path):
     (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
+
+
+# ===========================================================================
+# P20 round 3 — the tier-L gate was proven only against its own fixture shape.
+# ===========================================================================
+
+REAL_ROLE_EVAL = """# Resolver-eval fixture in the shape this repo actually ships (roles/*.eval.yaml).
+lens: demo
+
+should_fire:
+  - "agentic-vps"
+  - "set up a vps for autonomous agents"
+  - intent: "audit this provisioning script"
+    touched_files: ["skills/agentic-vps/scripts/provision.sh"]
+
+should_not_fire:
+  - "summarize this PDF in 3 bullets"
+  - "fix the bug in foo.rs"
+"""
+
+
+def test_tier_l_accepts_the_real_roles_eval_shape(tmp_path):
+    """Round-3 blocker 4, and the most important test in this file. The 14 real
+    `roles/*.eval.yaml` fixtures express polarity as top-level keys mapping to LISTS
+    of prompts. Requiring booleans would have rejected every one of them — while
+    step 5 reported the same file as a valid trigger eval, so the gate contradicted
+    itself about one file. Tier L had been proven only against a shape that existed
+    nowhere but these tests."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "demo.eval.yaml").write_text(REAL_ROLE_EVAL, encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]
+
+
+def test_tier_l_rejects_the_real_shape_when_one_polarity_is_missing(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "demo.eval.yaml").write_text(
+        REAL_ROLE_EVAL.split("should_not_fire:")[0], encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "negative" in step2["detail"]
+
+
+def test_empty_polarity_lists_do_not_count(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "demo.eval.yaml").write_text(
+        "lens: demo\nshould_fire: []\nshould_not_fire: []\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_one_self_contradictory_case_does_not_satisfy_both_polarities(tmp_path):
+    """Round-3 blocker 3: nothing required the two arms to come from distinct cases,
+    so a single case asserting both passed."""
+    d = _l(tmp_path, [{"prompt": "x", "should_fire": True, "should_not_fire": True}])
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_top_level_list_eval_is_visible_not_invisible(tmp_path):
+    """Round-3 major 1: keeping only dicts made a well-formed top-level-list prompt
+    set invisible, and the gate then reported 'no routing eval' about a file that was
+    present and correct."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "r.json").write_text(json.dumps(
+        [{"prompt": "a", "should_fire": True}, {"prompt": "b", "should_not_fire": True}]),
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_placeholder_held_out_case_file_is_not_a_case(tmp_path):
+    """Round-3 blocker 2: the round-2 placeholder guard landed on the `cases:` path
+    only; the FILE path still accepted any non-blank content, so a case file whose
+    entire content was `TBD` counted. `_substantive` was three lines away."""
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("TBD\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_extensionless_python_script_is_syntax_checked(tmp_path):
+    """Round-3 blocker 5: making extensionless files COUNT as code without extending
+    the syntax check meant the gate printed `syntax ok` about a file nothing examined."""
+    d = _skill(tmp_path, tier="D")
+    run = d / "scripts" / "run"
+    run.write_text("#!/usr/bin/env python3\ndef f(:\n    pass\n", encoding="utf-8")
+    run.chmod(0o755)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "syntax error" in step2["detail"]
+
+
+def test_fish_shebang_is_not_checked_with_bash(tmp_path):
+    """Round-3 major 5: `"sh" in shebang` substring-matched fish and zsh."""
+    d = _skill(tmp_path, tier="D")
+    run = d / "scripts" / "run"
+    run.write_text("#!/usr/bin/env fish\nfunction hi\n  echo hi\nend\n", encoding="utf-8")
+    run.chmod(0o755)
+    res = _check(d)
+    step2 = _step(res, 2)
+    assert step2["status"] == "PASS", step2["detail"]
+    # and it must NOT claim it checked what it could not check
+    assert "syntax ok" not in step2["detail"]
+    assert "unchecked" in step2["detail"]
+
+
+def test_rejection_inside_a_fence_still_blocks(tmp_path):
+    """Round-3 blocker 6: the docstring claimed 'ANY rejected anywhere wins' and the
+    code stripped fences first, so a superseding rejection in an example was invisible.
+    Failing closed on ambiguity is the correct direction for a gate."""
+    record = ("Two agents were given the same brief and a third reader judged both "
+              "outputs defensible.\n\n")
+    for body in ("Outcome: admitted\n\n```\nOutcome: rejected\n```\n",
+                 "Outcome: admitted\n\nCorrection: on rerun the final Outcome: rejected.\n",
+                 "| Outcome | admitted / rejected |\n"):
+        d = _j(tmp_path / f"rej{abs(hash(body)) % 9999}")
+        (d / "evals" / "admission.md").write_text(record + body, encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"accepted a rejection in {body!r}"
+
+
+def test_unreadable_template_yaml_fails_closed(tmp_path):
+    """Round-3 major 2: three call sites bypassed `_read`'s fail-closed contract."""
+    d = _skill(tmp_path, tier="D")
+    t = d / "templates"
+    t.mkdir(exist_ok=True)
+    y = t / "t.yaml"
+    y.write_text("script: scripts/do.py\n", encoding="utf-8")
+    y.chmod(0o000)
+    try:
+        res = _check(d)  # must return a verdict, not raise
+        assert any(r["step"] == "1c" for r in res)
+    finally:
+        y.chmod(0o644)
+
+
+def test_survey_does_not_tally_a_crashed_skill_as_unclassified(tmp_path):
+    """Round-3 major 3: a gate bug inflated the very roster bucket the docs quote."""
+    good = _skill(tmp_path, name="good", tier="D")
+    bad = _skill(tmp_path, name="bad", tier="D")
+    (bad / "scripts" / "do.py").chmod(0o000)
+    try:
+        rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+        assert rep["by_tier"].get("unclassified (inferred)", 0) == 0
+    finally:
+        (bad / "scripts" / "do.py").chmod(0o644)
