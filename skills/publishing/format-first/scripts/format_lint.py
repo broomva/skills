@@ -91,6 +91,20 @@ NEGATION_RX = re.compile(
 )
 
 
+def _compile_or_fail(pattern: str, what: str, fail) -> None:
+    """Any failure to compile means an unusable ledger — catch the CLASS, not a list.
+
+    `re.compile` raises more than `re.error`: OverflowError on an absurd repetition count,
+    RecursionError on deep nesting, and the set is not fixed across Python versions. Naming
+    the two that were reported would leave the next one to escape as a traceback and exit 1
+    — the code that means "findings were present".
+    """
+    try:
+        re.compile(pattern)
+    except Exception as exc:                       # noqa: BLE001 — see docstring
+        fail(f"{what}: {type(exc).__name__}: {exc}")
+
+
 def load_ledger(path: Path = LEDGER) -> dict:
     # EVERY way a ledger can be unusable becomes LedgerError, including malformed JSON and
     # unreadable files. Leaving JSONDecodeError to escape meant `--ledger` on a broken file
@@ -135,10 +149,7 @@ def load_ledger(path: Path = LEDGER) -> dict:
                     f"rule {r['id']}: citation_resolves must be a JSON boolean — a "
                     "non-boolean is truthy and would silently suppress findings"
                 )
-            try:
-                re.compile(r["pattern"])
-            except re.error as exc:
-                _fail(f"rule {r['id']} has an invalid pattern: {exc}")
+            _compile_or_fail(r["pattern"], f"rule {r['id']} has an invalid pattern", _fail)
 
     pws = data.get("precision_without_source")
     if pws is not None:
@@ -148,10 +159,9 @@ def load_ledger(path: Path = LEDGER) -> dict:
             if not isinstance(pws.get(field), str) or not pws[field].strip():
                 _fail(f"precision_without_source needs a non-empty string '{field}'")
         for field in ("pattern", "marker_regex"):
-            try:
-                re.compile(pws[field])
-            except re.error as exc:
-                _fail(f"precision_without_source.{field} is invalid: {exc}")
+            _compile_or_fail(
+                pws[field], f"precision_without_source.{field} is invalid", _fail
+            )
         if "window_lines" in pws and not isinstance(pws["window_lines"], int):
             _fail("precision_without_source.window_lines must be an integer")
 

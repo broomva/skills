@@ -1078,6 +1078,13 @@ MALFORMED_LEDGERS = {
     "citation_resolves as a string":
         '{"refuted":[{"id":"x","pattern":"x","message":"m","grade":"refuted","citation_resolves":"false"}]}',
     "uncompilable pattern": '{"refuted":[{"id":"x","pattern":"(","message":"m","grade":"refuted"}]}',
+    # re.compile raises more than re.error, and the set is not fixed across versions.
+    "repetition count that overflows":
+        '{"refuted":[{"id":"x","pattern":"a{999999999999999999999999999999999999999999999999}","message":"m","grade":"refuted"}]}',
+    "backreference to a group that does not exist":
+        '{"refuted":[{"id":"x","pattern":"(a)\\\\9","message":"m","grade":"refuted"}]}',
+    "precision pattern that overflows":
+        '{"precision_without_source": {"pattern":"a{999999999999999999999999999999999999999999999999}","marker_regex":"x","message":"m"}}',
     "precision is a scalar": '{"precision_without_source": 7}',
     "precision missing marker_regex": '{"precision_without_source": {"pattern":"x","message":"m"}}',
     "precision has a bad regex":
