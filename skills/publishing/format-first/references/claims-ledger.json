@@ -2,84 +2,111 @@
   "_meta": {
     "provenance": "broomva/workspace BRO-2145 (PR #376, merged 195a9e54). Claims verified against primary sources on 2026-08-12; see research/entities/pattern/format-consistency-is-retrieval-reliability.md and research/notes/2026-08-12-short-form-format-strategy-synthesis.md",
     "review": "P20 Strata A (codex), 3 rounds: 2/10 -> 5/10 -> 6/10",
-    "recheck_after": "2027-02-12"
+    "recheck_after": "2027-02-12",
+    "grades": {
+      "refuted": "ERROR — contradicted by a primary source that was loaded and read",
+      "contested": "WARN — the literature genuinely disagrees; do not state either side as settled",
+      "unverified": "WARN — origin could not be located in a documented search; NOT proof of falsity",
+      "folklore": "WARN — circulates as fact with no located evidentiary basis",
+      "hypothesis_as_fact": "WARN — plausible mechanism asserted as established"
+    },
+    "negation_guard": "Rules do not fire when the sentence negates or attributes the claim (not/never/no/isn't/does not/myth/false/debunk/misquot/claims that/allegedly)."
   },
   "refuted": [
     {
       "id": "sends-3-5x-likes",
-      "pattern": "(?i)sends?\\b[^.\\n]{0,60}\\b(3\\s*[-–—to]{1,3}\\s*5|three\\s+to\\s+five)\\s*(x|times)",
-      "message": "No primary source for a 3-5x sends:likes weighting was found in any venue searched (Mosseri's accounts, Instagram blog, Meta newsroom, Transparency Center).",
-      "instead": "Mosseri (2025-01-21): likes are 'slightly' more important for connected reach, sends 'slightly' more for unconnected. The asymmetry runs both ways and no numeric ratio is published."
+      "pattern": "(?i)\\bsends?\\b(?=[^.\\n]{0,80}\\blikes?\\b)[^.\\n]{0,80}\\b(3\\s*(?:-|–|—|to)\\s*5|three\\s+to\\s+five)\\s*(?:x|times)",
+      "message": "No primary source for a 3-5x sends:likes weighting was located in a documented search (Mosseri's accounts, Instagram blog, Meta newsroom, Transparency Center). Absence in a searched set is not proof it does not exist — but you cannot cite it.",
+      "instead": "Mosseri (2025-01-21): likes are 'slightly' more important for connected reach, sends 'slightly' more for unconnected. The asymmetry runs both ways and no numeric ratio is published.",
+      "grade": "unverified"
     },
     {
       "id": "polished-aesthetic-dead",
       "pattern": "(?i)(polished|perfect)[^.\\n]{0,30}aesthetic[^.\\n]{0,20}is dead",
-      "message": "Misquotation. Mosseri's 2025-12-31 Threads essay says 'That feed is dead' about personal sharing migrating to DMs, and it is a public essay, not an internal memo.",
-      "instead": "He announces NO ranking change and explicitly defers: 'tackling algorithmic transparency and control is probably best left for another essay.'"
+      "message": "Misquotation, checked against the post. Mosseri's 2025-12-31 Threads essay says 'That feed is dead' about personal sharing migrating to DMs; it is a public essay, not an internal memo, and announces no ranking change.",
+      "instead": "He announces NO ranking change and explicitly defers: 'tackling algorithmic transparency and control is probably best left for another essay.'",
+      "grade": "refuted"
     },
     {
       "id": "bornstein-208-studies",
       "pattern": "(?i)208\\s+studies",
-      "message": "It is 134 studies reporting 208 effect-size CONTRASTS (Grybinas, Kantner & Dobbins 2019, Memory & Cognition 47:1314-1327). Calling it 208 studies inflates the count ~55%.",
-      "instead": "Say '134 studies / 208 contrasts', or drop the number."
+      "message": "Ambiguous phrasing. Near-primary sources describe 134 studies/articles reporting 208 effect-size contrasts; 'a meta-analysis of 208 studies' conflates the two. The exact framing is disputed and the article is paywalled.",
+      "instead": "Write '134 studies reporting 208 contrasts', or drop the count.",
+      "grade": "contested"
     },
     {
       "id": "mere-exposure-r-026",
-      "pattern": "(?i)r\\s*[=≈~]\\s*0?\\.26",
-      "message": "The r = 0.26 figure could not be located in the paywalled article, its abstract, Crossref, PubMed, Google Books, or a full-text search across 41 open-access mere-exposure papers. Its proximate source is Wikipedia.",
-      "instead": "Make the claim qualitatively: repeated supraliminal visual exposure increases liking, up to a point."
+      "pattern": "(?i)\\br\\s*[=≈~]\\s*[.0]\\.?26\\b(?![0-9])",
+      "message": "The r = .26 figure could not be located in a documented search (paywalled article, its abstract, Crossref, PubMed, Google Books, full-text across 41 open-access mere-exposure papers). A reviewer asserted it is genuine but cited only paywalled sources. UNRESOLVED — not established false.",
+      "instead": "Either load the primary and cite a page, or make the claim qualitative: repeated supraliminal visual exposure increases liking, up to a point.",
+      "grade": "unverified"
     },
     {
       "id": "subliminal-stronger",
       "pattern": "(?i)(subliminal|below (the )?threshold|without awareness)[^.\\n]{0,50}(stronger|larger|better|more effective)",
-      "message": "Faithfully reports Bornstein 1989, but later work with proper awareness controls contradicts it (Fox & Burns 1993 'a failure to replicate'; de Zilva et al. 2013: 'the mere exposure effect does not occur without conscious awareness').",
-      "instead": "Cite as history, never as mechanism."
+      "message": "Genuinely disputed, not settled. Bornstein & D'Agostino (1992) report larger effects at 5ms; de Zilva et al. (2013) find no effect under continuous flash suppression. One method does not erase the other.",
+      "instead": "Say the evidence is mixed and name the conditions. Do not assert either direction as established.",
+      "grade": "contested"
     },
     {
       "id": "algorithm-favorites-list",
-      "pattern": "(?i)(favorites?|excluded|rejected|blacklist)\\s+list[^.\\n]{0,40}(algorithm|instagram|tiktok)|algorithm[^.\\n]{0,40}(favorites?|excluded)\\s+list",
-      "message": "No format-keyed favor or penalty state appears in any documented architecture. Retrieval is ANN over item embeddings plus a predicted-value score.",
-      "instead": "A real account-level gate exists but is keyed to ORIGINALITY (de-recommends primarily non-original reposting), not to format choice."
+      "pattern": "(?i)(?:algorithm|instagram|tiktok)[^.\\n]{0,60}\\b(?:favou?rites?|excluded|rejected|blacklist|black-?list|naughty)\\s+list\\b|\\b(?:favou?rites?|excluded|rejected|blacklist|black-?list)\\s+list\\b[^.\\n]{0,60}(?:algorithm|instagram|tiktok)",
+      "message": "No format-keyed favor or penalty state appears in any PUBLIC documentation. The systems are proprietary, so this is undocumented rather than disproven.",
+      "instead": "The one documented account-level gate is keyed to ORIGINALITY (de-recommends primarily non-original reposting), not to format choice.",
+      "grade": "unverified"
     }
   ],
   "folklore": [
     {
       "id": "three-second-hook",
-      "pattern": "(?i)(first|3|three)[\\s-]*second[s]?\\s+(hook|rule)|hook[^.\\n]{0,20}first\\s+(3|three)\\s+seconds",
+      "pattern": "(?i)\\b(?:first|3|three)[\\s-]*seconds?\\b[^.\\n]{0,30}\\b(?:hook|rule)\\b|\\bhook\\b[^.\\n]{0,30}\\bfirst\\s+(?:3|three)\\s+seconds\\b",
       "message": "The '3-second hook rule' has no peer-reviewed basis. A targeted search returned only content farms, SEO blogs, and platform-vendor marketing.",
-      "instead": "Real short-form research is descriptive (Zannettou et al. CHI'24) or recsys-internal; none identifies human-legible creative features."
+      "instead": "Real short-form research is descriptive (Zannettou et al. CHI'24) or recsys-internal; none identifies human-legible creative features.",
+      "grade": "folklore"
     },
     {
       "id": "post-daily",
       "pattern": "(?i)post(ing)?\\s+(every\\s+day|daily)[^.\\n]{0,40}(grow|growth|reach|algorithm)|(grow|growth)[^.\\n]{0,30}post(ing)?\\s+(every\\s+day|daily)",
       "message": "Volume-as-growth-strategy is unevidenced, and is the specific error the source case study spent two years and 800 posts disproving.",
-      "instead": "Format quality and consistency, not cadence. Publish less, with a validated format."
+      "instead": "Format quality and consistency, not cadence. Publish less, with a validated format.",
+      "grade": "folklore"
     },
     {
       "id": "algorithm-punishes",
-      "pattern": "(?i)algorithm[^.\\n]{0,25}(punish|hates?|sabotag|penaliz)",
+      "pattern": "(?i)\\balgorithm\\b[^.\\n]{0,25}\\b(?:punish\\w*|hates?|sabotag\\w*|penaliz\\w*)\\b",
       "message": "Anthropomorphic framing with no documented referent. There is no per-format punitive state.",
-      "instead": "Describe the actual mechanism: predicted-value scoring and retrieval proximity, or say you do not know."
+      "instead": "Describe the actual mechanism: predicted-value scoring and retrieval proximity, or say you do not know.",
+      "grade": "folklore"
     }
   ],
   "hypothesis_as_fact": [
     {
       "id": "embedding-variance-asserted",
-      "pattern": "(?i)(consistency|repeating|repetition)[^.\\n]{0,60}(lowers?|reduces?)[^.\\n]{0,20}embedding[^.\\n]{0,20}variance",
+      "pattern": "(?i)(?:format\\s+)?(?:consistency|repeating|repetition)[^.\\n]{0,60}(?:lowers?|reduces?)[^.\\n]{0,20}embedding[^.\\n]{0,20}variance",
       "message": "This mechanism is a HYPOTHESIS. No source establishes that 'format' is a dimension of the learned representation.",
-      "instead": "Label it: 'a plausible mechanism no cited source establishes'. The supported claim is the negative one (no documented format-keyed favor state)."
+      "instead": "Label it: 'a plausible mechanism no cited source establishes'. The supported claim is the negative one (no documented format-keyed favor state).",
+      "grade": "hypothesis_as_fact"
     },
     {
       "id": "pollutes-embeddings",
-      "pattern": "(?i)(pollut|contaminat|poison|drag)[^.\\n]{0,40}(your\\s+)?embeddings",
-      "message": "FALSE MECHANISM. Item embeddings are computed from item content by the item tower; one item's popularity does not move a creator's other item embeddings.",
-      "instead": "Any real effect would run through viewer-side interaction history, which is a different and undocumented mechanism. State it as an open question."
+      "pattern": "(?i)(?:mismatch\\w*|off-niche|viral)[^.\\n]{0,60}(?:pollut\\w*|contaminat\\w*|poison\\w*|drags?)[^.\\n]{0,30}\\byour\\s+embeddings\\b",
+      "message": "Asserted mechanism. The cited architecture describes item embeddings computed by an item tower; it does not establish that one item's popularity moves a creator's other item embeddings. A viewer-side-history pathway is plausible and equally undocumented.",
+      "instead": "State it as an open question, and do not claim the viewer-side route is the only possibility.",
+      "grade": "hypothesis_as_fact"
     }
   ],
   "precision_without_source": {
-    "pattern": "(?<![\\w.])(\\d{1,3}(?:\\.\\d+)?\\s*%|\\d+\\s*[-–]\\s*\\d+\\s*(?:x|times)|r\\s*[=≈]\\s*[01]?\\.\\d+|\\d{2,}\\s+(?:studies|papers|experiments|participants|users))",
-    "citation_markers": ["http://", "https://", "doi:", "10.", "[HIGH]", "[MED]", "[LOW]", "verbatim", "grepped", "et al", "p. ", "pp. "],
+    "pattern": "(?<![\\w.])(\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?\\s*%|\\d+\\s*(?:-|–)\\s*\\d+\\s*(?:x|times)\\b|r\\s*[=≈]\\s*[01]?\\.\\d+|\\d{1,3}(?:,\\d{3})+\\s+(?:studies|papers|experiments|participants|users)|\\d{2,}\\s+(?:studies|papers|experiments|participants|users))",
+    "citation_markers": [
+      "http://",
+      "https://",
+      "doi.org/",
+      "doi:10.",
+      "arxiv.org",
+      "pubmed",
+      "PMC"
+    ],
     "window_lines": 3,
-    "message": "Precise figure with no citation marker within 3 lines. Precision is a rhetorical property, freely available, and does not entail that a measurement occurred."
+    "message": "Precise figure with no resolvable citation (URL/DOI) within 3 lines. Precision is rhetorical and does not entail that a measurement occurred. Self-authored confidence tags do not count as sources."
   }
 }

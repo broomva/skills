@@ -45,4 +45,4 @@ jobs:
       - name: Ledger is valid JSON
         run: python -c "import json;json.load(open('references/claims-ledger.json'))"
       - name: Dogfood — the skill's own docs must pass its own gate
-        run: python scripts/format_lint.py SKILL.md references/evidence-map.md
+        run: python scripts/format_lint.py SKILL.md references/evidence-map.md --strict

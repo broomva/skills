@@ -58,8 +58,9 @@ ranking of signals located:
 
 The word is *slightly*, and the asymmetry runs **both** directions.
 
-**~90% of viewed videos come from non-followed accounts.** `[HIGH]` Zannettou et al.,
-CHI '24, 347 users / 9.2M recommendations, verified by pdftotext grep:
+**Most viewed videos come from non-followed accounts.** `[HIGH]` Zannettou et al., CHI '24
+(https://doi.org/10.1145/3613904.3642433), 347 users / 9.2M recommendations, verified by
+pdftotext grep of the paper:
 
 > "we find that only 10.3% of the video views in the dataset are actually for videos
 > originating from accounts that the participants followed in advance"
@@ -72,8 +73,7 @@ states a figure inconsistent with its own body definition; that figure is not ci
 
 ## 2. Hypothesis — plausible, unestablished
 
-<!-- format-lint: allow=embedding-variance-asserted -->
-**That format consistency lowers embedding variance and thereby improves retrieval.**
+**That format consistency lowers embedding variance and thereby improves retrieval.** <!-- format-lint: allow=embedding-variance-asserted -->
 
 Since content similarity is a documented retrieval signal, it is *plausible* that
 structurally consistent items sit near one another in the learned representation. But **no
@@ -92,26 +92,31 @@ items and compare per-item reach variance. Not done here.
 
 ## 3. Refuted — traced and found false or unlocatable
 
-These six are encoded in `claims-ledger.json` and enforced by `scripts/format_lint.py`.
+These are encoded in `claims-ledger.json` and enforced by `scripts/format_lint.py`.
+**Only one is graded `refuted`** — contradicted by a primary source that was loaded. The
+rest are `contested` (the literature disagrees) or `unverified` (the origin could not be
+located, which is a statement about a search, not about the world). Severity follows the
+grade, so only `refuted` exits non-zero.
 
 <!-- format-lint: disable -->
 
 | Claim | Finding |
 |---|---|
-| Sends weighted 3–5x likes | No primary source located in any venue searched. A search tool returned the fabrication *in quote form*; it traces to an SEO blog. |
+| Sends weighted 3–5x likes — **unverified** | No primary source located in any venue searched. A search tool returned it *in quote form*, traceable to an SEO blog. Not established false; simply not citable. |
 | "The polished aesthetic is dead" (Mosseri memo) | Real post, materially distorted. A public Threads essay, not a memo. The line is *"That feed is dead"* about personal sharing moving to DMs. Announces **no** ranking change and explicitly defers. |
-| Bornstein meta-analysis of "208 studies" | It is **134 studies reporting 208 contrasts** (Grybinas, Kantner & Dobbins 2019, *Memory & Cognition* 47:1314–1327). ~55% inflation. |
-| Mere-exposure `r = 0.26` | Not found in the paywalled article, its abstract, Crossref, PubMed, Google Books, or a full-text search across 41 open-access papers. Proximate source: **Wikipedia**. |
-| "Subliminal exposure is stronger" | Faithfully reports Bornstein 1989, but contradicted by later work with awareness controls (Fox & Burns 1993, *a failure to replicate*; de Zilva et al. 2013). Cite as history, never mechanism. |
-| The algorithm's "favorites / excluded list" of formats | No format-keyed favor or penalty state in any documented architecture. |
+| Bornstein "208 studies" — **contested** | Near-primary sources describe **134 studies reporting 208 contrasts** (Grybinas, Kantner & Dobbins 2019, *Memory & Cognition* 47:1314–1327). The phrasing conflates studies with contrasts; the article is paywalled and the exact framing is disputed. |
+| Mere-exposure `r = .26` — **unverified** | Not found in the paywalled article, its abstract, Crossref, PubMed, Google Books, or full text across 41 open-access papers; proximate source appears to be Wikipedia. A cross-model reviewer asserted it is genuine but cited only paywalled sources. **Unresolved in both directions** — load the primary before using it. |
+| "Subliminal exposure is stronger" — **contested** | Bornstein & D'Agostino (1992) report larger effects at 5ms; de Zilva et al. (2013) find none under continuous flash suppression. One method does not erase the other — state the conditions, not a verdict. |
+| Algorithm "favorites / excluded list" of formats — **unverified** | No format-keyed favor or penalty state appears in any PUBLIC documentation. The systems are proprietary, so this is undocumented rather than disproven. |
 
 <!-- format-lint: enable -->
 
 <!-- format-lint: disable -->
 **Also unevidenced** (WARN-grade in the linter): the 3-second hook rule, posting-daily as
 a growth strategy, and anthropomorphic "the algorithm punishes you" framing.
-<!-- format-lint: enable --> A targeted
-search for peer-reviewed work on what *structurally* predicts short-form retention
+<!-- format-lint: enable -->
+
+A targeted search for peer-reviewed work on what *structurally* predicts short-form retention
 returned only content farms and vendor marketing.
 
 ---

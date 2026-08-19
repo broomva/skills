@@ -9,17 +9,18 @@ description: >
   draft repeating any of six debunked claims or asserting a precise figure with no
   loadable source. The core move is choosing a FORMAT (visual grammar x script
   structure) as the invariant and letting topic vary, rather than the reverse.
-  Use when: (1) deciding what to post or what shape a piece should take,
-  (2) diagnosing why content is not reaching people, (3) auditing a draft or a
-  strategy doc for algorithm folklore and unsourced statistics, (4) choosing how
-  often to repeat a format and when to rotate, (5) evaluating a course, thread, or
-  guru claim about how a recommender works. NOT FOR: producing the artifact
-  (use content-creation), generating visuals (use content-engine), optimizing a
-  finished piece for AI citation (use citable), page markup (use seo-llmeo), or
-  running an engagement loop (use social-intelligence). Triggers on "what should I
-  post", "content strategy", "why is my content not getting views", "is the
-  algorithm punishing me", "hook", "should I post daily", "how do I grow",
-  "format", "does this claim about the algorithm hold up".
+  Use when, PRE-PRODUCTION: (1) choosing what shape a piece should take before it
+  is written, (2) deciding how often to repeat a format and when to rotate it,
+  (3) verifying a platform/algorithm claim from a course, thread, or guru,
+  (4) auditing a draft or strategy doc for recommender folklore and untraceable
+  statistics. NOT FOR: producing the artifact (use content-creation), generating
+  visuals (use content-engine), page markup (use seo-llmeo), running an engagement
+  loop (use social-intelligence), or **anything about a finished piece's reach,
+  length, or citation by AI answer engines — that is citable, including the
+  short-post-vs-long-article decision.** Triggers on "what format should I use",
+  "is the algorithm punishing me", "should I post daily", "does this algorithm
+  claim hold up", "why do my posts flop", "3-second hook", "verify this platform
+  claim".
 ---
 
 # format-first
@@ -49,19 +50,25 @@ mechanism is a working hypothesis with a plausibility argument. Say so.
 
 1. **Choose a format, not a topic.** Highest-leverage decision, almost never made
    deliberately.
-2. **Probe, do not guess.** Watch 3-5 instances of a candidate format to completion.
-   If the feed fills with it, there is a resident audience for that shape. This is a
-   *behavioural* test — valid regardless of whether the embedding hypothesis holds.
+2. **Probe, do not guess.** Watch several instances of a candidate format through to the
+   end, then see whether the feed serves you more of that shape. If it does, the shape has
+   a resident audience the recommender already serves. This is a *behavioural* test —
+   valid regardless of whether the embedding hypothesis holds. (No source specifies how
+   many instances; a handful is enough to notice the shift.)
 3. **Copy the skeleton, supply your own substance.** Structure is fair game; content
    is not — and reposting others' content is the one thing that triggers a real
    account-level gate (Instagram's originality policy de-recommends primarily
    non-original accounts; it does not touch followers).
-4. **Repeat it.** The counterintuitive part. Consistency buys findability; scattering
-   makes every post start cold.
-5. **Hold more than one format; rotate on measured decay.** No source supports a
-   specific count. Complex formats last longer than simple ones. **If the channel is
-   audio, the visual inverted-U does not transfer** — the meta-analysis found auditory
-   stimuli go U-shaped.
+4. **Repeat it.** The counterintuitive part — and the part resting on the hypothesis
+   above, not on a measured result. The argument is that consistent items are easier for
+   a similarity-based retriever to match to an audience that already engaged. Treat it
+   as the best available guess, and watch your own numbers.
+5. **Hold more than one format; rotate on measured decay.** No source supports a specific
+   count or interval — rotate on your own numbers. The wearout literature is *laboratory
+   stimulus* research and transporting it to platform formats is an analogy, not a
+   finding; what it does support is that liking rises then falls with repetition, and that
+   the curve differs by modality (**visual inverted-U; auditory came out U-shaped**), so
+   do not port repetition advice from video to audio.
 6. **Calibrate the hook to existing knowledge.** A curiosity gap only fires if the
    viewer already has enough context to perceive it as a gap. This is why generic hooks
    fail on cold audiences — structurally, not for craft reasons.
@@ -71,11 +78,15 @@ mechanism is a working hypothesis with a plausibility argument. Say so.
 
 ## Expectations, calibrated
 
-- **Roughly 19 of 20 pieces underperform**, even for operators who know what they are
-  doing. Plan for a heavy tail, not a hit rate.
+- **Expect a heavy tail, not a hit rate.** The operator whose method seeded this skill
+  reported most of their own posts underperforming even after a breakthrough. That is one
+  self-reported account, not a measured base rate — do not quote a ratio.
 - **An audience is not a delivery guarantee.** In a study of 347 TikTok users and 9.2M
-  recommendations, only 10.3% of viewed videos originated from followed accounts. Reach
-  is re-earned per item.
+  recommendations, only 10.3% of *viewed videos originated from followed accounts*
+  (https://doi.org/10.1145/3613904.3642433). Note what that does **not** say: it measures
+  video origin, not delivery path, and it is TikTok rather than Instagram. It does not
+  establish that reach is re-earned per item — it establishes that most of what people
+  watch does not come from accounts they follow.
 
 ## When the audience can verify
 
@@ -99,9 +110,17 @@ python3 scripts/format_lint.py DRAFT.md --strict   # warnings fail too
 python3 scripts/format_lint.py - --json            # stdin, machine-readable
 ```
 
-Fails a draft that repeats a refuted claim, asserts a hypothesis as mechanism, or states
-a precise figure with no citation marker within three lines. Fenced code blocks are
-exempt, so a document can quote a bad claim in order to correct it.
+Severity follows the ledger's **grade**, and only `refuted` (contradicted by a primary
+source that was loaded) exits non-zero. `contested`, `unverified`, `folklore` and
+`hypothesis_as_fact` are WARN — because "I could not find a source" is a statement about a
+search, not about the world, and a gate that conflates the two manufactures the false
+confidence it exists to prevent. Use `--strict` to fail on warnings too.
+
+Sentences that **negate, correct, or attribute** a claim do not fire, so the linter does
+not punish the corrections it exists to promote. Fenced blocks and well-formed YAML
+frontmatter are exempt; a leading `---` horizontal rule is not. Suppress narrowly with
+`<!-- format-lint: allow=<rule-id> -->` (that line only) or a `disable`/`enable` region —
+an unclosed, nested, or whole-file region is itself reported as an ERROR.
 
 Extend it by editing `references/claims-ledger.json` — pattern, message, and the
 correct replacement. Every rule needs both polarities in `tests/`.

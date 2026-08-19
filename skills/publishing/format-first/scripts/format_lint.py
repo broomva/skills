@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""format_lint — catch debunked platform folklore and unsourced precision in content drafts.
+"""format_lint — flag unsupported platform claims and unsourced precision in drafts.
 
-Encodes the verified/refuted claim set from broomva/workspace BRO-2145. The point is
-narrow and mechanical: a draft should not repeat a claim we already traced to nothing,
-and a precise-looking number should be accompanied by something loadable.
+Severity follows the ledger's GRADE, not the author's confidence:
+
+    refuted            ERROR  contradicted by a primary source that was loaded
+    contested          WARN   the literature genuinely disagrees
+    unverified         WARN   origin could not be located — NOT proof of falsity
+    folklore           WARN   circulates as fact with no located basis
+    hypothesis_as_fact WARN   plausible mechanism asserted as established
+
+The refuted/unverified split is the point. "I could not find a source" is a statement
+about a search, not about the world, and a linter that conflates the two manufactures
+exactly the false confidence it exists to prevent.
 
 Usage:
-    format_lint.py <file> [<file>...]      lint files
-    format_lint.py -                       lint stdin
-    format_lint.py <file> --json           machine-readable
-    format_lint.py <file> --strict         WARN also fails the exit code
+    format_lint.py <file>...        lint files ( - for stdin )
+    format_lint.py <f> --json       machine-readable
+    format_lint.py <f> --strict     warnings also fail the exit code
 
-Exit: 0 clean (or warnings only), 1 if any ERROR (or any finding under --strict).
+Exit: 0 clean/warnings, 1 on ERROR (or any finding under --strict), 2 on bad input.
 """
 from __future__ import annotations
 
@@ -23,13 +30,24 @@ from pathlib import Path
 
 LEDGER = Path(__file__).resolve().parent.parent / "references" / "claims-ledger.json"
 
-# severity per category
-SEVERITY = {
+GRADE_SEVERITY = {
     "refuted": "ERROR",
-    "hypothesis_as_fact": "ERROR",
+    "contested": "WARN",
+    "unverified": "WARN",
     "folklore": "WARN",
-    "precision_without_source": "WARN",
+    "hypothesis_as_fact": "WARN",
 }
+
+ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
+CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
+
+# A rule must not fire when the sentence denies, corrects, or attributes the claim —
+# otherwise the linter punishes the corrections it exists to promote.
+NEGATION_RX = re.compile(
+    r"(?i)\b(?:not|never|no longer|isn't|is ?n't|aren't|doesn't|does not|don't|do not|"
+    r"myth|false|untrue|debunk\w*|misquot\w*|misattribut\w*|unfounded|no evidence|"
+    r"claims? that|allegedly|supposedly|so-called|refut\w*|contrary to)\b"
+)
 
 
 def load_ledger(path: Path = LEDGER) -> dict:
@@ -39,152 +57,164 @@ def load_ledger(path: Path = LEDGER) -> dict:
         return json.load(fh)
 
 
-ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
-DISABLE_RX = re.compile(r"format-lint:\s*disable\b")
-ENABLE_RX = re.compile(r"format-lint:\s*enable\b")
+def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
+    """Exempt fenced blocks and *well-formed* YAML frontmatter; report malformed ones.
 
-
-def _disabled_regions(lines: list[str]) -> tuple[set[int], int | None]:
-    """Lines inside an explicit `<!-- format-lint: disable -->` … `enable` region.
-
-    A catalogue of false claims must be able to name them. The safeguard: an UNCLOSED
-    disable is reported as a finding, so a document cannot silently switch the gate off
-    for everything that follows.
+    Frontmatter requires a closing `---` AND at least one `key:` line — otherwise a
+    Markdown horizontal rule at the top of a file would exempt the whole document.
+    An unclosed fence is reported rather than silently swallowing the remainder.
     """
-    off: set[int] = set()
-    open_at: int | None = None
-    for i, line in enumerate(lines):
-        if DISABLE_RX.search(line):
-            open_at = i if open_at is None else open_at
-            off.add(i)
-            continue
-        if ENABLE_RX.search(line):
-            open_at = None
-            off.add(i)
-            continue
-        if open_at is not None:
-            off.add(i)
-    return off, open_at
+    exempt: set[int] = set()
+    problems: list[dict] = []
 
-
-def _exempt_lines(lines: list[str]) -> set[int]:
-    """0-indexed lines excluded from all rules.
-
-    Two exemptions, both principled:
-
-    * ``` fenced blocks — quoting a bad claim inside a fence is how you *document* it.
-      Without this the ledger could not describe itself.
-    * YAML frontmatter — `description:` carries trigger phrases, which are the words a
-      user types, not assertions the document makes. Linting them would forbid a skill
-      from being findable by the very folklore it corrects.
-    """
-    inside: set[int] = set()
-    open_fence = False
+    fence_open_at: int | None = None
     for i, line in enumerate(lines):
         if line.lstrip().startswith("```"):
-            open_fence = not open_fence
-            inside.add(i)
+            fence_open_at = None if fence_open_at is not None else i
+            exempt.add(i)
             continue
-        if open_fence:
-            inside.add(i)
-    # leading YAML frontmatter
+        if fence_open_at is not None:
+            exempt.add(i)
+    if fence_open_at is not None:
+        problems.append(
+            {
+                "line": fence_open_at + 1,
+                "severity": "ERROR",
+                "category": "lint_control",
+                "id": "unclosed-fence",
+                "matched": "```",
+                "message": "An unclosed code fence exempts every line to end of file.",
+                "instead": "Close the fence.",
+            }
+        )
+
     if lines and lines[0].strip() == "---":
-        for i in range(1, len(lines)):
-            inside.add(i)
-            if lines[i].strip() == "---":
-                break
-        inside.add(0)
-    return inside
+        close = next((j for j in range(1, len(lines)) if lines[j].strip() == "---"), None)
+        if close is not None and any(
+            re.match(r"^[A-Za-z_][\w-]*\s*:", lines[j]) for j in range(1, close)
+        ):
+            exempt |= set(range(0, close + 1))
+    return exempt, problems
 
 
-def _allowed_ids(lines: list[str], idx: int) -> set[int] | set[str]:
-    """Rule ids suppressed for this line via an inline marker on it or the line above.
+def _control_regions(lines: list[str]) -> tuple[set[int], list[dict]]:
+    """`<!-- format-lint: disable -->` … `enable`, as an exact standalone comment.
 
-    Marker form: `<!-- format-lint: allow=rule-id,other-id -->`. Naming the rule is
-    required — a blanket suppression would let a document silence the ledger wholesale.
+    Guards: an unclosed region is an ERROR; a nested disable is an ERROR; and a region
+    spanning effectively the whole document is an ERROR, because a closed whole-file
+    region would otherwise be a silent total bypass.
     """
-    out: set[str] = set()
-    for j in (idx, idx - 1):
-        if j < 0 or j >= len(lines):
+    off: set[int] = set()
+    problems: list[dict] = []
+    open_at: int | None = None
+    spans: list[tuple[int, int]] = []
+
+    for i, line in enumerate(lines):
+        m = CONTROL_RX.match(line)
+        if not m:
+            if open_at is not None:
+                off.add(i)
             continue
-        m = ALLOW_RX.search(lines[j])
-        if m:
-            out |= {s.strip() for s in m.group(1).split(",") if s.strip()}
-    return out
+        off.add(i)
+        if m.group(1) == "disable":
+            if open_at is not None:
+                problems.append(
+                    {
+                        "line": i + 1, "severity": "ERROR", "category": "lint_control",
+                        "id": "nested-disable", "matched": "format-lint: disable",
+                        "message": "A disable region is already open; nesting is collapsed by a single enable.",
+                        "instead": "Close the first region before opening another.",
+                    }
+                )
+            else:
+                open_at = i
+        else:
+            if open_at is not None:
+                spans.append((open_at, i))
+            open_at = None
+
+    if open_at is not None:
+        problems.append(
+            {
+                "line": open_at + 1, "severity": "ERROR", "category": "lint_control",
+                "id": "unclosed-disable", "matched": "format-lint: disable",
+                "message": "A disable region was never closed, so every rule is off to end of file.",
+                "instead": "Close it with `<!-- format-lint: enable -->` right after the quoted material.",
+            }
+        )
+
+    body = [i for i, l in enumerate(lines) if l.strip()]
+    if body:
+        covered = sum(1 for i in body if i in off)
+        if covered / len(body) > 0.8 and covered > 5:
+            problems.append(
+                {
+                    "line": (spans[0][0] + 1) if spans else 1,
+                    "severity": "ERROR", "category": "lint_control",
+                    "id": "whole-file-disable", "matched": "format-lint: disable",
+                    "message": f"Disable regions cover {covered}/{len(body)} non-blank lines — effectively a whole-file bypass.",
+                    "instead": "Scope suppressions to the quoted material, or use inline allow=<rule-id> markers.",
+                }
+            )
+    return off, problems
 
 
-def _has_citation_near(lines: list[str], idx: int, markers: list[str], window: int) -> bool:
-    lo = max(0, idx - window)
-    hi = min(len(lines), idx + window + 1)
-    blob = "\n".join(lines[lo:hi])
-    return any(m in blob for m in markers)
+def _allowed_ids(lines: list[str], idx: int) -> set[str]:
+    """Rule ids suppressed on THIS line only.
+
+    Current-line-only by design: a marker that also covered the next line let one
+    comment excuse two separate assertions.
+    """
+    m = ALLOW_RX.search(lines[idx]) if 0 <= idx < len(lines) else None
+    return {s.strip() for s in m.group(1).split(",") if s.strip()} if m else set()
 
 
 def lint_text(text: str, ledger: dict) -> list[dict]:
     lines = text.splitlines()
-    skip = _exempt_lines(lines)
-    disabled, unclosed = _disabled_regions(lines)
-    skip |= disabled
-    findings: list[dict] = []
-
-    if unclosed is not None:
-        findings.append(
-            {
-                "line": unclosed + 1,
-                "severity": "ERROR",
-                "category": "lint_control",
-                "id": "unclosed-disable",
-                "matched": "format-lint: disable",
-                "message": "A `format-lint: disable` region was never closed, so every rule is off from here to end of file.",
-                "instead": "Close it with `<!-- format-lint: enable -->` immediately after the quoted material.",
-            }
-        )
+    exempt, problems = _fence_and_frontmatter(lines)
+    ctrl_off, ctrl_problems = _control_regions(lines)
+    skip = exempt | ctrl_off
+    findings: list[dict] = list(problems) + list(ctrl_problems)
 
     for category in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger.get(category, []):
+            grade = rule.get("grade", category)
+            severity = GRADE_SEVERITY.get(grade, "WARN")
             rx = re.compile(rule["pattern"])
             for i, line in enumerate(lines):
-                if i in skip:
+                if i in skip or rule["id"] in _allowed_ids(lines, i):
                     continue
                 m = rx.search(line)
-                if not m:
-                    continue
-                if rule["id"] in _allowed_ids(lines, i):
+                if not m or NEGATION_RX.search(line):
                     continue
                 findings.append(
                     {
-                        "line": i + 1,
-                        "severity": SEVERITY[category],
-                        "category": category,
-                        "id": rule["id"],
-                        "matched": m.group(0)[:80],
-                        "message": rule["message"],
-                        "instead": rule.get("instead", ""),
+                        "line": i + 1, "severity": severity, "category": category,
+                        "grade": grade, "id": rule["id"], "matched": m.group(0)[:80],
+                        "message": rule["message"], "instead": rule.get("instead", ""),
                     }
                 )
 
     pws = ledger.get("precision_without_source")
     if pws:
         rx = re.compile(pws["pattern"])
-        markers = pws["citation_markers"]
-        window = int(pws.get("window_lines", 3))
+        markers, window = pws["citation_markers"], int(pws.get("window_lines", 3))
         for i, line in enumerate(lines):
-            if i in skip:
+            if i in skip or "unsourced-precision" in _allowed_ids(lines, i):
                 continue
-            if "unsourced-precision" in _allowed_ids(lines, i):
+            if NEGATION_RX.search(line):
+                continue
+            blob = "\n".join(lines[max(0, i - window) : min(len(lines), i + window + 1)])
+            if any(mk in blob for mk in markers):
                 continue
             for m in rx.finditer(line):
-                if _has_citation_near(lines, i, markers, window):
-                    continue
                 findings.append(
                     {
-                        "line": i + 1,
-                        "severity": SEVERITY["precision_without_source"],
-                        "category": "precision_without_source",
-                        "id": "unsourced-precision",
-                        "matched": m.group(0)[:80],
+                        "line": i + 1, "severity": "WARN",
+                        "category": "precision_without_source", "grade": "unverified",
+                        "id": "unsourced-precision", "matched": m.group(0)[:80],
                         "message": pws["message"],
-                        "instead": "Cite a loadable artifact containing that numeral, or make the claim qualitative.",
+                        "instead": "Cite a resolvable URL or DOI containing that figure, or make the claim qualitative.",
                     }
                 )
 
@@ -192,12 +222,13 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
     return findings
 
 
-def render(path_label: str, findings: list[dict]) -> str:
+def render(label: str, findings: list[dict]) -> str:
     if not findings:
-        return f"[format-lint] {path_label}: clean"
-    out = [f"[format-lint] {path_label}: {len(findings)} finding(s)"]
+        return f"[format-lint] {label}: clean"
+    out = [f"[format-lint] {label}: {len(findings)} finding(s)"]
     for f in findings:
-        out.append(f"  {f['severity']:<5} L{f['line']}  ({f['id']})  «{f['matched']}»")
+        grade = f.get("grade", f["category"])
+        out.append(f"  {f['severity']:<5} L{f['line']}  ({f['id']} · {grade})  «{f['matched']}»")
         out.append(f"        {f['message']}")
         if f["instead"]:
             out.append(f"        → {f['instead']}")
@@ -206,32 +237,31 @@ def render(path_label: str, findings: list[dict]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="format_lint")
-    ap.add_argument("files", nargs="+", help="files to lint, or - for stdin")
+    ap.add_argument("files", nargs="+")
     ap.add_argument("--json", action="store_true", dest="as_json")
-    ap.add_argument("--strict", action="store_true", help="warnings also fail")
+    ap.add_argument("--strict", action="store_true")
     ap.add_argument("--ledger", type=Path, default=LEDGER)
     args = ap.parse_args(argv)
 
     ledger = load_ledger(args.ledger)
-    all_results: dict[str, list[dict]] = {}
-
+    results: dict[str, list[dict]] = {}
     for spec in args.files:
         if spec == "-":
-            all_results["<stdin>"] = lint_text(sys.stdin.read(), ledger)
+            results["<stdin>"] = lint_text(sys.stdin.read(), ledger)
             continue
         p = Path(spec)
         if not p.exists():
             print(f"format_lint: no such file: {spec}", file=sys.stderr)
             return 2
-        all_results[str(p)] = lint_text(p.read_text(encoding="utf-8", errors="replace"), ledger)
+        results[str(p)] = lint_text(p.read_text(encoding="utf-8", errors="replace"), ledger)
 
     if args.as_json:
-        print(json.dumps(all_results, indent=2))
+        print(json.dumps(results, indent=2))
     else:
-        for label, findings in all_results.items():
+        for label, findings in results.items():
             print(render(label, findings))
 
-    flat = [f for fs in all_results.values() for f in fs]
+    flat = [f for fs in results.values() for f in fs]
     if args.strict and flat:
         return 1
     return 1 if any(f["severity"] == "ERROR" for f in flat) else 0
