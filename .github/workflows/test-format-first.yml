@@ -69,14 +69,26 @@ jobs:
           code=$?
           set -e
           test "$code" -eq 1 || { echo "::error::expected exit 1 on a refuted claim, got $code"; exit 1; }
-      - name: corpus_sweep runs end-to-end with zero crashes
+      - name: corpus_sweep runs end-to-end, and its compare path fails on a bad ledger
+        # The compare path was never exercised in CI, which is how a discarded crash count
+        # on the comparison side went unnoticed: a broken old ledger crashes on every file,
+        # its finding set comes back empty, and every current finding then reads as newly
+        # ADDED — a widening certifying itself as pure gain.
         run: |
           python - <<'PY'
-          import json, subprocess, sys
+          import json, subprocess, sys, tempfile, pathlib
           out = subprocess.run([sys.executable, "scripts/corpus_sweep.py", ".", "--json"],
                                capture_output=True, text=True, check=True)
           rep = json.loads(out.stdout)
-          assert rep["crashes"] == 0, rep
-          assert rep["files"] > 0, rep
+          assert rep["crashes"] == 0 and rep["files"] > 0, rep
           print(f"swept {rep['files']} files, {rep['findings']} findings, 0 crashes")
+
+          led = json.load(open("references/claims-ledger.json"))
+          led["refuted"][0]["pattern"] = "("          # uncompilable
+          with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+              json.dump(led, fh); bad = fh.name
+          r = subprocess.run([sys.executable, "scripts/corpus_sweep.py", ".", "--compare", bad],
+                             capture_output=True, text=True)
+          assert r.returncode != 0, f"a broken comparison ledger must not exit 0: {r.stdout}"
+          print("compare path correctly refuses a broken ledger")
           PY

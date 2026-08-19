@@ -694,6 +694,30 @@ def test_the_same_claim_without_a_citation_still_fires():
     assert "algorithm-punishes" in ids("The algorithm demotes accounts that switch formats.\n")
 
 
+def test_a_citation_does_not_settle_a_contested_claim():
+    """`contested` means the literature disagrees; citing one side does not settle it.
+
+    Keying suppression on SEVERITY swept `contested` and `hypothesis_as_fact` in with
+    `unverified`/`folklore`, which have a completely different complaint. A cross-model
+    review caught it with exactly this input.
+    """
+    text = "A meta-analysis of 208 studies found the effect robust.\nhttps://example.org/unrelated\n"
+    assert "bornstein-208-studies" in ids(text)
+
+
+def test_a_citation_does_not_establish_a_hypothesis():
+    text = "Format consistency lowers embedding variance.\nSee https://example.com/paper/1\n"
+    assert "embedding-variance-asserted" in ids(text)
+
+
+def test_suppression_is_keyed_to_grade_not_severity():
+    """The cut is semantic: only grades whose complaint IS "no source located"."""
+    assert fl.CITATION_ANSWERS == {"unverified", "folklore"}
+    assert "contested" not in fl.CITATION_ANSWERS
+    assert "hypothesis_as_fact" not in fl.CITATION_ANSWERS
+    assert "refuted" not in fl.CITATION_ANSWERS
+
+
 def test_a_citation_does_not_suppress_a_refuted_claim():
     """A misquotation with a link attached is still a misquotation — ERROR must survive."""
     text = (
@@ -782,3 +806,28 @@ def test_every_finding_points_at_a_real_line():
         doc = "\n".join(lines)
         for f in fl.lint_text(doc, LEDGER):
             assert 1 <= f["line"] <= len(lines), (f, doc)
+
+
+def test_an_indented_delimiter_inside_a_block_scalar_does_not_end_frontmatter():
+    """YAML document markers are column-zero; an indented `---` is block-scalar content.
+
+    `.strip()` mistook it for the closer, ended the frontmatter early, and linted the
+    remaining YAML as live prose. Found by cross-model review.
+    """
+    text = (
+        "---\nname: x\ndescription: |\n  ---\n  The algorithm punishes quiet accounts.\n---\n"
+        "Body.\n"
+    )
+    assert "algorithm-punishes" not in ids(text)
+
+
+def test_the_body_after_such_frontmatter_is_still_linted():
+    text = (
+        "---\nname: x\ndescription: |\n  ---\n  quiet\n---\n"
+        "The algorithm punishes quiet accounts.\n"
+    )
+    assert "algorithm-punishes" in ids(text)
+
+
+def test_a_leading_horizontal_rule_still_exempts_nothing():
+    assert "algorithm-punishes" in ids("---\nThe algorithm punishes formats.\n")

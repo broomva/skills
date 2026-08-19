@@ -38,6 +38,16 @@ GRADE_SEVERITY = {
     "hypothesis_as_fact": "WARN",
 }
 
+# Grades whose complaint IS "no source could be located". For these, and ONLY these, a
+# supplied source is the correction the rule asks for, so a citation suppresses.
+#
+# NOT `contested`: that grade means the literature disagrees, and citing one side of a
+# disagreement does not settle it. NOT `hypothesis_as_fact`: citing a source does not turn
+# a mechanism into an established one. NOT `refuted`: a misquotation with a link attached
+# is still a misquotation. Keying this on SEVERITY instead of grade silently swept
+# `contested` and `hypothesis_as_fact` in, which a cross-model review caught.
+CITATION_ANSWERS = {"unverified", "folklore"}
+
 ALLOW_RX = re.compile(r"format-lint:\s*allow[= ]([A-Za-z0-9_, -]+?)\s*(?:-->|$)")
 CONTROL_RX = re.compile(r"^\s*<!--\s*format-lint:\s*(disable|enable)\s*-->\s*$")
 MARKER_BLANK_RX = re.compile(r"<!--\s*format-lint:.*?-->")
@@ -98,6 +108,22 @@ def load_ledger(path: Path = LEDGER) -> dict:
             "format_lint: unknown grade(s) in ledger — a typo must not silently "
             f"downgrade severity: {bad}"
         )
+    # Compile every pattern HERE, not lazily per block. A rule whose regex does not compile
+    # otherwise raises once per file, which a batch caller can catch and discard — turning
+    # a broken ledger into "this ledger found nothing" instead of an error.
+    for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+        for r in data.get(cat, []):
+            try:
+                re.compile(r["pattern"])
+            except re.error as exc:
+                raise SystemExit(f"format_lint: rule {r.get('id', '?')} has an invalid pattern: {exc}")
+    pws = data.get("precision_without_source") or {}
+    for field in ("pattern", "marker_regex"):
+        if pws.get(field):
+            try:
+                re.compile(pws[field])
+            except re.error as exc:
+                raise SystemExit(f"format_lint: precision_without_source.{field} is invalid: {exc}")
     return data
 
 
@@ -115,8 +141,11 @@ def _fence_and_frontmatter(lines: list[str]) -> tuple[set[int], list[dict]]:
     # a bare ``` inside a YAML value used to open a fence that no `---` could close, so the
     # whole document became exempt and every live claim in it was silently missed.
     body_start = 0
-    if lines and lines[0].strip() == "---":
-        close = next((j for j in range(1, len(lines)) if lines[j].strip() == "---"), None)
+    # Column-zero only. YAML document markers live at column 0; an INDENTED `---` is
+    # ordinary content inside a block scalar, and `.strip()` mistook it for the closing
+    # delimiter — ending the frontmatter early and linting the rest of the YAML as prose.
+    if lines and lines[0].rstrip() == "---":
+        close = next((j for j in range(1, len(lines)) if lines[j].rstrip() == "---"), None)
         if close is not None and any(
             re.match(r"^[A-Za-z_][\w-]*\s*:", lines[j]) for j in range(1, close)
         ):
@@ -297,14 +326,13 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
 
     blocks = _blocks(lines, skip)
 
-    # A WARN-grade rule says "this circulates with no located source". A sentence that
-    # SUPPLIES a resolvable source is the correction the rule asks for, so it must not
-    # fire — "According to Instagram, its algorithm demotes non-original accounts:
-    # <link>" is true, cited, and was flagged as folklore until this existed.
+    # An `unverified`/`folklore` rule says "this circulates with no located source". A
+    # sentence that SUPPLIES a resolvable source is the correction the rule asks for, so
+    # it must not fire — "According to Instagram, its algorithm demotes non-original
+    # accounts: <link>" is true, cited, and was flagged as folklore until this existed.
     #
-    # THIS IS A DELIBERATE, DOCUMENTED BYPASS: appending any resolvable URL within three
-    # lines silences every WARN-grade claim rule near it. It does NOT silence `refuted`,
-    # because a misquotation with a link attached is still a misquotation.
+    # THIS IS A DELIBERATE, DOCUMENTED BYPASS, scoped by GRADE (see CITATION_ANSWERS) and
+    # by PARAGRAPH: a resolvable URL in a claim's own paragraph silences that claim.
     pws_cfg = ledger.get("precision_without_source") or {}
     cite_rx = re.compile(pws_cfg["marker_regex"], re.I) if pws_cfg.get("marker_regex") else None
 
@@ -332,7 +360,7 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
                     spanned = range(lo, hi + 1)
                     if any(rule["id"] in _allowed_ids(lines, k) for k in spanned):
                         continue
-                    if severity != "ERROR" and _cited_in(btext):
+                    if grade in CITATION_ANSWERS and _cited_in(btext):
                         continue
                     findings.append(
                         {

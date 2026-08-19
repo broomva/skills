@@ -1,7 +1,7 @@
 {
   "_meta": {
     "provenance": "broomva/workspace BRO-2145 (PR #376, merged 195a9e54). Claims verified against primary sources on 2026-08-12; see research/entities/pattern/format-consistency-is-retrieval-reliability.md and research/notes/2026-08-12-short-form-format-strategy-synthesis.md",
-    "review": "Upstream research arc (BRO-2145): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 6/10. THIS SKILL (BRO-2185): P20 Strata A, rounds 2/10 -> 5/10 -> 5/10, then a dogfood pass on a real unseen article that found 2 defects the tests missed, then a round-4 pass fixing fence-delimiter tracking, four universal-absence overstatements, and the paraphrase gap. Widenings were swept against 3,328 real files via scripts/corpus_sweep.py (net +1 finding, a true positive; 0 regressions). Known-open: regex-over-text still misses unlisted paraphrases; block boundaries are line-structural. See SKILL.md Provenance.",
+    "review": "Upstream research arc (BRO-2145): P20 Strata A, 3 rounds 2/10 -> 5/10 -> 6/10. THIS SKILL (BRO-2185): P20 Strata A, rounds 2/10 -> 5/10 -> 5/10 -> 5/10, plus a dogfood pass on a real unseen article that found 2 defects the tests missed. Round 5 findings — citation bypass keyed on severity instead of grade, an indented YAML `---` mistaken for the frontmatter closer, corpus_sweep discarding the comparison ledger's crash count, and a fifth unscoped absence claim (a full sweep then found six more) — are all fixed and mutation-proven. Known-open: regex-over-text still misses unlisted paraphrases; block boundaries are line-structural. See SKILL.md Provenance.",
     "recheck_after": "2027-02-12",
     "grades": {
       "refuted": "ERROR — contradicted by a primary source that was loaded and read",
@@ -10,7 +10,7 @@
       "folklore": "WARN — circulates as fact with no located evidentiary basis",
       "hypothesis_as_fact": "WARN — plausible mechanism asserted as established"
     },
-    "negation_guard": "Rules do not fire when the sentence negates or attributes the claim (not/never/no/isn't/does not/myth/false/debunk/misquot/claims that/allegedly). Separately, a WARN-grade rule is suppressed when a RESOLVABLE citation (URL/DOI) appears in the SAME PARAGRAPH — supplying a source is the correction the rule asks for. Paragraph scope, not a line window: a URL in a neighbouring paragraph must not silence a claim. `refuted` is never suppressed this way."
+    "negation_guard": "Rules do not fire when the sentence negates or attributes the claim (not/never/no/isn't/does not/myth/false/debunk/misquot/claims that/allegedly). Separately, a rule graded `unverified` or `folklore` is suppressed when a RESOLVABLE citation (URL/DOI) appears in the SAME PARAGRAPH — for those two grades the complaint IS 'no source located', so supplying one is the correction. NOT `contested` (the literature disagrees; one citation does not settle it), NOT `hypothesis_as_fact` (a citation does not establish a mechanism), NOT `refuted` (a misquotation with a link is still a misquotation)."
   },
   "refuted": [
     {
@@ -60,21 +60,21 @@
     {
       "id": "three-second-hook",
       "pattern": "(?i)\\bhooks?\\b[^.\\n]{0,40}\\bfirst\\s+(?:one\\s+to\\s+)?(?:1|2|3|one|two|three)(?:\\s*(?:-|–|to)\\s*(?:2|3|three))?\\s*seconds?\\b|\\bfirst\\s+(?:one\\s+to\\s+)?(?:1|2|3|one|two|three)(?:\\s*(?:-|–|to)\\s*(?:2|3|three))?\\s*seconds?\\b[^.\\n]{0,40}\\b(?:hooks?|rule)\\b|\\b(?:3|three)[\\s-]*seconds?\\s+(?:hook|rule)\\b",
-      "message": "The '3-second hook rule' has no peer-reviewed basis. A targeted search returned only content farms, SEO blogs, and platform-vendor marketing.",
+      "message": "A targeted search for a peer-reviewed basis for the '3-second hook rule' returned only content farms, SEO blogs, and platform-vendor marketing. Absence in a searched set is not proof — but you cannot cite it.",
       "instead": "Real short-form research is descriptive (Zannettou et al. CHI'24) or recsys-internal; none identifies human-legible creative features.",
       "grade": "folklore"
     },
     {
       "id": "post-daily",
       "pattern": "(?i)post(?:ing)?\\s+(?:every\\s+(?:single\\s+)?day|each\\s+day|daily|seven\\s+days\\s+a\\s+week|7\\s*x\\s*(?:a|per)\\s*week)[^.\\n]{0,40}(?:gr(?:ow|ew)|growth|reach|algorithm)|(?:gr(?:ow|ew)|growth)[^.\\n]{0,30}post(?:ing)?\\s+(?:every\\s+(?:single\\s+)?day|each\\s+day|daily)",
-      "message": "Volume-as-growth-strategy is unevidenced, and is the specific error the source case study spent two years and 800 posts disproving.",
+      "message": "No source located in a documented search evidences volume-as-growth-strategy, and it is the specific error the source case study spent two years and 800 posts disproving.",
       "instead": "Format quality and consistency, not cadence. Publish less, with a validated format.",
       "grade": "folklore"
     },
     {
       "id": "algorithm-punishes",
       "pattern": "(?i)\\balgorithm\\b[^.\\n]{0,25}\\b(?:punish\\w*|hates?|sabotag\\w*|penali[sz]\\w*|demot\\w*|suppress\\w*|throttl\\w*|shadow-?ban\\w*|deprioriti[sz]\\w*|bur(?:y|ies|ied))\\b",
-      "message": "Anthropomorphic framing with no documented referent. There is no per-format punitive state. The ONE documented demotion is account-level and keyed to originality (non-original reposting), not to format — if that is what you mean, name it and cite it.",
+      "message": "Anthropomorphic framing with no located referent. No per-format punitive state appears in the public documentation searched (references/evidence-map.md §1). The ONE documented demotion is account-level and keyed to originality (non-original reposting), not to format — if that is what you mean, name it and cite it.",
       "instead": "Describe the actual mechanism: predicted-value scoring and retrieval proximity, or say you do not know.",
       "grade": "folklore"
     }

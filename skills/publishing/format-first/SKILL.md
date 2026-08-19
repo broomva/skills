@@ -142,7 +142,7 @@ a gate you cannot reason about:
 |---|---|---|
 | `<!-- format-lint: allow=<id> -->` | that line, that rule | quoting a claim in order to correct it |
 | `<!-- format-lint: disable -->` … `enable` | the region | a block quotation; whole-file coverage is itself an ERROR |
-| a resolvable URL/DOI in the same paragraph | that finding, **WARN grades only** | see below |
+| a resolvable URL/DOI in the same paragraph | that finding, **`unverified` + `folklore` only** | see below |
 | an unclosed fence | everything after it | which is why it is an ERROR |
 
 The third is the one to watch. A WARN-grade rule asserts *"this circulates with no located
@@ -157,9 +157,14 @@ locator). A bare `example.com/page` does not suppress, and neither does a naked 
 or the substring `PMC`. Note that `references/evidence-map.md` cites several sources as
 backticked bare domains — that house style is *not* a suppression marker, deliberately: a
 bypass should be narrower than a citation convention, not wider. The consequence is that a
-resolvable link in the same paragraph silences every WARN-grade claim in that paragraph.
-It does **not** silence `refuted`: a misquotation with a link attached is still a
-misquotation, and that asymmetry is pinned by a test.
+resolvable link in the same paragraph silences those two grades' claims in that paragraph.
+
+The cut is **by grade, not by severity**, and the distinction is load-bearing. It does not
+silence `contested` — that grade means the literature genuinely disagrees, and citing one
+side of a disagreement does not settle it. It does not silence `hypothesis_as_fact` — a
+citation does not turn a mechanism into an established one. It does not silence `refuted` —
+a misquotation with a link attached is still a misquotation. Keying this on severity swept
+all three in, which a cross-model review caught; each boundary is now pinned by a test.
 
 The scope is the **paragraph**, deliberately narrower than the ±3-line window the precision
 rule uses. A line window let a URL in a *different* paragraph — even one **above** the
@@ -189,10 +194,10 @@ rule now requires a measurement context. Rerun the command to regenerate those n
 | Excuse | Reality |
 |---|---|
 | "I'll pick a format once I know what to say." | Backwards. The format is the container; topic fills it. Choosing topic-first is why output scatters. |
-| "This creator posts daily, so cadence works." | Survivorship. Volume-as-strategy is unevidenced and is precisely what the source case study spent two years disproving. |
-| "The 3-second hook is settled." | It has no peer-reviewed basis. Every source is a content farm or a platform vendor. | <!-- format-lint: allow=three-second-hook -->
+| "This creator posts daily, so cadence works." | Survivorship. No source located here evidences volume-as-strategy, and it is precisely what the source case study spent two years disproving. |
+| "The 3-second hook is settled." | A targeted search found no peer-reviewed basis — only content farms and platform-vendor marketing. | <!-- format-lint: allow=three-second-hook -->
 | "A precise number makes it credible." | Precision is rhetorical and freely available. It does not entail that a measurement happened — run the linter. |
-| "The algorithm is punishing my account." | No documented per-format punitive state exists. There is one real account-level gate and it is about originality. | <!-- format-lint: allow=algorithm-punishes -->
+| "The algorithm is punishing my account." | No per-format punitive state appears in the sources searched (evidence map §1). There is one real account-level gate and it is about originality. | <!-- format-lint: allow=algorithm-punishes -->
 | "It worked on me, so the explanation is right." | That is the counterfeit-verifier move. Sensation is not a discriminating test between hypotheses. |
 
 ## Provenance
@@ -204,21 +209,38 @@ cross-reviewed over three rounds scoring 2/10 -> 5/10 -> 6/10, catching two genu
 in it.
 
 **This skill's own review record is separate and worse:** adversarial rounds scoring
-**2/10 -> 5/10 -> 5/10**, plus a dogfood pass against a real unseen article that found two
-defects all 47 tests had missed, plus a fourth round that fixed the three findings below.
+**2/10 -> 5/10 -> 5/10 -> 5/10**, plus a dogfood pass against a real unseen article that
+found two defects all 47 tests had missed. What each round found:
 
+- **Universal-absence phrasing** — the defect this skill exists to prevent, in this skill.
+  Eleven sites asserted absence as a property of the world: format clustering "documented
+  nowhere", "any PUBLIC documentation", "there is no per-format punitive state",
+  "unevidenced", "every source is a content farm". Every one is a claim about a *search*,
+  which is precisely the grade this skill defines as `unverified`. The first pass fixed
+  four and a review found a fifth; a proper sweep then found six more. All eleven now name
+  the set that was searched.
 - **Fence tracking** treated any ` ``` ` or `~~~` as a toggle, so a ` ``` ` inside a
   ` ```` ` block closed it early and the rest was linted as prose. A fence is now a
   character *and* a length, and a closing run must carry no info string.
-- **Universal-absence phrasing.** Four sites said format-level clustering is "documented
-  nowhere" / absent from "any PUBLIC documentation". Those are claims about a search, which
-  is the exact grade this skill defines as `unverified` — it was grading its own claim above
-  its evidence. All four now name the source set.
+- **Frontmatter parsing**, twice. A bare ` ``` ` in a YAML value opened a fence no `---`
+  could close, so the entire document went exempt and its claims were silently missed;
+  frontmatter now resolves before the fence scan. And an *indented* `---` inside a block
+  scalar was mistaken for the closing delimiter, ending the frontmatter early and linting
+  YAML as prose; the delimiter is now column-zero only.
+- **The citation bypass**, which a reviewer's counter-example forced into existence and a
+  later round twice narrowed: first from a ±3-line window to the claim's own paragraph (a
+  URL in a *neighbouring* paragraph was silencing claims), then from "any WARN grade" to
+  `unverified` and `folklore` only — because `contested` means the literature disagrees,
+  and citing one side of a disagreement does not settle it.
+- **A vacuous guard, deleted.** `citation_markers` was a ledger list no code path read,
+  and a test asserted properties of it under the docstring "Regression on a real finding".
+  It passed whatever the linter did. The field is gone; the test now exercises the regex
+  the linter actually compiles, in both polarities.
 - **Paraphrase coverage**, widened where it was cheap and honest: anthropomorphic verbs
   beyond "punish" (demote/suppress/throttle/shadowban/bury/deprioritise), cadence phrased
-  as "each day" or "seven days a week", the variance hypothesis in five more verbs, and
-  word-form multipliers. Each widening carries a paired negative fixture and was swept
-  against 3,328 real files.
+  as "each day" or "seven days a week" or in the past tense, the variance hypothesis in
+  five more verbs, and word-form multipliers. Each widening carries a paired negative
+  fixture and was swept against 3,328 real files.
 
 **Still known-open.** The matcher is regex-over-text, so a claim stated in words the ledger
 does not list still passes; the widenings above narrow that gap, they do not close it.

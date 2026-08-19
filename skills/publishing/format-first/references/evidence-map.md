@@ -135,7 +135,7 @@ grade, so only `refuted` exits non-zero.
 <!-- format-lint: enable -->
 
 <!-- format-lint: disable -->
-**Also unevidenced** (WARN-grade in the linter): the 3-second hook rule, posting-daily as
+**Also unlocated in the sources searched here** (WARN-grade in the linter): the 3-second hook rule, posting-daily as
 a growth strategy, and anthropomorphic "the algorithm punishes you" framing.
 <!-- format-lint: enable -->
 

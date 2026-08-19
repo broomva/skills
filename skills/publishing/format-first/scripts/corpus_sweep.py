@@ -70,7 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if args.compare:
-        old, _ = scan(files, fl.load_ledger(args.compare))
+        old, old_crashes = scan(files, fl.load_ledger(args.compare))
+        # NEVER discard this. If the old ledger crashes on every file its finding set is
+        # empty, so every current finding reads as newly ADDED and a widening that bought
+        # nothing certifies itself as pure gain.
+        report["old_crashes"] = old_crashes
         report["added"] = [
             {"file": k[0], "line": k[1], "id": k[2], "matched": k[3]} for k in sorted(new - old)
         ]
@@ -78,11 +82,16 @@ def main(argv: list[str] | None = None) -> int:
             {"file": k[0], "line": k[1], "id": k[2], "matched": k[3]} for k in sorted(old - new)
         ]
 
+    failed = report["crashes"] or report.get("old_crashes", 0)
+
     if args.as_json:
         print(json.dumps(report, indent=2))
-        return 0
+        return 1 if failed else 0
 
-    print(f"files={report['files']}  crashes={report['crashes']}  findings={report['findings']}")
+    print(
+        f"files={report['files']}  crashes={report['crashes']}  findings={report['findings']}"
+        + (f"  old_crashes={report['old_crashes']}" if "old_crashes" in report else "")
+    )
     for rid, n in report["by_rule"].items():
         print(f"  {n:>6}  {rid}")
     for label in ("added", "removed"):
@@ -92,7 +101,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{label.upper()} vs {args.compare} ({len(rows)}):")
         for r in rows:
             print(f"  {Path(r['file']).name}:{r['line']}  [{r['id']}]  «{r['matched'][:70]}»")
-    return 0
+    if failed:
+        print(
+            f"corpus_sweep: {report['crashes']} crash(es) on the current ledger and "
+            f"{report.get('old_crashes', 0)} on the comparison ledger — the delta above is "
+            "NOT trustworthy.",
+            file=sys.stderr,
+        )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
