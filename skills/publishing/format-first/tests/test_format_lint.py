@@ -645,3 +645,48 @@ def test_cadence_folklore_in_the_past_tense():
 
 def test_past_tense_widening_does_not_flag_an_unrelated_growth_sentence():
     assert "post-daily" not in ids("The account grew after I switched to one format.\n")
+
+
+# ---------- citation suppression (round-4, found by the cross-model reviewer) ----------
+
+def test_a_cited_attributed_true_claim_does_not_read_as_folklore():
+    """The reviewer's counter-example: this sentence is true, sourced, and was flagged.
+
+    A WARN-grade rule asserts "this circulates with no located source". Supplying the
+    source is the correction the rule's own `instead` asks for.
+    """
+    text = (
+        "According to Instagram, its algorithm demotes primarily non-original accounts:\n"
+        "https://about.instagram.com/blog/announcements/original-content\n"
+    )
+    assert "algorithm-punishes" not in ids(text)
+
+
+def test_the_same_claim_without_a_citation_still_fires():
+    assert "algorithm-punishes" in ids("The algorithm demotes accounts that switch formats.\n")
+
+
+def test_a_citation_does_not_suppress_a_refuted_claim():
+    """A misquotation with a link attached is still a misquotation — ERROR must survive."""
+    text = (
+        "Mosseri said the polished, perfect aesthetic is dead.\n"
+        "Source: https://www.threads.net/@mosseri/post/abc\n"
+    )
+    hits = find(text, "polished-aesthetic-dead")
+    assert hits and hits[0]["severity"] == "ERROR"
+
+
+def test_citation_suppression_reaches_across_a_hard_wrap():
+    text = (
+        "Posting each day is how the\n"
+        "account grew.\n"
+        "See https://example.com/study/12345\n"
+    )
+    assert "post-daily" not in ids(text)
+
+
+def test_an_unresolvable_marker_does_not_suppress():
+    """"https://" alone or a bare "PMC" is not a citation — that is the marker_regex's job."""
+    assert "algorithm-punishes" in ids(
+        "The algorithm demotes inconsistent formats. Source: https://\n"
+    )

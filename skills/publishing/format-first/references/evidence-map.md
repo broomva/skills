@@ -48,6 +48,22 @@ Do not transport a formula across surfaces.
 Crucially: *"This update does not affect the way we show people content from accounts they
 follow"*, and it is reversible if the majority of the last 30 days is original. It is
 **eligibility, not ranking**, and it is keyed to reposting — **not** to format choice.
+Source: `creators.instagram.com/blog/rewarding-original-creators-on-instagram`
+
+> **Locator added 2026-08-19.** This entry was graded `[HIGH]` with a verbatim quote and a
+> date but **no locator**, alone among the `[HIGH]` entries in this section — a claim you
+> cannot re-check is not a claim you can call primary. Re-verified against the live page:
+> the date (30 April 2026), the recommendation sentence, the followers-unaffected sentence,
+> and the 30-day reversibility condition are all present.
+>
+> **Misattribution trap.** A sibling page, `creators.instagram.com/blog/recommendations-and-originality`,
+> is dated **30 April 2024** — exactly two years earlier — and states nearly the same thing
+> for reels only. The 2026 page is the one that extends the policy to *photo posts and
+> carousels*. Citing the 2024 page for the extended claim is the easiest available
+> provenance error here; check the date and the surface list, not the wording.
+>
+> The page localizes to the request locale, so a re-check may return a translation rather
+> than the English wording recorded above.
 
 **Signal ordering is conditional.** `[HIGH]` Mosseri, 2025-01-21 — the only primary
 ranking of signals located:

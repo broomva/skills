@@ -297,6 +297,24 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
 
     blocks = _blocks(lines, skip)
 
+    # A WARN-grade rule says "this circulates with no located source". A sentence that
+    # SUPPLIES a resolvable source is the correction the rule asks for, so it must not
+    # fire — "According to Instagram, its algorithm demotes non-original accounts:
+    # <link>" is true, cited, and was flagged as folklore until this existed.
+    #
+    # THIS IS A DELIBERATE, DOCUMENTED BYPASS: appending any resolvable URL within three
+    # lines silences every WARN-grade claim rule near it. It does NOT silence `refuted`,
+    # because a misquotation with a link attached is still a misquotation.
+    pws_cfg = ledger.get("precision_without_source") or {}
+    cite_rx = re.compile(pws_cfg["marker_regex"], re.I) if pws_cfg.get("marker_regex") else None
+    cite_window = int(pws_cfg.get("window_lines", 3))
+
+    def _cited_near(lo: int, hi: int) -> bool:
+        if cite_rx is None:
+            return False
+        blob = "\n".join(lines[max(0, lo - cite_window) : min(len(lines), hi + cite_window + 1)])
+        return bool(cite_rx.search(blob))
+
     for category in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger.get(category, []):
             grade = rule.get("grade", category)
@@ -310,6 +328,8 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
                     hi = _line_of(owner, m.end() - 1)
                     spanned = range(lo, hi + 1)
                     if any(rule["id"] in _allowed_ids(lines, k) for k in spanned):
+                        continue
+                    if severity != "ERROR" and _cited_near(lo, hi):
                         continue
                     findings.append(
                         {

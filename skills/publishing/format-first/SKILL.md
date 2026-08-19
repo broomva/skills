@@ -135,6 +135,32 @@ frontmatter are exempt; a leading `---` horizontal rule is not. Suppress narrowl
 `<!-- format-lint: allow=<rule-id> -->` (that line only) or a `disable`/`enable` region —
 an unclosed, nested, or whole-file region is itself reported as an ERROR.
 
+**The bypasses, stated plainly**, because a gate whose escape hatches are undocumented is
+a gate you cannot reason about:
+
+| Bypass | Scope | Why it exists |
+|---|---|---|
+| `<!-- format-lint: allow=<id> -->` | that line, that rule | quoting a claim in order to correct it |
+| `<!-- format-lint: disable -->` … `enable` | the region | a block quotation; whole-file coverage is itself an ERROR |
+| a resolvable URL/DOI within 3 lines | that finding, **WARN grades only** | see below |
+| an unclosed fence | everything after it | which is why it is an ERROR |
+
+The third is the one to watch. A WARN-grade rule asserts *"this circulates with no located
+source"*, so a sentence that **supplies** a source has already done what the rule asks —
+`"According to Instagram, its algorithm demotes primarily non-original accounts:
+https://creators.instagram.com/blog/rewarding-original-creators-on-instagram"` is true,
+cited, and was flagged as folklore until this existed — the sentence you just read is
+itself suppressed by the rule it describes.
+
+The marker must be **scheme-qualified** (`https://…`, `doi.org/10.…`, an arXiv or PubMed
+locator). A bare `example.com/page` does not suppress, and neither does a naked `https://`
+or the substring `PMC`. Note that `references/evidence-map.md` cites several sources as
+backticked bare domains — that house style is *not* a suppression marker, deliberately: a
+bypass should be narrower than a citation convention, not wider. The consequence is that
+appending any resolvable link within three lines silences every WARN-grade claim near it.
+It does **not** silence `refuted`: a misquotation with a link attached is still a
+misquotation, and that asymmetry is pinned by a test.
+
 Extend it by editing `references/claims-ledger.json` — pattern, message, and the
 correct replacement. Every rule needs both polarities in `tests/`.
 
