@@ -1780,13 +1780,78 @@ def test_malformed_closing_fence_fails_closed_not_open(tmp_path):
     """The reachable path for the body-extraction `else` branch, which mutant M51
     survived on until this test existed.
 
-    `parse_frontmatter`'s regex (`^---\\n(.*?)\\n---`) is LESS strict than the body
-    matcher, so trailing junk on the closing fence lets the OUTCOME parse while the
-    body match misses. The old code returned the input unchanged there (fail-open);
-    an empty body is the fail-closed answer."""
+    Trailing junk on the closing fence (`---xyz`) is malformed frontmatter. It used to
+    be parsed by a laxer second matcher, which let the OUTCOME parse while the body
+    match missed — and the old code then returned the input unchanged (fail-OPEN).
+
+    With a single matcher the diagnosis is both accurate and fail-closed: there is no
+    valid frontmatter here, so the gate says so rather than inventing a body."""
     d = _j(tmp_path)
     (d / "evals" / "admission.md").write_text(
         "---\noutcome: admitted\n---xyz\nTwo agents, one brief; both valid.\n",
         encoding="utf-8")
     step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "records nothing" in step2["detail"]
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "outcome" in step2["detail"]
+
+
+# ===========================================================================
+# Round 7. Both blockers were the same shape — a fix applied at one site while its
+# sibling kept the old behaviour. Eighth instance in this arc, so the fix is
+# structural: ONE frontmatter matcher, and these tests hold it to that.
+# ===========================================================================
+
+def test_bom_reaches_the_second_frontmatter_parser_too(tmp_path):
+    """THE one-site bug, again. The BOM fix went into `parse_frontmatter`, and
+    `_skillsh_frontmatter_issue` kept its own `^---` match — so a BOM'd SKILL.md
+    slipped past the skills.sh gotcha detector entirely and step 1 reported
+    `skills.sh-parseable` about a file that would not install."""
+    d = tmp_path / "bomskill"
+    d.mkdir()
+    (d / "SKILL.md").write_bytes(
+        '﻿---\nname: demo\ndescription: demo\ntags:\n  - "one", "two"\n---\n# body\n'
+        .encode("utf-8"))
+    assert mod._skillsh_frontmatter_issue(d) is not None
+    step1 = _step(_check(d), 1)
+    assert step1["status"] == "FAIL" and "skills.sh parser" in step1["detail"]
+
+
+def test_every_frontmatter_call_site_shares_one_matcher(tmp_path):
+    """Guards the structural fix rather than its three symptoms: a BOM'd file must be
+    seen identically by the frontmatter parser, the skills.sh detector, and the
+    admission reader. Three near-copies of the same regex is what let a fix land at
+    one of them twice."""
+    src = (Path(mod.__file__).read_text(encoding="utf-8")
+           if getattr(mod, "__file__", None) else SCRIPT.read_text(encoding="utf-8"))
+    live = [ln for ln in src.splitlines()
+            if 're.match(r"^---' in ln and not ln.lstrip().startswith("#")
+            and "There used to be" not in ln]
+    assert live == [], f"a second frontmatter matcher reappeared: {live}"
+
+
+def test_duplicate_outcome_detection_is_case_and_indent_insensitive(tmp_path):
+    """The outcome LOOKUP was made case-insensitive; the duplicate DETECTION was not,
+    so `outcome: admitted` + `Outcome: rejected` passed. Indented duplicates bypassed
+    the count too."""
+    for i, block in enumerate(["outcome: admitted\nOutcome: rejected",
+                               "outcome: admitted\n  outcome: rejected",
+                               "OUTCOME: admitted\noutcome: admitted"]):
+        d = _j(tmp_path / f"dup{i}")
+        (d / "evals" / "admission.md").write_text(
+            f"---\n{block}\n---\n\nTwo agents, one brief; both valid.\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"accepted duplicate declarations: {block!r}"
+        assert "declares `outcome`" in step2["detail"]
+
+
+def test_empty_outcome_message_is_reachable_without_pyyaml(tmp_path, monkeypatch):
+    """On the stdlib path an empty `outcome:` yielded "", indistinguishable from an
+    absent key, so the accurate message was unreachable exactly where the fallback
+    parser is in use."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    monkeypatch.setattr(mod, "yaml", None)
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome:\n---\n\nTwo agents received the same brief.\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty `outcome`" in step2["detail"]

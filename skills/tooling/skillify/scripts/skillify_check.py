@@ -52,6 +52,21 @@ PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
 # --- frontmatter -------------------------------------------------------------
 
+_FRONTMATTER_RE = re.compile(r"^\ufeff?---\n(.*?)\n---[^\S\n]*(?:\n|$)", re.DOTALL)
+
+
+def _frontmatter_match(text: str):
+    """The ONE frontmatter matcher. Tolerates a leading BOM and a closing fence that
+    ends the file or carries trailing spaces.
+
+    There used to be three near-copies of `re.match(r"^---\n(.*?)\n---")`, and a BOM
+    fix applied to one of them left the other two behind — twice in this arc a fix
+    landed at a single site while its sibling kept the old behaviour. One matcher is
+    the structural answer to that, not a third careful edit.
+    """
+    return _FRONTMATTER_RE.match(text)
+
+
 def parse_frontmatter(md_path: Path) -> dict | None:
     """Return the top YAML frontmatter as a flat str dict, or None if absent.
 
@@ -66,8 +81,7 @@ def parse_frontmatter(md_path: Path) -> dict | None:
         text = md_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    text = text.lstrip("\ufeff")  # a BOM made the ^--- match fail, hiding frontmatter
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    m = _frontmatter_match(text)
     if not m:
         return None
     block = m.group(1)
@@ -114,7 +128,7 @@ def _skillsh_frontmatter_issue(skill_dir: Path) -> str | None:
         text = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    m = _frontmatter_match(text)
     if not m:
         return None
     quote_comma = re.compile(r'(?:"[^"]*"|\'[^\']*\')\s*,')
@@ -837,22 +851,22 @@ def _admission_issue(skill_dir: Path) -> str | None:
     # Case-insensitive KEY lookup: the value was already compared case-insensitively,
     # so `Outcome: admitted` failing with "declares no outcome" was an undocumented
     # asymmetry that reads as the gate not seeing what is plainly there.
-    raw_outcome = next((v for k, v in fm.items() if str(k).strip().lower() == "outcome"), "")
-    outcome = str(raw_outcome).strip().lower()
+    present = [v for k, v in fm.items() if str(k).strip().lower() == "outcome"]
+    outcome = str(present[0]).strip().lower() if present else ""
+    if present and outcome in ("", "none", "null"):
+        return ("evals/admission.md declares an empty `outcome` — set it to `admitted` "
+                "or `rejected`")
     if not outcome:
         return ("evals/admission.md declares no `outcome` in frontmatter — add:\n"
                 f"{_ADMISSION_TEMPLATE}")
-    if outcome in ("", "none", "null"):
-        return ("evals/admission.md declares an empty `outcome` — set it to `admitted` "
-                "or `rejected`")
     if outcome not in ("admitted", "rejected"):
         return f"evals/admission.md outcome: {outcome!r} — must be `admitted` or `rejected`"
     if outcome == "rejected":
         return ("evals/admission.md declares `outcome: rejected` — an underspecified "
                 "skill is not admissible")
-    m = re.match(r"^\ufeff?---\n(.*?)\n---[^\S\n]*(?:\n|$)", raw, re.DOTALL)
+    m = _frontmatter_match(raw)
     block = m.group(1) if m else ""
-    declared = re.findall(r"(?m)^outcome\s*:", block)
+    declared = re.findall(r"(?mi)^[ \t]*outcome[ \t]*:", block)
     if len(declared) > 1:
         return (f"evals/admission.md declares `outcome` {len(declared)} times — "
                 "contradictory declarations; keep exactly one")

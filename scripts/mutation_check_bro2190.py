@@ -200,9 +200,9 @@ MUTANTS = [
      '    body = raw[m.end():] if m else raw',
      "test_malformed_closing_fence_fails_closed_not_open"),
     ("M52 a UTF-8 BOM hides frontmatter again",
-     '    text = text.lstrip("\\ufeff")  # a BOM made the ^--- match fail, hiding frontmatter',
-     '    pass',
-     "test_utf8_bom_does_not_hide_frontmatter"),
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     "test_bom_reaches_the_second_frontmatter_parser_too"),
     ("M53 the stdlib fallback stops stripping YAML comments",
      '                val = re.split(r"\\s+#", val, 1)[0].strip()',
      '                pass',
@@ -212,8 +212,8 @@ MUTANTS = [
      '    if False:',
      "test_duplicate_contradictory_outcome_declarations_fail"),
     ("M55 outcome key matched case-sensitively again",
-     '    raw_outcome = next((v for k, v in fm.items() if str(k).strip().lower() == "outcome"), "")',
-     '    raw_outcome = fm.get("outcome", "")',
+     '    present = [v for k, v in fm.items() if str(k).strip().lower() == "outcome"]',
+     '    present = [v for k, v in fm.items() if str(k) == "outcome"]',
      "test_outcome_key_is_matched_case_insensitively"),
     ("M56 step 1c fails OPEN on an unreadable templates artifact",
      '            if raw_y is None:\n                issues.append(f"{y.relative_to(skill_dir)} is unreadable — "\n                              "references cannot be verified")\n                raw_y = ""',
@@ -223,6 +223,16 @@ MUTANTS = [
      '    if txt is None:\n        return _Unparseable(path)  # unreadable is UNVERIFIED, not absent',
      '    if txt is None:\n        return None',
      "test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent"),
+
+    # --- round 7: one matcher, and the sibling sites -------------------------
+    ("M58 duplicate outcome detection becomes case-sensitive again",
+     "     declared = re.findall(r\"(?mi)^[ \\t]*outcome[ \\t]*:\", block)".strip(),
+     'declared = re.findall(r"(?m)^outcome[ \\t]*:", block)',
+     "test_duplicate_outcome_detection_is_case_and_indent_insensitive"),
+    ("M59 empty-outcome message unreachable on the stdlib path again",
+     '    if present and outcome in ("", "none", "null"):',
+     '    if False:',
+     "test_empty_outcome_message_is_reachable_without_pyyaml"),
 ]
 
 
