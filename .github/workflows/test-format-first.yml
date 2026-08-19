@@ -1,0 +1,100 @@
+name: test-format-first
+
+# Python test gate for the `format-first` skill (skills/publishing/format-first/).
+# Path-filtered so it runs ONLY when that skill changes — the monorepo's
+# tests-optional default (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/publishing/format-first/**'
+      - '.github/workflows/test-format-first.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/publishing/format-first/**'
+      - '.github/workflows/test-format-first.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-format-first-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/publishing/format-first
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install pytest
+      - name: Unit tests (format_lint deterministic core)
+        run: python -m pytest tests/ -v
+      - name: Ledger is valid JSON
+        run: python -c "import json;json.load(open('references/claims-ledger.json'))"
+      - name: Every ledger pattern compiles
+        run: |
+          python - <<'PY'
+          import json, re
+          d = json.load(open("references/claims-ledger.json"))
+          n = 0
+          for cat in ("refuted", "folklore", "hypothesis_as_fact"):
+              for r in d[cat]:
+                  re.compile(r["pattern"]); n += 1
+          re.compile(d["precision_without_source"]["pattern"])
+          # The citation detector is code, not a ledger field — compile it from the module
+          # so this step keeps checking something real if the ledger schema changes again.
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("fl", "scripts/format_lint.py")
+          fl = importlib.util.module_from_spec(spec); spec.loader.exec_module(fl)
+          assert fl.CITATION_RX.search("https://example.com/page")
+          assert not fl.CITATION_RX.search("https://")
+          print(f"{n + 1} ledger patterns compile; CITATION_RX discriminates")
+          PY
+      - name: Dogfood — the skill's own docs must pass its own gate
+        run: python scripts/format_lint.py SKILL.md references/evidence-map.md --strict
+      - name: The gate can actually go red
+        # A dogfood step that only ever asserts CLEAN passes just as well when the linter
+        # is broken and finds nothing. Prove the red path from CI, not from a local memory.
+        run: |
+          printf 'Mosseri said the polished, perfect aesthetic is dead.\n' > /tmp/dirty.md
+          set +e
+          python scripts/format_lint.py /tmp/dirty.md
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "::error::expected exit 1 on a refuted claim, got $code"; exit 1; }
+      - name: corpus_sweep runs end-to-end, and its compare path fails on a bad ledger
+        # The compare path was never exercised in CI, which is how a discarded crash count
+        # on the comparison side went unnoticed: a broken old ledger crashes on every file,
+        # its finding set comes back empty, and every current finding then reads as newly
+        # ADDED — a widening certifying itself as pure gain.
+        run: |
+          python - <<'PY'
+          import json, subprocess, sys, tempfile, pathlib
+          out = subprocess.run([sys.executable, "scripts/corpus_sweep.py", ".", "--json"],
+                               capture_output=True, text=True, check=True)
+          rep = json.loads(out.stdout)
+          assert rep["crashes"] == 0 and rep["files"] > 0, rep
+          print(f"swept {rep['files']} files, {rep['findings']} findings, 0 crashes")
+
+          led = json.load(open("references/claims-ledger.json"))
+          led["refuted"][0]["pattern"] = "("          # uncompilable
+          with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+              json.dump(led, fh); bad = fh.name
+          r = subprocess.run([sys.executable, "scripts/corpus_sweep.py", ".", "--compare", bad],
+                             capture_output=True, text=True)
+          assert r.returncode != 0, f"a broken comparison ledger must not exit 0: {r.stdout}"
+          print("compare path correctly refuses a broken ledger")
+          PY
