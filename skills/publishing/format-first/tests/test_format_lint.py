@@ -80,6 +80,19 @@ RESOLVABLE_LOCATORS = [
     # reviewer flagged — "how many digits" is not what makes an identifier resolvable.
     "PMC12",
     "https://engineering.fb.com/2023/08/09/ml-applications/x",
+    # Punctuation may legitimately sit against a locator in prose. Token alignment must
+    # allow that, or it trades a false-negative class for a false-positive one.
+    "(https://example.com/page)",
+    "https://example.com/page.",
+    '"https://example.com/page"',
+    "https://example.com/page, and more follows",
+    # Those four all use a PATH branch, whose `\S*` swallows the punctuation — so they
+    # cannot show that trailing closers are handled. These are closed-grammar identifiers,
+    # where the punctuation really does sit outside the match.
+    "PMC1234567.",
+    "(PMID: 12345678)",
+    "arXiv:2301.00001, and more follows",
+    "See PMC1234567; it is open access.",
 ]
 NOT_LOCATORS = [
     "https://", "http://",                 # a scheme is not a locator
@@ -94,6 +107,10 @@ NOT_LOCATORS = [
     # The reviewer's cases: malformed hosts and identifiers embedded in other words.
     "https://..com/path", "https://.com/p", "https://-x.com/p", "https://x-.com/p",
     "NOTPMC1234", "PMIDX 12345678",
+    # Round 21: a locator embedded in a larger token, on either side. Three rounds each
+    # found one branch missing a boundary, so boundaries stopped being per-branch.
+    "xhttps://example.com/page", "PMID: 1.2", "PMC123abc", "adoi:10.1037/abc",
+    "zzhttps://example.com/page",
     # Round 20: bare-host forms need a LEFT boundary or they match on a suffix, and
     # identifiers need a terminal one. `v0` is not a valid arXiv version.
     "fake-doi.org/10.1234/x", "not-arxiv.org/abs/2301.00001",
@@ -115,9 +132,9 @@ def test_only_resolvable_locators_count_as_citations():
     fixture set is either evadable or over-strict.
     """
     for good in RESOLVABLE_LOCATORS:
-        assert fl.CITATION_RX.search(good), good
+        assert fl._has_citation(good), good
     for bad in NOT_LOCATORS:
-        assert not fl.CITATION_RX.search(bad), bad
+        assert not fl._has_citation(bad), bad
 
 
 # ---------- POSITIVE + NEGATIVE for every rule ----------
@@ -2090,3 +2107,40 @@ def test_the_same_table_governs_the_claim_rule_bypass():
     assert "algorithm-punishes" not in ids(f"{folklore} https://example.com/page\n")
     assert "algorithm-punishes" in ids(f"{folklore} https://..com/path\n")
     assert "algorithm-punishes" in ids(f"{folklore} NOTPMC1234\n")
+
+
+def test_token_alignment_is_one_rule_for_every_branch():
+    """Direct coverage of the property that replaced per-branch boundaries.
+
+    Three consecutive rounds each found one branch missing a boundary — host labels, then
+    bare-host left edges, then the http branch and the identifier tails. A rule spelled per
+    branch is a rule you can forget once per branch. This one is applied to every match
+    regardless of which alternative produced it, so ADDING a branch cannot reintroduce the
+    bug — the property per-branch boundaries never had.
+    """
+    # Every branch, prefixed: a locator cannot begin inside a larger token.
+    all_branches = ("https://example.com/page", "doi:10.1037/abc", "arXiv:2301.00001",
+                    "pubmed.ncbi.nlm.nih.gov/1234567", "PMID: 12345678", "PMC1234567",
+                    "doi.org/10.1145/3613904.3642433", "arxiv.org/abs/2301.00001")
+    for sample in all_branches:
+        assert fl._has_citation(sample), sample
+        assert not fl._has_citation("zz" + sample), sample
+
+    # Suffixing only violates branches whose grammar is CLOSED. Appending to a path yields
+    # a different but equally valid path — `https://example.com/pagezz` is a real URL, and
+    # asserting otherwise would be testing a property the locator does not have.
+    closed_grammar = ("arXiv:2301.00001", "pubmed.ncbi.nlm.nih.gov/1234567",
+                      "PMID: 12345678", "PMC1234567", "arxiv.org/abs/2301.00001")
+    for sample in closed_grammar:
+        assert not fl._has_citation(sample + "zz"), sample
+
+
+def test_both_consumers_agree_on_an_embedded_locator():
+    """The precision rule and the claim-rule bypass share the detector; a fix to one must
+    not diverge from the other."""
+    claim = "The review covered 2024 studies."
+    folklore = "According to Instagram, its algorithm demotes non-original accounts."
+    assert "unsourced-precision" in ids(f"{claim} Source: xhttps://example.com/page\n")
+    assert "algorithm-punishes" in ids(f"{folklore} Source: xhttps://example.com/page\n")
+    assert "unsourced-precision" not in ids(f"{claim} Source: https://example.com/page\n")
+    assert "algorithm-punishes" not in ids(f"{folklore} Source: https://example.com/page\n")

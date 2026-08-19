@@ -242,29 +242,64 @@ PRECISION_KEYS = frozenset({"pattern", "message", "instead", "window_lines"})
 # So the field is gone. A citation is a resolvable locator: an http(s) URL with a path, a
 # DOI, an arXiv id, a PubMed id, or a PMC id. Making that configurable was letting the gate
 # be configured into silence, which contradicts the one claim this skill actually makes.
+# The locator ALTERNATIVES carry no boundaries of their own. Boundary conditions used to be
+# spelled into each branch, and three consecutive review rounds each found one branch that
+# had been missed — host labels, then bare-host left edges, then the http branch and the
+# identifier tails. Per-branch boundaries are a rule you can forget once per branch.
+#
+# `_has_citation` applies ONE token-alignment check to every match instead, so a locator
+# embedded in a larger token (`xhttps://example.com/page`, `fake-doi.org/10.1/x`,
+# `NOTPMC1234`, `PMID: 1.2`) cannot match no matter which branch produced it. Adding a
+# branch cannot reintroduce the bug, which is the property per-branch boundaries never had.
 CITATION_RX = re.compile(
     r"""
-      https?://                                          # a URL with a real host and a path
-        (?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+  # labels: alnum-bounded, no empty ones
+      https?://
+        (?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+  # host labels, alnum-bounded
         [A-Za-z]{2,}                                     # TLD
         (?::\d+)?                                        # optional port
-        /\S                                              # and at least one path character
-    # Bare-host forms need a LEFT boundary too, or `fake-doi.org/10.1/x` and
-    # `not-arxiv.org/abs/2301.00001` match on their suffixes and silence the finding.
-    | (?<![\w.-]) doi\.org/10\.\d{4,9}/\S
-    | (?<![\w.-]) arxiv\.org/abs/ (?: \d{4}\.\d{4,5}(?:v[1-9]\d*)?
-                                    | [a-z-]+(?:\.[A-Z]{2})?/\d{7} ) (?![\w.])
-    | (?<![\w.-]) pubmed\.ncbi\.nlm\.nih\.gov/[1-9]\d* (?![\w.])
-    # Prefixed identifier forms. Terminal boundaries matter as much as leading ones:
-    # `arXiv:2301.00001junk` is not an identifier, and `v0` is not a valid version.
-    | \b doi:\s*10\.\d{4,9}/\S
-    | \b arXiv:\s* (?: \d{4}\.\d{4,5}(?:v[1-9]\d*)?
-                     | [a-z-]+(?:\.[A-Z]{2})?/\d{7} ) (?![\w.])
-    | \b PMID:?\s*[1-9]\d* \b                            # any real PubMed id, incl. PMID 1
-    | \b PMC[1-9]\d* \b                                  # PMC id
+        /\S*                                             # path
+    | doi\.org/10\.\d{4,9}/\S+
+    | doi:\s*10\.\d{4,9}/\S+
+    | arxiv\.org/abs/(?:\d{4}\.\d{4,5}(?:v[1-9]\d*)?|[a-z-]+(?:\.[A-Z]{2})?/\d{7})
+    | arXiv:\s*(?:\d{4}\.\d{4,5}(?:v[1-9]\d*)?|[a-z-]+(?:\.[A-Z]{2})?/\d{7})
+    | pubmed\.ncbi\.nlm\.nih\.gov/[1-9]\d*/?
+    | PMID:?\s*[1-9]\d*
+    | PMC[1-9]\d*
     """,
     re.I | re.X,
 )
+
+# Punctuation that may legitimately sit against a locator in prose.
+_OPENERS = set("([{<\"'“‘")
+_CLOSERS = set(")]}>\"'”’,;:!?.…")
+
+
+def _has_citation(text: str) -> bool:
+    """True when `text` contains a resolvable locator AS A COMPLETE TOKEN.
+
+    The alignment rule, applied once for every branch: what precedes the match must be
+    whitespace, an opening bracket or quote, or the start of the text; what follows must be
+    whitespace, the end of the text, or closing punctuation that is itself followed by
+    whitespace or the end. `xhttps://example.com/page` fails on the left, `PMID: 1.2` on
+    the right, and neither needed its branch to say so.
+    """
+    for m in CITATION_RX.finditer(text):
+        lo, hi = m.span()
+        if lo > 0:
+            prev = text[lo - 1]
+            if not (prev.isspace() or prev in _OPENERS):
+                continue
+        rest = text[hi:]
+        if rest and not rest[0].isspace():
+            # Trailing closers are fine as long as ordinary text does not resume straight
+            # after them: `(…/page)` and `…/page, and more` are citations, `…/pagezz` and
+            # `PMID: 1.2` are not. One check, not two — mutation testing showed the
+            # separate "is the next character a closer?" test could be deleted without
+            # turning anything red, because this line already decides the same question.
+            if rest.lstrip("".join(_CLOSERS))[:1].strip():
+                continue
+        return True
+    return False
 
 
 def _validate_schema(data: dict, _fail) -> None:
@@ -627,7 +662,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
     # THIS IS A DELIBERATE, DOCUMENTED BYPASS, opted into PER RULE (`citation_resolves`)
     # and scoped to the claim's own PARAGRAPH.
     pws_cfg = ledger.get("precision_without_source") or {}
-    cite_rx = CITATION_RX
+    cite_rx = None  # the detector is a function now; see _has_citation
 
     def _cited_in(btext: str) -> bool:
         """Scoped to the claim's OWN paragraph, deliberately narrower than the +/-3-line
@@ -637,7 +672,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
         silence it, which turns "cite your source" into "put a link somewhere nearby".
         Block scope still spans a hard wrap, which is the only thing it needed to span.
         """
-        return bool(cite_rx.search(btext))
+        return _has_citation(btext)
 
     for category in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger.get(category, []):
@@ -674,7 +709,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
         window = int(pws.get("window_lines", 3))
         # A marker must look like a RESOLVABLE locator. A bare "https://" or the
         # substring "PMC" is not a citation.
-        marker_rx = CITATION_RX
+        pass
         for btext, owner in blocks:
             for m in rx.finditer(btext):
                 if _negated_at(btext, m.start()):
@@ -684,7 +719,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
                 if any("unsourced-precision" in _allowed_ids(lines, k) for k in range(lo, hi + 1)):
                     continue
                 blob = "\n".join(lines[max(0, lo - window) : min(len(lines), hi + window + 1)])
-                if marker_rx.search(blob):
+                if _has_citation(blob):
                     continue
                 findings.append(
                     {
