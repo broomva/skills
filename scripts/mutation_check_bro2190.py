@@ -31,7 +31,7 @@ MUTANTS = [
     ("M2 agreement_measured requirement removed",
      'elif not _substantive(measured.get("value")) or not _substantive(measured.get("method")):',
      'elif False:',
-     "test_agreement_measured_is_still_required"),
+     "test_measurement_fields_are_checked_structurally_only"),
     # M3 (admission outcome polarity) was retired in round 3: the hits-based branch it
     # mutated no longer exists, and the property it covered — a rejection blocks — is
     # now carried by M32 against the raw-text scan that replaced it.
@@ -129,10 +129,10 @@ MUTANTS = [
      '            if cp and cn:\n                continue  # one case cannot be both; it asserts nothing',
      '            pass',
      "test_one_self_contradictory_case_does_not_satisfy_both_polarities"),
-    ("M29 held-out FILE path drops the placeholder guard again (the one-site fix)",
-     '            txt = _read(f)\n            if _substantive(txt):',
-     '            txt = _read(f)\n            if txt and txt.strip():',
-     "test_an_empty_held_out_case_file_is_not_a_case"),
+    # M29 retired: it mutated `_substantive` to `txt.strip()` on the held-out FILE
+    # path. Now that _substantive IS an emptiness check, the two are identical and
+    # the mutant is a no-op. The property it guarded is covered by
+    # test_an_empty_held_out_case_file_is_not_a_case via M16's sibling checks.
     ("M30 extensionless python script counted but not syntax-checked",
      '    if interp in _PY_INTERPRETERS:',
      '    if False:',
@@ -164,7 +164,7 @@ MUTANTS = [
     ("M36 unterminated HTML comment not stripped",
      '    md = re.sub(r"(?s)<!--.*\\Z", "", md)',
      '    pass',
-     "test_html_comment_reference_does_not_break_step_1c"),
+     "test_unterminated_html_comment_reference_does_not_break_step_1c"),
 
     # --- final verify round --------------------------------------------------
 

@@ -1631,3 +1631,10 @@ def test_a_real_missing_reference_still_fails_step_1c(tmp_path):
                                 encoding="utf-8")
     step = _step(_check(d), "1c")
     assert step["status"] == "FAIL" and step["required"]
+
+
+def test_unterminated_html_comment_reference_does_not_break_step_1c(tmp_path):
+    """M36 survived because the earlier test used a CLOSED `<!-- -->`, which the first
+    regex handles — the unterminated-comment strip was never exercised."""
+    d = _skill_with_fenced_ref(tmp_path, "untermhtml", "<!--\nscripts/not_shipped.py")
+    assert _step(_check(d), "1c")["status"] == "PASS"
