@@ -1774,3 +1774,19 @@ def test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent(tmp_pat
         assert step2["status"] == "FAIL" and "unparseable" in step2["detail"]
     finally:
         j.chmod(0o644)
+
+
+def test_malformed_closing_fence_fails_closed_not_open(tmp_path):
+    """The reachable path for the body-extraction `else` branch, which mutant M51
+    survived on until this test existed.
+
+    `parse_frontmatter`'s regex (`^---\\n(.*?)\\n---`) is LESS strict than the body
+    matcher, so trailing junk on the closing fence lets the OUTCOME parse while the
+    body match misses. The old code returned the input unchanged there (fail-open);
+    an empty body is the fail-closed answer."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n---xyz\nTwo agents, one brief; both valid.\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "records nothing" in step2["detail"]
