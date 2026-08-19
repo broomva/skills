@@ -187,9 +187,66 @@ def test_run_detector_unavailable_is_reported_not_fatal(sloppy_repo, monkeypatch
 
 def test_run_detector_with_fake_command(sloppy_repo, tmp_path):
     fake = tmp_path / "fake_detect.py"
-    fake.write_text("import json,sys; print(json.dumps([{'antipattern':'gradient-text','severity':'warning','file':'x','line':1}]))")
+    fake.write_text("import json,sys; print(json.dumps([{'antipattern':'gradient-text','severity':'warning','file':'x','line':1}])); sys.exit(2)")
     d = us.run_detector(sloppy_repo, detector_cmd=f"{sys.executable} {fake}")
-    assert d["status"] == "ok" and d["primary_count"] == 1 and d["by_rule"] == {"gradient-text": 1}
+    assert d["status"] == "ok" and d["primary_count"] == 1 and d["by_rule"] == {"gradient-text": 1} and d["exit_code"] == 2
+
+
+def test_run_detector_crash_is_error_not_clean(sloppy_repo, tmp_path):
+    """A crashing detector with empty stdout must never read as 'ok, 0 findings' (fail-open)."""
+    crash = tmp_path / "crash.py"
+    crash.write_text("import sys; sys.stderr.write('boom'); sys.exit(1)")
+    d = us.run_detector(sloppy_repo, detector_cmd=f"{sys.executable} {crash}")
+    assert d["status"] == "error" and d["findings"] == [] and "no JSON array" in d["note"]
+    empty_ok = tmp_path / "empty.py"
+    empty_ok.write_text("pass")  # exit 0, prints nothing — still not a clean signal
+    d = us.run_detector(sloppy_repo, detector_cmd=f"{sys.executable} {empty_ok}")
+    assert d["status"] == "error"
+    garbage = tmp_path / "garbage.py"
+    garbage.write_text("print('[not json')")
+    d = us.run_detector(sloppy_repo, detector_cmd=f"{sys.executable} {garbage}")
+    assert d["status"] == "error" and "not JSON" in d["note"]
+
+
+def test_next_font_local_is_a_self_hosted_decision(tmp_path):
+    root = tmp_path / "lf"
+    (root / "src" / "app").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "src" / "app" / "layout.tsx").write_text("""
+import localFont from "next/font/local";
+const signifier = localFont({ src: [{ path: "../../public/fonts/Signifier-Regular.woff2", weight: "400" }], variable: "--font-signifier" });
+export default function L({children}) { return <html className={signifier.variable}><body>{children}</body></html>; }
+""")
+    (root / "src" / "app" / "globals.css").write_text("body { font-family: var(--font-signifier), Georgia, serif; }")
+    m = us.survey(root)
+    assert "signifier" in m["fonts"]["families"] and "signifier" in m["fonts"]["self_hosted"]
+    assert m["fonts"]["default_families_in_use"] == []
+    assert any(x.startswith("local:signifier@") for x in m["fonts"]["next_font_imports"])
+    r = [r for r in m["roots"] if r["kind"] == "font" and r["value"] == "signifier"][0]
+    assert r["self_hosted"] is True and r["default"] is False and r["root_file"].endswith("layout.tsx")
+
+
+def test_decorative_local_images_are_not_product_evidence(tmp_path):
+    root = tmp_path / "ev"
+    (root / "src").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"react": "19"}}))
+    (root / "src" / "Hero.tsx").write_text('<header><img src="/images/logo.svg"/><img src="/assets/og-image.png"/><img src="/images/hero-illustration.png"/></header>')
+    pe = us.survey(root)["substance"]["product_evidence"]
+    assert pe["local_images"] == 3 and pe["evidence_images"] == 0 and pe["has_real_evidence"] is False
+    (root / "src" / "Hero.tsx").write_text('<header><img src="/images/logo.svg"/><img src="/screenshots/ledger-march.png"/></header>')
+    pe = us.survey(root)["substance"]["product_evidence"]
+    assert pe["evidence_images"] == 1 and pe["has_real_evidence"] is True
+
+
+def test_skipped_files_are_counted(tmp_path, monkeypatch):
+    root = tmp_path / "big"
+    (root / "src").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"react": "19"}}))
+    (root / "src" / "A.tsx").write_text("<p>ok</p>")
+    (root / "src" / "huge.tsx").write_text("x" * 10)
+    monkeypatch.setattr(us, "MAX_FILE_BYTES", 5)
+    m = us.survey(root)
+    assert m["counts"]["skipped"]["oversized"] >= 1 and any("huge.tsx" in e for e in m["counts"]["skipped"]["examples"])
 
 
 # ---------------------------------------------------------------- CLI

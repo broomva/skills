@@ -56,6 +56,10 @@ MAX_FILE_BYTES = 1_500_000
 RE_FONT_FAMILY = re.compile(r"font-family\s*:\s*([^;}{]+)", re.I)
 RE_NEXT_FONT = re.compile(r"from\s+['\"]next/font/(google|local)['\"]")
 RE_NEXT_FONT_NAMES = re.compile(r"import\s*\{([^}]+)\}\s*from\s*['\"]next/font/google['\"]")
+# next/font/local: `import localFont from "next/font/local"` then `const brand = localFont({ src: …, variable: "--font-brand" })`
+RE_NEXT_FONT_LOCAL_IMPORT = re.compile(r"import\s+(\w+)\s+from\s*['\"]next/font/local['\"]")
+RE_NEXT_FONT_LOCAL_CALL = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(\w+)\(\s*\{([^}]*)\}", re.S)
+RE_FONT_LOCAL_SRC = re.compile(r"src\s*:\s*['\"]?[^'\"\]]*?([A-Za-z0-9_-]+)\.(?:woff2?|otf|ttf)", re.I)
 RE_GOOGLE_FONTS = re.compile(r"fonts\.googleapis\.com/css2?\?family=([^&\"'\s>]+)")
 RE_FONT_FACE = re.compile(r"@font-face\s*\{[^}]*font-family\s*:\s*['\"]?([^;'\"}]+)", re.I | re.S)
 RE_TW_FONT = re.compile(r"fontFamily\s*:\s*\{([^}]*)\}", re.S)
@@ -122,6 +126,10 @@ RE_PRICING = re.compile(r"pricing|PricingTier|PricingCard|PricingTable|/pricing"
 RE_TIER_WORDS = re.compile(r"\b(Free|Starter|Basic|Hobby|Pro|Team|Business|Enterprise|Premium|Plus|Growth|Scale)\b")
 RE_VIDEO = re.compile(r"<video|\.mp4\b|\.webm\b|youtube\.com/embed|player\.vimeo|loom\.com/embed|<iframe", re.I)
 RE_LOCAL_IMG = re.compile(r"""(?:src|href|url)\s*[=(:]\s*['"(]?(/?(?:public/|assets/|images?/|img/|screenshots?/|static/|media/)[^'"\s)]+\.(?:png|jpe?g|webp|avif|gif|svg))""", re.I)
+# A local raster counts as *product evidence* only if it is not obviously decorative (logo, icon, favicon, avatar,
+# og image, illustration, pattern, background) — svg never counts; a screenshots|demo|product|app path always does.
+RE_IMG_DECORATIVE = re.compile(r"(logo|icon|favicon|avatar|og[-_.]|opengraph|illustration|pattern|bg[-_.]|background|badge|sprite|placeholder)", re.I)
+RE_IMG_EVIDENCE_PATH = re.compile(r"(screenshot|screen|demo|product|app[-_./]|dashboard|ui[-_./]|preview|capture)", re.I)
 RE_STOCK_IMG = PLACEHOLDER_PATTERNS["stock-image-host"]
 
 RE_HEX = re.compile(r"#(?:[0-9a-fA-F]{3}){1,2}\b")
@@ -147,12 +155,19 @@ DEFAULT_FONTS = AI_DEFAULT_WEB_FONTS | SYSTEM_STACK
 TOKEN_FILE_HINTS = ("globals.css", "global.css", "app.css", "index.css", "tokens", "theme", "tailwind.config", "design-system", "styles.css", "variables.css", "main.css")
 
 
+SKIPPED: dict = {"oversized": [], "unreadable": []}
+
+
 def _read(p: Path) -> str:
+    """Read a text file; oversized (> MAX_FILE_BYTES) and unreadable files are recorded in SKIPPED,
+    never silently dropped — the manifest reports them under counts.skipped."""
     try:
         if p.stat().st_size > MAX_FILE_BYTES:
+            SKIPPED["oversized"].append(str(p))
             return ""
         return p.read_text(encoding="utf-8", errors="ignore")
     except OSError:
+        SKIPPED["unreadable"].append(str(p))
         return ""
 
 
@@ -277,6 +292,8 @@ def derive_routes(root: Path, fw: dict, ui_files: list[Path]) -> list[dict]:
 # ---------------------------------------------------------------------------
 def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) -> dict:
     root = root.resolve()
+    SKIPPED["oversized"].clear()
+    SKIPPED["unreadable"].clear()
     pkg = load_package_json(root)
     fw = detect_framework(root, pkg)
 
@@ -317,7 +334,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
     placeholders: dict[str, list[str]] = defaultdict(list)
     testimonials: list[str] = []
     pricing: dict = {"files": [], "tier_word_hits": Counter()}
-    evidence = {"video_sites": [], "local_image_sites": [], "stock_image_sites": []}
+    evidence = {"video_sites": [], "local_image_sites": [], "evidence_image_sites": [], "stock_image_sites": []}
     hex_sites: dict[str, list[str]] = defaultdict(list)
     radius_values: Counter = Counter()
     radius_sites: dict[str, list[str]] = defaultdict(list)
@@ -366,6 +383,21 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
                 font_fallbacks[fam] += 1                       # fallback stack only
         for m in RE_FONT_FACE.finditer(txt):
             font_face_selfhosted.add(m.group(1).strip().strip("'\"").lower())
+        lf = RE_NEXT_FONT_LOCAL_IMPORT.search(txt)
+        if lf:
+            fn = lf.group(1)
+            for m in RE_NEXT_FONT_LOCAL_CALL.finditer(txt):
+                if m.group(2) != fn:
+                    continue
+                var = m.group(1)
+                body = m.group(3)
+                srcm = RE_FONT_LOCAL_SRC.search(body)
+                fam = (srcm.group(1) if srcm else var).replace("_", " ").replace("-", " ").strip().lower()
+                fam = re.sub(r"\s+(regular|variable|vf|bold|medium|light|italic)$", "", fam) or var.lower()
+                ln = txt.count("\n", 0, m.start()) + 1
+                font_sites[fam].append(site(p, ln))
+                font_face_selfhosted.add(fam)
+                next_font_imports.append(f"local:{var}@{rp}")
         for m in RE_NEXT_FONT_NAMES.finditer(txt):
             for name in m.group(1).split(","):
                 n = name.strip().split(" as ")[0].strip()
@@ -434,7 +466,11 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
             if RE_VIDEO.search(txt):
                 evidence["video_sites"].append(rp)
             for m in RE_LOCAL_IMG.finditer(txt):
-                evidence["local_image_sites"].append(f"{m.group(1)}@{rp}")
+                path_ = m.group(1)
+                evidence["local_image_sites"].append(f"{path_}@{rp}")
+                is_raster = not path_.lower().endswith(".svg")
+                if is_raster and (RE_IMG_EVIDENCE_PATH.search(path_) or not RE_IMG_DECORATIVE.search(path_)):
+                    evidence["evidence_image_sites"].append(f"{path_}@{rp}")
             for m in RE_STOCK_IMG.finditer(txt):
                 evidence["stock_image_sites"].append(site(p, txt.count("\n", 0, m.start()) + 1))
 
@@ -591,13 +627,16 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
         "placeholders": {k: v for k, v in placeholders.items() if v},
         "testimonials": {"files": testimonials, "verify_real": bool(testimonials)},
         "pricing": {"files": pricing["files"], "tier_words": dict(pricing["tier_word_hits"].most_common(6)),
-                    "three_tier_scaffold_suspected": len(set(pricing["tier_word_hits"])) == 3 and bool(pricing["files"])},
+                    "three_tier_scaffold_suspected": len(set(pricing["tier_word_hits"])) >= 3 and bool(pricing["files"])},
         "product_evidence": {
             "video_sites": evidence["video_sites"][:10],
             "local_images": len(evidence["local_image_sites"]),
             "local_image_examples": evidence["local_image_sites"][:8],
+            "evidence_images": len(evidence["evidence_image_sites"]),
+            "evidence_image_examples": evidence["evidence_image_sites"][:8],
             "stock_image_sites": evidence["stock_image_sites"][:10],
-            "has_real_evidence": bool(evidence["video_sites"]) or len(evidence["local_image_sites"]) > 0,
+            # svg / logos / icons / og images never count; a video or a non-decorative local raster does
+            "has_real_evidence": bool(evidence["video_sites"]) or len(evidence["evidence_image_sites"]) > 0,
         },
         "motion": {"files_with_motion": len(motion_sites), "files_with_reduced_motion": len(reduced_motion_sites),
                     "reduced_motion_respected": (not motion_sites) or bool(reduced_motion_sites)},
@@ -609,7 +648,9 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None) ->
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "repo": str(root),
         "framework": fw,
-        "counts": {"ui_files": len(ui_files), "style_files": len(style_files), "script_files": len(script_files), "copy_files": len(copy_files), "routes": len(routes)},
+        "counts": {"ui_files": len(ui_files), "style_files": len(style_files), "script_files": len(script_files), "copy_files": len(copy_files), "routes": len(routes),
+                   "skipped": {"oversized": len(SKIPPED["oversized"]), "unreadable": len(SKIPPED["unreadable"]),
+                               "examples": [rel(root, Path(x)) for x in (SKIPPED["oversized"] + SKIPPED["unreadable"])[:6]]}},
         "routes": routes,
         "profile_hint": ("persuade" if (landing_hints or pricing["files"] or testimonials) else ("operate" if async_n or len(routes) > 3 else "unknown")),
         "landing_hint_files": landing_hints[:8],
@@ -647,6 +688,7 @@ def find_detector() -> list[str] | None:
     for cand in (
         home / ".claude/skills/impeccable/scripts/detect.mjs",
         home / ".agents/skills/impeccable/scripts/detect.mjs",
+        home / ".codex/skills/impeccable/scripts/detect.mjs",
         Path(".agents/skills/impeccable/scripts/detect.mjs"),
         Path(".claude/skills/impeccable/scripts/detect.mjs"),
     ):
@@ -667,15 +709,23 @@ def run_detector(root: Path, detector_cmd: str | None = None) -> dict:
     except (subprocess.TimeoutExpired, OSError) as e:  # pragma: no cover - environment
         return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0, "note": str(e)}
     out = proc.stdout.strip()
-    findings: list = []
-    if out:
-        try:
-            start = out.find("[")
-            findings = json.loads(out[start:]) if start >= 0 else []
-        except json.JSONDecodeError:
-            return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0,
-                    "note": "detector output was not JSON", "stderr": proc.stderr[-800:]}
-    return summarize_detector(findings, cmd)
+    # impeccable exits 0 (clean) or 2 (primary findings present); anything else is a crash, and an
+    # empty stdout is never "no findings" — a JSON array is the only acceptable clean signal.
+    start = out.find("[")
+    if start < 0:
+        return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0,
+                "note": f"detector produced no JSON array (exit {proc.returncode})", "stderr": proc.stderr[-800:]}
+    try:
+        findings = json.loads(out[start:])
+    except json.JSONDecodeError:
+        return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0,
+                "note": f"detector output was not JSON (exit {proc.returncode})", "stderr": proc.stderr[-800:]}
+    if not isinstance(findings, list) or proc.returncode not in (0, 2):
+        return {"status": "error", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0,
+                "note": f"detector exit {proc.returncode} with unexpected payload", "stderr": proc.stderr[-800:]}
+    d = summarize_detector(findings, cmd)
+    d["exit_code"] = proc.returncode
+    return d
 
 
 def summarize_detector(findings: list, cmd: list[str] | None = None) -> dict:

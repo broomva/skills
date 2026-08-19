@@ -92,7 +92,7 @@ body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
     _w(root, "src/app/page.tsx", """
 import { Receipt } from "lucide-react";
 export default function Home() {
-  return <main className="rounded-md"><h1>Ledgerline</h1><p>Bookkeeping for two-person studios.</p><video src="/media/ledgerline-demo.mp4" controls /><img src="/screenshots/dashboard.png" alt="The Ledgerline dashboard with March reconciled" /></main>;
+  return <main className="rounded-md"><h1>Ledgerline</h1><p>Bookkeeping for two-person studios.</p><img src="/images/logo.svg" alt="" /><video src="/media/ledgerline-demo.mp4" controls /><img src="/screenshots/dashboard.png" alt="The Ledgerline dashboard with March reconciled" /></main>;
 }
 """)
     _w(root, "src/app/terms/page.tsx", "export default function Terms() { return <article><h1>Terms of service</h1></article>; }\n")
@@ -112,7 +112,8 @@ export default function Ledger() {
     _w(root, "src/app/error.tsx", "'use client';\nexport default function Error() { return <p>Something went wrong.</p>; }\n")
     ev = root / ".unslop" / "evidence"
     ev.mkdir(parents=True)
-    for name in ("index-1280.png", "index-390.png", "ledger-1280.png", "ledger-390.png", "terms-1280.png", "privacy-390.png"):
+    for name in ("index-1280.png", "index-390.png", "ledger-1280.png", "ledger-390.png",
+                 "terms-1280.png", "terms-390.png", "privacy-1280.png", "privacy-390.png"):
         (ev / name).write_bytes(b"\x89PNG" + b"\x00" * 9000)
     return root
 

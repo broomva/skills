@@ -298,22 +298,28 @@ class Gate:
         shots = [p for p in self.evidence_dir.rglob("*") if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
         ok = [p for p in shots if p.stat().st_size >= MIN_SCREENSHOT_BYTES]
         blank = [p.name for p in shots if p.stat().st_size < MIN_SCREENSHOT_BYTES]
-        desktop = [p for p in ok if re.search(r"(1280|1440|1920|desktop|wide)", p.name, re.I)]
-        mobile = [p for p in ok if re.search(r"(390|375|412|mobile|narrow)", p.name, re.I)]
+        is_desktop = lambda p: re.search(r"(1280|1440|1920|desktop|wide)", p.name, re.I) is not None
+        is_mobile = lambda p: re.search(r"(390|375|412|mobile|narrow)", p.name, re.I) is not None
+        desktop = [p for p in ok if is_desktop(p)]
+        mobile = [p for p in ok if is_mobile(p)]
         pages = [r for r in m.get("routes", []) if r.get("kind") == "page"]
-        uncovered = []
+        # coverage matrix: every page route needs BOTH widths, matched by slug in the filename
+        full, partial, none = [], [], []
         for r in pages:
             slug = r["route"].strip("/").replace("/", "-") or "index"
-            if not any(slug in p.name for p in ok):
-                uncovered.append(r["route"])
+            d = any(slug in p.name for p in desktop)
+            mo = any(slug in p.name for p in mobile)
+            (full if d and mo else partial if (d or mo) else none).append(r["route"])
         if not ok:
             self.add("evidence.render", "FAIL", f"no non-blank screenshots in {self.evidence_dir}", evidence=blank[:6])
         elif not desktop or not mobile:
             self.add("evidence.render", "FAIL", f"need both widths: desktop={len(desktop)} mobile={len(mobile)} (name files with 1280/390 or desktop/mobile)")
-        elif uncovered and len(uncovered) > max(2, len(pages) // 2):
-            self.add("evidence.render", "WARN", f"{len(ok)} screenshots; {len(uncovered)}/{len(pages)} page routes have no matching screenshot", evidence=uncovered[:8])
+        elif pages and not full:
+            self.add("evidence.render", "FAIL", f"no page route has both widths; partial={len(partial)} none={len(none)} of {len(pages)}", evidence=(partial + none)[:8])
+        elif pages and (partial or none):
+            self.add("evidence.render", "WARN", f"{len(full)}/{len(pages)} page routes have both widths; partial={len(partial)} none={len(none)}", evidence=(partial + none)[:8])
         else:
-            self.add("evidence.render", "PASS", f"{len(ok)} screenshots (desktop {len(desktop)}, mobile {len(mobile)}); {len(pages) - len(uncovered)}/{len(pages)} page routes covered")
+            self.add("evidence.render", "PASS", f"{len(ok)} screenshots; {len(full)}/{len(pages)} page routes covered at both widths")
 
 
 # ---------------------------------------------------------------------------
@@ -322,8 +328,13 @@ def load_waivers(path: Path | None) -> dict:
         return {"waivers": []}
     if not path.exists():
         raise SystemExit(f"error: waivers file {path} not found")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    bad = [w for w in data.get("waivers", []) if len((w.get("reason") or "").strip()) < MIN_REASON or not w.get("check")]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise SystemExit(f"error: waivers file {path} is not readable JSON: {e}")
+    if not isinstance(data, dict) or not isinstance(data.get("waivers", []), list):
+        raise SystemExit(f"error: waivers file {path} must be an object with a 'waivers' list")
+    bad = [w for w in data.get("waivers", []) if not isinstance(w, dict) or len((w.get("reason") or "").strip()) < MIN_REASON or not w.get("check")]
     if bad:
         raise SystemExit(f"error: {len(bad)} waiver(s) lack a check or a reason ≥{MIN_REASON} chars — a silent waiver is not a waiver: {bad[:3]}")
     return data
@@ -364,13 +375,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {repo} is not a directory", file=sys.stderr)
         return 2
     if args.manifest:
-        manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"error: manifest {args.manifest} is not readable JSON: {e}", file=sys.stderr)
+            return 2
+        if not isinstance(manifest, dict) or manifest.get("schema") != "unslop-survey/1":
+            print(f"error: manifest {args.manifest} is not an unslop-survey/1 manifest", file=sys.stderr)
+            return 2
     else:
         if unslop_survey is None:
             print("error: unslop_survey.py not importable and no --manifest given", file=sys.stderr)
             return 2
         manifest = unslop_survey.survey(repo, detect=args.detect)
-    waivers = load_waivers(Path(args.waivers) if args.waivers else None)
+    try:
+        waivers = load_waivers(Path(args.waivers) if args.waivers else None)
+    except SystemExit as e:
+        print(str(e), file=sys.stderr)
+        return 2
     gate = Gate(manifest, repo, waivers, args.profile, args.strict, Path(args.evidence) if args.evidence else None, args.no_render)
     results = gate.run()
     table = render_table(results)

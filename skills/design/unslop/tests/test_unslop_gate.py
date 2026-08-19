@@ -45,7 +45,7 @@ def test_crafted_repo_clears_the_floor(crafted_repo, evidence_dir):
     assert r["substance.loading-states"].status == "PASS"
     assert r["substance.placeholders"].status == "PASS"
     assert r["motion.reduced-motion"].status == "PASS"
-    assert r["evidence.render"].status == "PASS"
+    assert r["evidence.render"].status == "PASS" and "4/4 page routes" in r["evidence.render"].detail
     assert r["substance.product-evidence"].status == "SKIP"  # operate profile
 
 
@@ -113,7 +113,15 @@ def test_render_evidence_requires_both_widths_and_non_blank(crafted_repo, tmp_pa
     assert r["evidence.render"].status == "FAIL"
     (ev / "index-390.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
     r = _run(crafted_repo, evidence_dir=ev)
-    assert r["evidence.render"].status in ("PASS", "WARN")
+    assert r["evidence.render"].status == "WARN"  # index covered at both widths; ledger/terms/privacy are not
+    assert "1/4 page routes" in r["evidence.render"].detail
+    # a width present globally but never for the same route as the other width → FAIL (no route has both)
+    ev2 = tmp_path / "ev2"
+    ev2.mkdir()
+    (ev2 / "index-1280.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
+    (ev2 / "ledger-390.png").write_bytes(b"\x89PNG" + b"\x00" * 9000)
+    r = _run(crafted_repo, evidence_dir=ev2)
+    assert r["evidence.render"].status == "FAIL" and "no page route has both widths" in r["evidence.render"].detail
 
 
 def test_missing_evidence_dir_is_fail_unless_no_render(crafted_repo):
@@ -141,3 +149,21 @@ def test_cli_manifest_roundtrip(sloppy_repo, tmp_path):
     m.write_text(json.dumps(us.survey(sloppy_repo)))
     r = subprocess.run([sys.executable, str(SCRIPT), str(sloppy_repo), "--manifest", str(m), "--no-render", "--quiet"], capture_output=True, text=True)
     assert r.returncode == 1
+
+
+def test_cli_bad_json_inputs_exit_2(sloppy_repo, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(sloppy_repo), "--manifest", str(bad), "--no-render", "--quiet"], capture_output=True, text=True)
+    assert r.returncode == 2 and "not readable JSON" in r.stderr
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text(json.dumps({"schema": "something-else/9"}))
+    r = subprocess.run([sys.executable, str(SCRIPT), str(sloppy_repo), "--manifest", str(wrong), "--no-render", "--quiet"], capture_output=True, text=True)
+    assert r.returncode == 2 and "unslop-survey/1" in r.stderr
+    w = tmp_path / "w.json"
+    w.write_text("[]")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(sloppy_repo), "--waivers", str(w), "--no-render", "--quiet"], capture_output=True, text=True)
+    assert r.returncode == 2 and "waivers" in r.stderr
+    w.write_text(json.dumps({"waivers": [{"check": "copy.emoji", "reason": "short"}]}))
+    r = subprocess.run([sys.executable, str(SCRIPT), str(sloppy_repo), "--waivers", str(w), "--no-render", "--quiet"], capture_output=True, text=True)
+    assert r.returncode == 2 and "reason" in r.stderr
