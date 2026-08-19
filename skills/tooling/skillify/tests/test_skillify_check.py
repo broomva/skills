@@ -1617,25 +1617,54 @@ def test_a_real_python_script_with_a_docstring_still_counts(tmp_path):
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
-def test_placeholder_anywhere_in_the_value_is_caught(tmp_path):
-    """Verify-round blocker 2: round 2 made `_PLACEHOLDER_RE` unanchored but left the
-    caller on `.match()`, so it still only matched at position 0. A one-word bug that
-    survived an entire round."""
+def test_a_value_that_is_nothing_but_a_placeholder_is_caught(tmp_path):
+    """Position-anchored matching missed "TBD later"; an unanchored scan then FALSE-
+    REJECTED ordinary prose. The check is now narrowed to the decidable question — is
+    the field empty of anything but the evasion?"""
     d = _j(tmp_path)
     blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["judge"]["agreement_measured"] = {"value": "result TBD later",
+    blob["judge"]["agreement_measured"] = {"value": "TBD later",
                                            "method": "40 dual-labelled cases"}
     (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
     assert _step(_check(d), 2)["status"] == "FAIL"
 
 
-def test_placeholder_anywhere_in_a_held_out_case_is_caught(tmp_path):
+def test_legitimate_method_prose_containing_a_placeholder_word_is_accepted(tmp_path):
+    """The paired control, and the blocker that forced the narrowing: both of these
+    are ordinary descriptions of a real method and were being rejected.
+
+    "result TBD later" now PASSES, and that is the deliberate trade — telling evasive
+    prose from descriptive prose is the authenticity question this gate explicitly does
+    not attempt. A false accept is a fake nobody claimed to catch; a false reject
+    blocks honest work."""
+    for method in ("excluded 3 cases with unknown labels",
+                   "n/a for the control arm",
+                   "pending review by a second labeller",
+                   "40 dual-labelled cases, Krippendorff alpha"):
+        d = _j(tmp_path / f"m{abs(hash(method)) % 9999}")
+        blob = json.loads((d / "evals" / "suite.json").read_text())
+        blob["judge"]["agreement_measured"] = {"value": 0.91, "method": method}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "PASS", f"false-rejected {method!r}"
+
+
+def test_a_held_out_case_that_is_only_a_placeholder_is_caught(tmp_path):
     d = _j(tmp_path, held_out=0)
     ho = d / "evals" / "held-out"
     ho.mkdir(parents=True, exist_ok=True)
-    (ho / "case-01.md").write_text("Prompt: TBD later\n", encoding="utf-8")
+    (ho / "case-01.md").write_text("TBD later\n", encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_a_short_but_real_held_out_case_counts(tmp_path):
+    """Control: the residue rule must not treat *short* as *placeholder*. An earlier
+    draft of it rejected the fixture's own `case 0` prompts."""
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("Critique this API.\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
 
 
 def test_unterminated_html_comment_hides_an_example_outcome(tmp_path):
@@ -1668,3 +1697,27 @@ def test_a_real_shell_script_still_counts(tmp_path):
         f.unlink()
     (d / "scripts" / "do.sh").write_text("#!/bin/bash\n# does a thing\necho hi\n", encoding="utf-8")
     assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_heading_form_rejection_blocks(tmp_path):
+    """Final-round blocker 2: `## Outcome` newline `Rejected` carries no separator, so
+    the labelled scan never saw it."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Two agents were given the same brief and a third reader judged both valid.\n\n"
+        "## Outcome\n\nRejected\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_labelled_prose_mentioning_rejection_is_not_a_verdict(tmp_path):
+    """Final-round blocker 3, the second false FAIL: the label was there, so the whole
+    tail was scanned and ordinary prose after it read as a verdict. A verdict follows
+    its label immediately; prose does not."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Two independent agents received the same design and a third party found both "
+        "answers valid under the written rubric.\n"
+        "Result: neither candidate was rejected by the judge.\n\n"
+        "Outcome: admitted\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]

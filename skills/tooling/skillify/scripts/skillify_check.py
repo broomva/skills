@@ -694,8 +694,30 @@ def _substantive(x: object) -> bool:
         return True
     if isinstance(x, str):
         t = x.strip()
-        return bool(t) and not _PLACEHOLDER_RE.search(t)
+        return bool(t) and not _is_placeholder(t)
     return False
+
+
+def _is_placeholder(t: str) -> bool:
+    """True when the value is essentially nothing but a placeholder token.
+
+    Position-anchored matching missed "TBD later"; an unanchored scan then FALSE-
+    REJECTED ordinary method prose — "excluded 3 cases with unknown labels",
+    "n/a for the control arm". Both directions were wrong because the question being
+    asked was undecidable: is this prose evasive or descriptive?
+
+    So the check is narrowed to what IS decidable — the field is empty of anything but
+    the evasion. Remove every placeholder token; if almost nothing is left, it was a
+    placeholder. Longer prose is ACCEPTED even when it contains such a word, because
+    telling an evasive sentence from a descriptive one is the authenticity problem this
+    gate explicitly does not attempt (see SKILL.md). "result TBD later" therefore
+    passes, and that is the deliberate trade: a false accept is a fake nobody claimed
+    to catch; a false reject blocks honest work.
+    """
+    if not _PLACEHOLDER_RE.search(t):
+        return False  # no evasion token at all — a short value is not a placeholder
+    residue = re.sub(r"[^0-9a-z]", "", _PLACEHOLDER_RE.sub(" ", t.lower()))
+    return len(residue) <= 6
 
 
 def _read(path: Path) -> str | None:
@@ -782,6 +804,14 @@ def _dig_all(blobs: list[tuple[Path, dict]], key: str) -> list[tuple[Path, objec
 # "Correction: on rerun the final Outcome: rejected." carries the verdict mid-line.
 # Requiring a LABEL is what keeps ordinary prose — "Neither candidate was rejected by
 # the judge." — from tripping it, which a bare word scan did.
+_REJECTED_MSG = ("evals/admission.md records a `rejected` verdict — an underspecified "
+                 "skill is not admissible (an example verdict is indistinguishable "
+                 "from a real one, so it blocks too)")
+
+# A verdict sits immediately after its label, modulo markdown decoration.
+_VERDICT_HEAD_RE = re.compile(r"^[\s*`|_>-]*(?:admitted|rejected|not admitted)\b",
+                              re.IGNORECASE)
+
 _OUTCOME_LABEL_RE = re.compile(
     r"\b(?:outcome|verdict|admission|result)\b\s*\**\s*[:\-\u2013\u2014|]+([^\n]*)",
     re.IGNORECASE)
@@ -824,14 +854,20 @@ def _admission_issue(skill_dir: Path) -> str | None:
     # (a rejection anywhere, fences included, blocks) without eating prose.
     for m in _OUTCOME_LABEL_RE.finditer(raw):
         tail = m.group(1).lower()
+        # A VERDICT follows its label immediately ("Outcome: rejected"). Prose does not
+        # ("Result: neither candidate was rejected by the judge."), and scanning the
+        # whole tail turned that ordinary sentence into a FAIL.
+        if not _VERDICT_HEAD_RE.match(tail):
+            continue
         has_a, has_r = "admitted" in tail, "rejected" in tail or "not admitted" in tail
         if has_a and has_r:
             return ("evals/admission.md has an unfilled outcome row "
                     "(`admitted / rejected` — delete one)")
         if has_r:
-            return ("evals/admission.md records a `rejected` verdict — an underspecified "
-                    "skill is not admissible (an example verdict is indistinguishable "
-                    "from a real one, so it blocks too)")
+            return _REJECTED_MSG
+    for m in _OUTCOME_HEADING_RE.finditer(raw):
+        if m.group(1).lower() != "admitted":
+            return _REJECTED_MSG
     hits = [m.group(1).lower() for m in _OUTCOME_RE.finditer(txt)]
     hits += [m.group(1).lower() for m in _OUTCOME_HEADING_RE.finditer(txt)]
     if not hits:

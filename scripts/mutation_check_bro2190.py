@@ -170,10 +170,9 @@ MUTANTS = [
      '            body = body[1:]  # drop the module docstring',
      '            pass',
      "test_docstring_only_script_is_not_a_deterministic_core"),
-    ("M35 placeholder matched only at position 0 again (.match vs .search)",
-     '        return bool(t) and not _PLACEHOLDER_RE.search(t)',
-     '        return bool(t) and not _PLACEHOLDER_RE.match(t)',
-     "test_placeholder_anywhere_in_the_value_is_caught"),
+    # M35 (.match vs .search on _PLACEHOLDER_RE) retired in the final round: that
+    # call site moved into _is_placeholder, whose two behaviours — requiring an
+    # actual token, and the residue rule — are covered by M39 and M40.
     ("M36 unterminated HTML comment not stripped",
      '    md = re.sub(r"(?s)<!--.*\\Z", "", md)  # unterminated HTML comment',
      '    pass  # unterminated HTML comment',
@@ -182,6 +181,24 @@ MUTANTS = [
      '    for m in _OUTCOME_LABEL_RE.finditer(raw):',
      '    for m in re.finditer(r"(rejected)", raw, re.IGNORECASE):',
      "test_ordinary_prose_mentioning_rejection_is_not_a_rejected_verdict"),
+
+    # --- final verify round --------------------------------------------------
+    ("M39 placeholder check widened back to any prose containing the token",
+     '    if not _PLACEHOLDER_RE.search(t):\n        return False  # no evasion token at all — a short value is not a placeholder\n    residue',
+     '    residue',
+     "test_a_short_but_real_held_out_case_counts"),
+    ("M40 residue rule dropped — any placeholder token rejects the whole value",
+     '    return len(residue) <= 6',
+     '    return True',
+     "test_legitimate_method_prose_containing_a_placeholder_word_is_accepted"),
+    ("M41 whole tail scanned for a verdict again (the second false FAIL)",
+     '        if not _VERDICT_HEAD_RE.match(tail):\n            continue',
+     '        pass',
+     "test_labelled_prose_mentioning_rejection_is_not_a_verdict"),
+    ("M42 heading-form rejection stops blocking",
+     '    for m in _OUTCOME_HEADING_RE.finditer(raw):\n        if m.group(1).lower() != "admitted":\n            return _REJECTED_MSG',
+     '    pass',
+     "test_heading_form_rejection_blocks"),
 ]
 
 
