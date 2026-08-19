@@ -1721,3 +1721,128 @@ def test_labelled_prose_mentioning_rejection_is_not_a_verdict(tmp_path):
         "Outcome: admitted\n", encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "PASS", step2["detail"]
+
+
+# ===========================================================================
+# CONTROL TABLES. The final review's sharpest point was methodological: each
+# previous fix was pinned by the ONE sentence from the report, so the next round
+# found seven more shapes of the same defect. These tables assert the CLASS.
+# ===========================================================================
+
+_RECORD = ("Two independent agents received the same design and a third party found "
+           "both answers valid under the written rubric.\n")
+
+# Natural, filled-in admission records that must all PASS. Every one of these was
+# rejected by at least one earlier draft of the verdict scan.
+ADMISSION_MUST_PASS = [
+    "Outcome: admitted\n",
+    "Outcome: admitted — both outputs were judged valid; neither was rejected.\n",
+    "Outcome: admitted (no output was rejected)\n",
+    "Outcome: admitted. The judge rejected neither candidate.\n",
+    "**Outcome:** admitted — zero rejected runs across 12 trials.\n",
+    "Verdict: admitted; the alternative framing was rejected as out of scope.\n",
+    "Outcome: admitted\nResult: agent A and agent B agreed; no output was rejected.\n",
+    "Outcome — admitted\n",
+    "## Outcome\n\nAdmitted.\n",
+    "| Outcome | admitted |\n",
+    "> Outcome: admitted\n",
+    "- Verdict: admitted\n",
+]
+
+# Records that must all FAIL: a real rejection, or an unfilled template row.
+ADMISSION_MUST_FAIL = [
+    "Outcome: rejected\n",
+    "Outcome: not admitted\n",
+    "Verdict: rejected — the two agents contradicted each other.\n",
+    "Outcome: admitted\n\nCorrection: on rerun the final Outcome: rejected.\n",
+    "## Outcome\n\nRejected\n",
+    "| Outcome | admitted / rejected |\n",
+    "Outcome: admitted or rejected (delete one)\n",
+    "Outcome: rejected | admitted\n",
+]
+
+
+def test_admission_control_table_accepts_every_natural_record(tmp_path):
+    """The direction that matters most. A gate that rejects honest work trains people
+    to write for the regex."""
+    for i, body in enumerate(ADMISSION_MUST_PASS):
+        d = _j(tmp_path / f"ok{i}")
+        (d / "evals" / "admission.md").write_text(_RECORD + body, encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected {body!r}: {step2['detail']}"
+
+
+def test_admission_control_table_blocks_every_rejection_and_template(tmp_path):
+    for i, body in enumerate(ADMISSION_MUST_FAIL):
+        d = _j(tmp_path / f"no{i}")
+        (d / "evals" / "admission.md").write_text(_RECORD + body, encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"accepted {body!r}"
+
+
+# Method / case prose. The placeholder check must catch a field left unfilled and
+# must not touch a field that merely uses one of those words descriptively.
+METHOD_MUST_PASS = [
+    "Cohen's kappa over 40 held-out cases, excluding 3 with unknown labels",
+    "excluded 3 cases with unknown labels",
+    "n/a for the control arm",
+    "pending review by a second labeller",
+    "40 dual-labelled cases, Krippendorff alpha",
+    "two raters, disagreements resolved by a third; 2 cases marked unknown",
+    "we guessed nothing: every label was adjudicated",
+    "placeholder rows were removed before scoring",
+]
+METHOD_MUST_FAIL = ["TBD", "TBD later", "todo", "vibes", "vibes only",
+                    "unmeasured", "n/a", "???", "—", "to be measured"]
+
+
+def test_method_control_table_accepts_legitimate_prose(tmp_path):
+    """Eight sentences an honest author would really write. An unanchored scan
+    rejected half of them."""
+    for i, method in enumerate(METHOD_MUST_PASS):
+        d = _j(tmp_path / f"mok{i}")
+        blob = json.loads((d / "evals" / "suite.json").read_text())
+        blob["judge"]["agreement_measured"] = {"value": 0.84, "method": method}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected {method!r}: {step2['detail']}"
+
+
+def test_method_control_table_blocks_unfilled_fields(tmp_path):
+    for i, method in enumerate(METHOD_MUST_FAIL):
+        d = _j(tmp_path / f"mno{i}")
+        blob = json.loads((d / "evals" / "suite.json").read_text())
+        blob["judge"]["agreement_measured"] = {"value": 0.84, "method": method}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted {method!r}"
+
+
+def test_held_out_case_control_table(tmp_path):
+    """Same class, on the FILE path — where the placeholder guard once landed at one
+    site while the correct helper sat three lines away."""
+    real = ["A user reports an outage whose root cause is unknown and asks for a triage plan.",
+            "Critique this API design.",
+            "Rewrite the onboarding copy; the current version is n/a for mobile."]
+    fake = ["TBD", "TODO: write case", "TBD later", "   "]
+    for i, text in enumerate(real):
+        d = _j(tmp_path / f"hok{i}", held_out=0)
+        ho = d / "evals" / "held-out"; ho.mkdir(parents=True, exist_ok=True)
+        (ho / "case-01.md").write_text(text + "\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected case {text!r}: {step2['detail']}"
+    for i, text in enumerate(fake):
+        d = _j(tmp_path / f"hno{i}", held_out=0)
+        ho = d / "evals" / "held-out"; ho.mkdir(parents=True, exist_ok=True)
+        (ho / "case-01.md").write_text(text + "\n", encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted case {text!r}"
+
+
+def test_fenced_example_before_a_real_record_does_not_swallow_it(tmp_path):
+    """Final-round minor 1: the greedy unterminated-HTML-comment strip ran before
+    fence stripping, so a `<!--` inside a fenced EXAMPLE deleted every entry below."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        _RECORD + "\nTemplate for future authors:\n\n```\n<!--\nOutcome: admitted\n-->\n```\n\n"
+        "Outcome: admitted\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]

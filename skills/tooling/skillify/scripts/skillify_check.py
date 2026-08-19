@@ -549,9 +549,12 @@ def _strip_fences(md: str) -> str:
     matters, since stripping them globally would eat ordinary nested list prose.
     """
     md = re.sub(r"<!--.*?-->", "", md, flags=re.DOTALL)
-    md = re.sub(r"(?s)<!--.*\Z", "", md)  # unterminated HTML comment
     md = re.sub(r"(?m)^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$", "", md, flags=re.DOTALL)
-    md = re.sub(r"(?ms)^[ \t]*(?:```|~~~).*\Z", "", md)  # unterminated fence
+    # Unterminated forms last, and after closed fences are gone — running the greedy
+    # HTML-comment strip first meant a bare `<!--` inside a fenced EXAMPLE deleted
+    # every real entry below it.
+    md = re.sub(r"(?ms)^[ \t]*(?:```|~~~).*\Z", "", md)
+    md = re.sub(r"(?s)<!--.*\Z", "", md)
     return md
 
 
@@ -661,10 +664,22 @@ _MODEL_FAMILIES = {
 # ANYWHERE in the value. Deliberately a typo-catcher, NOT an authenticity gate — see
 # the "what this cannot check" note in SKILL.md. No regex can tell whether 40 cases
 # were really labelled; that is what the P20 review layer is for.
+# Two classes, because they behave differently inside honest prose.
+#
+# INSTRUCTION tokens are an author talking to themselves — "TODO: write case" is not a
+# case no matter how many words follow it, so leading position alone decides.
+_INSTRUCTION_RE = re.compile(
+    r"^\W*(tbd|todo|fixme|xxx|wip|write ?me|fill ?(?:this )?in|coming soon"
+    r"|to ?be ?(?:done|written|measured|determined))\b", re.IGNORECASE)
+#
+# WEAK tokens appear constantly inside legitimate description — "excluded 3 cases with
+# unknown labels", "n/a for the control arm", "placeholder rows were removed before
+# scoring". They mark an unfilled field only when almost nothing else is there.
 _PLACEHOLDER_RE = re.compile(
     r"\b(tbd|todo|fixme|xxx|n/?a|unmeasured|unknown|vibes|placeholder|guess(?:ed)?|"
-    r"coming soon|to ?be ?(?:done|measured|determined)|not ?(?:yet )?(?:measured|run|done))\b"
-    r"|^\W*(?:none|pending|\?+|-+)\W*$", re.IGNORECASE)
+    r"pending|none|coming soon|to ?be ?(?:done|measured|determined)"
+    r"|not ?(?:yet )?(?:measured|run|done))\b"
+    r"|^\W*(?:\?+|[-\u2010-\u2015]+|\.+)\W*$", re.IGNORECASE)
 
 
 def _model_family(model: str) -> str | None:
@@ -706,14 +721,20 @@ def _is_placeholder(t: str) -> bool:
     "n/a for the control arm". Both directions were wrong because the question being
     asked was undecidable: is this prose evasive or descriptive?
 
-    So the check is narrowed to what IS decidable — the field is empty of anything but
-    the evasion. Remove every placeholder token; if almost nothing is left, it was a
-    placeholder. Longer prose is ACCEPTED even when it contains such a word, because
+    So the check is narrowed to what IS decidable, in two classes. An INSTRUCTION at
+    the head ("TODO: write case") is an author talking to themselves, and is a
+    placeholder however many words follow. A WEAK token marks an unfilled field only
+    when almost nothing else is there — remove every such token, and if the residue is
+    tiny it was a placeholder. So "n/a" is caught and "n/a for the control arm" is not.
+
+    Longer prose is ACCEPTED even when it contains a weak token, because
     telling an evasive sentence from a descriptive one is the authenticity problem this
     gate explicitly does not attempt (see SKILL.md). "result TBD later" therefore
     passes, and that is the deliberate trade: a false accept is a fake nobody claimed
     to catch; a false reject blocks honest work.
     """
+    if _INSTRUCTION_RE.match(t):
+        return True  # an instruction to write content is not content
     if not _PLACEHOLDER_RE.search(t):
         return False  # no evasion token at all — a short value is not a placeholder
     residue = re.sub(r"[^0-9a-z]", "", _PLACEHOLDER_RE.sub(" ", t.lower()))
@@ -809,8 +830,17 @@ _REJECTED_MSG = ("evals/admission.md records a `rejected` verdict — an undersp
                  "from a real one, so it blocks too)")
 
 # A verdict sits immediately after its label, modulo markdown decoration.
-_VERDICT_HEAD_RE = re.compile(r"^[\s*`|_>-]*(?:admitted|rejected|not admitted)\b",
+_VERDICT_HEAD_RE = re.compile(r"^[\s*`|_>-]*(admitted|not admitted|rejected)\b",
                               re.IGNORECASE)
+
+# An UNFILLED row offers both verdicts as alternatives: "admitted / rejected",
+# "admitted | rejected", "admitted or rejected". Mere co-occurrence on the line is
+# not that — "Outcome: admitted — both outputs were valid; neither was rejected." is
+# an ordinary filled-in record, and reading it as a template was a false FAIL.
+_UNFILLED_ROW_RE = re.compile(
+    r"\b(?:admitted)\s*(?:/|\||,|\bor\b|\bvs\.?\b)\s*(?:not\s+admitted|rejected)\b"
+    r"|\b(?:rejected|not\s+admitted)\s*(?:/|\||,|\bor\b|\bvs\.?\b)\s*admitted\b",
+    re.IGNORECASE)
 
 _OUTCOME_LABEL_RE = re.compile(
     r"\b(?:outcome|verdict|admission|result)\b\s*\**\s*[:\-\u2013\u2014|]+([^\n]*)",
@@ -831,12 +861,20 @@ def _admission_issue(skill_dir: Path) -> str | None:
     party judges BOTH valid? If they contradict with no tiebreak the skill is
     underspecified, not probabilistic, and is not admissible.
 
-    Hardened against the four ways review got a template to read as a record:
-      * fenced blocks are stripped first — an outcome inside ```…``` is an EXAMPLE
-      * ANY `rejected` anywhere wins, so a superseding correction cannot be buried
-        under an earlier `admitted` by first-match
+    What it checks, stated at the strength it actually holds:
+      * an outcome inside ```…``` / ~~~…~~~ / <!--…--> is an EXAMPLE, not a record
+      * a LABELLED rejection anywhere — including a later "Correction: … Outcome:
+        rejected." and including inside a fence — blocks; first-match cannot bury it
+      * an unfilled "admitted / rejected" alternatives row blocks
       * a line marked TODO / not-yet-run disqualifies the file
       * unreadable fails closed instead of raising
+
+    NARROWED, and deliberately so: an UNLABELLED correction ("Correction: on rerun the
+    skill was rejected.") no longer blocks. The earlier version did, by scanning for
+    the bare word, and that also rejected "Neither candidate was rejected by the
+    judge." — a false FAIL on an ordinary sentence. Requiring a label is what buys the
+    prose back, and the cost is stated here rather than left as a docstring claiming
+    the old guarantee.
     """
     f = skill_dir / "evals" / "admission.md"
     if not f.is_file():
@@ -853,17 +891,18 @@ def _admission_issue(skill_dir: Path) -> str | None:
     # worst class of gate defect. Matching a labelled verdict keeps the property
     # (a rejection anywhere, fences included, blocks) without eating prose.
     for m in _OUTCOME_LABEL_RE.finditer(raw):
-        tail = m.group(1).lower()
-        # A VERDICT follows its label immediately ("Outcome: rejected"). Prose does not
-        # ("Result: neither candidate was rejected by the judge."), and scanning the
-        # whole tail turned that ordinary sentence into a FAIL.
-        if not _VERDICT_HEAD_RE.match(tail):
-            continue
-        has_a, has_r = "admitted" in tail, "rejected" in tail or "not admitted" in tail
-        if has_a and has_r:
+        tail = m.group(1)
+        if _UNFILLED_ROW_RE.search(tail):
             return ("evals/admission.md has an unfilled outcome row "
                     "(`admitted / rejected` — delete one)")
-        if has_r:
+        # A VERDICT follows its label immediately ("Outcome: rejected"). Prose does not
+        # ("Result: neither candidate was rejected by the judge."). And only the head
+        # token is the verdict — the rest of the line is justification, which may
+        # legitimately mention the other word ("admitted; nothing was rejected").
+        vm = _VERDICT_HEAD_RE.match(tail)
+        if not vm:
+            continue
+        if vm.group(1).lower() != "admitted":
             return _REJECTED_MSG
     for m in _OUTCOME_HEADING_RE.finditer(raw):
         if m.group(1).lower() != "admitted":
