@@ -826,11 +826,16 @@ def test_every_finding_points_at_a_real_line():
         "", "```", "```", "# heading", "Format consistency lowers embedding variance.",
     ]
     rng = random.Random(4242)
+    checked = 0
     for _ in range(200):
         lines = [rng.choice(tokens) for _ in range(rng.randint(1, 15))]
         doc = "\n".join(lines)
         for f in fl.lint_text(doc, LEDGER):
             assert 1 <= f["line"] <= len(lines), (f, doc)
+            checked += 1
+    # Without this the test passes when lint_text returns nothing at all, which is the
+    # shape of a broken linter rather than a clean corpus.
+    assert checked > 0, "the generated corpus produced no findings — nothing was checked"
 
 
 def test_an_indented_delimiter_inside_a_block_scalar_does_not_end_frontmatter():
@@ -898,3 +903,66 @@ def test_frontmatter_fence_and_control_region_interactions():
         got = ids(template.replace("{D}", claim))
         fired = "polished-aesthetic-dead" in got
         assert fired == should_fire, f"{label}: expected fire={should_fire}, got {got}"
+
+
+# ---------- round-6 findings ----------
+
+def test_exempt_padding_cannot_defeat_the_whole_file_guard():
+    """Frontmatter and fenced code are not body.
+
+    Counting them in the coverage denominator let a document pad itself past the 80%
+    threshold: eight frontmatter fields around a disabled claim, and the guard went quiet.
+    Found by cross-model review.
+    """
+    claim = "The algorithm punishes formats."
+    frontmatter_padded = (
+        "---\n" + "".join(f"k{i}: v\n" for i in range(8)) + "---\n"
+        f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
+    )
+    fence_padded = (
+        "```\n" + "x\n" * 8 + "```\n"
+        f"<!-- format-lint: disable -->\n{claim}\n<!-- format-lint: enable -->\n"
+    )
+    for text in (frontmatter_padded, fence_padded):
+        assert "whole-file-disable" in ids(text), text
+
+
+def test_real_prose_around_a_scoped_disable_is_not_a_whole_file_bypass():
+    """The guard must still distinguish a legitimate scoped suppression."""
+    text = (
+        "Ranking is a weighted sum of predicted engagement probabilities.\n"
+        "Retrieval is nearest-neighbour over item embeddings.\n"
+        "Each surface has its own algorithm.\n"
+        "The value model carries a negative term on see-less.\n"
+        "<!-- format-lint: disable -->\n"
+        "Mosseri said the polished, perfect aesthetic is dead.\n"
+        "<!-- format-lint: enable -->\n"
+        "That quotation is a misattribution and is not used here.\n"
+    )
+    assert "whole-file-disable" not in ids(text)
+
+
+def test_a_non_boolean_citation_resolves_is_rejected_at_load(tmp_path):
+    """A truthy string would silently suppress a refuted ERROR.
+
+    The suite's other check only ever saw the SHIPPED ledger; an external ledger passed
+    via --ledger bypassed it entirely.
+    """
+    import pytest
+
+    bad = json.loads(json.dumps(LEDGER))
+    for r in bad["refuted"]:
+        if r["id"] == "polished-aesthetic-dead":
+            r["citation_resolves"] = "false"
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(bad))
+    with pytest.raises(SystemExit) as exc:
+        fl.load_ledger(path)
+    assert "citation_resolves" in str(exc.value)
+
+
+def test_a_boolean_citation_resolves_loads_fine(tmp_path):
+    good = json.loads(json.dumps(LEDGER))
+    path = tmp_path / "good.json"
+    path.write_text(json.dumps(good))
+    assert fl.load_ledger(path)["refuted"]

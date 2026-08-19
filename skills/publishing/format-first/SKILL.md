@@ -40,7 +40,7 @@ This skill separates these grades, and the separation is the point:
 | Grade | Meaning | Example |
 |---|---|---|
 | **Documented** | The operator publishes it | ANN retrieval over item embeddings; `"similarity to other reels"` is a named input signal |
-| **Hypothesis** | Plausible, no source establishes it | that format consistency lowers embedding variance and thereby improves retrieval | <!-- format-lint: allow=embedding-variance-asserted -->
+| **Hypothesis** | Plausible, no source located here establishes it | that format consistency lowers embedding variance and thereby improves retrieval | <!-- format-lint: allow=embedding-variance-asserted -->
 | **Refuted** | Contradicted by a primary source that was loaded | the misquoted "polished aesthetic" line |
 | **Contested** | The literature genuinely disagrees | whether subliminal exposure is stronger | <!-- format-lint: allow=subliminal-stronger -->
 | **Unverified** | Origin could not be located — **not** proof of falsity | the 3–5x sends weighting; a widely-quoted effect size |
@@ -64,8 +64,8 @@ plausibility argument. Say so, in both directions.
 2. **Probe, do not guess.** Watch several instances of a candidate format through to the
    end, then see whether the feed serves you more of that shape. If it does, the shape has
    a resident audience the recommender already serves. This is a *behavioural* test —
-   valid regardless of whether the embedding hypothesis holds. (No source specifies how
-   many instances; a handful is enough to notice the shift.)
+   valid regardless of whether the embedding hypothesis holds. (No source located here specifies
+   how many instances; a handful is enough to notice the shift.)
 3. **Copy the skeleton, supply your own substance.** Structure is fair game; content
    is not — and reposting others' content is the one thing that triggers a real
    account-level gate (Instagram's originality policy de-recommends primarily
@@ -74,7 +74,7 @@ plausibility argument. Say so, in both directions.
    above, not on a measured result. The argument is that consistent items are easier for
    a similarity-based retriever to match to an audience that already engaged. Treat it
    as the best available guess, and watch your own numbers.
-5. **Hold more than one format; rotate on measured decay.** No source supports a specific
+5. **Hold more than one format; rotate on measured decay.** No source located here supports a specific
    count or interval — rotate on your own numbers. The wearout literature is *laboratory
    stimulus* research and transporting it to platform formats is an analogy, not a
    finding; what it does support is that liking rises then falls with repetition, and that
@@ -224,12 +224,19 @@ in it.
 found two defects all 47 tests had missed. What each round found:
 
 - **Universal-absence phrasing** — the defect this skill exists to prevent, in this skill.
-  Eleven sites asserted absence as a property of the world: format clustering "documented
-  nowhere", "any PUBLIC documentation", "there is no per-format punitive state",
-  "unevidenced", "every source is a content farm". Every one is a claim about a *search*,
-  which is precisely the grade this skill defines as `unverified`. The first pass fixed
-  four and a review found a fifth; a proper sweep then found six more. All eleven now name
-  the set that was searched.
+  Sites throughout asserted absence as a property of the world rather than of a search:
+  format clustering "documented nowhere", absent from "any PUBLIC documentation", "there
+  is no per-format punitive state", "unevidenced", "every source is a content farm", "no
+  source establishes". Every one is a claim about a *search*, which is precisely the grade
+  this skill defines as `unverified`.
+
+  It took four passes, and the reason is worth more than the count: the first three swept
+  for the *wording* already found, so each pass caught only rephrasings of the last. The
+  pass that converged swept for the **shape** — any sentence asserting absence without
+  naming what was searched — and found sites the wording-based greps could not see. A
+  count produced that way is a count of what the pattern happened to match, so none is
+  quoted here; the sites that remain quoting the old phrasings are these, describing the
+  defect.
 - **Fence tracking** treated any ` ``` ` or `~~~` as a toggle, so a ` ``` ` inside a
   ` ```` ` block closed it early and the rest was linted as prose. A fence is now a
   character *and* a length, and a closing run must carry no info string.

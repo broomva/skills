@@ -98,6 +98,22 @@ def load_ledger(path: Path = LEDGER) -> dict:
             "format_lint: unknown grade(s) in ledger — a typo must not silently "
             f"downgrade severity: {bad}"
         )
+    # `citation_resolves` gates a bypass that can silence findings, so it must be an actual
+    # boolean. Read through truthiness, the string "false" is TRUE and silently suppresses
+    # a refuted ERROR — and an external ledger passed via --ledger never saw the suite's
+    # shipped-ledger check.
+    mistyped = [
+        (r.get("id", "?"), r["citation_resolves"])
+        for cat in ("refuted", "folklore", "hypothesis_as_fact")
+        for r in data.get(cat, [])
+        if "citation_resolves" in r and not isinstance(r["citation_resolves"], bool)
+    ]
+    if mistyped:
+        raise SystemExit(
+            "format_lint: citation_resolves must be a JSON boolean — a non-boolean is "
+            f"truthy and would silently suppress findings: {mistyped}"
+        )
+
     # Compile every pattern HERE, not lazily per block. A rule whose regex does not compile
     # otherwise raises once per file, which a batch caller can catch and discard — turning
     # a broken ledger into "this ledger found nothing" instead of an error.
@@ -232,7 +248,11 @@ def _control_regions(lines: list[str], fenced: set[int] | None = None) -> tuple[
             }
         )
 
-    body = [i for i, l in enumerate(lines) if l.strip()]
+    # Denominator = LINTABLE lines only. Counting frontmatter and fenced code as body let
+    # a document pad itself past the threshold: eight frontmatter fields around a disabled
+    # claim dropped coverage under 80% and the whole-file guard went quiet, which is
+    # exactly the silent total bypass it exists to catch.
+    body = [i for i, l in enumerate(lines) if l.strip() and i not in fenced]
     if body:
         covered = sum(1 for i in body if i in off)
         if covered / len(body) > 0.8:

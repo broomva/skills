@@ -68,7 +68,7 @@
       "id": "three-second-hook",
       "pattern": "(?i)\\bhooks?\\b[^.\\n]{0,40}\\bfirst\\s+(?:one\\s+to\\s+)?(?:1|2|3|one|two|three)(?:\\s*(?:-|–|to)\\s*(?:2|3|three))?\\s*seconds?\\b|\\bfirst\\s+(?:one\\s+to\\s+)?(?:1|2|3|one|two|three)(?:\\s*(?:-|–|to)\\s*(?:2|3|three))?\\s*seconds?\\b[^.\\n]{0,40}\\b(?:hooks?|rule)\\b|\\b(?:3|three)[\\s-]*seconds?\\s+(?:hook|rule)\\b",
       "message": "A targeted search for a peer-reviewed basis for the '3-second hook rule' returned only content farms, SEO blogs, and platform-vendor marketing. Absence in a searched set is not proof — but you cannot cite it.",
-      "instead": "Real short-form research is descriptive (Zannettou et al. CHI'24) or recsys-internal; none identifies human-legible creative features.",
+      "instead": "Real short-form research is descriptive (Zannettou et al. CHI'24) or recsys-internal; none of the work located here identifies human-legible creative features.",
       "grade": "folklore",
       "citation_resolves": false
     },
@@ -93,8 +93,8 @@
     {
       "id": "embedding-variance-asserted",
       "pattern": "(?i)(?:format\\s+)?(?:consistency|consistent|repeating|repetition)[^.\\n]{0,60}(?:lowers?|reduces?|shrinks?|narrows?|tightens?|compress\\w*|decreas\\w*)[^.\\n]{0,30}embedding[^.\\n]{0,20}variance",
-      "message": "This mechanism is a HYPOTHESIS. No source establishes that 'format' is a dimension of the learned representation.",
-      "instead": "Label it: 'a plausible mechanism no cited source establishes'. The supported claim is the negative one (no documented format-keyed favor state).",
+      "message": "This mechanism is a HYPOTHESIS. No source located here establishes that 'format' is a dimension of the learned representation.",
+      "instead": "Label it: 'a plausible mechanism no cited source establishes'. The better-supported claim is the negative one: no format-keyed favor state appears in the documentation searched (references/evidence-map.md \u00a71).",
       "grade": "hypothesis_as_fact",
       "citation_resolves": false
     },
