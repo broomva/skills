@@ -615,3 +615,8 @@ def test_keyframe_frames_are_not_shadow_or_radius_drift(tmp_path):
 '''})
     kinds = {r["kind"]: r for r in us.survey(root)["roots"]}
     assert int(kinds["shadow"]["value"].split()[0]) == 1 and int(kinds["radius"]["value"].split()[0]) == 1
+
+
+def test_em_dash_entities_and_escapes_count(tmp_path):
+    root = _repo(tmp_path, "ent", {"src/A.tsx": '<p>Four services &mdash; Arcan</p>\n<p>{"a \\u2014 b"}</p>\n<p>x &#8212; y</p>'})
+    assert us.survey(root)["copy_tells"]["em_dash"]["count"] == 3

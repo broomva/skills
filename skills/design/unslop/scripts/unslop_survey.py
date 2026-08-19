@@ -119,7 +119,7 @@ COMPONENT_LIBS = {
 }
 RE_IMPORT_FROM = re.compile(r"""(?:from|require\()\s*['"]([^'"]+)['"]""")
 
-RE_EM_DASH = re.compile("—")
+RE_EM_DASH = re.compile(r"—|&mdash;|&#8212;|\\u2014")   # the character, the HTML entity, the JS escape
 # a standalone em dash is a typographic empty-value marker (`?? "—"`, `<td>—</td>`), not the prose tell
 RE_EM_DASH_MARKER = re.compile(r"""(["'`])—\1|>\s*—\s*<|\{\s*"—"\s*\}""")
 RE_EMOJI = re.compile(
