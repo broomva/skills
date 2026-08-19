@@ -163,3 +163,27 @@ def test_current_side_crashes_also_fail(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cs.fl, "lint_text", boom)
     assert cs.main([str(tmp_path), "--json"]) == 1
+
+
+def test_a_ledger_error_is_not_swallowed_as_a_per_file_crash(tmp_path):
+    """`load_ledger` raises SystemExit deliberately, and that choice is load-bearing.
+
+    SystemExit derives from BaseException, so `scan`'s `except Exception` cannot catch it.
+    Downgrading it to a normal exception would send a broken ledger straight back into the
+    crash counter — which is the round-5 defect where an unusable comparison ledger made
+    every current finding look like new coverage.
+    """
+    broken = json.loads(json.dumps(LEDGER))
+    broken["refuted"][0]["pattern"] = "("
+    path = tmp_path / "broken.json"
+    path.write_text(json.dumps(broken))
+    _tree(tmp_path, {"a.md": DIRTY})
+
+    with pytest.raises(SystemExit):
+        cs.scan(cs.walk([str(tmp_path)], ".md"), fl.load_ledger(path))
+
+
+def test_system_exit_is_not_catchable_as_exception():
+    """Pins the property the test above depends on, so a refactor cannot quietly break it."""
+    assert issubclass(SystemExit, BaseException)
+    assert not issubclass(SystemExit, Exception)

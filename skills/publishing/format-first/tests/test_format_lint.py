@@ -966,3 +966,27 @@ def test_a_boolean_citation_resolves_loads_fine(tmp_path):
     path = tmp_path / "good.json"
     path.write_text(json.dumps(good))
     assert fl.load_ledger(path)["refuted"]
+
+
+def test_the_new_denominator_does_not_manufacture_whole_file_findings():
+    """Excluding exempt lines tightened the guard; it must not now fire on ordinary docs."""
+    clean = {
+        "mostly fenced code with one scoped disable":
+            "```\ncode\ncode\ncode\n```\nReal prose sentence one.\nReal prose sentence two.\n"
+            "<!-- format-lint: disable -->\nquoted claim\n<!-- format-lint: enable -->\n"
+            "Real prose sentence three.\nReal prose sentence four.\n",
+        "frontmatter and a short body, no disable at all":
+            "---\nname: x\ntags: [a]\n---\nOne sentence of prose.\n",
+        "a document that is only a fence":
+            "```\ncode\n```\n",
+        "four live lines against four disabled ones":
+            "a b c\nd e f\ng h i\nj k l\n"
+            "<!-- format-lint: disable -->\nm\nn\no\n<!-- format-lint: enable -->\n",
+    }
+    for label, text in clean.items():
+        assert "whole-file-disable" not in ids(text), label
+
+    # ...but a document whose ENTIRE lintable body is disabled still is one.
+    assert "whole-file-disable" in ids(
+        "---\nname: x\n---\n<!-- format-lint: disable -->\nq\n<!-- format-lint: enable -->\n"
+    )
