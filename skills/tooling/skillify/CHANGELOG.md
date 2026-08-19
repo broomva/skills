@@ -23,8 +23,10 @@ Stop letting testability decide expressibility — **the D / J / L tier model** 
 - **The `latent_only` amnesty is closed.** It used to SKIP steps 2 *and* 3, so the
   branch built to accommodate non-deterministic skills gated **nothing**. It still
   parses and still means "not tier D", but it must now satisfy J or L. Measured
-  effect over the 94-skill roster: 28 → 26 passing, and both losses are skills that
-  were passing only through the amnesty.
+  effect over the 94-skill roster: **−2 passing** (28 → 26 with `node` installed,
+  29 → 27 without — step 2's `.ts` syntax check is skipped when `node` is absent, so
+  quote the delta, not the absolute). Both losses are skills that were passing only
+  through the amnesty.
 - **Tests are required whenever code ships**, whatever the tier. The old expression
   routed step 3 through `latent_only`, so a skill could ship scripts and buy out of
   testing them.

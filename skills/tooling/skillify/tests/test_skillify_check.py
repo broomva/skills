@@ -946,3 +946,320 @@ def test_latent_only_plus_scripts_still_requires_tests(tmp_path):
     d = _skill(tmp_path, tests=False, latent=True)
     step3 = _step(_check(d), 3)
     assert step3["status"] == "FAIL" and step3["required"]
+
+
+# ===========================================================================
+# P20 round 1 — every blocker and major from two adversarial strata, as fixtures.
+# Each test names the finding it pins. All were reproduced as PASSes before the fix.
+# ===========================================================================
+
+def _j(tmp_path, **kw):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, **kw)
+    return d
+
+
+def _l(tmp_path, cases):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "prompts.json").write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    return d
+
+
+# --- the coverage regression (Strata B blocker 4) -----------------------------
+
+def test_syntax_check_applies_to_every_tier_not_just_d(tmp_path):
+    """THE regression this round found. `_script_syntax_error` was called only inside
+    the tier-D arm, so `tier: L` bought a skill out of a syntax check origin/main
+    applied unconditionally. Declaring a tier must never reduce coverage."""
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    (d / "scripts").mkdir(exist_ok=True)
+    (d / "scripts" / "do.py").write_text("def f(:\n    return 1\n", encoding="utf-8")
+    (d / "tests").mkdir(exist_ok=True)
+    (d / "tests" / "test_do.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "syntax error" in step2["detail"]
+
+
+def test_empty_script_is_not_a_deterministic_core(tmp_path):
+    """codex blocker 1: py_compile is happy with 0 bytes, so `touch scripts/noop.py`
+    satisfied tier D."""
+    d = _skill(tmp_path, tests=False, tier="D")
+    (d / "scripts" / "do.py").write_text("", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_extensionless_executable_counts_as_code(tmp_path):
+    """codex blocker 6: `scripts/run` with a shebang shipped untested, because
+    'code' keyed off five suffixes."""
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    (d / "scripts").mkdir(exist_ok=True)
+    run = d / "scripts" / "run"
+    run.write_text("#!/bin/bash\necho hi\n", encoding="utf-8")
+    run.chmod(0o755)
+    for t in (d / "tests").glob("*"):
+        t.unlink()
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL" and step3["required"]
+
+
+# --- tier L polarity (codex blocker 2, Strata B blocker 5) --------------------
+
+def test_null_valued_trigger_key_does_not_satisfy_tier_l(tmp_path):
+    """The weak-check-made-load-bearing defect, repeated from a sibling PR's step-5
+    finding because tier L made the weak check *required*."""
+    step2 = _step(_check(_l(tmp_path, [{"should_fire": None}])), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_positive_only_routing_eval_fails_tier_l(tmp_path):
+    """Both SKILL.md tables claim 'both polarities'; nothing enforced it. A
+    positive-only suite structurally cannot see over-triggering."""
+    step2 = _step(_check(_l(tmp_path, [{"should_fire": True}])), 2)
+    assert step2["status"] == "FAIL"
+    assert "negative" in step2["detail"]
+
+
+def test_negative_only_routing_eval_fails_tier_l(tmp_path):
+    step2 = _step(_check(_l(tmp_path, [{"should_not_fire": True}])), 2)
+    assert step2["status"] == "FAIL"
+    assert "positive" in step2["detail"]
+
+
+def test_both_polarities_passes_tier_l(tmp_path):
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_should_trigger_false_counts_as_the_negative_polarity(tmp_path):
+    """Schmid's convention expresses the negative as should_trigger:false rather than
+    a separate key; that must satisfy the negative arm."""
+    d = _l(tmp_path, [{"should_trigger": True}, {"should_trigger": False}])
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+# --- judge shadowing + opt-out (codex blocker 3, Strata B blockers 2 and 3) ---
+
+def test_decoy_blob_cannot_shadow_the_real_execution_contract(tmp_path):
+    """codex blocker 3: first-match `_dig` read `judge` from one file and
+    `execution_contract` from another, so it compared two configs that never meet."""
+    d = _j(tmp_path, judge_model="gpt-5", under_model="gpt-5")
+    (d / "evals" / "00-decoy.json").write_text(
+        json.dumps({"execution_contract": {"model": "haiku"}}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "self-judging" in step2["detail"]
+
+
+def test_two_judge_configs_are_ambiguous_not_first_wins(tmp_path):
+    """Strata B blocker 3 in its sharper form: a decoy `judge` sorting first hid the
+    real self-judging one entirely."""
+    d = _j(tmp_path)
+    (d / "evals" / "00-decoy.json").write_text(
+        json.dumps({"judge": {"model": "gpt-5", "agreement_floor": 0.8,
+                              "agreement_measured": {"value": 0.9, "method": "40 dual-labelled cases"}}}),
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "ambiguous" in step2["detail"]
+
+
+def test_missing_execution_contract_fails_rather_than_warns(tmp_path):
+    """Strata B blocker 2: the cross-model requirement was opt-out — omit the
+    comparison target and the whole gate degraded to a WARN."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    del blob["execution_contract"]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "nothing to compare" in step2["detail"]
+
+
+def test_non_mapping_judge_fails_cleanly(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "suite.json").write_text(json.dumps({"judge": "gpt-5"}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "not a mapping" in step2["detail"]
+
+
+# --- the measurement clamp (codex blocker 5, Strata B major 7) ----------------
+
+def test_blank_floor_and_whitespace_measurement_fail(tmp_path):
+    """codex blocker 5: `agreement_floor: ""` with whitespace value/method passed."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_floor"] = ""
+    blob["judge"]["agreement_measured"] = {"value": " ", "method": " "}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+
+
+def test_placeholder_measurement_is_not_a_measurement(tmp_path):
+    """Strata B blocker 1: `{value: TBD, method: TBD}` passed as 'a measured floor'."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": "TBD", "method": "TBD"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "placeholder" in step2["detail"]
+
+
+def test_vibes_as_a_method_is_not_a_measurement(tmp_path):
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": "unmeasured", "method": "vibes"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_a_measured_agreement_of_zero_is_a_real_measurement(tmp_path):
+    """Strata B major 7, the inverse direction. Truthiness got this pair backwards:
+    a genuine 0 was reported as 'no measurement' while 'unmeasured' passed."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": 0, "method": "40 dual-labelled cases, Krippendorff alpha"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_non_numeric_floor_fails(tmp_path):
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_floor"] = "high"
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "must be a number" in step2["detail"]
+
+
+# --- admission record (codex blocker 4, Strata B major 3) ---------------------
+
+def test_admission_outcome_inside_a_code_fence_is_an_example_not_a_record(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "# Admission\n\nWrite the outcome like this:\n\n```yaml\nOutcome: admitted\n```\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "no outcome" in step2["detail"]
+
+
+def test_a_superseding_rejection_is_not_buried_by_an_earlier_admitted(tmp_path):
+    """First-match-wins meant a correction below an earlier `admitted` was invisible."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Outcome: admitted\n\nCorrection 2026-08-19 — re-run.\n\nVerdict: rejected\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rejected" in step2["detail"]
+
+
+def test_admission_marked_not_yet_run_is_not_an_outcome(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Outcome: admitted\n\nTODO: actually run this against two agents.\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+
+
+def test_admission_accepts_plausible_phrasings(tmp_path):
+    """Strata B measured 5/7 false REJECTS on ordinary markdown. A gate that only
+    accepts one phrasing trains people to write for the regex."""
+    for body in ("Outcome — admitted\n",
+                 "## Outcome\n\nAdmitted.\n",
+                 "**Outcome: admitted**\n",
+                 "| Outcome | admitted |\n",
+                 "> Outcome: admitted\n",
+                 "- Verdict: admitted\n"):
+        d = _j(tmp_path / body[:12].replace("/", "_").replace("|", "_").strip())
+        (d / "evals" / "admission.md").write_text(body, encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "PASS", f"rejected: {body!r}"
+
+
+def test_unreadable_admission_fails_closed_without_a_traceback(tmp_path):
+    """codex major 2 / Strata B major 5: an uncaught PermissionError instead of a
+    structured FAIL. A traceback is worse than a verdict."""
+    d = _j(tmp_path)
+    f = d / "evals" / "admission.md"
+    f.chmod(0o000)
+    try:
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL" and step2["required"]
+    finally:
+        f.chmod(0o644)
+
+
+# --- rubric + held-out (Strata B majors 1 and 2) -----------------------------
+
+def test_empty_rubric_file_does_not_satisfy_the_rubric_check(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "rubric.md").write_text("", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
+
+
+def test_heading_only_rubric_does_not_count(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "rubric.md").write_text("# Rubric\n\n## Dimensions\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
+
+
+def test_gitkeep_and_readme_are_not_held_out_cases(tmp_path):
+    """`touch evals/held-out/.gitkeep` satisfied 'a held-out case set'."""
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / ".gitkeep").write_text("", encoding="utf-8")
+    (ho / "README.md").write_text("cases go here\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_a_real_held_out_case_file_counts(tmp_path):
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("Critique this API design.\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+# --- fail-closed on unparseable artifacts (codex major 1, Strata B major 4) ---
+
+def test_unparseable_eval_artifact_fails_closed_for_tier_j(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "broken.json").write_text("{not: valid json", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "unparseable" in step2["detail"]
+
+
+def test_unparseable_eval_artifact_fails_closed_for_tier_l(tmp_path):
+    """An unverifiable routing eval is not a routing eval — and the message must say
+    'could not parse', not 'no routing eval'."""
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    (d / "evals" / "broken.json").write_text("{not: valid json", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "could not be parsed" in step2["detail"]
+
+
+# --- survey robustness (Strata B major 5, codex minor 1) ---------------------
+
+def test_survey_isolates_a_failing_skill_and_still_reports_the_rest(tmp_path):
+    good = _skill(tmp_path, name="good", tier="D")
+    bad = _skill(tmp_path, name="bad", tier="D")
+    (bad / "scripts" / "do.py").chmod(0o000)
+    try:
+        rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+        assert rep["total"] == 2
+        assert any(r["skill"] == "good" and r["ok"] for r in rep["rows"])
+        assert any(r["skill"] == "bad" and not r["ok"] for r in rep["rows"])
+    finally:
+        (bad / "scripts" / "do.py").chmod(0o644)
+
+
+def test_survey_plus_positional_is_rejected_not_silently_ignored(tmp_path):
+    d = _skill(tmp_path, name="x", tier="D")
+    rc, out, err = _run(str(d), "--survey", str(tmp_path))
+    assert rc == 2 and "different modes" in err

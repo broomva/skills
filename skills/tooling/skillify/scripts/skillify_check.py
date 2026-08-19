@@ -211,13 +211,27 @@ def _iter_files(skill_dir: Path, subdirs: tuple[str, ...]) -> list[Path]:
     return out
 
 
+def _is_code_file(skill_dir: Path, f: Path) -> bool:
+    """Code = a recognized extension, OR an extensionless EXECUTABLE under scripts/.
+    `scripts/run` with a shebang is a deterministic core by any reading; keying purely
+    off five suffixes let it ship untested ("tests whenever code ships" quietly meant
+    "whenever a .py/.sh/.mjs/.js/.ts ships")."""
+    if _is_test_file(f.name) or f.name in {"__init__.py", "conftest.py", "setup.py"}:
+        return False
+    if f.suffix in CODE_EXTS:
+        return True
+    return (not f.suffix and f.is_relative_to(skill_dir / "scripts")
+            and bool(f.stat().st_mode & 0o111))
+
+
 def _code_files(skill_dir: Path) -> list[str]:
-    found = {
-        str(f.relative_to(skill_dir))
-        for f in _iter_files(skill_dir, ("scripts", ""))
-        if f.suffix in CODE_EXTS and not _is_test_file(f.name)
-        and f.name not in {"__init__.py", "conftest.py", "setup.py"}
-    }
+    found = set()
+    for f in _iter_files(skill_dir, ("scripts", "")):
+        try:
+            if _is_code_file(skill_dir, f):
+                found.add(str(f.relative_to(skill_dir)))
+        except OSError:
+            continue
     return sorted(found)
 
 
@@ -391,6 +405,12 @@ def _script_syntax_error(path: Path) -> str | None:
     if path.suffix in (".mjs", ".js", ".ts") and shutil.which("node"):
         r = subprocess.run(["node", "--check", str(path)], capture_output=True)
         return None if r.returncode == 0 else "node syntax error"
+    if not path.suffix:
+        # extensionless executable: check it only if its shebang says how
+        head = (_read(path) or "").splitlines()[:1]
+        if head and head[0].startswith("#!") and ("sh" in head[0] or "bash" in head[0]):
+            r = subprocess.run(["bash", "-n", str(path)], capture_output=True)
+            return None if r.returncode == 0 else "shell syntax error"
     return None
 
 
@@ -502,6 +522,11 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
 # Three tiers replace the binary. Each names what the skill IS and therefore which
 # gate applies. Inference decides *which* gate, never *whether* one applies: a skill
 # the gate cannot classify still fails.
+#
+# EVERY check below is content-based, not presence-based. A gate whose artifacts can
+# be satisfied by `touch` is the vacuous pass this file spends 20 lines warning about
+# at the step-5 comment; two adversarial reviews found nine ways to `touch` an earlier
+# draft of this block into a PASS.
 TIER_D, TIER_J, TIER_L = "D", "J", "L"
 TIERS = (TIER_D, TIER_J, TIER_L)
 
@@ -518,6 +543,13 @@ _MODEL_FAMILIES = {
     "mistral": ("mistral", "mixtral"),
 }
 
+# Content that is a promise rather than a record. Accepting any of these as a rubric,
+# a method or a measured value is how "declare a floor AND show the measurement"
+# degrades into "type something in the field".
+_PLACEHOLDER_RE = re.compile(
+    r"^\W*(tbd|todo|fixme|xxx|n/?a|none|pending|unmeasured|unknown|vibes|placeholder|"
+    r"coming soon|to be (?:done|measured|determined)|\?+|-+)\W*$", re.IGNORECASE)
+
 
 def _model_family(model: str) -> str | None:
     m = (model or "").lower()
@@ -527,81 +559,186 @@ def _model_family(model: str) -> str | None:
     return None
 
 
-def _load_data(path: Path) -> object | None:
-    """Parse a JSON/YAML artifact, or None if unreadable/unparseable."""
+def _is_num(x: object) -> bool:
+    """A real number. `bool` is an int in Python and must not qualify as a score."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _substantive(x: object) -> bool:
+    """Non-blank content that is not a placeholder.
+
+    A measured value of **0** is a genuine measurement, so truthiness is the wrong
+    test in both directions: `0` must pass and `"TBD"` must fail. An earlier draft
+    used `not measured.get("value")` and got exactly that pair backwards.
+    """
+    if _is_num(x):
+        return True
+    if isinstance(x, str):
+        t = x.strip()
+        return bool(t) and not _PLACEHOLDER_RE.match(t)
+    return False
+
+
+def _read(path: Path) -> str | None:
+    """Read text, or None if unreadable. Every caller must fail CLOSED on None — an
+    unreadable artifact is an unverified artifact, never a traceback."""
     try:
-        txt = path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        return None
+
+
+class _Unparseable:
+    """Sentinel: the file exists but this build cannot parse it (no pyyaml). Distinct
+    from 'absent', so the gate can say which — reporting a correct YAML judge config as
+    `no judge config` was a real misdiagnosis in review."""
+    __slots__ = ("path",)
+
+    def __init__(self, path: Path):
+        self.path = path
+
+
+def _load_data(path: Path) -> object | None | _Unparseable:
+    """Parse a JSON/YAML artifact. None = absent/empty; _Unparseable = cannot verify."""
+    txt = _read(path)
+    if txt is None or not txt.strip():
         return None
     if path.suffix == ".json":
         try:
             return json.loads(txt)
         except ValueError:
-            return None
-    if path.suffix in {".yaml", ".yml"} and yaml is not None:
+            return _Unparseable(path)
+    if path.suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            return _Unparseable(path)
         try:
             return yaml.safe_load(txt)
         except Exception:
-            return None
+            return _Unparseable(path)
     return None
 
 
-def _eval_blobs(skill_dir: Path) -> list[tuple[Path, dict]]:
-    """Every parseable mapping under evals/ — where J's declarations may live."""
+def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[Path]]:
+    """Every parseable mapping under evals/, plus the files that could not be parsed.
+
+    The unparseable list is returned rather than swallowed: a J skill whose judge
+    config is a YAML file this build cannot read must FAIL saying so, not FAIL saying
+    the config is missing, and must never PASS by the file being invisible.
+    """
     out: list[tuple[Path, dict]] = []
+    bad: list[Path] = []
     d = skill_dir / "evals"
     if not d.is_dir():
-        return out
+        return out, bad
     for f in sorted(d.rglob("*")):
         if not f.is_file() or f.suffix not in {".json", ".yaml", ".yml"}:
             continue
         data = _load_data(f)
-        if isinstance(data, dict):
+        if isinstance(data, _Unparseable):
+            bad.append(f)
+        elif isinstance(data, dict):
             out.append((f, data))
-    return out
+    return out, bad
 
 
-def _dig(blobs: list[tuple[Path, dict]], key: str) -> object | None:
-    """First top-level value for `key` across the eval blobs."""
-    for _, data in blobs:
-        if key in data:
-            return data[key]
-    return None
+def _dig_all(blobs: list[tuple[Path, dict]], key: str) -> list[tuple[Path, object]]:
+    """EVERY top-level value for `key`, with its file.
+
+    Deliberately not first-match-wins. A first-match `_dig` let `evals/aaa-decoy.yaml`
+    supply the `judge` while `evals/zzz-real.yaml` supplied the `execution_contract`,
+    so the gate compared two configs that never meet at runtime and called a
+    self-judging setup cross-model. Filename order is not a security boundary.
+    """
+    return [(f, data[key]) for f, data in blobs if key in data]
 
 
-_ADMITTED_RE = re.compile(r"^\s*(?:[-*>#\s]*)?\**\s*(?:outcome|verdict|result)\s*\**\s*[:\-]\s*\**\s*(admitted|rejected)\b",
-                          re.IGNORECASE | re.MULTILINE)
+_OUTCOME_RE = re.compile(
+    r"(?:^|\n)[^\S\n]*[>|*\-#\s]*\**\s*(?:outcome|verdict|admission|result)\s*\**\s*"
+    r"[:\-\u2013\u2014|]+\s*\**\s*(admitted|rejected|not admitted)\b",
+    re.IGNORECASE)
+_OUTCOME_HEADING_RE = re.compile(
+    r"(?:^|\n)#{1,6}\s*(?:outcome|verdict|admission|result)\s*\n+\s*\**\s*"
+    r"(admitted|rejected|not admitted)\b", re.IGNORECASE)
 
 
 def _admission_issue(skill_dir: Path) -> str | None:
-    """Tier J's hard gate. `evals/admission.md` must record the admission test AND
-    its outcome: given the same input, can two independent agents produce outputs a
-    third party judges BOTH valid? If they contradict with no tiebreak the skill is
+    """Tier J's hard gate. `evals/admission.md` must record the admission test AND its
+    outcome: given the same input, can two independent agents produce outputs a third
+    party judges BOTH valid? If they contradict with no tiebreak the skill is
     underspecified, not probabilistic, and is not admissible.
 
-    A file with no explicit outcome line is NOT admitted — an unrecorded admission
-    test is an unadmitted skill, and treating 'the file exists' as the outcome is the
-    presence-is-not-correctness trap this whole gate is built against.
+    Hardened against the four ways review got a template to read as a record:
+      * fenced blocks are stripped first — an outcome inside ```…``` is an EXAMPLE
+      * ANY `rejected` anywhere wins, so a superseding correction cannot be buried
+        under an earlier `admitted` by first-match
+      * a line marked TODO / not-yet-run disqualifies the file
+      * unreadable fails closed instead of raising
     """
     f = skill_dir / "evals" / "admission.md"
     if not f.is_file():
         return "no evals/admission.md (record the admission test and its outcome)"
-    txt = f.read_text(encoding="utf-8", errors="replace")
-    if not txt.strip():
+    raw = _read(f)
+    if raw is None:
+        return "evals/admission.md is unreadable"
+    if not raw.strip():
         return "evals/admission.md is empty"
-    m = _ADMITTED_RE.search(txt)
-    if not m:
+    txt = _strip_fences(raw)
+    hits = [m.group(1).lower() for m in _OUTCOME_RE.finditer(txt)]
+    hits += [m.group(1).lower() for m in _OUTCOME_HEADING_RE.finditer(txt)]
+    if not hits:
         return ("evals/admission.md records no outcome — needs a line like "
                 "`Outcome: admitted` (or `rejected`)")
-    if m.group(1).lower() == "rejected":
+    if any(h != "admitted" for h in hits):
         return "evals/admission.md records `rejected` — an underspecified skill is not admissible"
+    if _PLANNED_RE.search(txt):
+        return ("evals/admission.md is marked planned/not-yet-run — an unrun admission "
+                "test is not an outcome")
     return None
 
 
+def _rubric_issue(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> str | None:
+    """A rubric names the dimensions a third party grades on. An EMPTY rubric.md
+    satisfied an earlier draft — the same presence-is-not-correctness trap step 3
+    already avoids via _is_real_test."""
+    for _, val in _dig_all(blobs, "rubric"):
+        if isinstance(val, (list, dict)) and val:
+            return None
+        if _substantive(val):
+            return None
+    f = skill_dir / "evals" / "rubric.md"
+    if not f.is_file():
+        return "no rubric (evals/rubric.md or a `rubric` key in evals/)"
+    txt = _read(f)
+    if txt is None:
+        return "evals/rubric.md is unreadable"
+    body = [ln.strip() for ln in _strip_fences(txt).splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")]
+    if not body:
+        return "evals/rubric.md has no content below its heading — an empty rubric grades nothing"
+    return None
+
+
+_CASE_EXTS = {".json", ".yaml", ".yml", ".md", ".txt", ".jsonl"}
+
+
 def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
-    """Held-out cases: a dedicated evals/held-out/ dir, or cases flagged held_out."""
-    d = skill_dir / "evals" / "held-out"
-    n = len([f for f in d.rglob("*") if f.is_file()]) if d.is_dir() else 0
+    """Held-out cases: a dedicated evals/held-out/ dir, or cases flagged held_out.
+
+    Counts CASES, not files. `.gitkeep`, `README.md` and dotfiles are not cases, and
+    an empty file is not a case — `touch evals/held-out/.gitkeep` satisfied an earlier
+    draft's "held-out case set".
+    """
+    n = 0
+    d = skill_dir / "held-out" if False else skill_dir / "evals" / "held-out"
+    if d.is_dir():
+        for f in d.rglob("*"):
+            if not f.is_file() or f.name.startswith(".") or f.suffix not in _CASE_EXTS:
+                continue
+            if f.stem.lower() in {"readme", "index", "template", "example"}:
+                continue
+            txt = _read(f)
+            if txt and txt.strip():
+                n += 1
     for _, data in blobs:
         cases = data.get("cases")
         if isinstance(cases, list):
@@ -610,75 +747,147 @@ def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
     return n
 
 
-def _judge_issues(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]:
+def _judge_issues(blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]:
     """Validate tier J's judge declaration. Returns (failures, warnings).
 
-    Required: a `judge` mapping with a `model`; that model must DIFFER from the model
-    under eval (cross-model is structural for J — a judge sharing the generator's
-    substrate inflates confidence rather than testing it); and an
-    `agreement_floor` that is accompanied by an `agreement_measured` record.
+    Required: exactly one well-formed `judge` mapping with a `model`; at least one
+    `execution_contract.model` to compare it against (the comparison target is NOT
+    optional — omitting it used to degrade the whole cross-model requirement to a
+    WARN, making it opt-out); the judge model must differ from EVERY declared
+    model-under-eval; and an `agreement_floor` that is a real number accompanied by an
+    `agreement_measured` record carrying a substantive value and method.
 
-    The floor's VALUE is deliberately not constrained here. Nobody has measured what
-    it should be, and hard-coding one would be asserting a number no committed process
-    regenerates — the exact failure that produced this tier model. The gate enforces
-    the shape: declare a floor, and show the measurement that produced it.
+    The floor's VALUE is deliberately unconstrained. Nobody has measured what it should
+    be, and hard-coding one would assert a number no committed process regenerates —
+    the exact failure that produced this tier model. The gate enforces the shape:
+    declare a floor, and show the measurement that produced it.
     """
     fails: list[str] = []
     warns: list[str] = []
-    judge = _dig(blobs, "judge")
-    if not isinstance(judge, dict):
+
+    judges = _dig_all(blobs, "judge")
+    well_formed = [(f, j) for f, j in judges if isinstance(j, dict)]
+    if not judges:
         return ["no `judge` config in evals/ (tier J needs a cross-model judge declaration)"], warns
+    if not well_formed:
+        return [f"`judge` in {judges[0][0].name} is {type(judges[0][1]).__name__}, not a mapping"], warns
+    if len(well_formed) > 1:
+        names = ", ".join(f.name for f, _ in well_formed)
+        return [f"{len(well_formed)} `judge` configs ({names}) — ambiguous; declare exactly one"], warns
+    judge = well_formed[0][1]
 
     jm = judge.get("model")
-    if not isinstance(jm, str) or not jm.strip():
-        fails.append("judge.model missing")
+    if not (isinstance(jm, str) and jm.strip()):
+        fails.append("judge.model missing or not a string")
         jm = ""
 
-    # the model under eval: skill_evals' execution_contract.model, else the harness default
-    under = ""
-    ec = _dig(blobs, "execution_contract")
-    if isinstance(ec, dict) and isinstance(ec.get("model"), str):
-        under = ec["model"]
-    if jm and under:
-        if jm.strip().lower() == under.strip().lower():
-            fails.append(f"judge.model == model under eval ({jm!r}) — self-judging is not a gate")
-        elif _model_family(jm) and _model_family(jm) == _model_family(under):
-            warns.append(f"judge.model {jm!r} and model-under-eval {under!r} share a family "
-                         f"({_model_family(jm)}) — distinct names, correlated substrate")
-    elif jm and not under:
-        warns.append("no execution_contract.model to compare judge.model against — "
-                     "cross-model distinctness unverified")
+    unders = []
+    for _, ec in _dig_all(blobs, "execution_contract"):
+        if isinstance(ec, dict) and isinstance(ec.get("model"), str) and ec["model"].strip():
+            unders.append(ec["model"].strip())
+    if jm and not unders:
+        fails.append("no execution_contract.model in evals/ — nothing to compare judge.model "
+                     "against, so cross-model distinctness cannot be established")
+    elif jm:
+        same = [u for u in unders if u.lower() == jm.strip().lower()]
+        if same:
+            fails.append(f"judge.model == a model under eval ({jm!r}) — self-judging is not a gate")
+        else:
+            fam = [u for u in unders if _model_family(jm) and _model_family(jm) == _model_family(u)]
+            if fam:
+                warns.append(f"judge.model {jm!r} and model-under-eval {fam[0]!r} share a family "
+                             f"({_model_family(jm)}) — distinct names, correlated substrate")
 
     floor = judge.get("agreement_floor")
     measured = judge.get("agreement_measured")
     if floor is None:
         fails.append("judge.agreement_floor not declared")
-    elif not isinstance(measured, dict) or not measured.get("value") or not measured.get("method"):
+    elif not _is_num(floor):
+        fails.append(f"judge.agreement_floor is {floor!r} — must be a number")
+    elif not isinstance(measured, dict):
         fails.append(f"judge.agreement_floor={floor} declared with no agreement_measured "
                      "{value, method} — an unmeasured floor is an authored number")
+    elif not _substantive(measured.get("value")) or not _substantive(measured.get("method")):
+        fails.append(f"judge.agreement_measured is a placeholder "
+                     f"(value={measured.get('value')!r}, method={measured.get('method')!r}) — "
+                     "a field filled in is not a measurement taken")
     return fails, warns
 
 
-def _tier_of(skill_dir: Path, fm: dict, code: list[str],
-             blobs: list[tuple[Path, dict]]) -> tuple[str | None, bool, str]:
+_POSITIVE_KEYS = {"should_trigger", "shouldTrigger", "should_fire"}
+_NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire", "negative_case"}
+
+
+def _polarity_seen(node: object, depth: int = 0) -> tuple[bool, bool]:
+    """(has a real positive assertion, has a real negative assertion).
+
+    'Real' means an actual boolean, not merely the key's presence.
+    `{"should_fire": null}` satisfied an earlier draft — the same weak-check-made-
+    load-bearing defect a sibling PR had already documented for step 5, repeated here
+    because tier L made the weak check *required*.
+    """
+    pos = neg = False
+    if depth > 40:
+        return pos, neg
+    if isinstance(node, dict):
+        for k, v in node.items():
+            ks = str(k)
+            if ks in _POSITIVE_KEYS and isinstance(v, bool):
+                pos, neg = (pos or v), (neg or not v)
+            elif ks in _NEGATIVE_KEYS and isinstance(v, bool):
+                neg = neg or v
+            else:
+                p, n = _polarity_seen(v, depth + 1)
+                pos, neg = pos or p, neg or n
+    elif isinstance(node, list):
+        for v in node:
+            p, n = _polarity_seen(v, depth + 1)
+            pos, neg = pos or p, neg or n
+    return pos, neg
+
+
+def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
+                        unparseable: list[Path]) -> str | None:
+    """Tier L's core: a routing eval asserting BOTH polarities. A positive-only suite
+    structurally cannot see over-triggering, which is the failure mode a lens has."""
+    if unparseable:
+        return (f"{len(unparseable)} eval artifact(s) could not be parsed "
+                f"({unparseable[0].name}) — install pyyaml or fix the file; "
+                "an unverifiable routing eval is not a routing eval")
+    pos = neg = False
+    for _, data in blobs:
+        p, n = _polarity_seen(data)
+        pos, neg = pos or p, neg or n
+    if pos and neg:
+        return None
+    if not pos and not neg:
+        return ("no routing eval — a lens is gated on firing on the right requests "
+                "and staying silent on near-misses")
+    missing = "negative (should_not_fire)" if not neg else "positive (should_fire)"
+    return (f"routing eval asserts only one polarity — missing a {missing} case; "
+            "a positive-only suite cannot see over-triggering")
+
+
+def _tier_of(skill_dir: Path, fm: dict, code: list[str]) -> tuple[str | None, bool, str]:
     """Return (tier, declared, why). Declared wins; otherwise infer.
 
     Inference exists so a 94-skill roster does not break the day tiers ship — NOT to
     let an unclassifiable skill through. `None` means the gate could not tell what
     kind of thing this is, and that is a FAIL, same as before.
+
+    Inference fires for D ONLY. Shipping a pure function is definitionally tier D, so
+    that one is safe. The tempting second rule — "has a trigger eval, no code -> L" —
+    is NOT: a routing eval is tier L's *core*, not its *signature*, and every tier can
+    carry one. Backfilling the roster with that rule labelled `autonomous`, `handoff`
+    and `checkit` as lenses; all three run pipelines and none is a lens. A confidently
+    wrong tier is worse than an absent one (BRO-2192).
     """
-    raw = str(fm.get("tier", "")).strip().upper()
+    raw = fm.get("tier")
+    raw = "" if raw is None else str(raw).strip().upper()
     if raw in TIERS:
         return raw, True, "declared"
     if raw:
         return None, False, f"tier: {raw!r} is not one of D/J/L"
-    # Inference fires for D ONLY. Shipping a pure function is definitionally tier D,
-    # so that one is safe. The tempting second rule — "has a trigger eval, no code
-    # -> L" — is NOT: a routing eval is tier L's *core*, not its *signature*, and
-    # every tier can carry one. Backfilling the roster with that rule labelled
-    # `autonomous`, `handoff` and `checkit` as lenses; all three run pipelines and
-    # none of them is a lens. A confidently wrong tier is worse than an absent one,
-    # because it makes the taxonomy look like it carves when it does not (BRO-2192).
     if code:
         return TIER_D, False, "inferred: ships scripts/ code"
     return None, False, "no tier: declared and no scripts/ code (J and L must be declared)"
@@ -691,8 +900,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     name = (fm or {}).get("name") or skill_dir.resolve().name
     latent_only = str((fm or {}).get("latent_only", "")).lower() in ("true", "yes", "1")
     code = _code_files(skill_dir)
-    blobs = _eval_blobs(skill_dir)
-    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, code, blobs)
+    blobs, unparseable_evals = _eval_blobs(skill_dir)
+    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, code)
     results: list[dict] = []
 
     def add(step, label, status, detail, required=False):
@@ -746,6 +955,16 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # Step 2 now asks what KIND of skill this is and applies that tier's gate.
     # Inference picks WHICH gate when `tier:` is absent; it never waives one.
     tag = "tier " + (tier or "?") + (" (declared)" if tier_declared else f" ({tier_why})")
+    tier_warns: list[str] = []
+
+    # Syntax-check EVERY shipped script, whatever the tier. This deliberately sits
+    # OUTSIDE the tier branches: an earlier draft called _script_syntax_error only
+    # inside the tier-D arm, so declaring `tier: L` silently bought a skill out of a
+    # syntax check that origin/main applied unconditionally — a coverage regression
+    # introduced by the refactor and caught in adversarial review.
+    broken = [(c, e) for c in code if (e := _script_syntax_error(skill_dir / c))]
+    empty_code = [c for c in code if not (_read(skill_dir / c) or "").strip()]
+
     if tier is None:
         add(2, "Tier + core", FAIL,
             f"cannot classify — {tier_why}. Declare `tier: D` (ship scripts/), "
@@ -757,27 +976,36 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     elif latent_only and code:
         add(2, "Tier + core", FAIL,
             f"latent_only:true but {len(code)} script(s) present — contradiction", required=True)
+    elif broken:
+        add(2, "Tier + core", FAIL,
+            f"{tag}: " + "; ".join(f"{c}: {e}" for c, e in broken[:3]), required=True)
+    elif empty_code:
+        # An empty file is not a deterministic core. py_compile is perfectly happy with
+        # 0 bytes, so `touch scripts/noop.py` used to satisfy tier D.
+        add(2, "Tier + core", FAIL,
+            f"{tag}: empty script(s) {', '.join(empty_code[:3])} — an empty file is not a core",
+            required=True)
     elif tier == TIER_D:
         if not code:
             add(2, "Tier + core", FAIL, "tier D declared but no scripts/ code", required=True)
-        elif (broken := [(c, e) for c in code if (e := _script_syntax_error(skill_dir / c))]):
-            add(2, "Tier + core", FAIL,
-                f"{tag}: " + "; ".join(f"{c}: {e}" for c, e in broken[:3]), required=True)
         else:
             add(2, "Tier + core", PASS,
                 f"{tag}: {len(code)} script(s), syntax ok: {', '.join(code[:3])}", required=True)
     elif tier == TIER_J:
         issues: list[str] = []
+        if unparseable_evals:
+            issues.append(f"{len(unparseable_evals)} eval artifact(s) unparseable "
+                          f"({unparseable_evals[0].name}) — install pyyaml or fix the file")
         if (adm := _admission_issue(skill_dir)):
             issues.append(adm)
-        if not (_dig(blobs, "rubric") or (skill_dir / "evals" / "rubric.md").is_file()):
-            issues.append("no rubric (evals/rubric.md or a `rubric` key in evals/)")
+        if (rub := _rubric_issue(skill_dir, blobs)):
+            issues.append(rub)
         if (n_held := _held_out_count(skill_dir, blobs)) == 0:
-            issues.append("no held-out cases (evals/held-out/ or cases flagged held_out)")
-        jf, jw = _judge_issues(skill_dir, blobs)
+            issues.append("no held-out cases (evals/held-out/ or cases flagged held_out); "
+                          "an empty file or a README is not a case")
+        jf, jw = _judge_issues(blobs)
         issues += jf
-        for w in jw:
-            add("2j", "Judge distinctness", WARN, w)
+        tier_warns += jw
         if issues:
             shown = "; ".join(issues[:3]) + ("; …" if len(issues) > 3 else "")
             add(2, "Tier + core", FAIL, f"{tag}: {len(issues)} gap(s): {shown}", required=True)
@@ -785,21 +1013,24 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
             add(2, "Tier + core", PASS,
                 f"{tag}: admission recorded, rubric + {n_held} held-out case(s), "
                 "cross-model judge with a measured floor", required=True)
+    else:  # TIER_L
+        if (iss := _routing_eval_issue(skill_dir, blobs, unparseable_evals)):
+            add(2, "Tier + core", FAIL, f"{tag}: {iss}", required=True)
+        else:
+            add(2, "Tier + core", PASS,
+                f"{tag}: routing eval asserts both polarities", required=True)
+
+    # Warnings are appended AFTER step 2 so the human output reads in step order; an
+    # earlier draft printed "Judge distinctness" above "Tier + core".
+    for w in tier_warns:
+        add("2j", "Judge distinctness", WARN, w)
+    if tier == TIER_J:
         # The judge itself is an unbuilt seam. Reporting its RUN as a PASS because the
         # artifacts exist would be exactly the vacuous pass this harness exists to
         # prevent, so it is a named SKIP either way.
         add("2j*", "Judge execution", SKIP,
             "LLM judge is a declared seam — skill_evals/checks.py:make_judge_check "
             "raises rather than stubbing a pass; tier J gates artifacts, not judged output")
-    else:  # TIER_L
-        trig = [f for f in _eval_files(skill_dir) if _is_trigger_eval(skill_dir / f)]
-        if trig:
-            add(2, "Tier + core", PASS,
-                f"{tag}: {len(trig)} routing eval(s): {', '.join(trig[:2])}", required=True)
-        else:
-            add(2, "Tier + core", FAIL,
-                f"{tag}: no routing eval — a lens is gated on firing on the right requests "
-                "and staying silent on near-misses", required=True)
     if tier and not tier_declared:
         add("2t", "Tier declaration", WARN,
             f"no `tier:` in frontmatter; {tier_why} → treated as {tier}. Declare it explicitly.")
@@ -947,17 +1178,24 @@ def survey(root: Path, **kw) -> dict:
         if any(part in {"node_modules", ".git", "__pycache__", ".pytest_cache", ".worktrees"}
                for part in d.parts):
             continue
-        fm = parse_frontmatter(md) or {}
-        code = _code_files(d)
-        blobs = _eval_blobs(d)
-        tier, declared, why = _tier_of(d, fm, code, blobs)
-        res = run_checklist(d, **kw)
-        failed = [r for r in res if r["required"] and r["status"] != PASS]
+        # One odd file mode anywhere must not cost the whole report. This is the
+        # command the docs tell a reader to run to regenerate the roster numbers;
+        # an uncaught OSError two-thirds of the way through produced ZERO output.
+        try:
+            fm = parse_frontmatter(md) or {}
+            code = _code_files(d)
+            tier, declared, why = _tier_of(d, fm, code)
+            res = run_checklist(d, **kw)
+            failed = [f"{r['step']} {r['label']}" for r in res
+                      if r["required"] and r["status"] != PASS]
+        except Exception as exc:  # a skill that cannot be checked is not a skill that passed
+            fm, tier, declared, why = {}, None, False, f"errored: {type(exc).__name__}"
+            failed = [f"error: {type(exc).__name__}: {exc}"[:120]]
         rows.append({
             "skill": fm.get("name") or d.name,
             "path": str(d.relative_to(root)) if d.is_relative_to(root) else str(d),
             "tier": tier, "declared": declared, "why": why,
-            "failed": [f"{r['step']} {r['label']}" for r in failed],
+            "failed": failed,
             "ok": not failed,
         })
     by_tier: dict[str, int] = {}
@@ -1006,6 +1244,10 @@ def main(argv: list[str] | None = None) -> int:
         entities_dir=Path(args.entities_dir) if args.entities_dir else None,
         strict=args.strict, run_tests=args.run_tests, skills_sh=args.skills_sh)
 
+    if args.survey and args.skill_dir:
+        print("[skillify] --survey and a skill_dir are different modes; pass one",
+              file=sys.stderr)
+        return 2
     if args.survey:
         root = Path(args.survey)
         if not root.is_dir():

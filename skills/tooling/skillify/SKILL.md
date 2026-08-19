@@ -60,23 +60,30 @@ Run the sweep:
 python3 scripts/skillify_check.py --survey skills/
 ```
 
-At the commit that introduced this section it reported **94 skills; 42 ship no
-`scripts/` code and set no `latent_only`** — the gate calls every one of those "not
-a skill yet, just code that works today", and it is wrong about all 42. Re-run it;
-the number is whatever the roster now says, which is the point of shipping it as a
-command rather than as a sentence.
+At the commit that introduced this section it reported **94 skills, 44 of them
+unclassified** — every one ships no `scripts/` code, and the old gate called every one
+"not a skill yet, just code that works today". It was wrong about all 44. Re-run it;
+the number is whatever the roster now says, which is the point of shipping a command
+rather than a sentence.
 
-Worse, the **2** skills that *do* set `latent_only: true` buy an exemption from steps
-2 **and** 3 and are then gated on nothing at all. The binary did not merely
-misclassify the judgment skills; on the side it was built to accommodate, it gated
-nothing.
+Worse, the **2** skills that took the `latent_only: true` exemption bought their way
+out of steps 2 **and** 3, and were then gated on nothing at all. The binary did not
+merely misclassify judgment skills; on the side it was built to accommodate, it was an
+amnesty.
+
+> **Reproducibility note.** The *absolute* pass count moves by one depending on whether
+> `node` is installed, because step 2's `.ts` syntax check is skipped when it is not
+> (`keel` passes without node, fails with it). The **delta** is what this change claims
+> and it is invariant: old gate → new gate is **−2 passing** with node present (28 → 26)
+> and with node absent (29 → 27). Both losses are the two `latent_only` skills. Quote
+> the delta, not the absolute.
 
 Three tiers replace the binary. **Declare one in frontmatter** (`tier: D`); absent, the
 gate infers it and warns.
 
 | Tier | What it is | What the gate requires |
 |---|---|---|
-| **D** — deterministic | there is a pure function in here (`unslop_gate.py`; a lint) | `scripts/` + real unit tests + a mutation proof |
+| **D** — deterministic | there is a pure function in here (`unslop_gate.py`; a lint) | `scripts/` + real unit tests (a mutation proof is required discipline, but is **not** machine-checked — the gate cannot see one) |
 | **J** — judgment | a well-posed question whose valid answers vary (`critique`, `impeccable`, `devils-advocate`) | the admission record, a rubric, a held-out case set, a **cross-model** judge config, and a **measured** agreement floor |
 | **L** — lens | it changes what you attend to, not what you do | a routing eval in **both polarities** — fires on the right requests, stays silent on near-misses |
 
@@ -136,6 +143,15 @@ So the gate enforces the *shape* instead of a number: a Tier-J skill must declar
 `judge.agreement_floor` **and** carry `judge.agreement_measured` recording the value,
 the method, and the date that produced it. A floor declared with no measurement is a
 **FAIL**, not a warning. Pick your own floor; show your work.
+
+### Neither J nor L has a real user yet
+
+`--survey skills/` reports **zero** tier-J and **zero** tier-L skills. Both gates ship
+exercised only by their own test fixtures. That is worth stating rather than
+discovering later: the measured behavioural change of introducing tiers is exactly two
+skills moving from pass to fail, and everything else here is a contract waiting for its
+first artifact. The residue ticket (BRO-2192) is the reason — the roster's uncarved 44
+are procedures, not judgments or lenses.
 
 ### What Tier J does *not* yet have
 
@@ -265,8 +281,16 @@ depends on what the skill is:
 Tier J's eval artifacts are gated **in step 2, not step 5**. Step 5 grades the
 *trigger* surface; re-requiring it for J would be a second gate over the same
 evidence and a weaker one, since step 2 is what verifies the judge is cross-model
-and the floor is measured. Step 3 is required whenever a skill ships code, whatever
-its tier — that is where the old `latent_only` amnesty is closed.
+and the floor is measured. Step 3 is required whenever a skill ships code **in
+`scripts/` or at the skill root**, whatever its tier — that is where the old
+`latent_only` amnesty is closed. Code under `src/`, `lib/` or `bin/` is *not* yet
+discovered (BRO-2192); the claim is stated at the scope the code actually enforces
+rather than at the scope one would want.
+
+The script **syntax** check runs for every tier, not just D. It sits outside the tier
+branches deliberately: an earlier draft ran it only in the D arm, so declaring
+`tier: L` bought a skill out of a check the previous gate applied unconditionally.
+Declaring a tier must never reduce coverage.
 
 Absent `tier:`, the gate **infers D from shipped code** and WARNs, so the roster does
 not break on the day this ships. It infers nothing else: **J and L must be declared.**
