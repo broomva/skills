@@ -851,7 +851,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         })
     if radius_values:
         distinct = [k for k in radius_values if radius_values[k] > 0]
-        arbitrary = [k for k in distinct if (k.startswith("css:") or "[" in k) and "var(" not in k]   # rounded-[13px] / raw px; rounded-[var(--radius)] is a token ref
+        arbitrary = [k for k in distinct if (k.startswith("css:") or "[" in k) and "var(" not in k and "[inherit]" not in k]   # rounded-[13px] / raw px; var()/inherit are refs
         roots.append({
             "kind": "radius", "value": f"{len(distinct)} distinct radius values", "default": len(distinct) > 4,
             "arbitrary": len(arbitrary),
@@ -860,7 +860,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             "fix": "One radius vocabulary (e.g. control / card / dialog) declared as tokens; arbitrary values are drift, many scale steps are a decision to make.",
         })
     if shadow_values:
-        arbitrary_s = [k for k in shadow_values if (k.startswith("css:") or "[" in k) and "var(" not in k]
+        arbitrary_s = [k for k in shadow_values if (k.startswith("css:") or "[" in k) and "var(" not in k and "[inherit]" not in k]
         roots.append({
             "kind": "shadow", "value": f"{len(shadow_values)} distinct shadow values", "default": len(shadow_values) > 4,
             "arbitrary": len(arbitrary_s),
