@@ -598,10 +598,11 @@ def test_standalone_em_dash_markers_are_not_copy_tells(tmp_path):
 const a = loading ? "—" : String(n);
 return <td>—</td>;
 const b = x ?? "—";
+const parts = name.split(" — ");
 <p>Real prose — with a dash</p>
 '''})
     ct = us.survey(root)["copy_tells"]["em_dash"]
-    assert ct["count"] == 1 and ct["sites"][0].endswith(":5")
+    assert ct["count"] == 1 and ct["sites"][0].endswith(":6")
 
 
 def test_keyframe_frames_are_not_shadow_or_radius_drift(tmp_path):

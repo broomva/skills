@@ -121,7 +121,7 @@ RE_IMPORT_FROM = re.compile(r"""(?:from|require\()\s*['"]([^'"]+)['"]""")
 
 RE_EM_DASH = re.compile(r"—|&mdash;|&#8212;|\\u2014")   # the character, the HTML entity, the JS escape
 # a standalone em dash is a typographic empty-value marker (`?? "—"`, `<td>—</td>`), not the prose tell
-RE_EM_DASH_MARKER = re.compile(r"""(["'`])—\1|>\s*—\s*<|\{\s*"—"\s*\}""")
+RE_EM_DASH_MARKER = re.compile(r"""(["'`])\s*—\s*\1|>\s*—\s*<|\{\s*"—"\s*\}""")   # incl. " — " separator args (.split/.join)
 RE_EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B50\U00002B55\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
 )
