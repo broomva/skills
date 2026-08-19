@@ -10,7 +10,7 @@
       "folklore": "WARN — circulates as fact with no located evidentiary basis",
       "hypothesis_as_fact": "WARN — plausible mechanism asserted as established"
     },
-    "negation_guard": "Rules do not fire when the sentence negates or attributes the claim (not/never/no/isn't/does not/myth/false/debunk/misquot/claims that/allegedly). Separately, a WARN-grade rule is suppressed when a RESOLVABLE citation (URL/DOI) appears within 3 lines — supplying a source is the correction the rule asks for. `refuted` is never suppressed this way."
+    "negation_guard": "Rules do not fire when the sentence negates or attributes the claim (not/never/no/isn't/does not/myth/false/debunk/misquot/claims that/allegedly). Separately, a WARN-grade rule is suppressed when a RESOLVABLE citation (URL/DOI) appears in the SAME PARAGRAPH — supplying a source is the correction the rule asks for. Paragraph scope, not a line window: a URL in a neighbouring paragraph must not silence a claim. `refuted` is never suppressed this way."
   },
   "refuted": [
     {

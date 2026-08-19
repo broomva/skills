@@ -307,13 +307,16 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
     # because a misquotation with a link attached is still a misquotation.
     pws_cfg = ledger.get("precision_without_source") or {}
     cite_rx = re.compile(pws_cfg["marker_regex"], re.I) if pws_cfg.get("marker_regex") else None
-    cite_window = int(pws_cfg.get("window_lines", 3))
 
-    def _cited_near(lo: int, hi: int) -> bool:
-        if cite_rx is None:
-            return False
-        blob = "\n".join(lines[max(0, lo - cite_window) : min(len(lines), hi + cite_window + 1)])
-        return bool(cite_rx.search(blob))
+    def _cited_in(btext: str) -> bool:
+        """Scoped to the claim's OWN paragraph, deliberately narrower than the +/-3-line
+        window the precision rule uses.
+
+        A line window let a URL in a DIFFERENT paragraph — even one ABOVE the claim —
+        silence it, which turns "cite your source" into "put a link somewhere nearby".
+        Block scope still spans a hard wrap, which is the only thing it needed to span.
+        """
+        return bool(cite_rx.search(btext)) if cite_rx else False
 
     for category in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger.get(category, []):
@@ -329,7 +332,7 @@ def lint_text(text: str, ledger: dict) -> list[dict]:
                     spanned = range(lo, hi + 1)
                     if any(rule["id"] in _allowed_ids(lines, k) for k in spanned):
                         continue
-                    if severity != "ERROR" and _cited_near(lo, hi):
+                    if severity != "ERROR" and _cited_in(btext):
                         continue
                     findings.append(
                         {

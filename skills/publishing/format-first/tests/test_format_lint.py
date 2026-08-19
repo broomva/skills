@@ -690,3 +690,23 @@ def test_an_unresolvable_marker_does_not_suppress():
     assert "algorithm-punishes" in ids(
         "The algorithm demotes inconsistent formats. Source: https://\n"
     )
+
+
+def test_a_url_in_a_different_paragraph_does_not_suppress():
+    """Block-scoped, not line-windowed.
+
+    A +/-3-line window let a URL in a different paragraph — even one ABOVE the claim —
+    silence it, which turns "cite your source" into "put a link somewhere nearby".
+    """
+    for text in (
+        "The algorithm punishes inconsistent formats.\n\nSee my portfolio: https://example.com/about\n",
+        "The algorithm punishes inconsistent formats.\n\n- Follow me: https://example.com/me\n",
+        "Read more at https://example.com/x\n\nThe algorithm punishes inconsistent formats.\n",
+    ):
+        assert "algorithm-punishes" in ids(text), text
+
+
+def test_precision_rule_keeps_its_own_line_window():
+    """The precision rule's +/-3-line window is unchanged; only claim rules were narrowed."""
+    text = "Reels get a threefold increase in reach.\n\nSource: https://doi.org/10.1145/3613904.3642433\n"
+    assert "unsourced-precision" not in ids(text)

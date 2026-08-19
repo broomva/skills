@@ -142,7 +142,7 @@ a gate you cannot reason about:
 |---|---|---|
 | `<!-- format-lint: allow=<id> -->` | that line, that rule | quoting a claim in order to correct it |
 | `<!-- format-lint: disable -->` … `enable` | the region | a block quotation; whole-file coverage is itself an ERROR |
-| a resolvable URL/DOI within 3 lines | that finding, **WARN grades only** | see below |
+| a resolvable URL/DOI in the same paragraph | that finding, **WARN grades only** | see below |
 | an unclosed fence | everything after it | which is why it is an ERROR |
 
 The third is the one to watch. A WARN-grade rule asserts *"this circulates with no located
@@ -156,10 +156,15 @@ The marker must be **scheme-qualified** (`https://…`, `doi.org/10.…`, an arX
 locator). A bare `example.com/page` does not suppress, and neither does a naked `https://`
 or the substring `PMC`. Note that `references/evidence-map.md` cites several sources as
 backticked bare domains — that house style is *not* a suppression marker, deliberately: a
-bypass should be narrower than a citation convention, not wider. The consequence is that
-appending any resolvable link within three lines silences every WARN-grade claim near it.
+bypass should be narrower than a citation convention, not wider. The consequence is that a
+resolvable link in the same paragraph silences every WARN-grade claim in that paragraph.
 It does **not** silence `refuted`: a misquotation with a link attached is still a
 misquotation, and that asymmetry is pinned by a test.
+
+The scope is the **paragraph**, deliberately narrower than the ±3-line window the precision
+rule uses. A line window let a URL in a *different* paragraph — even one **above** the
+claim — silence it, which turns "cite your source" into "put a link somewhere nearby".
+Block scope still spans a hard wrap, which is the only thing it ever needed to span.
 
 Extend it by editing `references/claims-ledger.json` — pattern, message, and the
 correct replacement. Every rule needs both polarities in `tests/`.
