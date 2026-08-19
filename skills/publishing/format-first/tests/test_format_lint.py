@@ -12,6 +12,7 @@ did not have it, which a cross-model review caught):
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -1476,3 +1477,48 @@ def test_the_classification_sets_do_not_overlap():
         assert code not in fl.INPUT_ERRNOS, exc
     for exc in INPUT_FAILURES.values():
         assert exc.errno in fl.INPUT_ERRNOS, exc
+
+
+def test_content_shaped_failures_found_by_probing_the_space():
+    """Three more shapes, found by probing rather than by waiting for a review round.
+
+    Deeply nested JSON is the one case where RecursionError says something about the FILE
+    rather than about the machine, so it belongs in the input class — it was escaping.
+    """
+    import pytest
+
+    escaping = {
+        "nested past the stack limit": "[" * 100000 + "]" * 100000,
+        "window_lines far too wide": '{"precision_without_source": {"pattern":"x",'
+                                     '"marker_regex":"y","message":"m","window_lines":999999}}',
+        "window_lines negative": '{"precision_without_source": {"pattern":"x",'
+                                 '"marker_regex":"y","message":"m","window_lines":-1}}',
+        "window_lines is a bool": '{"precision_without_source": {"pattern":"x",'
+                                  '"marker_regex":"y","message":"m","window_lines":true}}',
+    }
+    for label, body in escaping.items():
+        path = Path(tempfile.mkdtemp()) / "l.json"
+        path.write_text(body, encoding="utf-8")
+        with pytest.raises(fl.LedgerError):
+            fl.load_ledger(path)
+
+
+def test_a_byte_order_mark_does_not_reject_a_valid_ledger():
+    """A BOM is what Windows editors write; the file is otherwise perfectly good JSON.
+
+    `json.loads` rejects it, so decoding as plain utf-8 turned a valid ledger into "not
+    valid JSON" — a false rejection, the inverse of every other failure in this space.
+    """
+    shipped = json.loads(fl.LEDGER.read_text(encoding="utf-8"))
+    path = Path(tempfile.mkdtemp()) / "bom.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(shipped).encode("utf-8"))
+    assert fl.load_ledger(path)["refuted"], "a BOM must not make a good ledger unusable"
+
+
+def test_a_wide_but_legal_window_still_loads():
+    """The bound rejects absurdity, not configuration."""
+    ledger = json.loads(fl.LEDGER.read_text(encoding="utf-8"))
+    ledger["precision_without_source"]["window_lines"] = 100
+    path = Path(tempfile.mkdtemp()) / "wide.json"
+    path.write_text(json.dumps(ledger), encoding="utf-8")
+    assert fl.load_ledger(path)["precision_without_source"]["window_lines"] == 100

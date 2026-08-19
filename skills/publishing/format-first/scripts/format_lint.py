@@ -161,7 +161,9 @@ def load_ledger(path: Path = LEDGER) -> dict:
         ) from None
 
     try:
-        text = raw.decode("utf-8")
+        # utf-8-sig, not utf-8: a leading BOM is what Windows editors write, and the file is
+        # otherwise perfectly good JSON that `json.loads` would reject.
+        text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise LedgerError(f"format_lint: ledger at {path} is not valid UTF-8: {exc}") from None
 
@@ -169,6 +171,13 @@ def load_ledger(path: Path = LEDGER) -> dict:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise LedgerError(f"format_lint: ledger at {path} is not valid JSON: {exc}") from None
+    except RecursionError:
+        # Nesting deep enough to exhaust the stack is a property of the CONTENT, so it is
+        # bad input rather than an operational failure — the one case where a
+        # RecursionError says something about the file rather than about the machine.
+        raise LedgerError(
+            f"format_lint: ledger at {path} is nested too deeply to parse"
+        ) from None
 
     if not isinstance(data, dict):
         raise LedgerError(
@@ -214,8 +223,16 @@ def load_ledger(path: Path = LEDGER) -> dict:
             _compile_or_fail(
                 pws[field], f"precision_without_source.{field} is invalid", _fail
             )
-        if "window_lines" in pws and not isinstance(pws["window_lines"], int):
+        window = pws.get("window_lines", 3)
+        # bool is an int subclass, and a window of `True` is a silent 1.
+        if "window_lines" in pws and (not isinstance(window, int) or isinstance(window, bool)):
             _fail("precision_without_source.window_lines must be an integer")
+        if not 0 <= window <= 100:
+            _fail(
+                f"precision_without_source.window_lines must be between 0 and 100, got {window}"
+                " — a window wide enough to span the document makes any citation anywhere"
+                " suppress every precision finding"
+            )
 
     return data
 
