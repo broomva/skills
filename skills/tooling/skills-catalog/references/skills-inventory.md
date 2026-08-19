@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 86 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-09.
+> 87 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-18.
 
 ## Governance & control — `skills/governance/` (8)
 
@@ -37,7 +37,7 @@
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 86 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 87 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -106,7 +106,7 @@
 | `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 
-## Design & brand — `skills/design/` (6)
+## Design & brand — `skills/design/` (7)
 
 | Skill | What it does |
 |---|---|
@@ -116,6 +116,7 @@
 | `design-distill` | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill, not a reimplementation |
 | `design-engineering` | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE |
 | `tekton` | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
+| `unslop` | Remove the vibecoded / AI-slop look from any frontend codebase at the root, autonomously — full-repo survey with root-cause attribution, substance tells, and a deterministic crafted-floor gate; composes the impeccable detector |
 
 ## Finance & payments — `skills/finance/` (4)
 
