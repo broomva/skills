@@ -847,6 +847,10 @@ def _admission_issue(skill_dir: Path) -> str | None:
     raw = _read(f)
     if raw is None:
         return "evals/admission.md is unreadable"
+    m = _frontmatter_match(raw)
+    if m is None:
+        return ("evals/admission.md has no frontmatter block — add:\n"
+                f"{_ADMISSION_TEMPLATE}")
     fm = parse_frontmatter(f) or {}
     # Case-insensitive KEY lookup: the value was already compared case-insensitively,
     # so `Outcome: admitted` failing with "declares no outcome" was an undocumented
@@ -864,13 +868,11 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if outcome == "rejected":
         return ("evals/admission.md declares `outcome: rejected` — an underspecified "
                 "skill is not admissible")
-    m = _frontmatter_match(raw)
-    block = m.group(1) if m else ""
-    declared = re.findall(r"(?mi)^[ \t]*outcome[ \t]*:", block)
+    declared = re.findall(r"(?mi)^[ \t]*outcome[ \t]*:", m.group(1))
     if len(declared) > 1:
         return (f"evals/admission.md declares `outcome` {len(declared)} times — "
                 "contradictory declarations; keep exactly one")
-    body = raw[m.end():] if m else ""
+    body = raw[m.end():]
     if not body.strip():
         return ("evals/admission.md declares an outcome but records nothing — write "
                 "what two agents were given and what a third party judged")

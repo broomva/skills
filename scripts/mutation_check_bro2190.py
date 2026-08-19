@@ -195,10 +195,10 @@ MUTANTS = [
      "test_measurement_fields_are_checked_structurally_only"),
 
     # --- round 6: the substance floor, and the frontmatter contract ----------
-    ("M51 body extraction fails OPEN when the frontmatter match misses",
-     '    body = raw[m.end():] if m else ""',
-     '    body = raw[m.end():] if m else raw',
-     "test_malformed_closing_fence_fails_closed_not_open"),
+    # M51 retired: unifying the frontmatter matcher made its target — the
+    # `if m else raw` fallback — unreachable, so no input could kill it. The
+    # branch was deleted and replaced by an explicit early return; a mutant that
+    # can never die is dishonest bookkeeping, not coverage.
     ("M52 a UTF-8 BOM hides frontmatter again",
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
