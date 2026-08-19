@@ -1654,7 +1654,9 @@ VALID_FOR = {
     "rule.grade": set(),                     # only the five known grades, none of them here
     "rule.citation_resolves": {"bool"},
     "precision.pattern": {"arbitrary string"},
-    "precision.marker_regex": {"arbitrary string"},
+    # NOT "arbitrary string" any more: a marker must tell cited text from uncited text, so
+    # `"zzz"` is no longer a valid marker — it matches no citation at all.
+    "precision.marker_regex": set(),
     "precision.message": {"arbitrary string"},
     "precision.window_lines": {"int"},
     # A category IS a list, and an empty one is a ledger with no rules in that grade.
@@ -1746,7 +1748,8 @@ def test_the_values_declared_valid_really_are_accepted():
             led["refuted"][0][f] = v
         assert fl.load_ledger(_ledger_with(mutate))["refuted"], label
 
-    for field, value in (("window_lines", 7), ("message", "m"), ("marker_regex", "zzz")):
+    for field, value in (("window_lines", 7), ("message", "m"),
+                        ("marker_regex", r"https?://\S+|doi\.org/\S+")):
         def mutate(led, f=field, v=value):
             led["precision_without_source"][f] = v
         assert fl.load_ledger(_ledger_with(mutate))["precision_without_source"], field
@@ -1855,15 +1858,49 @@ def test_a_refuted_rule_cannot_opt_into_the_citation_bypass():
         fl.load_ledger(_ledger_with(opt_in))
 
 
-def test_a_marker_regex_that_matches_everything_is_rejected():
-    """`.*` makes every block count as cited, switching the precision rule off silently."""
+def test_a_marker_regex_must_discriminate_in_both_directions():
+    """Rejecting only markers that match the EMPTY string was a special case pretending to
+    be a rule. `marker_regex: "."` passed it, matched every block, and silently switched
+    the precision rule off — a reviewer's case. The property is not "matches nothing" but
+    "tells cited text from uncited text", so the ledger gets the same polarity test this
+    project demands of its own suites.
+    """
     import pytest
 
-    def match_all(led):
-        led["precision_without_source"]["marker_regex"] = ".*"
+    too_loose = (".*", ".", r"\s*", "https?://", "[a-z]")
+    for pattern in too_loose:
+        def loose(led, p=pattern):
+            led["precision_without_source"]["marker_regex"] = p
 
-    with pytest.raises(fl.LedgerError, match="empty string"):
-        fl.load_ledger(_ledger_with(match_all))
+        with pytest.raises(fl.LedgerError, match="no citation"):
+            fl.load_ledger(_ledger_with(loose))
+
+    too_tight = ("(?!)", "zzz", "NEVERMATCHESANYTHING")
+    for pattern in too_tight:
+        def tight(led, p=pattern):
+            led["precision_without_source"]["marker_regex"] = p
+
+        with pytest.raises(fl.LedgerError, match="does not match a plain citation"):
+            fl.load_ledger(_ledger_with(tight))
+
+
+def test_a_reasonable_custom_marker_still_loads():
+    """The guard must reject degenerate markers, not customisation."""
+    def custom(led):
+        led["precision_without_source"]["marker_regex"] = r"https?://\S+|doi\.org/\S+"
+
+    assert fl.load_ledger(_ledger_with(custom))["precision_without_source"]
+
+
+def test_a_custom_instead_is_honoured_not_ignored():
+    """`instead` was an allowed key the code silently overrode with hardcoded guidance —
+    a ledger could set it, load fine, and never see it used."""
+    def custom(led):
+        led["precision_without_source"]["instead"] = "CUSTOM GUIDANCE"
+
+    ledger = fl.load_ledger(_ledger_with(custom))
+    findings = fl.lint_text("The study included 200 participants.\n", ledger)
+    assert findings and findings[0]["instead"] == "CUSTOM GUIDANCE"
 
 
 def test_a_rule_pattern_that_matches_everything_is_rejected():
@@ -1965,4 +2002,9 @@ def test_the_allow_lists_exactly_cover_the_shipped_ledger():
             used |= set(rule)
     assert used == fl.RULE_KEYS, sorted(fl.RULE_KEYS ^ used)
 
+    # `<=` here was the same looseness this project criticises elsewhere: it let
+    # PRECISION_KEYS permit `instead` while the code ignored it. The code honours it now,
+    # and the shipped block may legitimately omit it, so assert the DIFFERENCE is only that.
+    unused = fl.PRECISION_KEYS - set(ledger["precision_without_source"])
+    assert unused <= {"instead"}, f"allowances nothing exercises: {sorted(unused)}"
     assert set(ledger["precision_without_source"]) <= fl.PRECISION_KEYS

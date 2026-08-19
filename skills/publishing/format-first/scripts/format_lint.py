@@ -228,6 +228,21 @@ LEDGER_KEYS = frozenset(
 RULE_KEYS = frozenset({"id", "pattern", "message", "instead", "grade", "citation_resolves"})
 PRECISION_KEYS = frozenset({"pattern", "marker_regex", "message", "instead", "window_lines"})
 
+# A citation marker has one job: tell cited text from uncited text. These fixtures put that
+# to the ledger as a polarity test at load, the same bar this project's own suites are held
+# to — a rule that only ever fires, or only ever passes, is not a check.
+MARKER_MUST_NOT_MATCH = (
+    "",
+    "The study included 200 participants.",
+    "Sends are weighted 3-5x more than likes.",
+    "[HIGH] confidence, per my own notes.",
+    "https://",
+)
+MARKER_MUST_MATCH = (
+    "https://doi.org/10.1145/3613904.3642433",
+    "see https://example.com/page for detail",
+)
+
 
 def _validate_schema(data: dict, _fail) -> None:
     # UNKNOWN KEYS ARE REJECTED, because the failure mode of accepting them is silent.
@@ -312,14 +327,28 @@ def _validate_schema(data: dict, _fail) -> None:
             _compile_or_fail(
                 pws[field], f"precision_without_source.{field} is invalid", _fail
             )
-        # A marker_regex matching the empty string is satisfied by every block, which
-        # silently switches the whole precision rule off. A gate that stops checking
-        # without saying so is the failure this skill exists to prevent.
-        if re.compile(pws["marker_regex"]).search(""):
-            _fail(
-                "precision_without_source.marker_regex matches the empty string, so every "
-                "block counts as cited and the rule can never fire"
-            )
+        # THE MARKER MUST DISCRIMINATE, and that is checked in BOTH DIRECTIONS.
+        #
+        # Rejecting only markers that match the EMPTY string was a special case pretending
+        # to be a rule: `marker_regex: "."` passed it, matched every block, and silently
+        # switched the whole precision rule off while runs kept reporting documents clean.
+        # The property that matters is not "does it match nothing" but "does it tell cited
+        # text from uncited text", so the ledger is given the same polarity test this
+        # project demands of its own suites.
+        marker = re.compile(pws["marker_regex"], re.I)
+        for uncited in MARKER_MUST_NOT_MATCH:
+            if marker.search(uncited):
+                _fail(
+                    "precision_without_source.marker_regex matches text containing no "
+                    f"citation ({uncited!r}), so every block counts as cited and the rule "
+                    "can never fire"
+                )
+        for cited in MARKER_MUST_MATCH:
+            if not marker.search(cited):
+                _fail(
+                    "precision_without_source.marker_regex does not match a plain citation "
+                    f"({cited!r}), so citing a source would not suppress the finding"
+                )
         if re.compile(pws["pattern"]).search(""):
             _fail("precision_without_source.pattern matches the empty string")
         window = pws.get("window_lines", 3)
@@ -662,7 +691,11 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
                         "id": "unsourced-precision",
                         "matched": " ".join(m.group(0).split())[:80],
                         "message": pws["message"],
-                        "instead": "Cite a resolvable URL or DOI containing that figure, or make the claim qualitative.",
+                        "instead": pws.get(
+                            "instead",
+                            "Cite a resolvable URL or DOI containing that figure, or make "
+                            "the claim qualitative.",
+                        ),
                     }
                 )
 
