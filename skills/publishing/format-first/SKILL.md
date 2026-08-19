@@ -182,9 +182,9 @@ https://creators.instagram.com/blog/rewarding-original-creators-on-instagram"` i
 cited, and was flagged as folklore until this existed — the sentence you just read is
 itself suppressed by the rule it describes.
 
-The marker must be **scheme-qualified** (`https://…`, `doi.org/10.…`, an arXiv or PubMed
-locator). A bare `example.com/page` does not suppress, and neither does a naked `https://`
-or the substring `PMC`. Note that `references/evidence-map.md` cites several sources as
+The citation must be a **resolvable locator** (`https://…/…`, `doi.org/10.…`, `doi:10.…`,
+an arXiv, PubMed or PMC id). A bare `example.com/page` does not suppress, and neither does
+a naked `https://` or the substring `PMC`. Note that `references/evidence-map.md` cites several sources as
 backticked bare domains — that house style is *not* a suppression marker, deliberately: a
 bypass should be narrower than a citation convention, not wider. The consequence is that a
 resolvable link in the same paragraph silences those two grades' claims in that paragraph.
@@ -214,6 +214,14 @@ Block scope still spans a hard wrap, which is the only thing it ever needed to s
 
 Extend it by editing `references/claims-ledger.json` — pattern, message, and the
 correct replacement. Every rule needs both polarities in `tests/`.
+
+**What counts as a citation is code, not configuration.** It used to be a ledger field, and
+guarding it turned out to be impossible in that shape: any finite set of "this must not
+count" examples can be evaded by a pattern written against it, and any finite set of "this
+must count" examples wrongly rejects a legitimately narrower policy such as DOI-only. The
+two pull against each other by construction. A resolvable locator — an http(s) URL with a
+path, a DOI, an arXiv, PubMed or PMC id — is now fixed in the code, because making it
+configurable was making the gate configurable into silence.
 
 **The ledger is validated strictly, including its key names.** An unknown top-level key or
 rule key is an error, not an extension point: `precision_without_sources`, one letter off,

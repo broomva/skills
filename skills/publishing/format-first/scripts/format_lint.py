@@ -226,24 +226,30 @@ LEDGER_KEYS = frozenset(
     {"_meta", "refuted", "folklore", "hypothesis_as_fact", "precision_without_source"}
 )
 RULE_KEYS = frozenset({"id", "pattern", "message", "instead", "grade", "citation_resolves"})
-PRECISION_KEYS = frozenset({"pattern", "marker_regex", "message", "instead", "window_lines"})
+PRECISION_KEYS = frozenset({"pattern", "message", "instead", "window_lines"})
 
-# A citation marker has one job: tell cited text from uncited text. These fixtures put that
-# to the ledger as a polarity test at load, the same bar this project's own suites are held
-# to — a rule that only ever fires, or only ever passes, is not a check.
-MARKER_MUST_NOT_MATCH = (
-    "",
-    "The study included 200 participants.",
-    "Sends are weighted 3-5x more than likes.",
-    "[HIGH] confidence, per my own notes.",
-    "https://",
-    # A decimal figure: the shape a precision claim most often takes, and the one that
-    # slipped a marker of `\.\w` past the other fixtures.
-    "The effect size was r = 0.26 across the studies.",
-)
-MARKER_MUST_MATCH = (
-    "https://doi.org/10.1145/3613904.3642433",
-    "see https://example.com/page for detail",
+# WHAT COUNTS AS A CITATION IS CODE, NOT CONFIGURATION — and that is a deliberate reversal.
+#
+# It used to be a ledger field, and guarding it turned out to be impossible in the shape it
+# was in. Two review findings arrived together and pulled in opposite directions: a finite
+# set of "must not match" fixtures can always be evaded by a marker written against it
+# (`https?://\S+|\d{4}` passes them all and then silently swallows "The review covered 2024
+# studies"), while a finite set of "must match" fixtures wrongly rejects a legitimate
+# narrower policy (a DOI-only marker recognises real citations but not the HTTPS examples).
+# No fixture set satisfies both, because the two requirements are in tension by
+# construction — a guard that cannot tell its good case from its bad should not be judging.
+#
+# So the field is gone. A citation is a resolvable locator: an http(s) URL with a path, a
+# DOI, an arXiv id, a PubMed id, or a PMC id. Making that configurable was letting the gate
+# be configured into silence, which contradicts the one claim this skill actually makes.
+CITATION_RX = re.compile(
+    r"https?://[\w.-]+\.[a-z]{2,}/\S"
+    r"|doi\.org/10\.\d{4,}/\S"
+    r"|doi:\s*10\.\d{4,}/\S"
+    r"|arxiv\.org/abs/\d"
+    r"|pubmed\.ncbi\.nlm\.nih\.gov/\d"
+    r"|PMC\d{4,}",
+    re.I,
 )
 
 
@@ -286,6 +292,8 @@ def _validate_schema(data: dict, _fail) -> None:
                     f"rule {r['id']} has unknown grade {grade!r} — a typo must "
                     "not silently downgrade severity"
                 )
+            if "instead" in r and (not isinstance(r["instead"], str) or not r["instead"].strip()):
+                _fail(f"rule {r['id']}: instead must be a non-empty string when present")
             if "citation_resolves" in r and not isinstance(r["citation_resolves"], bool):
                 _fail(
                     f"rule {r['id']}: citation_resolves must be a JSON boolean — a "
@@ -323,35 +331,12 @@ def _validate_schema(data: dict, _fail) -> None:
                 f"'precision_without_source' has unknown key(s) {stray} — expected only "
                 f"{sorted(PRECISION_KEYS)}"
             )
-        for field in ("pattern", "marker_regex", "message"):
+        for field in ("pattern", "message"):
             if not isinstance(pws.get(field), str) or not pws[field].strip():
                 _fail(f"precision_without_source needs a non-empty string '{field}'")
-        for field in ("pattern", "marker_regex"):
-            _compile_or_fail(
-                pws[field], f"precision_without_source.{field} is invalid", _fail
-            )
-        # THE MARKER MUST DISCRIMINATE, and that is checked in BOTH DIRECTIONS.
-        #
-        # Rejecting only markers that match the EMPTY string was a special case pretending
-        # to be a rule: `marker_regex: "."` passed it, matched every block, and silently
-        # switched the whole precision rule off while runs kept reporting documents clean.
-        # The property that matters is not "does it match nothing" but "does it tell cited
-        # text from uncited text", so the ledger is given the same polarity test this
-        # project demands of its own suites.
-        marker = re.compile(pws["marker_regex"], re.I)
-        for uncited in MARKER_MUST_NOT_MATCH:
-            if marker.search(uncited):
-                _fail(
-                    "precision_without_source.marker_regex matches text containing no "
-                    f"citation ({uncited!r}), so every block counts as cited and the rule "
-                    "can never fire"
-                )
-        for cited in MARKER_MUST_MATCH:
-            if not marker.search(cited):
-                _fail(
-                    "precision_without_source.marker_regex does not match a plain citation "
-                    f"({cited!r}), so citing a source would not suppress the finding"
-                )
+        if "instead" in pws and (not isinstance(pws["instead"], str) or not pws["instead"].strip()):
+            _fail("precision_without_source.instead must be a non-empty string when present")
+        _compile_or_fail(pws["pattern"], "precision_without_source.pattern is invalid", _fail)
         if re.compile(pws["pattern"]).search(""):
             _fail("precision_without_source.pattern matches the empty string")
         window = pws.get("window_lines", 3)
@@ -628,7 +613,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
     # THIS IS A DELIBERATE, DOCUMENTED BYPASS, opted into PER RULE (`citation_resolves`)
     # and scoped to the claim's own PARAGRAPH.
     pws_cfg = ledger.get("precision_without_source") or {}
-    cite_rx = re.compile(pws_cfg["marker_regex"], re.I) if pws_cfg.get("marker_regex") else None
+    cite_rx = CITATION_RX
 
     def _cited_in(btext: str) -> bool:
         """Scoped to the claim's OWN paragraph, deliberately narrower than the +/-3-line
@@ -638,7 +623,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
         silence it, which turns "cite your source" into "put a link somewhere nearby".
         Block scope still spans a hard wrap, which is the only thing it needed to span.
         """
-        return bool(cite_rx.search(btext)) if cite_rx else False
+        return bool(cite_rx.search(btext))
 
     for category in ("refuted", "folklore", "hypothesis_as_fact"):
         for rule in ledger.get(category, []):
@@ -675,7 +660,7 @@ def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dic
         window = int(pws.get("window_lines", 3))
         # A marker must look like a RESOLVABLE locator. A bare "https://" or the
         # substring "PMC" is not a citation.
-        marker_rx = re.compile(pws["marker_regex"], re.I)
+        marker_rx = CITATION_RX
         for btext, owner in blocks:
             for m in rx.finditer(btext):
                 if _negated_at(btext, m.start()):

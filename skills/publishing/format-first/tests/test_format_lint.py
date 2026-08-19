@@ -55,14 +55,13 @@ def test_only_refuted_is_error():
 def test_only_resolvable_locators_count_as_citations():
     """A self-authored tag like [HIGH] is not a source. Regression on a real finding.
 
-    This asserts against `marker_regex`, the field the linter actually compiles. The
-    earlier version of this test validated a `citation_markers` LIST that no code path
-    ever read — it passed whatever the linter did, which is the definition of a vacuous
-    guard. The dead field has been removed.
+    This asserts against `fl.CITATION_RX`, the detector the linter actually uses. Two
+    earlier versions of this test were weaker: one validated a `citation_markers` LIST that
+    no code path read, and one validated a configurable `marker_regex` field that has since
+    been removed — guarding a configurable detector proved impossible, because any finite
+    fixture set is either evadable or over-strict.
     """
-    import re as _re
-
-    rx = _re.compile(LEDGER["precision_without_source"]["marker_regex"], _re.I)
+    rx = fl.CITATION_RX
 
     resolvable = [
         "https://doi.org/10.1145/3613904.3642433",
@@ -754,7 +753,7 @@ def test_citation_suppression_reaches_across_a_hard_wrap():
 
 
 def test_an_unresolvable_marker_does_not_suppress():
-    """"https://" alone or a bare "PMC" is not a citation — that is the marker_regex's job."""
+    """"https://" alone or a bare "PMC" is not a citation — CITATION_RX requires a locator."""
     assert "algorithm-punishes" in ids(
         "The algorithm demotes inconsistent formats. Source: https://\n"
     )
@@ -1086,13 +1085,13 @@ MALFORMED_LEDGERS = {
     "backreference to a group that does not exist":
         '{"refuted":[{"id":"x","pattern":"(a)\\\\9","message":"m","grade":"refuted"}]}',
     "precision pattern that overflows":
-        '{"precision_without_source": {"pattern":"a{999999999999999999999999999999999999999999999999}","marker_regex":"x","message":"m"}}',
+        '{"precision_without_source": {"pattern":"a{999999999999999999999999999999999999999999999999}","message":"m"}}',
     "precision is a scalar": '{"precision_without_source": 7}',
-    "precision missing marker_regex": '{"precision_without_source": {"pattern":"x","message":"m"}}',
+    "precision missing message": '{"precision_without_source": {"pattern":"x"}}',
     "precision has a bad regex":
-        '{"precision_without_source": {"pattern":"(","marker_regex":"x","message":"m"}}',
+        '{"precision_without_source": {"pattern":"(","message":"m"}}',
     "window_lines is a string":
-        '{"precision_without_source": {"pattern":"x","marker_regex":"y","message":"m","window_lines":"3"}}',
+        '{"precision_without_source": {"pattern":"x","message":"m","window_lines":"3"}}',
 }
 
 
@@ -1491,11 +1490,11 @@ def test_content_shaped_failures_found_by_probing_the_space():
     escaping = {
         "nested past the stack limit": "[" * 100000 + "]" * 100000,
         "window_lines far too wide": '{"precision_without_source": {"pattern":"x",'
-                                     '"marker_regex":"y","message":"m","window_lines":999999}}',
+                                     '"message":"m","window_lines":999999}}',
         "window_lines negative": '{"precision_without_source": {"pattern":"x",'
-                                 '"marker_regex":"y","message":"m","window_lines":-1}}',
+                                 '"message":"m","window_lines":-1}}',
         "window_lines is a bool": '{"precision_without_source": {"pattern":"x",'
-                                  '"marker_regex":"y","message":"m","window_lines":true}}',
+                                  '"message":"m","window_lines":true}}',
     }
     for label, body in escaping.items():
         path = Path(tempfile.mkdtemp()) / "l.json"
@@ -1654,11 +1653,9 @@ VALID_FOR = {
     "rule.grade": set(),                     # only the five known grades, none of them here
     "rule.citation_resolves": {"bool"},
     "precision.pattern": {"arbitrary string"},
-    # NOT "arbitrary string" any more: a marker must tell cited text from uncited text, so
-    # `"zzz"` is no longer a valid marker — it matches no citation at all.
-    "precision.marker_regex": set(),
     "precision.message": {"arbitrary string"},
     "precision.window_lines": {"int"},
+    "precision.instead": {"arbitrary string"},
     # A category IS a list, and an empty one is a ledger with no rules in that grade.
     "category": {"list"},
 }
@@ -1696,7 +1693,7 @@ def test_every_schema_field_rejects_every_hostile_type():
     checked = 0
     for scope, fields in (
         ("rule", ("id", "pattern", "message", "grade", "citation_resolves")),
-        ("precision", ("pattern", "marker_regex", "message", "window_lines")),
+        ("precision", ("pattern", "message", "window_lines", "instead")),
     ):
         for field in fields:
             allowed = VALID_FOR[f"{scope}.{field}"]
@@ -1748,8 +1745,7 @@ def test_the_values_declared_valid_really_are_accepted():
             led["refuted"][0][f] = v
         assert fl.load_ledger(_ledger_with(mutate))["refuted"], label
 
-    for field, value in (("window_lines", 7), ("message", "m"),
-                        ("marker_regex", r"https?://\S+|doi\.org/\S+")):
+    for field, value in (("window_lines", 7), ("message", "m"), ("instead", "do this")):
         def mutate(led, f=field, v=value):
             led["precision_without_source"][f] = v
         assert fl.load_ledger(_ledger_with(mutate))["precision_without_source"], field
@@ -1858,52 +1854,6 @@ def test_a_refuted_rule_cannot_opt_into_the_citation_bypass():
         fl.load_ledger(_ledger_with(opt_in))
 
 
-def test_a_marker_regex_must_discriminate_in_both_directions():
-    """Rejecting only markers that match the EMPTY string was a special case pretending to
-    be a rule. `marker_regex: "."` passed it, matched every block, and silently switched
-    the precision rule off — a reviewer's case. The property is not "matches nothing" but
-    "tells cited text from uncited text", so the ledger gets the same polarity test this
-    project demands of its own suites.
-    """
-    import pytest
-
-    # `\.\w` is the one that slipped the first fixture set — six of seven degenerate
-    # markers were caught, and a decimal-figure fixture closed the seventh.
-    too_loose = (".*", ".", r"\s*", "https?://", "[a-z]", "[A-Z]", r"\.\w", r"\d+\.\d+")
-    for pattern in too_loose:
-        def loose(led, p=pattern):
-            led["precision_without_source"]["marker_regex"] = p
-
-        with pytest.raises(fl.LedgerError, match="no citation"):
-            fl.load_ledger(_ledger_with(loose))
-
-    too_tight = ("(?!)", "zzz", "NEVERMATCHESANYTHING")
-    for pattern in too_tight:
-        def tight(led, p=pattern):
-            led["precision_without_source"]["marker_regex"] = p
-
-        with pytest.raises(fl.LedgerError, match="does not match a plain citation"):
-            fl.load_ledger(_ledger_with(tight))
-
-
-def test_reasonable_custom_markers_still_load():
-    """The guard must reject degeneracy, not customisation.
-
-    Five realistic marker styles, because a guard tightened until it only accepts the
-    shipped value is not a guard, it is a hardcode with extra steps.
-    """
-    for label, pattern in {
-        "urls only": r"https?://[\w.-]+\.[a-z]{2,}/\S",
-        "url or doi": r"https?://\S+|doi\.org/10\.\d{4,}/\S",
-        "url, doi or arxiv": r"https?://\S+|doi:10\.\S+|arxiv\.org/abs/\d",
-        "footnote style": r"https?://\S+|\[\^\d+\]",
-        "shipped": json.loads(fl.LEDGER.read_text(encoding="utf-8"))
-                       ["precision_without_source"]["marker_regex"],
-    }.items():
-        def custom(led, p=pattern):
-            led["precision_without_source"]["marker_regex"] = p
-
-        assert fl.load_ledger(_ledger_with(custom))["precision_without_source"], label
 
 
 def test_a_custom_instead_is_honoured_not_ignored():
@@ -1937,9 +1887,7 @@ def test_the_shipped_ledger_satisfies_all_three_invariants():
             assert not re.compile(rule["pattern"]).search(""), rule["id"]
             if rule["grade"] == "refuted":
                 assert not rule.get("citation_resolves"), rule["id"]
-    pws = ledger["precision_without_source"]
-    assert not re.compile(pws["marker_regex"]).search("")
-    assert not re.compile(pws["pattern"]).search("")
+    assert not re.compile(ledger["precision_without_source"]["pattern"]).search("")
 
 
 def test_a_misspelled_container_is_rejected_not_silently_ignored():
@@ -2020,5 +1968,67 @@ def test_the_allow_lists_exactly_cover_the_shipped_ledger():
     # PRECISION_KEYS permit `instead` while the code ignored it. The code honours it now,
     # and the shipped block may legitimately omit it, so assert the DIFFERENCE is only that.
     unused = fl.PRECISION_KEYS - set(ledger["precision_without_source"])
-    assert unused <= {"instead"}, f"allowances nothing exercises: {sorted(unused)}"
+    assert unused == {"instead"}, f"allowances nothing exercises: {sorted(unused)}"
     assert set(ledger["precision_without_source"]) <= fl.PRECISION_KEYS
+
+
+# ---------- the citation detector is code, not configuration ----------
+
+def test_a_ledger_cannot_configure_what_counts_as_a_citation():
+    """`marker_regex` was a ledger field and guarding it proved impossible.
+
+    Two review findings arrived together pulling in opposite directions: any finite
+    "must not match" set is evadable by a marker written against it — `https?://\\S+|\\d{4}`
+    passed every fixture and then silently swallowed "The review covered 2024 studies" —
+    while any finite "must match" set wrongly rejects a legitimate narrower policy, such as
+    a DOI-only marker. The two requirements are in tension by construction, and a guard
+    that cannot tell its good case from its bad should not be judging.
+
+    So the field is gone rather than guarded harder. This is the third time in this arc
+    that deleting the judgement beat defending it.
+    """
+    import pytest
+
+    def reintroduce(led):
+        led["precision_without_source"]["marker_regex"] = r"https?://\S+|\d{4}"
+
+    with pytest.raises(fl.LedgerError, match="unknown key"):
+        fl.load_ledger(_ledger_with(reintroduce))
+
+
+def test_the_reviewers_evasive_marker_can_no_longer_exist():
+    """The exact case: with the detector canonical, this document cannot be silenced."""
+    ledger = fl.load_ledger()
+    assert "unsourced-precision" in {
+        f["id"] for f in fl.lint_text("The review covered 2024 studies.\n", ledger)
+    }
+
+
+def test_a_doi_only_citation_is_recognised():
+    """The over-strictness half of the same finding: narrower citation styles work now,
+    because there is no longer a policy to declare — the detector accepts all of them."""
+    for cited in (
+        "The effect is r = 0.26. doi:10.1037/0033-2909.106.2.265",
+        "See https://doi.org/10.1145/3613904.3642433 for the figure.",
+        "Reported at https://pubmed.ncbi.nlm.nih.gov/1234567/",
+        "See PMC1234567 for the full text.",
+        "Preprint: https://arxiv.org/abs/2301.00001",
+    ):
+        assert "unsourced-precision" not in ids(cited + "\n"), cited
+
+
+def test_an_empty_instead_is_rejected_at_both_levels():
+    """A finding with no corrective guidance is a finding that does not help."""
+    import pytest
+
+    for value in (None, False, 0, "", "   "):
+        def rule_level(led, v=value):
+            led["refuted"][0]["instead"] = v
+
+        def precision_level(led, v=value):
+            led["precision_without_source"]["instead"] = v
+
+        with pytest.raises(fl.LedgerError, match="instead"):
+            fl.load_ledger(_ledger_with(rule_level))
+        with pytest.raises(fl.LedgerError, match="instead"):
+            fl.load_ledger(_ledger_with(precision_level))
