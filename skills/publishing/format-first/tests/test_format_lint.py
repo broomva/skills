@@ -1522,3 +1522,105 @@ def test_a_wide_but_legal_window_still_loads():
     path = Path(tempfile.mkdtemp()) / "wide.json"
     path.write_text(json.dumps(ledger), encoding="utf-8")
     assert fl.load_ledger(path)["precision_without_source"]["window_lines"] == 100
+
+
+# ---------- decode/parse are classified BY PHASE, not by exception type ----------
+
+CONTENT_FAILURES = {
+    "invalid json": "{",
+    "invalid utf-8": b"\xff\xfe\x00",
+    "nested past the stack limit": "[" * 100000 + "]" * 100000,
+    # CPython 3.11 caps int<->str conversion at 4300 digits, so this is syntactically
+    # valid JSON that the parser refuses — a ValueError, not a JSONDecodeError.
+    "integer past the digit limit": '{"refuted":' + "9" * 5000 + "}",
+    "root is a list": "[1,2,3]",
+    "root is a number": "42",
+    "empty file": "",
+}
+
+
+def test_every_content_failure_is_a_ledger_error_whatever_its_exception_type(tmp_path):
+    """Listing exception types did not work; five rounds found five more.
+
+    JSONDecodeError, then UnicodeDecodeError, then RecursionError, then ValueError from
+    the digit limit — the set is neither documented nor stable across Python versions, so
+    the next one was always coming. The invariant that IS stable: if decoding or parsing
+    fails at all, the text is not a usable ledger, and that is a statement about content.
+    """
+    import pytest
+
+    for label, body in CONTENT_FAILURES.items():
+        path = tmp_path / f"{abs(hash(label))}.json"
+        path.write_bytes(body) if isinstance(body, bytes) else path.write_text(body, encoding="utf-8")
+        with pytest.raises(fl.LedgerError, match="format_lint"):
+            fl.load_ledger(path)
+
+
+def test_memory_error_still_escapes_the_phase_catches(monkeypatch):
+    """The one exception to "any failure here is bad input". Catching the class must not
+    have swallowed the operational case along with it."""
+    import pytest
+
+    class _OomJson:
+        @staticmethod
+        def loads(*_a, **_k):
+            raise MemoryError("oom")
+
+    monkeypatch.setattr(fl, "json", _OomJson)
+    path = Path(tempfile.mkdtemp()) / "l.json"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(MemoryError):
+        fl.load_ledger(path)
+
+
+def test_the_cli_exits_two_for_every_content_failure(tmp_path):
+    """All three ledger entry points, since a traceback and exit 1 was the symptom."""
+    doc = tmp_path / "d.md"
+    doc.write_text("prose\n")
+    for label, body in CONTENT_FAILURES.items():
+        path = tmp_path / f"c{abs(hash(label))}.json"
+        path.write_bytes(body) if isinstance(body, bytes) else path.write_text(body, encoding="utf-8")
+        out = subprocess.run(
+            [sys.executable, str(SCRIPT), str(doc), "--ledger", str(path)],
+            capture_output=True, text=True,
+        )
+        assert out.returncode == 2, f"{label}: {out.returncode}\n{out.stderr}"
+        assert "Traceback" not in out.stderr, label
+
+
+class _UndecodableBytes(bytes):
+    """Bytes whose decode raises something that is NOT a UnicodeDecodeError.
+
+    The point of catching the class at the decode phase is that the set of exceptions a
+    decoder can raise is not enumerable in advance. A test built from a SAMPLE cannot show
+    that — the natural sample raises exactly UnicodeDecodeError, so narrowing the catch back
+    to it survived mutation. This injects an arbitrary failure instead, which is the
+    invariant rather than an instance of it.
+    """
+
+    def decode(self, *_a, **_k):
+        raise LookupError("unknown codec")
+
+
+def test_any_decode_failure_is_bad_input_not_only_unicode_errors(monkeypatch):
+    import pytest
+
+    path = Path(tempfile.mkdtemp()) / "l.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(type(path), "read_bytes", lambda self: _UndecodableBytes(b"{}"))
+    with pytest.raises(fl.LedgerError, match="not valid UTF-8"):
+        fl.load_ledger(path)
+
+
+def test_a_memory_error_while_decoding_still_propagates(monkeypatch):
+    import pytest
+
+    class _OomBytes(bytes):
+        def decode(self, *_a, **_k):
+            raise MemoryError("oom")
+
+    path = Path(tempfile.mkdtemp()) / "l.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(type(path), "read_bytes", lambda self: _OomBytes(b"{}"))
+    with pytest.raises(MemoryError):
+        fl.load_ledger(path)

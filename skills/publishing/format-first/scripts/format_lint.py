@@ -160,23 +160,36 @@ def load_ledger(path: Path = LEDGER) -> dict:
             f"format_lint: ledger at {path} could not be read: {exc}"
         ) from None
 
+    # DECODE and PARSE are classified BY PHASE, not by exception type.
+    #
+    # Listing types did not work. Five rounds found five more that a decoder or parser can
+    # raise — JSONDecodeError, UnicodeDecodeError, RecursionError on deep nesting, and
+    # ValueError on an integer past CPython 3.11's 4300-digit conversion limit — and the
+    # set is neither documented nor stable across versions, so the sixth was always coming.
+    #
+    # The invariant that IS stable: if decoding or parsing this text fails at all, the text
+    # is not a usable ledger. That is a statement about the content, so it is bad input.
+    # MemoryError is the sole exception, re-raised because it is about the machine; the
+    # BaseExceptions (KeyboardInterrupt, SystemExit, GeneratorExit) are never caught.
+    # Same shape as `_compile_or_fail` — catch the class, name the type in the message.
     try:
         # utf-8-sig, not utf-8: a leading BOM is what Windows editors write, and the file is
         # otherwise perfectly good JSON that `json.loads` would reject.
         text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise LedgerError(f"format_lint: ledger at {path} is not valid UTF-8: {exc}") from None
+    except MemoryError:
+        raise
+    except Exception as exc:                       # noqa: BLE001 — see above
+        raise LedgerError(
+            f"format_lint: ledger at {path} is not valid UTF-8: {type(exc).__name__}: {exc}"
+        ) from None
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise LedgerError(f"format_lint: ledger at {path} is not valid JSON: {exc}") from None
-    except RecursionError:
-        # Nesting deep enough to exhaust the stack is a property of the CONTENT, so it is
-        # bad input rather than an operational failure — the one case where a
-        # RecursionError says something about the file rather than about the machine.
+    except MemoryError:
+        raise
+    except Exception as exc:                       # noqa: BLE001 — see above
         raise LedgerError(
-            f"format_lint: ledger at {path} is nested too deeply to parse"
+            f"format_lint: ledger at {path} is not valid JSON: {type(exc).__name__}: {exc}"
         ) from None
 
     if not isinstance(data, dict):
