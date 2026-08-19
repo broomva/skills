@@ -120,6 +120,8 @@ COMPONENT_LIBS = {
 RE_IMPORT_FROM = re.compile(r"""(?:from|require\()\s*['"]([^'"]+)['"]""")
 
 RE_EM_DASH = re.compile("—")
+# a standalone em dash is a typographic empty-value marker (`?? "—"`, `<td>—</td>`), not the prose tell
+RE_EM_DASH_MARKER = re.compile(r"""(["'`])—\1|>\s*—\s*<|\{\s*"—"\s*\}""")
 RE_EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B50\U00002B55\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
 )
@@ -665,7 +667,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                 if st.startswith(("//", "/*", "*", "{/*", "<!--", "import ")):
                     continue
                 code_free = re.sub(r"//.*$|\{/\*.*?\*/\}|/\*.*?\*/", "", line)  # strip trailing comments
-                if RE_EM_DASH.search(code_free):
+                if RE_EM_DASH.search(RE_EM_DASH_MARKER.sub(" ", code_free)):
                     copy_tells["em_dash"].append(site(p, i))
                 if RE_EMOJI.search(code_free):
                     copy_tells["emoji"].append(site(p, i))
@@ -740,7 +742,17 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                 k = _norm_radius_class(m.group(0))
                 radius_values[k] += 1
                 radius_sites[k].append(rp)
+            in_keyframes = 0
             for i, line in enumerate(lines, 1):
+                # values inside @keyframes are animation states (pulse rings), not vocabulary
+                if "@keyframes" in line:
+                    in_keyframes = 1 + line.count("{") - line.count("}")
+                    continue
+                if in_keyframes:
+                    in_keyframes += line.count("{") - line.count("}")
+                    if in_keyframes <= 0:
+                        in_keyframes = 0
+                    continue
                 if RE_TOKEN_DECL_LINE.match(line):
                     continue  # `--radius-md: 0.5rem;` is the vocabulary itself, not drift
                 for m in RE_RADIUS_CSS.finditer(line):

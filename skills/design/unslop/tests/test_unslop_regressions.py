@@ -591,3 +591,27 @@ def test_coming_soon_and_internal_docs_are_not_placeholders(tmp_path):
     ph = us.survey(root)["substance"]["placeholders"]
     assert ph.get("insert-here") and all("src/app/page.tsx" in x for x in ph["insert-here"])
     assert "lorem-ipsum" not in ph
+
+
+def test_standalone_em_dash_markers_are_not_copy_tells(tmp_path):
+    root = _repo(tmp_path, "emm", {"src/A.tsx": '''
+const a = loading ? "—" : String(n);
+return <td>—</td>;
+const b = x ?? "—";
+<p>Real prose — with a dash</p>
+'''})
+    ct = us.survey(root)["copy_tells"]["em_dash"]
+    assert ct["count"] == 1 and ct["sites"][0].endswith(":5")
+
+
+def test_keyframe_frames_are_not_shadow_or_radius_drift(tmp_path):
+    root = _repo(tmp_path, "kf", {"src/styles/x.css": '''
+@keyframes ring { 0% { box-shadow: 0 0 0 0 oklch(0.6 0.12 260 / 0.7); } 70% { box-shadow: 0 0 0 8px oklch(0.6 0.12 260 / 0); } 100% { box-shadow: 0 0 0 0 oklch(0.6 0.12 260 / 0); } }
+@keyframes grow {
+  from { border-radius: 2px; }
+  to { border-radius: 9px; }
+}
+.card { box-shadow: 0 4px 8px oklch(0 0 0 / 0.4); border-radius: 12px; }
+'''})
+    kinds = {r["kind"]: r for r in us.survey(root)["roots"]}
+    assert int(kinds["shadow"]["value"].split()[0]) == 1 and int(kinds["radius"]["value"].split()[0]) == 1
