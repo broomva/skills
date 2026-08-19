@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import math
 import py_compile
 import re
 import shutil
@@ -59,7 +60,10 @@ def parse_frontmatter(md_path: Path) -> dict | None:
     indented continuation lines so folded prose can't manufacture bogus keys.
     """
     try:
-        text = md_path.read_text(encoding="utf-8")
+        # errors="replace": invalid UTF-8 must fail CLOSED (no frontmatter -> step 1
+        # FAIL), never raise. A single 0xFF byte in one SKILL.md used to abort the
+        # whole --survey run with a UnicodeDecodeError.
+        text = md_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
@@ -99,7 +103,7 @@ def _skillsh_frontmatter_issue(skill_dir: Path) -> str | None:
     ≥2-quote count. (Source: skills-sh.md KG entity + P20 v0.2 review.)
     """
     try:
-        text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        text = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
@@ -209,6 +213,29 @@ def _iter_files(skill_dir: Path, subdirs: tuple[str, ...]) -> list[Path]:
             if p.is_file() and "__pycache__" not in p.parts:
                 out.append(p)
     return out
+
+
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", "*/", "--", '"""', "'" * 3)
+
+
+def _has_executable_content(path: Path) -> bool:
+    """At least one line that is not blank, a shebang, or a comment.
+
+    A file containing only `# TODO: implement core` is not a deterministic core. This
+    is a FLOOR on substance, deliberately NOT a judgement about whether the code does
+    anything useful — that is undecidable, and a gate that pretends otherwise invites
+    an arms race it loses every round.
+    """
+    txt = _read(path)
+    if txt is None:
+        return False
+    for ln in txt.splitlines():
+        t = ln.strip()
+        if not t or t.startswith("#!"):
+            continue
+        if not t.startswith(_COMMENT_PREFIXES):
+            return True
+    return False
 
 
 def _is_code_file(skill_dir: Path, f: Path) -> bool:
@@ -439,9 +466,18 @@ _SKIP_JSON_KEYS = {"description", "summary", "notes", "when_to_use", "trigger", 
 
 
 def _strip_fences(md: str) -> str:
-    """Drop fenced code blocks (``` … ```) — example commands and File-Structure
-    trees inside them are not live contract claims."""
-    return re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+    """Drop fenced code blocks — example commands and File-Structure trees inside them
+    are not live contract claims.
+
+    Handles the four forms that reached an earlier draft as live text: ``` fences,
+    ~~~ fences, an UNTERMINATED fence (everything after it is example, not record),
+    and HTML comments. Four-space-indented blocks are handled by the caller where it
+    matters, since stripping them globally would eat ordinary nested list prose.
+    """
+    md = re.sub(r"<!--.*?-->", "", md, flags=re.DOTALL)
+    md = re.sub(r"(?m)^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$", "", md, flags=re.DOTALL)
+    md = re.sub(r"(?ms)^[ \t]*(?:```|~~~).*\Z", "", md)  # unterminated fence
+    return md
 
 
 def _ref_satisfied(skill_dir: Path, ref: str) -> bool:
@@ -472,7 +508,7 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     sj = skill_dir / "skill.json"
     if sj.is_file():
         try:
-            data = json.loads(sj.read_text(encoding="utf-8"))
+            data = json.loads(sj.read_text(encoding="utf-8", errors="replace"))
         except (ValueError, OSError):
             data = None
         ep = data.get("entrypoint") if isinstance(data, dict) else None
@@ -546,9 +582,14 @@ _MODEL_FAMILIES = {
 # Content that is a promise rather than a record. Accepting any of these as a rubric,
 # a method or a measured value is how "declare a floor AND show the measurement"
 # degrades into "type something in the field".
+# Anchored matching missed "TBD later" and "vibes only", so this scans for the marker
+# ANYWHERE in the value. Deliberately a typo-catcher, NOT an authenticity gate — see
+# the "what this cannot check" note in SKILL.md. No regex can tell whether 40 cases
+# were really labelled; that is what the P20 review layer is for.
 _PLACEHOLDER_RE = re.compile(
-    r"^\W*(tbd|todo|fixme|xxx|n/?a|none|pending|unmeasured|unknown|vibes|placeholder|"
-    r"coming soon|to be (?:done|measured|determined)|\?+|-+)\W*$", re.IGNORECASE)
+    r"\b(tbd|todo|fixme|xxx|n/?a|unmeasured|unknown|vibes|placeholder|guess(?:ed)?|"
+    r"coming soon|to ?be ?(?:done|measured|determined)|not ?(?:yet )?(?:measured|run|done))\b"
+    r"|^\W*(?:none|pending|\?+|-+)\W*$", re.IGNORECASE)
 
 
 def _model_family(model: str) -> str | None:
@@ -560,8 +601,11 @@ def _model_family(model: str) -> str | None:
 
 
 def _is_num(x: object) -> bool:
-    """A real number. `bool` is an int in Python and must not qualify as a score."""
-    return isinstance(x, (int, float)) and not isinstance(x, bool)
+    """A finite real number. `bool` is an int in Python and must not qualify as a
+    score, and NaN/inf are floats that are not coefficients — `agreement_floor: NaN`
+    satisfied a bare isinstance check."""
+    return (isinstance(x, (int, float)) and not isinstance(x, bool)
+            and math.isfinite(x))
 
 
 def _substantive(x: object) -> bool:
@@ -693,6 +737,16 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if _PLANNED_RE.search(txt):
         return ("evals/admission.md is marked planned/not-yet-run — an unrun admission "
                 "test is not an outcome")
+    # A verdict alone is not a record. The file must also say WHAT was run. This is a
+    # floor on substance, NOT a check that the test really happened — see the
+    # "what this cannot check" note in SKILL.md.
+    prose = [ln for ln in txt.splitlines()
+             if ln.strip()
+             and not _OUTCOME_RE.search("\n" + ln)
+             and not _OUTCOME_HEADING_RE.search("\n" + ln)]
+    if len("".join(prose).strip()) < 40:
+        return ("evals/admission.md records a verdict but not the test — say what two "
+                "agents were given and what a third party judged")
     return None
 
 
@@ -701,8 +755,14 @@ def _rubric_issue(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> str | None
     satisfied an earlier draft — the same presence-is-not-correctness trap step 3
     already avoids via _is_real_test."""
     for _, val in _dig_all(blobs, "rubric"):
-        if isinstance(val, (list, dict)) and val:
-            return None
+        if isinstance(val, dict):
+            if any(_substantive(k) and _substantive(v) for k, v in val.items()):
+                return None
+            continue
+        if isinstance(val, list):
+            if any(_substantive(v) for v in val):
+                return None
+            continue
         if _substantive(val):
             return None
     f = skill_dir / "evals" / "rubric.md"
@@ -743,7 +803,10 @@ def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
         cases = data.get("cases")
         if isinstance(cases, list):
             n += sum(1 for c in cases if isinstance(c, dict)
-                     and str(c.get("held_out", "")).lower() in ("true", "yes", "1"))
+                     and str(c.get("held_out", "")).lower() in ("true", "yes", "1")
+                     # a case needs an actual input; `{"held_out": true}` alone is a
+                     # marker object, not a held-out case
+                     and any(_substantive(c.get(k)) for k in ("prompt", "input", "case", "text")))
     return n
 
 
@@ -766,15 +829,17 @@ def _judge_issues(blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]
     warns: list[str] = []
 
     judges = _dig_all(blobs, "judge")
-    well_formed = [(f, j) for f, j in judges if isinstance(j, dict)]
     if not judges:
         return ["no `judge` config in evals/ (tier J needs a cross-model judge declaration)"], warns
-    if not well_formed:
+    # EVERY declaration counts toward ambiguity, well-formed or not. Skipping the
+    # malformed ones meant a decoy {"judge": "not-a-mapping"} was simply ignored, so
+    # "declare exactly one" was not actually enforced.
+    if len(judges) > 1:
+        names = ", ".join(f.name for f, _ in judges)
+        return [f"{len(judges)} `judge` declarations ({names}) — ambiguous; declare exactly one"], warns
+    if not isinstance(judges[0][1], dict):
         return [f"`judge` in {judges[0][0].name} is {type(judges[0][1]).__name__}, not a mapping"], warns
-    if len(well_formed) > 1:
-        names = ", ".join(f.name for f, _ in well_formed)
-        return [f"{len(well_formed)} `judge` configs ({names}) — ambiguous; declare exactly one"], warns
-    judge = well_formed[0][1]
+    judge = judges[0][1]
 
     jm = judge.get("model")
     if not (isinstance(jm, str) and jm.strip()):
@@ -782,9 +847,18 @@ def _judge_issues(blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]
         jm = ""
 
     unders = []
-    for _, ec in _dig_all(blobs, "execution_contract"):
-        if isinstance(ec, dict) and isinstance(ec.get("model"), str) and ec["model"].strip():
-            unders.append(ec["model"].strip())
+    for f, ec in _dig_all(blobs, "execution_contract"):
+        if not isinstance(ec, dict):
+            fails.append(f"execution_contract in {f.name} is {type(ec).__name__}, not a mapping")
+            continue
+        m = ec.get("model")
+        if m is None:
+            continue
+        if not (isinstance(m, str) and m.strip()):
+            fails.append(f"execution_contract.model in {f.name} is {m!r} — must be a "
+                         "non-empty string or absent")
+            continue
+        unders.append(m.strip())
     if jm and not unders:
         fails.append("no execution_contract.model in evals/ — nothing to compare judge.model "
                      "against, so cross-model distinctness cannot be established")
@@ -854,10 +928,19 @@ def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
         return (f"{len(unparseable)} eval artifact(s) could not be parsed "
                 f"({unparseable[0].name}) — install pyyaml or fix the file; "
                 "an unverifiable routing eval is not a routing eval")
+    # Polarity is read ONLY from a top-level cases/prompts/tests list. Walking the
+    # whole document let unrelated nested metadata supply it —
+    # {"metadata": {"should_fire": true}, "judge": {"should_trigger": false}} passed
+    # tier L with no routing cases at all.
     pos = neg = False
     for _, data in blobs:
-        p, n = _polarity_seen(data)
-        pos, neg = pos or p, neg or n
+        for key in ("cases", "prompts", "tests"):
+            cases = data.get(key)
+            if not isinstance(cases, list):
+                continue
+            for case in cases:
+                cp, cn = _polarity_seen(case)
+                pos, neg = pos or cp, neg or cn
     if pos and neg:
         return None
     if not pos and not neg:
@@ -963,7 +1046,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # syntax check that origin/main applied unconditionally — a coverage regression
     # introduced by the refactor and caught in adversarial review.
     broken = [(c, e) for c in code if (e := _script_syntax_error(skill_dir / c))]
-    empty_code = [c for c in code if not (_read(skill_dir / c) or "").strip()]
+    empty_code = [c for c in code if not _has_executable_content(skill_dir / c)]
 
     if tier is None:
         add(2, "Tier + core", FAIL,

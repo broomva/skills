@@ -1167,15 +1167,17 @@ def test_admission_marked_not_yet_run_is_not_an_outcome(tmp_path):
 def test_admission_accepts_plausible_phrasings(tmp_path):
     """Strata B measured 5/7 false REJECTS on ordinary markdown. A gate that only
     accepts one phrasing trains people to write for the regex."""
-    for body in ("Outcome — admitted\n",
-                 "## Outcome\n\nAdmitted.\n",
-                 "**Outcome: admitted**\n",
-                 "| Outcome | admitted |\n",
-                 "> Outcome: admitted\n",
-                 "- Verdict: admitted\n"):
-        d = _j(tmp_path / body[:12].replace("/", "_").replace("|", "_").strip())
-        (d / "evals" / "admission.md").write_text(body, encoding="utf-8")
-        assert _step(_check(d), 2)["status"] == "PASS", f"rejected: {body!r}"
+    record = ("Two agents were given the same design doc and asked to critique it. "
+              "A third reader judged both critiques defensible on the rubric.\n\n")
+    for i, verdict in enumerate(("Outcome — admitted\n",
+                                 "## Outcome\n\nAdmitted.\n",
+                                 "**Outcome: admitted**\n",
+                                 "| Outcome | admitted |\n",
+                                 "> Outcome: admitted\n",
+                                 "- Verdict: admitted\n")):
+        d = _j(tmp_path / f"phrasing{i}")
+        (d / "evals" / "admission.md").write_text(record + verdict, encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "PASS", f"rejected: {verdict!r}"
 
 
 def test_unreadable_admission_fails_closed_without_a_traceback(tmp_path):
@@ -1292,3 +1294,126 @@ def test_non_case_files_with_content_are_not_held_out_cases(tmp_path):
     (ho / "scratch.log").write_text("some run output\n", encoding="utf-8")
     step2 = _step(_check(d), 2)
     assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+# --- P20 round 2 --------------------------------------------------------------
+
+def test_comment_only_script_is_not_a_deterministic_core(tmp_path):
+    """Round-2 blocker 1: the round-1 empty-file fix rejected only zero-byte and
+    whitespace files, so `# TODO: implement core` still satisfied tier D. A floor on
+    substance — NOT a judgement about whether the code is useful, which is undecidable."""
+    d = _skill(tmp_path, tier="D")
+    (d / "scripts" / "do.py").write_text("#!/usr/bin/env python3\n# TODO: implement core\n",
+                                         encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_unrelated_nested_metadata_does_not_supply_polarity(tmp_path):
+    """Round-2 blocker 2: `_polarity_seen` walked the whole document, so
+    `{"metadata": {"should_fire": true}, "judge": {"should_trigger": false}}` passed
+    tier L with no routing cases at all."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "metadata.json").write_text(
+        json.dumps({"metadata": {"should_fire": True}, "judge": {"should_trigger": False}}),
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_malformed_decoy_judge_still_counts_as_ambiguity(tmp_path):
+    """Round-2 blocker 3: dropping malformed declarations meant a decoy
+    `{"judge": "not-a-mapping"}` was ignored, so 'declare exactly one' was unenforced."""
+    d = _j(tmp_path)
+    (d / "evals" / "decoy.json").write_text(
+        json.dumps({"judge": "not-a-mapping"}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "ambiguous" in step2["detail"]
+
+
+def test_null_execution_contract_model_is_rejected_not_skipped(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "decoy.json").write_text(
+        json.dumps({"execution_contract": {"model": None}}), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"  # None means absent, which is fine
+    (d / "evals" / "decoy.json").write_text(
+        json.dumps({"execution_contract": {"model": ""}}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "non-empty string" in step2["detail"]
+
+
+def test_nan_agreement_floor_is_not_a_number(tmp_path):
+    """Round-2 blocker 5: NaN passes isinstance(float) but is not a coefficient."""
+    d = _j(tmp_path)
+    (d / "evals" / "suite.yaml").write_text(
+        "judge:\n  model: gpt-5\n  agreement_floor: .nan\n"
+        "  agreement_measured:\n    value: 0.9\n    method: 40 dual-labelled cases\n"
+        "execution_contract:\n  model: haiku\n", encoding="utf-8")
+    (d / "evals" / "suite.json").unlink()
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "must be a number" in step2["detail"]
+
+
+def test_decorated_placeholders_are_still_placeholders(tmp_path):
+    """Round-2 blocker 5: the anchored regex matched "TBD" but not "TBD later"."""
+    for value, method in (("TBD later", "vibes only"), ("0.9", "to be measured"),
+                          ("guessed", "40 cases")):
+        d = _j(tmp_path / f"ph{abs(hash((value, method))) % 9999}")
+        blob = json.loads((d / "evals" / "suite.json").read_text())
+        blob["judge"]["agreement_measured"] = {"value": value, "method": method}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted {value!r}/{method!r}"
+
+
+def test_held_out_marker_object_without_an_input_is_not_a_case(tmp_path):
+    """Round-2 blocker 6: `cases: [{"held_out": true}]` satisfied the gate."""
+    d = _j(tmp_path, held_out=0)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["cases"] = [{"held_out": True}]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_invalid_utf8_in_skill_md_fails_closed_without_a_traceback(tmp_path):
+    """Round-2 blocker 7: one 0xFF byte aborted the entire --survey run."""
+    d = tmp_path / "badbytes"
+    d.mkdir()
+    (d / "SKILL.md").write_bytes(b"---\nname: x\ndescription: \xff\xfe bad\n---\n# body\n")
+    res = _check(d)
+    step1 = _step(res, 1)
+    assert step1["status"] in ("PASS", "FAIL")  # a verdict, not an exception
+    rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 1
+
+
+def test_tilde_and_unterminated_fences_hide_an_example_outcome(tmp_path):
+    """Round-2 blocker 4: only ``` fences were stripped."""
+    record = ("Two agents were given the same brief and a third reader judged both "
+              "outputs defensible.\n\n")
+    for fenced in ("~~~yaml\nOutcome: admitted\n~~~\n",
+                   "```yaml\nOutcome: admitted\n",
+                   "<!--\nOutcome: admitted\n-->\n"):
+        d = _j(tmp_path / f"f{abs(hash(fenced)) % 9999}")
+        (d / "evals" / "admission.md").write_text(record + fenced, encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"accepted example outcome in {fenced!r}"
+
+
+def test_admission_verdict_without_a_record_is_not_enough(tmp_path):
+    """Round-2 major 3: a file containing only `Outcome: admitted` recorded no test."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text("Outcome: admitted\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "not the test" in step2["detail"]
+
+
+def test_placeholder_keyed_rubric_is_not_a_rubric(tmp_path):
+    """Round-2 major 1: any nonempty mapping counted as a rubric."""
+    d = _j(tmp_path, rubric=False)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["rubric"] = {"TODO": None}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
