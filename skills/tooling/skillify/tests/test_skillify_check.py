@@ -1566,3 +1566,85 @@ def test_survey_does_not_tally_a_crashed_skill_as_unclassified(tmp_path):
         assert rep["by_tier"].get("unclassified (inferred)", 0) == 0
     finally:
         (bad / "scripts" / "do.py").chmod(0o644)
+
+
+# ===========================================================================
+# P20 verify round — 4 blockers, one of them a false FAIL introduced in round 3.
+# ===========================================================================
+
+def test_ordinary_prose_mentioning_rejection_is_not_a_rejected_verdict(tmp_path):
+    """THE false FAIL, and the worst class of gate defect: rejecting a real, correct
+    artifact. Round 3 replaced a fence-stripped verdict scan with a bare
+    `\\brejected\\b` substring scan over raw text, which blocked the perfectly
+    ordinary sentence below. Requiring an outcome LABEL keeps the property without
+    eating prose."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Two independent agents received the same design and a third party found both "
+        "answers valid under the written rubric.\n"
+        "Neither candidate was rejected by the judge.\n\n"
+        "Outcome: admitted\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]
+
+
+def test_mid_line_superseding_rejection_still_blocks(tmp_path):
+    """...and the property it was protecting must survive the fix."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Two agents were given the same brief and a third reader judged both valid.\n\n"
+        "Outcome: admitted\n\nCorrection: on rerun the final Outcome: rejected.\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_docstring_only_script_is_not_a_deterministic_core(tmp_path):
+    """Verify-round blocker 1: the round-2 fix checked line PREFIXES, and a module
+    docstring's body lines carry none, so a docstring-only file read as executable."""
+    d = _skill(tmp_path, tier="D")
+    (d / "scripts" / "do.py").write_text(
+        '"""Module documentation only.\n\nTODO: implement later.\n"""\n', encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_a_real_python_script_with_a_docstring_still_counts(tmp_path):
+    """Paired control: the fix must not reject a normal module that opens with a
+    docstring and then does something."""
+    d = _skill(tmp_path, tier="D")
+    (d / "scripts" / "do.py").write_text(
+        '"""Does a thing."""\n\n\ndef go():\n    return 1\n', encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_placeholder_anywhere_in_the_value_is_caught(tmp_path):
+    """Verify-round blocker 2: round 2 made `_PLACEHOLDER_RE` unanchored but left the
+    caller on `.match()`, so it still only matched at position 0. A one-word bug that
+    survived an entire round."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": "result TBD later",
+                                           "method": "40 dual-labelled cases"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_placeholder_anywhere_in_a_held_out_case_is_caught(tmp_path):
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("Prompt: TBD later\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_unterminated_html_comment_hides_an_example_outcome(tmp_path):
+    """Verify-round blocker 3: round 3 handled unterminated code fences but not
+    unterminated HTML comments."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "Two independent agents received the same design and a third party found both "
+        "answers valid under the written rubric.\n<!--\nOutcome: admitted\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "no outcome" in step2["detail"]

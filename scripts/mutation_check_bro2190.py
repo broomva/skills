@@ -153,14 +153,31 @@ MUTANTS = [
      '    if interp in _SH_INTERPRETERS:',
      '    if "sh" in interp:',
      "test_fish_shebang_is_not_checked_with_bash"),
-    ("M32 a rejection inside a fence stops blocking",
-     '    if re.search(r"\\brejected\\b|\\bnot admitted\\b", raw, re.IGNORECASE):',
-     '    if False:',
-     "test_rejection_inside_a_fence_still_blocks"),
+    # M32 (raw-substring rejection scan) retired in the verify round: the scan it
+    # mutated was replaced by a labelled-verdict scan after it produced a false
+    # FAIL on ordinary prose. M37 mutates the replacement.
     ("M33 top-level-list eval artifacts become invisible again",
      '        elif isinstance(data, list):',
      '        elif False:',
      "test_top_level_list_eval_is_visible_not_invisible"),
+
+    # --- verify round -------------------------------------------------------
+    ("M34 docstring-only script accepted as a deterministic core",
+     '            body = body[1:]  # drop the module docstring',
+     '            pass',
+     "test_docstring_only_script_is_not_a_deterministic_core"),
+    ("M35 placeholder matched only at position 0 again (.match vs .search)",
+     '        return bool(t) and not _PLACEHOLDER_RE.search(t)',
+     '        return bool(t) and not _PLACEHOLDER_RE.match(t)',
+     "test_placeholder_anywhere_in_the_value_is_caught"),
+    ("M36 unterminated HTML comment not stripped",
+     '    md = re.sub(r"(?s)<!--.*\\Z", "", md)  # unterminated HTML comment',
+     '    pass  # unterminated HTML comment',
+     "test_unterminated_html_comment_hides_an_example_outcome"),
+    ("M37 rejection scanned as a bare word again (the false-FAIL regression)",
+     '    for m in _OUTCOME_LABEL_RE.finditer(raw):',
+     '    for m in re.finditer(r"()(?=rejected)", raw, re.IGNORECASE):',
+     "test_ordinary_prose_mentioning_rejection_is_not_a_rejected_verdict"),
 ]
 
 

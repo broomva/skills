@@ -219,17 +219,39 @@ _COMMENT_PREFIXES = ("#", "//", "/*", "*", "*/", "--", '"""', "'" * 3)
 
 
 def _has_executable_content(path: Path) -> bool:
-    """At least one line that is not blank, a shebang, or a comment.
+    """At least one statement that is not a docstring, a comment, or a shebang.
 
-    A file containing only `# TODO: implement core` is not a deterministic core. This
-    is a FLOOR on substance, deliberately NOT a judgement about whether the code does
-    anything useful — that is undecidable, and a gate that pretends otherwise invites
-    an arms race it loses every round.
+    A file containing only `# TODO: implement core` is not a deterministic core, and
+    neither is one containing only a module docstring saying the same thing — the
+    line-prefix check missed the second because docstring BODY lines carry no comment
+    marker. Python is decided by AST; other languages by stripping block and line
+    comments.
+
+    This is a FLOOR on substance, deliberately NOT a judgement about whether the code
+    does anything useful — that is undecidable, and a gate pretending otherwise
+    invites an arms race it loses every round.
     """
     txt = _read(path)
     if txt is None:
         return False
-    for ln in txt.splitlines():
+    if not txt.strip():
+        return False
+    head = txt.splitlines()[:1]
+    m = _SHEBANG_RE.match(head[0]) if head else None
+    is_py = path.suffix == ".py" or (m and m.group(1).lower() in _PY_INTERPRETERS)
+    if is_py:
+        try:
+            body = ast.parse(txt).body
+        except SyntaxError:
+            return True  # broken syntax is step 2's other branch, not emptiness
+        if body and isinstance(body[0], ast.Expr) and isinstance(
+                getattr(body[0], "value", None), ast.Constant) and isinstance(
+                body[0].value.value, str):
+            body = body[1:]  # drop the module docstring
+        return bool(body)
+    stripped = re.sub(r"/\*.*?\*/", "", txt, flags=re.DOTALL)
+    stripped = re.sub(r"(?s)<#.*?#>", "", stripped)
+    for ln in stripped.splitlines():
         t = ln.strip()
         if not t or t.startswith("#!"):
             continue
@@ -527,6 +549,7 @@ def _strip_fences(md: str) -> str:
     matters, since stripping them globally would eat ordinary nested list prose.
     """
     md = re.sub(r"<!--.*?-->", "", md, flags=re.DOTALL)
+    md = re.sub(r"(?s)<!--.*\Z", "", md)  # unterminated HTML comment
     md = re.sub(r"(?m)^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$", "", md, flags=re.DOTALL)
     md = re.sub(r"(?ms)^[ \t]*(?:```|~~~).*\Z", "", md)  # unterminated fence
     return md
@@ -671,7 +694,7 @@ def _substantive(x: object) -> bool:
         return True
     if isinstance(x, str):
         t = x.strip()
-        return bool(t) and not _PLACEHOLDER_RE.match(t)
+        return bool(t) and not _PLACEHOLDER_RE.search(t)
     return False
 
 
@@ -753,6 +776,16 @@ def _dig_all(blobs: list[tuple[Path, dict]], key: str) -> list[tuple[Path, objec
     return [(f, data[key]) for f, data in blobs if key in data]
 
 
+# An outcome LABEL plus the remainder of its line, used to scan raw text for verdicts
+# without matching ordinary prose that merely contains the word "rejected".
+# The label may appear anywhere in a line, not only at its start: a superseding
+# "Correction: on rerun the final Outcome: rejected." carries the verdict mid-line.
+# Requiring a LABEL is what keeps ordinary prose — "Neither candidate was rejected by
+# the judge." — from tripping it, which a bare word scan did.
+_OUTCOME_LABEL_RE = re.compile(
+    r"\b(?:outcome|verdict|admission|result)\b\s*\**\s*[:\-\u2013\u2014|]+([^\n]*)",
+    re.IGNORECASE)
+
 _OUTCOME_RE = re.compile(
     r"(?:^|\n)[^\S\n]*[>|*\-#\s]*\**\s*(?:outcome|verdict|admission|result)\s*\**\s*"
     r"[:\-\u2013\u2014|]+\s*\**\s*(admitted|rejected|not admitted)\b",
@@ -784,15 +817,21 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if not raw.strip():
         return "evals/admission.md is empty"
     txt = _strip_fences(raw)
-    # A rejection ANYWHERE in the raw file blocks — including inside a fence, and
-    # including "admitted / rejected (delete one)" template rows. The docstring
-    # claimed this and the code did not: fence-stripping ran first, so a superseding
-    # rejection in an example was invisible. Failing closed on ambiguity is the
-    # correct direction for a gate; write examples without a rejection verdict.
-    if re.search(r"\brejected\b|\bnot admitted\b", raw, re.IGNORECASE):
-        return ("evals/admission.md contains a `rejected` verdict — an underspecified "
-                "skill is not admissible (and an example verdict is indistinguishable "
-                "from a real one, so it blocks too)")
+    # Scan the RAW text (fences included) for outcome-LABELLED verdicts. Round 3 used
+    # a bare `\brejected\b` substring scan, which blocked the perfectly ordinary
+    # sentence "Neither candidate was rejected by the judge." — a false FAIL, the
+    # worst class of gate defect. Matching a labelled verdict keeps the property
+    # (a rejection anywhere, fences included, blocks) without eating prose.
+    for m in _OUTCOME_LABEL_RE.finditer(raw):
+        tail = m.group(1).lower()
+        has_a, has_r = "admitted" in tail, "rejected" in tail or "not admitted" in tail
+        if has_a and has_r:
+            return ("evals/admission.md has an unfilled outcome row "
+                    "(`admitted / rejected` — delete one)")
+        if has_r:
+            return ("evals/admission.md records a `rejected` verdict — an underspecified "
+                    "skill is not admissible (an example verdict is indistinguishable "
+                    "from a real one, so it blocks too)")
     hits = [m.group(1).lower() for m in _OUTCOME_RE.finditer(txt)]
     hits += [m.group(1).lower() for m in _OUTCOME_HEADING_RE.finditer(txt)]
     if not hits:
