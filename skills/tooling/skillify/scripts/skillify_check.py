@@ -66,6 +66,7 @@ def parse_frontmatter(md_path: Path) -> dict | None:
         text = md_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+    text = text.lstrip("\ufeff")  # a BOM made the ^--- match fail, hiding frontmatter
     m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
     if not m:
         return None
@@ -83,7 +84,14 @@ def parse_frontmatter(md_path: Path) -> dict | None:
             continue  # indented continuation / comment — not a key
         if ":" in line:
             key, _, val = line.partition(":")
-            fm[key.strip()] = val.strip().strip("\"'")
+            val = val.strip()
+            if not val.startswith(("\"", "'")):
+                # YAML: " #" begins a comment on a plain scalar. Without this the
+                # template documented in this very skill — `outcome: admitted
+                # # or: rejected` — parsed as the literal 'admitted # or: rejected'
+                # on any machine without pyyaml.
+                val = re.split(r"\s+#", val, 1)[0].strip()
+            fm[key.strip()] = val.strip("\"'")
     return fm
 
 
@@ -576,7 +584,11 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     issues: list[str] = []
     md = skill_dir / "SKILL.md"
     if md.is_file():
-        body = _strip_fences(_read(md) or "")
+        raw_md = _read(md)
+        if raw_md is None:
+            issues.append("SKILL.md is unreadable — references cannot be verified")
+            raw_md = ""
+        body = _strip_fences(raw_md)
         for ln in body.splitlines():
             planned = bool(_PLANNED_RE.search(ln))
             for m in _REF_RE.finditer(ln):
@@ -611,7 +623,12 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     tdir = skill_dir / "templates"
     if tdir.is_dir():
         for y in sorted([*tdir.rglob("*.yaml"), *tdir.rglob("*.yml")]):
-            for ln in (_read(y) or "").splitlines():
+            raw_y = _read(y)
+            if raw_y is None:
+                issues.append(f"{y.relative_to(skill_dir)} is unreadable — "
+                              "references cannot be verified")
+                raw_y = ""
+            for ln in raw_y.splitlines():
                 planned = bool(_PLANNED_RE.search(ln))
                 for m in _REF_RE.finditer(ln):  # all 4 subdir prefixes, not just scripts/
                     ref = m.group(1)
@@ -725,7 +742,9 @@ class _Unparseable:
 def _load_data(path: Path) -> object | None | _Unparseable:
     """Parse a JSON/YAML artifact. None = absent/empty; _Unparseable = cannot verify."""
     txt = _read(path)
-    if txt is None or not txt.strip():
+    if txt is None:
+        return _Unparseable(path)  # unreadable is UNVERIFIED, not absent
+    if not txt.strip():
         return None
     if path.suffix == ".json":
         try:
@@ -781,15 +800,10 @@ def _dig_all(blobs: list[tuple[Path, dict]], key: str) -> list[tuple[Path, objec
     return [(f, data[key]) for f, data in blobs if key in data]
 
 
-# An outcome LABEL plus the remainder of its line, used to scan raw text for verdicts
-# without matching ordinary prose that merely contains the word "rejected".
-# The label may appear anywhere in a line, not only at its start: a superseding
-# "Correction: on rerun the final Outcome: rejected." carries the verdict mid-line.
-# Requiring a LABEL is what keeps ordinary prose — "Neither candidate was rejected by
-# the judge." — from tripping it, which a bare word scan did.
 _ADMISSION_TEMPLATE = (
-    "---\noutcome: admitted   # or: rejected\n---\n\n"
-    "<what two agents were given, and what the third party judged>\n")
+    "  (at the very top of the file, before anything else)\n"
+    "  ---\n  outcome: admitted   # or: rejected\n  ---\n\n"
+    "  <what two agents were given, and what the third party judged>\n")
 
 
 def _admission_issue(skill_dir: Path) -> str | None:
@@ -819,17 +833,30 @@ def _admission_issue(skill_dir: Path) -> str | None:
     raw = _read(f)
     if raw is None:
         return "evals/admission.md is unreadable"
-    fm = parse_frontmatter(f)
-    outcome = str((fm or {}).get("outcome", "")).strip().lower()
+    fm = parse_frontmatter(f) or {}
+    # Case-insensitive KEY lookup: the value was already compared case-insensitively,
+    # so `Outcome: admitted` failing with "declares no outcome" was an undocumented
+    # asymmetry that reads as the gate not seeing what is plainly there.
+    raw_outcome = next((v for k, v in fm.items() if str(k).strip().lower() == "outcome"), "")
+    outcome = str(raw_outcome).strip().lower()
     if not outcome:
         return ("evals/admission.md declares no `outcome` in frontmatter — add:\n"
                 f"{_ADMISSION_TEMPLATE}")
+    if outcome in ("", "none", "null"):
+        return ("evals/admission.md declares an empty `outcome` — set it to `admitted` "
+                "or `rejected`")
     if outcome not in ("admitted", "rejected"):
         return f"evals/admission.md outcome: {outcome!r} — must be `admitted` or `rejected`"
     if outcome == "rejected":
         return ("evals/admission.md declares `outcome: rejected` — an underspecified "
                 "skill is not admissible")
-    body = re.sub(r"^---\n.*?\n---\n", "", raw, flags=re.DOTALL)
+    m = re.match(r"^\ufeff?---\n(.*?)\n---[^\S\n]*(?:\n|$)", raw, re.DOTALL)
+    block = m.group(1) if m else ""
+    declared = re.findall(r"(?m)^outcome\s*:", block)
+    if len(declared) > 1:
+        return (f"evals/admission.md declares `outcome` {len(declared)} times — "
+                "contradictory declarations; keep exactly one")
+    body = raw[m.end():] if m else ""
     if not body.strip():
         return ("evals/admission.md declares an outcome but records nothing — write "
                 "what two agents were given and what a third party judged")
@@ -968,9 +995,9 @@ def _judge_issues(blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]
         fails.append(f"judge.agreement_floor={floor} declared with no agreement_measured "
                      "{value, method} — an unmeasured floor is an authored number")
     elif not _substantive(measured.get("value")) or not _substantive(measured.get("method")):
-        fails.append(f"judge.agreement_measured is a placeholder "
+        fails.append("judge.agreement_measured is missing a value or a method "
                      f"(value={measured.get('value')!r}, method={measured.get('method')!r}) — "
-                     "a field filled in is not a measurement taken")
+                     "both must be present and non-empty")
     return fails, warns
 
 

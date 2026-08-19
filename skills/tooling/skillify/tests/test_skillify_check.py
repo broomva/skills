@@ -1638,3 +1638,135 @@ def test_unterminated_html_comment_reference_does_not_break_step_1c(tmp_path):
     regex handles — the unterminated-comment strip was never exercised."""
     d = _skill_with_fenced_ref(tmp_path, "untermhtml", "<!--\nscripts/not_shipped.py")
     assert _step(_check(d), "1c")["status"] == "PASS"
+
+
+# ===========================================================================
+# Round 6. Both strata converged here: the refactor is right and the false-reject
+# surface is empirically gone, but the ONE substance floor the deletion left
+# standing did not hold.
+# ===========================================================================
+
+def test_non_canonical_closing_fences_do_not_defeat_the_body_check(tmp_path):
+    """The blocker both strata found. The body strip required a newline AFTER the
+    closing fence while the frontmatter parser did not, so on any non-canonical close
+    the strip silently missed, `body` became the whole file, and the emptiness test
+    passed over 30 bytes containing no record.
+
+    The mutation proof could not see it: M49 mutates the `if not body.strip():`
+    consequent and is killed, because the PATTERN was wrong, not the predicate. Six
+    variants, one test."""
+    for i, raw in enumerate(["---\noutcome: admitted\n---",
+                             "---\noutcome: admitted\n--- \n",
+                             "---\noutcome: admitted\n---\t\n",
+                             "---\noutcome: admitted\n---   ",
+                             "---\noutcome: admitted\n---\n",
+                             "---\noutcome: admitted\n---\n\n   \n"]):
+        d = _j(tmp_path / f"fence{i}")
+        (d / "evals" / "admission.md").write_text(raw, encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"empty record passed for {raw!r}"
+        assert "records nothing" in step2["detail"]
+
+
+def test_a_real_body_after_a_non_canonical_fence_still_passes(tmp_path):
+    """Paired control: tightening the pattern must not eat real records."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n--- \nTwo agents, one brief; a third reader judged "
+        "both answers valid.\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_utf8_bom_does_not_hide_frontmatter(tmp_path):
+    """A BOM'd record was told to add the frontmatter it visibly already had. Strata B
+    measured this as a REGRESSION the refactor introduced — the old prose scanner
+    passed the same file."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_bytes(
+        "﻿---\noutcome: admitted\n---\n\nTwo agents, one brief; both valid.\n"
+        .encode("utf-8"))
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_the_documented_template_parses_without_pyyaml(tmp_path, monkeypatch):
+    """The gate rejected the template it prints itself. `outcome: admitted # or:
+    rejected` is the form in `_ADMISSION_TEMPLATE` and in SKILL.md, and the stdlib
+    fallback never stripped the YAML comment — so an author copying the remediation
+    message was told to add what they already had."""
+    monkeypatch.setattr(mod, "yaml", None)
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted   # or: rejected\n---\n\nTwo agents, one brief.\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_a_hash_inside_a_quoted_value_is_not_a_comment(tmp_path, monkeypatch):
+    """Control on the comment strip: YAML only starts a comment at ` #` on a PLAIN
+    scalar, so a quoted value keeps its hash."""
+    monkeypatch.setattr(mod, "yaml", None)
+    fm = mod.parse_frontmatter_from_text if hasattr(mod, "parse_frontmatter_from_text") else None
+    d = _skill(tmp_path, name="hashy", tier="D")
+    (d / "SKILL.md").write_text(
+        '---\nname: hashy\ndescription: "issue #42 handling"\ntier: D\n---\n# b\n',
+        encoding="utf-8")
+    got = mod.parse_frontmatter(d / "SKILL.md")
+    assert got["description"] == "issue #42 handling"
+
+
+def test_duplicate_contradictory_outcome_declarations_fail(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: rejected\noutcome: admitted\n---\n\nTwo agents, one brief.\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "declares `outcome` 2 times" in step2["detail"]
+
+
+def test_outcome_key_is_matched_case_insensitively(tmp_path):
+    """The value was already compared case-insensitively; the key was not, so
+    `Outcome: admitted` failed with "declares no outcome"."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\nOutcome: Admitted\n---\n\nTwo agents, one brief; both valid.\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_empty_outcome_value_reports_what_the_author_typed(tmp_path):
+    """YAML coercion round-tripped through str(), so an empty `outcome:` was reported
+    back as the token 'none', which the author never wrote."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome:\n---\n\nTwo agents, one brief.\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty `outcome`" in step2["detail"]
+
+
+def test_unreadable_template_reference_fails_step_1c_closed(tmp_path):
+    """Step 1c treated an unreadable artifact as an empty one and PASSed — a
+    fail-OPEN on a file nothing could verify."""
+    d = _skill(tmp_path, name="unreadtpl", tier="D")
+    t = d / "templates"; t.mkdir(exist_ok=True)
+    y = t / "t.yaml"
+    y.write_text("script: scripts/do.py\n", encoding="utf-8")
+    y.chmod(0o000)
+    try:
+        step = _step(_check(d), "1c")
+        assert step["status"] == "FAIL" and "unreadable" in step["detail"]
+    finally:
+        y.chmod(0o644)
+
+
+def test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent(tmp_path):
+    """`_load_data`'s OSError path returned None, so an unreadable judge.json was
+    invisible and the gate said "no judge config" about a file that exists — the very
+    misdiagnosis `_Unparseable` was introduced to prevent."""
+    d = _j(tmp_path)
+    j = d / "evals" / "suite.json"
+    j.chmod(0o000)
+    try:
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL" and "unparseable" in step2["detail"]
+    finally:
+        j.chmod(0o644)
