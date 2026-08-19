@@ -1718,6 +1718,17 @@ def test_every_schema_field_rejects_every_hostile_type():
             expect_ledger_error(_ledger_with(mutate), f"{cat}={name}")
             checked += 1
 
+    # The CONTAINER itself, not only its children. The earlier sweep covered every field
+    # inside the precision block and none of the block, so `"precision_without_source":
+    # null` loaded cleanly and silently disabled the entire rule class.
+    for name, value in HOSTILE_VALUES.items():
+        if name == "dict":
+            continue                                # an object is what it should be
+        def mutate(led, v=value):
+            led["precision_without_source"] = v
+        expect_ledger_error(_ledger_with(mutate), f"precision_without_source={name}")
+        checked += 1
+
     assert checked > 90, f"only {checked} combinations were exercised"
 
 
@@ -1789,3 +1800,35 @@ def test_an_arbitrary_parse_failure_is_bad_input(monkeypatch):
     path.write_text("{}", encoding="utf-8")
     with pytest.raises(fl.LedgerError, match="not valid JSON"):
         fl.load_ledger(path)
+
+
+def test_a_null_precision_block_does_not_silently_disable_a_rule_class():
+    """ABSENT and PRESENT-BUT-NULL are different things, and `.get()` conflated them.
+
+    `{"precision_without_source": null}` loaded cleanly and switched off every
+    unsourced-precision finding — the quietest possible failure for a gate, and the one it
+    least affords. Omitting the key entirely is still legitimate.
+    """
+    import pytest
+
+    def nulled(led):
+        led["precision_without_source"] = None
+
+    with pytest.raises(fl.LedgerError, match="must be an object"):
+        fl.load_ledger(_ledger_with(nulled))
+
+
+def test_omitting_the_precision_block_entirely_is_still_legitimate():
+    """The inverse control: the fix must reject null without making the block mandatory."""
+    def omitted(led):
+        led.pop("precision_without_source")
+
+    ledger = fl.load_ledger(_ledger_with(omitted))
+    assert "precision_without_source" not in ledger
+    assert fl.lint_text("The study included 200 participants.\n", ledger) == []
+    # ...and the claim rules still work without it.
+    assert "polished-aesthetic-dead" in {
+        f["id"] for f in fl.lint_text(
+            "Mosseri said the polished, perfect aesthetic is dead.\n", ledger
+        )
+    }

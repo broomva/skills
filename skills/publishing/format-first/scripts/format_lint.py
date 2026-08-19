@@ -249,8 +249,11 @@ def _validate_schema(data: dict, _fail) -> None:
                 )
             _compile_or_fail(r["pattern"], f"rule {r['id']} has an invalid pattern", _fail)
 
-    pws = data.get("precision_without_source")
-    if pws is not None:
+    # ABSENT and PRESENT-BUT-NULL are different things, and `.get()` conflates them.
+    # `{"precision_without_source": null}` loaded cleanly and silently disabled an entire
+    # rule class — the quietest possible failure for a gate, and the one it least affords.
+    if "precision_without_source" in data:
+        pws = data["precision_without_source"]
         if not isinstance(pws, dict):
             _fail(f"'precision_without_source' must be an object, got {type(pws).__name__}")
         for field in ("pattern", "marker_regex", "message"):

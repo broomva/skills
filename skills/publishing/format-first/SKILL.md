@@ -249,9 +249,17 @@ load-bearing claim traced to a primary source. **That upstream research arc** wa
 cross-reviewed over three rounds scoring 2/10 -> 5/10 -> 6/10, catching two genuine errors
 in it.
 
-**This skill's own review record is separate and worse:** adversarial rounds scoring
-**2/10 -> 5/10 -> 5/10 -> 5/10**, plus a dogfood pass against a real unseen article that
-found two defects all 47 tests had missed. What each round found:
+**This skill's own review record is separate, longer, and worse.** Fifteen cross-model
+adversarial rounds, scoring **2, 5, 5, 5, 6, 6, 5, 5, 6, 6, 5, 6, 5, 6** (one round timed
+out before rendering a verdict, though it produced a real finding), plus a dogfood pass
+against a real unseen article that found two defects all 47 tests had missed. **It never
+reached the 7/10 bar.** The score oscillated in the 5-6 band because every round found
+something — which is itself the most useful thing to know about this artifact: its input
+surface is arbitrary markdown and an arbitrary JSON config, and a surface that size does
+not run out of edges.
+
+The number that moved was not the score but the coverage: 47 tests to 166, with a mutation
+proof for every fix. What each round found:
 
 - **Universal-absence phrasing** — the defect this skill exists to prevent, in this skill.
   Sites throughout asserted absence as a property of the world rather than of a search:
