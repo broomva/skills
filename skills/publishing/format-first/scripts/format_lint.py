@@ -374,24 +374,33 @@ def _line_of(owner: list[int], offset: int) -> int:
     return owner[min(offset, len(owner) - 1)] if owner else 0
 
 
-def lint_text(text: str, ledger: dict, _report_suppressed: bool = True) -> list[dict]:
+def lint_text(text: str, ledger: dict, _honour_regions: bool = True) -> list[dict]:
+    """Lint `text`. `_honour_regions=False` is internal: it lints as if every disable
+    region were absent, which is how the suppression report learns what a region hid.
+
+    It is a FLAG rather than a text substitution on purpose. Rewriting the marker comments
+    to neutralise them changes the document the second pass sees — the replacement text is
+    no longer recognised as lint metadata, so it joins the surrounding paragraph and can
+    change what matches and where.
+    """
     lines = text.splitlines()
     exempt, problems = _fence_and_frontmatter(lines)
     ctrl_off, ctrl_problems, spans = _control_regions(lines, exempt)
-    skip = exempt | ctrl_off
-    findings: list[dict] = list(problems) + list(ctrl_problems)
+    skip = exempt | (ctrl_off if _honour_regions else set())
+    findings: list[dict] = list(problems) + list(ctrl_problems) if _honour_regions else []
 
     # What did each disable region actually hide? Re-lint with the regions inactive and
     # diff. This replaces a coverage-ratio heuristic that six review rounds defeated with
     # six different kinds of padding: the reader is told what was suppressed rather than
     # given a verdict about how much of the file it was.
-    if _report_suppressed and spans:
-        uncensored = lint_text(text.replace("<!-- format-lint: disable -->", "<!-- x -->")
-                                   .replace("<!-- format-lint: enable -->", "<!-- x -->"),
-                               ledger, _report_suppressed=False)
+    if _honour_regions and spans:
+        uncensored = lint_text(text, ledger, _honour_regions=False)
         for lo, hi in spans:
-            hidden = [f for f in uncensored if lo + 1 <= f["line"] <= hi + 1
-                      and f["category"] != "lint_control"]
+            # No lint_control filter here: the inner pass returns claim findings only
+            # (see the `if _honour_regions else []` above), so filtering them would be
+            # dead code — and a mutant that removed it could not be killed, which is how
+            # it was found.
+            hidden = [f for f in uncensored if lo + 1 <= f["line"] <= hi + 1]
             if hidden:
                 ids_ = ", ".join(sorted({f["id"] for f in hidden}))
                 findings.append(

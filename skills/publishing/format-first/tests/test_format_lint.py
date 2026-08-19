@@ -1020,10 +1020,52 @@ def test_two_regions_are_reported_separately():
 
 
 def test_suppression_reporting_does_not_recurse_forever():
-    """The reporter re-lints the document; a missing guard would loop."""
+    """The reporter re-lints the document once; a missing guard would loop."""
     text = "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n<!-- format-lint: enable -->\n"
-    assert fl.lint_text(text, LEDGER, _report_suppressed=False) == []
-    assert ids(text) == {"suppressed-findings"}
+    inner = fl.lint_text(text, LEDGER, _honour_regions=False)
+    assert {f["id"] for f in inner} == {"algorithm-punishes"}, "the inner pass sees the claim"
+    assert ids(text) == {"suppressed-findings"}, "the outer pass reports it as hidden"
+
+
+def test_the_inner_pass_uses_a_flag_not_a_text_rewrite():
+    """Neutralising markers by rewriting them changes the document the second pass sees.
+
+    The replacement text is no longer recognised as lint metadata, so it joins the
+    surrounding paragraph and can move what matches and where. These shapes all put a
+    claim immediately against a marker, which is where a rewrite would show.
+    """
+    adjacent = (
+        "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    wrapped = (
+        "<!-- format-lint: disable -->\nThe algorithm\npunishes formats.\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    assert find(adjacent, "suppressed-findings")[0]["message"].endswith(
+        "lines 2-2: algorithm-punishes."
+    )
+    assert find(wrapped, "suppressed-findings")[0]["message"].endswith(
+        "lines 2-3: algorithm-punishes."
+    )
+
+
+def test_an_allowed_claim_inside_a_region_is_not_reported_as_hidden():
+    """It was suppressed by its own named marker, not concealed by the region."""
+    text = (
+        "<!-- format-lint: disable -->\n"
+        "The algorithm punishes formats. <!-- format-lint: allow=algorithm-punishes -->\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    assert ids(text) == set()
+
+
+def test_a_disable_directive_inside_a_fence_reports_nothing():
+    text = (
+        "```\n<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\n```\n"
+    )
+    assert ids(text) == set()
 
 
 def test_structural_control_errors_survived_the_removal():
@@ -1075,3 +1117,46 @@ def test_the_cli_exits_two_on_a_bad_ledger_not_one(tmp_path):
     assert out.returncode == 2, out
     assert "not valid JSON" in out.stderr
     assert "Traceback" not in out.stderr
+
+
+def test_a_claim_outside_the_region_is_reported_normally_not_as_hidden():
+    """The span bound is exact. Widening it would attribute live findings to the region.
+
+    Mutation testing found `hi + 1` could become `hi + 5` with no test noticing — the
+    report would then claim to have hidden findings that are plainly visible, which is
+    worse than silence because it is a false account of the document.
+    """
+    text = (
+        "<!-- format-lint: disable -->\nThe algorithm punishes formats.\n"
+        "<!-- format-lint: enable -->\nUse a 3-second hook.\n"
+    )
+    got = ids(text)
+    assert got == {"suppressed-findings", "three-second-hook"}
+    msg = find(text, "suppressed-findings")[0]["message"]
+    assert "1 finding" in msg and "algorithm-punishes" in msg
+    assert "three-second-hook" not in msg, "a live finding must not be reported as hidden"
+
+
+def test_the_inner_pass_returns_claim_findings_only():
+    """The invariant that keeps the reporter from describing its own diagnostics as
+    "hidden content". A filter for that once existed and was DEAD code — no mutant that
+    removed it could be killed, because the inner pass never produces lint_control
+    findings in the first place. The filter is gone; the reason it was unnecessary is
+    pinned here instead.
+    """
+    text = (
+        "<!-- format-lint: disable -->\nalpha\n<!-- format-lint: disable -->\nbeta\n"
+        "<!-- format-lint: enable -->\n```\n"
+    )
+    inner = fl.lint_text(text, LEDGER, _honour_regions=False)
+    assert not [f for f in inner if f["category"] == "lint_control"], inner
+
+
+def test_a_structural_error_inside_a_region_is_not_reported_as_hidden_content():
+    text = (
+        "<!-- format-lint: disable -->\nalpha\n<!-- format-lint: disable -->\nbeta\n"
+        "<!-- format-lint: enable -->\n"
+    )
+    got = ids(text)
+    assert "nested-disable" in got
+    assert "suppressed-findings" not in got, "no claim was hidden — only a directive error"
