@@ -54,8 +54,14 @@ jobs:
               for r in d[cat]:
                   re.compile(r["pattern"]); n += 1
           re.compile(d["precision_without_source"]["pattern"])
-          re.compile(d["precision_without_source"]["marker_regex"])
-          print(f"{n + 2} patterns compile")
+          # The citation detector is code, not a ledger field — compile it from the module
+          # so this step keeps checking something real if the ledger schema changes again.
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("fl", "scripts/format_lint.py")
+          fl = importlib.util.module_from_spec(spec); spec.loader.exec_module(fl)
+          assert fl.CITATION_RX.search("https://example.com/page")
+          assert not fl.CITATION_RX.search("https://")
+          print(f"{n + 1} ledger patterns compile; CITATION_RX discriminates")
           PY
       - name: Dogfood — the skill's own docs must pass its own gate
         run: python scripts/format_lint.py SKILL.md references/evidence-map.md --strict
