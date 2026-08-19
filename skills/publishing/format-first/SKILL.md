@@ -147,9 +147,19 @@ a gate you cannot reason about:
 | an unclosed fence | everything after it | which is why it is an ERROR |
 
 **A disable region cannot hide anything quietly.** Whatever it suppresses is reported as
-`suppressed-findings`, naming the rules and the line range — *"This region hides 2
-finding(s) on lines 3-4: algorithm-punishes, three-second-hook."* It is the one guard here
-with no threshold in it.
+`suppressed-findings`, naming the rules and the line range:
+
+```
+WARN  L2  (suppressed-findings · lint_control)  «format-lint: disable»
+      This region hides 2 finding(s) on lines 3-4: algorithm-punishes, three-second-hook.
+```
+
+It is the one guard here with no threshold in it.
+
+That sample sits in a fenced block for a reason, and the reason is worth a sentence: a rule
+id such as `algorithm-punishes` contains the very string its own rule matches, so quoting <!-- format-lint: allow=algorithm-punishes -->
+the linter's output in prose makes the document flag itself. Fence the output, or mark the
+line — the second option is what the line you are reading does.
 
 Its severity is **inherited from the worst thing it hides**. Suppressing warnings is
 ordinary editorial practice and stays a WARN; suppressing an ERROR is itself an ERROR, so
