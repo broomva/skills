@@ -1545,3 +1545,89 @@ def test_prose_that_broke_every_earlier_scanner_now_passes(tmp_path):
         _admission(d, "---\noutcome: admitted\n---\n\n" + body)
         step2 = _step(_check(d), 2)
         assert step2["status"] == "PASS", f"false-rejected {body!r}: {step2['detail']}"
+
+
+# ===========================================================================
+# Coverage the simplification orphaned. Deleting the prose heuristics also deleted
+# the tests that happened to exercise these still-live checks — five mutants went
+# SURVIVED and one MISSED, which is how the gap surfaced.
+# ===========================================================================
+
+def test_gitkeep_and_readme_are_not_held_out_cases(tmp_path):
+    """`touch evals/held-out/.gitkeep` must not satisfy a held-out case set. Still
+    live after the simplification; its former test went with the placeholder logic."""
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / ".gitkeep").write_text("", encoding="utf-8")
+    (ho / "README.md").write_text("cases go here\n", encoding="utf-8")
+    (ho / "notes.log").write_text("scratch output\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_an_empty_held_out_case_file_is_not_a_case(tmp_path):
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("   \n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_held_out_marker_object_without_an_input_is_not_a_case(tmp_path):
+    """`cases: [{"held_out": true}]` is a marker, not a case."""
+    d = _j(tmp_path, held_out=0)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["cases"] = [{"held_out": True}]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_agreement_measured_is_still_required(tmp_path):
+    """The clamp that survives the simplification: a floor must carry a measurement
+    record. Its fields are checked structurally, but they must be there."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    del blob["judge"]["agreement_measured"]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "agreement_measured" in step2["detail"]
+
+
+# `_strip_fences` is no longer used by the admission check, but step 1c still relies
+# on it: a `scripts/…` path inside a fenced EXAMPLE is not a contract claim.
+
+def _skill_with_fenced_ref(tmp_path, name, fence):
+    d = _skill(tmp_path, name=name, tier="D")
+    body = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(body + f"\nExample usage:\n\n{fence}\n", encoding="utf-8")
+    return d
+
+
+def test_fenced_example_reference_does_not_break_step_1c(tmp_path):
+    for i, fence in enumerate(("```\npython3 scripts/not_shipped.py --flag\n```",
+                               "~~~\npython3 scripts/not_shipped.py --flag\n~~~")):
+        d = _skill_with_fenced_ref(tmp_path, f"fenced{i}", fence)
+        step = _step(_check(d), "1c")
+        assert step["status"] == "PASS", f"fence form {i} not stripped: {step['detail']}"
+
+
+def test_unterminated_fence_still_hides_a_reference(tmp_path):
+    d = _skill_with_fenced_ref(tmp_path, "unterm", "```\npython3 scripts/not_shipped.py")
+    assert _step(_check(d), "1c")["status"] == "PASS"
+
+
+def test_html_comment_reference_does_not_break_step_1c(tmp_path):
+    d = _skill_with_fenced_ref(tmp_path, "htmlc", "<!--\nscripts/not_shipped.py\n-->")
+    assert _step(_check(d), "1c")["status"] == "PASS"
+
+
+def test_a_real_missing_reference_still_fails_step_1c(tmp_path):
+    """Paired control: stripping must not swallow live claims."""
+    d = _skill(tmp_path, name="liveref", tier="D")
+    body = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(body + "\nRun scripts/not_shipped.py to do the thing.\n",
+                                encoding="utf-8")
+    step = _step(_check(d), "1c")
+    assert step["status"] == "FAIL" and step["required"]

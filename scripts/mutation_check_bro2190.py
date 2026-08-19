@@ -31,7 +31,7 @@ MUTANTS = [
     ("M2 agreement_measured requirement removed",
      'elif not _substantive(measured.get("value")) or not _substantive(measured.get("method")):',
      'elif False:',
-     "test_placeholder_measurement_is_not_a_measurement"),
+     "test_agreement_measured_is_still_required"),
     # M3 (admission outcome polarity) was retired in round 3: the hits-based branch it
     # mutated no longer exists, and the property it covered — a rejection blocks — is
     # now carried by M32 against the raw-text scan that replaced it.
@@ -80,7 +80,7 @@ MUTANTS = [
     ("M16 held-out counts every file again (.gitkeep, README)",
      '            if not f.is_file() or f.name.startswith(".") or f.suffix not in _CASE_EXTS:',
      '            if not f.is_file():',
-     "test_non_case_files_with_content_are_not_held_out_cases"),
+     "test_gitkeep_and_readme_are_not_held_out_cases"),
     ("M17 empty script accepted as a deterministic core",
      '    empty_code = [c for c in code if not _has_executable_content(skill_dir / c)]',
      '    empty_code = []',
@@ -114,7 +114,7 @@ MUTANTS = [
     ("M24 only ``` fences stripped from the admission record",
      '    md = re.sub(r"(?ms)^[ \\t]*(?:```|~~~).*\\Z", "", md)',
      '    pass',
-     "test_tilde_and_unterminated_fences_hide_an_example_outcome"),
+     "test_unterminated_fence_still_hides_a_reference"),
     ("M26 invalid UTF-8 crashes the gate again",
      '        text = md_path.read_text(encoding="utf-8", errors="replace")',
      '        text = md_path.read_text(encoding="utf-8")',
@@ -132,7 +132,7 @@ MUTANTS = [
     ("M29 held-out FILE path drops the placeholder guard again (the one-site fix)",
      '            txt = _read(f)\n            if _substantive(txt):',
      '            txt = _read(f)\n            if txt and txt.strip():',
-     "test_placeholder_held_out_case_file_is_not_a_case"),
+     "test_an_empty_held_out_case_file_is_not_a_case"),
     ("M30 extensionless python script counted but not syntax-checked",
      '    if interp in _PY_INTERPRETERS:',
      '    if False:',
@@ -164,7 +164,7 @@ MUTANTS = [
     ("M36 unterminated HTML comment not stripped",
      '    md = re.sub(r"(?s)<!--.*\\Z", "", md)',
      '    pass',
-     "test_unterminated_html_comment_hides_an_example_outcome"),
+     "test_html_comment_reference_does_not_break_step_1c"),
 
     # --- final verify round --------------------------------------------------
 
