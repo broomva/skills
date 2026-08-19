@@ -125,6 +125,12 @@ def load_ledger(path: Path = LEDGER) -> dict:
     # EVERY way a ledger can be unusable becomes LedgerError, including malformed JSON and
     # unreadable files. Leaving JSONDecodeError to escape meant `--ledger` on a broken file
     # printed a traceback and exited 1 — the code that means "findings were present".
+    #
+    # OSError is deliberately in that set even though some of its members (a failing disk)
+    # are operational: whatever the cause, the ledger you named cannot be read, and the
+    # message carries the underlying error. MemoryError is deliberately NOT — it is not an
+    # OSError, so it propagates, because running out of memory says nothing about whether
+    # this ledger is valid. Same distinction as at the compile site.
     try:
         with path.open(encoding="utf-8") as fh:
             data = json.load(fh)

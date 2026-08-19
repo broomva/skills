@@ -1383,3 +1383,29 @@ def test_every_base_exception_still_propagates_from_the_compile_site():
     for exc in propagate_on_their_own:
         assert not issubclass(exc, Exception), exc.__name__
     assert issubclass(MemoryError, Exception), "this is why it needs an explicit re-raise"
+
+
+def test_the_read_path_classifies_failures_the_same_way_the_compile_path_does():
+    """"Cannot read the ledger you named" is bad input. "Out of memory" is not.
+
+    OSError is treated as bad input even where its cause is operational, because whatever
+    happened, the named ledger is unusable and the message carries the underlying error.
+    MemoryError is not an OSError and propagates, since running out of memory says nothing
+    about whether the ledger is valid.
+    """
+    import pytest
+
+    def loading_raises(exc):
+        class P(type(Path())):
+            def open(self, *_a, **_k):
+                raise exc
+
+        return P("ledger.json")
+
+    for exc in (FileNotFoundError("nope"), PermissionError("denied"),
+                IsADirectoryError("dir"), OSError("I/O error")):
+        with pytest.raises(fl.LedgerError):
+            fl.load_ledger(loading_raises(exc))
+
+    with pytest.raises(MemoryError):
+        fl.load_ledger(loading_raises(MemoryError("oom")))
