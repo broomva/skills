@@ -200,8 +200,8 @@ MUTANTS = [
     # branch was deleted and replaced by an explicit early return; a mutant that
     # can never die is dishonest bookkeeping, not coverage.
     ("M52 a UTF-8 BOM hides frontmatter again",
-     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
-     '_FRONTMATTER_RE = re.compile(r"^---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t\\r]*\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^---[ \\t\\r]*\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
      "test_bom_reaches_the_second_frontmatter_parser_too"),
     ("M53 the stdlib fallback stops stripping YAML comments",
      '                val = re.split(r"\\s+#", val, 1)[0].strip()',
@@ -225,7 +225,7 @@ MUTANTS = [
      "test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent"),
 
     # --- round 7: one matcher, and the sibling sites -------------------------
-    ("M59 empty-outcome message unreachable on the stdlib path again",
+    ("M59 empty-outcome message unreachable — the author is told nothing was typed",
      '    if present and outcome in ("", "none", "null"):',
      '    if False:',
      "test_empty_outcome_value_reports_what_the_author_typed"),
@@ -251,12 +251,30 @@ MUTANTS = [
      '    if False:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
      "test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse"),
     ("M67 structured values stop counting as values",
-     '    if isinstance(x, (dict, list, tuple, set)):\n        return bool(x)  # a structured value is a value',
-     '    if isinstance(x, (dict, list, tuple, set)):\n        return False',
+     '        return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))',
+     '        return False',
      "test_structured_values_are_substantive"),
-    ("M68 opening fence stops tolerating trailing whitespace",
+
+    # --- round 11: the false ACCEPT that the round-10 fix created -------------
+    # M69 is M67's INVERSE, and the reason both must exist. Round 10 fixed a false
+    # REJECT by making containers truthy; that shipped a false ACCEPT nobody caught
+    # because every mutant pointed the same way. Mutate a predicate in BOTH
+    # directions or it only proves half of it.
+    ("M69 hollow containers count as content again (the round-10 regression)",
+     '        return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))',
+     '        return bool(x)',
+     "test_a_hollow_tier_j_core_does_not_pass"),
+    ("M70 fence padding admits control characters again",
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t\\r]*\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
-     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
+     "test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters"),
+    ("M71 the cycle guard reports present instead of absent",
+     '            return False  # YAML anchors and JSON round-trips can build cycles',
+     '            return True  # YAML anchors and JSON round-trips can build cycles',
+     "test_substantive_terminates_on_a_cyclic_structure"),
+    ("M68 opening fence stops tolerating trailing whitespace",
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t\\r]*\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
+     '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
      "test_trailing_whitespace_on_the_opening_fence_is_accepted"),
 ]
 

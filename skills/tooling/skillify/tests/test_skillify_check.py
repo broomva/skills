@@ -1996,3 +1996,78 @@ def test_trailing_whitespace_on_the_opening_fence_is_accepted(tmp_path):
         "---  \noutcome: admitted\n---\n\nTwo agents, one brief; both valid.\n",
         encoding="utf-8")
     assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_a_hollow_tier_j_core_does_not_pass(tmp_path):
+    """P20 round 11, Strata A — the FALSE ACCEPT the previous round's own fix created.
+
+    Round 10 fixed a false REJECT (`method: {metric: …, judges: 3}` read as "missing a
+    method") by making `_substantive` return `bool(x)` for containers. That was too
+    shallow by exactly one level, and it widened SEVEN call sites to fix two: every
+    hollow-but-truthy structure then counted as content. A tier-J skill declaring no
+    measurement value, no method, no rubric content and no case content passed as
+    "rubric + 1 held-out case(s), cross-model judge with a measured floor".
+
+    This is the whole hollow core in one fixture — the reproduction from the report,
+    kept as a test so the class cannot come back one field at a time."""
+    d = _j(tmp_path, held_out=0)
+    (d / "evals" / "rubric.md").unlink()
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": {"garbage": None}, "method": {"metric": ""}}
+    blob["cases"] = [{"held_out": True, "input": {"messages": []}}]
+    blob["rubric"] = {"criterion": {"label": None}}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_substantive_control_table_both_directions():
+    """The standing pattern from this arc: never fix the one sentence in the report.
+
+    Every row was run against the shipped predicate. The must-pass column is the
+    round-10 false-reject fix, which must survive; the must-fail column is the
+    round-11 false-accept fix, which must bite. A future edit that satisfies one
+    column by breaking the other fails here rather than in review."""
+    must_pass = [
+        {"metric": "Krippendorff alpha", "judges": 3, "cases": 40},   # real method
+        {"messages": [{"role": "user", "content": "Summarize."}]},    # real case input
+        {"a": {"b": {"c": "x"}}},                                     # one real leaf, deep
+        {"k": [None, "", 0]},                                         # 0 is a value
+        ["a", "b"], 0, 0.5, "text",
+    ]
+    must_fail = [
+        {"garbage": None},                 # value with nothing in it
+        {"metric": ""},                    # method with nothing in it
+        {"messages": []},                  # case input with nothing in it
+        {"criterion": {"label": None}},    # rubric with nothing in it
+        {"a": {"b": [{}, [], ""]}},        # hollow all the way down
+        {}, [], None, True, False, "   ",
+    ]
+    for v in must_pass:
+        assert mod._substantive(v) is True, f"must pass: {v!r}"
+    for v in must_fail:
+        assert mod._substantive(v) is False, f"must fail: {v!r}"
+
+
+def test_substantive_terminates_on_a_cyclic_structure():
+    """Recursing to a leaf means a cycle must not become a RecursionError. YAML anchors
+    build these, and the gate must fail closed on a cycle rather than crash — but a
+    cycle that also holds a real leaf is still substantive."""
+    cyclic = {}
+    cyclic["self"] = cyclic
+    assert mod._substantive(cyclic) is False
+    cyclic_with_leaf = ["x"]
+    cyclic_with_leaf.append(cyclic_with_leaf)
+    assert mod._substantive(cyclic_with_leaf) is True
+
+
+def test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters(tmp_path):
+    """P20 round 11, Strata A (minor). `[^\\S\\n]` also admits form-feed, vertical-tab
+    and NBSP. Those matched the fence and then died inside PyYAML with a ReaderError,
+    so the gate blamed the YAML for a fence it should never have accepted. Space, tab
+    and CR must keep matching — CR because CRLF files are ordinary."""
+    for ok in (" ", "\t", "\r", "  ", ""):
+        raw = f"---{ok}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"
+        assert mod._frontmatter_match(raw), f"must match padding {ok!r}"
+    for bad in ("\f", "\v", " "):
+        raw = f"---{bad}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"
+        assert not mod._frontmatter_match(raw), f"must not match padding {bad!r}"

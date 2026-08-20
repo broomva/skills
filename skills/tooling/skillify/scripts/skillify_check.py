@@ -25,7 +25,9 @@ genuinely latent), 3 (real unit tests, when code present). Workspace-aware steps
 flag is supplied. `--strict` promotes 6/7 to required *and* fails if their path
 flag is missing (so strict can't pass while skipping the things strict is for).
 
-Pure-stdlib + optional pyyaml/node; deterministic; zero network.
+Pure-stdlib + optional pyyaml/node; deterministic; zero network. Tier J is the
+one exception: its admission record is a YAML contract, so it fails closed
+without pyyaml rather than gating what it cannot parse.
 """
 from __future__ import annotations
 
@@ -52,7 +54,11 @@ PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
 # --- frontmatter -------------------------------------------------------------
 
-_FRONTMATTER_RE = re.compile(r"^\ufeff?---[^\S\n]*\n(.*?)\n---[^\S\n]*(?:\n|$)", re.DOTALL)
+# Fence padding is spaces, tabs and a CR (for CRLF files) — NOT `[^\S\n]`,
+# which also admits form-feed, vertical-tab and NBSP. Those matched here and
+# then failed inside PyYAML with a ReaderError, so the gate blamed the YAML for
+# a fence the matcher should never have accepted.
+_FRONTMATTER_RE = re.compile(r"^\ufeff?---[ \t\r]*\n(.*?)\n---[ \t\r]*(?:\n|$)", re.DOTALL)
 
 
 def _count_top_level_key(block: str, key: str) -> int | None:
@@ -740,8 +746,9 @@ def _is_num(x: object) -> bool:
             and math.isfinite(x))
 
 
-def _substantive(x: object) -> bool:
-    """Structural presence only: a finite number, or a non-empty string.
+def _substantive(x: object, _seen: frozenset[int] = frozenset()) -> bool:
+    """Structural presence only: a finite number, a non-empty string, or a container
+    that holds at least one of those somewhere inside it.
 
     This used to try to detect placeholder CONTENT — "TBD", "vibes", "n/a" — and it was
     rebuilt five times. Every rebuild produced a fresh crop of FALSE REJECTS on honest
@@ -761,7 +768,21 @@ def _substantive(x: object) -> bool:
     if isinstance(x, (int, float)):
         return math.isfinite(x)
     if isinstance(x, (dict, list, tuple, set)):
-        return bool(x)  # a structured value is a value
+        # A container counts as present iff something is actually IN it. `bool(x)`
+        # was the first answer to "structured values are values" and it was too
+        # shallow by exactly one level: {"value": None}, {"metric": ""},
+        # {"messages": []} and {"criterion": {"label": None}} are all truthy and all
+        # hollow, so a tier-J skill declaring no measurement, no method, no rubric
+        # content and no case content passed as "rubric + 1 held-out case(s),
+        # cross-model judge with a measured floor". Recurse to a leaf instead.
+        #
+        # This stays a STRUCTURAL question — is there a value here at all — and does
+        # not reopen the undecidable one above. A leaf that is present but means
+        # nothing still passes, and still belongs to the review layer.
+        if id(x) in _seen:
+            return False  # YAML anchors and JSON round-trips can build cycles
+        _seen = _seen | {id(x)}
+        return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))
     return isinstance(x, str) and bool(x.strip())
 
 
