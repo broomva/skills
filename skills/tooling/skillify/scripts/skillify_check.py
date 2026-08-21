@@ -513,21 +513,41 @@ def _code_files(skill_dir: Path) -> list[str]:
     return sorted(found)
 
 
-def _test_files(skill_dir: Path, kind: str = "") -> list[str]:
-    """Test files, EXCLUDING anything under scripts/.
+def _core_files(skill_dir: Path) -> list[str]:
+    """Shipped code that is NOT a test — what tier D is inferred from.
 
-    The exclusion is the other half of `_is_code_file`'s location rule, and without it
-    the two functions overlap: a lone `scripts/test_only.py` counted as the shipped core
-    *and* as the test proving it, so step 2 inferred tier D and step 3 reported "1 real
-    test file" about the same bytes. A skill with no core passed both required steps.
-    A file cannot be both the artifact and its own proof.
+    `_code_files` is deliberately wider: everything under scripts/ is syntax-checked,
+    test-named or not, because a broken `scripts/test_helper.py` that no checker reads
+    is how a required step passed on a file that does not parse.
+
+    The core is narrower, and the difference is the whole point. A lone
+    `scripts/test_only.py` used to be BOTH: step 2 inferred tier D from it and step 3
+    reported "1 real test file" about the same bytes, so a skill shipping nothing but a
+    test passed both required steps — the case
+    `test_tier_d_declared_without_code_fails` calls the one thing the gate must not
+    permit. A file cannot be the artifact and the proof of the artifact at once.
     """
-    scripts_dir = skill_dir / "scripts"
+    return [c for c in _code_files(skill_dir) if not _is_test_file(Path(c).name)]
+
+
+def _test_files(skill_dir: Path, kind: str = "") -> list[str]:
+    """Test files, wherever they live — INCLUDING under scripts/.
+
+    A first attempt at the overlap problem excluded `scripts/` here. That was a false
+    reject, and the roster said so: three real skills keep their only tests beside the
+    code they test (`kg/scripts/test_kg.py`, `what/scripts/test_what_concepts.py`,
+    `finance-substrate/scripts/test_runtime_guard.py`), and two of them lost a required
+    step over nothing but file placement. Refusing a real test for its location is the
+    mirror image of the bug it was meant to fix.
+
+    The overlap is a narrower property and it belongs where the CORE is decided, not
+    here: see `_core_files`. A test-named script is a test AND is syntax-checked as
+    shipped code; what it cannot be is the thing it is testing.
+    """
     found = {
         str(f.relative_to(skill_dir))
         for f in _iter_files(skill_dir, ("tests", "scripts", ""))
-        if _is_test_file(f.name) and not f.is_relative_to(scripts_dir)
-        and (not kind or kind in f.name.lower())
+        if _is_test_file(f.name) and (not kind or kind in f.name.lower())
     }
     return sorted(found)
 
@@ -1635,7 +1655,7 @@ def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
             "a positive-only suite cannot see over-triggering")
 
 
-def _tier_of(skill_dir: Path, fm: dict, code: list[str]) -> tuple[str | None, bool, str]:
+def _tier_of(skill_dir: Path, fm: dict, core: list[str]) -> tuple[str | None, bool, str]:
     """Return (tier, declared, why). Declared wins; otherwise infer.
 
     Inference exists so a 94-skill roster does not break the day tiers ship — NOT to
@@ -1658,7 +1678,7 @@ def _tier_of(skill_dir: Path, fm: dict, code: list[str]) -> tuple[str | None, bo
         return raw, True, "declared"
     if raw:
         return None, False, f"tier: {raw!r} is not one of D/J/L"
-    if code:
+    if core:
         return TIER_D, False, "inferred: ships scripts/ code"
     return None, False, "no tier: declared and no scripts/ code (J and L must be declared)"
 
@@ -1671,7 +1691,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     latent_only = str(_fm(fm, "latent_only", "")).lower() in ("true", "yes", "1")
     code = _code_files(skill_dir)
     blobs, unparseable_evals = _eval_blobs(skill_dir)
-    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, code)
+    core = _core_files(skill_dir)
+    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, core)
     results: list[dict] = []
 
     def add(step, label, status, detail, required=False):
@@ -1756,8 +1777,10 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
             f"{tag}: empty script(s) {', '.join(empty_code[:3])} — an empty file is not a core",
             required=True)
     elif tier == TIER_D:
-        if not code:
-            add(2, "Tier + core", FAIL, "tier D declared but no scripts/ code", required=True)
+        if not core:
+            add(2, "Tier + core", FAIL,
+                "tier D declared but no scripts/ code that is not itself a test"
+                if code else "tier D declared but no scripts/ code", required=True)
         else:
             checked = [c for c in code if _syntax_checkable(skill_dir / c)]
             claim = (f"{len(code)} script(s), syntax ok" if len(checked) == len(code)
@@ -1964,7 +1987,7 @@ def survey(root: Path, **kw) -> dict:
         try:
             fm = parse_frontmatter(md) or {}
             code = _code_files(d)
-            tier, declared, why = _tier_of(d, fm, code)
+            tier, declared, why = _tier_of(d, fm, _core_files(d))
             res = run_checklist(d, **kw)
             failed = [f"{r['step']} {r['label']}" for r in res
                       if r["required"] and r["status"] != PASS]

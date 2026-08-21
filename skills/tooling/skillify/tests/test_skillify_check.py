@@ -2972,7 +2972,7 @@ def test_the_skill_json_walk_cap_is_neither_absent_nor_crippling(tmp_path):
     assert _step(_check(ok), "1c")["status"] == "PASS"
 
 
-def test_a_scripts_file_is_never_its_own_test(tmp_path):
+def test_a_test_cannot_be_the_core_it_tests(tmp_path):
     """P20 round 19 — BLOCKER, and the hunk that caused it shipped with no coverage at
     all: four mutants reverting or inverting it all survived 208 green tests.
 
@@ -2990,15 +2990,33 @@ def test_a_scripts_file_is_never_its_own_test(tmp_path):
     (d / "scripts" / "test_only.py").write_text("def test_x():\n    assert True\n",
                                                 encoding="utf-8")
     res = _check(d)
-    # Step 2 PASSES, and that is correct: the file is a real script with valid syntax,
-    # so a deterministic core does ship. What must fail is step 3 — nothing tests it.
-    # Before the fix BOTH passed, the same bytes counted twice, and the skill came out
-    # rc 0 with no proof of anything.
-    assert _step(res, 2)["status"] == "PASS", _step(res, 2)["detail"]
-    assert _step(res, 3)["status"] == "FAIL", _step(res, 3)["detail"]
-    assert mod._test_files(d) == [], mod._test_files(d)
+    # The split that makes this decidable: the file IS shipped code (so it is
+    # syntax-checked) and IS a test (so it is not refused for its location) — but it is
+    # not a CORE, because the core is code that is not itself a test. Step 2 fails for
+    # want of something to test; step 3 passes, because a test does exist.
     assert mod._code_files(d) == ["scripts/test_only.py"], mod._code_files(d)
-    assert [r["step"] for r in res if r["required"] and r["status"] == "FAIL"] == [3]
+    assert mod._core_files(d) == [], mod._core_files(d)
+    assert mod._test_files(d) == ["scripts/test_only.py"], mod._test_files(d)
+    assert _step(res, 2)["status"] == "FAIL", _step(res, 2)["detail"]
+    assert _step(res, 3)["status"] == "PASS", _step(res, 3)["detail"]
+    assert [r["step"] for r in res if r["required"] and r["status"] == "FAIL"] == [2]
+
+    # THE CONTROL THAT COST A ROSTER REGRESSION. A first attempt excluded scripts/ from
+    # `_test_files` outright, which false-rejected three real skills that keep their
+    # only tests beside the code they test — `kg`, `what`, `finance-substrate` — and
+    # dropped the roster 28 -> 26. A test beside its subject is ordinary; a test that IS
+    # its subject is not.
+    beside = tmp_path / "beside"
+    (beside / "scripts").mkdir(parents=True)
+    (beside / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: A demo skill.\n---\n# body\n", encoding="utf-8")
+    (beside / "scripts" / "core.py").write_text("def go():\n    return 1\n", encoding="utf-8")
+    (beside / "scripts" / "test_core.py").write_text("def test_x():\n    assert True\n",
+                                                     encoding="utf-8")
+    assert mod._core_files(beside) == ["scripts/core.py"], mod._core_files(beside)
+    res2 = _check(beside)
+    assert _step(res2, 2)["status"] == "PASS", _step(res2, 2)["detail"]
+    assert _step(res2, 3)["status"] == "PASS", _step(res2, 3)["detail"]
 
     # control: the same test file under tests/, with a real core, passes both steps
     ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
