@@ -2281,3 +2281,35 @@ def test_absurdly_nested_values_fail_closed_instead_of_raising(tmp_path):
     (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
     res = _check(d)
     assert _step(res, 2)["status"] == "FAIL"
+
+
+def test_the_nesting_cap_counts_depth_not_containers_visited():
+    """The cap is `len(_seen) >= _MAX_NESTING`, and `_seen` is a frozenset rebuilt per
+    call — every sibling receives the SAME parent set, so it measures depth along one
+    path. Had it been a mutable accumulator shared across siblings it would count
+    containers VISITED, and an ordinary wide suite would false-reject.
+
+    That distinction is invisible in the source and would survive any test that only
+    nests deeply, so it is pinned here: 501 siblings at depth 3 must pass, and a
+    200-case held-out suite of realistic shape must pass."""
+    wide = {"cases": [{"input": {"text": ""}} for _ in range(500)]
+                     + [{"input": {"text": "real"}}]}
+    assert mod._substantive(wide) is True
+    assert mod._substantive({"cases": [{"input": {"text": ""}} for _ in range(500)]}) is False
+
+    realistic = {"judge": {"model": "gpt-5", "agreement_floor": 0.7,
+                           "agreement_measured": {"value": 0.84,
+                                                  "method": {"metric": "alpha", "judges": 3}}},
+                 "cases": [{"held_out": True,
+                            "input": {"messages": [{"role": "user", "content": "Summarize."}]}}
+                           for _ in range(200)]}
+    assert mod._substantive(realistic) is True
+
+    # and the boundary itself, so a silent off-by-one in the cap is visible
+    def nest(n):
+        v = "x"
+        for _ in range(n):
+            v = {"a": v}
+        return v
+    assert mod._substantive(nest(100)) is True
+    assert mod._substantive(nest(101)) is False
