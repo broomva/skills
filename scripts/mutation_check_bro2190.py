@@ -125,7 +125,7 @@ MUTANTS = [
 
     # --- round 3 -----------------------------------------------------------
     ("M27 tier L requires booleans again (rejects the real roles/*.eval.yaml shape)",
-     '        if isinstance(v, list) and v:',
+     '        if isinstance(v, list) and _substantive(v):',
      '        if False:',
      "test_tier_l_accepts_the_real_roles_eval_shape"),
     ("M28 one self-contradictory case satisfies both polarities",

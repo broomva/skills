@@ -2875,3 +2875,39 @@ def test_a_test_file_is_recognised_whatever_the_extension_case(tmp_path):
         (d / "tests" / fname).write_text("def test_x():\n    assert True\n", encoding="utf-8")
         verdicts[label] = _step(_check(d), 3)["status"]
     assert verdicts["upper"] == verdicts["lower"] == "PASS", verdicts
+
+
+def test_the_memo_does_not_change_any_answer():
+    """A memo that fixes a hang but shifts a verdict is worse than the hang.
+
+    The risk is specific: `_substantive` marks a node `False` *while in progress* so a
+    cycle contributes nothing, and it keys on `id()`. If a shared subtree is first
+    reached from a position that resolves to False, a naive memo would poison every
+    later visit and the answer would depend on dict iteration order. These cases can
+    catch that; generic ones cannot.
+
+    Also run once, out of band, against the pre-memo implementation at `ead649d`: 3000
+    randomly generated nested structures over the leaf alphabet
+    `["", "  ", "x", 0, 1, 0.5, True, False, None, nan, inf]` with dict/list/tuple/set
+    containers to depth 4 — **0 disagreements**. Trees only, because the pre-memo
+    version hangs on exactly the shared nodes that motivated the change. That sweep is
+    deliberately NOT shipped: it would need a copy of the old implementation living in
+    the suite, and a reference implementation beside the real one drifts until its
+    rules stop meaning anything."""
+    hollow, real = {"h": ""}, {"r": "x"}
+    assert mod._substantive({"a": hollow, "b": hollow}) is False
+    assert mod._substantive({"a": real, "b": real}) is True
+    # the discriminating pair: same shared objects, both orders, one answer
+    assert mod._substantive({"a": hollow, "b": real}) is True
+    assert mod._substantive({"a": real, "b": hollow}) is True
+    # reached as both sibling and grandchild
+    assert mod._substantive({"a": real, "b": {"c": real}}) is True
+    assert mod._substantive({"a": {"h": ""}, "b": {"r": "x"}}) is True
+    assert mod._substantive({"b": {"r": "x"}, "a": {"h": ""}}) is True
+
+    # `_walk_for_trigger_keys` short-circuits on True; memo + any() must stay
+    # order-independent there too
+    keyed, plain = {"should_fire": [1]}, {"v": 1}
+    assert mod._walk_for_trigger_keys({"a": plain, "b": keyed}) is True
+    assert mod._walk_for_trigger_keys({"a": keyed, "b": plain}) is True
+    assert mod._walk_for_trigger_keys({"a": plain, "b": plain}) is False
