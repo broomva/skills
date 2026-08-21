@@ -353,3 +353,50 @@ export default function Home() {
 """)
     ct = us.survey(root)["copy_tells"]
     assert ct["not_x_but_y"]["count"] == 2
+
+
+# ---------------------------------------- codex r1 regressions (BRO-2195, one per finding)
+def test_not_x_but_y_period_form_requires_an_article(tmp_path):
+    root = _prose_repo(tmp_path, "nxy-fact")
+    (root / "app" / "page.tsx").write_text("""
+export default function Compat() {
+  return (
+    <main>
+      <p>It's not available on iPad. It's available on desktop.</p>
+      <p>The future isn't coming. It's already here.</p>
+    </main>
+  );
+}
+""")
+    ct = us.survey(root)["copy_tells"]
+    assert ct["not_x_but_y"]["count"] == 0        # factual note + article-less isn't → not the rhetorical tell
+    assert ct["fake_profound"]["count"] == 1      # the kicker books ONCE, under the waivable aggregate
+
+
+def test_template_strings_in_copy_modules_are_not_prose(tmp_path):
+    root = _prose_repo(tmp_path, "tmpl")
+    (root / "content" / "emails.ts").write_text(
+        "export const template = '<div data-headline=\"What nobody tells you about billing\">Pay now</div>';\n"
+        "export const cls = '<div class=\"game changer\">Pay now</div>';\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["faux_insight"]["count"] == 0
+    assert ct["buzzwords"]["count"] == 0
+
+
+def test_cited_claims_and_literal_bottom_line_stay_quiet(tmp_path):
+    root = _prose_repo(tmp_path, "cited")
+    (root / "app" / "page.tsx").write_text("""
+export default function Docs() {
+  return (
+    <main>
+      <p>Research shows that autocomplete reduces form errors.[1]</p>
+      <p>The bottom line: annual billing only.</p>
+      <p>Studies show onboarding drops by half.</p>
+    </main>
+  );
+}
+""")
+    ct = us.survey(root)["copy_tells"]
+    assert ct["weasel_attribution"]["count"] == 1  # only the UNcited "Studies show" line
+    assert ct["colon_reveal"]["count"] == 0        # "the bottom line" is literal in finance copy
