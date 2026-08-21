@@ -50,8 +50,8 @@ except ImportError:  # pragma: no cover - exercised on stdlib-only machines
 def _ext(path: Path) -> str:
     """The file's suffix, CASEFOLDED. The only way this file asks "what kind of file".
 
-    Every extension match here used to be `_ext(path)`, case-sensitively, at twenty
-    sites. Two of them flipped REQUIRED steps on byte-identical content: a script named
+    Every extension match here used to be a raw `.suffix`, case-sensitively, at
+    nineteen sites (the count, measured: `git diff | grep -c "^-.*\\.suffix"`). Two of them flipped REQUIRED steps on byte-identical content: a script named
     `scripts/core.PY` was not code, so tier D never syntax-checked it and step 3 said
     "no code to test"; an `evals/broken.YAML` was not an eval artifact, so an
     unparseable file became invisible rather than failing closed. `_is_code_file` had
@@ -396,12 +396,20 @@ def _skillsh_list_has(target: str, name: str) -> tuple[bool, str]:
 def _is_test_file(name: str) -> bool:
     """True for genuine test files only — `.test.` counts solely for code exts,
     so a data fixture like `fixtures.test.json` is NOT mistaken for a test."""
-    ext = name.rsplit(".", 1)[-1] if "." in name else ""
-    if name.startswith("test_") and ext in _TEST_CODE_EXTS:
+    # THREE hand-rolled extension idioms lived here, none of them routed through
+    # `_ext`, so casefolding landed on `_is_code_file` and not on its partner: a
+    # `tests/test_core.PY` containing a real test was told "no tests/ — the 'works
+    # today' trap". The source scan could not see it either, because it greps for the
+    # literal `.suffix`, which never appeared here. Lowercase the name once, up front.
+    lowered = name.lower()
+    ext = _ext(Path(lowered)).lstrip(".")
+    if lowered.startswith("test_") and ext in _TEST_CODE_EXTS:
         return True
-    if any(name.endswith(f"_test.{e}") for e in _TEST_CODE_EXTS):
+    if any(lowered.endswith(f"_test.{e}") for e in _TEST_CODE_EXTS):
         return True
-    return bool(re.search(r"\.test\.(py|sh|mjs|js|ts)$", name))
+    # A fourth copy of _TEST_CODE_EXTS used to be spelled out here as a regex literal;
+    # built from the constant instead so it cannot drift the day a suffix is added.
+    return bool(re.search(r"\.test\.(" + "|".join(sorted(_TEST_CODE_EXTS)) + r")$", lowered))
 
 
 def _iter_files(skill_dir: Path, subdirs: tuple[str, ...]) -> list[Path]:
@@ -613,11 +621,14 @@ def _is_trigger_eval(path: Path) -> bool:
     if _ext(path) == ".json":
         try:
             return _walk_for_trigger_keys(_json_loads(txt))
-        # ValueError, not JSONDecodeError: `_DuplicateKey` is a ValueError but not a
-        # decode error, and routing this reader through the shared `_json_loads` made
-        # it reachable here for the first time. "Not a trigger eval" is the honest
-        # answer for a file whose keys the gate cannot trust — step 5 is advisory, and
-        # `_load_data` reports the duplicate on the gating path.
+        except _DuplicateKey:
+            # Detect-and-discard was the round-16 behaviour here, and the justification
+            # ("`_load_data` reports the duplicate on the gating path") is false for
+            # artifacts OUTSIDE evals/, which `_eval_blobs` never scans. The gate then
+            # said "none assert trigger behaviour" about a file that plainly does.
+            # A file whose keys cannot be trusted is not a clean trigger eval, but the
+            # reason has to survive rather than be dropped.
+            return False
         except (ValueError, RecursionError):
             return False
     if _ext(path) in {".yaml", ".yml"}:
@@ -633,17 +644,36 @@ def _is_trigger_eval(path: Path) -> bool:
     return bool(_TRIGGER_ASSERTION_RE.search(_strip_code_noise(txt)))
 
 
-def _walk_for_trigger_keys(node: object, depth: int = 0) -> bool:
-    """A trigger key must appear as an actual mapping KEY, at any nesting depth."""
+def _walk_for_trigger_keys(node: object, depth: int = 0,
+                           _memo: dict[int, bool] | None = None) -> bool:
+    """A trigger key must appear as an actual mapping KEY, at any nesting depth.
+
+    Memoised for the same reason as `_substantive` and `_duplicate_key_in_node`: a
+    depth cap alone bounds nothing when the graph branches. With cap 40 and branching
+    factor 2, a 20-byte `a: &a\n b: *a\n c: *a\n` is ~2^40 visits — measured at
+    3,000,001 calls in 0.7s and still walking, with no output, no exit and no
+    traceback, and `--survey` dying with it. Step 5 runs for EVERY skill at every tier,
+    so this was the widest-reaching instance of the class.
+    """
+    if _memo is None:
+        _memo = {}
     if depth > 40:
         return False
+    key = id(node)
+    if key in _memo:
+        return _memo[key]
+    _memo[key] = False
     if isinstance(node, dict):
         if TRIGGER_ASSERTION_KEYS & set(map(str, node.keys())):
+            _memo[key] = True
             return True
-        return any(_walk_for_trigger_keys(v, depth + 1) for v in node.values())
-    if isinstance(node, list):
-        return any(_walk_for_trigger_keys(v, depth + 1) for v in node)
-    return False
+        result = any(_walk_for_trigger_keys(v, depth + 1, _memo) for v in node.values())
+    elif isinstance(node, list):
+        result = any(_walk_for_trigger_keys(v, depth + 1, _memo) for v in node)
+    else:
+        result = False
+    _memo[key] = result
+    return result
 
 
 def _syntax_checkable(path: Path) -> bool:
@@ -1004,7 +1034,7 @@ def _duplicate_top_level_key_issue(path: Path) -> str | None:
             "reader sees; declare each key once")
 
 
-def _substantive(x: object, _seen: frozenset[int] = frozenset()) -> bool:
+def _substantive(x: object, _memo: dict[int, bool] | None = None, _depth: int = 0) -> bool:
     """Structural presence only: a finite number, a non-empty string, or a container
     that holds at least one of those somewhere inside it.
 
@@ -1037,16 +1067,31 @@ def _substantive(x: object, _seen: frozenset[int] = frozenset()) -> bool:
         # This stays a STRUCTURAL question — is there a value here at all — and does
         # not reopen the undecidable one above. A leaf that is present but means
         # nothing still passes, and still belongs to the review layer.
-        if id(x) in _seen or len(_seen) >= _MAX_NESTING:
-            # Cycles (YAML anchors, JSON round-trips) and absurd nesting both fail
-            # closed. The depth cap is not cosmetic: round 11 shipped this recursion
-            # with only a cycle guard, and a 1.4 KB evals/suite.json nested ~500 deep
-            # raised RecursionError straight out of run_checklist — a bare traceback
-            # and zero checklist lines, which violates this file's own contract that
-            # an unverified artifact is reported, never thrown. Found in P20 round 13.
+        # A MEMO, not a path-set. Round 11 shipped a path-based `_seen` frozenset,
+        # which stops cycles and nothing else: because each sibling receives its own
+        # copy, a node reachable by many paths is walked once per path. P20 round 17
+        # measured the consequence — an ACYCLIC alias DAG (`l{i}: &l{i} {a: *l{i-1},
+        # b: *l{i-1}}`, 876 bytes) makes this function walk 2^n nodes and never return.
+        # No cycle is involved, so a cycle guard cannot help; the invariant is
+        # memoisation. `_duplicate_key_in_node` already had it and terminated in 0.002s
+        # on the same input while this hung — the model I cited in round 16 was the
+        # one that was wrong.
+        #
+        # The depth cap stays: it is a different property (round 13, a 1.4 KB
+        # evals/suite.json nested ~500 deep raised RecursionError out of
+        # run_checklist, a bare traceback where the contract says report).
+        if _memo is None:
+            _memo = {}
+        if _depth >= _MAX_NESTING:
             return False
-        _seen = _seen | {id(x)}
-        return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))
+        key = id(x)
+        if key in _memo:
+            return _memo[key]
+        _memo[key] = False          # a cycle contributes nothing while in progress
+        result = any(_substantive(v, _memo, _depth + 1)
+                     for v in (x.values() if isinstance(x, dict) else x))
+        _memo[key] = result
+        return result
     return isinstance(x, str) and bool(x.strip())
 
 
@@ -1138,14 +1183,24 @@ def _duplicate_key_in_node(text: str) -> str | None:
             seen: set[str] = set()
             for k, v in node.value:
                 name = str(getattr(k, "value", ""))
-                # `<<` is the merge key. Repeating it is legal YAML and PyYAML merges
-                # the referents deterministically (left to right, first wins per key),
-                # so it is NOT last-wins and reporting it as such was both a false
-                # reject and a factually wrong message.
-                if name != "<<":
-                    if name in seen:
-                        return name
-                    seen.add(name)
+                # No `<<` carve-out. Round 16 added one, justified in a comment
+                # claiming PyYAML merges repeated merge keys "left to right, first wins
+                # per key, so it is NOT last-wins". Measured on PyYAML 6.0.3, that is
+                # exactly inverted:
+                #
+                #     a: &A {k: FROM_A}
+                #     b: &B {k: FROM_B}
+                #     m: {<<: *A, <<: *B}   ->  {'k': 'FROM_B'}
+                #     n: {<<: *B, <<: *A}   ->  {'k': 'FROM_A'}
+                #
+                # Repeated `<<` IS last-wins, so it is precisely the ambiguity this
+                # function exists to refuse — and the carve-out let swapping two
+                # adjacent lines flip a REQUIRED tier-J gate from FAIL to PASS on a
+                # self-judging judge declaration. The property was asserted in prose
+                # without being run; the refusal was right all along.
+                if name in seen:
+                    return name
+                seen.add(name)
                 stack.append(v)
         elif isinstance(node, getattr(yaml, "SequenceNode", ())):
             stack.extend(node.value)
@@ -1199,8 +1254,10 @@ def _unparseable_detail(u: "_Unparseable") -> str:
     """`name — why`. The reason is the point: "could not be parsed" sent an author
     hunting for a syntax error when the actual defect was a duplicated key that
     last-wins would have decided silently."""
-    return f"{u.path.name} — {u.reason}" if u.reason else (
-        f"{u.path.name} — install pyyaml or fix the file")
+    if u.reason:
+        return f"{u.path.name} — {u.reason}"
+    hint = "fix the file" if _ext(u.path) == ".json" else "install pyyaml or fix the file"
+    return f"{u.path.name} — {hint}"
 
 
 def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[_Unparseable]]:
@@ -1502,7 +1559,13 @@ def _blob_polarity(data: dict) -> tuple[bool, bool]:
     """
     pos = neg = False
     for k, v in data.items():
-        if isinstance(v, list) and v:
+        # `_substantive`, not just `and v`. This was the one tier-artifact check
+        # without a substance floor while all three siblings carry one
+        # (`_rubric_issue`, `_held_out_count` — which rejects "a marker object, not a
+        # held-out case" — and `_judge_issues`). Measured: `should_fire: [null]` /
+        # `should_not_fire: [null]` PASSED tier L as "routing eval asserts both
+        # polarities", a lens gated on a suite containing no prompts.
+        if isinstance(v, list) and _substantive(v):
             ks = str(k)
             if ks in _POSITIVE_KEYS:
                 pos = True
@@ -1678,8 +1741,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     elif tier == TIER_J:
         issues: list[str] = []
         if unparseable_evals:
-            issues.append(f"{len(unparseable_evals)} eval artifact(s) unparseable "
-                          f"({_unparseable_detail(unparseable_evals[0])})")
+            issues.append(f"{len(unparseable_evals)} eval artifact(s) could not be "
+                          f"trusted ({_unparseable_detail(unparseable_evals[0])})")
         if (adm := _admission_issue(skill_dir)):
             issues.append(adm)
         if (rub := _rubric_issue(skill_dir, blobs)):
@@ -1833,7 +1896,14 @@ def _check_registry(registry: Path, name: str) -> tuple[str, str]:
     # bulleted/piped line (M3: "- we removed `demo`" and "x | demo y" must FAIL).
     nb = re.escape(name)
     list_item = re.compile(r"^[-*]\s+[\W_]*" + nb + r"\b")
-    for raw in registry.read_text(encoding="utf-8", errors="replace").splitlines():
+    # `_read`, the fourth member of the shared reader surface: this was the ONE read
+    # in the file that bypassed it with no local try, so an unreadable registry
+    # (PermissionError) produced a bare traceback and zero checklist lines — the
+    # "reported, never thrown" contract again, at the last site holding out.
+    raw_registry = _read(registry)
+    if raw_registry is None:
+        return WARN, f"registry {registry.name} is unreadable — cannot verify the trigger"
+    for raw in raw_registry.splitlines():
         s = raw.strip()
         if list_item.match(s):
             return PASS, f"'{name}' registered (list item) in {registry.name}"

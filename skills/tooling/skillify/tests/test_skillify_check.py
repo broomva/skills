@@ -1143,7 +1143,7 @@ def test_unparseable_eval_artifact_fails_closed_for_tier_j(tmp_path):
     d = _j(tmp_path)
     (d / "evals" / "broken.json").write_text("{not: valid json", encoding="utf-8")
     step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "unparseable" in step2["detail"]
+    assert step2["status"] == "FAIL" and "could not be trusted" in step2["detail"]
 
 
 def test_unparseable_eval_artifact_fails_closed_for_tier_l(tmp_path):
@@ -1785,7 +1785,7 @@ def test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent(tmp_pat
     j.chmod(0o000)
     try:
         step2 = _step(_check(d), 2)
-        assert step2["status"] == "FAIL" and "unparseable" in step2["detail"]
+        assert step2["status"] == "FAIL" and "could not be trusted" in step2["detail"]
     finally:
         j.chmod(0o644)
 
@@ -2563,33 +2563,52 @@ def test_no_reader_bypasses_the_shared_guards():
       * `_ast_parse(txt)` — folds RecursionError/MemoryError into SyntaxError, so a
                             generated script reports instead of printing a traceback.
 
-    This is a source scan, which is a weaker instrument than a behavioural test — it
-    can be fooled by aliasing or by `getattr`. It is here for the property no
-    behavioural test can express: that a reader *not yet written* inherits the guard.
-    The behavioural tests above cover the sites that exist today."""
+    This is a source scan, and its coverage is MEASURED rather than asserted. Against
+    a ten-form bypass battery it catches **7/10**; the first version caught 3 of 13 and
+    was falsified by the file it scans (`_is_test_file` held a raw `rsplit(".", 1)` the
+    scan could not see, and a nested `def` opened an unbounded exemption because
+    `current_def` never reset on dedent).
+
+    The three that still slip are `js = json.loads` (alias), `getattr(json, "loads")`
+    and `getattr(path, "suffix")` — indirection a text scan structurally cannot follow.
+    An AST pass would catch them; that is more machinery than this earns, and this arc
+    is a long argument against adding machinery speculatively. What the scan does buy
+    is the ordinary-idiom cases (`json.load`, `os.path.splitext`, `rsplit(".", 1)`,
+    `compile(..., PyCF_ONLY_AST)`), which is how a reader gets written by accident.
+
+    It is here for the property no behavioural test can express: that a reader *not yet
+    written* inherits the guard. The behavioural tests above cover the sites that exist
+    today."""
     src = (Path(mod.__file__).read_text(encoding="utf-8")).splitlines()
 
-    def offenders(needle: str, allowed_in: str) -> list[str]:
+    def offenders(needles: tuple[str, ...], allowed_in: str) -> list[str]:
+        """Only a TOP-LEVEL `def` opens an allowed region. The first version tracked
+        any `def` at any indent and never reset on dedent, so a nested
+        `def _ext`/`def _json_loads`/`def _ast_parse` — or module-level code following
+        the real helper — opened an unbounded exemption. Round 17 slipped 10 of 13
+        probes past it, two of them ordinary idioms rather than adversarial ones."""
         out, current_def = [], ""
         for i, line in enumerate(src, 1):
+            if line.startswith("def "):                      # column 0 only
+                current_def = line[4:].split("(")[0]
+            elif line and not line[0].isspace():             # any other top-level stmt
+                current_def = ""
             stripped = line.lstrip()
-            if stripped.startswith("def "):
-                current_def = stripped[4:].split("(")[0]
-            if needle in line and not stripped.startswith("#"):
-                if current_def == allowed_in:
-                    continue
+            code = stripped.split("#", 1)[0]                 # ignore trailing comments
+            if any(n in code for n in needles) and current_def != allowed_in:
                 out.append(f"{i}: {stripped[:90]}")
         return out
 
-    assert not offenders(".suffix", "_ext"), (
+    assert not offenders((".suffix", "os.path.splitext", 'rsplit("."', "rsplit('.'"), "_ext"), (
         "raw .suffix outside _ext — case-sensitive extension matching is how "
-        f"scripts/core.PY skipped two required steps:\n" + "\n".join(offenders(".suffix", "_ext")))
-    assert not offenders("json.loads(", "_json_loads"), (
+        "scripts/core.PY skipped two required steps:\n"
+        + "\n".join(offenders((".suffix", "os.path.splitext", 'rsplit("."', "rsplit('.'"), "_ext")))
+    assert not offenders(("json.loads(", "json.load(", "JSONDecoder"), "_json_loads"), (
         "raw json.loads outside _json_loads — no duplicate-key hook:\n"
-        + "\n".join(offenders("json.loads(", "_json_loads")))
-    assert not offenders("ast.parse(", "_ast_parse"), (
+        + "\n".join(offenders(("json.loads(", "json.load(", "JSONDecoder"), "_json_loads")))
+    assert not offenders(("ast.parse(", "PyCF_ONLY_AST"), "_ast_parse"), (
         "raw ast.parse outside _ast_parse — RecursionError/MemoryError escape as "
-        "tracebacks:\n" + "\n".join(offenders("ast.parse(", "_ast_parse")))
+        "tracebacks:\n" + "\n".join(offenders(("ast.parse(", "PyCF_ONLY_AST"), "_ast_parse")))
 
 
 def test_the_shared_guards_actually_guard():
@@ -2669,17 +2688,30 @@ def test_a_recursive_yaml_anchor_terminates(tmp_path):
     assert _with_timeout(10, mod._duplicate_key_in_node, "a: &x {p: 1}\nb: *x\na: 2\n") == "a"
 
 
-def test_repeated_merge_keys_are_not_duplicates():
-    """`<<` is the merge key. Repeating it is legal YAML and PyYAML merges the
-    referents deterministically, so it is NOT last-wins — reporting it as a duplicate
-    was both a false reject and a factually wrong message."""
-    merged = ("defaults: &d\n  a: 1\nextra: &e\n  b: 2\n"
-              "m:\n  <<: *d\n  <<: *e\n  c: 3\n")
-    assert mod._duplicate_key_in_node(merged) is None
+def test_repeated_merge_keys_are_duplicates_because_they_are_last_wins():
+    """The round-16 carve-out was justified by a claim that is empirically INVERTED,
+    and this test was written so it could not notice.
+
+    The comment asserted PyYAML merges repeated `<<` "left to right, first wins per
+    key, so it is NOT last-wins". Measured on PyYAML 6.0.3 it is the opposite. The old
+    fixture could not see that, because its two anchors carried DISJOINT keys (`a` from
+    one, `b` from the other) — no input could observe which merge won, and it asserted
+    `{"a":1,"b":2,"c":3}`, true under either semantics. The anchors here OVERLAP, which
+    is what makes the property observable at all."""
     import yaml as _y
-    assert _y.safe_load(merged)["m"] == {"a": 1, "b": 2, "c": 3}   # the merge is real
-    # control: an ordinary repeated key alongside merge keys is still caught
-    assert mod._duplicate_key_in_node(merged.replace("  c: 3\n", "  c: 3\n  c: 4\n")) == "c"
+    doc = ("a: &A {k: FROM_A}\nb: &B {k: FROM_B}\n"
+           "m:\n  <<: *A\n  <<: *B\n"
+           "n:\n  <<: *B\n  <<: *A\n")
+    loaded = _y.safe_load(doc)
+    assert loaded["m"]["k"] == "FROM_B"      # order decides
+    assert loaded["n"]["k"] == "FROM_A"      # the other order decides differently
+
+    # so a repeated `<<` is exactly the ambiguity this function exists to refuse
+    assert mod._duplicate_key_in_node(doc) == "<<"
+
+    # and the consequence it had: swapping two adjacent lines flipped a REQUIRED gate
+    single = "a: &A {k: FROM_A}\nm:\n  <<: *A\n  c: 3\n"
+    assert mod._duplicate_key_in_node(single) is None    # control: one `<<` is fine
 
 
 def test_a_duplicate_entrypoint_in_skill_json_is_reported_not_swallowed(tmp_path):
@@ -2745,3 +2777,101 @@ def test_step5_detects_a_camelcase_negative_only_trigger_eval(tmp_path):
     # control: a file with no trigger assertion at all is still not a trigger eval
     (d / "evals" / "other.json").write_text(json.dumps({"notes": ["x"]}), encoding="utf-8")
     assert mod._is_trigger_eval(d / "evals" / "other.json") is False
+
+
+def _alias_dag(levels: int, leaf):
+    """An ACYCLIC graph where every level references the previous one TWICE. `levels=24`
+    is 2^24 paths through ~24 distinct nodes: unreachable for a memoised walk, fatal
+    for one that only caps depth."""
+    node = leaf
+    for _ in range(levels):
+        node = {"a": node, "b": node}
+    return node
+
+
+def test_every_recursive_walk_memoises_not_just_guards_cycles(tmp_path):
+    """P20 round 17 — instance NINE and TEN of the arc's dominant class, and the round
+    that showed the round-16 fix was aimed at the wrong invariant.
+
+    Round 16 gave `_duplicate_key_in_node` a cycle guard after a recursive anchor hung
+    the gate, and cited `_substantive` as the model that already had one. Measured, the
+    model was the wrong one: `_substantive`'s guard was a PATH-based frozenset, so each
+    sibling got its own copy and a node reachable by many paths was walked once per
+    path. An ACYCLIC alias DAG — no cycle anywhere — hung it. `_walk_for_trigger_keys`,
+    reached from step 5 for EVERY skill at every tier, had no guard at all: a 20-byte
+    `a: &a\\n b: *a\\n c: *a\\n` was ~2^40 visits, no output, no exit, no traceback,
+    and `--survey` died with it.
+
+    The invariant is MEMOISATION, not cycle detection — a memo subsumes both. Only
+    `_duplicate_key_in_node` had one, and it returned in 0.002s on the same input that
+    hung the other two.
+
+    Note the branching factor: the round-16 regression fixture is branching-1
+    (`cases: &x` / `nested: *x`), and measured against `_walk_for_trigger_keys` it
+    returns False in 0.000s — it would have passed while the function was fatal. A
+    cycle fixture cannot detect this class; the DAG is the discriminating input."""
+    hollow, real = _alias_dag(24, {"v": ""}), _alias_dag(24, {"v": "x"})
+    assert _with_timeout(10, mod._substantive, hollow) is False
+    assert _with_timeout(10, mod._substantive, real) is True
+
+    assert _with_timeout(10, mod._walk_for_trigger_keys, _alias_dag(24, {"v": 1})) is False
+    assert _with_timeout(10, mod._walk_for_trigger_keys,
+                         _alias_dag(24, {"should_fire": [1]})) is True
+
+    yaml_dag = "\n".join(["l0: &l0 {v: 1}"]
+                         + [f"l{i}: &l{i} {{a: *l{i-1}, b: *l{i-1}}}" for i in range(1, 32)])
+    assert _with_timeout(10, mod._duplicate_key_in_node, yaml_dag + "\n") is None
+
+    # end to end: step 5 runs for every skill, so the bomb needs no evals/ dir
+    d = _skill(tmp_path / "bomb", scripts=True, tests=True, tier="D")
+    (d / "evals").mkdir(exist_ok=True)
+    (d / "evals" / "suite.yaml").write_text("a: &a\n b: *a\n c: *a\n", encoding="utf-8")
+    assert isinstance(_with_timeout(25, _check, d), list)
+
+
+def test_the_fourth_walk_is_exempt_because_json_cannot_alias(tmp_path):
+    """`_internal_ref_issues._walk` keeps only a depth cap, and that is not an
+    oversight — it is the one walk whose input cannot be a DAG. `json.loads` has no
+    anchor syntax, so structurally identical containers are always distinct objects.
+    Asserted rather than claimed, because "this one doesn't need the guard" is exactly
+    the sentence that produced instances nine and ten."""
+    d = json.loads('{"a": {"x": 1}, "b": {"x": 1}, "c": [[1], [1]]}')
+    ids = [id(d["a"]), id(d["b"]), id(d["c"][0]), id(d["c"][1])]
+    assert len(set(ids)) == 4, "json.loads produced a shared container — _walk needs a memo"
+
+
+def test_a_routing_eval_of_empty_prompts_is_not_a_routing_eval(tmp_path):
+    """P20 round 17 — `_blob_polarity` was the one tier-artifact check with no
+    substance floor, while all three siblings carry one (`_rubric_issue`,
+    `_held_out_count` — which rejects "a marker object, not a held-out case" — and
+    `_judge_issues`). So a lens passed on a suite containing no prompts."""
+    d = _l(tmp_path / "hollow", cases=[])
+    (d / "evals" / "prompts.json").write_text(
+        json.dumps({"should_fire": [None], "should_not_fire": [None]}), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+    ok = _l(tmp_path / "real", cases=[])
+    (ok / "evals" / "prompts.json").write_text(
+        json.dumps({"should_fire": ["run the lens"], "should_not_fire": ["unrelated"]}),
+        encoding="utf-8")
+    assert _step(_check(ok), 2)["status"] == "PASS"
+
+
+def test_a_test_file_is_recognised_whatever_the_extension_case(tmp_path):
+    """The unit-test half of the casefolding claim. `_is_test_file` carried THREE
+    hand-rolled extension idioms, none routed through `_ext`, and the source scan
+    greps for the literal `.suffix` so it could not see them. The gate told an author
+    "no tests/ — the 'works today' trap" about `tests/test_core.PY`, which contains a
+    test."""
+    for name in ("test_core.py", "test_core.PY", "core_test.JS", "core.TEST.ts"):
+        assert mod._is_test_file(name) is True, name
+    for name in ("fixtures.test.json", "notes.md", "core.py"):
+        assert mod._is_test_file(name) is False, name
+
+    verdicts = {}
+    for label, fname in (("upper", "test_core.PY"), ("lower", "test_core.py")):
+        d = _skill(tmp_path / label, scripts=True, tests=False, tier="D")
+        (d / "tests").mkdir(exist_ok=True)
+        (d / "tests" / fname).write_text("def test_x():\n    assert True\n", encoding="utf-8")
+        verdicts[label] = _step(_check(d), 3)["status"]
+    assert verdicts["upper"] == verdicts["lower"] == "PASS", verdicts
