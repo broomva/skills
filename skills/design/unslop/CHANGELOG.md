@@ -5,6 +5,13 @@ All notable changes to `unslop` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-08-20
+
+Genesis dogfood finding #2 (BRO-2196, via cross-model review of the arc's own PR): `app/manifest.ts`
+— a Next metadata route serving `/manifest.webmanifest` — carries user-facing name/description copy
+(the PWA install surface) and was not a copy module, so the copy pass missed it. `manifest` joins
+the copy-module basenames.
+
 ## [0.2.1] — 2026-08-20
 
 Genesis dogfood (BRO-2196): continuation lines of multi-line `/* … */` / `{/* … */}` comments were

@@ -49,7 +49,9 @@ SKIP_DIRS = {
 # `<root>/reports/` and `<root>/build/` are artefacts (a real app lost its /reports route to this list once)
 SKIP_TOP_LEVEL_DIRS = {"dist", "build", "out", "reports", "lighthouse", "cypress", "tmp", "temp"}
 # .ts/.js modules that carry landing/marketing copy — scanned for copy + substance tells like UI files
-RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo)(\.(?!test|spec|stories|d)[a-z]+)*\.[cm]?[jt]s$", re.I)
+# manifest: a Next metadata route (app/manifest.ts → /manifest.webmanifest) carries user-facing
+# name/description copy — the PWA install surface (genesis dogfood, BRO-2196)
+RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo|manifest)(\.(?!test|spec|stories|d)[a-z]+)*\.[cm]?[jt]s$", re.I)
 # server-side / non-surface files that can never carry a loading state
 RE_SERVER_SIDE_UI = re.compile(r"(^|/)(api|server|middleware|workers?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]sx?$", re.I)
 RE_SERVER_SIDE = re.compile(r"(^|/)(api|server|db|lib|utils?|hooks?|middleware|workers?|scripts?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]s$|(^|/)use-[a-z-]+\.[jt]sx?$", re.I)
