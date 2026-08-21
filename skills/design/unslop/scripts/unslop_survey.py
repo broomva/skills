@@ -701,7 +701,10 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         )
         is_prose_mdx = p.suffix.lower() == ".mdx" and re.search(r"(^|/)(content|docs?|blog|posts?|articles?)(/|$)", rp, re.I)
         if (is_ui and not is_prose_mdx) or is_copy_module:
-            for i, line in enumerate(lines, 1):
+            # blank block comments with newlines preserved: a continuation line of a multi-line
+            # /* … */ or {/* … */} comment carries no marker prefix and read as UI copy otherwise
+            comment_free = re.sub(r"/\*.*?\*/", lambda mm: "\n" * mm.group(0).count("\n"), txt, flags=re.S)
+            for i, line in enumerate(comment_free.splitlines(), 1):
                 st = line.lstrip()
                 if st.startswith(("//", "/*", "*", "{/*", "<!--", "import ")):
                     continue

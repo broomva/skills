@@ -437,3 +437,26 @@ def test_dialog_template_attrs_stay_invisible(tmp_path):
         'export const tip = "<dialog data-headline=\\"What nobody tells you about billing\\">OK</dialog>";\n'
     )
     assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 0
+
+
+# ---------------------------------------- genesis dogfood finding (BRO-2196)
+def test_block_comment_continuation_lines_are_not_copy(tmp_path):
+    # a multi-line {/* … */} comment's middle lines carry no marker prefix; they are not UI copy —
+    # and blanking them must not shift the line numbers of real sites below
+    root = _prose_repo(tmp_path, "blockcmt")
+    (root / "app" / "page.tsx").write_text(
+        "export default function Home() {\n"
+        "  return (\n"
+        "    <main>\n"
+        "      {/* the scroller pins to the bottom while streaming and\n"
+        "          returns toward the newest — translateY past the edge, a supercharged\n"
+        "          trick — see BRO-1590 for the running signal */}\n"
+        "      <p>Model locked — session running.</p>\n"
+        "    </main>\n"
+        "  );\n"
+        "}\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["em_dash"]["count"] == 1                      # only the real UI string
+    assert ct["em_dash"]["sites"][0].endswith(":7")          # line numbers preserved
+    assert ct["buzzwords"]["count"] == 0                     # "supercharged" lived in the comment
