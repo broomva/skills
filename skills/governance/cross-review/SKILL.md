@@ -181,9 +181,10 @@ cross-review pre-push \
 
 Promoting it to a blocking gate is a later decision, and it needs evidence: a measured false-positive rate across real repos, gathered from the reported signal. When no `--mutation-target` is given, `pre-push` says so explicitly rather than staying silent, because "the signal did not run" and "the signal passed" must never look alike.
 
-## The reviewer cannot write
+## Taking the reviewer's hands away
 
-**The gate keeps its authority. The reviewer loses its hands.**
+**The gate keeps its authority. The reviewer loses its hands — as far as the
+harness allows, which is further for Codex than for a subagent.**
 
 A reviewer that can edit the tree does not report findings — it fixes them. And a
 finding that was silently fixed is indistinguishable from one that was never
