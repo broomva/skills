@@ -265,3 +265,175 @@ def test_cli_writes_json_and_md(sloppy_repo, tmp_path):
 def test_cli_rejects_missing_dir(tmp_path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(tmp_path / "nope")], capture_output=True, text=True)
     assert r.returncode == 2
+
+
+# ------------------------------------------- prose-slop patterns (after no-ai-slop, BRO-2195)
+def _prose_repo(tmp_path, name="prose"):
+    root = tmp_path / name
+    (root / "app").mkdir(parents=True)
+    (root / "content").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    return root
+
+
+def test_prose_patterns_fire_on_product_surfaces(tmp_path):
+    root = _prose_repo(tmp_path)
+    (root / "app" / "page.tsx").write_text("""
+export default function Home() {
+  return (
+    <main>
+      <h1>The future of shipping is here.</h1>
+      <p>Here's what nobody tells you about scaling.</p>
+      <p>Let me be clear: this is fast.</p>
+      <li>The best part: it learns.</li>
+      <p>This release marks a pivotal moment for the team.</p>
+      <p>Experts agree that our approach works.</p>
+      <p>Imagine a world where deploys are instant.</p>
+      <p>Connect your repo. It's that simple.</p>
+      <p>The launch adds file search, showcasing our commitment to better workflows.</p>
+      <p>
+        Ship without meetings. No setup. No config.
+        Just code.
+      </p>
+    </main>
+  );
+}
+""")
+    (root / "content" / "landing.ts").write_text(
+        'export const hero = "The future isn\'t coming. It\'s already here.";\n'
+        'export const pitch = "Delve into a tapestry of transformative workflows — a real game changer.";\n'
+    )
+    ct = us.survey(root)["copy_tells"]
+    for key in us.PROSE_KEYS:
+        assert ct[key]["count"] >= 1, f"{key} did not fire"
+    assert ct["fake_profound"]["count"] >= 2          # single-sentence hero + multi-sentence content string
+    assert ct["buzzwords"]["count"] >= 1              # delve / tapestry / transformative / spaced "game changer"
+    assert all(":" in s for s in ct["negative_listing"]["sites"])  # file:line provenance
+
+
+def test_prose_patterns_stay_quiet_on_legit_ui(tmp_path):
+    root = _prose_repo(tmp_path, "quiet")
+    (root / "app" / "page.tsx").write_text("""
+export default function Dashboard() {
+  // here's the thing: comments are never copy
+  return (
+    <main>
+      <span>Status: active</span>
+      <span>Total: $42</span>
+      <p>No results found.</p>
+      <p>It is not possible to undo this action. Confirm to continue.</p>
+      <address>1 Embarcadero Center</address>
+      <button>Delete</button>
+    </main>
+  );
+}
+""")
+    (root / "content" / "blog").mkdir(parents=True)
+    (root / "content" / "blog" / "post.mdx").write_text(
+        "# On writing\n\nHere's the thing: experts agree that authored prose keeps its own voice. "
+        "The future of writing is here, and it's that simple.\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    for key in us.PROSE_KEYS:
+        assert ct[key]["count"] == 0, f"{key} false-positived: {ct[key]['sites']}"
+    assert ct["buzzwords"]["count"] == 0
+
+
+def test_not_x_but_y_period_and_isnt_forms(tmp_path):
+    root = _prose_repo(tmp_path, "nxy")
+    (root / "app" / "page.tsx").write_text("""
+export default function Home() {
+  return (
+    <main>
+      <p>It's not a chatbot. It's a teammate.</p>
+      <p>The question isn't the model, it's the eval.</p>
+    </main>
+  );
+}
+""")
+    ct = us.survey(root)["copy_tells"]
+    assert ct["not_x_but_y"]["count"] == 2
+
+
+# ---------------------------------------- codex r1 regressions (BRO-2195, one per finding)
+def test_not_x_but_y_period_form_requires_an_article(tmp_path):
+    root = _prose_repo(tmp_path, "nxy-fact")
+    (root / "app" / "page.tsx").write_text("""
+export default function Compat() {
+  return (
+    <main>
+      <p>It's not available on iPad. It's available on desktop.</p>
+      <p>The future isn't coming. It's already here.</p>
+    </main>
+  );
+}
+""")
+    ct = us.survey(root)["copy_tells"]
+    assert ct["not_x_but_y"]["count"] == 0        # factual note + article-less isn't → not the rhetorical tell
+    assert ct["fake_profound"]["count"] == 1      # the kicker books ONCE, under the waivable aggregate
+
+
+def test_template_strings_in_copy_modules_are_not_prose(tmp_path):
+    root = _prose_repo(tmp_path, "tmpl")
+    (root / "content" / "emails.ts").write_text(
+        "export const template = '<div data-headline=\"What nobody tells you about billing\">Pay now</div>';\n"
+        "export const cls = '<div class=\"game changer\">Pay now</div>';\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["faux_insight"]["count"] == 0
+    assert ct["buzzwords"]["count"] == 0
+
+
+def test_cited_claims_and_literal_bottom_line_stay_quiet(tmp_path):
+    root = _prose_repo(tmp_path, "cited")
+    (root / "app" / "page.tsx").write_text("""
+export default function Docs() {
+  return (
+    <main>
+      <p>Research shows that autocomplete reduces form errors.[1]</p>
+      <p>The bottom line: annual billing only.</p>
+      <p>Studies show onboarding drops by half.</p>
+    </main>
+  );
+}
+""")
+    ct = us.survey(root)["copy_tells"]
+    assert ct["weasel_attribution"]["count"] == 1  # only the UNcited "Studies show" line
+    assert ct["colon_reveal"]["count"] == 0        # "the bottom line" is literal in finance copy
+
+
+# ---------------------------------------- codex r2 regressions
+def test_were_not_period_form_still_counts(tmp_path):
+    root = _prose_repo(tmp_path, "were")
+    (root / "app" / "page.tsx").write_text(
+        "export default () => <p>We're not a chatbot. We're a teammate.</p>;\n"
+    )
+    assert us.survey(root)["copy_tells"]["not_x_but_y"]["count"] == 1
+
+
+def test_keyboard_key_tokens_do_not_hide_copy_module_prose(tmp_path):
+    root = _prose_repo(tmp_path, "kbd")
+    (root / "content" / "help.ts").write_text(
+        "export const tip = 'Use <Tab> to continue. What nobody tells you about billing';\n"
+    )
+    assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 1
+
+
+# ---------------------------------------- codex r3 regression
+def test_template_inner_text_in_copy_module_is_scanned(tmp_path):
+    # attrs inside the tag stay invisible; the INNER text is rendered copy and must fire
+    root = _prose_repo(tmp_path, "tmpl-inner")
+    (root / "content" / "tips.ts").write_text(
+        "export const tip = '<div data-headline=\"ignore\">What nobody tells you about billing</div>';\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["faux_insight"]["count"] == 1, ct["faux_insight"]
+
+
+def test_dialog_template_attrs_stay_invisible(tmp_path):
+    # codex r4 nit: less-common HTML elements route to the tag-first path too
+    root = _prose_repo(tmp_path, "dlg")
+    (root / "content" / "modal.ts").write_text(
+        'export const tip = "<dialog data-headline=\\"What nobody tells you about billing\\">OK</dialog>";\n'
+    )
+    assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 0

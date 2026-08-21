@@ -1,7 +1,7 @@
 ---
 name: unslop
 category: design
-version: 0.1.1
+version: 0.2.0
 description: >-
   Remove the "vibecoded" / AI-slop look from an arbitrary frontend codebase at
   the ROOT, autonomously, and prove the result clears a crafted floor. Full-repo
@@ -83,7 +83,8 @@ world and say so. Never fabricate substance (policy text, testimonials, demos) t
   or [J] judgment, sourced (Kowalski, Freiberg, Linear, Comeau, Refactoring UI, Butterick, Rams, Apple,
   Material, GOV.UK, Vercel, Stripe, NN/g, Fogg, WCAG, web.dev), contradictions resolved explicitly.
 - `references/tells.md` — the dated, regenerable list of current LLM defaults (the reel's 30 → class →
-  machine check), Vercel's reject list, and why a static ban-list decays.
+  machine check), Vercel's reject list, the no-ai-slop prose-pattern catalog (dated), and why a
+  static ban-list decays.
 - `references/root-cause-playbook.md` — per root kind: where the default lives, the one edit, the order.
 
 ## Anti-rationalization

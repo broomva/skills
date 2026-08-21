@@ -168,3 +168,58 @@ def test_cli_bad_json_inputs_exit_2(sloppy_repo, tmp_path):
     w.write_text(json.dumps({"waivers": [{"check": "copy.emoji", "reason": "short"}]}))
     r = subprocess.run([sys.executable, str(SCRIPT), str(sloppy_repo), "--waivers", str(w), "--no-render", "--quiet"], capture_output=True, text=True)
     assert r.returncode == 2 and "reason" in r.stderr
+
+
+# ------------------------------------------- copy.slop-patterns (after no-ai-slop, BRO-2195)
+def _slop_pattern_repo(tmp_path):
+    root = tmp_path / "prose-gate"
+    (root / "app").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "app" / "page.tsx").write_text("""
+export default function Home() {
+  return (
+    <main>
+      <h1>The future of shipping is here.</h1>
+      <p>Here's what nobody tells you about scaling.</p>
+      <p>Experts agree that our approach works.</p>
+    </main>
+  );
+}
+""")
+    return root
+
+
+def test_gate_slop_patterns_fails_at_three_sites(tmp_path):
+    r = _run(_slop_pattern_repo(tmp_path), no_render=True)
+    res = r["copy.slop-patterns"]
+    assert res.status == "FAIL"
+    assert "fake_profound" in res.detail and "weasel_attribution" in res.detail
+    assert any(e.startswith("[faux_insight] ") and ":" in e for e in res.evidence)  # pattern-tagged file:line
+
+
+def test_gate_slop_patterns_warn_waiver_and_backcompat(tmp_path, sloppy_repo, crafted_repo):
+    # sloppy fixture carries exactly one prose-pattern site ("the future is here") → WARN, never silent
+    assert _run(sloppy_repo, no_render=True)["copy.slop-patterns"].status == "WARN"
+    # crafted fixture is clean → PASS
+    assert _run(crafted_repo, no_render=True)["copy.slop-patterns"].status == "PASS"
+    # a reasoned waiver turns the FAIL into a waived PASS
+    w = {"waivers": [{"check": "copy.slop-patterns", "reason": "editorial voice reviewed by a human, kept deliberately"}]}
+    res = _run(_slop_pattern_repo(tmp_path), no_render=True, waivers=w)["copy.slop-patterns"]
+    assert res.status == "PASS" and res.waived
+    # a 0.1.x manifest (no prose keys) still gates: PASS "none", not a crash
+    m = us.survey(crafted_repo)
+    m["copy_tells"] = {k: m["copy_tells"][k] for k in ("em_dash", "emoji", "not_x_but_y", "checkmark_bullets", "buzzwords")}
+    assert _run(crafted_repo, no_render=True, manifest=m)["copy.slop-patterns"].status == "PASS"
+
+
+def test_gate_slop_patterns_counts_distinct_sites_not_key_hits(tmp_path):
+    # one line matching three patterns is ONE site → WARN, never FAIL (codex r1 blocker)
+    root = tmp_path / "one-line"
+    (root / "app").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "app" / "page.tsx").write_text(
+        "export default () => <p>Here's the thing: the best part: it's that simple.</p>;\n"
+    )
+    res = _run(root, no_render=True)["copy.slop-patterns"]
+    assert res.status == "WARN", res.detail
+    assert res.detail.startswith("1 prose-slop site(s)")
