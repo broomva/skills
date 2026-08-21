@@ -554,6 +554,34 @@ def _core_files(skill_dir: Path) -> list[str]:
             if _has_executable_content(skill_dir / c)]
 
 
+def _is_definitely_a_test(path: Path) -> bool:
+    """A STRICTER test detector, used only where a wrong answer excuses a file.
+
+    `_is_real_test` is an AST walk for Python — reliable — but a regex everywhere
+    else, and its bash pattern counts `ok()` / `fail()` helper definitions. Those are
+    ordinary shell logging helpers: across this roster the pattern calls an
+    installer, a publisher, a setup script and an audit script "tests".
+
+    Reporting that a skill has tests can live with that. Excusing a file from the
+    `latent_only` contradiction and from `require_tests` cannot, because there the
+    error direction is fail-OPEN — round 26 shipped a working publisher named
+    `scripts/test_publish.sh` past a clean gate on exactly this.
+
+    So for non-Python, the weak alternation does not count here: a strong construct
+    is required (an assert, a bats `@test`, or pass/fail accounting). Python is
+    unchanged, because the AST answer is not a guess.
+    """
+    if _ext(path) == ".py":
+        return _is_real_test(path)
+    if not _is_real_test(path):
+        return False
+    try:
+        txt = _strip_code_noise(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return False
+    return bool(_STRONG_TEST_CONSTRUCT.search(txt))
+
+
 def _deterministic_scripts(skill_dir: Path) -> list[str]:
     """Any shipped non-test script with something in it — deliberately WIDER than
     the core, and used only by the `latent_only` contradiction.
@@ -563,6 +591,10 @@ def _deterministic_scripts(skill_dir: Path) -> list[str]:
     core excludes pytest configuration by name, so the claim went unchallenged. The
     exclusion is right for INFERRING a tier and wrong for REFUTING a denial, which is
     the tell that these were always two questions.
+
+    Used by BOTH refutations — the `latent_only` contradiction and `require_tests`.
+    (An earlier docstring said "used only by the latent_only contradiction"; step 3
+    became a consumer in the same round and the sentence was not updated.)
 
     A file is excluded here only if BOTH predicates agree: the name says test AND
     the structure contains one. Requiring both is what makes the exclusion narrow,
@@ -579,7 +611,7 @@ def _deterministic_scripts(skill_dir: Path) -> list[str]:
     Also excludes empty files — a package marker is not deterministic anything.
     """
     return [c for c in _code_files(skill_dir)
-            if not (_is_test_file(Path(c).name) and _is_real_test(skill_dir / c))
+            if not (_is_test_file(Path(c).name) and _is_definitely_a_test(skill_dir / c))
             and _has_executable_content(skill_dir / c)]
 
 
@@ -622,6 +654,15 @@ _JS_TEST_CONSTRUCT = re.compile(r"\b(it|test|describe)\s*\(|\bassert\b|\bexpect\
 
 # Bash test suites (e.g. cross-review's tests/*.test.sh) define ok()/fail() helpers
 # + PASS/FAIL accounting rather than JS/py constructs; recognize them too.
+# The subset of the bash pattern that cannot be an ordinary logging helper. Used by
+# `_is_definitely_a_test`, where a false positive is a fail-open rather than a note.
+_STRONG_TEST_CONSTRUCT = re.compile(
+    r"\bassert\w*\b"
+    r"|^\s*@test\b"
+    r"|\b(?:PASS|FAIL|PASSED|FAILED|TESTS_RUN)\s*=\s*0\b",
+    re.MULTILINE,
+)
+
 _BASH_TEST_CONSTRUCT = re.compile(
     r"\bassert\w*\b"                                          # assert / assert_eq / assertEquals
     r"|^\s*@test\b"                                           # bats

@@ -3337,8 +3337,9 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
     the stronger claim I first wrote here ("governs inference only; being wrong can
     only produce a conservative false reject") is FALSE, and round 24 measured it:
     perturbing the list opens fail-opens in both directions. What holds is narrower
-    and worth stating exactly — every row that escapes that way is a ZERO-BYTE file,
-    so no logic escapes through the name list. The two refutations that could let
+    and worth stating exactly — every row that escapes that way has NO EXECUTABLE
+    CONTENT — zero-byte, or comment-only, or a lone docstring — so no logic escapes
+    through the name list. The two refutations that could let
     real logic through, the `latent_only` contradiction and `require_tests`, read a
     predicate that excludes a file only when its name AND its structure agree.
 
@@ -3403,13 +3404,16 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
         f"is load-bearing for a refutation again: {escaped}")
 
 
-def test_a_shell_script_is_not_a_test_because_test_is_a_builtin(tmp_path):
+def test_a_shell_script_is_not_a_test_for_defining_ok_and_fail(tmp_path):
     """Round 25's own regression, caught by the roster rather than by a test.
 
     Excluding test-side files BY ROLE alone looked like the principled fix — until
     it moved the roster. `_is_real_test` is an AST walk for Python but a REGEX for
-    every other language, and `test` is a shell builtin, so it called the real
-    `blog-post/scripts/publish.sh` a test. That is a fail-open for every shell
+    every other language, and its bash pattern counts `ok()` / `fail()` HELPER
+    DEFINITIONS, so it called the real `blog-post/scripts/publish.sh` a test.
+    (An earlier version of this docstring blamed the `test` shell builtin. That was
+    wrong — `if test -f` does not match the pattern — and the first fixture written
+    from that wrong explanation could not fail.) That is a fail-open for every shell
     script in the repo: ship one, and nothing requires you to test it.
 
     Both predicates must agree. This pins the arm that ROLE-only would break.
@@ -3436,3 +3440,94 @@ def test_a_shell_script_is_not_a_test_because_test_is_a_builtin(tmp_path):
     # ...and it therefore still has to be tested.
     step3 = _step(_check(d), 3)
     assert step3["status"] == "FAIL", step3["detail"]
+
+
+def test_a_test_shaped_shell_name_cannot_excuse_a_publisher(tmp_path):
+    """Round 26's BLOCKER: the conjunction needs BOTH predicates wrong at once, and
+    one file makes both wrong.
+
+    `scripts/test_publish.sh` — test-shaped NAME, so `_is_test_file` says yes; shell
+    LOGGING helpers `ok()`/`fail()`, so the bash regex says yes — while containing
+    nothing but a working publisher. It escaped both refutations and the whole gate
+    returned rc 0, where 6e688f6 failed it.
+
+    The fix is not a stronger conjunction, it is a stronger BURDEN. Reporting that a
+    skill has tests may accept weak evidence; excusing a file from a refutation may
+    not, because there a wrong answer is fail-open.
+    """
+    d = _mk(tmp_path, "pub",
+            {"scripts/test_publish.sh":
+                 '#!/bin/bash\nset -euo pipefail\n'
+                 'log()  { echo "[log] $*"; }\n'
+                 'ok()   { echo "[ok] $*"; }\n'
+                 'fail() { echo "[fail] $*" >&2; exit 1; }\n'
+                 'publish() { curl -fsS -X POST "$1" || fail "no"; ok "done"; }\n'
+                 'publish "$@"\n',
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+
+    # The fixture must reproduce BOTH halves or it proves nothing.
+    p = d / "scripts" / "test_publish.sh"
+    assert mod._is_test_file(p.name), "fixture must have a test-shaped name"
+    assert mod._is_real_test(p), "fixture must trip the weak role regex"
+    assert not mod._is_definitely_a_test(p), "...and must NOT clear the stricter bar"
+
+    res = _check(d)
+    assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
+        "a publisher shipped past the gate by being named like a test"
+
+
+def test_a_genuine_shell_suite_still_counts_as_tests(tmp_path):
+    """The other side of the same change, and the reason the weak alternation was
+    not simply deleted: one real suite in this roster
+    (`governed-autonomy-loop/tests/smoke.sh`) is recognised only by it.
+
+    Step 3 still uses `_is_real_test`, so that suite still counts. Only the
+    refutation path demands the stronger construct.
+    """
+    weak = tmp_path / "weak" / "tests" / "smoke.sh"
+    weak.parent.mkdir(parents=True)
+    weak.write_text('#!/bin/bash\nok()   { echo ok; }\nfail() { echo no; exit 1; }\n'
+                    '[ -f x ] && ok "found" || fail "missing"\n', encoding="utf-8")
+    assert mod._is_real_test(weak), "step 3 must still see this as a test"
+    assert not mod._is_definitely_a_test(weak), "but it is not strong enough to excuse"
+
+    strong = tmp_path / "strong" / "tests" / "real.test.sh"
+    strong.parent.mkdir(parents=True)
+    strong.write_text('#!/bin/bash\nassert_eq() { [ "$1" = "$2" ]; }\nassert_eq a a\n',
+                      encoding="utf-8")
+    assert mod._is_definitely_a_test(strong), "an assert IS strong enough"
+
+
+def test_a_health_check_named_like_production_is_not_excused(tmp_path):
+    """Why the NAME half of the conjunction still earns its place.
+
+    Once the role detector was made strict, dropping the name half stopped mattering
+    for the shell case — the mutation survived, which is the sweep telling me the
+    arm was no longer pinned. It still matters here: a module named
+    `scripts/checks.py` that defines `def test_connection(): assert ping()` is a
+    health checker, not a test suite. The AST cannot tell those apart, and the name
+    can.
+
+    Under the conjunction it stays deterministic (correct). Under role alone it is
+    excused, and a lens could ship it untested.
+    """
+    d = _mk(tmp_path, "health",
+            {"scripts/checks.py":
+                 "def ping(host):\n"
+                 "    return host.startswith('http')\n\n"
+                 "def test_connection():\n"
+                 "    assert ping('http://x')\n",
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+
+    p = d / "scripts" / "checks.py"
+    assert mod._is_real_test(p), "the AST does see a test function here"
+    assert mod._is_definitely_a_test(p), "and for Python the strict bar is the same"
+    assert not mod._is_test_file(p.name), "but the NAME says production"
+
+    assert "scripts/checks.py" in mod._deterministic_scripts(d), \
+        "the name half is what keeps a health checker deterministic"
+    res = _check(d)
+    assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
+        "a health checker was excused by containing an assert"
