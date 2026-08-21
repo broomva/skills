@@ -116,10 +116,24 @@ done
 # daemon makes `git status` report a CLEAN tree while files are modified — which
 # would turn this detector into a rubber stamp exactly when it matters.
 guard_fingerprint() {
-    {
-        git -c core.fsmonitor=false status --porcelain=v1 -uall 2>/dev/null
-        git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>/dev/null
-    } | shasum -a 256 | awk '{print $1}'
+    # Fail CLOSED. Previously both git calls were 2>/dev/null and their exit codes
+    # discarded, so outside a repo (or with git broken) the fingerprint was the
+    # hash of the empty string — identical at capture and verify, i.e. a vacuous
+    # pass exactly when nothing could be observed.
+    local st df untracked
+    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 -uall 2>&1); then
+        echo "reviewer-guard: git status failed: $st" >&2; return 1
+    fi
+    if ! df=$(git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>&1); then
+        echo "reviewer-guard: git diff failed: $df" >&2; return 1
+    fi
+    # `status` lists untracked PATHS; it says nothing about their CONTENT, and
+    # `git diff HEAD` does not see untracked files at all. So a reviewer editing a
+    # file that was already untracked at capture was invisible to both. Hash the
+    # bytes as well as the names.
+    untracked=$(git -c core.fsmonitor=false ls-files --others --exclude-standard -z 2>/dev/null \
+        | xargs -0 -I{} shasum -a 256 "{}" 2>/dev/null | sort)
+    printf '%s\n%s\n%s\n' "$st" "$df" "$untracked" | shasum -a 256 | awk '{print $1}'
 }
 
 guard_state_path() {
@@ -135,8 +149,18 @@ if [ "$COMMAND" = "reviewer-guard" ]; then
     STATE=$(guard_state_path)
     case "$GUARD_MODE" in
         capture)
-            guard_fingerprint > "$STATE"
-            echo "reviewer-guard: captured $(cut -c1-16 < "$STATE")… -> $STATE"
+            # `guard_fingerprint > "$STATE"` truncated the file BEFORE running, so a
+            # failing fingerprint or an unwritable path still left a state file and
+            # exited 0 — a baseline that certifies nothing.
+            if ! FP=$(guard_fingerprint); then
+                echo "reviewer-guard: cannot fingerprint; refusing to capture a baseline" >&2
+                exit 4
+            fi
+            if ! printf '%s\n' "$FP" > "$STATE" 2>/dev/null; then
+                echo "reviewer-guard: cannot write state to $STATE" >&2
+                exit 4
+            fi
+            echo "reviewer-guard: captured ${FP:0:16}… -> $STATE"
             exit 0
             ;;
         verify)
@@ -146,7 +170,15 @@ if [ "$COMMAND" = "reviewer-guard" ]; then
                 echo "  reviewer. An unverifiable review is not a passed review." >&2
                 exit 4
             fi
-            BEFORE=$(cat "$STATE"); AFTER=$(guard_fingerprint)
+            BEFORE=$(cat "$STATE")
+            if ! AFTER=$(guard_fingerprint); then
+                echo "reviewer-guard: cannot fingerprint at verify — unverifiable, not clean" >&2
+                exit 4
+            fi
+            if [ -z "$BEFORE" ]; then
+                echo "reviewer-guard: baseline at $STATE is EMPTY — unverifiable" >&2
+                exit 4
+            fi
             if [ "$BEFORE" = "$AFTER" ]; then
                 echo "reviewer-guard: tree unchanged across review — verdict is admissible"
                 exit 0
@@ -259,16 +291,37 @@ if [ "$COMMAND" = "pre-push" ]; then
     # ─── Reviewer guard: capture before any reviewer runs ────────────────
     echo "  ─── Reviewer guard ──────────────────────────────────────────"
     echo ""
+    # Capture here rather than telling the agent to. An instruction printed to
+    # stdout is not a baseline: the previous version advertised a guard that
+    # nothing in the run actually armed, so every review passed unguarded.
+    if GUARD_MODE=capture GUARD_STATE="" bash "${BASH_SOURCE[0]}" reviewer-guard capture; then
+        GUARD_ARMED=1
+    else
+        GUARD_ARMED=0
+        echo "  [warn] could not arm the reviewer guard — the review will be"
+        echo "         UNVERIFIABLE. That is not the same as clean."
+    fi
+    echo ""
     echo "  [TODO-AGENT] The reviewer must not be able to write. Two layers:"
     echo "    1. dispatch it read-only (each stratum below names how)"
-    echo "    2. prove layer 1 held:"
-    echo "         cross-review reviewer-guard capture     # before dispatch"
-    echo "         ...run the review..."
-    echo "         cross-review reviewer-guard verify      # after; exit 4 = INVALID"
+    echo "    2. after the review returns, run:"
+    echo "         cross-review reviewer-guard verify      # exit 4 = INVALID"
     echo ""
     echo "  Exit 4 is REVIEW INVALID, distinct from a failing score: a verdict"
     echo "  produced by a reviewer that edited the tree is not a low score, it is"
     echo "  no verdict at all. Fix rounds belong to the WRITER, never the reviewer."
+    echo ""
+    echo "  What the guard does and does not see: it compares the tree before and"
+    echo "  after, so it detects writes that PERSIST. A write that is made and then"
+    echo "  reverted within the review, a write outside this worktree, and a"
+    echo "  reviewer that replaces the baseline file itself all remain invisible."
+    echo "  Layer 1 (the read-only tool set) is the control; this is corroboration."
+    if [ "$GUARD_ARMED" = "1" ]; then
+        echo "  Guard: ARMED. Run \`reviewer-guard verify\` before accepting any verdict."
+    else
+        echo "  Guard: NOT ARMED. Any verdict from this run is UNVERIFIABLE —"
+        echo "  which is not the same as clean, and must be said in the PR."
+    fi
     echo ""
 
     # Strata A — true cross-vendor via Codex

@@ -212,6 +212,55 @@ else
 fi
 (cd "$GUARD_TMP" && rm -rf newdir .git/cross-review-guard.state)
 
+echo "T18. editing a file that was ALREADY untracked at capture is caught"
+# status lists untracked PATHS, not their bytes; git diff HEAD does not see
+# untracked files at all. Without hashing untracked contents this write was
+# invisible to both halves of the fingerprint.
+(cd "$GUARD_TMP" && echo "before" > loose.txt)
+(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture >/dev/null 2>&1)
+ST_BEFORE=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1 -uall)
+(cd "$GUARD_TMP" && echo "reviewer edited me" > loose.txt)
+ST_AFTER=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1 -uall)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$ST_BEFORE" != "$ST_AFTER" ]; then
+    fail "T18: precondition" "status differed; this does not test content hashing"
+elif [ "$RC" -eq 4 ]; then
+    ok "T18: untracked content change detected"
+else
+    fail "T18: untracked content change detected" "rc=$RC out=$OUT"
+fi
+(cd "$GUARD_TMP" && rm -f loose.txt .git/cross-review-guard.state)
+
+echo "T19. outside a git repo the guard is unverifiable, not clean"
+# The old fingerprint discarded git errors, so both calls returning nothing
+# hashed the empty string — identical before and after, a vacuous pass.
+NOGIT=$(mktemp -d)
+OUT=$(cd "$NOGIT" && bash "$CROSS_REVIEW_SH" reviewer-guard capture --state="$NOGIT/s" 2>&1); RC=$?
+if [ "$RC" -ne 0 ]; then
+    ok "T19: refuses to capture where nothing can be observed (rc=$RC)"
+else
+    fail "T19: refuses to capture where nothing can be observed" "rc=0 out=$OUT"
+fi
+rm -rf "$NOGIT"
+
+echo "T20. an unwritable state path fails closed"
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture --state=/nonexistent-dir/s 2>&1); RC=$?
+if [ "$RC" -eq 4 ]; then
+    ok "T20: unwritable baseline is exit 4"
+else
+    fail "T20: unwritable baseline is exit 4" "rc=$RC out=$OUT"
+fi
+
+echo "T21. an EMPTY baseline is unverifiable, not a match"
+(cd "$GUARD_TMP" && : > .git/cross-review-guard.state)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$RC" -eq 4 ]; then
+    ok "T21: empty baseline is exit 4"
+else
+    fail "T21: empty baseline is exit 4" "rc=$RC out=$OUT — an empty file would otherwise match an empty fingerprint"
+fi
+(cd "$GUARD_TMP" && rm -f .git/cross-review-guard.state)
+
 # ── T14: the dispatch names a read-only agent type ────────────────────────
 echo "T14. Strata B dispatches read-only, not general-purpose"
 SB=$(sed -n "/Strata B: fresh-context subagent/,/dispatches the subagent/p" "$CROSS_REVIEW_SH")

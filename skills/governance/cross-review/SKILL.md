@@ -201,7 +201,7 @@ Two layers, because **a prose instruction is not a capability**:
 | Layer | Mechanism | What it is |
 |---|---|---|
 | 1 — control | Strata B dispatches `subagent_type='Explore'` (every tool except `Edit`/`Write`/`NotebookEdit`); Strata A pins `codex exec -c sandbox_mode=read-only` | the reviewer *cannot* write |
-| 2 — detector | `reviewer-guard capture` / `verify` around the review | proves layer 1 held |
+| 2 — detector | `reviewer-guard capture` / `verify` around the review | corroborates layer 1 — see the limits below |
 
 ```bash
 cross-review reviewer-guard capture     # fingerprint before dispatch
@@ -209,11 +209,24 @@ cross-review reviewer-guard capture     # fingerprint before dispatch
 cross-review reviewer-guard verify      # exit 4 = REVIEW INVALID
 ```
 
-The fingerprint is `git status --porcelain -uall` plus `git diff HEAD`, hashed —
-so an added untracked file is caught, not just a tracked edit. `core.fsmonitor`
+The fingerprint is `git status --porcelain -uall`, plus `git diff HEAD`, plus a
+hash of the **contents** of every untracked file. All three are load-bearing:
+`status` lists untracked *paths* but says nothing about their bytes, and `git
+diff HEAD` does not see untracked files at all — so without the third, a reviewer
+editing a file that was already untracked at capture was invisible to both. `core.fsmonitor`
 is forced **off** for both: this repo family sets `core.fsmonitor=true`, and a
 dead daemon makes `git status` report a clean tree while files are modified,
 which would turn the detector into a rubber stamp precisely when it matters.
+
+**What this does not detect.** The guard compares two snapshots, so it sees writes
+that **persist**. It does not see: a write made and reverted inside the review; a
+write outside this worktree; or a reviewer that overwrites the baseline file
+itself. It is corroboration that layer 1 held, not proof — **layer 1, the
+read-only tool set, is the actual control.** A guard described as proof would
+license dropping the tool-set restriction, which is the only part that cannot be
+worked around. Everything it *does* catch, it fails closed on: if `git` errors, or
+the baseline is missing or empty, the verdict is *unverifiable* (exit 4), never
+*clean*.
 
 **Exit 4 is REVIEW INVALID, and it is not a low score.** A verdict produced by a
 reviewer that edited the tree is *no verdict at all* — discard it, revert the
