@@ -5,6 +5,18 @@ All notable changes to `unslop` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] — 2026-08-21
+
+broomva-design dogfood (BRO-2197, the house exemplar audits itself):
+
+- **Font subsystem**: `fontFamily: "var(--bv-font-mono, ui-monospace, monospace)"` declared nothing —
+  yet its fallback tail leaked as fake family roots (`ui-monospace`×31 and a mangled `monospace)` on
+  the exemplar). `_split_families()` now strips `var()` (nested-safe) and routes fallback tails to
+  `fallback_only`. Namespaced font tokens (`--bv-font-sans`, `--brand-font-heading`) register as
+  declarations — closes the `fonts.deliberate` gap from the genesis arc (BRO-2196).
+- Known collateral documented: `MIN_SCREENSHOT_BYTES` flags genuinely sparse specimen pages (a
+  two-swatch token page compresses under the floor); kept — it guards white-page false evidence.
+
 ## [0.2.2] — 2026-08-20
 
 Genesis dogfood finding #2 (BRO-2196, via cross-model review of the arc's own PR): `app/manifest.ts`

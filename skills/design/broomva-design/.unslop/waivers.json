@@ -1,0 +1,59 @@
+{
+  "waivers": [
+    {
+      "check": "tokens.radius",
+      "reason": "assets/system/ is the curated archive (full/essentials/tokens profiles): source-era vocabulary preserved deliberately as evidence; the product-neutral boundary is assets/portable/, which gates CLEAR on its own. SKILL.md \u00a7Auditing this skill."
+    },
+    {
+      "check": "tokens.shadow",
+      "reason": "Archive boundary, same as tokens.radius; portable/ declares exactly the two earned-glass elevation values in broomva-foundation.css."
+    },
+    {
+      "check": "tokens.color",
+      "reason": "All hex literals outside token files live in assets/system/ archive specimens; assets/portable/ has zero."
+    },
+    {
+      "check": "copy.em-dash",
+      "reason": "All sites are assets/system/ archive specimens (Design System.html, guidelines) preserved as source-era evidence; portable copy is clean."
+    },
+    {
+      "check": "copy.emoji",
+      "reason": "Archive specimens only; the portable layer and prompt contracts carry none."
+    },
+    {
+      "check": "copy.checkmark-bullets",
+      "reason": "Archive specimens only (Design System.html feature lists), preserved as evidence."
+    },
+    {
+      "check": "copy.buzzwords",
+      "reason": "One site in an archive specimen; preserved as evidence of the source era."
+    },
+    {
+      "check": "copy.slop-patterns",
+      "reason": "One negative-listing site in the archived brand-voice guideline; preserved as evidence, not product copy."
+    },
+    {
+      "check": "substance.legal",
+      "reason": "This is an asset library inside a skills monorepo, not a served product; legal surfaces belong to host products (see the genesis and broomva.tech arcs)."
+    },
+    {
+      "check": "substance.product-evidence",
+      "reason": "Render evidence for the portable layer is produced by .unslop/render-harness.html against the shipped foundation CSS; host products carry the real product evidence."
+    },
+    {
+      "check": "detector.rule",
+      "value": "flat-type-hierarchy",
+      "reason": "All flat-type-hierarchy findings live in assets/system/ archive specimens (portable/ runs the detector clean, 0 findings); source-era evidence preserved per SKILL.md \u00a7Auditing this skill."
+    },
+    {
+      "check": "detector.rule",
+      "value": "bounce-easing",
+      "reason": "All bounce-easing findings live in assets/system/ archive specimens (portable/ runs the detector clean, 0 findings); source-era evidence preserved per SKILL.md \u00a7Auditing this skill."
+    },
+    {
+      "check": "detector.rule",
+      "value": "layout-transition",
+      "reason": "All layout-transition findings live in assets/system/ archive specimens (portable/ runs the detector clean, 0 findings); source-era evidence preserved per SKILL.md \u00a7Auditing this skill."
+    }
+  ]
+}

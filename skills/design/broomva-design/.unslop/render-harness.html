@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broomva foundation — render harness</title>
+<link rel="stylesheet" href="../assets/portable/broomva-foundation.css">
+<style>main{max-width:960px;margin:0 auto;padding:32px 16px;display:grid;gap:16px}</style>
+</head>
+<body class="bv-body">
+<main>
+  <h1 class="bv-h">Broomva foundation</h1>
+  <p class="bv-meta">Render harness for the portable layer. Every class below ships in broomva-foundation.css.</p>
+  <div class="bv-card">
+    <h2 class="bv-h">A matte card</h2>
+    <p>Blue-black ink on whisper-chroma neutrals. The card stays matte; glass is earned elsewhere.</p>
+    <button class="bv-button">Primary action</button>
+    <button class="bv-button bv-button--secondary">Secondary</button>
+    <button class="bv-button bv-button--ghost">Ghost</button>
+  </div>
+  <div class="bv-card bv-card--interactive">
+    <h2 class="bv-h">Interactive card</h2>
+    <input class="bv-input" placeholder="Type here" aria-label="Sample input">
+    <p class="bv-code">bv-code: 13px mono, reserved for code.</p>
+  </div>
+  <div class="bv-glass" style="padding:16px">
+    <p>Earned glass: dialog-grade elevation.</p>
+  </div>
+</main>
+</body>
+</html>

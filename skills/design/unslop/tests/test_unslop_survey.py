@@ -516,3 +516,44 @@ def test_manifest_metadata_route_is_a_copy_surface(tmp_path):
     )
     ct2 = us.survey(root)["copy_tells"]
     assert ct2["em_dash"]["count"] == 1 and ct2["buzzwords"]["count"] == 1  # unchanged
+
+
+# ------------------------------- broomva-design dogfood findings (BRO-2197, 0.2.3)
+def test_var_fallback_tails_are_not_declared_families(tmp_path):
+    # fontFamily: "var(--bv-font-mono, ui-monospace, monospace)" consumes a token; its fallback
+    # tail leaked as fake roots (ui-monospace ×31 + a mangled "monospace)") on the exemplar skill
+    root = _prose_repo(tmp_path, "varfont")
+    (root / "app" / "page.tsx").write_text(
+        'export default () => <div style={{ fontFamily: "var(--bv-font-mono, ui-monospace, monospace)" }}>x</div>;\n'
+    )
+    fonts = us.survey(root)["fonts"]
+    assert fonts["families"] == {}                    # a var()-consuming declaration declares NOTHING
+    assert "ui-monospace" in fonts["fallback_only"]   # the tail is recorded where it belongs
+    assert all("var(" not in k and ")" not in k for k in fonts["fallback_only"])  # nothing mangled
+
+
+def test_namespaced_font_tokens_are_declarations(tmp_path):
+    # genesis follow-up: --bv-font-sans under a namespace prefix is the declared stack
+    root = _prose_repo(tmp_path, "nsfont")
+    (root / "app" / "globals.css").write_text(
+        ":root { --bv-font-sans: -apple-system, 'Segoe UI', sans-serif; --bv-font-size-lg: 1.25rem; }\n"
+    )
+    fonts = us.survey(root)["fonts"]
+    assert "-apple-system" in fonts["families"]       # the namespaced stack registers as declared
+    assert all("1.25rem" not in k for k in list(fonts["families"]) + list(fonts["fallback_only"]))
+
+
+def test_split_families_hostile_edges():
+    # self-probe before review: case-insensitive var(), deep nesting, quotes, empty fallback,
+    # unbalanced input — never emit a mangled root, and "Varela Round" is a real family
+    assert us._split_families("Varela Round, sans-serif")[0] == ["varela round", "sans-serif"]
+    assert us._split_families("VAR(--a, Menlo)") == ([], ["menlo"])
+    assert us._split_families("var(--a, var(--b, var(--c, var(--d, X))))") == ([], ["x"])
+    assert us._split_families("var(--a,)") == ([], [])
+    d, fb = us._split_families("var(--bv-font-sans, 'SF Pro', \"Segoe UI\")")
+    assert d == [] and fb == ["sf pro", "segoe ui"]
+    d, fb = us._split_families("var(--broken, Menlo")   # unbalanced: no mangled roots either way
+    assert all("var(" not in x and ")" not in x for x in d + fb)
+    # codex r2 nit: quoted families with balanced parens are legitimate, not mangled fragments
+    assert us._split_families('"Brandon (Text)", serif')[0] == ["brandon (text)", "serif"]
+    assert us._split_families('var(--a, "Brandon (Text)", serif)') == ([], ["brandon (text)", "serif"])

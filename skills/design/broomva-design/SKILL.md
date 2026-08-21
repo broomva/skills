@@ -60,6 +60,20 @@ These profiles remain available for maintainers and existing automation, but the
 
 Prefer `foundation` or `web` for new products. The legacy profiles preserve their pre-portability paths and therefore retain source-era vocabulary; they are not the product-neutral boundary. Do not copy the bundled Maestro app or agentic vocabulary into an unrelated product. Extensions never leak upward into the foundation.
 
+## Auditing this skill (unslop / design gates)
+
+The unit under audit is **`assets/portable/`** — the product-neutral boundary every new product
+inherits. It gates CLEAR on its own (BRO-2197: 12 PASS · 2 WARN · 0 FAIL; zero copy tells, zero hex
+outside token files, every radius and font a `--bv-*` token). `assets/system/` is the **curated
+archive** (full/essentials/tokens profiles): its specimens keep source-era vocabulary as evidence and
+must not be edited to green a check — that would be falsifying the archive. A whole-skill survey
+therefore reads loud; `.unslop/waivers.json` encodes the boundary with reasons — but waivers are
+check-global, so the boundary is **enforced by `.unslop/audit.sh`**: gate 1 re-runs `assets/portable/`
+with ZERO waivers (new portable drift fails there no matter what the waiver file says), gate 2 runs
+the whole skill with the archive waivers. `.unslop/render-harness.html` renders the shipped
+foundation for screenshot evidence. `DESIGN.md`
+here is the materialized product contract — never add audit or skill-internal notes to it.
+
 ## Preserve the visual thesis
 
 - Keep application chrome on the system sans stack. Cal Sans is opt-in for marketing and hero display surfaces only.
