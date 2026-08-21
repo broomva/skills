@@ -250,8 +250,8 @@ MUTANTS = [
      '    if False:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
      "test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse"),
     ("M67 structured values stop counting as values",
-     '        return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))',
-     '        return False',
+     '        result = any(_substantive(v, _memo, _depth + 1)\n                     for v in (x.values() if isinstance(x, dict) else x))',
+     '        result = False',
      "test_structured_values_are_substantive"),
 
     # --- round 11: the false ACCEPT that the round-10 fix created -------------
@@ -260,16 +260,16 @@ MUTANTS = [
     # because every mutant pointed the same way. Mutate a predicate in BOTH
     # directions or it only proves half of it.
     ("M69 hollow containers count as content again (the round-10 regression)",
-     '        return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))',
-     '        return bool(x)',
+     '        result = any(_substantive(v, _memo, _depth + 1)\n                     for v in (x.values() if isinstance(x, dict) else x))',
+     '        result = bool(x)',
      "test_a_hollow_tier_j_core_does_not_pass"),
     ("M70 fence padding admits control characters again",
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t]*\\n(.*?)\\n---[ \\t]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
      "test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters"),
-    ("M71 the cycle/depth guard reports present instead of absent",
-     '            # an unverified artifact is reported, never thrown. Found in P20 round 13.\n            return False',
-     '            # an unverified artifact is reported, never thrown. Found in P20 round 13.\n            return True',
+    ("M71 the in-progress cycle marker reports present instead of absent",
+     '        _memo[key] = False          # a cycle contributes nothing while in progress',
+     '        _memo[key] = True          # a cycle contributes nothing while in progress',
      "test_substantive_terminates_on_a_cyclic_structure"),
 
     # --- round 12 -------------------------------------------------------------
@@ -301,8 +301,8 @@ MUTANTS = [
      '    want = key\n    for k, v in fm.items():\n        if str(k) == want:',
      "test_frontmatter_keys_are_matched_case_insensitively"),
     ("M79 the nesting cap is removed and deep values raise instead of failing closed",
-     '        if id(x) in _seen or len(_seen) >= _MAX_NESTING:',
-     '        if id(x) in _seen:',
+     '        if _depth >= _MAX_NESTING:',
+     '        if False:',
      "test_absurdly_nested_values_fail_closed_instead_of_raising"),
     ("M80 the nesting cap is so low it rejects ordinary nesting",
      '_MAX_NESTING = 100',
@@ -413,10 +413,11 @@ MUTANTS = [
      '    lowered = name.lower()',
      '    lowered = name',
      "test_a_test_file_is_recognised_whatever_the_extension_case"),
-    ("M105 the reader scan stops resetting on dedent",
-     "            elif line and not line[0].isspace():             # any other top-level stmt\n                current_def = \"\"",
-     "            elif False:             # any other top-level stmt\n                current_def = \"\"",
-     "test_no_reader_bypasses_the_shared_guards"),
+    # M105 retired: it targeted a line in the TEST file, and this harness only mutates
+    # GATE (skillify_check.py), so the anchor could never match. The guard's polarity is
+    # proven instead by the ten-form bypass battery recorded in its docstring — 7/10
+    # caught, with the three that slip named. A mutant that cannot be applied is the
+    # same dishonest bookkeeping as one that cannot die.
     ("M92 camelCase negative polarity is dropped again",
      '_NEGATIVE_KEYS = {"should_not_trigger", "shouldNotTrigger", "should_not_fire",',
      '_NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire",',
