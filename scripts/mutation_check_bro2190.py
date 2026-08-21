@@ -244,11 +244,7 @@ MUTANTS = [
      '        node = yaml.compose(block)\n    except Exception:\n        return None',
      '        node = yaml.compose("a: 1")\n    except Exception:\n        return None',
      "test_duplicate_top_level_outcome_declarations_fail"),
-    ("M65 an unparseable frontmatter block stops being reported",
-     '    if declared is None:\n        return ("evals/admission.md frontmatter does not parse as YAML',
-     '    if False:\n        return ("evals/admission.md frontmatter does not parse as YAML',
-     "test_a_malformed_closing_fence_does_not_run_on_to_a_later_one"),
-
+    
     ("M66 tier J passes frontmatter it cannot parse (the final false accept)",
      '    if yaml is None:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
      '    if False:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
@@ -296,11 +292,7 @@ MUTANTS = [
      '    if yaml is None:\n        return "no-parser", []',
      '    if yaml is None:\n        return "ok", [("tier", 2)]',
      "test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing"),
-    ("M76 an unparseable block collapses back into 'no duplicates' (the r13 blocker)",
-     '        return "unparseable", []',
-     '        return "ok", []',
-     "test_a_malformed_line_cannot_disable_the_duplicate_check"),
-    ("M77 the unparseable refusal fires on well-formed YAML too",
+        ("M77 the unparseable refusal fires on well-formed YAML too",
      '    if status == "unparseable":',
      '    if status != "":',
      "test_a_wellformed_frontmatter_is_not_called_unparseable"),
@@ -318,6 +310,13 @@ MUTANTS = [
      '_MAX_NESTING = 100',
      '_MAX_NESTING = 2',
      "test_absurdly_nested_values_fail_closed_instead_of_raising"),
+
+    # M65/M76 retired in round 15. Both anchored on branches that
+    # `_frontmatter_disagreement_issue` now shadows: `compose` is a strict prefix of
+    # `safe_load`, so a block compose rejects is one safe_load rejects, which the
+    # disagreement check refuses first. Both SURVIVED, and this file's standard is that
+    # a mutant which cannot die is dishonest bookkeeping — so the branches were deleted
+    # rather than the mutants kept.
 
     # --- round 14: the refusal keyed on the wrong parser ----------------------
     ("M81 the tier gate stops refusing when the two readers disagree",
@@ -340,6 +339,36 @@ MUTANTS = [
      '    if data is None and not block.strip():',
      '    if False:',
      "test_parse_frontmatter_status_names_which_reader_answered"),
+
+    # --- round 15 -------------------------------------------------------------
+    ("M86 duplicate keys in a YAML eval artifact are resolved last-wins again",
+     '        dup = _duplicate_key_in_node(txt)\n        if dup:',
+     '        dup = None\n        if dup:',
+     "test_a_duplicate_key_in_an_eval_artifact_cannot_hide_a_self_judging_declaration"),
+    ("M87 duplicate keys in a JSON eval artifact are resolved last-wins again",
+     '            return json.loads(txt, object_pairs_hook=_no_duplicate_pairs)',
+     '            return json.loads(txt)',
+     "test_a_duplicate_key_in_an_eval_artifact_cannot_hide_a_self_judging_declaration"),
+    ("M88 the duplicate-key refusal fires on artifacts with no duplicates",
+     '        if k in seen:\n            raise _DuplicateKey(k)',
+     '        if True:\n            raise _DuplicateKey(k)',
+     "test_a_clean_eval_artifact_still_passes"),
+    ("M89 the step-1 name report goes back to a case-sensitive read",
+     "f\"name={_fm(fm, 'name')} (skills.sh-parseable)\"",
+     "f\"name={fm['name']} (skills.sh-parseable)\"",
+     "test_a_capitalised_name_key_reports_instead_of_raising"),
+    ("M90 skill.json recursion is uncaught again",
+     '        except (ValueError, OSError, RecursionError):',
+     '        except (ValueError, OSError):',
+     "test_deeply_nested_artifacts_report_rather_than_throw"),
+    ("M91 the json eval arm stops catching recursion",
+     '        except RecursionError:\n            # json.loads recurses',
+     '        except UnicodeDecodeError:\n            # json.loads recurses',
+     "test_deeply_nested_artifacts_report_rather_than_throw"),
+    ("M92 camelCase negative polarity is dropped again",
+     '_NEGATIVE_KEYS = {"should_not_trigger", "shouldNotTrigger", "should_not_fire",',
+     '_NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire",',
+     "test_camelcase_negative_polarity_is_recognised"),
     ("M68 opening fence stops tolerating trailing whitespace",
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t]*\\n(.*?)\\n---[ \\t]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[ \\t]*(?:\\n|$)", re.DOTALL)',

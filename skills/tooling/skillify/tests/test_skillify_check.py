@@ -2418,3 +2418,109 @@ def test_parse_frontmatter_status_names_which_reader_answered(tmp_path):
     assert st("---\na: !!foo 1\n---\nbody\n") == mod.FM_FALLBACK
     assert st("---\nbroken: [\n---\nbody\n") == mod.FM_FALLBACK
     assert st("---\n- a\n- b\n---\nbody\n") == mod.FM_FALLBACK
+
+
+def _jsuite(root: Path, suite_text: str, suffix: str = "yaml") -> Path:
+    (root / "evals" / "held-out").mkdir(parents=True)
+    (root / "SKILL.md").write_text(
+        "---\nname: jdup\ndescription: A judgment skill.\ntier: J\n---\n# jdup\n", encoding="utf-8")
+    (root / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n---\nTwo agents, one brief; a third judged both valid.\n",
+        encoding="utf-8")
+    (root / "evals" / "rubric.md").write_text("# Rubric\n- specificity\n", encoding="utf-8")
+    (root / "evals" / "held-out" / "case1.md").write_text("A held-out case prompt.\n", encoding="utf-8")
+    (root / "evals" / f"suite.{suffix}").write_text(suite_text, encoding="utf-8")
+    return root
+
+
+_DUP_YAML = """judge:
+  model: gpt-5
+  agreement_floor: 0.8
+  agreement_measured: {value: 0.84, method: 40 hand-labelled cases, two raters}
+execution_contract:
+  model: gpt-5
+execution_contract:
+  model: claude-opus-4
+"""
+_CLEAN_YAML = _DUP_YAML.replace("execution_contract:\n  model: gpt-5\n", "", 1)
+_JUDGE = ('{"judge": {"model":"gpt-5","agreement_floor":0.8,'
+          '"agreement_measured":{"value":0.84,"method":"40 cases"}}, ')
+_DUP_JSON = _JUDGE + '"execution_contract": {"model":"gpt-5"}, "execution_contract": {"model":"claude-opus-4"}}'
+_CLEAN_JSON = _JUDGE + '"execution_contract": {"model":"claude-opus-4"}}'
+
+
+def test_a_duplicate_key_in_an_eval_artifact_cannot_hide_a_self_judging_declaration(tmp_path):
+    """The SEVENTH instance of this arc's pattern, and the one that reaches furthest.
+
+    The duplicate-key class was fixed three times, each time in `SKILL.md`: `outcome:`,
+    then `tier:`, then key-agnostically. The commit that made it key-agnostic said "a
+    future gate-deciding key should be covered the day it is added rather than the day
+    someone remembers to enumerate it" — and `evals/*`, the documents carrying tier J's
+    ENTIRE contract, were still read with plain `safe_load`/`json.loads`, both last-wins
+    and silent.
+
+    Measured: a duplicated `execution_contract:` hid a self-judging declaration and the
+    gate printed "cross-model judge with a measured floor". Its control — the same file
+    with the discarded line removed — FAILs with "judge.model == a model under eval". So
+    the bypass is a pass the gate would refuse if the hidden line were the only one."""
+    for i, (text, suffix) in enumerate(((_DUP_YAML, "yaml"), (_DUP_JSON, "json"))):
+        d = _jsuite(tmp_path / f"dup{i}", text, suffix)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{suffix} -> {step2['detail']}"
+        assert "duplicate key" in step2["detail"], step2["detail"]
+
+
+def test_a_clean_eval_artifact_still_passes(tmp_path):
+    """Paired control in both formats: the refusal must bite only on real duplicates."""
+    for i, (text, suffix) in enumerate(((_CLEAN_YAML, "yaml"), (_CLEAN_JSON, "json"))):
+        d = _jsuite(tmp_path / f"ok{i}", text, suffix)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{suffix} -> {step2['detail']}"
+
+
+def test_a_capitalised_name_key_reports_instead_of_raising(tmp_path):
+    """A regression I shipped, seven lines from the fix that was meant to prevent it.
+
+    `f6b1bfc` converted the frontmatter GUARD to `_fm(fm, "name")` and left the REPORT
+    three lines below reading `fm['name']`. A capitalised `Name:` then passed the guard
+    and raised an uncaught KeyError — exit 1, zero bytes of stdout, a bare traceback
+    where the parent commit printed a clean diagnosis. The commit message for that very
+    edit claimed "every gate-affecting read goes here … there are no per-key
+    exceptions"; there was one, in the same hunk."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(raw.replace("name: demo", "Name: demo", 1), encoding="utf-8")
+    res = _check(d)                                    # must not raise
+    assert _step(res, 1)["status"] == "PASS"
+    assert "name=demo" in _step(res, 1)["detail"]
+
+
+def test_deeply_nested_artifacts_report_rather_than_throw(tmp_path):
+    """Round 13 capped `_substantive` and left three siblings uncovered — `_load_data`'s
+    json arm (`except ValueError` does not catch RecursionError, while the yaml arm's
+    `except Exception` does), `_internal_ref_issues`' `skill.json` read, and its `_walk`,
+    which had no cap at all. The file's own contract is that an unverified artifact is
+    reported, never thrown."""
+    for name, rel in (("suite", "evals/suite.json"), ("skilljson", "skill.json")):
+        d = _skill(tmp_path / name, scripts=True, tests=True, tier="D")
+        (d / "evals").mkdir(exist_ok=True)
+        depth = 20000 if rel.endswith("suite.json") else 5000
+        (d / rel).write_text("[" * depth + "1" + "]" * depth, encoding="utf-8")
+        res = _check(d)                                # must not raise
+        assert isinstance(res, list) and res, rel
+
+
+def test_camelcase_negative_polarity_is_recognised(tmp_path):
+    """`shouldTrigger` was in `_POSITIVE_KEYS` and `TRIGGER_ASSERTION_KEYS`;
+    `shouldNotTrigger` was in neither. So a legitimate camelCase routing eval was
+    false-rejected for "asserts only one polarity" while step 5 called the same file a
+    valid trigger eval — the self-contradiction `_blob_polarity`'s docstring warns
+    about. One accommodation added at one of its two sites."""
+    for keys in (("shouldTrigger", "shouldNotTrigger"),
+                 ("should_trigger", "should_not_trigger")):
+        d = _l(tmp_path / keys[0], cases=[])
+        (d / "evals" / "prompts.json").write_text(
+            json.dumps({keys[0]: ["review this diff for slop"],
+                        keys[1]: ["what is the weather"]}), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{keys} -> {step2['detail']}"

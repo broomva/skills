@@ -523,7 +523,7 @@ def _is_real_test(path: Path) -> bool:
 # convention (`should_trigger`) and role-x's resolver evals (`should_fire` /
 # `should_not_fire`, roles/<lens>.eval.yaml).
 TRIGGER_ASSERTION_KEYS = frozenset({
-    "should_trigger", "should_not_trigger", "shouldTrigger",
+    "should_trigger", "should_not_trigger", "shouldTrigger", "shouldNotTrigger",
     "should_fire", "should_not_fire", "negative_case",
 })
 
@@ -749,13 +749,18 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     if sj.is_file():
         try:
             data = json.loads(sj.read_text(encoding="utf-8", errors="replace"))
-        except (ValueError, OSError):
+        # RecursionError is NOT a ValueError, so a deeply nested skill.json crashed the
+        # run with a bare traceback. Third sibling site of the same class: round 13
+        # capped `_substantive` and left `_load_data`'s json arm and this one uncovered.
+        except (ValueError, OSError, RecursionError):
             data = None
         ep = data.get("entrypoint") if isinstance(data, dict) else None
         if isinstance(ep, str) and ep and not _ref_satisfied(skill_dir, ep):
             issues.append(f"skill.json entrypoint → {ep} (missing)")
 
-        def _walk(o, key=""):
+        def _walk(o, key="", depth=0):
+            if depth > _MAX_NESTING:
+                return  # same cap, same reason: report, never throw
             if isinstance(o, str):
                 if key in _SKIP_JSON_KEYS or key == "entrypoint":
                     return  # entrypoint already checked explicitly above (no double-count)
@@ -765,10 +770,10 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
                         issues.append(f"skill.json → {ref} (missing)")
             elif isinstance(o, dict):
                 for k, v in o.items():
-                    _walk(v, k)
+                    _walk(v, k, depth + 1)
             elif isinstance(o, list):
                 for v in o:
-                    _walk(v, key)
+                    _walk(v, key, depth + 1)
         _walk(data)
     tdir = skill_dir / "templates"
     if tdir.is_dir():
@@ -926,11 +931,13 @@ def _duplicate_top_level_key_issue(path: Path) -> str | None:
     disagreement = _frontmatter_disagreement_issue(path, "SKILL.md frontmatter")
     if disagreement:
         return disagreement
+    # No `unparseable` branch here any more. `compose` is a strict prefix of the work
+    # `safe_load` does, so a block compose rejects is one safe_load also rejects — which
+    # `_frontmatter_disagreement_issue` above has already refused. Mutant M76 SURVIVED
+    # against that shadowed branch, which is this file's own standard for deleting it:
+    # a mutant that cannot die is dishonest bookkeeping, not coverage.
     status, dupes = _duplicate_top_level_keys(m.group(1))
-    if status == "unparseable":
-        return ("SKILL.md frontmatter does not compose as YAML — the duplicate-key "
-                "question cannot be answered, and an unanswerable gate must refuse")
-    if status == "no-parser" or not dupes:
+    if status != "ok" or not dupes:
         return None
     shown = ", ".join(f"`{k}:` x{n}" for k, n in dupes)
     return (f"SKILL.md frontmatter declares the same key twice ({shown}) — YAML resolves "
@@ -994,13 +1001,69 @@ def _read(path: Path) -> str | None:
 
 
 class _Unparseable:
-    """Sentinel: the file exists but this build cannot parse it (no pyyaml). Distinct
-    from 'absent', so the gate can say which — reporting a correct YAML judge config as
-    `no judge config` was a real misdiagnosis in review."""
-    __slots__ = ("path",)
+    """Sentinel: the file exists but the gate cannot trust what it says. Distinct from
+    'absent', so the gate can say which — reporting a correct YAML judge config as
+    `no judge config` was a real misdiagnosis in review.
 
-    def __init__(self, path: Path):
+    `reason` exists because "cannot verify" now covers more than "no pyyaml": a
+    duplicate key that last-wins would silently decide, and a document nested too
+    deeply to parse. Telling an author "could not be parsed" when the real defect is a
+    duplicated `execution_contract:` is the same misdiagnosis one level down.
+    """
+    __slots__ = ("path", "reason")
+
+    def __init__(self, path: Path, reason: str | None = None):
         self.path = path
+        self.reason = reason
+
+
+class _DuplicateKey(ValueError):
+    """Raised by the JSON object-pairs hook. Subclasses ValueError deliberately: any
+    caller that already treats malformed JSON as unverifiable keeps doing the right
+    thing if it does not know about this."""
+
+    def __init__(self, key: str):
+        super().__init__(f"duplicate key {key!r}")
+        self.key = key
+
+
+def _no_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict:
+    seen: set[str] = set()
+    for k, _ in pairs:
+        if k in seen:
+            raise _DuplicateKey(k)
+        seen.add(k)
+    return dict(pairs)
+
+
+def _duplicate_key_in_node(text: str) -> str | None:
+    """First duplicate key ANYWHERE in a YAML document, via the node tree.
+
+    `safe_load` has already collapsed duplicates by the time it returns, so this walks
+    `compose()` — the same parser-answers-the-parser's-question move the SKILL.md check
+    makes. Nested, not just top-level: `judge:` and `execution_contract:` are found by
+    `_dig_all` at any depth, so a duplicate at any depth decides a gate.
+    """
+    if yaml is None:
+        return None
+    try:
+        root = yaml.compose(text)
+    except Exception:
+        return None  # the caller has already reported it as unparseable
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, getattr(yaml, "MappingNode", ())):
+            seen: set[str] = set()
+            for k, v in node.value:
+                name = str(getattr(k, "value", ""))
+                if name in seen:
+                    return name
+                seen.add(name)
+                stack.append(v)
+        elif isinstance(node, getattr(yaml, "SequenceNode", ())):
+            stack.extend(node.value)
+    return None
 
 
 def _load_data(path: Path) -> object | None | _Unparseable:
@@ -1010,22 +1073,51 @@ def _load_data(path: Path) -> object | None | _Unparseable:
         return _Unparseable(path)  # unreadable is UNVERIFIED, not absent
     if not txt.strip():
         return None
+    # Duplicate top-level keys are resolved last-wins, silently, by BOTH parsers.
+    # `SKILL.md` has been guarded against that three times in this arc; `evals/*` — the
+    # documents carrying tier J's entire contract — never were, which made this the
+    # seventh instance of the same class. Measured: a duplicated `execution_contract:`
+    # hid a self-judging declaration and the gate printed "cross-model judge with a
+    # measured floor"; a duplicated `judge:` defeated "declare exactly one", a rule the
+    # same gate enforces correctly ACROSS files while key order inside one file decided
+    # it. `_dig_all`'s docstring already says filename order is not a security boundary;
+    # neither is key order.
     if path.suffix == ".json":
         try:
-            return json.loads(txt)
+            return json.loads(txt, object_pairs_hook=_no_duplicate_pairs)
+        except _DuplicateKey as e:
+            return _Unparseable(path, f"duplicate key {e.key!r} — last-wins would decide it")
+        except RecursionError:
+            # json.loads recurses; `except ValueError` never caught this, so a deeply
+            # nested artifact crashed the whole run with a bare traceback. The yaml arm
+            # below always caught it via `except Exception`, and `_is_trigger_eval`
+            # guards it explicitly — the guard existed at the LATER site, not this one.
+            return _Unparseable(path, "nested too deeply to parse")
         except ValueError:
             return _Unparseable(path)
     if path.suffix in {".yaml", ".yml"}:
         if yaml is None:
             return _Unparseable(path)
         try:
-            return yaml.safe_load(txt)
+            data = yaml.safe_load(txt)
         except Exception:
             return _Unparseable(path)
+        dup = _duplicate_key_in_node(txt)
+        if dup:
+            return _Unparseable(path, f"duplicate key {dup!r} — last-wins would decide it")
+        return data
     return None
 
 
-def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[Path]]:
+def _unparseable_detail(u: "_Unparseable") -> str:
+    """`name — why`. The reason is the point: "could not be parsed" sent an author
+    hunting for a syntax error when the actual defect was a duplicated key that
+    last-wins would have decided silently."""
+    return f"{u.path.name} — {u.reason}" if u.reason else (
+        f"{u.path.name} — install pyyaml or fix the file")
+
+
+def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[_Unparseable]]:
     """Every parseable mapping under evals/, plus the files that could not be parsed.
 
     The unparseable list is returned rather than swallowed: a J skill whose judge
@@ -1042,7 +1134,7 @@ def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[Path]]:
             continue
         data = _load_data(f)
         if isinstance(data, _Unparseable):
-            bad.append(f)
+            bad.append(data)   # the sentinel, not the Path: it carries WHY
         elif isinstance(data, dict):
             out.append((f, data))
         elif isinstance(data, list):
@@ -1131,14 +1223,10 @@ def _admission_issue(skill_dir: Path) -> str | None:
     # A block that does not parse as a YAML mapping is malformed frontmatter — which
     # is also how `---xyz` (a fence the matcher ran past) surfaces, without a
     # hand-rolled `---`-in-block rule that false-rejected `---source: author-record`.
-    # No `and yaml is not None` guard: _admission_issue returns early without a
-    # parser, so reaching here means one exists and `None` can only mean "did not
-    # parse". The conjunct survived the fail-closed change as dead code that read
-    # like a live guard.
+    # `declared is None` is unreachable now: no parser is refused at the top of this
+    # function, and a block compose rejects is refused by the disagreement check above.
+    # Mutant M65 SURVIVED against it. Deleted rather than kept as an unkillable guard.
     declared = _count_top_level_key(m.group(1), "outcome")
-    if declared is None:
-        return ("evals/admission.md frontmatter does not parse as YAML — the closing "
-                "fence must be `---` alone on its line")
     if declared is not None and declared > 1:
         return (f"evals/admission.md declares `outcome` {declared} times — "
                 "contradictory declarations; keep exactly one")
@@ -1288,7 +1376,12 @@ def _judge_issues(blobs: list[tuple[Path, dict]]) -> tuple[list[str], list[str]]
 
 
 _POSITIVE_KEYS = {"should_trigger", "shouldTrigger", "should_fire"}
-_NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire", "negative_case"}
+# `shouldNotTrigger` was missing while `shouldTrigger` was present, so a camelCase
+# routing eval was FALSE-REJECTED for "asserts only one polarity" while step 5 called
+# the same file a valid trigger eval — the self-contradiction `_blob_polarity`'s
+# docstring warns about. One accommodation added at one of its two sites.
+_NEGATIVE_KEYS = {"should_not_trigger", "shouldNotTrigger", "should_not_fire",
+                  "negative_case"}
 
 
 def _case_polarity(case: object) -> tuple[bool, bool]:
@@ -1342,12 +1435,12 @@ def _blob_polarity(data: dict) -> tuple[bool, bool]:
 
 
 def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
-                        unparseable: list[Path]) -> str | None:
+                        unparseable: list[_Unparseable]) -> str | None:
     """Tier L's core: a routing eval asserting BOTH polarities. A positive-only suite
     structurally cannot see over-triggering, which is the failure mode a lens has."""
     if unparseable:
         return (f"{len(unparseable)} eval artifact(s) could not be parsed "
-                f"({unparseable[0].name}) — install pyyaml or fix the file; "
+                f"({_unparseable_detail(unparseable[0])}); "
                 "an unverifiable routing eval is not a routing eval")
     # Polarity is read ONLY from a top-level cases/prompts/tests list. Walking the
     # whole document let unrelated nested metadata supply it —
@@ -1419,7 +1512,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         add(1, "SKILL.md contract", FAIL,
             f"frontmatter breaks skills.sh parser (multi-quoted-string list item): {gotcha[:48]}", required=True)
     else:
-        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable)", required=True)
+        add(1, "SKILL.md contract", PASS, f"name={_fm(fm, 'name')} (skills.sh-parseable)", required=True)
 
     # 1b — Installable layout (ADVISORY, not required). A top-level SKILL.md is
     # standard-valid (the agentskills.io spec + the skills.sh README list the repo
@@ -1500,7 +1593,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         issues: list[str] = []
         if unparseable_evals:
             issues.append(f"{len(unparseable_evals)} eval artifact(s) unparseable "
-                          f"({unparseable_evals[0].name}) — install pyyaml or fix the file")
+                          f"({_unparseable_detail(unparseable_evals[0])})")
         if (adm := _admission_issue(skill_dir)):
             issues.append(adm)
         if (rub := _rubric_issue(skill_dir, blobs)):
