@@ -564,11 +564,22 @@ def _deterministic_scripts(skill_dir: Path) -> list[str]:
     exclusion is right for INFERRING a tier and wrong for REFUTING a denial, which is
     the tell that these were always two questions.
 
-    Still excludes tests (a lens may ship one) and empty files (a package marker is
-    not deterministic anything).
+    A file is excluded here only if BOTH predicates agree: the name says test AND
+    the structure contains one. Requiring both is what makes the exclusion narrow,
+    and narrow is the safe direction for a refutation — fewer things escape it.
+
+    Neither predicate alone survives contact. By NAME only (round 24):
+    `scripts/test_helpers.py` holding production logic and no test at all was
+    excluded, so a `latent_only` lens shipping it passed the whole gate. By ROLE
+    only (round 25): `_is_real_test` is an AST walk for Python but a REGEX for
+    everything else, and `test` is a shell builtin — it called the real
+    `blog-post/scripts/publish.sh` a test and moved the roster, which is a fail-open
+    for every shell script in the repo.
+
+    Also excludes empty files — a package marker is not deterministic anything.
     """
     return [c for c in _code_files(skill_dir)
-            if not _is_test_file(Path(c).name)
+            if not (_is_test_file(Path(c).name) and _is_real_test(skill_dir / c))
             and _has_executable_content(skill_dir / c)]
 
 

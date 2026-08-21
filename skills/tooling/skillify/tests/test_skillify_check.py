@@ -3332,10 +3332,15 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
     enumeration — and that is right, so this stops enumerating and states the
     property instead.
 
-    `_TEST_INFRA` now governs tier-D INFERENCE only. Being wrong there can only ever
-    produce "cannot classify", a conservative false reject with a stated remedy.
-    Both REFUTATION questions — the `latent_only` contradiction and `require_tests` —
-    read a name-blind predicate, so no filename buys anything.
+    `_TEST_INFRA` governs tier-D inference and — through `_core_candidates` — which
+    files the empty-core report considers. That second consumer IS a refutation, so
+    the stronger claim I first wrote here ("governs inference only; being wrong can
+    only produce a conservative false reject") is FALSE, and round 24 measured it:
+    perturbing the list opens fail-opens in both directions. What holds is narrower
+    and worth stating exactly — every row that escapes that way is a ZERO-BYTE file,
+    so no logic escapes through the name list. The two refutations that could let
+    real logic through, the `latent_only` contradiction and `require_tests`, read a
+    predicate that excludes a file only when its name AND its structure agree.
 
     The test is therefore not "are these three names right". It is: **for ANY
     filename, including one nobody has thought of yet, shipping real untested logic
@@ -3351,13 +3356,27 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
     `test_latent_only_sees_logic_hidden_behind_a_conftest_name` (M116). What this one
     adds that neither of those can: it generalises past the names anyone has listed.
 
-    Measured: fails against the pre-fix gate, and against `require_tests` narrowed
-    back to `_core_files`.
+    Controls, corrected after round 24 measured them: this test does NOT
+    meaningfully fail against the pre-fix gate — that "failure" is an
+    `AttributeError` because 6e688f6 has no `_TEST_INFRA`, and with the attribute
+    shimmed on, the pre-fix gate PASSES it. A crash is not a discriminating control
+    and claiming it as one was wrong. The real controls are the two mutants: M122
+    (exclude on the NAME alone) and the `require_tests` narrowing to `_core_files`,
+    both verified to turn this red.
+
+    Scope it does NOT cover, measured and stated rather than left implicit: it
+    samples `scripts/` only. `_is_code_file` drops root-level files named like
+    packaging or like a test, so `<skill>/setup.py` holding real untested logic
+    passes clean at `tier: L` — on this gate AND on the pre-fix gate. That is
+    pre-existing, lives in a function this change does not touch, and is recorded in
+    SKILL.md's limits rather than fixed here.
     """
     names = sorted(mod._TEST_INFRA) + [
         "conftest.py", "Conftest.py", "CONFTEST.PY",       # every casing
         "setup.py", "__init__.py",                          # the two that were removed
         "some_future_infra_name.py", "pytest_plugin.py",    # names not in any list
+        "test_helpers.py", "helpers_test.py", "test_util.py",  # TEST-SHAPED names
+        "thing.test.py", "TEST_UTIL.PY",                       # holding no test
     ]
     declarations = [
         ("", "undeclared"),
@@ -3365,6 +3384,9 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
         ("tier: L\n", "tier L"),
         ("tier: L\nlatent_only: true\n", "tier L + latent_only"),
     ]
+    # The payload is production logic and contains NO test construct, so a file is
+    # test-side here only if something decides that from its NAME — which is the
+    # loophole this asserts is closed. Round 24 found it open for `test_*.py`.
     escaped = []
     for name in names:
         for extra, label in declarations:
@@ -3379,3 +3401,38 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
     assert not escaped, (
         "a filename bought a clean pass for real untested logic — the exclusion list "
         f"is load-bearing for a refutation again: {escaped}")
+
+
+def test_a_shell_script_is_not_a_test_because_test_is_a_builtin(tmp_path):
+    """Round 25's own regression, caught by the roster rather than by a test.
+
+    Excluding test-side files BY ROLE alone looked like the principled fix — until
+    it moved the roster. `_is_real_test` is an AST walk for Python but a REGEX for
+    every other language, and `test` is a shell builtin, so it called the real
+    `blog-post/scripts/publish.sh` a test. That is a fail-open for every shell
+    script in the repo: ship one, and nothing requires you to test it.
+
+    Both predicates must agree. This pins the arm that ROLE-only would break.
+    """
+    # The fixture must reproduce the ACTUAL trigger, not a plausible one. My first
+    # attempt used `if test -f`, which the regex does not match (it wants `test(`),
+    # so the mutant SURVIVED and the test proved nothing. The real `publish.sh`
+    # trips `\\b(?:ok|pass|fail|expect|check)\\s*\\(\\s*\\)` by defining shell LOGGING
+    # helpers called `ok()` and `fail()`.
+    d = _mk(tmp_path, "sh", {"scripts/publish.sh":
+        '#!/bin/bash\n'
+        'set -euo pipefail\n'
+        'log()  { echo "[log] $*"; }\n'
+        'ok()   { echo "[ok] $*"; }\n'
+        'fail() { echo "[fail] $*" >&2; exit 1; }\n'
+        'publish() { curl -fsS -X POST "$1" || fail "upload failed"; ok "published"; }\n'
+        'publish "$@"\n'},
+        "tier: D\n")
+    assert mod._is_real_test(d / "scripts" / "publish.sh"), \
+        "fixture does not reproduce the false positive it exists to pin"
+    assert mod._deterministic_scripts(d) == ["scripts/publish.sh"], \
+        "a shell script using `test` is not thereby a test"
+
+    # ...and it therefore still has to be tested.
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL", step3["detail"]
