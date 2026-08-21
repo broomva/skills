@@ -191,6 +191,27 @@ else
 fi
 (cd "$GUARD_TMP" && git checkout -q -- file.txt && rm -f .git/cross-review-guard.state)
 
+echo "T17. a file added inside an UNTRACKED DIRECTORY is caught (-uall is load-bearing)"
+# T12 covers a top-level untracked file, which plain `git status --porcelain`
+# reports anyway — so it never tested what -uall buys. Inside an untracked
+# directory, -unormal collapses the whole tree to one '?? newdir/' line that is
+# byte-identical no matter what the reviewer puts in it, and `git diff HEAD`
+# does not see untracked content at all. -uall is the only thing closing that.
+(cd "$GUARD_TMP" && mkdir -p newdir && echo a > newdir/a.txt)
+(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture >/dev/null 2>&1)
+NORMAL_BEFORE=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1)
+(cd "$GUARD_TMP" && echo b > newdir/b.txt)
+NORMAL_AFTER=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$NORMAL_BEFORE" != "$NORMAL_AFTER" ]; then
+    fail "T17: precondition" "plain status already differed; this no longer tests -uall"
+elif [ "$RC" -eq 4 ]; then
+    ok "T17: write inside an untracked directory detected"
+else
+    fail "T17: write inside an untracked directory detected" "rc=$RC out=$OUT"
+fi
+(cd "$GUARD_TMP" && rm -rf newdir .git/cross-review-guard.state)
+
 # ── T14: the dispatch names a read-only agent type ────────────────────────
 echo "T14. Strata B dispatches read-only, not general-purpose"
 SB=$(sed -n "/Strata B: fresh-context subagent/,/dispatches the subagent/p" "$CROSS_REVIEW_SH")
