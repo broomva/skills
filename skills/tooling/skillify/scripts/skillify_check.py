@@ -151,31 +151,19 @@ def _frontmatter_match(text: str):
     return _FRONTMATTER_RE.match(text)
 
 
-def parse_frontmatter(md_path: Path) -> dict | None:
-    """Return the top YAML frontmatter as a flat str dict, or None if absent.
+# How the frontmatter was actually read. The only distinction that matters to a gate is
+# whether the HAND-ROLLED SCANNER RAN, because that is the one state in which two
+# readers of the same bytes disagree — and a gate keyed on any other condition will
+# miss most of it. P20 round 13 keyed the refusal on `yaml.compose` raising; round 14
+# showed that is the wrong parser. `compose` builds a node tree without CONSTRUCTING
+# values, so `tier: J` + `extra: {x: !!foo 1,` + `tier: D` composes fine (one top-level
+# `tier`, value J) while `safe_load` raises ConstructorError — the scanner then took
+# last-wins `tier: D` and the skill passed as tier D with the J gate never run.
+FM_ABSENT, FM_YAML, FM_FALLBACK, FM_NO_PARSER = "absent", "yaml", "fallback", "no-parser"
 
-    Uses pyyaml when available (correctly handles folded/block scalars like
-    `description: >-`); falls back to a scalar-only hand-roll that skips
-    indented continuation lines so folded prose can't manufacture bogus keys.
-    """
-    try:
-        # errors="replace": invalid UTF-8 must fail CLOSED (no frontmatter -> step 1
-        # FAIL), never raise. A single 0xFF byte in one SKILL.md used to abort the
-        # whole --survey run with a UnicodeDecodeError.
-        text = md_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    m = _frontmatter_match(text)
-    if not m:
-        return None
-    block = m.group(1)
-    try:
-        import yaml  # optional
-        data = yaml.safe_load(block)
-        if isinstance(data, dict):
-            return {k: (v if isinstance(v, str) else str(v)) for k, v in data.items()}
-    except Exception:
-        pass
+
+def _scan_frontmatter(block: str) -> dict:
+    """The hand-rolled, scalar-only reader. Only ever used when YAML could not."""
     fm: dict[str, str] = {}
     for line in block.splitlines():
         if line[:1] in (" ", "\t") or line.lstrip().startswith("#"):
@@ -191,6 +179,70 @@ def parse_frontmatter(md_path: Path) -> dict | None:
                 val = re.split(r"\s+#", val, 1)[0].strip()
             fm[key.strip()] = val.strip("\"'")
     return fm
+
+
+def parse_frontmatter_status(md_path: Path) -> tuple[str, dict | None]:
+    """`(status, frontmatter)`, where status says WHICH reader produced the dict.
+
+    `FM_FALLBACK` is the load-bearing one: a YAML parser is installed and it refused
+    the block, so the scalar-only scanner below took over and may now report a
+    different value for the same key. Every gate that reads a declaration must refuse
+    on it rather than trust whichever reader answered.
+    """
+    try:
+        # errors="replace": invalid UTF-8 must fail CLOSED (no frontmatter -> step 1
+        # FAIL), never raise. A single 0xFF byte in one SKILL.md used to abort the
+        # whole --survey run with a UnicodeDecodeError.
+        text = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return FM_ABSENT, None
+    m = _frontmatter_match(text)
+    if not m:
+        return FM_ABSENT, None
+    block = m.group(1)
+    if yaml is None:
+        return FM_NO_PARSER, _scan_frontmatter(block)
+    try:
+        data = yaml.safe_load(block)
+    except Exception:
+        return FM_FALLBACK, _scan_frontmatter(block)
+    if isinstance(data, dict):
+        return FM_YAML, {k: (v if isinstance(v, str) else str(v)) for k, v in data.items()}
+    if data is None and not block.strip():
+        # An empty block is well-formed YAML that happens to be empty. Calling it a
+        # parse failure would misdiagnose the ordinary "no frontmatter keys" case,
+        # which step 1 already reports precisely.
+        return FM_YAML, {}
+    # Parsed, but not into a mapping (a list, a bare scalar). The scanner is about to
+    # invent keys the parser does not agree exist.
+    return FM_FALLBACK, _scan_frontmatter(block)
+
+
+def parse_frontmatter(md_path: Path) -> dict | None:
+    """Return the top YAML frontmatter as a flat str dict, or None if absent.
+
+    Thin wrapper: callers that only need the values keep working unchanged. Callers
+    that GATE on a value must use `parse_frontmatter_status` and refuse on
+    `FM_FALLBACK` — see `_frontmatter_disagreement_issue`.
+    """
+    return parse_frontmatter_status(md_path)[1]
+
+
+def _frontmatter_disagreement_issue(path: Path, what: str) -> str | None:
+    """Refuse when the YAML parser rejected the block and the scanner took over.
+
+    Keyed on the condition that ACTUALLY produces two disagreeing readers, not on a
+    proxy for it. The message deliberately does not name duplicate keys: the round-13
+    version did, and told every author with an unquoted colon in `description:` that
+    their duplicate keys were being resolved last-wins, which is a misdiagnosis.
+    """
+    status, _ = parse_frontmatter_status(path)
+    if status != FM_FALLBACK:
+        return None
+    return (f"{what} does not parse as YAML. A parser is installed and rejected the "
+            "block, so the gate fell back to a line scanner that reads it differently "
+            "— a declaration the scanner sees may not be the one YAML sees, and no "
+            "gate can be trusted on the difference. Fix the YAML")
 
 
 # --- skills.sh installability (the publish target) ---------------------------
@@ -854,10 +906,16 @@ def _duplicate_top_level_key_issue(path: Path) -> str | None:
     unparseable, 0 lack a matched frontmatter block. The blanket rule costs nothing on
     the real population.
 
-    Returns None when the question cannot be answered (no pyyaml, or the block does
-    not parse). That residue is deliberate: answering it without a YAML parser means
-    rebuilding the line-based key walker this file deleted twice, for the same reason
-    both times.
+    Returns None only when there is genuinely no parser installed. A block a parser
+    REJECTS is a reported defect, not a residue — that conflation was the round-13
+    blocker, and the round-13 fix then keyed the refusal on `yaml.compose` raising,
+    which is not the condition that triggers the fallback scanner. Round 14 found the
+    gap with a YAML tag: composes fine, `safe_load` raises. The refusal now keys on
+    `parse_frontmatter_status(...) == FM_FALLBACK`.
+
+    The no-parser residue stays deliberate: answering the duplicate question without a
+    YAML parser means rebuilding the line-based key walker this file deleted twice, for
+    the same reason both times.
     """
     raw = _read(path)
     if raw is None:
@@ -865,12 +923,13 @@ def _duplicate_top_level_key_issue(path: Path) -> str | None:
     m = _frontmatter_match(raw)
     if m is None:
         return None
+    disagreement = _frontmatter_disagreement_issue(path, "SKILL.md frontmatter")
+    if disagreement:
+        return disagreement
     status, dupes = _duplicate_top_level_keys(m.group(1))
     if status == "unparseable":
-        return ("SKILL.md frontmatter does not parse as YAML. The gate then reads it "
-                "with a fallback scanner that resolves duplicate keys last-wins, so one "
-                "malformed line silently disables the duplicate check while still "
-                "yielding values — fix the YAML")
+        return ("SKILL.md frontmatter does not compose as YAML — the duplicate-key "
+                "question cannot be answered, and an unanswerable gate must refuse")
     if status == "no-parser" or not dupes:
         return None
     shown = ", ".join(f"`{k}:` x{n}" for k, n in dupes)
@@ -1039,6 +1098,12 @@ def _admission_issue(skill_dir: Path) -> str | None:
     if not f.is_file():
         return ("no evals/admission.md — record the admission test and declare its "
                 f"outcome in frontmatter:\n{_ADMISSION_TEMPLATE}")
+    # The same two-readers-disagree class as the tier site. `outcome:` is read through
+    # parse_frontmatter, so a block YAML rejects lets the scanner's last-wins value
+    # stand: a declared `outcome: rejected` was reported as admitted.
+    disagreement = _frontmatter_disagreement_issue(f, "evals/admission.md frontmatter")
+    if disagreement:
+        return disagreement
     raw = _read(f)
     if raw is None:
         return "evals/admission.md is unreadable"

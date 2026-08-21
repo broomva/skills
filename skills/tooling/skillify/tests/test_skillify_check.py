@@ -2321,3 +2321,100 @@ def test_the_nesting_cap_counts_depth_not_containers_visited():
         return v
     assert mod._substantive(nest(100)) is True
     assert mod._substantive(nest(101)) is False
+
+
+def _demo(tmp: Path, front: str) -> Path:
+    d = tmp / "demo"
+    (d / "scripts").mkdir(parents=True)
+    (d / "tests").mkdir()
+    (d / "scripts" / "do.py").write_text("print('hi')\n", encoding="utf-8")
+    (d / "tests" / "test_do.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    (d / "SKILL.md").write_text(f"---\n{front}\n---\n# body\n", encoding="utf-8")
+    return d
+
+
+def test_a_yaml_tag_cannot_hide_a_tier_declaration(tmp_path):
+    """P20 round 14, Strata B — BLOCKER, and the SEVENTH instance of this arc's pattern.
+
+    Round 13 refused blocks where `yaml.compose` raised. But the hand-rolled scanner in
+    `parse_frontmatter` is entered when **`yaml.safe_load`** raises or returns a
+    non-mapping, which is a different and much larger condition: `compose` builds a node
+    tree without CONSTRUCTING values, so a custom or unknown tag composes perfectly and
+    `safe_load`s not at all.
+
+        tier: J
+        extra: {x: !!foo 1,
+        tier: D
+        }
+
+    compose -> MappingNode, one top-level `tier`, value J. safe_load -> ConstructorError.
+    So the duplicate check said "ok", the scanner took last-wins `tier: D`, and the whole
+    gate exited 0 with "PASS — all required steps complete" while the only parser that
+    parses the block declares tier J. The site here is not a call site — it is WHICH
+    FAILURE CONDITION the refusal keys on."""
+    for i, front in enumerate((
+        "name: demo\ndescription: d\ntier: J\nextra: {x: !!foo 1,\ntier: D\n}",
+        "name: demo\ndescription: d\ntier: J\ncfg: {region: !Ref AWS::Region,\ntier: D\n}",
+        'name: demo\ndescription: d\ntier: J\nnote: "see\ntier: D\nend"\nmodel: !env MODEL',
+        "- a\n- b",                                   # parses, but not to a mapping
+    )):
+        d = _demo(tmp_path / f"bypass{i}", front)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{front!r} -> {step2['detail']}"
+        assert "does not parse as YAML" in step2["detail"], step2["detail"]
+
+
+def test_legitimate_yaml_still_parses_after_the_disagreement_refusal(tmp_path):
+    """Paired control, and the one that matters: the refusal keys on `safe_load`
+    failing, which is a BROAD condition. Every ordinary YAML shape must survive it —
+    these are exactly the shapes the deleted line-based walker used to false-reject."""
+    for i, front in enumerate((
+        "name: demo\ndescription: d\ntier: D",
+        "name: demo\ndescription: d\ntier: D\naliases: {a: 1, b: 2}",
+        "name: demo\ndescription: d\ntier: D\nanchored: &a hi\nreused: *a",
+        "name: demo\ndescription: d\ntier: D\nbase: &b {x: 1}\nm:\n  <<: *b",
+        "name: demo\ndescription: d\ntier: D\nlong: >-\n  folded prose here",
+        "name: demo\ndescription: d\ntier: D\nmeta:\n  tier: J",
+        'name: demo\ndescription: d\ntier: D\n"quoted": yes',
+    )):
+        d = _demo(tmp_path / f"ok{i}", front)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{front!r} -> {step2['detail']}"
+
+
+def test_a_yaml_tag_cannot_hide_a_rejected_admission(tmp_path):
+    """The SECOND site of the same class, also from round 14. `outcome:` is read through
+    `parse_frontmatter`, so a block `safe_load` rejects lets the scanner's last-wins
+    value stand — a declared `outcome: rejected` was reported as admitted, which is the
+    single most load-bearing declaration in tier J."""
+    d = _j(tmp_path / "hidden")
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: rejected\nmeta: {ref: !Ref x,\noutcome: admitted\n}\n---\n\n"
+        "Two agents; the brief was ambiguous.\n", encoding="utf-8")
+    assert mod.parse_frontmatter(d / "evals" / "admission.md")["outcome"] == "admitted"
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "does not parse as YAML" in step2["detail"], step2["detail"]
+
+    ok = _j(tmp_path / "ok")          # control: an ordinary admitted record still passes
+    assert _step(_check(ok), 2)["status"] == "PASS"
+
+
+def test_parse_frontmatter_status_names_which_reader_answered(tmp_path):
+    """The status is the whole fix, so it is asserted directly rather than only through
+    the gates. `FM_FALLBACK` must mean exactly "a parser exists and the scanner ran"."""
+    def st(text):
+        f = tmp_path / "probe.md"
+        f.write_text(text, encoding="utf-8")
+        return mod.parse_frontmatter_status(f)[0]
+    assert st("---\na: 1\n---\nbody\n") == mod.FM_YAML
+    # An EMPTY block is well-formed YAML that happens to be empty, and must not be
+    # called a parse failure. Note the shape: `---\n---\n` does not match the fence
+    # regex at all (it needs a line between the fences), so the reachable empty block
+    # is `---\n\n---\n` — which is what the code's `data is None and not block.strip()`
+    # branch actually sees.
+    assert st("---\n---\nbody\n") == mod.FM_ABSENT
+    assert st("---\n\n---\nbody\n") == mod.FM_YAML
+    assert st("no frontmatter here\n") == mod.FM_ABSENT
+    assert st("---\na: !!foo 1\n---\nbody\n") == mod.FM_FALLBACK
+    assert st("---\nbroken: [\n---\nbody\n") == mod.FM_FALLBACK
+    assert st("---\n- a\n- b\n---\nbody\n") == mod.FM_FALLBACK
