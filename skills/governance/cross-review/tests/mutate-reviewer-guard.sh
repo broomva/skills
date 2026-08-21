@@ -35,7 +35,7 @@ PY
   else echo "  [KILLED ] $n"; pass=$((pass+1)); fi
   git checkout -q -- "$F"; }
 
-mut "untracked CONTENT hash removed"       '    printf '\"'\"'%s\\n%s\\n%s\\n'\"'\"' \"$st\" \"$df\" \"$untracked\"' '    printf '\"'\"'%s\\n%s\\n'\"'\"' \"$st\" \"$df\"'
+mut "untracked CONTENT hash removed"       'xargs -0 -I{} shasum -a 256 "{}" 2>/dev/null' 'xargs -0 -I{} echo "{}" 2>/dev/null'
 mut "fingerprint ignores tracked edits"    '    if ! df=$(git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>&1); then' '    if ! df=$(true 2>&1); then'
 mut "missing baseline treated as pass"     'An unverifiable review is not a passed review." >&2
                 exit 4' 'An unverifiable review is not a passed review." >&2
