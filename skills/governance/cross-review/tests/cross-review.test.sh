@@ -169,6 +169,28 @@ else
     fail "T13: missing baseline is not silence" "rc=$RC out=$OUT"
 fi
 
+echo "T16. a content change that leaves 'git status' identical is still caught"
+# The status line alone cannot see this: the file is modified at capture AND at
+# verify, so `git status --porcelain` prints the identical ' M file.txt' both
+# times. Only hashing the actual diff distinguishes them. Without this test the
+# `git diff HEAD` half of the fingerprint is dead weight nothing exercises —
+# which is exactly what the mutation sweep reported before it was added.
+(cd "$GUARD_TMP" && echo "reviewer-was-here-A" >> file.txt)
+(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture >/dev/null 2>&1)
+STATUS_AT_CAPTURE=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1 -uall)
+# same status shape, different bytes
+(cd "$GUARD_TMP" && sed -i.bak 's/reviewer-was-here-A/reviewer-was-here-B/' file.txt && rm -f file.txt.bak)
+STATUS_AT_VERIFY=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1 -uall)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$STATUS_AT_CAPTURE" != "$STATUS_AT_VERIFY" ]; then
+    fail "T16: precondition" "status differed, so this does not test the diff half"
+elif [ "$RC" -eq 4 ]; then
+    ok "T16: content change under identical status detected"
+else
+    fail "T16: content change under identical status detected" "rc=$RC out=$OUT"
+fi
+(cd "$GUARD_TMP" && git checkout -q -- file.txt && rm -f .git/cross-review-guard.state)
+
 # ── T14: the dispatch names a read-only agent type ────────────────────────
 echo "T14. Strata B dispatches read-only, not general-purpose"
 SB=$(sed -n "/Strata B: fresh-context subagent/,/dispatches the subagent/p" "$CROSS_REVIEW_SH")
