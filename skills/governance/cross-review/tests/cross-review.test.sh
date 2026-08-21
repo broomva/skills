@@ -311,6 +311,25 @@ else
 fi
 (cd "$GUARD_TMP" && rm -f .git/cross-review-guard*.state)
 
+echo "T26. an unreadable untracked file fails the fingerprint rather than contributing nothing"
+# A file that cannot be hashed used to be skipped silently, so its bytes were
+# simply absent from the fingerprint — indistinguishable from a file that had
+# not changed.
+(cd "$GUARD_TMP" && printf 'secret' > locked.txt && chmod 000 locked.txt)
+if [ -r "$GUARD_TMP/locked.txt" ]; then
+    # running as root, or a filesystem that ignores the mode — the experiment
+    # cannot be performed, and saying so beats reporting a pass.
+    echo "  [skip] T26: cannot make a file unreadable here (running as root?)"
+else
+    OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture 2>&1); RC=$?
+    if [ "$RC" -ne 0 ]; then
+        ok "T26: unreadable untracked file fails closed"
+    else
+        fail "T26: unreadable untracked file fails closed" "rc=$RC out=$OUT"
+    fi
+fi
+(cd "$GUARD_TMP" && chmod 644 locked.txt 2>/dev/null; rm -f locked.txt .git/cross-review-guard*.state)
+
 # ── T14: the dispatch names a read-only agent type ────────────────────────
 echo "T14. Strata B dispatches read-only, not general-purpose"
 SB=$(sed -n "/Strata B: fresh-context subagent/,/dispatches the subagent/p" "$CROSS_REVIEW_SH")

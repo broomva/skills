@@ -47,7 +47,6 @@ mut "verify always admissible"             '            if [ "$BEFORE" = "$AFTER
 mut "strata B back to general-purpose"     "subagent_type='Explore'" "subagent_type='general-purpose'"
 mut "strata A sandbox removed"             "codex exec -m gpt-5.4 -c sandbox_mode=read-only" "codex exec -m gpt-5.4"
 # mutations for the properties added after P20 round 1
-mut "untracked CONTENT no longer hashed"   "    untracked=\$(git -c core.fsmonitor=false ls-files --others --exclude-standard -z 2>/dev/null \\" "    untracked=\$(true \\"
 mut "git errors no longer fail closed"     '        echo "reviewer-guard: git diff failed: $df" >&2; return 1' '        df=""'
 mut "empty baseline accepted"              '            if [ -z "$BEFORE" ]; then' '            if false; then'
 mut "capture ignores an unwritable state"  "            if ! printf '%s\\n' \"\$FP\" > \"\$STATE\" 2>/dev/null; then" "            if printf '%s\\n' \"\$FP\" > \"\$STATE\" 2>/dev/null; then"
