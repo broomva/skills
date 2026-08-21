@@ -3202,9 +3202,9 @@ def test_the_known_core_consumers_have_not_drifted(tmp_path):
             "_tier_of(d, fm, _core_files(d), _code_files(d))",
         "the empty report is drawn from candidates":
             "empty_core = [c for c in _core_candidates(skill_dir)",
-        "latent_only refutes on the name-blind predicate":
+        "latent_only refutes on the conjunction predicate":
             "elif latent_only and (_det := _deterministic_scripts(skill_dir)):",
-        "require_tests reads the name-blind predicate":
+        "require_tests reads the conjunction predicate":
             "require_tests = bool(_deterministic_scripts(skill_dir))",
         "the step-3 skip message matches its predicate":
             '"nothing deterministic to test" if not real_tests',
@@ -3271,7 +3271,10 @@ def test_a_pytest_shaped_filename_does_not_buy_out_of_testing(tmp_path):
     a working, untested module called `scripts/conftest.py` and the whole gate went
     green — rc 0, "SKIP no code to test", about a file containing real logic.
 
-    Both refutation questions now read the name-blind predicate. The name list
+    Both refutation questions read a predicate that excuses a file only when its
+    NAME and its STRUCTURE agree — it is not name-blind, and four earlier copies of
+    this sentence said it was, including the two key labels in this very test. The
+    name list
     governs INFERENCE only, where being wrong yields a conservative false reject.
     """
     d = _mk(tmp_path, "sneaky",
@@ -3337,9 +3340,9 @@ def test_no_name_can_ever_open_the_gate(tmp_path):
     the stronger claim I first wrote here ("governs inference only; being wrong can
     only produce a conservative false reject") is FALSE, and round 24 measured it:
     perturbing the list opens fail-opens in both directions. What holds is narrower
-    and worth stating exactly — every row that escapes that way has NO EXECUTABLE
-    CONTENT — zero-byte, or comment-only, or a lone docstring — so no logic escapes
-    through the name list. The two refutations that could let
+    and worth stating exactly — every row that escapes that way is CONTENT-FREE, not
+    necessarily zero-byte — a 1.3 KB comments-only file escapes the same way. What
+    holds is the operative half: no logic escapes through the name list. The two refutations that could let
     real logic through, the `latent_only` contradiction and `require_tests`, read a
     predicate that excludes a file only when its name AND its structure agree.
 
@@ -3531,3 +3534,41 @@ def test_a_health_check_named_like_production_is_not_excused(tmp_path):
     res = _check(d)
     assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
         "a health checker was excused by containing an assert"
+
+
+def test_a_non_python_test_the_regex_misses_is_treated_as_deterministic(tmp_path):
+    """The stated cost of holding the excusing path to a stronger burden.
+
+    A test-named NON-Python file that shows no construct the strict detector
+    recognises is treated as a deterministic script. A genuine bash test written as
+    `[[ "$out" != "bar" ]] && exit 1` — no assert, no bats `@test`, no pass/fail
+    counters — therefore trips the `latent_only` contradiction, and the message it
+    gets is about shipping deterministic code rather than about an unrecognised test.
+
+    This is deliberate and it is the fail-CLOSED direction: the remedy is to write an
+    assertion the detector can see. It is pinned here so the arm is not rediscovered
+    as a surprise, and because no other test and not the roster can see it.
+
+    Reachability, measured rather than asserted: across all 96 skills there are ZERO
+    non-Python test-named files under `scripts/` or the skill root, so this arm is
+    currently unreachable in the live roster. That is why it is a documented limit
+    and not a blocking regression — and it is the number to re-check if that changes.
+    """
+    d = _mk(tmp_path, "bashtest",
+            {"scripts/test_run.sh":
+                 '#!/bin/bash\nout=$(echo bar)\nif [[ "$out" != "bar" ]]; then exit 1; fi\n',
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+    p = d / "scripts" / "test_run.sh"
+    assert mod._is_test_file(p.name), "test-shaped name"
+    assert not mod._is_definitely_a_test(p), "but no construct the strict bar accepts"
+    assert "scripts/test_run.sh" in mod._deterministic_scripts(d)
+
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "contradiction" in step2["detail"]
+
+    # ...and the remedy works: an assertion the detector can see clears it.
+    p.write_text('#!/bin/bash\nassert_eq() { [ "$1" = "$2" ]; }\nassert_eq bar bar\n',
+                 encoding="utf-8")
+    assert mod._is_definitely_a_test(p), "an assert is recognised"
+    assert mod._deterministic_scripts(d) == []

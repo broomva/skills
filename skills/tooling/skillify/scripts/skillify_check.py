@@ -1972,7 +1972,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # requiring tests off it meant renaming one file bought a working module out of
     # being tested — the round-21 fail-open, transplanted. `code` was the original
     # bug (a package marker is not a thing to test). The right predicate is the
-    # name-blind one: does this skill ship anything that runs?
+    # conjunction: a file is excused only when its NAME and its STRUCTURE agree it
+    # is a test, and for non-Python the structure must show a real construct.
     require_tests = bool(_deterministic_scripts(skill_dir))
     all_tests = _test_files(skill_dir)
     real_tests = [t for t in all_tests if _is_real_test(skill_dir / t)]
