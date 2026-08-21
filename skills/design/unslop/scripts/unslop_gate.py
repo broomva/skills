@@ -58,7 +58,7 @@ def _lead_int(value: str) -> int:
 AI_DEFAULT_WEB_FONTS = getattr(unslop_survey, "AI_DEFAULT_WEB_FONTS", {"inter", "geist", "space grotesk", "roboto"})
 SYSTEM_STACK = getattr(unslop_survey, "SYSTEM_STACK", {"system-ui", "-apple-system", "arial", "helvetica", "sans-serif"})
 MIN_REASON = 20
-MIN_SCREENSHOT_BYTES = 8_000
+MIN_SCREENSHOT_BYTES = 8_000   # guards white-page false evidence; known collateral: genuinely sparse specimen pages (BRO-2197)
 # every check id the gate can emit — waivers naming anything else are rejected, and two are never waivable
 KNOWN_CHECKS = {
     "direction.authored", "detector.clean", "detector.rule", "fonts.deliberate", "icons.single-system",
