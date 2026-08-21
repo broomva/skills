@@ -72,6 +72,42 @@ optical center."
 - **Fabricated metrics as texture** ("99.98% UPTIME SLA", "124ms AVG. RESPONSE") — Stitch `taste-design`
   and impeccable's Truth check; the survey flags `fake-metrics` and the gate WARNs `substance.claims`.
 
+## Prose-slop on product surfaces (after petergyang/no-ai-slop, read verbatim 2026-08-20)
+
+[no-ai-slop](https://github.com/petergyang/no-ai-slop) (Peter Yang, 5.5k★ in six weeks, also a ChatGPT
+plugin) catalogs ~18 sentence-level patterns for *writing*. Landing pages are writing; the subset that
+recurs on persuade surfaces is machine-checked by the survey as `copy_tells` keys, gated in aggregate by
+`copy.slop-patterns` (WARN 1–2 sites, FAIL ≥3 — their own "1–2 em dashes are fine in longer drafts"
+grading, generalized):
+
+| key | canonical example | theirs |
+|---|---|---|
+| `faux_insight` | "What nobody tells you about scaling" | Faux-insight setups |
+| `throat_clearing` | "Let me be clear: this is fast" | Throat-clearing openers |
+| `colon_reveal` | "The best part: it learns." (curated lead-ins only) | Colon reveals |
+| `fake_profound` | "The future of shipping is here." / "…isn't coming. It's already here." | Fake-profound kickers |
+| `importance_puffery` | "marks a pivotal moment", "a testament to" | Importance puffery |
+| `weasel_attribution` | "Experts agree", "studies show" | Weasel attribution |
+| `rhetorical_setup` | "Imagine a world where…", "What if I told you…" | Rhetorical setups |
+| `dramatic_simple` | "It's that simple." | Dramatic fragmentation |
+| `superficial_ing` | ", showcasing our commitment to…" | Superficial analysis |
+| `negative_listing` | "No setup. No config. Just code." | Negative listing |
+
+Their binary-contrast pattern widened our existing `not_x_but_y` (period-separated and "isn't"-led forms
+now count). Their banned-word list contributed the buzzword deltas (delve, foster, tapestry,
+transformative, ever-evolving, embark, multifaceted, meticulous, paramount, paradigm shift, spaced "game
+changer"). What stayed judgment-only — synonym cycling, robotic rhythm, minimum-effective-edit
+proportionality — lives in `arc.md` step 5 as [J] rules, not regexes.
+
+Two stances adopted from that skill, verbatim in spirit:
+
+- **Detection names patterns, never authors.** "AI detectors guess. Named patterns are evidence the user
+  can check." The survey reports `file:line` sites; it never claims the copy was AI-written.
+- **The list detects, it doesn't ban — and it decays.** Their list is static and undated; at 5.5k★ it is
+  itself an instance of second-order slop (a ban list popular enough gets trained and prompted around,
+  and *visibly avoiding* the list becomes the next tell). This section carries a read-date for exactly
+  that reason; regenerate per the section below.
+
 ## What the other skills already say (so unslop composes, not repeats)
 
 - **impeccable** (Bakaus) — 64 mechanical rules + `craft-floor.md` ("Refuse: the category's defaults, not
