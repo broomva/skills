@@ -65,7 +65,7 @@ with an empty `exhausted` list is a defect, not a question.
 | 3 · Delegate | Can a fresh agent resolve it — a reader, a researcher, an adversarial reviewer with different context? | Chain agents instead of chaining to the human |
 | 4 · Reroute | Can another lane, worktree, fan-out, or approach go around it? | The blocker is often a path, not a wall |
 | 5 · Loop | Can iteration resolve it — retry under a changed assumption, let a persist loop converge? | Slow beats blocked when nobody is awake |
-| 6 · Default | Is the choice reversible? **Take it, log it, tell the human afterwards. Do not ask.** | Reversible decisions are not the human's to make in real time |
+| 6 · Default | Is the choice reversible? **Take it, log it, tell the human afterwards. Do not ask.** — "log it" means an entry in the ledger's `decisions:`, and "tell the human" means the 🔀 block below | Reversible decisions are not the human's to make in real time |
 | 7 · Ask | Only now. Record which rungs were tried and why each failed. | |
 
 **Rung 6 is where most asks should die.** A choice that can be undone with one
@@ -81,7 +81,7 @@ continue on the next unblocked lane. Run `handback` only when the unblocked set
 is empty. An arc that halts with runnable work left is the failure this skill
 exists to prevent.
 
-## The shape — five blocks, always in this order
+## The shape — six blocks, always in this order
 
 ```
 ## ⛔ Blocked on you — N items, ~M min
@@ -95,6 +95,12 @@ exists to prevent.
 ## ✅ Shipped
    PR table. One line each. No narrative.
 
+## 🔀 Decided for you — N choices, least-confident first
+   table: # | what I decided | why it was mine to take | undo
+   rendered from the ledger's `decisions:` list, never free prose
+   every row carries its one-line reversal — that is what made it safe not to ask
+   hard cap 7, same as the ask block; overflow counted in the header
+
 ## 📋 Receipt — the nine items, unchanged
    1 dep chain · 2 plan vs done · 3 parallel streams · 4 files changed · 5 PRs
    6 deploys · 7 validation · 8 merge result · 9 follow-ups
@@ -104,7 +110,7 @@ exists to prevent.
    corrections. That prose is what this contract displaces.
 ```
 
-## The nine rules
+## The ten rules
 
 Each is derived from a measured failure, not a style preference.
 
@@ -135,6 +141,36 @@ Each is derived from a measured failure, not a style preference.
 9. **The nine-item receipt stays, underneath the asks.** It is structured and
    proves the work. What this contract displaces is the **free-form narrative**
    — that moves to `docs/handoffs/`.
+10. **The ask block ends with the reply already drafted.** A copy-pasteable
+   skeleton, one line per row, recommendation pre-filled — so answering is an
+   *edit*, not a composition. Rules 2–6 fix what a row **says**; none of them
+   lowers the cost of **replying**, and a perfectly-formed ask still stalls if
+   answering it means composing prose at 1am. Reacting beats imagining: hand
+   the reader something to strike through, not a blank box.
+
+## The 🔀 block — what rung 6 owes the human
+
+Rung 6 is where most asks are supposed to die: *take the reversible default, log
+it, tell the human afterwards.* For as long as this contract defined five blocks,
+there was nowhere for that last clause to land — the ladder told the arc to decide
+and say so, and the message shape had no room for it. Every silent-but-correct
+decision therefore looked identical to no decision at all, while the user still
+inherited it.
+
+The 🔀 block is that room. It is **not** an ask block: nothing in it is a
+question, and the arc did not wait for any of it.
+
+| Property | Why |
+|---|---|
+| Rendered from `decisions:` in the ask ledger, not written free-hand | The schema requires a reversal (or a named reason it is irreversible) on every entry, so a row that should never have been decided alone cannot be quietly prosed over. See `ask_ledger.py` |
+| **Least-confident first** | Confidence ranks; verdict groups. The reader's attention is finite and should land on the choice most likely to be wrong, not the one that happened to be made first |
+| Every row shows its **undo** | The reversal is the entire justification for not having asked. A row that cannot state one is a row that should have been an ask |
+| Hard cap 7, overflow counted | Same discipline as the ask block. More than seven means the plan was foggy — the clustering *is* the signal, and the fix is upstream in the spec, not a longer table |
+
+**`sound` is not skippable.** The temptation is to list only the shaky calls, but
+a confident decision the user never made is still architecture the user now owns.
+Trivial discretion — internal naming, cosmetic calls — compresses to a one-line
+count; everything load-bearing gets a row.
 
 ## Anti-patterns
 
@@ -147,6 +183,10 @@ Each is derived from a measured failure, not a style preference.
 | "I'll ask now and keep working after they answer" | Wrong order. Park the gated lanes and keep working *now*; the answer arrives whenever it arrives. |
 | "Asking is safer than assuming" | Asking is expensive — median 2.4h of stalled arc-time, 25 overnight stalls in the measured corpus. Rung 6 exists for this. |
 | "I'll write the narrative first so they understand the ask" | That ordering is the measured defect. Narrative goes to the handoff doc; the ask goes first. |
+| "I took a reversible default, so there is nothing to report" | Rung 6 is a licence to **not ask**, not a licence to **not tell**. The whole clause is "take it, log it, tell the human afterwards." A decision with no record is one the user inherits without ever seeing. |
+| "The 🔀 rows are really questions — I'll move them into the ask block" | Then the ladder was not climbed. If it still needs the human it never reached rung 6; if it reached rung 6 it is settled and reversible. Rows do not belong in both. |
+| "I'll list only the decisions I'm unsure about" | `sound` is not skippable. A confident call the user never made is still architecture they now own — the point is disclosure, not confession. |
+| "They can just tell me what they want in their own words" | That is the blank box rule 10 exists to remove. An answer that requires composing prose costs more than one that requires striking a line through, and the measured stall is hours, not minutes. |
 
 ## Composition
 
