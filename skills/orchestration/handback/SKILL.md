@@ -172,10 +172,25 @@ question, and the arc did not wait for any of it.
 | Property | Why |
 |---|---|
 | Rendered by `ask_ledger.py decisions --render-handback`, not written free-hand | The rules below — ordering, the undo, the cap, the overflow header — are executable there and tested. Stated only in prose they are four things an agent forgets one at a time |
-| An **irreversible** choice may not appear here as a settled default | Rung 6 licenses reversible choices only. Recording an irreversible one is still right, but the schema forces it to carry `verdict: needs-user` and name the ask that took it to the human — so it surfaces in the ⛔ block, not as something quietly decided |
+| An **irreversible** choice may not appear here as a settled default | Rung 6 licenses reversible choices only. Recording an irreversible one is still right, but the schema forces it to carry `verdict: needs-user` and name the ask that took it to the human |
+| A `needs-user` row is **excluded** from this block | It reached the human, so it belongs in ⛔ keyed by its `ask`. Rendering it in both would print one item twice under contradictory headings — "decided for you" and "blocked on you" — which this workspace's own arc ledger did before the renderer excluded them |
 | **Least-confident first** | Confidence ranks; verdict groups. The reader's attention is finite and should land on the choice most likely to be wrong, not the one that happened to be made first |
 | Every row shows its **undo** | The reversal is the entire justification for not having asked. A row that cannot state one is a row that should have been an ask |
 | Hard cap 7, overflow counted | Same discipline as the ask block. More than seven means the plan was foggy — the clustering *is* the signal, and the fix is upstream in the spec, not a longer table |
+
+**Where each verdict surfaces**, so nothing is duplicated and nothing is dropped:
+
+| Verdict | Block | Why |
+|---|---|---|
+| `sound` | 🔀 | Decided and settled. The user owns it now |
+| `unsound` | 🔀, with its corrected decision | Decided, and known to need redoing |
+| `needs-user` | **⛔ only**, via its `ask` | It was not decided for them — it was asked |
+
+Consequence worth stating plainly: because the schema forces an irreversible
+choice to be `needs-user`, no valid ledger can render one in 🔀 at all. The
+renderer keeps a defensive branch for a ledger nobody validated — an empty undo
+column would read as "no undo needed", the opposite of the truth — but on a valid
+ledger that branch is unreachable.
 
 **`sound` is not skippable.** The temptation is to list only the shaky calls, but
 a confident decision the user never made is still architecture the user now owns.
