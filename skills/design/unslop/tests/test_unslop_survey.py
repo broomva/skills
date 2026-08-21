@@ -417,3 +417,14 @@ def test_keyboard_key_tokens_do_not_hide_copy_module_prose(tmp_path):
         "export const tip = 'Use <Tab> to continue. What nobody tells you about billing';\n"
     )
     assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 1
+
+
+# ---------------------------------------- codex r3 regression
+def test_template_inner_text_in_copy_module_is_scanned(tmp_path):
+    # attrs inside the tag stay invisible; the INNER text is rendered copy and must fire
+    root = _prose_repo(tmp_path, "tmpl-inner")
+    (root / "content" / "tips.ts").write_text(
+        "export const tip = '<div data-headline=\"ignore\">What nobody tells you about billing</div>';\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["faux_insight"]["count"] == 1, ct["faux_insight"]
