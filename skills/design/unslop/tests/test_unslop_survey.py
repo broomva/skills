@@ -527,9 +527,9 @@ def test_var_fallback_tails_are_not_declared_families(tmp_path):
         'export default () => <div style={{ fontFamily: "var(--bv-font-mono, ui-monospace, monospace)" }}>x</div>;\n'
     )
     fonts = us.survey(root)["fonts"]
-    assert "monospace)" not in fonts["families"]      # the mangled tail is gone
-    assert "ui-monospace" not in fonts["families"]    # fallback tail is not a declared family
-    assert "ui-monospace" in fonts["fallback_only"]   # it is recorded where it belongs
+    assert fonts["families"] == {}                    # a var()-consuming declaration declares NOTHING
+    assert "ui-monospace" in fonts["fallback_only"]   # the tail is recorded where it belongs
+    assert all("var(" not in k and ")" not in k for k in fonts["fallback_only"])  # nothing mangled
 
 
 def test_namespaced_font_tokens_are_declarations(tmp_path):
