@@ -54,11 +54,15 @@ PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
 # --- frontmatter -------------------------------------------------------------
 
-# Fence padding is spaces, tabs and a CR (for CRLF files) — NOT `[^\S\n]`,
+# Fence padding is spaces and tabs — NOT `[^\S\n]`,
 # which also admits form-feed, vertical-tab and NBSP. Those matched here and
 # then failed inside PyYAML with a ReaderError, so the gate blamed the YAML for
-# a fence the matcher should never have accepted.
-_FRONTMATTER_RE = re.compile(r"^\ufeff?---[ \t\r]*\n(.*?)\n---[ \t\r]*(?:\n|$)", re.DOTALL)
+# a fence the matcher should never have accepted. No `\r` either: `_read` uses
+# `read_text()`, whose universal-newline handling turns CRLF (and a lone CR)
+# into `\n` before this pattern is applied, so a CR here could never match.
+# Round 11 kept one and justified it as CRLF support — CRLF does work, but
+# normalization is what does it, not the regex.
+_FRONTMATTER_RE = re.compile(r"^\ufeff?---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", re.DOTALL)
 
 
 def _count_top_level_key(block: str, key: str) -> int | None:
@@ -90,28 +94,44 @@ def _count_top_level_key(block: str, key: str) -> int | None:
                if str(getattr(k, "value", "")).strip().lower() == key)
 
 
-def _duplicate_top_level_keys(block: str) -> list[tuple[str, int]]:
+def _duplicate_top_level_keys(block: str) -> tuple[str, list[tuple[str, int]]]:
     """Every top-level key declared more than once, with its count.
 
-    Same parser, same reason, asked key-agnostically — see
-    `_duplicate_top_level_key_issue`. Returns [] when the question cannot be answered,
-    which is indistinguishable from "no duplicates" by design: the caller reports the
-    check as unperformed rather than guessing, and an empty list is the only honest
-    answer a non-parser can give.
+    Returns `(status, duplicates)` where status is one of:
+
+      * `"ok"`          — the block parsed; `duplicates` is authoritative
+      * `"no-parser"`   — pyyaml is absent, so the question cannot be asked at all
+      * `"unparseable"` — a parser EXISTS and the block did not parse
+
+    Collapsing the last two into "no duplicates" is what made this bypassable, and the
+    tri-state exists to prevent exactly that. `parse_frontmatter` falls back to a
+    hand-rolled scanner when YAML rejects a block, and that scanner resolves duplicates
+    last-wins. So a `tier: J` / `tier: D` pair plus ONE malformed line —
+
+        tier: J
+        tier: D
+        broken: [
+
+    — disabled the duplicate check (compose raised, the check reported "no duplicates")
+    while value extraction happily produced `tier: D`. Step 2 said "tier D (declared)"
+    and PASSED, with the tier-J gate never run: a required gate bypassed by adding a
+    broken line.
+
+    Two readers of the same bytes that disagree is worse than one reader that refuses.
     """
     if yaml is None:
-        return []
+        return "no-parser", []
     try:
-        node = yaml.compose(block)
+        node = yaml.compose(block)  # M64 anchor: compose, not safe_load
     except Exception:
-        return []
+        return "unparseable", []
     if not isinstance(node, getattr(yaml, "MappingNode", ())):
-        return []
+        return "ok", []
     counts: dict[str, int] = {}
     for k, _ in node.value:
         name = str(getattr(k, "value", "")).strip().lower()
         counts[name] = counts.get(name, 0) + 1
-    return sorted(((k, n) for k, n in counts.items() if n > 1), key=lambda kv: kv[0])
+    return "ok", sorted(((k, n) for k, n in counts.items() if n > 1), key=lambda kv: kv[0])
 
 
 def _frontmatter_match(text: str):
@@ -809,8 +829,13 @@ def _duplicate_top_level_key_issue(path: Path) -> str | None:
     m = _frontmatter_match(raw)
     if m is None:
         return None
-    dupes = _duplicate_top_level_keys(m.group(1))
-    if not dupes:
+    status, dupes = _duplicate_top_level_keys(m.group(1))
+    if status == "unparseable":
+        return ("SKILL.md frontmatter does not parse as YAML. The gate then reads it "
+                "with a fallback scanner that resolves duplicate keys last-wins, so one "
+                "malformed line silently disables the duplicate check while still "
+                "yielding values — fix the YAML")
+    if status == "no-parser" or not dupes:
         return None
     shown = ", ".join(f"`{k}:` x{n}" for k, n in dupes)
     return (f"SKILL.md frontmatter declares the same key twice ({shown}) — YAML resolves "

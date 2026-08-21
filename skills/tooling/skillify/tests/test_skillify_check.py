@@ -2075,14 +2075,14 @@ def test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters(t
     # arc that a one-site proof was written for a two-site fix.
     # NBSP is spelled \u00a0 deliberately: the first version of this test carried the
     # literal character, which is invisible in a diff.
-    for ok in (" ", "\t", "\r", "  ", ""):
+    for ok in (" ", "\t", "  ", ""):
         for where, raw in (
             ("opening", f"---{ok}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"),
             ("closing", f"---\noutcome: admitted\n---{ok}\n\nTwo agents, one brief.\n"),
             ("both",    f"---{ok}\noutcome: admitted\n---{ok}\n\nTwo agents, one brief.\n"),
         ):
             assert mod._frontmatter_match(raw), f"{where} fence must match padding {ok!r}"
-    for bad in ("\f", "\v", "\u00a0"):
+    for bad in ("\f", "\v", "\u00a0", "\r"):   # \r joins them: unreachable after _read
         for where, raw in (
             ("opening", f"---{bad}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"),
             ("closing", f"---\noutcome: admitted\n---{bad}\n\nTwo agents, one brief.\n"),
@@ -2121,14 +2121,26 @@ def test_a_nested_tier_key_is_not_a_duplicate_declaration(tmp_path):
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
-def test_crlf_frontmatter_parses(tmp_path):
-    """Round 11 tightened the fence to `[ \\t\\r]`, keeping CR so CRLF files work — a
-    behaviour change round 11 shipped without a test, flagged by Strata B in round 12.
-    A tier-J admission record written on Windows must not read as "no frontmatter"."""
+def test_crlf_frontmatter_parses_because_reads_are_newline_normalised(tmp_path):
+    """CRLF works, and round 11 credited the wrong mechanism for it.
+
+    That commit kept `\\r` in the fence class "because CRLF files are ordinary". They
+    are — but `_read` uses `read_text()`, whose universal-newline handling turns CRLF
+    (and a lone CR) into `\\n` before the matcher ever runs, so the `\\r` could never
+    match anything. P20 round 13 (Strata A) caught the consequence: the CRLF test was
+    vacuous, staying green when its own fixture's CRLFs were replaced with LFs.
+
+    The `\\r` is gone from the pattern and this asserts the real mechanism, so it fails
+    if either half changes."""
+    raw_bytes = b"---\r\noutcome: admitted\r\n---\r\n\r\nTwo agents, one brief; both valid.\r\n"
+    f = tmp_path / "probe.md"
+    f.write_bytes(raw_bytes)
+    assert b"\r\n" in raw_bytes                       # the fixture really is CRLF on disk
+    assert "\r" not in mod._read(f)                    # and _read is what removes it
+    assert not mod._frontmatter_match(raw_bytes.decode("utf-8"))  # the regex alone would NOT match
+
     d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "---\r\noutcome: admitted\r\n---\r\n\r\nTwo agents, one brief; both valid.\r\n",
-        encoding="utf-8")
+    (d / "evals" / "admission.md").write_bytes(raw_bytes)
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
@@ -2159,6 +2171,47 @@ def test_a_clean_frontmatter_has_no_duplicate_keys(tmp_path):
     0 of 96 carry a duplicate top-level key, so the blanket rule costs nothing."""
     d = _skill(tmp_path, scripts=True, tests=True, tier="D")
     assert mod._duplicate_top_level_key_issue(d / "SKILL.md") is None
-    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nc:\n  a: 3\n") == []
-    assert mod._duplicate_top_level_keys("a: 1\nb: 2\na: 3\n") == [("a", 2)]
-    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nA: 3\nb: 4\n") == [("a", 2), ("b", 2)]
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nc:\n  a: 3\n") == ("ok", [])
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\na: 3\n") == ("ok", [("a", 2)])
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nA: 3\nb: 4\n") == ("ok", [("a", 2), ("b", 2)])
+
+
+def test_a_malformed_line_cannot_disable_the_duplicate_check(tmp_path):
+    """P20 round 13, Strata A — BLOCKER. Two readers of the same bytes disagreed.
+
+    `parse_frontmatter` falls back to a hand-rolled scanner when YAML rejects a block,
+    and that scanner resolves duplicates last-wins. The duplicate check used the YAML
+    parser and reported "no duplicates" when compose raised. So ONE malformed line
+    turned the check off while values kept flowing:
+
+        tier: J
+        tier: D
+        broken: [
+
+    -> step 2 PASS, "tier D (declared)", tier-J gate never run. A required gate
+    bypassed by adding a broken line."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier=None)
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(
+        raw.replace("---\n", "---\ntier: J\ntier: D\nbroken: [\n", 1), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL", step2["detail"]
+    assert "does not parse as YAML" in step2["detail"], step2["detail"]
+
+
+def test_a_wellformed_frontmatter_is_not_called_unparseable(tmp_path):
+    """Paired control for the above: the refusal must bite only on real malformation.
+    Flow mappings, quoted keys and nested blocks are ordinary YAML and must survive —
+    these are the shapes the deleted line-based key walker false-rejected."""
+    for i, extra in enumerate((
+        'aliases: {a: 1, b: 2}',
+        '"quoted": yes',
+        'nested:\n  tier: J\n  deep:\n    - 1\n    - 2',
+        'anchored: &a hello\nreused: *a',
+    )):
+        d = _skill(tmp_path / f"ok{i}", scripts=True, tests=True, tier="D")
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("tier: D", f"tier: D\n{extra}", 1),
+                                    encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{extra!r} -> {step2['detail']}"
