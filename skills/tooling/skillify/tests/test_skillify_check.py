@@ -2215,3 +2215,69 @@ def test_a_wellformed_frontmatter_is_not_called_unparseable(tmp_path):
                                     encoding="utf-8")
         step2 = _step(_check(d), 2)
         assert step2["status"] == "PASS", f"{extra!r} -> {step2['detail']}"
+
+
+def test_frontmatter_keys_are_matched_case_insensitively(tmp_path):
+    """P20 round 13, Strata B — MAJOR, and the FIFTH product-level instance of this
+    arc's dominant pattern: fixed at `outcome`, never at `tier`.
+
+    `_count_top_level_key` has always lowercased; `_admission_issue` was fixed early to
+    match, its comment naming the reason ("an undocumented asymmetry that reads as the
+    gate not seeing what is plainly there"). `_tier_of` read `fm.get("tier")`, and there
+    the asymmetry is a false ACCEPT rather than a false reject. Measured before the fix:
+
+        Tier: J  + scripts, no J core  ->  PASS "tier D (inferred: ships scripts/ code)"
+        tier: J  + scripts, no J core  ->  FAIL "tier J (declared): 4 gap(s)…"
+
+    One capital letter and a declared tier-J skill passes on scripts alone."""
+    for i, key in enumerate(("Tier", "TIER", "tIeR")):
+        d = _skill(tmp_path / f"case{i}", scripts=True, tests=True, tier=None)
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("---\n", f"---\n{key}: J\n", 1), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{key} -> {step2['detail']}"
+        assert "tier J (declared)" in step2["detail"], step2["detail"]
+
+
+def test_case_insensitive_lookup_reaches_every_frontmatter_read(tmp_path):
+    """Paired control, and the reason this is an accessor rather than a `tier` patch:
+    fixing one key would have been the sixth one-site fix in this arc. `name`,
+    `description` and `latent_only` must honour the same rule."""
+    assert mod._fm({"Name": "x"}, "name") == "x"
+    assert mod._fm({"DESCRIPTION": "d"}, "description") == "d"
+    assert mod._fm({"Latent_Only": "true"}, "latent_only") == "true"
+    assert mod._fm({"tier": "D"}, "tier") == "D"
+    assert mod._fm({}, "tier", "fallback") == "fallback"
+    assert mod._fm(None, "tier", "fallback") == "fallback"
+    # a capitalised latent_only must still reach the contradiction check
+    d = _skill(tmp_path, scripts=True, tests=True, tier=None)
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(raw.replace("---\n", "---\nLatent_Only: true\n", 1), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "contradiction" in step2["detail"], step2["detail"]
+
+
+def test_absurdly_nested_values_fail_closed_instead_of_raising(tmp_path):
+    """P20 round 13, Strata B — a regression round 11 introduced with the recursion.
+
+    `_substantive` shipped with a cycle guard but no depth cap, so a 1.4 KB
+    evals/suite.json nested ~500 deep raised RecursionError out of `run_checklist`:
+    a bare traceback and zero checklist lines, violating this file's own contract that
+    an unverified artifact is reported, never thrown. Before round 11, `bool(x)` could
+    not recurse at all, so this is strictly a defect of the fix."""
+    deep = "x"
+    for _ in range(2000):
+        deep = {"a": deep}
+    assert mod._substantive(deep) is False          # fails closed, does not raise
+    shallow = "x"
+    for _ in range(20):
+        shallow = {"a": shallow}
+    assert mod._substantive(shallow) is True        # control: real nesting still counts
+
+    # and end to end, the checklist reports rather than throwing
+    d = _j(tmp_path, held_out=0)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": 0.84, "method": deep}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    res = _check(d)
+    assert _step(res, 2)["status"] == "FAIL"

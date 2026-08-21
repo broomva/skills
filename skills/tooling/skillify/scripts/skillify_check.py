@@ -51,6 +51,11 @@ CODE_EXTS = {".py", ".sh", ".mjs", ".js", ".ts"}
 _TEST_CODE_EXTS = ("py", "sh", "mjs", "js", "ts")
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
+# Deepest container nesting `_substantive` will walk before failing closed. No real
+# rubric, measurement or held-out case nests anywhere near this; the cap exists so
+# a hostile or generated artifact cannot turn a checklist into a RecursionError.
+_MAX_NESTING = 100
+
 
 # --- frontmatter -------------------------------------------------------------
 
@@ -790,6 +795,37 @@ def _is_num(x: object) -> bool:
             and math.isfinite(x))
 
 
+def _fm(fm: dict | None, key: str, default: object = None) -> object:
+    """Read a frontmatter key case-INSENSITIVELY. Every gate-affecting read goes here.
+
+    `_count_top_level_key` has always lowercased the key it counts, and
+    `_admission_issue` was fixed early to match — its comment names the reason: reading
+    `Outcome: admitted` as "declares no outcome" is "an undocumented asymmetry that
+    reads as the gate not seeing what is plainly there."
+
+    `_tier_of` was never given the same treatment, and the asymmetry there is a false
+    ACCEPT rather than a false reject. Measured:
+
+        Tier: J   + scripts, no J core  ->  PASS "tier D (inferred: ships scripts/ code)"
+        tier: J   + scripts, no J core  ->  FAIL "tier J (declared): 4 gap(s)…"
+
+    One capital letter and a declared tier-J skill passes on scripts alone, with the
+    admission record, rubric, held-out cases and judge config never consulted — the
+    exact sentence the duplicate-`tier:` fix was written to close.
+
+    Fixing `tier` alone would have been the SIXTH one-site fix in this arc for a class
+    with several sites, so this is the accessor and there are no per-key exceptions:
+    the property is "frontmatter keys are matched case-insensitively", full stop.
+    """
+    if not fm:
+        return default
+    want = key.strip().lower()
+    for k, v in fm.items():
+        if str(k).strip().lower() == want:
+            return v
+    return default
+
+
 def _duplicate_top_level_key_issue(path: Path) -> str | None:
     """ANY top-level frontmatter key declared twice is ambiguous. Not just `tier:`.
 
@@ -876,8 +912,14 @@ def _substantive(x: object, _seen: frozenset[int] = frozenset()) -> bool:
         # This stays a STRUCTURAL question — is there a value here at all — and does
         # not reopen the undecidable one above. A leaf that is present but means
         # nothing still passes, and still belongs to the review layer.
-        if id(x) in _seen:
-            return False  # YAML anchors and JSON round-trips can build cycles
+        if id(x) in _seen or len(_seen) >= _MAX_NESTING:
+            # Cycles (YAML anchors, JSON round-trips) and absurd nesting both fail
+            # closed. The depth cap is not cosmetic: round 11 shipped this recursion
+            # with only a cycle guard, and a 1.4 KB evals/suite.json nested ~500 deep
+            # raised RecursionError straight out of run_checklist — a bare traceback
+            # and zero checklist lines, which violates this file's own contract that
+            # an unverified artifact is reported, never thrown. Found in P20 round 13.
+            return False
         _seen = _seen | {id(x)}
         return any(_substantive(v, _seen) for v in (x.values() if isinstance(x, dict) else x))
     return isinstance(x, str) and bool(x.strip())
@@ -1277,7 +1319,7 @@ def _tier_of(skill_dir: Path, fm: dict, code: list[str]) -> tuple[str | None, bo
     dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md")
     if dup:
         return None, False, dup
-    raw = fm.get("tier")
+    raw = _fm(fm, "tier")
     raw = "" if raw is None else str(raw).strip().upper()
     if raw in TIERS:
         return raw, True, "declared"
@@ -1292,8 +1334,8 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
                   entities_dir: Path | None, strict: bool, run_tests: bool = False,
                   skills_sh: str | None = None) -> list[dict]:
     fm = parse_frontmatter(skill_dir / "SKILL.md")
-    name = (fm or {}).get("name") or skill_dir.resolve().name
-    latent_only = str((fm or {}).get("latent_only", "")).lower() in ("true", "yes", "1")
+    name = _fm(fm, "name") or skill_dir.resolve().name
+    latent_only = str(_fm(fm, "latent_only", "")).lower() in ("true", "yes", "1")
     code = _code_files(skill_dir)
     blobs, unparseable_evals = _eval_blobs(skill_dir)
     tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, code)
@@ -1305,7 +1347,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
 
     # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable.
     gotcha = _skillsh_frontmatter_issue(skill_dir)
-    if not (fm and fm.get("name") and fm.get("description")):
+    if not (fm and _fm(fm, "name") and _fm(fm, "description")):
         add(1, "SKILL.md contract", FAIL,
             "SKILL.md missing" if fm is None else "frontmatter needs name + description", required=True)
     elif gotcha:
@@ -1590,7 +1632,7 @@ def survey(root: Path, **kw) -> dict:
             fm, tier, declared, why = {}, "errored", False, f"errored: {type(exc).__name__}"
             failed = [f"error: {type(exc).__name__}: {exc}"[:120]]
         rows.append({
-            "skill": fm.get("name") or d.name,
+            "skill": _fm(fm, "name") or d.name,
             "path": str(d.relative_to(root)) if d.is_relative_to(root) else str(d),
             "tier": tier, "declared": declared, "why": why,
             "failed": failed,
