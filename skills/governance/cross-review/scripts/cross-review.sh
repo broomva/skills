@@ -136,7 +136,7 @@ if [ "$COMMAND" = "reviewer-guard" ]; then
     case "$GUARD_MODE" in
         capture)
             guard_fingerprint > "$STATE"
-            echo "reviewer-guard: captured $(cat "$STATE" | cut -c1-16)… -> $STATE"
+            echo "reviewer-guard: captured $(cut -c1-16 < "$STATE")… -> $STATE"
             exit 0
             ;;
         verify)

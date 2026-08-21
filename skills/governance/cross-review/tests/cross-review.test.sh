@@ -116,7 +116,7 @@ fi
 GUARD_TMP=$(mktemp -d)
 trap 'rm -rf "$GUARD_TMP"' EXIT
 (
-  cd "$GUARD_TMP"
+  cd "$GUARD_TMP" || exit 1
   git init -q .
   git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   echo "original" > file.txt

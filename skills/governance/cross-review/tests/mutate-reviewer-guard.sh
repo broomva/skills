@@ -36,6 +36,8 @@ mut "fingerprint ignores tracked edits"    "        git -c core.fsmonitor=false 
 mut "missing baseline treated as pass"     'An unverifiable review is not a passed review." >&2
                 exit 4' 'An unverifiable review is not a passed review." >&2
                 exit 0'
+# shellcheck disable=SC2016  # anchors are literal source text; expansion would
+# rewrite the very string we are searching for, and the mutation would never match.
 mut "verify always admissible"             '            if [ "$BEFORE" = "$AFTER" ]; then' '            if true; then'
 mut "strata B back to general-purpose"     "subagent_type='Explore'" "subagent_type='general-purpose'"
 mut "strata A sandbox removed"             "codex exec -m gpt-5.4 -c sandbox_mode=read-only" "codex exec -m gpt-5.4"
