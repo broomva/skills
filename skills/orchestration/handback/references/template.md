@@ -15,6 +15,16 @@ receipt, and never reorder.
 > If more than 7 rows exist, show the top 7 by leverage and head the block
 > `⛔ Blocked on you — 7 of {total} shown, rest in .control/asks/{arc}.yaml`.
 
+**Reply by editing this** — every row pre-answered with the recommendation, so
+you strike out what you disagree with instead of composing anything. **One line
+per ask row, numbered to match:** a skeleton shorter than the table silently
+drops the asks it omits.
+
+```
+1. done
+2. A
+```
+
 ## ▶ Running meanwhile
 
 {What is still executing, or what completed with zero input. If nothing —
@@ -26,6 +36,20 @@ say so explicitly and say why every remaining lane is gated.}
 |---|---|
 | **{repo}#{pr}** | {one line: state, checks, merge disposition} |
 | **{TICKET}** | {one line} |
+
+## 🔀 Decided for you — {N} choices, least-confident first
+
+| # | I decided | Why it was mine to take | Undo |
+|---|---|---|---|
+| 1 | {what the work does today, in plain words} | {what the spec left unsaid} | `{the one-line reversal}` |
+| 2 | {…} | {…} | `{…}` |
+
+> Generated — do not hand-write it:
+> `python3 scripts/ask_ledger.py decisions .control/asks/{arc}.yaml --render-handback`
+> Ordering, the 7-row cap and the `{n} of {total} shown` overflow header are
+> enforced there and tested, not left to be remembered. Omit the block entirely
+> when there are no decisions. Nothing here is a question — none of it stopped
+> the arc, and every row carries its undo.
 
 ## 📋 Receipt
 
@@ -76,6 +100,13 @@ in a paragraph about something else, the block at 88% depth.
 | 1 | **Merge `workspace#403`** — `gh pr merge 403 --squash --repo broomva/workspace`. Tests and lint are green; it needs a human because personal branches have no auto-merge rule. | The knowledge entry lands | It stays open; nothing depends on it |
 | 2 | **Pick one for `bstack#102`.** The review score is 5 out of 10; this branch needs 7 to merge automatically. The main fix is solid — four independent reviews confirmed it. Everything unresolved is in extra safety code added afterwards.<br>&nbsp;&nbsp;**A** — Split it: merge the main fix now, follow-up for the safety code. *Fastest; the fix works today.* ← suggested<br>&nbsp;&nbsp;**B** — Keep reviewing until it scores 7. *The last three rounds each found a new problem in the previous fix, so this may not converge.*<br>&nbsp;&nbsp;**C** — Close it unmerged. *We lose the fix; the bug is live.* | The fix reaching the copy that actually runs | I do **A** |
 
+**Reply by editing this:**
+
+```
+1. done
+2. A
+```
+
 ## ▶ Running meanwhile
 
 Nothing — both remaining lanes are gated on the two rows above. Everything else
@@ -88,6 +119,16 @@ in the arc is done.
 | **bstack#102** | 5 commits, 41/41 suite, CI green, open |
 | **workspace#403** | lint clean, CI green, open |
 | **BRO-2170 / BRO-2171** | filed, not half-built |
+
+## 🔀 Decided for you — 2 choices, least-confident first
+
+| # | I decided | Why it was mine to take | Undo |
+|---|---|---|---|
+| 1 | Kept the cached-path safety code on the branch and scoped it into a follow-up ticket, instead of reverting it so the core fix could merge clean. | The spec said "land the fix"; it never said what to do with hardening added mid-review that the gate then flagged. | `git revert 4f2a1c` on the branch — the core fix does not depend on it |
+| 2 | Filed the leftovers as **two** tickets (BRO-2170, BRO-2171) rather than one, splitting the sensor copy-step from the cached-path work. | Nothing specified ticket granularity. | Close BRO-2171 as duplicate and fold its body into BRO-2170 |
+
+> Row 1 is first because it is the least confident of the two: it is the one
+> that shapes whether option **A** above is actually cheap.
 
 ## 📋 Receipt
 
