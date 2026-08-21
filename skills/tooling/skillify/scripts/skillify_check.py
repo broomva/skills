@@ -17,10 +17,19 @@ through. So this doctor *executes* what it cheaply can:
   construct (`def test_…`, `assert`, `it(`, `test(`, `describe(`, `@pytest`);
   with `--run-tests` it actually invokes pytest and gates on the result.
 - `latent_only: true` is only honored when NO deterministic code is present
-  (declaring it while shipping scripts is a contradiction → FAIL).
+  (declaring it while shipping scripts is a contradiction → FAIL), and it makes
+  step 5 (trigger evals) REQUIRED — a skill with no deterministic half has no
+  other gate on its behaviour at all.
+- Step 1 validates the frontmatter against the agentskills.io spec (description
+  ≤1024, name ≤64 + charset, compatibility ≤500), not merely that the fields
+  exist. Presence-as-validity was satisfiable by construction.
+
+Advisory sub-steps (WARN, never gate): 1d description carries a when-clause,
+1e body carries a gotchas section, 1f body under 500 lines.
 
 Required steps gate the exit code: 1 (SKILL.md contract), 2 (code syntax — unless
-genuinely latent), 3 (real unit tests, when code present). Workspace-aware steps
+genuinely latent), 3 (real unit tests, when code present), 5 (trigger evals, when
+purely latent). Workspace-aware steps
 (6 resolver trigger, 7 resolver eval, 10 brain filing) SKIP unless their path
 flag is supplied. `--strict` promotes 6/7 to required *and* fails if their path
 flag is missing (so strict can't pass while skipping the things strict is for).
@@ -48,6 +57,77 @@ CODE_EXTS = {".py", ".sh", ".mjs", ".js", ".ts"}
 _TEST_CODE_EXTS = ("py", "sh", "mjs", "js", "ts")
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
+# --- agentskills.io spec conformance -----------------------------------------
+# Normative limits, https://agentskills.io/specification (read verbatim 2026-08-10):
+#   name         Max 64 chars, lowercase [a-z0-9-], no leading/trailing/consecutive hyphen
+#   description  Max 1024 chars, non-empty
+#   compatibility  Max 500 chars (optional field)
+#
+# These are CONFORMANCE limits and they are TIGHTER than the render cap this host
+# happens to apply. BRO-2014 measured the observed cap at 1536 chars across 1,199
+# real skill_listing attachments — so a description of 1025..1536 renders in FULL
+# here and is still invalid under the standard. That gap is the "silent band": no
+# local signal fires, and the skill breaks only when some other conforming host
+# loads it. Conform to the tighter number; measure the looser one to know the slack.
+# See research/entities/concept/observed-limit-is-not-the-conformance-limit.md
+SPEC_MAX_DESCRIPTION = 1024
+SPEC_MAX_NAME = 64
+SPEC_MAX_COMPATIBILITY = 500
+SPEC_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+OBSERVED_RENDER_CAP = 1536  # measured, NOT normative — for message precision only
+
+# Body length is a DIFFERENT cost with a DIFFERENT schedule. The body loads only
+# on trigger, so an over-long body is a per-trigger *dilution* risk; the
+# description is billed on EVERY turn and gates triggering. Ranking skills by body
+# length audits the surface most of them never pay for, so this is a WARN and
+# never gates the exit code, while a spec-invalid description is a hard FAIL.
+# See research/entities/concept/trigger-surface-is-the-standing-cost.md
+SPEC_RECOMMENDED_BODY_LINES = 500
+
+# IBM Technology, "5 Best Practices for Building AI Agent Skills" (2026-08-10):
+# "the name and the description need to contain enough information by themselves
+# so that the agent knows when to use it … models tend to undertrigger."  A
+# description that says what a skill DOES but never when to USE it is the
+# single most common trigger defect, so require the when-clause to be present.
+# Accepts the common affirmative trigger phrasings ("invoke for", "use this for"
+# are legitimate and were previously warned on) and rejects negated ones — "do
+# NOT use when …" describes an anti-trigger, so counting it as a when-clause
+# would score a description that never says when to fire as if it did.
+_WHEN_CLAUSE_RE = re.compile(
+    r"(?<!not )(?<!never )\b("
+    r"use\s+when|used\s+when|use\s+this\s+when|use\s+this\s+for|use\s+for|"
+    r"triggers?\s+on|when\s+to\s+use|invoke\s+(?:for|when)|reach\s+for\s+(?:this\s+)?when"
+    r")\b", re.I)
+# The window has to cover real hedging — "do not UNDER ANY CIRCUMSTANCES use
+# when …" is four words, and a two-word window let it read as affirmative.
+# A BARE `not` is deliberately absent from the negator set: with a six-word
+# window it swallows affirmative constructions like "Not only should you use
+# when offline". Every negator here is an explicit multi-word negation, which is
+# a closed set — unlike "any sentence containing 'not'", which is not.
+_WHEN_NEGATION_RE = re.compile(
+    r"\b(?:do\s+not|does\s+not|don't|doesn't|never|avoid|rather\s+than|"
+    r"must\s+not|mustn't|should\s+not|shouldn't|cannot|can't|will\s+not|won't)\s+"
+    r"(?:\w+[\s,]+){0,6}?"
+    r"(?:use|used|using|invoke|invoked|trigger|triggers|reach\s+for)\b", re.I)
+
+# Same source, practice 2: "the highest value section you can put in the skill
+# body is gotchas — environment-specific facts that defy reasonable assumptions.
+# Every time you correct the agent by hand, that correction is a gotcha."  A
+# skill distilled from a real session but carrying no corrections has thrown away
+# the only content the model could not have produced on its own.
+# CommonMark allows an ATX heading to be indented up to 3 spaces. Anchoring at
+# column zero meant an indented `## Gotchas` was not seen as a heading at all —
+# which also made the indented-fence test pass for the wrong reason: it was
+# proving "indented headings are invisible", not "fences are stripped".
+_GOTCHA_SECTION_RE = re.compile(
+    r"^ {0,3}#{1,6}\s.*\b(gotchas?|pitfalls?|anti-?rationaliz\w*|caveats?|"
+    r"common\s+mistakes?|troubleshooting|known\s+issues?|failure\s+modes?|"
+    r"red\s+flags?|what\s+goes\s+wrong)\b", re.I | re.M)
+# A heading that DENIES the section — "## No gotchas", "## No known gotchas" —
+# must not satisfy a check that the corrections were written down. Scanned
+# across the whole heading prefix, not just the word immediately before.
+_NEGATED_HEADING_RE = re.compile(r"\b(no|none|zero|without|nil|not|never)\b", re.I)
+
 
 # --- frontmatter -------------------------------------------------------------
 
@@ -62,7 +142,10 @@ def parse_frontmatter(md_path: Path) -> dict | None:
         text = md_path.read_text(encoding="utf-8")
     except OSError:
         return None
-    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    # Delimiters must be WHOLE lines: a bare `\n---` substring test lets a body
+    # line like `---8<---` close the block early, truncating the frontmatter that
+    # every downstream check then validates.
+    m = re.match(r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", text, re.DOTALL)
     if not m:
         return None
     block = m.group(1)
@@ -81,6 +164,89 @@ def parse_frontmatter(md_path: Path) -> dict | None:
             key, _, val = line.partition(":")
             fm[key.strip()] = val.strip().strip("\"'")
     return fm
+
+
+def _frontmatter_type_issues(md_path: Path) -> list[str]:
+    """Malformed YAML and wrong-typed fields, which `parse_frontmatter` hides.
+
+    `parse_frontmatter` is lenient by design — it stringifies non-str values and
+    falls back to a hand-rolled scan when YAML fails, so callers always get a
+    flat str dict. That leniency silently launders real defects past step 1:
+    `description: [foo]` becomes the 7-char string "['foo']" and passes the 1024
+    check, while the registry linter rejects the same file as a non-string. Two
+    gates, one contract, opposite answers. Detect the raw shape here.
+    """
+    if yaml is None:
+        # Fail LOUD, not open. Without a YAML parser this check cannot run, and
+        # silently returning "no issues" is indistinguishable from "validated" —
+        # the exact confusion the rest of this file exists to remove.
+        return ["PyYAML unavailable — frontmatter types were NOT validated "
+                "(install pyyaml, or run the registry linter which requires it)"]
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    m = re.match(r"^---[ \t]*\n(.*?)\n---[ \t]*(?:\n|$)", text, re.DOTALL)
+    if not m:
+        return []
+    try:
+        data = yaml.safe_load(m.group(1))
+    except yaml.YAMLError as e:
+        return [f"frontmatter is not valid YAML — {str(e).splitlines()[0]}"]
+    if not isinstance(data, dict):
+        return ["frontmatter is not a mapping"]
+    out = []
+    for field in ("name", "description", "compatibility"):
+        if field in data and not isinstance(data[field], str):
+            got = type(data[field]).__name__
+            out.append(f"`{field}` must be a string, got {got}")
+    return out
+
+
+def _spec_violations(fm: dict) -> list[str]:
+    """Hard agentskills.io violations — each makes the skill invalid under the
+    standard regardless of whether THIS host tolerates it.
+
+    Deliberately NOT checked here: the spec's `name` must-match-parent-directory
+    rule. `skillify_check` is routinely pointed at a scratch/temp/CI checkout
+    whose directory name is not the canonical one, so enforcing it here would
+    manufacture false positives. It is enforced where the canonical layout is
+    known — the registry-wide `.github/workflows/lint-skill-md.yml`.
+    """
+    out: list[str] = []
+    name = fm.get("name") or ""
+    desc = fm.get("description") or ""
+
+    # Spec §compatibility: "Must be 1-500 characters IF PROVIDED" — present-but-
+    # empty is invalid, which `fm.get(...) or ""` would collapse into "absent".
+    if "compatibility" in fm:
+        compat = fm["compatibility"]
+        if not compat.strip():
+            out.append("compatibility is present but empty (spec: 1-500 chars)")
+        elif len(compat) > SPEC_MAX_COMPATIBILITY:
+            out.append(f"compatibility {len(compat)} chars > {SPEC_MAX_COMPATIBILITY} spec max")
+
+    if len(desc) > SPEC_MAX_DESCRIPTION:
+        band = ("renders in full here but is non-conforming — the silent band"
+                if len(desc) <= OBSERVED_RENDER_CAP
+                else f"also truncated mid-sentence past {OBSERVED_RENDER_CAP} by the renderer")
+        out.append(f"description {len(desc)} chars > {SPEC_MAX_DESCRIPTION} spec max ({band})")
+    if len(name) > SPEC_MAX_NAME:
+        out.append(f"name {len(name)} chars > {SPEC_MAX_NAME} spec max")
+    elif not SPEC_NAME_RE.match(name):
+        out.append(f"name '{name}' must be lowercase [a-z0-9-] with no leading, "
+                   "trailing or consecutive hyphens")
+    return out
+
+
+def _body_after_frontmatter(skill_dir: Path) -> str:
+    """SKILL.md text with the YAML frontmatter stripped (empty string if absent)."""
+    try:
+        text = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.match(r"^---\n.*?\n---\n?", text, re.DOTALL)
+    return text[m.end():] if m else text
 
 
 # --- skills.sh installability (the publish target) ---------------------------
@@ -221,6 +387,34 @@ def _code_files(skill_dir: Path) -> list[str]:
     return sorted(found)
 
 
+_NON_CODE_DIRS = {"tests", "test", "evals", "references", "assets", "templates",
+                  "node_modules", ".venv", "venv", "site-packages", "__pycache__",
+                  ".git", "dist", "build"}
+
+
+def _any_code_anywhere(skill_dir: Path) -> list[str]:
+    """Every non-test source file ANYWHERE in the skill, not just `scripts/`.
+
+    `_code_files` deliberately looks only at `scripts/` and the skill root, which
+    is the right scope for "what must steps 2-3 syntax-check and test". It is the
+    WRONG scope for adjudicating `latent_only`, because that flag is a claim
+    about the whole skill: with `_code_files` alone, `latent_only: true` plus
+    `src/core.py` classifies as purely latent, steps 2 and 3 SKIP, and the code
+    ships entirely ungated. Deciding a whole-skill claim needs a whole-skill scan.
+    """
+    out = []
+    for p in skill_dir.rglob("*"):
+        if not p.is_file() or p.suffix not in CODE_EXTS:
+            continue
+        rel = p.relative_to(skill_dir)
+        if _NON_CODE_DIRS.intersection(rel.parts[:-1]):
+            continue
+        if _is_test_file(p.name) or p.name in {"__init__.py", "conftest.py", "setup.py"}:
+            continue
+        out.append(str(rel))
+    return sorted(out)
+
+
 def _test_files(skill_dir: Path, kind: str = "") -> list[str]:
     found = {
         str(f.relative_to(skill_dir))
@@ -359,21 +553,122 @@ def _is_trigger_eval(path: Path) -> bool:
         # No PyYAML: fall through to the regex rather than silently reporting
         # "no trigger eval" for a file we simply could not parse.
     if path.suffix in _EVAL_DATA_EXTS - {".json", ".yaml", ".yml"}:
-        return bool(_TRIGGER_ASSERTION_RE.search(txt))
-    return bool(_TRIGGER_ASSERTION_RE.search(_strip_code_noise(txt)))
+        return len(_textual_polarities(txt)) >= 2
+    return len(_textual_polarities(_strip_code_noise(txt))) >= 2
+
+
+# Keys whose boolean value states the polarity directly, vs. inverted ("this
+# prompt must NOT fire the skill" is a negative case when the value is true).
+_POSITIVE_KEYS = {"should_trigger", "shouldTrigger", "should_fire"}
+_NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire", "negative_case"}
+
+# Textual analogue of _trigger_polarities, for code/markdown eval suites that
+# cannot be parsed structurally. Requires a boolean LITERAL on the key — a bare
+# `should_trigger:` mention asserts nothing.
+# ONE pass, then classify. Two overlapping regexes let a single line match both
+# and supply both polarities by itself — first `should_trigger = "false"`, then
+# `should_trigger = "false prompt"` once the exclusion only covered exact
+# literals. Chasing that with ever-more-precise lookaheads is unbounded; matching
+# the value ONCE and classifying it exclusively removes the class.
+_TRIGGER_ASSERTION_ANY_RE = re.compile(
+    r"[\"']?(" + "|".join(sorted(TRIGGER_ASSERTION_KEYS)) + r")[\"']?\s*[:=]\s*"
+    r"(\[\s*[^\]\s][^\]]*\]|\[\s*\]|\n\s*-\s*\S|[\"'][^\"']*[\"']|[A-Za-z0-9_.+-]+)", re.I)
+_BOOL_LITERAL_RE = re.compile(r"^[\"']?(true|false)[\"']?$", re.I)
+
+
+def _textual_polarities(txt: str) -> set[bool]:
+    """Polarities asserted by `key: value` pairs in unparsed text.
+
+    Each match is classified into exactly one of three buckets:
+      * a boolean literal  -> the VALUE carries the polarity
+      * a real corpus      -> the KEY carries it (should_trigger: [prompts])
+      * anything else      -> asserts nothing
+    """
+    out: set[bool] = set()
+    for key, raw in _TRIGGER_ASSERTION_ANY_RE.findall(txt):
+        positive = key in _POSITIVE_KEYS
+        val = raw.strip()
+        m = _BOOL_LITERAL_RE.match(val)
+        if m:
+            truthy = m.group(1).lower() == "true"
+            out.add(truthy if positive else not truthy)
+            continue
+        # Corpus arm: a quoted string with real content, or a non-empty list/item.
+        if val.startswith(("[", "-")):
+            if val not in ("[]", "[ ]", "-"):
+                out.add(positive)
+        elif val[:1] in "\"'":
+            if val.strip("\"'").strip():
+                out.add(positive)
+    return out
 
 
 def _walk_for_trigger_keys(node: object, depth: int = 0) -> bool:
-    """A trigger key must appear as an actual mapping KEY, at any nesting depth."""
-    if depth > 40:
-        return False
-    if isinstance(node, dict):
-        if TRIGGER_ASSERTION_KEYS & set(map(str, node.keys())):
-            return True
-        return any(_walk_for_trigger_keys(v, depth + 1) for v in node.values())
-    if isinstance(node, list):
-        return any(_walk_for_trigger_keys(v, depth + 1) for v in node)
+    """True iff the artifact asserts BOTH polarities with real boolean values.
+
+    Key presence alone is not an assertion. `{"should_trigger": null}` names the
+    concept and tests nothing, and once step 5 is REQUIRED for purely-latent
+    skills such a token artifact would be the only thing standing between that
+    skill and a green gate. A suite carrying one polarity is equally hollow: a
+    positive-only set is satisfied by a skill that fires on everything, and a
+    negative-only set by one that never fires at all. Demand both.
+    """
+    return len(_trigger_polarities(node)) >= 2
+
+
+def _is_real_corpus(v: object) -> bool:
+    """True for a prompt corpus that actually contains a prompt.
+
+    `len(v) > 0` was too weak: `should_trigger: [null]` and `should_trigger: "  "`
+    both have non-zero length and assert nothing, which is the same
+    presence-not-content hole this check exists to close, one level down.
+    """
+    if isinstance(v, str):
+        return bool(v.strip())
+    if isinstance(v, (list, tuple)):
+        # A prompt is TEXT, or a case object carrying text. Accepting any
+        # non-null scalar let `[false]` and `[0]` count as a prompt corpus — the
+        # presence-not-content hole again, one level further down. Booleans and
+        # numbers are not prompts, so enumerate what is rather than what isn't.
+        return any(
+            (isinstance(i, str) and i.strip())
+            or (isinstance(i, dict) and any(
+                isinstance(x, str) and x.strip() for x in i.values()))
+            for i in v)
     return False
+
+
+def _trigger_polarities(node: object, depth: int = 0) -> set[bool]:
+    """The set of case polarities asserted anywhere in the structure.
+
+    {True} = only positive cases, {False} = only negative, {True, False} = both.
+    Non-boolean values (null, strings, numbers) assert nothing and are ignored.
+    """
+    out: set[bool] = set()
+    if depth > 40:
+        return out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            ks = str(k)
+            polarity = (True if ks in _POSITIVE_KEYS
+                        else False if ks in _NEGATIVE_KEYS else None)
+            if polarity is not None:
+                if isinstance(v, bool):
+                    # Case-per-object schema: {"prompt": "...", "should_trigger": true}
+                    out.add(v if polarity else not v)
+                elif _is_real_corpus(v):
+                    # Key-groups-prompts schema, equally valid and widely used:
+                    #   should_trigger:      ["prompt a", "prompt b"]
+                    #   should_not_trigger:  ["prompt c"]
+                    # Here the KEY carries the polarity and the value is the corpus.
+                    # Requiring a bool would report these real, two-polarity suites
+                    # as asserting nothing.
+                    out.add(polarity)
+            out |= _trigger_polarities(v, depth + 1)
+    elif isinstance(node, list):
+        for v in node:
+            out |= _trigger_polarities(v, depth + 1)
+    return out
 
 
 def _script_syntax_error(path: Path) -> str | None:
@@ -419,9 +714,14 @@ _SKIP_JSON_KEYS = {"description", "summary", "notes", "when_to_use", "trigger", 
 
 
 def _strip_fences(md: str) -> str:
-    """Drop fenced code blocks (``` … ```) — example commands and File-Structure
-    trees inside them are not live contract claims."""
-    return re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+    """Drop fenced code blocks — example commands and File-Structure trees inside
+    them are not live contract claims. CommonMark allows tilde fences as well as
+    backticks, and stripping only one kind leaves the other as a hiding place."""
+    # CommonMark allows a fence to be indented up to 3 spaces; anchoring at
+    # column zero left an indented fence as a hiding place.
+    md = re.sub(r"^ {0,3}```.*?^ {0,3}```", "", md, flags=re.DOTALL | re.M)
+    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)  # inline/unanchored leftovers
+    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)
 
 
 def _ref_satisfied(skill_dir: Path, ref: str) -> bool:
@@ -498,22 +798,35 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     name = (fm or {}).get("name") or skill_dir.resolve().name
     latent_only = str((fm or {}).get("latent_only", "")).lower() in ("true", "yes", "1")
     code = _code_files(skill_dir)
+    any_code = _any_code_anywhere(skill_dir)
     results: list[dict] = []
 
     def add(step, label, status, detail, required=False):
         results.append({"step": step, "label": label, "status": status,
                         "detail": detail, "required": required})
 
-    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable.
+    # 1 — SKILL.md contract (required): frontmatter present + skills.sh-parseable
+    # + VALID under the agentskills.io spec. The presence half of this check used
+    # to be the whole of it, which made it satisfiable by construction: a
+    # 2218-char description is truthy, so `kg` scored PASS at 2.2x the spec cap.
+    # A presence check standing in for a validity check is green for the wrong
+    # reason on every violation at once.
     gotcha = _skillsh_frontmatter_issue(skill_dir)
+    type_issues = _frontmatter_type_issues(skill_dir / "SKILL.md")
+    spec_issues = (type_issues + _spec_violations(fm)) if fm else type_issues
     if not (fm and fm.get("name") and fm.get("description")):
         add(1, "SKILL.md contract", FAIL,
             "SKILL.md missing" if fm is None else "frontmatter needs name + description", required=True)
     elif gotcha:
         add(1, "SKILL.md contract", FAIL,
             f"frontmatter breaks skills.sh parser (multi-quoted-string list item): {gotcha[:48]}", required=True)
+    elif spec_issues:
+        add(1, "SKILL.md contract", FAIL,
+            "agentskills.io spec — " + "; ".join(spec_issues), required=True)
     else:
-        add(1, "SKILL.md contract", PASS, f"name={fm['name']} (skills.sh-parseable)", required=True)
+        add(1, "SKILL.md contract", PASS,
+            f"name={fm['name']} ({len(fm['description'])}/{SPEC_MAX_DESCRIPTION} desc chars, "
+            "spec-valid, skills.sh-parseable)", required=True)
 
     # 1b — Installable layout (ADVISORY, not required). A top-level SKILL.md is
     # standard-valid (the agentskills.io spec + the skills.sh README list the repo
@@ -545,10 +858,64 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
         add("1c", "Reference integrity", PASS,
             "every scripts/references/assets/templates reference resolves")
 
+    # 1d — Trigger clarity (ADVISORY). The description is the ONLY surface the
+    # model sees at startup, and it decides whether the skill ever runs. A
+    # description that says what the skill DOES but never when to USE it leans on
+    # the model to infer the trigger, and models undertrigger. Cheap deterministic
+    # proxy: require an explicit when-clause.
+    desc_text = (fm or {}).get("description") or ""
+    # Strip negated clauses first so "NOT FOR: … do not use when X" cannot
+    # satisfy a check about saying when the skill SHOULD fire.
+    desc_affirmative = _WHEN_NEGATION_RE.sub(" ", desc_text)
+    if not desc_text:
+        add("1d", "Trigger clarity", SKIP, "no description to grade")
+    elif _WHEN_CLAUSE_RE.search(desc_affirmative):
+        add("1d", "Trigger clarity", PASS, "description carries an explicit when-clause")
+    else:
+        add("1d", "Trigger clarity", WARN,
+            "description never says WHEN to use the skill (add 'USE WHEN: …' / "
+            "'Triggers on …') — models undertrigger on what-only descriptions")
+
+    # 1e — Gotchas (ADVISORY). The corrections you made by hand while doing the
+    # task are the one part of a skill the model could not have generated itself;
+    # without them the body decays into generic mush the model already knew.
+    body = _body_after_frontmatter(skill_dir)
+    # Fenced blocks are stripped (a heading inside ``` is sample text, not a
+    # section) and a heading that NEGATES the section — "## No gotchas" — must
+    # not satisfy a check that the corrections were written down.
+    body_prose = _strip_fences(body)
+    gotcha_hit = next(
+        (m for m in _GOTCHA_SECTION_RE.finditer(body_prose)
+         if not _NEGATED_HEADING_RE.search(
+             m.group(0)[:m.group(0).lower().find(m.group(1).lower())])),
+        None)
+    if gotcha_hit:
+        add("1e", "Gotchas section", PASS, "body carries a gotchas/pitfalls/anti-rationalization section")
+    else:
+        add("1e", "Gotchas section", WARN,
+            "no gotchas/pitfalls/anti-rationalization section — record the corrections "
+            "you made by hand, or the next agent repeats them")
+
+    # 1f — Body budget (ADVISORY, never gates). Per-trigger dilution, not standing
+    # cost: unlike the description this loads only when the skill fires, so it is
+    # deliberately a WARN even though an over-long body measurably degrades the
+    # skill's own performance when it does fire.
+    body_lines = len(body.splitlines())
+    if body_lines > SPEC_RECOMMENDED_BODY_LINES:
+        add("1f", "Body budget", WARN,
+            f"{body_lines} lines > {SPEC_RECOMMENDED_BODY_LINES} recommended — "
+            "split detail into references/ (progressive disclosure)")
+    else:
+        add("1f", "Body budget", PASS, f"{body_lines}/{SPEC_RECOMMENDED_BODY_LINES} lines")
+
     # 2 — Deterministic code: present + SYNTAX-VALID (required unless truly latent)
-    if latent_only and code:
+    # The latent_only contradiction is adjudicated against the WHOLE skill, not
+    # just scripts/: otherwise code parked in src/ or lib/ makes the claim true
+    # by construction and steps 2+3 go blind on real code.
+    if latent_only and any_code:
         add(2, "Deterministic code", FAIL,
-            f"latent_only:true but {len(code)} script(s) present — contradiction", required=True)
+            f"latent_only:true but {len(any_code)} source file(s) present "
+            f"({', '.join(any_code[:3])}) — contradiction", required=True)
     elif latent_only:
         add(2, "Deterministic code", SKIP, "latent_only: true — composition skill, no scripts")
     elif code:
@@ -594,18 +961,33 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # with a single should_trigger case). A skill's LATENT half — does the
     # description fire, does it stay silent on a near-miss — is exactly the half
     # a presence check cannot see, so grade the CONTENT.
+    #
+    # REQUIRED for a purely-latent skill. `latent_only: true` with no scripts
+    # makes steps 2 and 3 SKIP ("no code to test"), so while this stayed advisory
+    # such a skill could pass the whole gate with ZERO required assertions about
+    # its behaviour. That inverts the risk exactly: a latent_only skill is not the
+    # low-risk case, it is the case where 100% of the behaviour is latent and the
+    # trigger eval is the only instrument that exists. Requiring tests only where
+    # scripts exist waives evals precisely where behaviour is unobservable.
     eval_files = _eval_files(skill_dir)
     trigger_evals = [f for f in eval_files if _is_trigger_eval(skill_dir / f)]
+    purely_latent = bool(latent_only) and not any_code
     if trigger_evals:
         add(5, "LLM evals", PASS,
-            f"{len(trigger_evals)} trigger eval(s): {', '.join(trigger_evals[:3])}", required=False)
+            f"{len(trigger_evals)} trigger eval(s): {', '.join(trigger_evals[:3])}",
+            required=purely_latent)
     elif eval_files:
-        add(5, "LLM evals", WARN,
+        add(5, "LLM evals", FAIL if purely_latent else WARN,
             f"{len(eval_files)} eval artifact(s) but none assert trigger behaviour "
-            f"({'/'.join(sorted(TRIGGER_ASSERTION_KEYS)[:3])}…) — latent half still ungated",
-            required=False)
+            f"({'/'.join(sorted(TRIGGER_ASSERTION_KEYS)[:3])}…) — latent half still ungated"
+            + (" and this skill is ALL latent half (latent_only, no scripts)" if purely_latent else ""),
+            required=purely_latent)
     else:
-        add(5, "LLM evals", WARN, "none (recommended for judgment-output skills)", required=False)
+        add(5, "LLM evals", FAIL if purely_latent else WARN,
+            "no trigger eval and the skill is all latent half (latent_only, no scripts) — "
+            "steps 2+3 cannot see it, so this is the only gate on its behaviour"
+            if purely_latent else "none (recommended for judgment-output skills)",
+            required=purely_latent)
 
     # 6 — Resolver trigger (workspace-aware; under --strict the missing path is
     # itself a FAIL — strict must not pass while skipping the checks it exists for)

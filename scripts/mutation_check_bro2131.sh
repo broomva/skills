@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+# Mutation proof for BRO-2131. A green suite proves the tests PASS; it does not
+# prove any check can FAIL. Each mutation guts exactly one check and asserts the
+# suite goes red. A mutation that SURVIVES means that check is unbound to its
+# test — vacuous.
+#
+# Discipline enforced here (each learned from a prior arc that got it wrong):
+#   * clean-tree assert BEFORE the first mutation — the revert baseline is
+#     `git checkout -- <file>`, which destroys uncommitted work on line one
+#   * exactly-one-anchor assert per mutation — a stale pattern no-ops silently
+#     and reports a false SURVIVED
+#   * bidirectional arms — an advisory check gets an arm proving it does NOT gate
+#   * fsmonitor disabled — a dead daemon makes `git status` report a clean tree
+#     while files are modified, voiding the guard above
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
+
+GATE="skills/tooling/skillify/scripts/skillify_check.py"
+LINT="scripts/lint_skill_md.py"
+GATE_TESTS="skills/tooling/skillify/tests/"
+LINT_TESTS="tests/test_lint_skill_md.py"
+
+if [ -n "$(git -c core.fsmonitor=false status --porcelain)" ]; then
+  echo "ABORT: working tree is dirty. This script reverts to HEAD and would"
+  echo "       destroy uncommitted work. Commit first."
+  git -c core.fsmonitor=false status --porcelain
+  exit 2
+fi
+
+# The baseline suite MUST be green before any mutation runs. Without this the
+# whole report inverts: one pre-existing failure makes every mutation "KILLED"
+# and the harness cheerfully prints "all mutations killed" while proving nothing.
+for t in "$GATE_TESTS" "$LINT_TESTS"; do
+  if ! python3 -m pytest "$t" -q >/dev/null 2>&1; then
+    echo "ABORT: baseline suite is RED before mutating ($t)."
+    echo "       Every mutation would report KILLED for the wrong reason."
+    exit 2
+  fi
+done
+echo "baseline: both suites green"
+
+# A killed run (timeout, Ctrl-C, CI cancel) must not leave an injected mutation
+# in the tree. Without this trap the last mutation survives as an uncommitted
+# edit that looks like real work — and the next commit could ship it.
+# Revert ONLY the file currently mid-mutation. A blanket `git checkout -- $GATE
+# $LINT` on exit also destroys edits someone made to those files while this ran
+# in the background — which is the very hazard this trap exists to prevent, just
+# pointed at the author instead of the script.
+IN_FLIGHT=""
+cleanup() { [ -n "$IN_FLIGHT" ] && git checkout -- "$IN_FLIGHT" 2>/dev/null; IN_FLIGHT=""; }
+trap cleanup EXIT INT TERM
+
+killed=0 survived=0
+
+# mutate <file> <tests> <label> <find> <replace>
+mutate() {
+  local file="$1" tests="$2" label="$3" find="$4" repl="$5"
+  local n
+  n=$(python3 - "$file" "$find" <<'PY'
+import sys
+print(open(sys.argv[1], encoding="utf-8").read().count(sys.argv[2]))
+PY
+)
+  if [ "$n" != "1" ]; then
+    echo "  ✗ ANCHOR  $label — matched $n times, expected exactly 1 (stale pattern?)"
+    survived=$((survived + 1))
+    return
+  fi
+  IN_FLIGHT="$file"
+  python3 - "$file" "$find" "$repl" <<'PY'
+import sys
+p, find, repl = sys.argv[1], sys.argv[2], sys.argv[3]
+t = open(p, encoding="utf-8").read()
+open(p, "w", encoding="utf-8").write(t.replace(find, repl, 1))
+PY
+  if python3 -m pytest "$tests" -q >/dev/null 2>&1; then
+    echo "  ✗ SURVIVED  $label — check is unbound to any test"
+    survived=$((survived + 1))
+  else
+    echo "  ✓ KILLED    $label"
+    killed=$((killed + 1))
+  fi
+  git checkout -- "$file"
+  IN_FLIGHT=""
+}
+
+echo "=== skillify_check.py — spec conformance (step 1) ==="
+mutate "$GATE" "$GATE_TESTS" "description cap not enforced" \
+  "if len(desc) > SPEC_MAX_DESCRIPTION:" "if False:"
+mutate "$GATE" "$GATE_TESTS" "name length cap not enforced" \
+  "if len(name) > SPEC_MAX_NAME:" "if False:"
+mutate "$GATE" "$GATE_TESTS" "name charset not enforced" \
+  "elif not SPEC_NAME_RE.match(name):" "elif False:"
+mutate "$GATE" "$GATE_TESTS" "compatibility cap not enforced" \
+  "if len(compat) > SPEC_MAX_COMPATIBILITY:" "if False:"
+mutate "$GATE" "$GATE_TESTS" "silent-band wording dropped from message" \
+  'if len(desc) <= OBSERVED_RENDER_CAP' 'if False'
+
+echo "=== skillify_check.py — the latent_only hole (step 5) ==="
+mutate "$GATE" "$GATE_TESTS" "purely-latent never requires a trigger eval" \
+  "purely_latent = bool(latent_only) and not any_code" "purely_latent = False"
+mutate "$GATE" "$GATE_TESTS" "evals forced required for EVERY skill (over-correction)" \
+  "purely_latent = bool(latent_only) and not any_code" "purely_latent = True"
+
+echo "=== skillify_check.py — advisory checks (1d / 1e / 1f) ==="
+mutate "$GATE" "$GATE_TESTS" "when-clause always considered present" \
+  "elif _WHEN_CLAUSE_RE.search(desc_affirmative):" "elif True:"
+mutate "$GATE" "$GATE_TESTS" "gotchas section always considered present" \
+  "if gotcha_hit:" "if True:"
+mutate "$GATE" "$GATE_TESTS" "body budget never warns" \
+  "if body_lines > SPEC_RECOMMENDED_BODY_LINES:" "if False:"
+
+echo "=== lint_skill_md.py — the four ratchet rules ==="
+# Mutate the GATING BRANCH, not the message. Rewording the error still fails the
+# test (which asserts on message content) and reports KILLED while new over-cap
+# debt is in fact still rejected — a mutation that proves nothing.
+# Must change BEHAVIOUR, not crash. Two earlier attempts were vacuous: rewording
+# the error still failed the message assertion, and `if prior is None: -> if
+# False:` falls through to `dlen > prior` with prior=None and raises TypeError —
+# the suite went red on the crash, so it "KILLED" while proving nothing about
+# whether new debt is rejected. Defaulting `prior` to dlen makes a brand-new
+# over-cap skill look grandfathered-and-unchanged: silently backlogged, no crash.
+mutate "$LINT" "$LINT_TESTS" "rule 1: new over-cap debt silently accepted" \
+  "        dlen, prior = len(desc), grandfathered.get(key)" \
+  "        dlen, prior = len(desc), grandfathered.get(key, len(desc))"
+mutate "$LINT" "$LINT_TESTS" "rule 2: growth beyond the frozen length accepted" \
+  "elif dlen > prior:" "elif False:"
+mutate "$LINT" "$LINT_TESTS" "rule 3: fixed-but-still-listed entry allowed to rot" \
+  "elif prior is not None:" "elif False:"
+mutate "$LINT" "$LINT_TESTS" "rule 4: stale grandfather entry accepted" \
+  "for stale in sorted(set(grandfathered) - seen):" "for stale in sorted(set()):"
+mutate "$LINT" "$LINT_TESTS" "vendored .venv skills linted after all" \
+  'if "extensions" in ancestors or VENDORED.intersection(ancestors):' "if False:"
+mutate "$LINT" "$LINT_TESTS" "name-vs-parent-dir rule dropped" \
+  "elif name != md.parent.name:" "elif False:"
+
+echo "=== P20 round 1 fixes (CodeRabbit) ==="
+mutate "$LINT" "$LINT_TESTS" "name regex diverges from skillify_check (no leading digit)" \
+  'NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")' \
+  'NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")'
+mutate "$LINT" "$LINT_TESTS" "delimiters matched as substrings again" \
+  'close = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)' \
+  'close = next((i for i in range(1, len(lines)) if lines[i].startswith("---")), None)'
+mutate "$LINT" "$LINT_TESTS" "opening delimiter accepts a prefix again" \
+  'if not lines or lines[0].strip() != "---":' \
+  'if not lines or not lines[0].startswith("---"):'
+mutate "$LINT" "$LINT_TESTS" "empty compatibility accepted" \
+  'elif not compat.strip():' 'elif False:'
+mutate "$LINT" "$LINT_TESTS" "seen recorded after description validation (double-report)" \
+  "        seen.add(key)
+        fm, err = _parse(md)" \
+  "        fm, err = _parse(md)"
+mutate "$GATE" "$GATE_TESTS" "gate accepts a truncating body delimiter again" \
+  '(?:\n|$)", text, re.DOTALL)
+    if not m:
+        return None' 'x", text, re.DOTALL)
+    if not m:
+        return None'
+mutate "$GATE" "$GATE_TESTS" "gate accepts empty compatibility" \
+  'if not compat.strip():' 'if False:'
+
+echo "=== P20 round 1 blockers (Codex Strata A) ==="
+mutate "$LINT" "$LINT_TESTS" "BLOCKER: ratchet baseline no longer immutable (new entries allowed)" \
+  "        if key not in base:" "        if False:"
+mutate "$LINT" "$LINT_TESTS" "BLOCKER: frozen lengths allowed to rise" \
+  "        elif length > base[key]:" "        elif False:"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: trigger key presence counts as an assertion again" \
+  "    return len(_trigger_polarities(node)) >= 2" "    return _trigger_polarities(node) is not None"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: single polarity accepted (positive-only suite)" \
+  "    return len(_trigger_polarities(node)) >= 2" "    return len(_trigger_polarities(node)) >= 1"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: latent_only adjudicated on scripts/ only again" \
+  "    purely_latent = bool(latent_only) and not any_code" \
+  "    purely_latent = bool(latent_only) and not code"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: latent_only contradiction ignores nested code" \
+  "    if latent_only and any_code:" "    if latent_only and code:"
+mutate "$GATE" "$GATE_TESTS" "BLOCKER: non-string frontmatter fields laundered again" \
+  "        if field in data and not isinstance(data[field], str):" \
+  "        if False:"
+mutate "$GATE" "$GATE_TESTS" "over-correction guard: key-groups-prompts schema rejected" \
+  "                elif _is_real_corpus(v):" "                elif False:"
+mutate "$GATE" "$GATE_TESTS" "MINOR: when-clause counts negations" \
+  "    desc_affirmative = _WHEN_NEGATION_RE.sub(\" \", desc_text)" \
+  "    desc_affirmative = desc_text"
+mutate "$GATE" "$GATE_TESTS" "MINOR: gotchas heading inside a fence counts" \
+  "    body_prose = _strip_fences(body)" "    body_prose = body"
+
+echo "=== P20 round 2 (Codex verify) ==="
+mutate "$LINT" "$LINT_TESTS" "B1: first GRANDFATHERED binding shadows a second" \
+  "    if len(found) > 1:" "    if False:"
+mutate "$LINT" "$LINT_TESTS" "B1: post-assignment mutation of the baseline allowed" \
+  "    if mutated:" "    if False:"
+mutate "$LINT" "$LINT_TESTS" "M2: exclusions match every component again" \
+  "        ancestors = p.relative_to(root).parts[:-2]" \
+  "        ancestors = p.relative_to(root).parts"
+mutate "$GATE" "$GATE_TESTS" "B2: type validation fails open without PyYAML" \
+  '        return ["PyYAML unavailable — frontmatter types were NOT validated "' \
+  '        return [] or ["'
+mutate "$GATE" "$GATE_TESTS" "B3: empty corpus elements count as prompts" \
+  "                elif _is_real_corpus(v):" \
+  "                elif isinstance(v, (list, str)) and len(v) > 0:"
+mutate "$GATE" "$GATE_TESTS" "MINOR: negation window too narrow again" \
+  '(?:\w+[\s,]+){0,6}?' '(?:\w+\s+){0,2}?'
+mutate "$GATE" "$GATE_TESTS" "MINOR: tilde fences not stripped" \
+  '    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)' \
+  "    return md"
+mutate "$GATE" "$GATE_TESTS" "MINOR: negated heading only checked adjacent to the keyword" \
+  'r"\b(no|none|zero|without|nil|not|never)\b"' 'r"\b(zzz-never-matches)\b"'
+
+echo "=== P20 round 3 (Codex verify) — closed-form fixes ==="
+mutate "$LINT" "$LINT_TESTS" "B1: augmented assignment to the baseline allowed" \
+  "        elif isinstance(node, ast.AugAssign):" "        elif False:"
+mutate "$LINT" "$LINT_TESTS" "B1: scope-blind walk counts local shadows as bindings" \
+  "    for node in tree.body:" "    for node in ast.walk(tree):"
+mutate "$LINT" "$LINT_TESTS" "B1: every attribute call treated as a mutation (reads abort)" \
+  "                and node.func.attr in _DICT_MUTATORS):" "                ):"
+mutate "$GATE" "$GATE_TESTS" "B3: non-text scalars count as prompts again" \
+  "            (isinstance(i, str) and i.strip())
+            or (isinstance(i, dict) and any(
+                isinstance(x, str) and x.strip() for x in i.values()))
+            for i in v)" \
+  "            i is not None
+            for i in v)"
+# Dropping `continue` makes the boolean branch fall through into the corpus arm —
+# exactly the non-exclusive classification that let one line assert both polarities.
+mutate "$GATE" "$GATE_TESTS" "NEW: one line supplies both polarities again" \
+  "            out.add(truthy if positive else not truthy)
+            continue" \
+  "            out.add(truthy if positive else not truthy)"
+# The negator line gained the modal alternates in round 4, so this anchor targets
+# its current text. Re-adding bare `not` must make "Not only … use when" WARN.
+mutate "$GATE" "$GATE_TESTS" "MINOR: bare 'not' back in the negator set" \
+  "    r\"\\b(?:do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than|\"" \
+  "    r\"\\b(?:not|do\\s+not|does\\s+not|don't|doesn't|never|avoid|rather\\s+than|\""
+mutate "$GATE" "$GATE_TESTS" "MINOR: indented fences not stripped" \
+  '    return re.sub(r"^ {0,3}~~~.*?^ {0,3}~~~", "", md, flags=re.DOTALL | re.M)' \
+  '    return re.sub(r"^~~~.*?^~~~", "", md, flags=re.DOTALL | re.M)'
+
+echo "=== P20 round 4 (closed-form only; stopped at the plateau) ==="
+mutate "$LINT" "$LINT_TESTS" "fromkeys misclassified as a mutator (aborts on a read)" \
+  '                      "__setitem__", "__delitem__"}' \
+  '                      "__setitem__", "__delitem__", "fromkeys"}'
+mutate "$LINT" "$LINT_TESTS" "augmented SUBSCRIPT assignment bypasses the ratchet" \
+  "            elif (isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name)" \
+  "            elif (False and isinstance(tgt.value, ast.Name)"
+mutate "$GATE" "$GATE_TESTS" "modal negations dropped from the when-clause negators" \
+  "    r\"must\\s+not|mustn't|should\\s+not|shouldn't|cannot|can't|will\\s+not|won't)\\s+\"" \
+  "    r\"zzznomatch)\\s+\""
+
+echo
+echo "killed=$killed survived=$survived"
+if [ -n "$(git -c core.fsmonitor=false status --porcelain)" ]; then
+  echo "ERROR: tree left dirty — a revert failed"
+  exit 2
+fi
+[ "$survived" -eq 0 ] || exit 1
+echo "all mutations killed — every check is bound to a test"

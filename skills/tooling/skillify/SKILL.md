@@ -48,7 +48,7 @@ the *gate*, not a reimplementation of the pieces.
 | 2 | Deterministic code | latent-vs-deterministic split — move precision work into `scripts/` (`latent_only: true` exempts pure composition skills like this one) |
 | 3 | Unit tests | `tests/test_*.py` (vitest/pytest) on the deterministic core |
 | 4 | Integration tests | live-endpoint / real-data tests where applicable |
-| 5 | LLM evals | judgment-output skills only — LLM-as-judge, compose **P20** |
+| 5 | LLM evals | LLM-as-judge, compose **P20**. **Required when `latent_only` and no scripts** — such a skill has no deterministic half, so steps 2+3 SKIP and this is the *only* gate on its behaviour |
 | 6 | Resolver trigger | a `roles/<name>.md` lens (**P17**) and/or registry entry |
 | 7 | Resolver eval | **`role-x.py eval`** + `roles/<name>.eval.yaml` (BRO-1411 slice 1) — *assert the trigger actually routes* |
 | 8 | Check-resolvable + DRY | **`bstack skills audit`** (reachability + duplicate + budget) |
@@ -68,6 +68,13 @@ audit.
    procedure, and which parts are *deterministic* (precision → script) vs
    *latent* (judgment → markdown). State the latent/deterministic split in one
    line before scaffolding.
+   **Extract the corrections, not just the procedure.** The steps that worked are
+   the part the model could have guessed; the *gotchas* — every hand correction
+   you made, every environment fact that defied a reasonable assumption — are the
+   only content that could not have come from training data. A skill distilled
+   without them decays into generic mush ("handle errors appropriately"). Walk the
+   session and ask **"where did I have to correct it?"** — each answer is a line in
+   a `## Gotchas` section. Step 1e of the gate WARNs when that section is absent.
 2. **Scaffold** (compose **CreateSkill**) — `SKILL.md` contract: `name`,
    `description` with explicit USE WHEN / NOT FOR triggers, the procedure.
 3. **Build the deterministic core** — write `scripts/*` for the precision work.
@@ -143,9 +150,41 @@ prose, `skill.json`, and `templates/*.yaml`. It does **not** flag bare filenames
 references inside ` ``` ` fenced blocks, or links in `references/*.md` — those trade
 recall for zero false positives.
 
+**Step 1 — agentskills.io conformance (required).** Step 1 validates the frontmatter
+against the [spec](https://agentskills.io/specification), not merely that the fields
+exist: `description` ≤ **1024** chars, `name` ≤ 64 and lowercase `[a-z0-9-]` with no
+leading/trailing/consecutive hyphen, `compatibility` ≤ 500. Presence-as-validity was
+satisfiable by construction — a 2218-char description is truthy, so `kg` scored PASS
+at 2.2× the cap.
+
+> **The 1024 cap is tighter than the 1536-char cap this host renders at.** A
+> description of 1025–1536 renders *in full* here and is still invalid under the
+> standard — the **silent band**, where no local signal fires and the skill breaks
+> only when a different conforming host loads it. Conform to the spec number;
+> the measured one only tells you your slack.
+> See `research/entities/concept/observed-limit-is-not-the-conformance-limit.md`.
+
+The `name`-matches-parent-directory rule is enforced registry-wide in
+`.github/workflows/lint-skill-md.yml`, not here — `skillify_check` is routinely
+pointed at scratch and CI checkouts whose directory name isn't canonical. That
+workflow also **ratchets** the description cap: new violations fail, grandfathered
+ones may only shrink, and a fixed entry left in the list fails so it cannot rot.
+
+**Steps 1d / 1e / 1f — advisory (WARN, never gate).**
+- **1d Trigger clarity** — the description must say *when* to use the skill, not
+  only what it does. Models undertrigger on what-only descriptions.
+- **1e Gotchas section** — the body should carry
+  Gotchas / Pitfalls / Anti-rationalization / Failure modes. See pipeline step 1.
+- **1f Body budget** — under 500 lines, else split into `references/`. Deliberately
+  a WARN even though an over-long body degrades performance *when the skill fires*:
+  the body loads only on trigger (per-trigger dilution) while the description is
+  billed every turn (standing cost). Ranking skills by body length audits the
+  surface most of them never pay for — see `trigger-surface-is-the-standing-cost`.
+
 Reports PASS / WARN / SKIP / FAIL for each step. **Required** steps (1 SKILL.md,
-1c reference integrity, 2 code unless `latent_only`, 3 unit tests when code present)
-gate the exit code. `--strict` promotes the recommended steps to required. Step 3
+1c reference integrity, 2 code unless `latent_only`, 3 unit tests when code present,
+**5 trigger evals when `latent_only` and no scripts**) gate the exit code.
+`--strict` promotes the recommended steps to required. Step 3
 recognizes Python (AST), JS/TS, **and bash** test suites (`*.test.sh` with
 `ok()`/`fail()` helpers or `PASS`/`FAIL` accounting), so a real shell test battery
 isn't read as "no tests".
@@ -172,6 +211,9 @@ isn't read as "no tests".
 | "I'll register it later." | Step 6/7 unregistered = a dark skill nobody can reach. Do it now or it's invisible. |
 | "Should I file a KG entry?" | Never ask (P6). File proactively, report after. |
 | "Just write the SKILL.md, skip the script." | If the work is deterministic, latent space doing it is the bug. Move precision into `scripts/`. |
+| "It's `latent_only`, so there's nothing to test." | Inverted. `latent_only` means *all* the behaviour is latent — steps 2+3 go blind, so the trigger eval is the only instrument left. That's why step 5 is required there and advisory everywhere else. |
+| "The description renders fine, so the length is fine." | Rendering is your host's behaviour; 1024 is the format's contract. 1025–1536 renders in full and is still invalid — the silent band. |
+| "I'll shorten the over-cap descriptions by truncating them." | A description is trigger surface; blind truncation stops the skill firing. Burndown is editorial compression that keeps the when-clause and the trigger keywords. |
 
 ## Scope
 

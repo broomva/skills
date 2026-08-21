@@ -4,7 +4,11 @@ name: lint-skill-md
 #   - required frontmatter fields: name + description
 #   - `name` is lowercase + hyphens + ≤64 chars, no leading/trailing/consecutive hyphens
 #   - `name` matches parent directory name (per spec §Name)
+#   - `description` ≤1024 chars (per spec §Description) — RATCHETED, see below
 #   - nested sub-skills (e.g. skills/<x>/skills/<sub>/SKILL.md) checked the same way
+#
+# Implementation + the full ratchet contract: scripts/lint_skill_md.py
+# (extracted from an inline heredoc so the gate logic is unit-testable).
 #
 # Fast (<3s). Hermetic (pure Python + PyYAML, no network).
 
@@ -12,11 +16,15 @@ on:
   pull_request:
     paths:
       - 'skills/**/SKILL.md'
+      - 'scripts/lint_skill_md.py'
+      - 'tests/test_lint_skill_md.py'
       - '.github/workflows/lint-skill-md.yml'
   push:
     branches: [main]
     paths:
       - 'skills/**/SKILL.md'
+      - 'scripts/lint_skill_md.py'
+      - 'tests/test_lint_skill_md.py'
       - '.github/workflows/lint-skill-md.yml'
   workflow_dispatch:
 
@@ -31,76 +39,26 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install PyYAML
-        run: pip install pyyaml
+      - name: Install deps
+        run: pip install pyyaml pytest
 
       - name: Lint SKILL.md frontmatter
+        run: python3 scripts/lint_skill_md.py
+
+      # The ratchet's baseline lives in the same file a PR is allowed to edit, so
+      # on its own it does not ratchet: a PR could legalise new over-cap debt by
+      # appending its own GRANDFATHERED entry, or undo a shrink by raising a
+      # frozen number, and every other check would still pass. Compare against
+      # the merge base, which the PR cannot rewrite.
+      - name: Ratchet may only tighten (vs merge base)
+        if: github.event_name == 'pull_request'
         run: |
-          python3 - <<'PYEOF'
-          import os, re, sys, yaml
-          from pathlib import Path
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git show "FETCH_HEAD:scripts/lint_skill_md.py" > /tmp/baseline_lint.py 2>/dev/null; then
+            python3 scripts/lint_skill_md.py --compare-baseline /tmp/baseline_lint.py
+          else
+            echo "no baseline on ${{ github.base_ref }} (first landing) — skipping"
+          fi
 
-          NAME_RE = re.compile(r'^[a-z][a-z0-9]*(-[a-z0-9]+)*$')
-          MAX_NAME = 64
-
-          errors = []
-          # Discover every SKILL.md under skills/ at ANY depth, so the linter
-          # covers all canonical discoverable-skill layouts uniformly:
-          #   - skills/<category>/<name>/SKILL.md      (category-bucketed skills, depth-2)
-          #   - skills/<category>/<name>/skills/<sub>/  (nested-sub-skill idiom, e.g. content-engine)
-          #   - skills/<name>/SKILL.md                  (legacy flat / single-file)
-          # Internal artifacts like .../extensions/<y>/SKILL.md are excluded —
-          # they're skill-private extensions, not independently-installable skills.
-          # (Keying on rglob rather than fixed-depth globs is what makes the
-          # category-bucket layout — skills/<category>/<name>/ — lintable.)
-          skill_mds = sorted(
-              p for p in Path("skills").rglob("SKILL.md")
-              if "extensions" not in p.relative_to("skills").parts
-          )
-          if not skill_mds:
-              print("ERROR: no SKILL.md found under skills/")
-              sys.exit(1)
-
-          print(f"linting {len(skill_mds)} SKILL.md files\n")
-
-          for md in skill_mds:
-              parent = md.parent.name
-              text = md.read_text(encoding="utf-8", errors="replace")
-              if not text.startswith("---"):
-                  errors.append(f"{md}: missing YAML frontmatter (no leading ---)")
-                  continue
-              end = text.find("\n---", 3)
-              if end < 0:
-                  errors.append(f"{md}: unclosed YAML frontmatter")
-                  continue
-              try:
-                  fm = yaml.safe_load(text[3:end]) or {}
-              except yaml.YAMLError as e:
-                  errors.append(f"{md}: malformed YAML — {e}")
-                  continue
-              if not isinstance(fm, dict):
-                  errors.append(f"{md}: frontmatter is not a mapping")
-                  continue
-              name = fm.get("name")
-              if not name:
-                  errors.append(f"{md}: missing required field `name`")
-              else:
-                  if not isinstance(name, str):
-                      errors.append(f"{md}: `name` must be a string, got {type(name).__name__}")
-                  elif len(name) > MAX_NAME:
-                      errors.append(f"{md}: `name` exceeds {MAX_NAME} chars ({len(name)})")
-                  elif not NAME_RE.match(name):
-                      errors.append(f"{md}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* (lowercase, hyphens, no leading/trailing/consecutive)")
-                  elif name != parent:
-                      errors.append(f"{md}: `name`='{name}' does not match parent dir '{parent}' (agentskills.io §Name)")
-              if not fm.get("description"):
-                  errors.append(f"{md}: missing required field `description`")
-
-          if errors:
-              print("FAIL — frontmatter violations:\n")
-              for e in errors:
-                  print(f"  {e}")
-              print(f"\n{len(errors)} error(s) across {len(skill_mds)} skill(s)")
-              sys.exit(1)
-          print(f"OK — {len(skill_mds)} SKILL.md files conform to agentskills.io spec")
-          PYEOF
+      - name: Self-test the linter (ratchet rules)
+        run: python3 -m pytest tests/test_lint_skill_md.py -q
