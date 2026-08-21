@@ -1965,7 +1965,7 @@ def test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing(tmp_p
     monkeypatch.setattr(mod, "yaml", None)
     assert mod._count_top_level_key("outcome: admitted", "outcome") is None
     d = _skill(tmp_path, scripts=True, tests=True, tier="D")
-    assert mod._duplicate_top_level_key_issue(d / "SKILL.md", "tier") is None
+    assert mod._duplicate_top_level_key_issue(d / "SKILL.md") is None
     assert _step(_check(d), 2)["status"] == "PASS"
 
 
@@ -2069,12 +2069,25 @@ def test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters(t
     and NBSP. Those matched the fence and then died inside PyYAML with a ReaderError,
     so the gate blamed the YAML for a fence it should never have accepted. Space, tab
     and CR must keep matching — CR because CRLF files are ordinary."""
+    # BOTH fences. Round 11 tightened both and asserted only the opening one, so
+    # mutant M72 — loosening the CLOSING fence alone — survived all 175 tests. A fix
+    # applied at two sites needs a proof at two sites; that is the fourth time in this
+    # arc that a one-site proof was written for a two-site fix.
+    # NBSP is spelled \u00a0 deliberately: the first version of this test carried the
+    # literal character, which is invisible in a diff.
     for ok in (" ", "\t", "\r", "  ", ""):
-        raw = f"---{ok}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"
-        assert mod._frontmatter_match(raw), f"must match padding {ok!r}"
-    for bad in ("\f", "\v", " "):
-        raw = f"---{bad}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"
-        assert not mod._frontmatter_match(raw), f"must not match padding {bad!r}"
+        for where, raw in (
+            ("opening", f"---{ok}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"),
+            ("closing", f"---\noutcome: admitted\n---{ok}\n\nTwo agents, one brief.\n"),
+            ("both",    f"---{ok}\noutcome: admitted\n---{ok}\n\nTwo agents, one brief.\n"),
+        ):
+            assert mod._frontmatter_match(raw), f"{where} fence must match padding {ok!r}"
+    for bad in ("\f", "\v", "\u00a0"):
+        for where, raw in (
+            ("opening", f"---{bad}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"),
+            ("closing", f"---\noutcome: admitted\n---{bad}\n\nTwo agents, one brief.\n"),
+        ):
+            assert not mod._frontmatter_match(raw), f"{where} fence must not match {bad!r}"
 
 
 def test_a_duplicate_tier_declaration_is_ambiguous_not_last_wins(tmp_path):
@@ -2093,7 +2106,7 @@ def test_a_duplicate_tier_declaration_is_ambiguous_not_last_wins(tmp_path):
         (d / "SKILL.md").write_text(raw.replace("---\n", f"---\n{front}\n", 1), encoding="utf-8")
         step2 = _step(_check(d), 2)
         assert step2["status"] == "FAIL", f"{front!r} -> {step2['detail']}"
-        assert "declared 2 times" in step2["detail"], step2["detail"]
+        assert "the same key twice" in step2["detail"], step2["detail"]
 
 
 def test_a_nested_tier_key_is_not_a_duplicate_declaration(tmp_path):
@@ -2117,3 +2130,35 @@ def test_crlf_frontmatter_parses(tmp_path):
         "---\r\noutcome: admitted\r\n---\r\n\r\nTwo agents, one brief; both valid.\r\n",
         encoding="utf-8")
     assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_any_duplicated_top_level_key_is_ambiguous_not_just_tier(tmp_path):
+    """The FOURTH one-site fix for a several-site class, caught before a reviewer did.
+
+    Round 12 closed duplicate `tier:`. Executed against that commit, three other
+    gate-deciding keys were still resolved last-wins in silence. `latent_only` is the
+    one that matters: its control — a single `latent_only: true` alongside shipped
+    code — FAILs with "latent_only:true but 1 script(s) present — contradiction", and
+    duplicating the key to flip it escapes that required FAIL outright.
+
+    Keying the check to a list of names would have been the fifth one-site fix. The
+    property is "declare each key once"."""
+    for i, extra in enumerate(("latent_only: true\nlatent_only: false",
+                               "name: other",
+                               "description: A second description.")):
+        d = _skill(tmp_path / f"case{i}", scripts=True, tests=True, tier="D")
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("tier: D", f"tier: D\n{extra}", 1), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{extra!r} -> {step2['detail']}"
+        assert "the same key twice" in step2["detail"], step2["detail"]
+
+
+def test_a_clean_frontmatter_has_no_duplicate_keys(tmp_path):
+    """Paired control. Every real SKILL.md in this repo must keep passing: measured,
+    0 of 96 carry a duplicate top-level key, so the blanket rule costs nothing."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    assert mod._duplicate_top_level_key_issue(d / "SKILL.md") is None
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nc:\n  a: 3\n") == []
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\na: 3\n") == [("a", 2)]
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nA: 3\nb: 4\n") == [("a", 2), ("b", 2)]

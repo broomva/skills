@@ -7,6 +7,9 @@ Guards, each closing a named prior failure:
   * assert the anchor matches EXACTLY ONCE (a stale regex no-ops -> false SURVIVED)
   * record WHICH tests failed, so a mutant that merely CRASHES the suite is not
     scored as a behavioural kill (false KILLED)
+  * audit that every mutant's named target test EXISTS, before running anything —
+    a renamed target used to surface only afterwards as MISSED (M63), and a deleted
+    one only as a mutant that died to something else
 """
 import subprocess, sys
 from pathlib import Path
@@ -236,7 +239,7 @@ MUTANTS = [
     ("M63 duplicate detection guesses instead of using the parser",
      '    if yaml is None:\n        return None',
      '    if yaml is None:\n        return 0',
-     "test_duplicate_detection_is_skipped_not_guessed_without_pyyaml"),
+     "test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing"),
     ("M64 duplicate keys collapse (safe_load) instead of composing the node tree",
      '        node = yaml.compose(block)',
      '        node = yaml.compose("a: 1")',
@@ -281,13 +284,17 @@ MUTANTS = [
      '\\n---[ \\t\\r]*(?:\\n|$)"',
      '\\n---[^\\S\\n]*(?:\\n|$)"',
      "test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters"),
-    ("M73 a duplicate `tier:` declaration is accepted (last-wins)",
-     '    dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md", "tier")\n    if dup:\n        return None, False, dup',
+    ("M73 a duplicate declaration is accepted (last-wins)",
+     '    dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md")\n    if dup:\n        return None, False, dup',
      '    dup = None',
      "test_a_duplicate_tier_declaration_is_ambiguous_not_last_wins"),
-    ("M74 the duplicate-key check guesses instead of reporting unknown",
-     '    if n is not None and n > 1:',
-     '    if n is None or n > 1:',
+    ("M74 the duplicate-key check narrows back to `tier:` alone",
+     '    dupes = _duplicate_top_level_keys(m.group(1))',
+     '    dupes = [d for d in _duplicate_top_level_keys(m.group(1)) if d[0] == "tier"]',
+     "test_any_duplicated_top_level_key_is_ambiguous_not_just_tier"),
+    ("M75 the duplicate scan guesses when it cannot parse",
+     '    if yaml is None:\n        return []',
+     '    if yaml is None:\n        return [("tier", 2)]',
      "test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing"),
     ("M68 opening fence stops tolerating trailing whitespace",
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t\\r]*\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
@@ -310,7 +317,22 @@ if not clean_tree():
 rc, failed, err = run_tests()
 if rc != 0:
     sys.exit(f"ABORT: baseline suite is not green ({failed})")
-print(f"baseline: green, clean tree\n")
+print(f"baseline: green, clean tree")
+
+# Target-test-exists audit. The arc's write-ups have claimed this ran "before it" for
+# several rounds; it did not. Only the anchor count was audited, so a target test that
+# was RENAMED surfaced after the fact as MISSED (M63, round 12) and a target that was
+# DELETED could only surface as a mutant that died to something else. Collect the real
+# test-id set once and check every mutant names one.
+_collected = subprocess.run([sys.executable, "-m", "pytest", str(TESTS), "-q", "--collect-only"],
+                            cwd=REPO, capture_output=True, text=True)
+_known = {line.split("::")[-1].split("[")[0].strip()
+          for line in _collected.stdout.splitlines() if "::" in line}
+_ghosts = sorted({expect for _, _, _, expect in MUTANTS if expect not in _known})
+if _ghosts:
+    print(f"  !! {len(_ghosts)} mutant(s) name a test that does not exist: {', '.join(_ghosts)}")
+    sys.exit(1)
+print(f"target-test audit: {len(MUTANTS)} mutants, every named test exists\n")
 
 killed = survived = stale = missed = 0
 for name, old, new, expect in MUTANTS:

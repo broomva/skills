@@ -90,6 +90,30 @@ def _count_top_level_key(block: str, key: str) -> int | None:
                if str(getattr(k, "value", "")).strip().lower() == key)
 
 
+def _duplicate_top_level_keys(block: str) -> list[tuple[str, int]]:
+    """Every top-level key declared more than once, with its count.
+
+    Same parser, same reason, asked key-agnostically — see
+    `_duplicate_top_level_key_issue`. Returns [] when the question cannot be answered,
+    which is indistinguishable from "no duplicates" by design: the caller reports the
+    check as unperformed rather than guessing, and an empty list is the only honest
+    answer a non-parser can give.
+    """
+    if yaml is None:
+        return []
+    try:
+        node = yaml.compose(block)
+    except Exception:
+        return []
+    if not isinstance(node, getattr(yaml, "MappingNode", ())):
+        return []
+    counts: dict[str, int] = {}
+    for k, _ in node.value:
+        name = str(getattr(k, "value", "")).strip().lower()
+        counts[name] = counts.get(name, 0) + 1
+    return sorted(((k, n) for k, n in counts.items() if n > 1), key=lambda kv: kv[0])
+
+
 def _frontmatter_match(text: str):
     """The ONE frontmatter matcher. Tolerates a leading BOM and a closing fence that
     ends the file or carries trailing spaces.
@@ -746,16 +770,33 @@ def _is_num(x: object) -> bool:
             and math.isfinite(x))
 
 
-def _duplicate_top_level_key_issue(path: Path, key: str) -> str | None:
-    """A declared key that appears twice is resolved last-wins, silently.
+def _duplicate_top_level_key_issue(path: Path) -> str | None:
+    """ANY top-level frontmatter key declared twice is ambiguous. Not just `tier:`.
 
-    `tier:` chooses WHICH gate runs, so a duplicate is not a style nit. Measured:
-    a SKILL.md whose line 4 said `tier: J` and line 5 said `tier: D` was reported as
-    "tier D (declared)" and PASSED on scripts+tests alone — admission record, rubric,
-    held-out cases and judge config never consulted. That is the round-10 duplicate
-    `outcome:` false accept again, one level up, on the field that decides which gate
-    the other one belongs to. The detector already existed in this file; it was
-    pointed at only one of the two places the class occurs.
+    YAML resolves duplicate keys last-wins, silently, so a declaration a reader sees
+    on line 4 is not necessarily the one that governs. Measured on this gate, before
+    the check existed:
+
+      * `tier: J` then `tier: D` -> reported "tier D (declared)" and PASSED on
+        scripts+tests alone; admission record, rubric, held-out cases and judge config
+        never consulted.
+      * `latent_only: true` then `latent_only: false` -> PASSED, escaping a REQUIRED
+        FAIL whose control ("latent_only:true but 1 script(s) present — contradiction")
+        fires on the single-key version.
+      * `name:` and `description:` twice -> identity and the routing surface silently
+        become the last one.
+
+    The first version of this check took a `key` argument and was pointed at `tier`
+    alone, which made it the FOURTH one-site fix for a several-site class in this arc
+    (three near-copies of the frontmatter regex; `outcome:` but not `tier:`; the
+    opening fence but not the closing one). Keying it to a list would have been the
+    fifth: the property is "declare each key once", not "declare these keys once", and
+    a future gate-deciding key should be covered the day it is added rather than the
+    day someone remembers to enumerate it.
+
+    Measured over all 96 SKILL.md in this repo: 0 have duplicate top-level keys, 0 are
+    unparseable, 0 lack a matched frontmatter block. The blanket rule costs nothing on
+    the real population.
 
     Returns None when the question cannot be answered (no pyyaml, or the block does
     not parse). That residue is deliberate: answering it without a YAML parser means
@@ -768,12 +809,13 @@ def _duplicate_top_level_key_issue(path: Path, key: str) -> str | None:
     m = _frontmatter_match(raw)
     if m is None:
         return None
-    n = _count_top_level_key(m.group(1), key)
-    if n is not None and n > 1:
-        return (f"`{key}:` is declared {n} times in SKILL.md frontmatter — YAML resolves "
-                f"duplicates last-wins, so the {key} that governs is not the first one a "
-                f"reader sees; declare it once")
-    return None
+    dupes = _duplicate_top_level_keys(m.group(1))
+    if not dupes:
+        return None
+    shown = ", ".join(f"`{k}:` x{n}" for k, n in dupes)
+    return (f"SKILL.md frontmatter declares the same key twice ({shown}) — YAML resolves "
+            "duplicates last-wins, so the value that governs is not the first one a "
+            "reader sees; declare each key once")
 
 
 def _substantive(x: object, _seen: frozenset[int] = frozenset()) -> bool:
@@ -1207,7 +1249,7 @@ def _tier_of(skill_dir: Path, fm: dict, code: list[str]) -> tuple[str | None, bo
     and `checkit` as lenses; all three run pipelines and none is a lens. A confidently
     wrong tier is worse than an absent one (BRO-2192).
     """
-    dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md", "tier")
+    dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md")
     if dup:
         return None, False, dup
     raw = fm.get("tier")
