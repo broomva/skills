@@ -67,8 +67,11 @@ inherits. It gates CLEAR on its own (BRO-2197: 12 PASS · 2 WARN · 0 FAIL; zero
 outside token files, every radius and font a `--bv-*` token). `assets/system/` is the **curated
 archive** (full/essentials/tokens profiles): its specimens keep source-era vocabulary as evidence and
 must not be edited to green a check — that would be falsifying the archive. A whole-skill survey
-therefore reads loud; `.unslop/waivers.json` encodes the boundary with reasons, and
-`.unslop/render-harness.html` renders the shipped foundation for screenshot evidence. `DESIGN.md`
+therefore reads loud; `.unslop/waivers.json` encodes the boundary with reasons — but waivers are
+check-global, so the boundary is **enforced by `.unslop/audit.sh`**: gate 1 re-runs `assets/portable/`
+with ZERO waivers (new portable drift fails there no matter what the waiver file says), gate 2 runs
+the whole skill with the archive waivers. `.unslop/render-harness.html` renders the shipped
+foundation for screenshot evidence. `DESIGN.md`
 here is the materialized product contract — never add audit or skill-internal notes to it.
 
 ## Preserve the visual thesis
