@@ -554,3 +554,6 @@ def test_split_families_hostile_edges():
     assert d == [] and fb == ["sf pro", "segoe ui"]
     d, fb = us._split_families("var(--broken, Menlo")   # unbalanced: no mangled roots either way
     assert all("var(" not in x and ")" not in x for x in d + fb)
+    # codex r2 nit: quoted families with balanced parens are legitimate, not mangled fragments
+    assert us._split_families('"Brandon (Text)", serif')[0] == ["brandon (text)", "serif"]
+    assert us._split_families('var(--a, "Brandon (Text)", serif)') == ([], ["brandon (text)", "serif"])

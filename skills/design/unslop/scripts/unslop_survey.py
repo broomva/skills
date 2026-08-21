@@ -201,8 +201,9 @@ def _split_families(value: str) -> tuple[list[str], list[str]]:
         val = nxt
     def clean(chunk: str) -> list[str]:
         return [f.strip().strip("'\"").lower() for f in chunk.split(",") if f.strip()]
-    # residual "var(" fragments mean unbalanced/hostile input — drop them, never emit mangled roots
-    declared = [f for f in clean(val) if f and f not in FONT_KEYWORDS and "var(" not in f and ")" not in f]
+    # residual "var(" / unbalanced-paren fragments are mangled input — drop them, never emit
+    # mangled roots. Balanced parens survive: "Brandon (Text)" is a legitimate quoted family.
+    declared = [f for f in clean(val) if f and f not in FONT_KEYWORDS and "var(" not in f and f.count("(") == f.count(")")]
     fallback = [f for chunk in inner for f in clean(chunk) if f and f not in FONT_KEYWORDS]
     return declared, fallback
 
