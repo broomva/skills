@@ -181,6 +181,58 @@ cross-review pre-push \
 
 Promoting it to a blocking gate is a later decision, and it needs evidence: a measured false-positive rate across real repos, gathered from the reported signal. When no `--mutation-target` is given, `pre-push` says so explicitly rather than staying silent, because "the signal did not run" and "the signal passed" must never look alike.
 
+## The reviewer cannot write
+
+**The gate keeps its authority. The reviewer loses its hands.**
+
+A reviewer that can edit the tree does not report findings — it fixes them. And a
+finding that was silently fixed is indistinguishable from one that was never
+found, which makes the score meaningless in exactly the direction that flatters
+the writer. The audit's job is to produce an honest verdict; the moment it can
+close its own findings it starts optimising for a clean report instead.
+
+This was a real hole here, not a hypothetical: Strata B used to be dispatched as
+`subagent_type='general-purpose'`, which carries `Tools: *` — full `Edit`/`Write`.
+Strata A invoked `codex exec` unsandboxed, which can patch the tree just as
+easily. The stronger stratum had the same defect as the weaker one.
+
+Two layers, because **a prose instruction is not a capability**:
+
+| Layer | Mechanism | What it is |
+|---|---|---|
+| 1 — control | Strata B dispatches `subagent_type='Explore'` (every tool except `Edit`/`Write`/`NotebookEdit`); Strata A pins `codex exec -c sandbox_mode=read-only` | the reviewer *cannot* write |
+| 2 — detector | `reviewer-guard capture` / `verify` around the review | proves layer 1 held |
+
+```bash
+cross-review reviewer-guard capture     # fingerprint before dispatch
+# ...run the review...
+cross-review reviewer-guard verify      # exit 4 = REVIEW INVALID
+```
+
+The fingerprint is `git status --porcelain -uall` plus `git diff HEAD`, hashed —
+so an added untracked file is caught, not just a tracked edit. `core.fsmonitor`
+is forced **off** for both: this repo family sets `core.fsmonitor=true`, and a
+dead daemon makes `git status` report a clean tree while files are modified,
+which would turn the detector into a rubber stamp precisely when it matters.
+
+**Exit 4 is REVIEW INVALID, and it is not a low score.** A verdict produced by a
+reviewer that edited the tree is *no verdict at all* — discard it, revert the
+writes, re-run. Missing baseline is also exit 4: "I never captured" and "nothing
+changed" must never look alike.
+
+**Fix rounds belong to the writer.** The `<7 → fix → rescore` loop is the
+*writer's* work. The reviewer scores, hands back, and touches nothing.
+
+### Why P20 still blocks
+
+The upstream framing of this idea (dzhng's `audit-choices`) says the audit "never
+blocks". That is right for an *audit* and wrong for a *gate*, and they are
+different objects. P20 is a merge gate: it stays blocking at <7/10. What changes
+is the reviewer's capability, not the gate's authority — the same split bstack
+already holds as `out-of-band-observer-in-band-gate`: **non-writable observer,
+authority elsewhere.** Adopting "never blocks" wholesale would have strictly
+weakened P20.
+
 ## Invocation patterns
 
 ### Pattern 1: pre-push gate (the canonical use)
@@ -259,6 +311,10 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
 | "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, max 3 rounds. Don't push override. |
+| "The reviewer noticed a small thing and just fixed it — that's efficient" | Then the finding never existed. A reviewer that writes is optimising for a clean report. Dispatch it read-only; `reviewer-guard verify` exits 4 if it wrote. |
+| "I told the subagent not to edit anything" | A prose instruction is not a capability. `general-purpose` carries `Tools: *`; use `Explore`. The brief is layer 2, the tool set is layer 1. |
+| "Codex is a different vendor, the sandbox is belt-and-braces" | Different weights, same hands. `codex exec` unsandboxed patches the tree as readily as a subagent — pin `-c sandbox_mode=read-only`. |
+| "dzhng's audit never blocks, so P20 shouldn't either" | Audit ≠ gate. Make the *reviewer* non-writing; keep the *gate* blocking. Conflating them weakens the merge bar on an external project's say-so. |
 | "The tests are green, so dimension 5 is satisfied" | Green proves the suite ran, not that it watches the code you changed. Delete the code and re-run: if it stays green, the test is decoration. `mutation-proof run --target … --test …`. |
 
 ## Red flags — STOP if you catch yourself
@@ -267,6 +323,9 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 - About to merge with verdict <7 → STOP, fix or escalate
 - About to use only "I reviewed it" as the verdict → STOP, fire Strata B at minimum
 - About to skip the rubric because "the score doesn't matter, I see the work is good" → STOP, the score is the contract
+- About to dispatch a reviewer with a writable tool set → STOP, `Explore` (or `sandbox_mode=read-only`), never `general-purpose`
+- About to accept a verdict without `reviewer-guard verify` → STOP, an unverifiable review is not a passed review
+- About to let the reviewer apply its own findings → STOP, fix rounds are the writer's
 
 ## Implementation
 

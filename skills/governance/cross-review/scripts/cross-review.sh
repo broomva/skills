@@ -21,6 +21,8 @@
 #   cross-review pre-push --strata C      # composed skills only
 #   cross-review plan --spec PATH         # plan-stage gate
 #   cross-review audit --target PATH      # audit-on-demand
+#   cross-review reviewer-guard capture   # fingerprint the tree before review
+#   cross-review reviewer-guard verify    # fail if the reviewer wrote to it
 #   cross-review --help
 #
 # Mutation-proof (REPORTED SIGNAL on pre-push, never a blocker):
@@ -51,6 +53,8 @@ MUT_STRATEGY="stub"
 MUT_REF=""
 MUT_ROOT=""
 MUT_PATHS=""
+GUARD_STATE=""
+GUARD_MODE=""
 
 # ─── Arg parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
@@ -66,7 +70,7 @@ case "$COMMAND" in
         sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
         exit 0
         ;;
-    pre-push|plan|audit|version)
+    pre-push|plan|audit|version|reviewer-guard)
         ;;
     *)
         echo "cross-review: unknown command '$COMMAND' (try: pre-push | plan | audit | --help)" >&2
@@ -90,9 +94,76 @@ for arg in "$@"; do
         --mutation-ref=*) MUT_REF="${arg#*=}" ;;
         --mutation-root=*) MUT_ROOT="${arg#*=}" ;;
         --mutation-paths=*) MUT_PATHS="${arg#*=}" ;;
+        --state=*) GUARD_STATE="${arg#*=}" ;;
+        capture|verify) GUARD_MODE="$arg" ;;
         *) echo "cross-review: unknown flag '$arg'" >&2; exit 2 ;;
     esac
 done
+
+# ─── Reviewer guard: the reviewer must not be able to write ──────────────
+#
+# A reviewer that can edit the tree does not report findings, it fixes them —
+# and a finding that was silently fixed is indistinguishable from one that was
+# never found. The gate keeps its authority; the REVIEWER loses its hands.
+# (Non-writable observer, authority elsewhere.)
+#
+# Two layers, because a prose instruction is not a capability:
+#   1. dispatch the reviewer with a read-only tool set (see the strata blocks)
+#   2. this guard — fingerprint before, verify after. Layer 1 is the control;
+#      this is the detector that proves layer 1 held.
+#
+# fsmonitor is forced off: this repo family sets core.fsmonitor=true, and a dead
+# daemon makes `git status` report a CLEAN tree while files are modified — which
+# would turn this detector into a rubber stamp exactly when it matters.
+guard_fingerprint() {
+    {
+        git -c core.fsmonitor=false status --porcelain=v1 -uall 2>/dev/null
+        git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>/dev/null
+    } | shasum -a 256 | awk '{print $1}'
+}
+
+guard_state_path() {
+    if [ -n "$GUARD_STATE" ]; then echo "$GUARD_STATE"; return; fi
+    local gd; gd=$(git rev-parse --git-dir 2>/dev/null) || {
+        echo "cross-review: reviewer-guard needs a git repo (or pass --state=PATH)" >&2
+        exit 2
+    }
+    echo "$gd/cross-review-guard.state"
+}
+
+if [ "$COMMAND" = "reviewer-guard" ]; then
+    STATE=$(guard_state_path)
+    case "$GUARD_MODE" in
+        capture)
+            guard_fingerprint > "$STATE"
+            echo "reviewer-guard: captured $(cat "$STATE" | cut -c1-16)… -> $STATE"
+            exit 0
+            ;;
+        verify)
+            if [ ! -f "$STATE" ]; then
+                # "I never captured" and "nothing changed" must not look alike.
+                echo "reviewer-guard: NO BASELINE at $STATE — capture before dispatching the" >&2
+                echo "  reviewer. An unverifiable review is not a passed review." >&2
+                exit 4
+            fi
+            BEFORE=$(cat "$STATE"); AFTER=$(guard_fingerprint)
+            if [ "$BEFORE" = "$AFTER" ]; then
+                echo "reviewer-guard: tree unchanged across review — verdict is admissible"
+                exit 0
+            fi
+            echo "reviewer-guard: REVIEW INVALID — the tree changed while the reviewer ran." >&2
+            echo "  A reviewer that writes is optimising for a clean report, not an honest one." >&2
+            echo "  before=$(echo "$BEFORE" | cut -c1-16)… after=$(echo "$AFTER" | cut -c1-16)…" >&2
+            git -c core.fsmonitor=false status --porcelain=v1 -uall >&2
+            echo "  Discard this verdict, revert the reviewer's writes, re-run the review." >&2
+            exit 4
+            ;;
+        *)
+            echo "cross-review: reviewer-guard needs 'capture' or 'verify'" >&2
+            exit 2
+            ;;
+    esac
+fi
 
 # ─── Strata auto-detect ──────────────────────────────────────────────────
 detect_strata() {
@@ -185,6 +256,21 @@ if [ "$COMMAND" = "pre-push" ]; then
         fi
     fi
 
+    # ─── Reviewer guard: capture before any reviewer runs ────────────────
+    echo "  ─── Reviewer guard ──────────────────────────────────────────"
+    echo ""
+    echo "  [TODO-AGENT] The reviewer must not be able to write. Two layers:"
+    echo "    1. dispatch it read-only (each stratum below names how)"
+    echo "    2. prove layer 1 held:"
+    echo "         cross-review reviewer-guard capture     # before dispatch"
+    echo "         ...run the review..."
+    echo "         cross-review reviewer-guard verify      # after; exit 4 = INVALID"
+    echo ""
+    echo "  Exit 4 is REVIEW INVALID, distinct from a failing score: a verdict"
+    echo "  produced by a reviewer that edited the tree is not a low score, it is"
+    echo "  no verdict at all. Fix rounds belong to the WRITER, never the reviewer."
+    echo ""
+
     # Strata A — true cross-vendor via Codex
     if [ "$SELECTED_STRATA" = "A" ] || [ "$SELECTED_STRATA" = "auto" ] && command -v codex >/dev/null 2>&1; then
         echo "  ─── Strata A: cross-vendor (Codex CLI) ──────────────────"
@@ -192,9 +278,12 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "  [TODO-AGENT] The agent runs the following pattern:"
         echo "    1. Capture the diff: git diff $DIFF_BASE...HEAD > /tmp/cross-review-diff.patch"
         echo "    2. Invoke Codex with the adversarial brief from references/rubric.md"
-        echo "       codex exec -m gpt-5.4 \\"
+        echo "       codex exec -m gpt-5.4 -c sandbox_mode=read-only \\"
         echo "         --prompt-file references/codex-prompt.md \\"
         echo "         --attach /tmp/cross-review-diff.patch"
+        echo "       (read-only is not optional: an unsandboxed reviewer that can"
+        echo "        patch the tree stops reporting and starts fixing — the same"
+        echo "        defect as dispatching Strata B as 'general-purpose')"
         echo "    3. Parse Codex's response: score (0-10) + reasoning per rubric dim"
         echo "    4. If score >=7: pass (echo verdict, exit 0)"
         echo "    5. If score <7: fix the specific deductions, rescore"
@@ -209,11 +298,15 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo ""
         echo "  [TODO-AGENT] The agent runs the following pattern:"
         echo "    1. Capture diff + rubric"
-        echo "    2. Dispatch a sub-Agent via Claude Code's Agent tool"
-        echo "       with subagent_type='general-purpose' and the prompt:"
-        echo "       'You are reviewing diff X against rubric Y as a devil's"
+        echo "    2. Dispatch a sub-Agent via Claude Code's Agent tool with a"
+        echo "       READ-ONLY agent type — subagent_type='Explore', which carries"
+        echo "       every tool EXCEPT Edit/Write/NotebookEdit. Not 'general-purpose':"
+        echo "       that is Tools:* , so the reviewer could silently fix what it was"
+        echo "       dispatched to report, and a fixed finding is indistinguishable"
+        echo "       from one that was never found."
+        echo "       Prompt: 'You are reviewing diff X against rubric Y as a devil's"
         echo "        advocate. Read references/rubric.md. Score each dimension"
-        echo "        and report verdict.'"
+        echo "        and report verdict. You cannot change code: report, do not fix.'"
         echo "    3. Parse the subagent's response"
         echo "    4. Same loop: ≥7 pass, <7 fix-rescore, max $MAX_ROUNDS rounds"
         echo ""

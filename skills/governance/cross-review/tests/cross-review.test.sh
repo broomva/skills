@@ -108,6 +108,85 @@ else
     fail "T8: P20 framing" "first body line: $FIRST_BODY"
 fi
 
+# ── T9-T13: the reviewer guard (BRO-2200) ─────────────────────────────────
+#
+# The property: a reviewer that writes produces no verdict at all. These tests
+# run in a throwaway repo so a real tree is never mutated.
+
+GUARD_TMP=$(mktemp -d)
+trap 'rm -rf "$GUARD_TMP"' EXIT
+(
+  cd "$GUARD_TMP"
+  git init -q .
+  git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+  echo "original" > file.txt
+  git add file.txt
+  git -c user.email=t@t -c user.name=t commit -q -m add
+) >/dev/null 2>&1
+
+echo "T9. reviewer-guard capture writes a baseline"
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$GUARD_TMP/.git/cross-review-guard.state" ]; then
+    ok "T9: capture"
+else
+    fail "T9: capture" "rc=$RC out=$OUT"
+fi
+
+echo "T10. verify on an untouched tree is admissible (exit 0)"
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "unchanged"; then
+    ok "T10: clean verify passes"
+else
+    fail "T10: clean verify passes" "rc=$RC out=$OUT"
+fi
+
+echo "T11. a reviewer that edits a tracked file invalidates the review (exit 4)"
+(cd "$GUARD_TMP" && echo "the reviewer fixed it" >> file.txt)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$RC" -eq 4 ] && echo "$OUT" | grep -q "REVIEW INVALID"; then
+    ok "T11: tracked-file write detected"
+else
+    fail "T11: tracked-file write detected" "rc=$RC out=$OUT"
+fi
+(cd "$GUARD_TMP" && git checkout -q -- file.txt)
+
+echo "T12. a reviewer that adds an untracked file is also caught"
+(cd "$GUARD_TMP" && echo "sneaky" > extra.txt)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$RC" -eq 4 ]; then
+    ok "T12: untracked write detected"
+else
+    fail "T12: untracked write detected" "rc=$RC out=$OUT — an -uall-less status would miss this"
+fi
+(cd "$GUARD_TMP" && rm -f extra.txt)
+
+echo "T13. no baseline is NOT a pass — it is unverifiable (exit 4)"
+(cd "$GUARD_TMP" && rm -f .git/cross-review-guard.state)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$RC" -eq 4 ] && echo "$OUT" | grep -q "NO BASELINE"; then
+    ok "T13: missing baseline is not silence"
+else
+    fail "T13: missing baseline is not silence" "rc=$RC out=$OUT"
+fi
+
+# ── T14: the dispatch names a read-only agent type ────────────────────────
+echo "T14. Strata B dispatches read-only, not general-purpose"
+SB=$(sed -n "/Strata B: fresh-context subagent/,/dispatches the subagent/p" "$CROSS_REVIEW_SH")
+if echo "$SB" | grep -q "subagent_type='Explore'" \
+   && ! echo "$SB" | grep -q "subagent_type='general-purpose'"; then
+    ok "T14: read-only dispatch"
+else
+    fail "T14: read-only dispatch" "Strata B block still names a writable agent type"
+fi
+
+echo "T15. Strata A runs Codex sandboxed read-only"
+SA=$(sed -n "/Strata A: cross-vendor/,/runs the Codex call/p" "$CROSS_REVIEW_SH")
+if echo "$SA" | grep -q "sandbox_mode=read-only"; then
+    ok "T15: codex sandboxed"
+else
+    fail "T15: codex sandboxed" "Strata A does not pin a read-only sandbox"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────
 echo ""
 echo "── results ────────────────────────────────────────────────────"
