@@ -119,7 +119,9 @@ COMPONENT_LIBS = {
 }
 RE_IMPORT_FROM = re.compile(r"""(?:from|require\()\s*['"]([^'"]+)['"]""")
 
-RE_EM_DASH = re.compile("—")
+RE_EM_DASH = re.compile(r"—|&mdash;|&#8212;|\\u2014")   # the character, the HTML entity, the JS escape
+# a standalone em dash is a typographic empty-value marker (`?? "—"`, `<td>—</td>`), not the prose tell
+RE_EM_DASH_MARKER = re.compile(r"""(["'`])\s*—\s*\1|>\s*—\s*<|\{\s*"—"\s*\}""")   # incl. " — " separator args (.split/.join)
 RE_EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B50\U00002B55\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
 )
@@ -175,7 +177,8 @@ PLACEHOLDER_PATTERNS = {
     "john-jane-doe": re.compile(r"\b(john|jane)\s+doe\b", re.I),
     "acme": re.compile(r"\bAcme(\s+(Inc|Corp|Co)\.?)?\b"),
     "your-company": re.compile(r"\b(your|the)\s+company\s+name\b|\[?your\s+(company|name|product|brand)\]?", re.I),
-    "insert-here": re.compile(r"\[(?:insert|add|your|placeholder)\s+[a-z][^\]]{2,}\]|\bcoming soon\b|\bTBD\b", re.I),
+    # "Coming soon" is the honest label for an unshipped feature (the arc recommends it over a fake demo) — not counted
+    "insert-here": re.compile(r"\[(?:insert|add|your|placeholder)\s+[a-z][^\]]{2,}\]|\bTBD\b", re.I),
     "todo-in-copy": re.compile(r">\s*(TODO|FIXME|XXX)\b|['\"](TODO|FIXME)[:\s]"),
     "stock-image-host": re.compile(r"(images\.unsplash\.com|source\.unsplash\.com|picsum\.photos|placehold\.co|placeholder\.com|via\.placeholder|placekitten|dummyimage\.com|loremflickr|pravatar\.cc|randomuser\.me|ui-avatars\.com|i\.pravatar)", re.I),
     "example-domain": re.compile(r"\b[a-z0-9.-]*example\.(com|org|net)\b", re.I),
@@ -417,6 +420,33 @@ def derive_routes(root: Path, fw: dict, ui_files: list[Path]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Main survey
 # ---------------------------------------------------------------------------
+def git_toplevel(root: Path) -> Path | None:
+    if not shutil.which("git"):
+        return None
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return Path(proc.stdout.strip()) if proc.returncode == 0 and proc.stdout.strip() else None
+
+
+def find_design_docs(root: Path) -> dict:
+    """DESIGN.md / PRODUCT.md at the app root, or in a parent up to the git toplevel (monorepos keep the
+    design contract at the repo root — apps/web/ must not read as 'no direction')."""
+    top = git_toplevel(root)
+    out = {"DESIGN.md": False, "PRODUCT.md": False, "paths": {}}
+    cur = root
+    for _ in range(6):
+        for name in ("DESIGN.md", "PRODUCT.md"):
+            if not out[name] and (cur / name).is_file():
+                out[name] = True
+                out["paths"][name] = str(cur / name)
+        if (top and cur == top) or cur.parent == cur:
+            break
+        cur = cur.parent
+    return out
+
+
 def find_app_root(root: Path) -> Path:
     """If `root` has no package.json but exactly one nested app (depth ≤ 2) does and declares a known
     framework, survey that app instead — monorepos with `app/` or `apps/web/` are the common shape."""
@@ -511,7 +541,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
     reduced_motion_sites: list[str] = []
     loading_files_next: list[str] = []
     error_files_next: list[str] = []
-    design_docs = {"DESIGN.md": (root / "DESIGN.md").exists(), "PRODUCT.md": (root / "PRODUCT.md").exists()}
+    design_docs = find_design_docs(root)
 
     def site(p: Path, ln: int) -> str:
         return f"{rel(root, p)}:{ln}"
@@ -534,6 +564,10 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         rp = rel(root, p)
         is_style = p.suffix.lower() in STYLE_EXT
         is_ui = p.suffix.lower() in UI_EXT
+        # tests, stories, scripts and generated-image routes are code, not the product's copy or token surface
+        is_non_surface = bool(re.search(r"(\.(test|spec|stories|e2e)\.[cm]?[jt]sx?$)|(^|/)(__tests__|tests?|e2e|scripts?|__mocks__|fixtures?)(/|$)|(^|/)(opengraph-image|twitter-image|apple-icon|icon)\.[jt]sx?$", rp, re.I))
+        if is_ui and is_non_surface:
+            is_ui = False
         is_config = "tailwind.config" in p.name or p.name in ("postcss.config.js", "postcss.config.mjs")
         lines = txt.splitlines()
 
@@ -621,7 +655,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         # never copy modules, whatever they are named.
         _segs = rp.replace("\\", "/").split("/")
         is_copy_module = (
-            p.suffix.lower() in SCRIPT_EXT
+            not is_non_surface
+            and p.suffix.lower() in SCRIPT_EXT
             and (bool(RE_COPY_MODULE.match(_segs[-1])) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
             and not re.search(r"(^|/)(api|server|middleware|hooks?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|(^|/)use-[a-z-]+\.[jt]sx?$", rp, re.I)
         )
@@ -632,7 +667,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                 if st.startswith(("//", "/*", "*", "{/*", "<!--", "import ")):
                     continue
                 code_free = re.sub(r"//.*$|\{/\*.*?\*/\}|/\*.*?\*/", "", line)  # strip trailing comments
-                if RE_EM_DASH.search(code_free):
+                if RE_EM_DASH.search(RE_EM_DASH_MARKER.sub(" ", code_free)):
                     copy_tells["em_dash"].append(site(p, i))
                 if RE_EMOJI.search(code_free):
                     copy_tells["emoji"].append(site(p, i))
@@ -653,9 +688,9 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             # substance: landing / testimonials / pricing / evidence
             if RE_LANDING.search(txt):
                 landing_hints.append(rp)
-            if RE_TESTIMONIAL.search(txt):
+            if RE_TESTIMONIAL.search(txt) and not is_prose_mdx:
                 testimonials.append(rp)
-            if RE_PRICING.search(txt) or "pricing" in rp.lower():
+            if (RE_PRICING.search(txt) or "pricing" in rp.lower()) and not is_prose_mdx:
                 pricing["files"].append(rp)
                 for m in RE_TIER_WORDS.finditer(txt):
                     pricing["tier_word_hits"][m.group(1)] += 1
@@ -680,14 +715,20 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     "empty": bool(RE_EMPTY_STATE.search(txt)),
                 }
 
-        # placeholders (UI + copy modules)
+        # placeholders (UI + copy modules). `placeholder="you@example.com"` / "Acme Labs" on an input is an example
+        # value, not fake content; prose MDX (articles) only counts lorem / John Doe.
         if is_ui or is_copy_module:
             for key, rx in PLACEHOLDER_PATTERNS.items():
+                if is_prose_mdx and key not in ("lorem-ipsum", "john-jane-doe"):
+                    continue
                 for m in rx.finditer(txt):
-                    placeholders[key].append(site(p, txt.count("\n", 0, m.start()) + 1))
+                    ln = txt.count("\n", 0, m.start()) + 1
+                    if key in ("example-domain", "acme", "your-company") and re.search(r"placeholder\s*=", lines[ln - 1] if ln - 1 < len(lines) else ""):
+                        continue
+                    placeholders[key].append(site(p, ln))
 
-        # visual vocabulary
-        if is_ui or is_style:
+        # visual vocabulary — the product's token surface; prose MDX (embedded article figures) is content
+        if (is_ui and not is_prose_mdx) or is_style:
             token_file = is_token_file(rp)
             if not token_file:
                 for i, line in enumerate(lines, 1):
@@ -701,7 +742,17 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                 k = _norm_radius_class(m.group(0))
                 radius_values[k] += 1
                 radius_sites[k].append(rp)
+            in_keyframes = 0
             for i, line in enumerate(lines, 1):
+                # values inside @keyframes are animation states (pulse rings), not vocabulary
+                if "@keyframes" in line:
+                    in_keyframes = max(0, line.count("{") - line.count("}"))   # 0 when the block closes on the same line
+                    continue
+                if in_keyframes:
+                    in_keyframes += line.count("{") - line.count("}")
+                    if in_keyframes <= 0:
+                        in_keyframes = 0
+                    continue
                 if RE_TOKEN_DECL_LINE.match(line):
                     continue  # `--radius-md: 0.5rem;` is the vocabulary itself, not drift
                 for m in RE_RADIUS_CSS.finditer(line):
@@ -734,6 +785,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
     for p in copy_files:
         if p.name in ("package.json", "package-lock.json", "tsconfig.json", "bun.lock", "pnpm-lock.yaml") or p.suffix == ".json" and "lock" in p.name:
             continue
+        if re.search(r"(^|/)(docs?|_drafts?|drafts?|specs?|plans?|adrs?|handoffs?|\.github|node_modules)(/|$)", rel(root, p), re.I):
+            continue  # internal documentation / drafts are not shipped copy
         if p.suffix == ".json" and not any(k in rel(root, p).lower() for k in ("content", "copy", "locale", "messages", "i18n", "data")):
             continue
         txt = _read(p)
@@ -798,7 +851,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         })
     if radius_values:
         distinct = [k for k in radius_values if radius_values[k] > 0]
-        arbitrary = [k for k in distinct if (k.startswith("css:") or "[" in k) and "var(" not in k]   # rounded-[13px] / raw px; rounded-[var(--radius)] is a token ref
+        arbitrary = [k for k in distinct if (k.startswith("css:") or "[" in k) and "var(" not in k and "[inherit]" not in k]   # rounded-[13px] / raw px; var()/inherit are refs
         roots.append({
             "kind": "radius", "value": f"{len(distinct)} distinct radius values", "default": len(distinct) > 4,
             "arbitrary": len(arbitrary),
@@ -807,7 +860,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
             "fix": "One radius vocabulary (e.g. control / card / dialog) declared as tokens; arbitrary values are drift, many scale steps are a decision to make.",
         })
     if shadow_values:
-        arbitrary_s = [k for k in shadow_values if (k.startswith("css:") or "[" in k) and "var(" not in k]
+        arbitrary_s = [k for k in shadow_values if (k.startswith("css:") or "[" in k) and "var(" not in k and "[inherit]" not in k]
         roots.append({
             "kind": "shadow", "value": f"{len(shadow_values)} distinct shadow values", "default": len(shadow_values) > 4,
             "arbitrary": len(arbitrary_s),
@@ -885,7 +938,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         },
         "icons": {k: len(v) for k, v in icon_imports.items()},
         "component_libs": sorted(component_libs),
-        "copy_tells": {k: {"count": len(v), "sites": v[:12]} for k, v in copy_tells.items()},
+        "copy_tells": {k: {"count": len(v), "sites": v[:200]} for k, v in copy_tells.items()},
         "substance": substance,
         "roots": roots,
         "detector": {"status": "not-run", "findings": [], "by_rule": {}, "primary_count": 0, "advisory_count": 0},

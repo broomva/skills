@@ -137,9 +137,12 @@ class Gate:
 
     # ------------------------------------------------------------------ utils
     def _read_design_docs(self) -> str:
+        """The design contract may live at the app root or a parent up to the git toplevel (monorepos);
+        the manifest's substance.design_docs.paths says where the survey found it."""
         out = []
-        for name in ("DESIGN.md", "PRODUCT.md"):
-            p = self.repo / name
+        paths = ((self.m.get("substance", {}).get("design_docs", {}) or {}).get("paths") or {})
+        cands = [Path(v) for v in paths.values()] or [self.repo / n for n in ("DESIGN.md", "PRODUCT.md")]
+        for p in cands:
             if p.exists():
                 try:
                     out.append(p.read_text(encoding="utf-8", errors="ignore").lower())
@@ -182,7 +185,8 @@ class Gate:
         # direction.authored
         dd = s.get("design_docs", {})
         if dd.get("DESIGN.md") or dd.get("PRODUCT.md"):
-            self.add("direction.authored", "PASS", f"design docs present: {', '.join(k for k, v in dd.items() if v)}")
+            where = dd.get("paths") or {}
+            self.add("direction.authored", "PASS", "design docs present: " + ", ".join(f"{k} ({where.get(k, 'app root')})" for k, v in dd.items() if v is True))
         else:
             self.add("direction.authored", "FAIL", "no DESIGN.md / PRODUCT.md — the direction was never decided; author it (impeccable `document`/`init`) before fixing surfaces")
 
@@ -214,11 +218,14 @@ class Gate:
         ai_defaults = [f for f in fam if f in AI_DEFAULT_WEB_FONTS]
         sys_primary = [f for f in fam if f in SYSTEM_STACK]
         if ai_defaults:
-            unw = [f for f in ai_defaults if not self.waiver_for("fonts.deliberate", f)]
+            stated = [f for f in ai_defaults if re.search(r"\b" + re.escape(f) + r"\b", self.design_text)]
+            unw = [f for f in ai_defaults if f not in stated and not self.waiver_for("fonts.deliberate", f)]
             if unw:
-                self.add("fonts.deliberate", "FAIL", f"AI-default web face(s) as primary: {', '.join(unw)} — decide a face once and declare it at the root (see roots)", value=None, waivable=False)
+                self.add("fonts.deliberate", "FAIL", f"AI-default web face(s) as primary: {', '.join(unw)} — decide a face once and declare it at the root (see roots)" + (f"; stated in DESIGN.md: {', '.join(stated)}" if stated else ""), value=None, waivable=False)
+            elif stated and len(stated) == len(ai_defaults):
+                self.add("fonts.deliberate", "PASS", f"AI-default face(s) but stated as the decision in DESIGN.md/PRODUCT.md: {', '.join(stated)} — the list detects, it does not ban")
             else:
-                self.add("fonts.deliberate", "PASS", f"default faces waived with reasons: {', '.join(ai_defaults)}", waivable=False)
+                self.add("fonts.deliberate", "PASS", f"default faces stated ({', '.join(stated)}) or waived with reasons ({', '.join(f for f in ai_defaults if f not in stated)})", waivable=False)
                 self.results[-1].waived = True
         elif sys_primary and not re.search(r"(system|platform|native|os)[- ](ui|font|fonts|stack|typeface|typography|default|sans)|os default typeface|-apple-system", self.design_text):
             self.add("fonts.deliberate", "WARN", f"system stack as primary ({', '.join(sys_primary)}) with no stated decision in DESIGN.md/PRODUCT.md — deliberate or default?")

@@ -130,7 +130,7 @@ def test_substance_legal_async_placeholders(sloppy_repo, crafted_repo):
     assert s["pricing"]["three_tier_scaffold_suspected"] is True
     assert s["product_evidence"]["has_real_evidence"] is False
     assert s["motion"]["files_with_motion"] >= 1 and s["motion"]["reduced_motion_respected"] is False
-    assert s["design_docs"] == {"DESIGN.md": False, "PRODUCT.md": False}
+    assert (s["design_docs"]["DESIGN.md"], s["design_docs"]["PRODUCT.md"]) == (False, False)
 
     s2 = us.survey(crafted_repo)["substance"]
     assert s2["legal"]["terms_route"] == "/terms" and s2["legal"]["privacy_route"] == "/privacy"
@@ -141,7 +141,7 @@ def test_substance_legal_async_placeholders(sloppy_repo, crafted_repo):
     assert s2["placeholders"] == {}
     assert s2["product_evidence"]["has_real_evidence"] is True
     assert s2["motion"]["reduced_motion_respected"] is True
-    assert s2["design_docs"] == {"DESIGN.md": True, "PRODUCT.md": True}
+    assert (s2["design_docs"]["DESIGN.md"], s2["design_docs"]["PRODUCT.md"]) == (True, True) and s2["design_docs"]["paths"]["DESIGN.md"].endswith("crafted/DESIGN.md")
 
 
 def test_placeholder_regex_precision(tmp_path):
