@@ -712,11 +712,18 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                 if RE_CHECKMARK.search(code_free):
                     copy_tells["checkmark_bullets"].append(site(p, i))
                 if not RE_CODE_ONLY_LINE.search(line):
-                    # markup-bearing lines get the JSX stripper (incl. HTML template strings inside .ts copy
-                    # modules — their attr payloads are not prose); a plain assignment line must not, or
-                    # `export const pitch = "Delve…"` parses as an attribute payload and the copy vanishes
-                    strip_markup = is_ui or p.suffix.lower() in (".tsx", ".jsx") or RE_HTML_TAG.search(code_free)
-                    prose = _strip_attrs(code_free) if strip_markup else RE_CSS_TOKENS.sub(" ", code_free)
+                    # three stripping paths (codex r1–r3):
+                    #  markup files → full JSX stripper (keeps copy-bearing attrs, drops payloads/tags);
+                    #  plain copy module WITH a known HTML tag (template string) → strip TAGS FIRST — the
+                    #    attrs ride inside the tag, and _strip_attrs would let RE_JSX_ATTR eat the whole
+                    #    `tip = '<div …>inner</div>'` assignment before tag removal, losing the inner text;
+                    #  plain assignment line → scan as-is, or `pitch = "Delve…"` parses as an attr payload.
+                    if is_ui or p.suffix.lower() in (".tsx", ".jsx"):
+                        prose = _strip_attrs(code_free)
+                    elif RE_HTML_TAG.search(code_free):
+                        prose = RE_CSS_TOKENS.sub(" ", RE_TAG.sub(" ", code_free))
+                    else:
+                        prose = RE_CSS_TOKENS.sub(" ", code_free)
                     if RE_BUZZ.search(prose):
                         copy_tells["buzzwords"].append(site(p, i))
                     for k, rx in PROSE_PATTERNS.items():
