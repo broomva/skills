@@ -2501,13 +2501,22 @@ def test_deeply_nested_artifacts_report_rather_than_throw(tmp_path):
     `except Exception` does), `_internal_ref_issues`' `skill.json` read, and its `_walk`,
     which had no cap at all. The file's own contract is that an unverified artifact is
     reported, never thrown."""
-    for name, rel in (("suite", "evals/suite.json"), ("skilljson", "skill.json")):
+    # Two DIFFERENT guards, needing different depths to be reached — which the first
+    # version of this test got wrong: it used 5000 for skill.json, `json.loads` parses
+    # 5000 happily (it only raises around 10000+), so `_walk`'s cap fired and the
+    # `except RecursionError` on the json read was never exercised. Mutant M90 SURVIVED
+    # against it. Measured rather than assumed: json.loads depth 5000 -> parses;
+    # 10000 / 20000 / 40000 -> RecursionError.
+    for name, rel, depth in (
+        ("suite_parse", "evals/suite.json", 20000),   # json.loads raises -> _load_data guard
+        ("sj_parse",    "skill.json",       20000),   # json.loads raises -> skill.json guard
+        ("sj_walk",     "skill.json",        5000),   # json.loads parses -> _walk depth cap
+    ):
         d = _skill(tmp_path / name, scripts=True, tests=True, tier="D")
         (d / "evals").mkdir(exist_ok=True)
-        depth = 20000 if rel.endswith("suite.json") else 5000
         (d / rel).write_text("[" * depth + "1" + "]" * depth, encoding="utf-8")
         res = _check(d)                                # must not raise
-        assert isinstance(res, list) and res, rel
+        assert isinstance(res, list) and res, f"{rel}@{depth}"
 
 
 def test_camelcase_negative_polarity_is_recognised(tmp_path):

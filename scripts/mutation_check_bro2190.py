@@ -89,7 +89,7 @@ MUTANTS = [
      '    empty_code = []',
      "test_empty_script_is_not_a_deterministic_core"),
     ("M18 unparseable eval artifacts become invisible instead of failing closed",
-     '        if isinstance(data, _Unparseable):\n            bad.append(f)',
+     '        if isinstance(data, _Unparseable):\n            bad.append(data)',
      '        if isinstance(data, _Unparseable):\n            pass',
      "test_unparseable_eval_artifact_fails_closed_for_tier_j"),
 
@@ -237,8 +237,8 @@ MUTANTS = [
     # M58/M60/M61/M62 retired with the line-based key walker they targeted; the
     # property they approximated is now answered by the YAML parser itself.
     ("M63 duplicate detection guesses instead of using the parser",
-     '    if yaml is None:\n        return None',
-     '    if yaml is None:\n        return 0',
+     'approximating it.\n    """\n    if yaml is None:\n        return None',
+     'approximating it.\n    """\n    if yaml is None:\n        return 0',
      "test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing"),
     ("M64 duplicate keys collapse (safe_load) instead of composing the node tree",
      '        node = yaml.compose(block)\n    except Exception:\n        return None',
@@ -292,11 +292,9 @@ MUTANTS = [
      '    if yaml is None:\n        return "no-parser", []',
      '    if yaml is None:\n        return "ok", [("tier", 2)]',
      "test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing"),
-        ("M77 the unparseable refusal fires on well-formed YAML too",
-     '    if status == "unparseable":',
-     '    if status != "":',
-     "test_a_wellformed_frontmatter_is_not_called_unparseable"),
-
+        # M77 retired in round 15 with the branch it named: the `status == "unparseable"`
+    # arm was deleted once `_frontmatter_disagreement_issue` shadowed it.
+    
     # --- round 13, Strata B ---------------------------------------------------
     ("M78 frontmatter keys are matched case-sensitively again",
      '    want = key.strip().lower()\n    for k, v in fm.items():\n        if str(k).strip().lower() == want:',
@@ -364,6 +362,10 @@ MUTANTS = [
     ("M91 the json eval arm stops catching recursion",
      '        except RecursionError:\n            # json.loads recurses',
      '        except UnicodeDecodeError:\n            # json.loads recurses',
+     "test_deeply_nested_artifacts_report_rather_than_throw"),
+    ("M93 the skill.json reference walk loses its depth cap",
+     '            if depth > _MAX_NESTING:\n                return  # same cap, same reason: report, never throw',
+     '            if False:\n                return  # same cap, same reason: report, never throw',
      "test_deeply_nested_artifacts_report_rather_than_throw"),
     ("M92 camelCase negative polarity is dropped again",
      '_NEGATIVE_KEYS = {"should_not_trigger", "shouldNotTrigger", "should_not_fire",',
