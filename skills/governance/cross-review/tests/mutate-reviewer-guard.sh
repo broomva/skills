@@ -35,7 +35,10 @@ PY
   else echo "  [KILLED ] $n"; pass=$((pass+1)); fi
   git checkout -q -- "$F"; }
 
-mut "untracked CONTENT hash removed"       'xargs -0 -I{} shasum -a 256 "{}" 2>/dev/null' 'xargs -0 -I{} echo "{}" 2>/dev/null'
+mut "untracked CONTENT hash removed"       'shasum -a 256 -- "./$f" >> "$hashes"' 'echo "$f" >> "$hashes"'
+mut "option-like filenames unguarded"      'shasum -a 256 -- "./$f"' 'shasum -a 256 "$f"'
+mut "capture clobbers a live baseline"     '            if [ -s "$STATE" ] && [ "$GUARD_FORCE" != "1" ]; then' '            if false; then'
+mut "untracked hash errors ignored"        '            echo "reviewer-guard: cannot hash untracked file: $f" >&2; rc=1; break' '            :' 
 mut "fingerprint ignores tracked edits"    '    if ! df=$(git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>&1); then' '    if ! df=$(true 2>&1); then'
 mut "missing baseline treated as pass"     'An unverifiable review is not a passed review." >&2
                 exit 4' 'An unverifiable review is not a passed review." >&2

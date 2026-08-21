@@ -55,6 +55,8 @@ MUT_ROOT=""
 MUT_PATHS=""
 GUARD_STATE=""
 GUARD_MODE=""
+RUN_ID=""
+GUARD_FORCE=0
 
 # ─── Arg parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
@@ -95,6 +97,8 @@ for arg in "$@"; do
         --mutation-root=*) MUT_ROOT="${arg#*=}" ;;
         --mutation-paths=*) MUT_PATHS="${arg#*=}" ;;
         --state=*) GUARD_STATE="${arg#*=}" ;;
+        --run-id=*) RUN_ID="${arg#*=}" ;;
+        --force) GUARD_FORCE=1 ;;
         capture|verify) GUARD_MODE="$arg" ;;
         *) echo "cross-review: unknown flag '$arg'" >&2; exit 2 ;;
     esac
@@ -134,13 +138,40 @@ guard_fingerprint() {
     # directories. That flag is deliberately gone: the mutation sweep showed no
     # test could tell it apart from its absence once contents are hashed, and a
     # rule nothing can distinguish is one more thing to maintain, not a defence.
-    untracked=$(git -c core.fsmonitor=false ls-files --others --exclude-standard -z 2>/dev/null \
-        | xargs -0 -I{} shasum -a 256 "{}" 2>/dev/null | sort)
+    # NUL-delimited list via a FILE, not a variable: command substitution strips
+    # NUL bytes, so `$(git ls-files -z)` silently concatenates every filename
+    # into one string and the whole hash becomes meaningless.
+    local list rc
+    list=$(mktemp) || { echo "reviewer-guard: mktemp failed" >&2; return 1; }
+    if ! git -c core.fsmonitor=false ls-files --others --exclude-standard -z > "$list" 2>/dev/null; then
+        rm -f "$list"; echo "reviewer-guard: git ls-files failed" >&2; return 1
+    fi
+    local hashes
+    hashes=$(mktemp) || { rm -f "$list"; return 1; }
+    # "./" prefix and --: an untracked file literally named "--help" or "-a" would
+    # otherwise be read by shasum as an OPTION, producing output independent of
+    # that file, so later edits to it stay invisible. Errors fail the fingerprint
+    # rather than silently contributing nothing.
+    rc=0
+    while IFS= read -r -d '' f; do
+        [ -n "$f" ] || continue
+        if ! shasum -a 256 -- "./$f" >> "$hashes" 2>/dev/null; then
+            echo "reviewer-guard: cannot hash untracked file: $f" >&2; rc=1; break
+        fi
+    done < "$list"
+    if [ "$rc" -ne 0 ]; then rm -f "$list" "$hashes"; return 1; fi
+    untracked=$(sort < "$hashes")
+    rm -f "$list" "$hashes"
     printf '%s\n%s\n%s\n' "$st" "$df" "$untracked" | shasum -a 256 | awk '{print $1}'
 }
 
 guard_state_path() {
     if [ -n "$GUARD_STATE" ]; then echo "$GUARD_STATE"; return; fi
+    if [ -n "$RUN_ID" ]; then
+        local gd2; gd2=$(git rev-parse --git-dir 2>/dev/null) || {
+            echo "cross-review: reviewer-guard needs a git repo (or --state=PATH)" >&2; exit 2; }
+        echo "$gd2/cross-review-guard.$RUN_ID.state"; return
+    fi
     local gd; gd=$(git rev-parse --git-dir 2>/dev/null) || {
         echo "cross-review: reviewer-guard needs a git repo (or pass --state=PATH)" >&2
         exit 2
@@ -157,6 +188,16 @@ if [ "$COMMAND" = "reviewer-guard" ]; then
             # exited 0 — a baseline that certifies nothing.
             if ! FP=$(guard_fingerprint); then
                 echo "reviewer-guard: cannot fingerprint; refusing to capture a baseline" >&2
+                exit 4
+            fi
+            # Refuse to overwrite a live baseline. Auto-capture on pre-push made
+            # this reachable: a second review starting in the same worktree used to
+            # silently replace the first one's baseline, after which the first
+            # review verified against the wrong tree and read as clean.
+            if [ -s "$STATE" ] && [ "$GUARD_FORCE" != "1" ]; then
+                echo "reviewer-guard: a baseline already exists at $STATE — another" >&2
+                echo "  review may be in flight. Pass --run-id to scope this one, or" >&2
+                echo "  --force to replace it deliberately." >&2
                 exit 4
             fi
             if ! printf '%s\n' "$FP" > "$STATE" 2>/dev/null; then
@@ -297,7 +338,8 @@ if [ "$COMMAND" = "pre-push" ]; then
     # Capture here rather than telling the agent to. An instruction printed to
     # stdout is not a baseline: the previous version advertised a guard that
     # nothing in the run actually armed, so every review passed unguarded.
-    if GUARD_MODE=capture GUARD_STATE="" bash "${BASH_SOURCE[0]}" reviewer-guard capture; then
+    CR_RUN_ID="pp$$"
+    if bash "${BASH_SOURCE[0]}" reviewer-guard capture --run-id="$CR_RUN_ID"; then
         GUARD_ARMED=1
     else
         GUARD_ARMED=0
@@ -308,7 +350,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  [TODO-AGENT] The reviewer must not be able to write. Two layers:"
     echo "    1. dispatch it read-only (each stratum below names how)"
     echo "    2. after the review returns, run:"
-    echo "         cross-review reviewer-guard verify      # exit 4 = INVALID"
+    echo "         cross-review reviewer-guard verify --run-id=$CR_RUN_ID   # exit 4 = INVALID"
     echo ""
     echo "  Exit 4 is REVIEW INVALID, distinct from a failing score: a verdict"
     echo "  produced by a reviewer that edited the tree is not a low score, it is"

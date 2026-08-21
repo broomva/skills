@@ -277,6 +277,40 @@ else
 fi
 rm -rf "$NOCOMMIT"
 
+echo "T23. an untracked file whose NAME looks like an option is still hashed by content"
+# shasum would read a file called "--help" as a FLAG, emitting output that does
+# not depend on the file, so every later edit to it stayed invisible.
+(cd "$GUARD_TMP" && printf 'v1' > -- 2>/dev/null; printf 'v1' > ./--help)
+(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture >/dev/null 2>&1)
+(cd "$GUARD_TMP" && printf 'v2-reviewer-edited' > ./--help)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
+if [ "$RC" -eq 4 ]; then
+    ok "T23: option-like untracked filename hashed by content"
+else
+    fail "T23: option-like untracked filename hashed by content" "rc=$RC out=$OUT"
+fi
+(cd "$GUARD_TMP" && rm -f ./--help ./-- .git/cross-review-guard.state)
+
+echo "T24. capture refuses to clobber a baseline another review is using"
+(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture >/dev/null 2>&1)
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture 2>&1); RC=$?
+if [ "$RC" -eq 4 ] && echo "$OUT" | grep -q "already exists"; then
+    ok "T24: second capture refuses rather than replacing"
+else
+    fail "T24: second capture refuses rather than replacing" "rc=$RC out=$OUT — auto-capture on pre-push makes this reachable"
+fi
+
+echo "T25. --force replaces deliberately, --run-id scopes instead"
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture --force 2>&1); RC=$?
+[ "$RC" -eq 0 ] || fail "T25a: --force replaces" "rc=$RC out=$OUT"
+OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture --run-id=alpha 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && [ -s "$GUARD_TMP/.git/cross-review-guard.alpha.state" ]; then
+    ok "T25: --force replaces, --run-id gives a concurrent review its own baseline"
+else
+    fail "T25: run-scoped baseline" "rc=$RC out=$OUT"
+fi
+(cd "$GUARD_TMP" && rm -f .git/cross-review-guard*.state)
+
 # ── T14: the dispatch names a read-only agent type ────────────────────────
 echo "T14. Strata B dispatches read-only, not general-purpose"
 SB=$(sed -n "/Strata B: fresh-context subagent/,/dispatches the subagent/p" "$CROSS_REVIEW_SH")
