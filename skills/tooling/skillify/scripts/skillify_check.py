@@ -746,6 +746,36 @@ def _is_num(x: object) -> bool:
             and math.isfinite(x))
 
 
+def _duplicate_top_level_key_issue(path: Path, key: str) -> str | None:
+    """A declared key that appears twice is resolved last-wins, silently.
+
+    `tier:` chooses WHICH gate runs, so a duplicate is not a style nit. Measured:
+    a SKILL.md whose line 4 said `tier: J` and line 5 said `tier: D` was reported as
+    "tier D (declared)" and PASSED on scripts+tests alone — admission record, rubric,
+    held-out cases and judge config never consulted. That is the round-10 duplicate
+    `outcome:` false accept again, one level up, on the field that decides which gate
+    the other one belongs to. The detector already existed in this file; it was
+    pointed at only one of the two places the class occurs.
+
+    Returns None when the question cannot be answered (no pyyaml, or the block does
+    not parse). That residue is deliberate: answering it without a YAML parser means
+    rebuilding the line-based key walker this file deleted twice, for the same reason
+    both times.
+    """
+    raw = _read(path)
+    if raw is None:
+        return None
+    m = _frontmatter_match(raw)
+    if m is None:
+        return None
+    n = _count_top_level_key(m.group(1), key)
+    if n is not None and n > 1:
+        return (f"`{key}:` is declared {n} times in SKILL.md frontmatter — YAML resolves "
+                f"duplicates last-wins, so the {key} that governs is not the first one a "
+                f"reader sees; declare it once")
+    return None
+
+
 def _substantive(x: object, _seen: frozenset[int] = frozenset()) -> bool:
     """Structural presence only: a finite number, a non-empty string, or a container
     that holds at least one of those somewhere inside it.
@@ -927,8 +957,12 @@ def _admission_issue(skill_dir: Path) -> str | None:
     # A block that does not parse as a YAML mapping is malformed frontmatter — which
     # is also how `---xyz` (a fence the matcher ran past) surfaces, without a
     # hand-rolled `---`-in-block rule that false-rejected `---source: author-record`.
+    # No `and yaml is not None` guard: _admission_issue returns early without a
+    # parser, so reaching here means one exists and `None` can only mean "did not
+    # parse". The conjunct survived the fail-closed change as dead code that read
+    # like a live guard.
     declared = _count_top_level_key(m.group(1), "outcome")
-    if declared is None and yaml is not None:
+    if declared is None:
         return ("evals/admission.md frontmatter does not parse as YAML — the closing "
                 "fence must be `---` alone on its line")
     if declared is not None and declared > 1:
@@ -1173,6 +1207,9 @@ def _tier_of(skill_dir: Path, fm: dict, code: list[str]) -> tuple[str | None, bo
     and `checkit` as lenses; all three run pipelines and none is a lens. A confidently
     wrong tier is worse than an absent one (BRO-2192).
     """
+    dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md", "tier")
+    if dup:
+        return None, False, dup
     raw = fm.get("tier")
     raw = "" if raw is None else str(raw).strip().upper()
     if raw in TIERS:

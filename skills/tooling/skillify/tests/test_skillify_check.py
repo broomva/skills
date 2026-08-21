@@ -1950,19 +1950,23 @@ def test_valid_yaml_frontmatter_is_never_false_rejected(tmp_path):
         assert step2["status"] == "PASS", f"false-rejected valid YAML {block!r}: {step2['detail']}"
 
 
-def test_duplicate_detection_is_skipped_not_guessed_without_pyyaml(tmp_path, monkeypatch):
+def test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing(tmp_path, monkeypatch):
     """Honest degradation: with no parser the gate cannot answer the question, so it
-    does not answer it. Guessing with a regex is what produced every false reject
-    above."""
+    does not answer it. Guessing with a regex is what produced every false reject above.
+
+    This test used to assert a bare `_count_top_level_key(...) is None` and nothing
+    else, and its docstring claimed "the record is still read" — which stopped being
+    true when tier J began failing closed. P20 round 12 (Strata B) called that out:
+    the branch was production-dead and the test's only subject was the dead branch.
+    Duplicate-`tier:` detection put it back on a live path, so the test now asserts
+    what production actually does — a tier-D skill still passes without pyyaml, and
+    the unanswerable duplicate question is skipped rather than guessed at."""
     monkeypatch.setitem(sys.modules, "yaml", None)
     monkeypatch.setattr(mod, "yaml", None)
-    d = _j(tmp_path)
-    (d / "evals" / "admission.md").write_text(
-        "---\noutcome: admitted\nOutcome: rejected\n---\n\nTwo agents, one brief.\n",
-        encoding="utf-8")
-    # the duplicate goes undetected, and that is the stated trade — but the record is
-    # still read and a declared rejection would still block
     assert mod._count_top_level_key("outcome: admitted", "outcome") is None
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    assert mod._duplicate_top_level_key_issue(d / "SKILL.md", "tier") is None
+    assert _step(_check(d), 2)["status"] == "PASS"
 
 
 def test_structured_values_are_substantive(tmp_path):
@@ -2071,3 +2075,45 @@ def test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters(t
     for bad in ("\f", "\v", " "):
         raw = f"---{bad}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"
         assert not mod._frontmatter_match(raw), f"must not match padding {bad!r}"
+
+
+def test_a_duplicate_tier_declaration_is_ambiguous_not_last_wins(tmp_path):
+    """P20 round 12, Strata B — the round-10 duplicate-key false accept, one level up.
+
+    `tier:` decides WHICH gate runs, and YAML resolves duplicates last-wins silently.
+    Measured before the fix: a SKILL.md whose line 4 said `tier: J` and line 5 said
+    `tier: D` was reported as "tier D (declared)" and PASSED on scripts+tests alone —
+    admission record, rubric, held-out cases and judge config never consulted, with
+    pyyaml present. The detector already existed in this file; it had been pointed at
+    only one of the two places the class occurs."""
+    for front in ("tier: J\ntier: D", "tier: D\ntier: J", "tier: D\ntier: D"):
+        d = _skill(tmp_path / front.replace("\n", "_").replace(":", ""),
+                   scripts=True, tests=True, tier=None)
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("---\n", f"---\n{front}\n", 1), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{front!r} -> {step2['detail']}"
+        assert "declared 2 times" in step2["detail"], step2["detail"]
+
+
+def test_a_nested_tier_key_is_not_a_duplicate_declaration(tmp_path):
+    """Paired control for the check above: the question is TOP-LEVEL duplicates. A
+    `tier:` nested under another mapping is ordinary YAML and must not trip it —
+    this is the exact false-reject shape the deleted line-based key walker produced,
+    and the reason the count comes from `yaml.compose()` rather than a scan."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(raw.replace("tier: D", "tier: D\nmeta:\n  tier: J", 1),
+                                encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_crlf_frontmatter_parses(tmp_path):
+    """Round 11 tightened the fence to `[ \\t\\r]`, keeping CR so CRLF files work — a
+    behaviour change round 11 shipped without a test, flagged by Strata B in round 12.
+    A tier-J admission record written on Windows must not read as "no frontmatter"."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\r\noutcome: admitted\r\n---\r\n\r\nTwo agents, one brief; both valid.\r\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"

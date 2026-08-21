@@ -242,8 +242,8 @@ MUTANTS = [
      '        node = yaml.compose("a: 1")',
      "test_duplicate_top_level_outcome_declarations_fail"),
     ("M65 an unparseable frontmatter block stops being reported",
-     '    if declared is None and yaml is not None:',
-     '    if False:',
+     '    if declared is None:\n        return ("evals/admission.md frontmatter does not parse as YAML',
+     '    if False:\n        return ("evals/admission.md frontmatter does not parse as YAML',
      "test_a_malformed_closing_fence_does_not_run_on_to_a_later_one"),
 
     ("M66 tier J passes frontmatter it cannot parse (the final false accept)",
@@ -272,6 +272,23 @@ MUTANTS = [
      '            return False  # YAML anchors and JSON round-trips can build cycles',
      '            return True  # YAML anchors and JSON round-trips can build cycles',
      "test_substantive_terminates_on_a_cyclic_structure"),
+
+    # --- round 12 -------------------------------------------------------------
+    # M72 is the one round 11 MISSED. Round 11 tightened BOTH fences but tested only
+    # the opening one, so a mutant loosening the CLOSING fence survived the whole
+    # 175-test suite. A fix applied at two sites needs a proof at two sites.
+    ("M72 the CLOSING fence re-admits control characters",
+     '\\n---[ \\t\\r]*(?:\\n|$)"',
+     '\\n---[^\\S\\n]*(?:\\n|$)"',
+     "test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters"),
+    ("M73 a duplicate `tier:` declaration is accepted (last-wins)",
+     '    dup = _duplicate_top_level_key_issue(skill_dir / "SKILL.md", "tier")\n    if dup:\n        return None, False, dup',
+     '    dup = None',
+     "test_a_duplicate_tier_declaration_is_ambiguous_not_last_wins"),
+    ("M74 the duplicate-key check guesses instead of reporting unknown",
+     '    if n is not None and n > 1:',
+     '    if n is None or n > 1:',
+     "test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing"),
     ("M68 opening fence stops tolerating trailing whitespace",
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t\\r]*\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---\\n(.*?)\\n---[ \\t\\r]*(?:\\n|$)", re.DOTALL)',

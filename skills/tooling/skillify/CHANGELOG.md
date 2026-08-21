@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Stop letting testability decide expressibility — **the D / J / L tier model** (BRO-2190).
 
+- **Tier J requires PyYAML.** Its admission record is a YAML contract, so the tier
+  fails closed without a parser instead of gating what it cannot read. Found as a
+  false ACCEPT: with no parser the duplicate check returned "unknown" and the stdlib
+  fallback resolved duplicates last-wins, so `outcome: rejected` followed by
+  `outcome: admitted` passed. Tiers D and L are unaffected.
+- **A duplicate `tier:` is ambiguous, not last-wins.** `tier: J` followed by
+  `tier: D` was reported as "tier D (declared)" and passed on scripts alone, with the
+  admission record, rubric, held-out cases and judge config never consulted. The same
+  duplicate-key class as the `outcome:` accept above, on the field that decides which
+  gate the other one belongs to.
+- **`_substantive` recurses to a leaf.** A container counts as present only if
+  something is actually inside it. `bool(x)` was one level too shallow and admitted a
+  wholly hollow tier-J core — `{"value": null}`, `{"metric": ""}`, `{"messages": []}` —
+  as "cross-model judge with a measured floor".
 - **Step 2 is now "Tier + core", and it dispatches.** The gate used to ask one
   question — *is there a deterministic core?* — and treat *no* as either a failure or,
   via `latent_only: true`, a blanket exemption. That let a testability question decide

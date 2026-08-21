@@ -163,6 +163,23 @@ So the gate enforces the *shape* instead of a number: a Tier-J skill must declar
 the method, and the date that produced it. A floor declared with no measurement is a
 **FAIL**, not a warning. Pick your own floor; show your work.
 
+### Tier J requires PyYAML; the other tiers do not
+
+The admission record is a YAML contract — one declared `outcome:`, unambiguously —
+so tier J **fails closed** without a YAML parser rather than gating what it cannot
+read. Without `pyyaml`, a J skill reports `FAIL … pip install pyyaml`.
+
+This was learned as a false ACCEPT, not designed: the duplicate-key check returned
+"unknown" with no parser while the stdlib fallback resolved duplicates last-wins, so
+`outcome: rejected` followed by `outcome: admitted` **passed** on any stdlib-only box.
+A *declared rejection*, admitted. "Skip rather than guess" was right not to guess and
+wrong about the direction.
+
+Tiers D and L still run on the stdlib alone. The residue is stated rather than
+papered over: **a duplicate `tier:` cannot be detected without a parser either**, and
+that check degrades to unperformed rather than guessing — because answering it with a
+pattern means rebuilding the line-based YAML key walker this gate deleted twice.
+
 ### What this gate cannot check, and does not pretend to
 
 Two adversarial review rounds spent most of their findings on one question: *can the
