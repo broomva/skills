@@ -5,6 +5,87 @@ All notable changes to `skillify` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-19
+
+Stop letting testability decide expressibility — **the D / J / L tier model** (BRO-2190).
+
+- **Tier J requires PyYAML.** Its admission record is a YAML contract, so the tier
+  fails closed without a parser instead of gating what it cannot read. Found as a
+  false ACCEPT: with no parser the duplicate check returned "unknown" and the stdlib
+  fallback resolved duplicates last-wins, so `outcome: rejected` followed by
+  `outcome: admitted` passed. Tiers D and L are unaffected.
+- **A duplicate `tier:` is ambiguous, not last-wins.** `tier: J` followed by
+  `tier: D` was reported as "tier D (declared)" and passed on scripts alone, with the
+  admission record, rubric, held-out cases and judge config never consulted. The same
+  duplicate-key class as the `outcome:` accept above, on the field that decides which
+  gate the other one belongs to.
+- **`_substantive` recurses to a leaf.** A container counts as present only if
+  something is actually inside it. `bool(x)` was one level too shallow and admitted a
+  wholly hollow tier-J core — `{"value": null}`, `{"metric": ""}`, `{"messages": []}` —
+  as "cross-model judge with a measured floor".
+- **A test is not the thing it tests, and pytest configuration is neither.**
+  `_code_files` was answering two questions with one list: *does this skill ship
+  executable logic?* (which decides tier D) and *which files are code?* (which decides
+  what gets syntax-checked). A skill whose only Python file was its own test was
+  inferred tier D, and step 3 then reported "1 real test file" about the same bytes.
+
+  Split into `_core_files()`. Location still decides what is **code** — anything under
+  `scripts/` is syntax-checked whatever it is named, which is why a broken
+  `scripts/Setup.py` can no longer ship. It does not decide what is a **core**. Two
+  things disqualify a file: being a test (including `conftest.py`, which is pytest's
+  own configuration) and being empty. A packaging *name* does not: `setup.py` and
+  `__init__.py` routinely hold real logic and are cores when they do.
+
+  Five call sites turn on the distinction — tier inference in `run_checklist` and in
+  `survey`, the empty-core report, the `latent_only` contradiction, and
+  `require_tests`. Adversarial review found the first fix had moved one of them, and
+  the verify pass on that fix found the fifth. A static test now pins all five.
+
+- **Step 2 is now "Tier + core", and it dispatches.** The gate used to ask one
+  question — *is there a deterministic core?* — and treat *no* as either a failure or,
+  via `latent_only: true`, a blanket exemption. That let a testability question decide
+  an expressibility question. Step 2 now asks what **kind** of thing the skill is and
+  applies that tier's gate:
+  - **D** (deterministic) — `scripts/` present and syntax-valid; step 3 unit tests.
+  - **J** (judgment) — `evals/admission.md` recording the admission test *and its
+    outcome*, a rubric, held-out cases, a judge config whose model differs from the
+    model under eval, and `agreement_floor` accompanied by `agreement_measured`.
+  - **L** (lens) — a routing eval; step 7's resolver eval becomes required when
+    `--roles-dir` is supplied.
+- **The `latent_only` amnesty is closed.** It used to SKIP steps 2 *and* 3, so the
+  branch built to accommodate non-deterministic skills gated **nothing**. It still
+  parses and still means "not tier D", but it must now satisfy J or L. Measured
+  effect over the 94-skill roster: **−2 passing** (28 → 26 with `node` installed,
+  29 → 27 without — step 2's `.ts` syntax check is skipped when `node` is absent, so
+  quote the delta, not the absolute). Both losses are skills that were passing only
+  through the amnesty.
+- **Tests are required whenever code ships**, whatever the tier. The old expression
+  routed step 3 through `latent_only`, so a skill could ship scripts and buy out of
+  testing them.
+- **Inference is deliberately narrow: D only.** J and L must be declared. The obvious
+  second rule — *no code but has a trigger eval → L* — was implemented, run over the
+  roster, and **withdrawn**: it labelled `autonomous`, `handoff` and `checkit` as
+  lenses, and all three run pipelines. A routing eval is tier L's *core*, not its
+  *signature*. A confidently wrong tier is worse than an absent one.
+- **The agreement floor is not set here.** Nobody has measured it, and asserting a
+  threshold no committed process regenerates is the failure that produced this tier
+  model. The gate enforces the *shape*: declare a floor **and** carry the measurement
+  that produced it. A floor with no `agreement_measured` is a FAIL, not a warning.
+- **The judge run is never a PASS.** The LLM judge is a declared, unbuilt seam
+  (`skill_evals/checks.py:make_judge_check` raises rather than stubbing a permissive
+  pass). Tier J gates *artifacts*; the judge *execution* reports as a named SKIP even
+  when every artifact is perfect. A tier certifying itself through an unimplemented
+  judge is the vacuity this gate exists to prevent.
+- **New `--survey ROOT`** — runs the whole checklist over every `SKILL.md` under
+  `ROOT` and tallies by tier. It is the same gate over a population, not a second
+  gate, and it is what regenerates every roster count in `SKILL.md`. It reports; it
+  does not gate.
+- **Tiers backfilled on 11 skills** whose pure function *is* their contract.
+- **Known gap, filed as BRO-2192:** D/J/L does not carve the roster. 44 of 94 skills
+  are neither judgment nor lens — they are procedures binding an external capability
+  (`d1-cli`, `colab-remote`, `haima`, `weekly-review`). Step 2's failure message names
+  that residue rather than advising them to pick one of three tiers that do not fit.
+
 ## [0.3.0] — 2026-06-28
 
 Close the gate's blind spot — **contract honesty**.
@@ -62,8 +143,9 @@ false-PASS risk. The doctor now **executes** what it cheaply can:
   `node --check` (.mjs/.js/.ts when node present).
 - **`.test.` is extension-scoped** — `fixtures.test.json` is no longer counted
   as a test (only `*.test.{py,sh,mjs,js,ts}`).
-- **`latent_only: true` with code present is a contradiction → FAIL** (was an
-  unconditional bypass of steps 2+3).
+- **`latent_only: true` with a deterministic CORE present is a contradiction → FAIL**
+  (was an unconditional bypass of steps 2+3). A test file or an empty package marker
+  beside a lens is not a core and does not contradict it.
 - **Folded/block-scalar frontmatter** (`description: >-`) parsed correctly
   (pyyaml when available; the hand-roll no longer manufactures bogus keys).
 - **Step 6 requires a structured registry line** (table row / list item /

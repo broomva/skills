@@ -31,6 +31,8 @@ rule machine-checkable:
 ```bash
 python3 scripts/skillify_check.py <skill_dir> \
     [--roles-dir roles] [--registry AGENTS.md] [--entities-dir research/entities] [--strict]
+
+python3 scripts/skillify_check.py --survey skills/     # the same gate over a whole roster
 ```
 
 It runs the 10-step checklist and exits non-zero if a required step is missing:
@@ -38,15 +40,40 @@ It runs the 10-step checklist and exits non-zero if a required step is missing:
 | # | Step | Required? |
 |---|------|-----------|
 | 1 | SKILL.md contract (name + description) | ✅ |
-| 2 | Deterministic code (`scripts/`) | ✅ unless `latent_only: true` |
-| 3 | Unit tests | ✅ when code present |
+| 2 | **Tier + its core** (see below) | ✅ |
+| 3 | Unit tests | ✅ whenever code ships |
 | 4 | Integration tests | recommended |
-| 5 | LLM evals | recommended |
+| 5 | LLM evals (trigger surface) | recommended |
 | 6 | Resolver trigger | `--strict` |
-| 7 | Resolver eval (`role-x.py eval`) | `--strict` |
+| 7 | Resolver eval (`role-x.py eval`) | `--strict`, and ✅ for tier L with `--roles-dir` |
 | 8 | check-resolvable + DRY (`bstack skills audit`) | external |
 | 9 | E2E smoke test | recommended |
 | 10 | Brain filing / KG provenance | recommended |
+
+### Tiers
+
+Step 2 used to ask *"is there a deterministic core?"* and treat *no* as either a
+failure or, via `latent_only: true`, a blanket exemption — a testability question
+deciding an expressibility question. It now asks what **kind** of thing the skill is.
+
+| Tier | What it is | Step 2 passes when |
+|---|---|---|
+| **D** — deterministic | there is a pure function in here | `scripts/` present and syntax-valid |
+| **J** — judgment | a well-posed question whose valid answers vary | `evals/admission.md` with a recorded outcome + a rubric + held-out cases + a judge config naming a model distinct from the model under eval + `judge.agreement_floor` **with** `judge.agreement_measured` |
+| **L** — lens | it changes what you attend to, not what you do | a routing eval asserting BOTH polarities |
+
+Declare it in frontmatter (`tier: D`). Only **D** is inferred, from shipped code;
+**J and L must be declared.** Inference decides *which* gate applies, never *whether*
+one does — a skill the gate cannot classify still fails.
+
+`latent_only: true` is deprecated: it still means "not tier D", but it no longer
+exempts a skill from everything else. It contradicts a deterministic **core**, not
+merely the presence of files under `scripts/` — a lens may ship a test and a package
+marker.
+
+**The agreement floor is deliberately unset**, and **the judge is an unbuilt seam** —
+the gate checks that a tier-J skill's artifacts are present, well-formed and
+cross-model, and reports the judge *run* as a SKIP, never a PASS.
 
 ## Composes
 

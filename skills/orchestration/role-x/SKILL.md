@@ -1,5 +1,6 @@
 ---
 name: role-x
+tier: D
 primitive: P17
 category: orchestration
 description: |
