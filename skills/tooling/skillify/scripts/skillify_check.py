@@ -95,9 +95,11 @@ CODE_EXTS = {".py", ".sh", ".mjs", ".js", ".ts"}
 _TEST_CODE_EXTS = ("py", "sh", "mjs", "js", "ts")
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 
-# Deepest container nesting `_substantive` will walk before failing closed. No real
-# rubric, measurement or held-out case nests anywhere near this; the cap exists so
-# a hostile or generated artifact cannot turn a checklist into a RecursionError.
+# Deepest nesting `_internal_ref_issues._walk` will descend before giving up. This is
+# now its ONLY consumer: `_substantive` and `_walk_for_trigger_keys` dropped their caps
+# in round 18, because a cap makes the answer a function of the traversal budget and a
+# memo then caches it as a property of the node. `_walk` keeps one because its input is
+# JSON, which cannot alias, so a visited set would be machinery for an unreachable case.
 _MAX_NESTING = 100
 
 
@@ -480,20 +482,24 @@ def _is_code_file(skill_dir: Path, f: Path) -> bool:
     `scripts/run` with a shebang is a deterministic core by any reading; keying purely
     off five suffixes let it ship untested ("tests whenever code ships" quietly meant
     "whenever a .py/.sh/.mjs/.js/.ts ships")."""
-    # A test NAME does not exempt a file that lives in scripts/. It used to: a broken
-    # `scripts/test_helper.py` was classified as a test, dropped from `code`, and never
-    # syntax-checked — a required step passing on a file that does not parse. Round 17's
-    # casefolding widened that hole to `scripts/TEST_helper.PY` (rc 1 -> rc 0 on
-    # byte-identical content), which is how it surfaced; the lowercase form was already
-    # escaping. Location decides: anything shipped under scripts/ is a script.
-    if f.name.lower() in _PACKAGE_PLUMBING:
-        return False
-    if not f.is_relative_to(skill_dir / "scripts") and _is_test_file(f.name):
+    # LOCATION DECIDES, and it decides FIRST. Anything shipped under scripts/ is a
+    # script — no name exempts it, not a test name and not package plumbing.
+    #
+    # Round 18 put the name checks ahead of the location check and thereby kept two
+    # fail-open holes it claimed to close: a broken `scripts/Setup.py` or
+    # `scripts/CONFTEST.PY` was still never syntax-checked (rc 1 -> rc 0). It also
+    # opened a worse one, because `_test_files` scans scripts/ too: a lone
+    # `scripts/test_only.py` became the deterministic core AND its own unit test, so a
+    # skill shipping no core at all inferred tier D and passed steps 2 and 3 together.
+    # That is the case `test_tier_d_declared_without_code_fails` calls the one thing
+    # the gate must not permit. See `_test_files`, which now refuses the same overlap
+    # from the other side — a file cannot be both the core and the proof of the core.
+    under_scripts = f.is_relative_to(skill_dir / "scripts")
+    if not under_scripts and (f.name.lower() in _PACKAGE_PLUMBING or _is_test_file(f.name)):
         return False
     if _ext(f) in CODE_EXTS:
         return True
-    return (not _ext(f) and f.is_relative_to(skill_dir / "scripts")
-            and bool(f.stat().st_mode & 0o111))
+    return (not _ext(f) and under_scripts and bool(f.stat().st_mode & 0o111))
 
 
 def _code_files(skill_dir: Path) -> list[str]:
@@ -508,10 +514,20 @@ def _code_files(skill_dir: Path) -> list[str]:
 
 
 def _test_files(skill_dir: Path, kind: str = "") -> list[str]:
+    """Test files, EXCLUDING anything under scripts/.
+
+    The exclusion is the other half of `_is_code_file`'s location rule, and without it
+    the two functions overlap: a lone `scripts/test_only.py` counted as the shipped core
+    *and* as the test proving it, so step 2 inferred tier D and step 3 reported "1 real
+    test file" about the same bytes. A skill with no core passed both required steps.
+    A file cannot be both the artifact and its own proof.
+    """
+    scripts_dir = skill_dir / "scripts"
     found = {
         str(f.relative_to(skill_dir))
         for f in _iter_files(skill_dir, ("tests", "scripts", ""))
-        if _is_test_file(f.name) and (not kind or kind in f.name.lower())
+        if _is_test_file(f.name) and not f.is_relative_to(scripts_dir)
+        and (not kind or kind in f.name.lower())
     }
     return sorted(found)
 

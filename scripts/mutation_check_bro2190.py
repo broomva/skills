@@ -419,6 +419,26 @@ MUTANTS = [
     # proven instead by the ten-form bypass battery recorded in its docstring — 7/10
     # caught, with the three that slip named. A mutant that cannot be applied is the
     # same dishonest bookkeeping as one that cannot die.
+    # --- round 19: the _is_code_file hunk, which shipped with NO coverage ------
+    # Four mutants reverting or inverting it all survived 208 green tests, and the
+    # sweep did not reach it either — `grep _is_code_file` in this file returned
+    # nothing. These are those four, plus the overlap the hunk actually caused.
+    ("M106 location no longer decides: a test name exempts a script again",
+     '    if not under_scripts and (f.name.lower() in _PACKAGE_PLUMBING or _is_test_file(f.name)):',
+     '    if f.name.lower() in _PACKAGE_PLUMBING or _is_test_file(f.name):',
+     "test_package_plumbing_under_scripts_is_still_a_script"),
+    ("M107 the location rule is inverted (only scripts/ tests are exempt)",
+     '    under_scripts = f.is_relative_to(skill_dir / "scripts")',
+     '    under_scripts = not f.is_relative_to(skill_dir / "scripts")',
+     "test_package_plumbing_under_scripts_is_still_a_script"),
+    ("M108 extension matching in _is_test_file stops casefolding",
+     '    lowered = name.lower()',
+     '    lowered = name',
+     "test_a_test_file_is_recognised_whatever_the_extension_case"),
+    ("M109 a scripts/ file counts as its own unit test again",
+     '        if _is_test_file(f.name) and not f.is_relative_to(scripts_dir)',
+     '        if _is_test_file(f.name)',
+     "test_a_scripts_file_is_never_its_own_test"),
     ("M92 camelCase negative polarity is dropped again",
      '_NEGATIVE_KEYS = {"should_not_trigger", "shouldNotTrigger", "should_not_fire",',
      '_NEGATIVE_KEYS = {"should_not_trigger", "should_not_fire",',

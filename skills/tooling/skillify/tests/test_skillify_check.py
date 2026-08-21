@@ -2306,22 +2306,40 @@ def test_deeply_nested_values_are_answered_not_truncated_or_thrown(tmp_path):
     # 3.12 and raised RecursionError on CI's 3.11. The TEST blew the stack, not the
     # gate, which is the failure this very test exists to rule out. Depth 120 clears
     # the cap of 100 and depends on no interpreter's stack headroom.
+    # End to end. This assertion used to build `_j(tmp_path, held_out=0)` and expect
+    # FAIL — but the FAIL was "no held-out cases", identical with a depth-0 payload, so
+    # the nesting contributed nothing and the test was green on an unrelated gap. Worse,
+    # once the cap was removed the payload became a PASS case, so the assertion pointed
+    # the wrong way. `held_out` stays at its default here, making nesting the only
+    # variable, and the expectation is PASS: a deeply nested method IS a method.
     depth = 120
     deep_json = '{"a":' * depth + '"x"' + "}" * depth
-    d = _j(tmp_path, held_out=0)
+    d = _j(tmp_path / "deep_ok")
     blob = json.loads((d / "evals" / "suite.json").read_text())
     blob["judge"]["agreement_measured"] = {"value": 0.84, "method": "__DEEP__"}
     text = json.dumps(blob).replace('"__DEEP__"', deep_json)
     assert json.loads(text)["judge"]["agreement_measured"]["method"] != "__DEEP__"
     (d / "evals" / "suite.json").write_text(text, encoding="utf-8")
-    assert _step(_check(d), 2)["status"] == "FAIL"
+    assert _step(_check(d), 2)["status"] == "PASS", _step(_check(d), 2)["detail"]
+
+    # and the discriminating control: hollow at the same depth must still FAIL
+    hollow_json = '{"a":' * depth + '""' + "}" * depth
+    d2 = _j(tmp_path / "deep_hollow")
+    blob2 = json.loads((d2 / "evals" / "suite.json").read_text())
+    blob2["judge"]["agreement_measured"] = {"value": 0.84, "method": "__DEEP__"}
+    (d2 / "evals" / "suite.json").write_text(
+        json.dumps(blob2).replace('"__DEEP__"', hollow_json), encoding="utf-8")
+    assert _step(_check(d2), 2)["status"] == "FAIL"
 
 
 def test_a_wide_structure_is_not_mistaken_for_a_deep_one():
-    """The cap is `len(_seen) >= _MAX_NESTING`, and `_seen` is a frozenset rebuilt per
-    call — every sibling receives the SAME parent set, so it measures depth along one
-    path. Had it been a mutable accumulator shared across siblings it would count
-    containers VISITED, and an ordinary wide suite would false-reject.
+    """A wide structure must not be mistaken for a deep one.
+
+    The prose here used to describe round-11's `len(_seen) >= _MAX_NESTING` frozenset,
+    which two rounds deleted; the body was rewritten and the docstring was not. What the
+    test now guards is the surviving property: `_substantive` is an iterative walk with
+    a visited set, so breadth costs one visit per node and cannot be confused with
+    depth.
 
     That distinction is invisible in the source and would survive any test that only
     nests deeply, so it is pinned here: 501 siblings at depth 3 must pass, and a
@@ -2952,3 +2970,58 @@ def test_the_skill_json_walk_cap_is_neither_absent_nor_crippling(tmp_path):
     (ok / "skill.json").write_text(
         json.dumps({"a": {"b": {"c": {"d": {"e": {"ref": "scripts/do.py"}}}}}}), encoding="utf-8")
     assert _step(_check(ok), "1c")["status"] == "PASS"
+
+
+def test_a_scripts_file_is_never_its_own_test(tmp_path):
+    """P20 round 19 — BLOCKER, and the hunk that caused it shipped with no coverage at
+    all: four mutants reverting or inverting it all survived 208 green tests.
+
+    Round 18 put the NAME checks ahead of the location check in `_is_code_file`. Because
+    `_test_files` also scans `scripts/`, a lone `scripts/test_only.py` became the
+    deterministic core AND the unit test proving it: step 2 inferred tier D from it,
+    step 3 reported "1 real test file" about the same bytes, and a skill shipping no
+    core passed both required steps (rc 1 -> rc 0). That is what
+    `test_tier_d_declared_without_code_fails` calls the one thing the gate must not
+    permit. A file cannot be both the artifact and its own proof."""
+    d = tmp_path / "lone"
+    (d / "scripts").mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: A demo skill.\n---\n# body\n", encoding="utf-8")
+    (d / "scripts" / "test_only.py").write_text("def test_x():\n    assert True\n",
+                                                encoding="utf-8")
+    res = _check(d)
+    # Step 2 PASSES, and that is correct: the file is a real script with valid syntax,
+    # so a deterministic core does ship. What must fail is step 3 — nothing tests it.
+    # Before the fix BOTH passed, the same bytes counted twice, and the skill came out
+    # rc 0 with no proof of anything.
+    assert _step(res, 2)["status"] == "PASS", _step(res, 2)["detail"]
+    assert _step(res, 3)["status"] == "FAIL", _step(res, 3)["detail"]
+    assert mod._test_files(d) == [], mod._test_files(d)
+    assert mod._code_files(d) == ["scripts/test_only.py"], mod._code_files(d)
+    assert [r["step"] for r in res if r["required"] and r["status"] == "FAIL"] == [3]
+
+    # control: the same test file under tests/, with a real core, passes both steps
+    ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
+    assert _step(_check(ok), 2)["status"] == "PASS"
+    assert _step(_check(ok), 3)["status"] == "PASS"
+
+
+def test_package_plumbing_under_scripts_is_still_a_script(tmp_path):
+    """The second half of the same BLOCKER. `_PACKAGE_PLUMBING` was checked before the
+    location rule, so a broken `scripts/Setup.py` or `scripts/CONFTEST.PY` was never
+    syntax-checked — the identical rc 1 -> rc 0 fail-open the commit claimed to close,
+    surviving at the plumbing names. Location decides, and it decides FIRST."""
+    for i, name in enumerate(("Setup.py", "CONFTEST.PY", "__INIT__.py", "test_helper.py")):
+        d = _skill(tmp_path / f"broken{i}", scripts=True, tests=True, tier="D")
+        (d / "scripts" / name).write_text("def broken( (( syntax error\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{name} -> {step2['detail']}"
+        assert "syntax error" in step2["detail"], f"{name} -> {step2['detail']}"
+
+    # controls: the same names OUTSIDE scripts/ stay exempt, and a valid one passes
+    ok = _skill(tmp_path / "outside", scripts=True, tests=True, tier="D")
+    (ok / "conftest.py").write_text("def broken( (( syntax error\n", encoding="utf-8")
+    assert _step(_check(ok), 2)["status"] == "PASS"
+    fine = _skill(tmp_path / "fine", scripts=True, tests=True, tier="D")
+    (fine / "scripts" / "Setup.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    assert _step(_check(fine), 2)["status"] == "PASS"
