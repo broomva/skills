@@ -2067,12 +2067,17 @@ def test_substantive_terminates_on_a_cyclic_structure():
     """Recursing to a leaf means a cycle must not become a RecursionError. YAML anchors
     build these, and the gate must fail closed on a cycle rather than crash — but a
     cycle that also holds a real leaf is still substantive."""
+    # Time-bounded, and that is load-bearing rather than defensive. The defect these
+    # calls cover is NON-TERMINATION, so an unbounded call would hang the whole mutation
+    # sweep instead of failing it — a mutant that hangs the harness reports nothing at
+    # all, which is a fifth way for a proof to be dishonest alongside cannot-die,
+    # wrong-test, cannot-be-applied and stale-anchor.
     cyclic = {}
     cyclic["self"] = cyclic
-    assert mod._substantive(cyclic) is False
+    assert _with_timeout(10, mod._substantive, cyclic) is False
     cyclic_with_leaf = ["x"]
     cyclic_with_leaf.append(cyclic_with_leaf)
-    assert mod._substantive(cyclic_with_leaf) is True
+    assert _with_timeout(10, mod._substantive, cyclic_with_leaf) is True
 
 
 def test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters(tmp_path):
@@ -2268,7 +2273,7 @@ def test_case_insensitive_lookup_reaches_every_frontmatter_read(tmp_path):
     assert step2["status"] == "FAIL" and "contradiction" in step2["detail"], step2["detail"]
 
 
-def test_absurdly_nested_values_fail_closed_instead_of_raising(tmp_path):
+def test_deeply_nested_values_are_answered_not_truncated_or_thrown(tmp_path):
     """P20 round 13, Strata B — a regression round 11 introduced with the recursion.
 
     `_substantive` shipped with a cycle guard but no depth cap, so a 1.4 KB
@@ -2282,8 +2287,18 @@ def test_absurdly_nested_values_fail_closed_instead_of_raising(tmp_path):
             v = {"a": v}
         return v
 
-    assert mod._substantive(nest(600)) is False     # fails closed, does not raise
-    assert mod._substantive(nest(20)) is True       # control: real nesting still counts
+    # The depth CAP is gone as of round 18, and this assertion is the reason. A cap
+    # makes the answer a function of the traversal budget; paired with a memo it made
+    # the verdict depend on which branch was walked first. `_substantive` is now an
+    # iterative walk with a visited set, so a deep structure is ANSWERED rather than
+    # truncated — strictly stronger than the old "fails closed at 100".
+    assert mod._substantive(nest(600)) is True      # a real value, however deep
+    assert mod._substantive(nest(20)) is True
+    assert mod._substantive(nest(20000)) is True    # and no RecursionError
+    hollow = "  "
+    for _ in range(600):
+        hollow = {"a": hollow}
+    assert mod._substantive(hollow) is False        # hollow stays hollow at depth
 
     # End to end. The nested value is spliced in as TEXT rather than built with
     # json.dumps: encoding a deeply nested object recurses inside the encoder, and the
@@ -2302,7 +2317,7 @@ def test_absurdly_nested_values_fail_closed_instead_of_raising(tmp_path):
     assert _step(_check(d), 2)["status"] == "FAIL"
 
 
-def test_the_nesting_cap_counts_depth_not_containers_visited():
+def test_a_wide_structure_is_not_mistaken_for_a_deep_one():
     """The cap is `len(_seen) >= _MAX_NESTING`, and `_seen` is a frozenset rebuilt per
     call — every sibling receives the SAME parent set, so it measures depth along one
     path. Had it been a mutable accumulator shared across siblings it would count
@@ -2324,14 +2339,16 @@ def test_the_nesting_cap_counts_depth_not_containers_visited():
                            for _ in range(200)]}
     assert mod._substantive(realistic) is True
 
-    # and the boundary itself, so a silent off-by-one in the cap is visible
+    # The cap that this used to bracket is gone (round 18): it made the answer a
+    # function of the budget, and a memo then cached that as if it were a property of
+    # the node. What replaces the boundary assertion is the property the boundary was
+    # a proxy for — the answer does not change with depth.
     def nest(n):
         v = "x"
         for _ in range(n):
             v = {"a": v}
         return v
-    assert mod._substantive(nest(100)) is True
-    assert mod._substantive(nest(101)) is False
+    assert all(mod._substantive(nest(n)) is True for n in (1, 99, 100, 101, 500, 5000))
 
 
 def _demo(tmp: Path, front: str) -> Path:
@@ -2911,3 +2928,22 @@ def test_the_memo_does_not_change_any_answer():
     assert mod._walk_for_trigger_keys({"a": plain, "b": keyed}) is True
     assert mod._walk_for_trigger_keys({"a": keyed, "b": plain}) is True
     assert mod._walk_for_trigger_keys({"a": plain, "b": plain}) is False
+
+
+def test_the_skill_json_walk_cap_is_neither_absent_nor_crippling(tmp_path):
+    """`_internal_ref_issues._walk` keeps a depth cap (its input is JSON, which cannot
+    alias, so a memo would be machinery for an unreachable case — asserted in
+    `test_the_fourth_walk_is_exempt_because_json_cannot_alias`). A cap needs proving in
+    BOTH directions: absent, a deep artifact throws; crippled, a legitimately nested
+    reference stops being seen."""
+    d = _skill(tmp_path / "nested", scripts=True, tests=True, tier="D")
+    payload = {"a": {"b": {"c": {"d": {"e": {"ref": "scripts/does-not-exist.py"}}}}}}
+    (d / "skill.json").write_text(json.dumps(payload), encoding="utf-8")
+    step = _step(_check(d), "1c")
+    assert step["status"] == "FAIL", step["detail"]
+    assert "does-not-exist" in step["detail"], step["detail"]
+
+    ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
+    (ok / "skill.json").write_text(
+        json.dumps({"a": {"b": {"c": {"d": {"e": {"ref": "scripts/do.py"}}}}}}), encoding="utf-8")
+    assert _step(_check(ok), "1c")["status"] == "PASS"

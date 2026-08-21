@@ -250,8 +250,8 @@ MUTANTS = [
      '    if False:\n        return ("tier J\'s admission record is a YAML contract and this build has no "',
      "test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse"),
     ("M67 structured values stop counting as values",
-     '        result = any(_substantive(v, _memo, _depth + 1)\n                     for v in (x.values() if isinstance(x, dict) else x))',
-     '        result = False',
+     '        elif _substantive_leaf(node):\n            return True',
+     '        elif False:\n            return True',
      "test_structured_values_are_substantive"),
 
     # --- round 11: the false ACCEPT that the round-10 fix created -------------
@@ -260,16 +260,16 @@ MUTANTS = [
     # because every mutant pointed the same way. Mutate a predicate in BOTH
     # directions or it only proves half of it.
     ("M69 hollow containers count as content again (the round-10 regression)",
-     '        result = any(_substantive(v, _memo, _depth + 1)\n                     for v in (x.values() if isinstance(x, dict) else x))',
-     '        result = bool(x)',
+     '    if not isinstance(x, (dict, list, tuple, set)):\n        return _substantive_leaf(x)',
+     '    if isinstance(x, (dict, list, tuple, set)):\n        return bool(x)\n    if True:\n        return _substantive_leaf(x)',
      "test_a_hollow_tier_j_core_does_not_pass"),
     ("M70 fence padding admits control characters again",
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t]*\\n(.*?)\\n---[ \\t]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
      "test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters"),
-    ("M71 the in-progress cycle marker reports present instead of absent",
-     '        _memo[key] = False          # a cycle contributes nothing while in progress',
-     '        _memo[key] = True          # a cycle contributes nothing while in progress',
+    ("M71 the visited set is dropped (cycles and alias DAGs stop terminating)",
+     '        if id(node) in seen:\n            continue\n        seen.add(id(node))',
+     '        if False:\n            continue\n        seen.add(id(node))',
      "test_substantive_terminates_on_a_cyclic_structure"),
 
     # --- round 12 -------------------------------------------------------------
@@ -300,14 +300,15 @@ MUTANTS = [
      '    want = key.strip().lower()\n    for k, v in fm.items():\n        if str(k).strip().lower() == want:',
      '    want = key\n    for k, v in fm.items():\n        if str(k) == want:',
      "test_frontmatter_keys_are_matched_case_insensitively"),
-    ("M79 the nesting cap is removed and deep values raise instead of failing closed",
-     '        if _depth >= _MAX_NESTING:',
-     '        if False:',
-     "test_absurdly_nested_values_fail_closed_instead_of_raising"),
-    ("M80 the nesting cap is so low it rejects ordinary nesting",
+    # M79 retired in round 18 with `_substantive`'s depth cap. The cap made the answer
+    # a function of the traversal budget; paired with a memo it made the verdict depend
+    # on which branch was walked first. An iterative walk needs no cap, so there is no
+    # branch left to mutate. Deep-nesting behaviour is covered behaviourally by
+    # test_deeply_nested_values_are_answered_not_truncated_or_thrown.
+    ("M80 the remaining (skill.json) nesting cap is so low it stops seeing references",
      '_MAX_NESTING = 100',
      '_MAX_NESTING = 2',
-     "test_absurdly_nested_values_fail_closed_instead_of_raising"),
+     "test_the_skill_json_walk_cap_is_neither_absent_nor_crippling"),
 
     # M65/M76 retired in round 15. Both anchored on branches that
     # `_frontmatter_disagreement_issue` now shadows: `compose` is a strict prefix of

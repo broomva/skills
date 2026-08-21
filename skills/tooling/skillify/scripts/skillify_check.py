@@ -470,12 +470,25 @@ def _has_executable_content(path: Path) -> bool:
     return False
 
 
+# Package plumbing, never a deterministic core. Casefolded like every other name
+# comparison in this file — `CONFTEST.PY` was counted as shippable code.
+_PACKAGE_PLUMBING = {"__init__.py", "conftest.py", "setup.py"}
+
+
 def _is_code_file(skill_dir: Path, f: Path) -> bool:
     """Code = a recognized extension, OR an extensionless EXECUTABLE under scripts/.
     `scripts/run` with a shebang is a deterministic core by any reading; keying purely
     off five suffixes let it ship untested ("tests whenever code ships" quietly meant
     "whenever a .py/.sh/.mjs/.js/.ts ships")."""
-    if _is_test_file(f.name) or f.name in {"__init__.py", "conftest.py", "setup.py"}:
+    # A test NAME does not exempt a file that lives in scripts/. It used to: a broken
+    # `scripts/test_helper.py` was classified as a test, dropped from `code`, and never
+    # syntax-checked — a required step passing on a file that does not parse. Round 17's
+    # casefolding widened that hole to `scripts/TEST_helper.PY` (rc 1 -> rc 0 on
+    # byte-identical content), which is how it surfaced; the lowercase form was already
+    # escaping. Location decides: anything shipped under scripts/ is a script.
+    if f.name.lower() in _PACKAGE_PLUMBING:
+        return False
+    if not f.is_relative_to(skill_dir / "scripts") and _is_test_file(f.name):
         return False
     if _ext(f) in CODE_EXTS:
         return True
@@ -621,14 +634,14 @@ def _is_trigger_eval(path: Path) -> bool:
     if _ext(path) == ".json":
         try:
             return _walk_for_trigger_keys(_json_loads(txt))
-        except _DuplicateKey:
-            # Detect-and-discard was the round-16 behaviour here, and the justification
-            # ("`_load_data` reports the duplicate on the gating path") is false for
-            # artifacts OUTSIDE evals/, which `_eval_blobs` never scans. The gate then
-            # said "none assert trigger behaviour" about a file that plainly does.
-            # A file whose keys cannot be trusted is not a clean trigger eval, but the
-            # reason has to survive rather than be dropped.
-            return False
+        # One clause, because `_DuplicateKey` IS a ValueError. Round 17 added a separate
+        # `except _DuplicateKey` above this and wrote a comment claiming it changed the
+        # outcome; it did not — renaming it to an exception that is never raised leaves
+        # all tests green, which is the definition of inert. The honest statement is the
+        # one below: step 5 is advisory, and a file whose keys cannot be trusted is not
+        # counted as a clean trigger eval. The duplicate itself is reported by
+        # `_load_data` for anything under evals/, and is NOT reported for eval-shaped
+        # files elsewhere — a real gap, but an advisory-only one.
         except (ValueError, RecursionError):
             return False
     if _ext(path) in {".yaml", ".yml"}:
@@ -644,36 +657,34 @@ def _is_trigger_eval(path: Path) -> bool:
     return bool(_TRIGGER_ASSERTION_RE.search(_strip_code_noise(txt)))
 
 
-def _walk_for_trigger_keys(node: object, depth: int = 0,
-                           _memo: dict[int, bool] | None = None) -> bool:
+def _walk_for_trigger_keys(node: object) -> bool:
     """A trigger key must appear as an actual mapping KEY, at any nesting depth.
 
-    Memoised for the same reason as `_substantive` and `_duplicate_key_in_node`: a
-    depth cap alone bounds nothing when the graph branches. With cap 40 and branching
-    factor 2, a 20-byte `a: &a\n b: *a\n c: *a\n` is ~2^40 visits — measured at
-    3,000,001 calls in 0.7s and still walking, with no output, no exit and no
-    traceback, and `--survey` dying with it. Step 5 runs for EVERY skill at every tier,
-    so this was the widest-reaching instance of the class.
+    Iterative with a visited set, for the same reason as `_substantive` and with the
+    same history one round compressed: a depth cap of 40 with branching factor 2 is
+    ~2^40 visits, so a 20-byte `a: &a\\n b: *a\\n c: *a\\n` hung the gate with no
+    output, no exit and no traceback — and `--survey` died with it, since a loop that
+    never raises is not catchable by its per-skill `except Exception`. Step 5 runs for
+    EVERY skill at every tier, which made this the widest-reaching instance.
+
+    The cap is gone rather than paired with a memo: the two together made the answer
+    depend on which branch was walked first (round 18). One visit per distinct node
+    bounds the work without making the verdict a function of the traversal.
     """
-    if _memo is None:
-        _memo = {}
-    if depth > 40:
-        return False
-    key = id(node)
-    if key in _memo:
-        return _memo[key]
-    _memo[key] = False
-    if isinstance(node, dict):
-        if TRIGGER_ASSERTION_KEYS & set(map(str, node.keys())):
-            _memo[key] = True
-            return True
-        result = any(_walk_for_trigger_keys(v, depth + 1, _memo) for v in node.values())
-    elif isinstance(node, list):
-        result = any(_walk_for_trigger_keys(v, depth + 1, _memo) for v in node)
-    else:
-        result = False
-    _memo[key] = result
-    return result
+    seen: set[int] = set()
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        if isinstance(cur, dict):
+            if TRIGGER_ASSERTION_KEYS & set(map(str, cur.keys())):
+                return True
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return False
 
 
 def _syntax_checkable(path: Path) -> bool:
@@ -1034,65 +1045,64 @@ def _duplicate_top_level_key_issue(path: Path) -> str | None:
             "reader sees; declare each key once")
 
 
-def _substantive(x: object, _memo: dict[int, bool] | None = None, _depth: int = 0) -> bool:
-    """Structural presence only: a finite number, a non-empty string, or a container
-    that holds at least one of those somewhere inside it.
-
-    This used to try to detect placeholder CONTENT — "TBD", "vibes", "n/a" — and it was
-    rebuilt five times. Every rebuild produced a fresh crop of FALSE REJECTS on honest
-    prose: "Write me a concise incident report from these logs.", "excluded 3 cases
-    with unknown labels", "Unknown cause.", "TBD is not an acceptable answer; explain
-    why." Each fix bought one shape and broke another, because the question it asked —
-    is this text evasive or descriptive? — is the same undecidable question as "is this
-    measurement real?", which SKILL.md already declares out of scope.
-
-    So it is gone. A field that is present and non-empty passes; whether its contents
-    mean anything is the review layer's job, which is where that judgement was always
-    going to have to live. Deleting the heuristic removed eight false-reject classes at
-    once, along with about eighty lines of regex.
-    """
+def _substantive_leaf(x: object) -> bool:
+    """Is this SCALAR a value? Split out so the container walk and the leaf rule cannot
+    drift apart, and so the walk below can stay a plain reachability question."""
     if isinstance(x, bool):
         return False
     if isinstance(x, (int, float)):
         return math.isfinite(x)
-    if isinstance(x, (dict, list, tuple, set)):
-        # A container counts as present iff something is actually IN it. `bool(x)`
-        # was the first answer to "structured values are values" and it was too
-        # shallow by exactly one level: {"value": None}, {"metric": ""},
-        # {"messages": []} and {"criterion": {"label": None}} are all truthy and all
-        # hollow, so a tier-J skill declaring no measurement, no method, no rubric
-        # content and no case content passed as "rubric + 1 held-out case(s),
-        # cross-model judge with a measured floor". Recurse to a leaf instead.
-        #
-        # This stays a STRUCTURAL question — is there a value here at all — and does
-        # not reopen the undecidable one above. A leaf that is present but means
-        # nothing still passes, and still belongs to the review layer.
-        # A MEMO, not a path-set. Round 11 shipped a path-based `_seen` frozenset,
-        # which stops cycles and nothing else: because each sibling receives its own
-        # copy, a node reachable by many paths is walked once per path. P20 round 17
-        # measured the consequence — an ACYCLIC alias DAG (`l{i}: &l{i} {a: *l{i-1},
-        # b: *l{i-1}}`, 876 bytes) makes this function walk 2^n nodes and never return.
-        # No cycle is involved, so a cycle guard cannot help; the invariant is
-        # memoisation. `_duplicate_key_in_node` already had it and terminated in 0.002s
-        # on the same input while this hung — the model I cited in round 16 was the
-        # one that was wrong.
-        #
-        # The depth cap stays: it is a different property (round 13, a 1.4 KB
-        # evals/suite.json nested ~500 deep raised RecursionError out of
-        # run_checklist, a bare traceback where the contract says report).
-        if _memo is None:
-            _memo = {}
-        if _depth >= _MAX_NESTING:
-            return False
-        key = id(x)
-        if key in _memo:
-            return _memo[key]
-        _memo[key] = False          # a cycle contributes nothing while in progress
-        result = any(_substantive(v, _memo, _depth + 1)
-                     for v in (x.values() if isinstance(x, dict) else x))
-        _memo[key] = result
-        return result
     return isinstance(x, str) and bool(x.strip())
+
+
+def _substantive(x: object) -> bool:
+    """Structural presence: a finite number, a non-empty string, or a container that
+    reaches at least one of those.
+
+    This used to try to detect placeholder CONTENT — "TBD", "vibes", "n/a" — and was
+    rebuilt five times, each rebuild producing fresh FALSE REJECTS on honest prose
+    ("Write me a concise incident report from these logs.", "excluded 3 cases with
+    unknown labels"). That question is undecidable and SKILL.md declares it out of
+    scope. What is left is reachability: is there a value in here at all.
+
+    ITERATIVE, with a visited set, and NO depth cap. Three attempts preceded that:
+
+      * round 11 — recursion + a PATH-based `_seen` frozenset. Stops cycles only;
+        because each sibling gets its own copy, a node reachable by many paths is
+        walked once per path, so an ACYCLIC alias DAG (876 bytes) hung it.
+      * round 13 — added `_MAX_NESTING` after a 1.4 KB `evals/suite.json` nested ~500
+        deep raised RecursionError out of `run_checklist`: a bare traceback where this
+        file's contract says report, never throw.
+      * round 17 — swapped the path-set for a memo, which fixed the DAG but made the
+        answer ORDER-DEPENDENT, because the cap was evaluated before the memo. A node
+        whose subtree the cap truncated cached that `False` and returned it later at a
+        shallower depth where the whole subtree was in budget. Measured: a 584-byte
+        valid tier-L artifact flipped a required gate PASS -> FAIL depending only on
+        which branch was walked first.
+
+    A depth cap and a memo cannot coexist honestly: the cap makes the answer a function
+    of the budget, and the memo caches it as if it were a function of the node. An
+    explicit stack removes the reason for the cap (there is no Python recursion to
+    overflow) and the visited set bounds the work at one visit per distinct node, so
+    cycles, DAGs and 20000-deep nesting all terminate and the answer depends only on
+    the data.
+    """
+    if not isinstance(x, (dict, list, tuple, set)):
+        return _substantive_leaf(x)
+    seen: set[int] = set()
+    stack = [x]
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, (list, tuple, set)):
+            stack.extend(node)
+        elif _substantive_leaf(node):
+            return True
+    return False
 
 
 def _read(path: Path) -> str | None:
