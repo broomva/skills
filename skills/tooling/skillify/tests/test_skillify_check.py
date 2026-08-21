@@ -2718,3 +2718,30 @@ def test_uppercase_extensions_are_the_same_kind_of_file(tmp_path):
         res = _check(d)
         verdicts[label] = (_step(res, 2)["status"], _step(res, 3)["status"])
     assert verdicts["upper"] == verdicts["lower"] == ("FAIL", "FAIL"), verdicts
+
+
+def test_step5_detects_a_camelcase_negative_only_trigger_eval(tmp_path):
+    """The UNTESTED half of the two-site camelCase fix, which mutant M99 SURVIVED.
+
+    `shouldNotTrigger` was added to `_NEGATIVE_KEYS` (tier L's polarity check, covered
+    by M92) and to `TRIGGER_ASSERTION_KEYS` (step 5's "is this a trigger eval at all"
+    detection, covered by nothing). The round-16 audit called it out and my own mutant
+    then proved it: removing the key from the second set left all 201 tests green.
+
+    Step 5 is advisory, so this is a WARN/PASS distinction rather than a gate — but an
+    unproven half of a two-site fix is precisely the thing this arc keeps being bitten
+    by, and a file asserting only the negative polarity is a real shape."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    (d / "evals").mkdir(exist_ok=True)
+    (d / "evals" / "routing.json").write_text(
+        json.dumps({"shouldNotTrigger": ["what is the weather"]}), encoding="utf-8")
+    assert mod._is_trigger_eval(d / "evals" / "routing.json") is True
+    assert _step(_check(d), 5)["status"] == "PASS"
+
+    # both the parser path and the regex fallback read the same key set
+    assert mod._walk_for_trigger_keys({"shouldNotTrigger": ["x"]}) is True
+    assert bool(mod._TRIGGER_ASSERTION_RE.search('"shouldNotTrigger": ["x"]'))
+
+    # control: a file with no trigger assertion at all is still not a trigger eval
+    (d / "evals" / "other.json").write_text(json.dumps({"notes": ["x"]}), encoding="utf-8")
+    assert mod._is_trigger_eval(d / "evals" / "other.json") is False
