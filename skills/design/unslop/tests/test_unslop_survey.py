@@ -400,3 +400,20 @@ export default function Docs() {
     ct = us.survey(root)["copy_tells"]
     assert ct["weasel_attribution"]["count"] == 1  # only the UNcited "Studies show" line
     assert ct["colon_reveal"]["count"] == 0        # "the bottom line" is literal in finance copy
+
+
+# ---------------------------------------- codex r2 regressions
+def test_were_not_period_form_still_counts(tmp_path):
+    root = _prose_repo(tmp_path, "were")
+    (root / "app" / "page.tsx").write_text(
+        "export default () => <p>We're not a chatbot. We're a teammate.</p>;\n"
+    )
+    assert us.survey(root)["copy_tells"]["not_x_but_y"]["count"] == 1
+
+
+def test_keyboard_key_tokens_do_not_hide_copy_module_prose(tmp_path):
+    root = _prose_repo(tmp_path, "kbd")
+    (root / "content" / "help.ts").write_text(
+        "export const tip = 'Use <Tab> to continue. What nobody tells you about billing';\n"
+    )
+    assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 1

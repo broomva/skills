@@ -132,7 +132,7 @@ RE_CHECKMARK = re.compile("[✓✔✅☑]")
 RE_NOT_X_BUT_Y = re.compile(
     r"\b(?:it'?s|it is|this is|we'?re|that'?s)\s+not\s+(?:just\s+|about\s+|a\s+|an\s+|another\s+)?[^.;:\n]{2,60}?[,;—–-]+\s*(?:it'?s|this is|we'?re|that'?s|but)\b"
     r"|\b(?:it|this|that|the [a-z]{2,12}) isn'?t (?:just |about )?(?:a|an|another|the) [^.;:\n]{2,60}?[,;—–-]+\s*(?:it'?s|this is|that'?s|but)\b"
-    r"|\b(?:it'?s|it is|this is|that'?s)\s+not\s+(?:just\s+)?(?:a|an|another)\s+[^.;:\n]{2,40}?\.\s+(?:it'?s|this is|that'?s)\s"
+    r"|\b(?:it'?s|it is|this is|we'?re|that'?s)\s+not\s+(?:just\s+)?(?:a|an|another)\s+[^.;:\n]{2,40}?\.\s+(?:it'?s|this is|we'?re|that'?s)\s"
     r"|\b(?:it|this|that|the [a-z]{2,12}) isn'?t (?:just )?(?:a|an|another|the) [^.;:\n]{2,40}?\.\s+(?:it'?s|this is|that'?s)\s",
     re.I,
 )
@@ -155,6 +155,10 @@ PROSE_PATTERNS = {
     "superficial_ing": re.compile(r",\s*(?:highlighting|underscoring|showcasing|signaling|cementing|reinforcing|demonstrating|reflecting) (?:our|its|their|the) (?:commitment|dedication|passion|mission|importance|significance|value|power|expertise|focus)", re.I),
 }
 RE_CITATION = re.compile(r"\[\d{1,3}\]|https?://|\bdoi\.org|<(?:a|cite|sup)\b", re.I)
+RE_HTML_TAG = re.compile(
+    r"</?(?:div|span|p|a|b|i|u|em|strong|small|li|ul|ol|h[1-6]|section|main|aside|img|br|hr|table|thead"
+    r"|tbody|td|th|tr|button|input|label|form|select|option|textarea|header|footer|nav|article|figure"
+    r"|figcaption|blockquote|cite|sup|sub|code|pre|video|audio|source|iframe|svg|path)\b[^<>]*>", re.I)
 PROSE_PATTERNS_MULTI = {
     "fake_profound": re.compile(r"isn'?t coming[.!]\s+it'?s already here", re.I),
     "negative_listing": re.compile(r"\bno (?:more )?\w[\w' -]{0,24}\.\s+no \w[\w' -]{0,24}\.\s+(?:no|just|only)\b|\bnot (?:a|an|your) [\w' -]{2,30}\.\s+not (?:a|an|your)\b", re.I),
@@ -711,7 +715,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     # markup-bearing lines get the JSX stripper (incl. HTML template strings inside .ts copy
                     # modules — their attr payloads are not prose); a plain assignment line must not, or
                     # `export const pitch = "Delve…"` parses as an attribute payload and the copy vanishes
-                    strip_markup = is_ui or p.suffix.lower() in (".tsx", ".jsx") or RE_TAG.search(code_free)
+                    strip_markup = is_ui or p.suffix.lower() in (".tsx", ".jsx") or RE_HTML_TAG.search(code_free)
                     prose = _strip_attrs(code_free) if strip_markup else RE_CSS_TOKENS.sub(" ", code_free)
                     if RE_BUZZ.search(prose):
                         copy_tells["buzzwords"].append(site(p, i))
