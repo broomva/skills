@@ -196,12 +196,25 @@ This was a real hole here, not a hypothetical: Strata B used to be dispatched as
 Strata A invoked `codex exec` unsandboxed, which can patch the tree just as
 easily. The stronger stratum had the same defect as the weaker one.
 
-Two layers, because **a prose instruction is not a capability**:
+Two layers, because **a prose instruction is not a capability** — and the two
+strata are not equally strong, which matters more than it first looks:
 
-| Layer | Mechanism | What it is |
+| Layer | Mechanism | What it actually buys |
 |---|---|---|
-| 1 — control | Strata B dispatches `subagent_type='Explore'` (every tool except `Edit`/`Write`/`NotebookEdit`); Strata A pins `codex exec -c sandbox_mode=read-only` | the reviewer *cannot* write |
-| 2 — detector | `reviewer-guard capture` / `verify` around the review | corroborates layer 1 — see the limits below |
+| 1a — Strata A | `codex exec -c sandbox_mode=read-only` | A real sandbox. The process cannot write, full stop |
+| 1b — Strata B | `subagent_type='Explore'` — every tool **except** `Edit`/`Write`/`NotebookEdit` | **Reduced, not removed.** `Explore` still has `Bash`, and a shell can write. It is instructed not to; that is a disposition, not a wall |
+| 2 — detector | `reviewer-guard capture` / `verify` | For Strata A, corroboration. For Strata B, **the only thing standing between a shell redirect and an unnoticed edit** |
+
+**Do not read layer 1b as "the reviewer cannot write."** It removes the ergonomic
+path — the tools a reviewer would naturally reach for — and leaves a deliberate
+one open. Against a reviewer that is *drifting* (fixing because fixing is what it
+does) that is enough. Against one that has decided to write, it is not, and the
+fingerprint is what catches it. Stating this the other way round would be the
+same error this section exists to name: describing a disposition as a capability.
+
+The asymmetry has a practical consequence: **prefer Strata A when Codex is
+available**, not only because a different vendor has different blind spots, but
+because it is the only stratum where "cannot write" is literally true.
 
 ```bash
 cross-review reviewer-guard capture     # fingerprint before dispatch
