@@ -254,10 +254,11 @@ fi
 echo "T21. an EMPTY baseline is unverifiable, not a match"
 (cd "$GUARD_TMP" && : > .git/cross-review-guard.state)
 OUT=$(cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard verify 2>&1); RC=$?
-if [ "$RC" -eq 4 ]; then
-    ok "T21: empty baseline is exit 4"
+if [ "$RC" -eq 4 ] && echo "$OUT" | grep -q "is EMPTY"; then
+    ok "T21: empty baseline is diagnosed as unverifiable"
 else
-    fail "T21: empty baseline is exit 4" "rc=$RC out=$OUT — an empty file would otherwise match an empty fingerprint"
+    fail "T21: empty baseline is diagnosed as unverifiable" \
+         "rc=$RC out=$OUT — exit 4 alone is not enough: the mismatch path also returns 4, so without asserting the DIAGNOSIS this test passes with the empty-baseline check deleted"
 fi
 (cd "$GUARD_TMP" && rm -f .git/cross-review-guard.state)
 

@@ -35,8 +35,8 @@ PY
   else echo "  [KILLED ] $n"; pass=$((pass+1)); fi
   git checkout -q -- "$F"; }
 
-mut "fingerprint ignores untracked files"  "        git -c core.fsmonitor=false status --porcelain=v1 -uall 2>/dev/null" "        git -c core.fsmonitor=false status --porcelain=v1 2>/dev/null"
-mut "fingerprint ignores tracked edits"    "        git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>/dev/null" "        true"
+mut "fingerprint ignores untracked names"  '    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 -uall 2>&1); then' '    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 2>&1); then'
+mut "fingerprint ignores tracked edits"    '    if ! df=$(git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>&1); then' '    if ! df=$(true 2>&1); then'
 mut "missing baseline treated as pass"     'An unverifiable review is not a passed review." >&2
                 exit 4' 'An unverifiable review is not a passed review." >&2
                 exit 0'
@@ -45,7 +45,7 @@ mut "strata B back to general-purpose"     "subagent_type='Explore'" "subagent_t
 mut "strata A sandbox removed"             "codex exec -m gpt-5.4 -c sandbox_mode=read-only" "codex exec -m gpt-5.4"
 # mutations for the properties added after P20 round 1
 mut "untracked CONTENT no longer hashed"   "    untracked=\$(git -c core.fsmonitor=false ls-files --others --exclude-standard -z 2>/dev/null \\" "    untracked=\$(true \\"
-mut "git status errors ignored again"      '        echo "reviewer-guard: git status failed: $st" >&2; return 1' '        :'
+mut "git errors no longer fail closed"     '        echo "reviewer-guard: git diff failed: $df" >&2; return 1' '        df=""'
 mut "empty baseline accepted"              '            if [ -z "$BEFORE" ]; then' '            if false; then'
 mut "capture ignores an unwritable state"  "            if ! printf '%s\\n' \"\$FP\" > \"\$STATE\" 2>/dev/null; then" "            if printf '%s\\n' \"\$FP\" > \"\$STATE\" 2>/dev/null; then"
 
