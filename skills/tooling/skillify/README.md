@@ -67,7 +67,9 @@ Declare it in frontmatter (`tier: D`). Only **D** is inferred, from shipped code
 one does — a skill the gate cannot classify still fails.
 
 `latent_only: true` is deprecated: it still means "not tier D", but it no longer
-exempts a skill from everything else.
+exempts a skill from everything else. It contradicts a deterministic **core**, not
+merely the presence of files under `scripts/` — a lens may ship a test and a package
+marker.
 
 **The agreement floor is deliberately unset**, and **the judge is an unbuilt seam** —
 the gate checks that a tier-J skill's artifacts are present, well-formed and

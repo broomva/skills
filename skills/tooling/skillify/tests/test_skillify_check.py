@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+
+import pytest
 import os
 import re
 import subprocess
@@ -3043,3 +3045,337 @@ def test_package_plumbing_under_scripts_is_still_a_script(tmp_path):
     fine = _skill(tmp_path / "fine", scripts=True, tests=True, tier="D")
     (fine / "scripts" / "Setup.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
     assert _step(_check(fine), 2)["status"] == "PASS"
+
+
+# --- rounds 20-22: what is CODE and what is a CORE are different questions -------
+#
+# Round 19 split `_code_files` into code and core and moved ONE of five consumers.
+# Round 20 (both strata) found the plumbing arm missing and the suite blind to it.
+# Round 21, verifying that fix, found it had traded one fail-open for another and
+# that a fifth consumer existed. The case matrix below is the whole disagreement,
+# written down: eleven skills, each of which some round got wrong.
+
+def _mk(root, name, files, extra=""):
+    d = root / name
+    (d / "scripts").mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: A skill for the case matrix.\n{extra}---\n# body\n",
+        encoding="utf-8")
+    for rel, content in files.items():
+        p = d / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    return d
+
+
+_LOGIC = "def configure(x):\n    return x * 2\n"
+_TEST = "def test_x():\n    assert True\n"
+_FIXTURE = "import pytest\n\n@pytest.fixture\ndef thing():\n    return 1\n"
+
+
+def _evals():
+    return json.dumps({"cases": [{"should_fire": True, "input": {"text": "go"}},
+                                 {"should_not_fire": True, "input": {"text": "no"}}]})
+
+
+CORE_MATRIX = [
+    ("conftest_and_test_only_is_not_tier_d",
+     {"scripts/conftest.py": _FIXTURE, "scripts/test_only.py": _TEST}, "",
+     "cannot classify", False),
+    ("setup_py_holding_real_logic_is_a_core",
+     {"scripts/setup.py": _LOGIC, "tests/test_a.py": _TEST}, "", "tier D", True),
+    ("init_py_holding_real_logic_is_a_core",
+     {"scripts/__init__.py": "def run(x):\n    return x * 3\n", "tests/test_a.py": _TEST},
+     "tier: D\n", "tier D", True),
+    ("latent_only_still_contradicts_a_real_core_named_setup",
+     {"scripts/setup.py": _LOGIC, "tests/test_a.py": _TEST, "evals/routing.json": None},
+     "tier: L\nlatent_only: true\n", "contradiction", False),
+    ("an_empty_package_marker_does_not_sink_a_real_core",
+     {"scripts/core.py": _LOGIC, "scripts/__init__.py": "", "tests/test_a.py": _TEST},
+     "tier: D\n", "syntax ok", True),
+    ("a_lens_shipping_only_an_empty_marker_passes",
+     {"scripts/__init__.py": "", "evals/routing.json": None},
+     "tier: L\nlatent_only: true\n", "both polarities", True),
+    ("a_lens_whose_only_script_is_a_test_passes",
+     {"scripts/test_lens.py": _TEST, "evals/routing.json": None},
+     "tier: L\nlatent_only: true\n", "both polarities", True),
+    ("a_lone_test_file_is_not_a_core",
+     {"scripts/test_only.py": _TEST}, "", "cannot classify", False),
+    ("an_empty_script_is_not_a_core",
+     {"scripts/do.py": "", "tests/test_a.py": _TEST}, "tier: D\n", "empty script", False),
+    ("conftest_is_matched_whatever_its_case",
+     {"scripts/Conftest.py": _FIXTURE, "tests/test_a.py": _TEST}, "",
+     "cannot classify", False),
+    ("a_broken_script_names_the_syntax_error_not_the_tier",
+     {"scripts/setup.py": "def f(:\n", "tests/test_a.py": _TEST}, "", "syntax error", False),
+]
+
+
+@pytest.mark.parametrize("label,files,extra,expect,should_pass",
+                         CORE_MATRIX, ids=[c[0] for c in CORE_MATRIX])
+def test_the_core_matrix(tmp_path, label, files, extra, expect, should_pass):
+    """Each row is a skill some round of this arc classified wrongly.
+
+    The rows are not decoration: run this matrix against the pre-fix gate and five
+    of the eleven fail. That is the control — a matrix that cannot fail proves
+    nothing, and this arc has shipped three fixtures that could not.
+    """
+    files = {k: (_evals() if v is None else v) for k, v in files.items()}
+    d = _mk(tmp_path, "m", files, extra)
+    res = _check(d)
+    step2 = _step(res, 2)
+    assert expect in step2["detail"], f"{label}: {step2['detail']}"
+
+    # The WHOLE gate, not just step 2. An earlier version asserted only on step 2 and
+    # the mutation sweep said so: a mutant that widened `require_tests` back to all
+    # code broke step THREE for a lens shipping an empty package marker, and this
+    # matrix — which contains exactly that skill — reported MISSED because it never
+    # looked past the tier check.
+    failed = [f"{r['step']} {r['label']}" for r in res
+              if r["required"] and r["status"] == "FAIL"]
+    if should_pass:
+        assert step2["status"] == "PASS", f"{label}: {step2['detail']}"
+        assert not failed, f"{label}: required step(s) failed: {failed}"
+    else:
+        assert step2["status"] == "FAIL", f"{label}: {step2['detail']}"
+
+
+def test_pytest_configuration_is_test_infrastructure_not_a_core(tmp_path):
+    """The narrowed rule, stated on its own because round 21 showed the wide version
+    (all of `_PACKAGE_PLUMBING`) was wrong in BOTH directions.
+
+    `conftest.py` is excluded by NAME because the name really does determine the role
+    — it is pytest's own configuration and nothing else imports it. `setup.py` and
+    `__init__.py` are not excluded by name, because they routinely hold real logic;
+    the empty-marker case that put them on the list is handled by SUBSTANCE.
+    """
+    d = _mk(tmp_path, "infra", {"scripts/conftest.py": _FIXTURE,
+                                "scripts/setup.py": _LOGIC,
+                                "tests/test_a.py": _TEST})
+    core = mod._core_files(d)
+    assert "scripts/conftest.py" not in core, "pytest config is not a core"
+    assert "scripts/setup.py" in core, "a packaging NAME does not make it plumbing"
+    # ...and both are still code, so both are still syntax-checked.
+    code = mod._code_files(d)
+    assert "scripts/conftest.py" in code and "scripts/setup.py" in code
+
+
+def test_the_conftest_exclusion_is_case_insensitive(tmp_path):
+    """`Conftest.py` re-opened the round-20 BLOCKER and no test or mutant saw it.
+    The file's own comment already records the identical prior regression on
+    `CONFTEST.PY`, which is how a casefold gets written and then not pinned.
+    """
+    for name in ("Conftest.py", "CONFTEST.PY", "conftest.PY"):
+        d = _mk(tmp_path, "c" + name.replace(".", ""),
+                {f"scripts/{name}": _FIXTURE, "tests/test_a.py": _TEST})
+        assert mod._core_files(d) == [], f"{name} was treated as a core"
+
+
+def test_the_known_core_consumers_have_not_drifted(tmp_path):
+    """A CHANGE-DETECTOR for the known consumers, and deliberately named as one.
+
+    An earlier version of this called itself `test_every_consumer_of_the_core_reads_core`
+    and its docstring claimed the property its name implies. It does not hold it.
+    Proven both directions by the round-22 reviewer: inserting a genuine seventh
+    consumer (`ships_deterministic_logic = bool(code)`) left it GREEN, and a
+    behaviour-preserving respelling of a pinned line (`len(core) > 0`) turned it RED.
+    It detects edits to known lines and nothing else, which is worth having and is
+    not worth mis-naming — a test that overclaims is how a surface stops being
+    reviewed.
+
+    The real net for "is there another consumer" is the behavioural matrix above,
+    plus the fact that the two refutation questions now read a NAME-BLIND predicate,
+    so a mistake in `_TEST_INFRA` can only ever cause a conservative false reject.
+
+    Asserted POSITIVELY. The negative form — scanning for the old `code` spelling —
+    is the vacuity this arc keeps producing: a pattern absent today is absent whether
+    or not the property holds. An earlier version of this test asserted that the
+    ASSIGNMENT `core = _core_files(...)` existed, which stayed true when the call
+    site was mutated to pass `code`; it now pins the CALL.
+    """
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def run_checklist("):]
+    required = {
+        "run_checklist infers from core":
+            "_tier_of(skill_dir, fm or {}, core, code)",
+        "survey infers from core":
+            "_tier_of(d, fm, _core_files(d), _code_files(d))",
+        "the empty report is drawn from candidates":
+            "empty_core = [c for c in _core_candidates(skill_dir)",
+        "latent_only refutes on the name-blind predicate":
+            "elif latent_only and (_det := _deterministic_scripts(skill_dir)):",
+        "require_tests reads the name-blind predicate":
+            "require_tests = bool(_deterministic_scripts(skill_dir))",
+        "the step-3 skip message matches its predicate":
+            '"nothing deterministic to test" if not real_tests',
+    }
+    missing = [why for why, pat in required.items() if pat not in body]
+    assert not missing, f"a core consumer is no longer reading core: {missing}"
+
+
+def test_the_pass_line_discloses_the_core_count(tmp_path):
+    """The step is labelled "Tier + core" and reported only the script count, so a
+    skill with one core beside its test printed "2 script(s)". Shipped untested in
+    the fix for round 20's finding that fixes ship untested.
+    """
+    d = _mk(tmp_path, "disclose", {"scripts/core.py": _LOGIC,
+                                   "scripts/test_beside.py": _TEST,
+                                   "tests/test_a.py": _TEST}, "tier: D\n")
+    detail = _step(_check(d), 2)["detail"]
+    assert "2 script(s)" in detail and "1 core" in detail, detail
+
+
+def test_latent_only_sees_logic_hidden_behind_a_conftest_name(tmp_path):
+    """`latent_only` and tier D ask different questions, and answering both with
+    `core` reopened a narrower version of the fail-open round 21 closed.
+
+    The core excludes `conftest.py` by name — right for INFERRING a tier, wrong for
+    REFUTING a denial. A lens could therefore ship a working, imported module called
+    `conftest.py` and its `latent_only: true` claim went unchallenged.
+    """
+    d = _mk(tmp_path, "hidden",
+            {"scripts/pkg/conftest.py": "def transform(x):\n    return x * 7\n",
+             "tests/test_a.py": _TEST,
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL", step2["detail"]
+    assert "contradiction" in step2["detail"], step2["detail"]
+    assert "conftest" in step2["detail"], "the message must name the file it means"
+
+    # ...and the narrower predicate is unchanged: conftest is still not a CORE, so a
+    # skill shipping only that cannot be INFERRED as tier D.
+    assert mod._core_files(d) == []
+
+
+def test_the_two_predicates_are_not_the_same_predicate(tmp_path):
+    """The property that keeps them from collapsing back into one.
+
+    An empty package marker is in neither. A test is in neither. A real module named
+    `conftest.py` is in the WIDER set only. Anything else substantive is in both.
+    """
+    d = _mk(tmp_path, "two",
+            {"scripts/conftest.py": "def helper(x):\n    return x\n",
+             "scripts/__init__.py": "",
+             "scripts/test_a.py": _TEST})
+    assert mod._core_files(d) == [], "conftest is not a core"
+    assert mod._deterministic_scripts(d) == ["scripts/conftest.py"], \
+        "but it IS something deterministic that a latent_only claim must answer for"
+
+
+def test_a_pytest_shaped_filename_does_not_buy_out_of_testing(tmp_path):
+    """The round-22 BLOCKER: renaming one file was the entire exploit.
+
+    `core` excludes `conftest.py` BY NAME, which is right for inferring a tier and
+    wrong for refuting a denial. When `require_tests` read `core`, a lens could ship
+    a working, untested module called `scripts/conftest.py` and the whole gate went
+    green — rc 0, "SKIP no code to test", about a file containing real logic.
+
+    Both refutation questions now read the name-blind predicate. The name list
+    governs INFERENCE only, where being wrong yields a conservative false reject.
+    """
+    d = _mk(tmp_path, "sneaky",
+            {"scripts/conftest.py": "ROTATION_DAYS = 30\n\ndef rotate(c):\n    return c\n",
+             "evals/routing.json": _evals()},
+            "tier: L\n")
+    res = _check(d)
+    step3 = _step(res, 3)
+    assert step3["status"] == "FAIL", f"a real module shipped untested: {step3['detail']}"
+    assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
+        "the gate must not report a clean pass"
+
+    # ...and the same file still does not INFER tier D, which is the other half.
+    assert mod._core_files(d) == []
+
+
+def test_an_empty_stub_beside_a_real_core_is_still_a_failure(tmp_path):
+    """Relocating the empty check into the tier-D arm made it unreachable whenever a
+    core existed, so `touch scripts/noop.py` beside working code started passing.
+
+    The false reject that motivated the move — an empty `scripts/__init__.py` — is
+    handled by not counting legitimately-empty packaging, so the check goes back to
+    the top level where it covers every tier.
+    """
+    d = _mk(tmp_path, "stub", {"scripts/core.py": _LOGIC,
+                               "scripts/todo_stub.py": "",
+                               "tests/test_a.py": _TEST}, "tier: D\n")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"], step2["detail"]
+
+    # ...while the package marker it was confused with is still spared.
+    d2 = _mk(tmp_path, "marker", {"scripts/core.py": _LOGIC,
+                                  "scripts/__init__.py": "",
+                                  "tests/test_a.py": _TEST}, "tier: D\n")
+    assert _step(_check(d2), 2)["status"] == "PASS"
+
+
+def test_the_pass_line_names_the_cores_it_counted(tmp_path):
+    """"1 core:" followed by a list of non-cores. The count came from `core` and the
+    names from `code`, so the one real core could be absent from its own disclosure.
+    """
+    d = _mk(tmp_path, "named", {"scripts/core.py": _LOGIC,
+                                "scripts/test_beside.py": _TEST,
+                                "tests/test_a.py": _TEST}, "tier: D\n")
+    detail = _step(_check(d), 2)["detail"]
+    assert "1 core" in detail, detail
+    assert "scripts/core.py" in detail, detail
+    assert "test_beside" not in detail.split("core:")[-1], \
+        f"a non-core was listed as the core: {detail}"
+
+
+def test_no_name_can_ever_open_the_gate(tmp_path):
+    """The invariant that ends the round-per-name sequence.
+
+    Round 20 added three names to the exclusion list, round 21 removed two, round 22
+    found a third. The round-22 reviewer's diagnosis was that a rule spelled as a
+    NAME LIST forgets its invariant once per name and will not converge by
+    enumeration — and that is right, so this stops enumerating and states the
+    property instead.
+
+    `_TEST_INFRA` now governs tier-D INFERENCE only. Being wrong there can only ever
+    produce "cannot classify", a conservative false reject with a stated remedy.
+    Both REFUTATION questions — the `latent_only` contradiction and `require_tests` —
+    read a name-blind predicate, so no filename buys anything.
+
+    The test is therefore not "are these three names right". It is: **for ANY
+    filename, including one nobody has thought of yet, shipping real untested logic
+    under it cannot produce a clean pass.** A future maintainer adding a name to
+    `_TEST_INFRA` cannot break this without the test saying so.
+
+    Scope, stated because measuring it changed what I would have claimed: this is a
+    WHOLE-GATE property and TWO independent mechanisms enforce it — the `latent_only`
+    contradiction and `require_tests`. Mutating either one alone leaves this test
+    green, because the other still fails the skill. That redundancy is a feature of
+    the gate and a limit of this test, so the mechanisms are pinned individually by
+    `test_a_pytest_shaped_filename_does_not_buy_out_of_testing` (M117) and
+    `test_latent_only_sees_logic_hidden_behind_a_conftest_name` (M116). What this one
+    adds that neither of those can: it generalises past the names anyone has listed.
+
+    Measured: fails against the pre-fix gate, and against `require_tests` narrowed
+    back to `_core_files`.
+    """
+    names = sorted(mod._TEST_INFRA) + [
+        "conftest.py", "Conftest.py", "CONFTEST.PY",       # every casing
+        "setup.py", "__init__.py",                          # the two that were removed
+        "some_future_infra_name.py", "pytest_plugin.py",    # names not in any list
+    ]
+    declarations = [
+        ("", "undeclared"),
+        ("tier: D\n", "tier D"),
+        ("tier: L\n", "tier L"),
+        ("tier: L\nlatent_only: true\n", "tier L + latent_only"),
+    ]
+    escaped = []
+    for name in names:
+        for extra, label in declarations:
+            d = _mk(tmp_path, f"n{abs(hash(name + label)) % 10 ** 9}",
+                    {f"scripts/{name}": "TOKEN = 7\n\ndef work(x):\n    return x * TOKEN\n",
+                     "evals/routing.json": _evals()},
+                    extra)
+            res = _check(d)
+            failed = [r for r in res if r["required"] and r["status"] == "FAIL"]
+            if not failed:
+                escaped.append(f"{name} @ {label}")
+    assert not escaped, (
+        "a filename bought a clean pass for real untested logic — the exclusion list "
+        f"is load-bearing for a refutation again: {escaped}")

@@ -23,6 +23,24 @@ Stop letting testability decide expressibility — **the D / J / L tier model** 
   something is actually inside it. `bool(x)` was one level too shallow and admitted a
   wholly hollow tier-J core — `{"value": null}`, `{"metric": ""}`, `{"messages": []}` —
   as "cross-model judge with a measured floor".
+- **A test is not the thing it tests, and pytest configuration is neither.**
+  `_code_files` was answering two questions with one list: *does this skill ship
+  executable logic?* (which decides tier D) and *which files are code?* (which decides
+  what gets syntax-checked). A skill whose only Python file was its own test was
+  inferred tier D, and step 3 then reported "1 real test file" about the same bytes.
+
+  Split into `_core_files()`. Location still decides what is **code** — anything under
+  `scripts/` is syntax-checked whatever it is named, which is why a broken
+  `scripts/Setup.py` can no longer ship. It does not decide what is a **core**. Two
+  things disqualify a file: being a test (including `conftest.py`, which is pytest's
+  own configuration) and being empty. A packaging *name* does not: `setup.py` and
+  `__init__.py` routinely hold real logic and are cores when they do.
+
+  Five call sites turn on the distinction — tier inference in `run_checklist` and in
+  `survey`, the empty-core report, the `latent_only` contradiction, and
+  `require_tests`. Adversarial review found the first fix had moved one of them, and
+  the verify pass on that fix found the fifth. A static test now pins all five.
+
 - **Step 2 is now "Tier + core", and it dispatches.** The gate used to ask one
   question — *is there a deterministic core?* — and treat *no* as either a failure or,
   via `latent_only: true`, a blanket exemption. That let a testability question decide
@@ -125,8 +143,9 @@ false-PASS risk. The doctor now **executes** what it cheaply can:
   `node --check` (.mjs/.js/.ts when node present).
 - **`.test.` is extension-scoped** — `fixtures.test.json` is no longer counted
   as a test (only `*.test.{py,sh,mjs,js,ts}`).
-- **`latent_only: true` with code present is a contradiction → FAIL** (was an
-  unconditional bypass of steps 2+3).
+- **`latent_only: true` with a deterministic CORE present is a contradiction → FAIL**
+  (was an unconditional bypass of steps 2+3). A test file or an empty package marker
+  beside a lens is not a core and does not contradict it.
 - **Folded/block-scalar frontmatter** (`description: >-`) parsed correctly
   (pyyaml when available; the hand-roll no longer manufactures bogus keys).
 - **Step 6 requires a structured registry line** (table row / list item /

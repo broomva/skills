@@ -16,8 +16,9 @@ through. So this doctor *executes* what it cheaply can:
 - Step 3 (tests) requires each test file to be non-empty and contain a real test
   construct (`def test_…`, `assert`, `it(`, `test(`, `describe(`, `@pytest`);
   with `--run-tests` it actually invokes pytest and gates on the result.
-- `latent_only: true` is only honored when NO deterministic code is present
-  (declaring it while shipping scripts is a contradiction → FAIL).
+- `latent_only: true` is only honored when no deterministic CORE is present.
+  Shipping a test or an empty package marker beside a lens is fine; shipping a
+  script that does something is a contradiction → FAIL.
 
 Required steps gate the exit code: 1 (SKILL.md contract), 2 (code syntax — unless
 genuinely latent), 3 (real unit tests, when code present). Workspace-aware steps
@@ -476,6 +477,19 @@ def _has_executable_content(path: Path) -> bool:
 # comparison in this file — `CONFTEST.PY` was counted as shippable code.
 _PACKAGE_PLUMBING = {"__init__.py", "conftest.py", "setup.py"}
 
+# Round 20 excluded ALL of _PACKAGE_PLUMBING from the core and round 21 showed that
+# was too wide in one direction and too narrow in another. `setup.py` and
+# `__init__.py` are NAMED for packaging but routinely hold real logic — excluding
+# them turned a passing tier-D skill into "cannot classify", and (worse) hid a real
+# core from the `latent_only` contradiction, flipping a required FAIL to a whole-gate
+# PASS. `conftest.py` is different in kind: it is pytest's own configuration, it is
+# test-side by definition, and nothing else imports it.
+#
+# So the name-based rule is narrowed to the one file where the name really does
+# determine the role, and the empty-marker case — the reason `__init__.py` was in
+# here — is handled by SUBSTANCE instead, which is what it always was.
+_TEST_INFRA = {"conftest.py"}
+
 
 def _is_code_file(skill_dir: Path, f: Path) -> bool:
     """Code = a recognized extension, OR an extensionless EXECUTABLE under scripts/.
@@ -520,6 +534,15 @@ def _core_files(skill_dir: Path) -> list[str]:
     test-named or not, because a broken `scripts/test_helper.py` that no checker reads
     is how a required step passed on a file that does not parse.
 
+    Two things disqualify a shipped file from being the core, and both were found
+    the hard way. It cannot be a TEST (round 19) and it cannot be EMPTY (round 20) —
+    `scripts/conftest.py` is excluded as test infrastructure, and an empty
+    `scripts/__init__.py` is excluded for having nothing in it, not for its name.
+
+    `_is_code_file` still lets LOCATION decide first, so all of these are syntax-
+    checked as shipped code whatever they are called. Being code and being a core are
+    different questions; five call sites turn on the second one.
+
     The core is narrower, and the difference is the whole point. A lone
     `scripts/test_only.py` used to be BOTH: step 2 inferred tier D from it and step 3
     reported "1 real test file" about the same bytes, so a skill shipping nothing but a
@@ -527,7 +550,37 @@ def _core_files(skill_dir: Path) -> list[str]:
     `test_tier_d_declared_without_code_fails` calls the one thing the gate must not
     permit. A file cannot be the artifact and the proof of the artifact at once.
     """
-    return [c for c in _code_files(skill_dir) if not _is_test_file(Path(c).name)]
+    return [c for c in _core_candidates(skill_dir)
+            if _has_executable_content(skill_dir / c)]
+
+
+def _deterministic_scripts(skill_dir: Path) -> list[str]:
+    """Any shipped non-test script with something in it — deliberately WIDER than
+    the core, and used only by the `latent_only` contradiction.
+
+    `latent_only: true` claims the skill ships nothing deterministic. Answering that
+    with `core` let a real, imported module pass by being named `conftest.py`: the
+    core excludes pytest configuration by name, so the claim went unchallenged. The
+    exclusion is right for INFERRING a tier and wrong for REFUTING a denial, which is
+    the tell that these were always two questions.
+
+    Still excludes tests (a lens may ship one) and empty files (a package marker is
+    not deterministic anything).
+    """
+    return [c for c in _code_files(skill_dir)
+            if not _is_test_file(Path(c).name)
+            and _has_executable_content(skill_dir / c)]
+
+
+def _core_candidates(skill_dir: Path) -> list[str]:
+    """Everything that COULD be a core: shipped code that is neither a test nor
+    pytest's own infrastructure. Separate from `_core_files` because the difference
+    between the two — candidates that turned out to be empty — is exactly what the
+    "an empty file is not a core" message needs to name.
+    """
+    return [c for c in _code_files(skill_dir)
+            if not _is_test_file(Path(c).name)
+            and Path(c).name.lower() not in _TEST_INFRA]
 
 
 def _test_files(skill_dir: Path, kind: str = "") -> list[str]:
@@ -1655,7 +1708,8 @@ def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
             "a positive-only suite cannot see over-triggering")
 
 
-def _tier_of(skill_dir: Path, fm: dict, core: list[str]) -> tuple[str | None, bool, str]:
+def _tier_of(skill_dir: Path, fm: dict, core: list[str],
+             code: list[str] | None = None) -> tuple[str | None, bool, str]:
     """Return (tier, declared, why). Declared wins; otherwise infer.
 
     Inference exists so a 94-skill roster does not break the day tiers ship — NOT to
@@ -1680,6 +1734,13 @@ def _tier_of(skill_dir: Path, fm: dict, core: list[str]) -> tuple[str | None, bo
         return None, False, f"tier: {raw!r} is not one of D/J/L"
     if core:
         return TIER_D, False, "inferred: ships scripts/ code"
+    # "no scripts/ code" was FALSE for the case that motivated the split: a skill
+    # shipping `scripts/test_only.py` ships scripts/ code, it just ships no CORE.
+    # Saying otherwise sent an author looking for a file that is already there.
+    if code:
+        return None, False, ("no tier: declared, and no script here is a deterministic "
+                             "core — each is a test, pytest configuration, or empty "
+                             "(J and L must be declared)")
     return None, False, "no tier: declared and no scripts/ code (J and L must be declared)"
 
 
@@ -1692,7 +1753,7 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     code = _code_files(skill_dir)
     blobs, unparseable_evals = _eval_blobs(skill_dir)
     core = _core_files(skill_dir)
-    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, core)
+    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, core, code)
     results: list[dict] = []
 
     def add(step, label, status, detail, required=False):
@@ -1754,9 +1815,21 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # syntax check that origin/main applied unconditionally — a coverage regression
     # introduced by the refactor and caught in adversarial review.
     broken = [(c, e) for c in code if (e := _script_syntax_error(skill_dir / c))]
-    empty_code = [c for c in code if not _has_executable_content(skill_dir / c)]
+    # The empty set is drawn from CANDIDATES, not from all code: an empty
+    # `scripts/__init__.py` beside a working `scripts/core.py` is an ordinary package
+    # marker, and failing the skill for it was a false reject (round 20).
+    empty_core = [c for c in _core_candidates(skill_dir)
+                  if not _has_executable_content(skill_dir / c)
+                  and Path(c).name.lower() not in _PACKAGE_PLUMBING]
 
-    if tier is None:
+    # A file that does not parse is the most actionable thing the gate can say, so it
+    # is said FIRST. It used to sit behind `tier is None`, which meant a skill whose
+    # only script was broken reported "cannot classify" — true, but it buried the
+    # reason it could not be classified.
+    if broken:
+        add(2, "Tier + core", FAIL,
+            f"{tag}: " + "; ".join(f"{c}: {e}" for c, e in broken[:3]), required=True)
+    elif tier is None:
         add(2, "Tier + core", FAIL,
             f"cannot classify — {tier_why}. Declare `tier: D` (ship scripts/), "
             "`tier: J` (ship evals/admission.md + rubric + held-out cases + judge config), "
@@ -1764,29 +1837,37 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
             "PROCEDURE binding an external capability (a CLI, an API, a hosted runtime) "
             "it is none of the three — that residue is BRO-2192, and until it lands the "
             "honest options are an integration test (step 4) or an explicit tier", required=True)
-    elif latent_only and code:
+    elif latent_only and (_det := _deterministic_scripts(skill_dir)):
+        # Deliberately NOT `core`: see _deterministic_scripts. A lens may ship a test
+        # and an empty package marker; what it may not ship is anything that runs.
         add(2, "Tier + core", FAIL,
-            f"latent_only:true but {len(code)} script(s) present — contradiction", required=True)
-    elif broken:
+            f"latent_only:true but {len(_det)} deterministic script(s) present "
+            f"({', '.join(_det[:3])}) — contradiction", required=True)
+    elif empty_core:
+        # An empty file is not a deterministic core. py_compile is perfectly happy
+        # with 0 bytes, so `touch scripts/noop.py` used to satisfy tier D. An earlier
+        # attempt moved this inside the tier-D arm to spare an empty `__init__.py`;
+        # that made it unreachable whenever a core existed, so an empty stub beside a
+        # real core started passing. The marker is spared by not counting plumbing.
         add(2, "Tier + core", FAIL,
-            f"{tag}: " + "; ".join(f"{c}: {e}" for c, e in broken[:3]), required=True)
-    elif empty_code:
-        # An empty file is not a deterministic core. py_compile is perfectly happy with
-        # 0 bytes, so `touch scripts/noop.py` used to satisfy tier D.
-        add(2, "Tier + core", FAIL,
-            f"{tag}: empty script(s) {', '.join(empty_code[:3])} — an empty file is not a core",
-            required=True)
+            f"{tag}: empty script(s) {', '.join(empty_core[:3])} "
+            "— an empty file is not a core", required=True)
     elif tier == TIER_D:
         if not core:
             add(2, "Tier + core", FAIL,
-                "tier D declared but no scripts/ code that is not itself a test"
-                if code else "tier D declared but no scripts/ code", required=True)
+                "tier D declared but no scripts/ code that is not itself a test "
+                "or pytest configuration" if code
+                else "tier D declared but no scripts/ code", required=True)
         else:
             checked = [c for c in code if _syntax_checkable(skill_dir / c)]
             claim = (f"{len(code)} script(s), syntax ok" if len(checked) == len(code)
                      else f"{len(code)} script(s), {len(checked)} syntax-checked "
                           f"({len(code) - len(checked)} unchecked: no checker for their type)")
-            add(2, "Tier + core", PASS, f"{tag}: {claim}: {', '.join(code[:3])}", required=True)
+            # The step is labelled "Tier + core". Reporting only the script count made
+            # the split invisible in the one line a reader sees.
+            if len(core) != len(code):
+                claim += f"; {len(core)} core"
+            add(2, "Tier + core", PASS, f"{tag}: {claim}: {', '.join(core[:3])}", required=True)
     elif tier == TIER_J:
         issues: list[str] = []
         if unparseable_evals:
@@ -1835,12 +1916,22 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
     # Tests are required whenever deterministic code ships, whatever the tier. The
     # old expression routed through `latent_only`, which is how a skill could ship
     # scripts and buy its way out of testing them.
-    require_tests = bool(code)
+    # NOT `core`, and not `code` either. `core` excludes `conftest.py` BY NAME, so
+    # requiring tests off it meant renaming one file bought a working module out of
+    # being tested — the round-21 fail-open, transplanted. `code` was the original
+    # bug (a package marker is not a thing to test). The right predicate is the
+    # name-blind one: does this skill ship anything that runs?
+    require_tests = bool(_deterministic_scripts(skill_dir))
     all_tests = _test_files(skill_dir)
     real_tests = [t for t in all_tests if _is_real_test(skill_dir / t)]
     if not require_tests:
         add(3, "Unit tests", SKIP if not real_tests else PASS,
-            "no code to test" if not real_tests else f"{len(real_tests)} test file(s)")
+            # "no code to test" became false the moment require_tests started
+            # reading `core`: a lens shipping a test and a package marker has code.
+            # Same class as the two other messages this arc had to correct — a string
+            # that describes the OLD predicate after the predicate moved.
+            "nothing deterministic to test" if not real_tests
+            else f"{len(real_tests)} test file(s)")
     elif not real_tests:
         why = "no tests/" if not all_tests else f"{len(all_tests)} test file(s) but none contain a real test"
         add(3, "Unit tests", FAIL, f"{why} — the 'works today' trap", required=True)
@@ -1986,8 +2077,7 @@ def survey(root: Path, **kw) -> dict:
         # an uncaught OSError two-thirds of the way through produced ZERO output.
         try:
             fm = parse_frontmatter(md) or {}
-            code = _code_files(d)
-            tier, declared, why = _tier_of(d, fm, _core_files(d))
+            tier, declared, why = _tier_of(d, fm, _core_files(d), _code_files(d))
             res = run_checklist(d, **kw)
             failed = [f"{r['step']} {r['label']}" for r in res
                       if r["required"] and r["status"] != PASS]

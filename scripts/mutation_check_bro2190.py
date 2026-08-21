@@ -11,6 +11,7 @@ Guards, each closing a named prior failure:
     a renamed target used to surface only afterwards as MISSED (M63), and a deleted
     one only as a mutant that died to something else
 """
+import os
 import subprocess, sys
 from pathlib import Path
 
@@ -43,16 +44,16 @@ MUTANTS = [
      'add("2j*", "Judge execution", PASS,',
      "test_judge_execution_is_never_reported_as_a_pass"),
     ("M6 tier L inferred from a trigger eval again",
-     '    if core:\n        return TIER_D, False, "inferred: ships scripts/ code"\n    return None, False,',
-     '    if core:\n        return TIER_D, False, "inferred: ships scripts/ code"\n    if (skill_dir / "evals").is_dir():\n        return TIER_L, False, "inferred: has evals"\n    return None, False,',
+     '    if core:\n        return TIER_D, False, "inferred: ships scripts/ code"\n',
+     '    if core:\n        return TIER_D, False, "inferred: ships scripts/ code"\n    if (skill_dir / "evals").is_dir():\n        return TIER_L, False, "inferred: has evals"\n',
      "test_trigger_eval_alone_does_not_infer_a_lens"),
     ("M7 require_tests routed through latent_only again",
-     '    require_tests = bool(code)',
-     '    require_tests = bool(code) and not latent_only',
+     '    require_tests = bool(_deterministic_scripts(skill_dir))',
+     '    require_tests = bool(_deterministic_scripts(skill_dir)) and not latent_only',
      "test_latent_only_plus_scripts_still_requires_tests"),
     ("M8 unclassified skill passes step 2",
-     '    if tier is None:\n        add(2, "Tier + core", FAIL,',
-     '    if tier is None:\n        add(2, "Tier + core", PASS,',
+     '    elif tier is None:\n        add(2, "Tier + core", FAIL,',
+     '    elif tier is None:\n        add(2, "Tier + core", PASS,',
      "test_unclassifiable_skill_still_fails"),
 
     # --- round 1: every fix made in response to the two adversarial strata ---
@@ -85,8 +86,8 @@ MUTANTS = [
      '            if not f.is_file():',
      "test_gitkeep_and_readme_are_not_held_out_cases"),
     ("M17 empty script accepted as a deterministic core",
-     '    empty_code = [c for c in code if not _has_executable_content(skill_dir / c)]',
-     '    empty_code = []',
+     '    empty_core = [c for c in _core_candidates(skill_dir)\n                  if not _has_executable_content(skill_dir / c)\n                  and Path(c).name.lower() not in _PACKAGE_PLUMBING]',
+     '    empty_core = []',
      "test_empty_script_is_not_a_deterministic_core"),
     ("M18 unparseable eval artifacts become invisible instead of failing closed",
      '        if isinstance(data, _Unparseable):\n            bad.append(data)',
@@ -431,17 +432,64 @@ MUTANTS = [
      '    under_scripts = f.is_relative_to(skill_dir / "scripts")',
      '    under_scripts = not f.is_relative_to(skill_dir / "scripts")',
      "test_package_plumbing_under_scripts_is_still_a_script"),
-    ("M108 extension matching in _is_test_file stops casefolding",
-     '    lowered = name.lower()',
-     '    lowered = name',
-     "test_a_test_file_is_recognised_whatever_the_extension_case"),
+    # M108 retired in round 20: byte-identical to M104 in anchor, replacement AND
+    # target test, so the sweep counted one distinct mutation twice.
     ("M109 the core stops excluding tests (a test becomes its own subject again)",
-     '    return [c for c in _code_files(skill_dir) if not _is_test_file(Path(c).name)]',
-     '    return _code_files(skill_dir)',
+     '            if not _is_test_file(Path(c).name)\n            and Path(c).name.lower() not in _TEST_INFRA]',
+     '            if not False\n            and Path(c).name.lower() not in _TEST_INFRA]',
      "test_a_test_cannot_be_the_core_it_tests"),
+    # --- rounds 20-22: the four consumers the split left behind -----------------
+    ("M111 pytest configuration counts as a deterministic core again",
+     '            and Path(c).name.lower() not in _TEST_INFRA]',
+     '            and True]',
+     "test_pytest_configuration_is_test_infrastructure_not_a_core"),
+    ("M112 the conftest exclusion stops casefolding",
+     '            and Path(c).name.lower() not in _TEST_INFRA]',
+     '            and Path(c).name not in _TEST_INFRA]',
+     "test_the_conftest_exclusion_is_case_insensitive"),
+    ("M113 an empty file counts as a deterministic core",
+     '    return [c for c in _core_candidates(skill_dir)\n            if _has_executable_content(skill_dir / c)]',
+     '    return _core_candidates(skill_dir)',
+     # NOT the matrix: the sweep reported MISSED and it was right. Every matrix row
+     # that ships an empty file also trips the empty-core branch, which fires first
+     # and yields the same verdict, so the matrix cannot see this one. The unit
+     # assertion on the two predicates can.
+     "test_the_two_predicates_are_not_the_same_predicate"),
+    ("M114 run_checklist infers the tier from code again, not core",
+     '    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, core, code)',
+     '    tier, tier_declared, tier_why = _tier_of(skill_dir, fm or {}, code, code)',
+     "test_the_core_matrix"),
+    ("M115 survey() infers the tier from code again, not core",
+     '            tier, declared, why = _tier_of(d, fm, _core_files(d), _code_files(d))',
+     '            tier, declared, why = _tier_of(d, fm, _code_files(d), _code_files(d))',
+     "test_the_known_core_consumers_have_not_drifted"),
+    ("M116 the latent_only contradiction narrows back to the core",
+     '    elif latent_only and (_det := _deterministic_scripts(skill_dir)):',
+     '    elif latent_only and (_det := _core_files(skill_dir)):',
+     "test_latent_only_sees_logic_hidden_behind_a_conftest_name"),
+    ("M117 require_tests narrows back to the core, so a conftest buys out of testing",
+     '    require_tests = bool(_deterministic_scripts(skill_dir))',
+     '    require_tests = bool(_core_files(skill_dir))',
+     "test_a_pytest_shaped_filename_does_not_buy_out_of_testing"),
+    ("M119 require_tests widens back to all code, demanding tests for a marker",
+     '    require_tests = bool(_deterministic_scripts(skill_dir))',
+     '    require_tests = bool(_code_files(skill_dir))',
+     "test_the_core_matrix"),
+    ("M120 the empty-file check stops sparing legitimately-empty packaging",
+     '                  and Path(c).name.lower() not in _PACKAGE_PLUMBING]',
+     '                  ]',
+     "test_an_empty_stub_beside_a_real_core_is_still_a_failure"),
+    ("M121 the PASS line lists code again instead of the cores it counted",
+     "', '.join(core[:3])",
+     "', '.join(code[:3])",
+     "test_the_pass_line_names_the_cores_it_counted"),
+    ("M118 the PASS line stops disclosing the core count",
+     '            if len(core) != len(code):\n                claim += f"; {len(core)} core"',
+     '            pass',
+     "test_the_pass_line_discloses_the_core_count"),
     ("M110 the core excludes too much (real code beside a test disappears)",
-     '    return [c for c in _code_files(skill_dir) if not _is_test_file(Path(c).name)]',
-     '    return [c for c in _code_files(skill_dir) if False]',
+     '            if not _is_test_file(Path(c).name)\n            and Path(c).name.lower() not in _TEST_INFRA]',
+     '            if False\n            and Path(c).name.lower() not in _TEST_INFRA]',
      "test_a_test_cannot_be_the_core_it_tests"),
     ("M92 camelCase negative polarity is dropped again",
      '_NEGATIVE_KEYS = {"should_not_trigger", "shouldNotTrigger", "should_not_fire",',
@@ -455,9 +503,20 @@ MUTANTS = [
 
 
 def run_tests():
+    # PYTHONDONTWRITEBYTECODE is load-bearing, not hygiene. CPython invalidates a
+    # .pyc on (mtime_seconds, size), so a same-LENGTH replacement written inside one
+    # second reuses stale bytecode and the mutant reports SURVIVED without having
+    # run. M1, M5 and M8 are byte-length-identical: three live candidates for a
+    # fabricated survivor, and a survivor is a FALSE FINDING, the worse direction.
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     r = subprocess.run([sys.executable, "-m", "pytest", str(TESTS), "-q", "--tb=no"],
-                       cwd=REPO, capture_output=True, text=True)
-    failed = [l.split("::")[-1].split()[0] for l in r.stdout.splitlines()
+                       cwd=REPO, capture_output=True, text=True, env=env)
+    # Strip the parametrize id. `_known` below already normalises `name[case]` to
+    # `name`, and this list did not, so `expect not in failed` was UNSATISFIABLE for
+    # every mutant naming a parametrized test: it died, the named test really did
+    # fail, and the harness reported "targeted test did NOT fail". A proof harness
+    # that cannot score its own targets is worse than none.
+    failed = [l.split("::")[-1].split()[0].split("[")[0] for l in r.stdout.splitlines()
               if l.startswith("FAILED")]
     errored = any(l.startswith("ERROR") for l in r.stdout.splitlines())
     return r.returncode, failed, errored
