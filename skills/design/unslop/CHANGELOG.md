@@ -20,6 +20,13 @@ Absorbed [petergyang/no-ai-slop](https://github.com/petergyang/no-ai-slop) (read
 - Fixed a false negative the new tests exposed: `export const pitch = "…"` in a plain `.ts/.js` copy
   module was eaten by the JSX-attribute stripper, hiding assignment-style copy from every line-level
   tell.
+- Cross-model round 1 (codex gpt-5.4) hardening: `copy.slop-patterns` severity counts **distinct
+  file:line sites** (one line matching three patterns is one site); period-separated binary contrasts
+  require an article ("It's not *a* chatbot. It's *a* teammate." counts — "It's not available on iPad.
+  It's available on desktop." does not, and "isn't coming. It's already here" books once, under the
+  waivable aggregate); HTML template strings inside `.ts` copy modules are markup-stripped; cited
+  claims (`[1]`, links) are not weasel attribution; "the bottom line" dropped as a colon-reveal lead-in
+  (literal in finance copy).
 - Voice doctrine in `arc.md` step 5 (minimum effective edit, proportional cutting, post-fix
   self-check) and the adopted detection stance in `tells.md`: named patterns are evidence — never a
   claim of AI authorship.

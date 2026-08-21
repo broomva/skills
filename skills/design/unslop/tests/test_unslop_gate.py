@@ -210,3 +210,16 @@ def test_gate_slop_patterns_warn_waiver_and_backcompat(tmp_path, sloppy_repo, cr
     m = us.survey(crafted_repo)
     m["copy_tells"] = {k: m["copy_tells"][k] for k in ("em_dash", "emoji", "not_x_but_y", "checkmark_bullets", "buzzwords")}
     assert _run(crafted_repo, no_render=True, manifest=m)["copy.slop-patterns"].status == "PASS"
+
+
+def test_gate_slop_patterns_counts_distinct_sites_not_key_hits(tmp_path):
+    # one line matching three patterns is ONE site → WARN, never FAIL (codex r1 blocker)
+    root = tmp_path / "one-line"
+    (root / "app").mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}))
+    (root / "app" / "page.tsx").write_text(
+        "export default () => <p>Here's the thing: the best part: it's that simple.</p>;\n"
+    )
+    res = _run(root, no_render=True)["copy.slop-patterns"]
+    assert res.status == "WARN", res.detail
+    assert res.detail.startswith("1 prose-slop site(s)")

@@ -126,9 +126,14 @@ RE_EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002B50\U00002B55\U0001F900-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U0001F1E6-\U0001F1FF✅✨⚡⭐\U0001F525\U0001F680\U0001F4A1\U0001F389]"
 )
 RE_CHECKMARK = re.compile("[✓✔✅☑]")
+# comma/dash-separated contrasts stay loose; PERIOD-separated ones require an article after not/isn't —
+# "It's not a chatbot. It's a teammate." is the tell, "It's not available on iPad. It's available on
+# desktop." is a factual compatibility note (codex r1 blocker).
 RE_NOT_X_BUT_Y = re.compile(
-    r"\b(?:it'?s|it is|this is|we'?re|that'?s)\s+not\s+(?:just\s+|about\s+|a\s+|an\s+|another\s+)?[^.;:\n]{2,60}?[.,;—–-]+\s*(?:it'?s|this is|we'?re|that'?s|but)\b"
-    r"|\b(?:it|this|that|the [a-z]{2,12}) isn'?t (?:just |about |a |an |another )?[^.;:\n]{2,60}?[.,;—–-]+\s*(?:it'?s|this is|that'?s|but)\b",
+    r"\b(?:it'?s|it is|this is|we'?re|that'?s)\s+not\s+(?:just\s+|about\s+|a\s+|an\s+|another\s+)?[^.;:\n]{2,60}?[,;—–-]+\s*(?:it'?s|this is|we'?re|that'?s|but)\b"
+    r"|\b(?:it|this|that|the [a-z]{2,12}) isn'?t (?:just |about )?(?:a|an|another|the) [^.;:\n]{2,60}?[,;—–-]+\s*(?:it'?s|this is|that'?s|but)\b"
+    r"|\b(?:it'?s|it is|this is|that'?s)\s+not\s+(?:just\s+)?(?:a|an|another)\s+[^.;:\n]{2,40}?\.\s+(?:it'?s|this is|that'?s)\s"
+    r"|\b(?:it|this|that|the [a-z]{2,12}) isn'?t (?:just )?(?:a|an|another|the) [^.;:\n]{2,40}?\.\s+(?:it'?s|this is|that'?s)\s",
     re.I,
 )
 
@@ -141,7 +146,7 @@ PROSE_KEYS = ("faux_insight", "throat_clearing", "colon_reveal", "fake_profound"
 PROSE_PATTERNS = {
     "faux_insight": re.compile(r"what nobody tells you|what no one tells you|what most people (?:get wrong|miss|don'?t)|the part everyone misses|nobody (?:talks|is talking) about|here'?s what nobody", re.I),
     "throat_clearing": re.compile(r"here'?s the thing|let me be clear|let'?s be (?:honest|real|clear)|let'?s face it|i'?ll be honest|the uncomfortable truth|truth be told", re.I),
-    "colon_reveal": re.compile(r"\b(?:the best part|the kicker|the catch|the twist|the magic|the secret|the bottom line|plot twist)\s*:", re.I),
+    "colon_reveal": re.compile(r"\b(?:the best part|the kicker|the catch|the twist|the magic|the secret|plot twist)\s*:", re.I),
     "fake_profound": re.compile(r"\bthe future (?:of [\w .'-]{1,40})?is (?:already\s+)?(?:here|now)\b|welcome to the future", re.I),
     "importance_puffery": re.compile(r"a testament to|marks? a pivotal|pivotal moment|plays? a vital role|stands? as a testament|solidif(?:ies|y|ying) (?:its|our|their)|underscor(?:es|ing) (?:its|our|the)", re.I),
     "weasel_attribution": re.compile(r"experts (?:agree|say)|studies (?:show|suggest)|research shows|science says|scientists (?:agree|say)|industry (?:leaders|reports) (?:agree|suggest|say)|widely regarded as", re.I),
@@ -149,6 +154,7 @@ PROSE_PATTERNS = {
     "dramatic_simple": re.compile(r"it'?s that (?:simple|easy)\b|it really is that (?:simple|easy)|that'?s it\.\s+that'?s the", re.I),
     "superficial_ing": re.compile(r",\s*(?:highlighting|underscoring|showcasing|signaling|cementing|reinforcing|demonstrating|reflecting) (?:our|its|their|the) (?:commitment|dedication|passion|mission|importance|significance|value|power|expertise|focus)", re.I),
 }
+RE_CITATION = re.compile(r"\[\d{1,3}\]|https?://|\bdoi\.org|<(?:a|cite|sup)\b", re.I)
 PROSE_PATTERNS_MULTI = {
     "fake_profound": re.compile(r"isn'?t coming[.!]\s+it'?s already here", re.I),
     "negative_listing": re.compile(r"\bno (?:more )?\w[\w' -]{0,24}\.\s+no \w[\w' -]{0,24}\.\s+(?:no|just|only)\b|\bnot (?:a|an|your) [\w' -]{2,30}\.\s+not (?:a|an|your)\b", re.I),
@@ -702,13 +708,18 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                 if RE_CHECKMARK.search(code_free):
                     copy_tells["checkmark_bullets"].append(site(p, i))
                 if not RE_CODE_ONLY_LINE.search(line):
-                    # markup-bearing files get the JSX stripper; a plain .ts/.js copy module must not —
+                    # markup-bearing lines get the JSX stripper (incl. HTML template strings inside .ts copy
+                    # modules — their attr payloads are not prose); a plain assignment line must not, or
                     # `export const pitch = "Delve…"` parses as an attribute payload and the copy vanishes
-                    prose = _strip_attrs(code_free) if (is_ui or p.suffix.lower() in (".tsx", ".jsx")) else RE_CSS_TOKENS.sub(" ", code_free)
+                    strip_markup = is_ui or p.suffix.lower() in (".tsx", ".jsx") or RE_TAG.search(code_free)
+                    prose = _strip_attrs(code_free) if strip_markup else RE_CSS_TOKENS.sub(" ", code_free)
                     if RE_BUZZ.search(prose):
                         copy_tells["buzzwords"].append(site(p, i))
                     for k, rx in PROSE_PATTERNS.items():
                         if rx.search(prose):
+                            # "Research shows …[1]" / "…(see study)" names its source — the weasel tell is the UNcited claim
+                            if k == "weasel_attribution" and RE_CITATION.search(code_free):
+                                continue
                             copy_tells[k].append(site(p, i))
             for m in RE_NOT_X_BUT_Y.finditer(txt):
                 copy_tells["not_x_but_y"].append(site(p, txt.count("\n", 0, m.start()) + 1))

@@ -284,11 +284,12 @@ class Gate:
         # a pattern the survey adds later is counted here automatically — no per-pattern gate branch to forget.
         legacy = {"em_dash", "emoji", "checkmark_bullets", "not_x_but_y", "buzzwords"}
         prose_counts = {k: v.get("count", 0) for k, v in ct.items() if k not in legacy}
-        total = sum(prose_counts.values())
+        # severity is DISTINCT file:line sites — one line matching three patterns is one site (codex r1 blocker)
+        distinct = {s for k, v in ct.items() if k not in legacy for s in v.get("sites", [])}
         named = ", ".join(f"{k}×{n}" for k, n in sorted(prose_counts.items()) if n) or "none"
         prose_ev = [f"[{k}] {s}" for k, v in sorted(ct.items()) if k not in legacy for s in v.get("sites", [])]
-        self.add("copy.slop-patterns", "FAIL" if total >= 3 else ("WARN" if total else "PASS"),
-                 f"{total} prose-slop pattern site(s): {named}", evidence=prose_ev)
+        self.add("copy.slop-patterns", "FAIL" if len(distinct) >= 3 else ("WARN" if distinct else "PASS"),
+                 f"{len(distinct)} prose-slop site(s): {named}", evidence=prose_ev)
 
         # substance.legal
         lg = s.get("legal", {})
