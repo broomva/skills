@@ -541,3 +541,16 @@ def test_namespaced_font_tokens_are_declarations(tmp_path):
     fonts = us.survey(root)["fonts"]
     assert "-apple-system" in fonts["families"]       # the namespaced stack registers as declared
     assert all("1.25rem" not in k for k in list(fonts["families"]) + list(fonts["fallback_only"]))
+
+
+def test_split_families_hostile_edges():
+    # self-probe before review: case-insensitive var(), deep nesting, quotes, empty fallback,
+    # unbalanced input — never emit a mangled root, and "Varela Round" is a real family
+    assert us._split_families("Varela Round, sans-serif")[0] == ["varela round", "sans-serif"]
+    assert us._split_families("VAR(--a, Menlo)") == ([], ["menlo"])
+    assert us._split_families("var(--a, var(--b, var(--c, var(--d, X))))") == ([], ["x"])
+    assert us._split_families("var(--a,)") == ([], [])
+    d, fb = us._split_families("var(--bv-font-sans, 'SF Pro', \"Segoe UI\")")
+    assert d == [] and fb == ["sf pro", "segoe ui"]
+    d, fb = us._split_families("var(--broken, Menlo")   # unbalanced: no mangled roots either way
+    assert all("var(" not in x and ")" not in x for x in d + fb)

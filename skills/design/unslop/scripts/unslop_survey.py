@@ -194,14 +194,15 @@ def _split_families(value: str) -> tuple[list[str], list[str]]:
     roots `ui-monospace`×31 and a mangled `monospace)`). Families inside var() count as fallbacks."""
     inner: list[str] = []
     val = value
-    for _ in range(3):   # nested var(--a, var(--b, x)) resolves in ≤3 passes
-        nxt = re.sub(r"var\(\s*--[\w-]+\s*(?:,([^()]*))?\)", lambda m: inner.append(m.group(1) or "") or " ", val)
+    while True:   # innermost-out; each pass strips ≥1 var() so this terminates at any nesting depth
+        nxt = re.sub(r"var\(\s*--[\w-]+\s*(?:,([^()]*))?\)", lambda m: inner.append(m.group(1) or "") or " ", val, flags=re.I)
         if nxt == val:
             break
         val = nxt
     def clean(chunk: str) -> list[str]:
         return [f.strip().strip("'\"").lower() for f in chunk.split(",") if f.strip()]
-    declared = [f for f in clean(val) if f and f not in FONT_KEYWORDS]
+    # residual "var(" fragments mean unbalanced/hostile input — drop them, never emit mangled roots
+    declared = [f for f in clean(val) if f and f not in FONT_KEYWORDS and "var(" not in f and ")" not in f]
     fallback = [f for chunk in inner for f in clean(chunk) if f and f not in FONT_KEYWORDS]
     return declared, fallback
 
