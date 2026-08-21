@@ -16,7 +16,9 @@ receipt, and never reorder.
 > `⛔ Blocked on you — 7 of {total} shown, rest in .control/asks/{arc}.yaml`.
 
 **Reply by editing this** — every row pre-answered with the recommendation, so
-you strike out what you disagree with instead of composing anything:
+you strike out what you disagree with instead of composing anything. **One line
+per ask row, numbered to match:** a skeleton shorter than the table silently
+drops the asks it omits.
 
 ```
 1. done
@@ -42,9 +44,12 @@ say so explicitly and say why every remaining lane is gated.}
 | 1 | {what the work does today, in plain words} | {what the spec left unsaid} | `{the one-line reversal}` |
 | 2 | {…} | {…} | `{…}` |
 
-> Generated from `.control/asks/{arc}.yaml` → `decisions:`, least-confident
-> first. Same 7-row cap as the ask block; head it `{n} of {total} shown` when it
-> overflows. Nothing here is a question — none of it stopped the arc.
+> Generated — do not hand-write it:
+> `python3 scripts/ask_ledger.py decisions .control/asks/{arc}.yaml --render-handback`
+> Ordering, the 7-row cap and the `{n} of {total} shown` overflow header are
+> enforced there and tested, not left to be remembered. Omit the block entirely
+> when there are no decisions. Nothing here is a question — none of it stopped
+> the arc, and every row carries its undo.
 
 ## 📋 Receipt
 

@@ -83,6 +83,11 @@ exists to prevent.
 
 ## The shape — six blocks, always in this order
 
+*"Always in this order" constrains **order**, never presence.* A block with no
+content is omitted, not rendered empty — an empty 🔀 block would assert that
+nothing was decided, and an empty ⛔ block would assert that nothing is blocked.
+Only the receipt is unconditional.
+
 ```
 ## ⛔ Blocked on you — N items, ~M min
    table: # | ask (imperative, addressed to "you") | unblocks | if you say nothing
@@ -141,12 +146,16 @@ Each is derived from a measured failure, not a style preference.
 9. **The nine-item receipt stays, underneath the asks.** It is structured and
    proves the work. What this contract displaces is the **free-form narrative**
    — that moves to `docs/handoffs/`.
-10. **The ask block ends with the reply already drafted.** A copy-pasteable
+10. **The ask block ends with the reply already drafted — one line per row,
+   numbered to match.** A copy-pasteable
    skeleton, one line per row, recommendation pre-filled — so answering is an
    *edit*, not a composition. Rules 2–6 fix what a row **says**; none of them
    lowers the cost of **replying**, and a perfectly-formed ask still stalls if
    answering it means composing prose at 1am. Reacting beats imagining: hand
-   the reader something to strike through, not a blank box.
+   the reader something to strike through, not a blank box. The skeleton is
+   generated *from the rows*: if it has four lines and the table has five, the
+   fifth ask is one the reader is never prompted to answer — a silent drop
+   dressed as a convenience.
 
 ## The 🔀 block — what rung 6 owes the human
 
@@ -162,7 +171,8 @@ question, and the arc did not wait for any of it.
 
 | Property | Why |
 |---|---|
-| Rendered from `decisions:` in the ask ledger, not written free-hand | The schema requires a reversal (or a named reason it is irreversible) on every entry, so a row that should never have been decided alone cannot be quietly prosed over. See `ask_ledger.py` |
+| Rendered by `ask_ledger.py decisions --render-handback`, not written free-hand | The rules below — ordering, the undo, the cap, the overflow header — are executable there and tested. Stated only in prose they are four things an agent forgets one at a time |
+| An **irreversible** choice may not appear here as a settled default | Rung 6 licenses reversible choices only. Recording an irreversible one is still right, but the schema forces it to carry `verdict: needs-user` and name the ask that took it to the human — so it surfaces in the ⛔ block, not as something quietly decided |
 | **Least-confident first** | Confidence ranks; verdict groups. The reader's attention is finite and should land on the choice most likely to be wrong, not the one that happened to be made first |
 | Every row shows its **undo** | The reversal is the entire justification for not having asked. A row that cannot state one is a row that should have been an ask |
 | Hard cap 7, overflow counted | Same discipline as the ask block. More than seven means the plan was foggy — the clustering *is* the signal, and the fix is upstream in the spec, not a longer table |
