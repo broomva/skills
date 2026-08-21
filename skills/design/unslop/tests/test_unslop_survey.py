@@ -437,3 +437,60 @@ def test_dialog_template_attrs_stay_invisible(tmp_path):
         'export const tip = "<dialog data-headline=\\"What nobody tells you about billing\\">OK</dialog>";\n'
     )
     assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 0
+
+
+# ---------------------------------------- genesis dogfood finding (BRO-2196)
+def test_block_comment_continuation_lines_are_not_copy(tmp_path):
+    # a multi-line {/* … */} comment's middle lines carry no marker prefix; they are not UI copy —
+    # and blanking them must not shift the line numbers of real sites below
+    root = _prose_repo(tmp_path, "blockcmt")
+    (root / "app" / "page.tsx").write_text(
+        "export default function Home() {\n"
+        "  return (\n"
+        "    <main>\n"
+        "      {/* the scroller pins to the bottom while streaming and\n"
+        "          returns toward the newest — translateY past the edge, a supercharged\n"
+        "          trick — see BRO-1590 for the running signal */}\n"
+        "      <p>Model locked — session running.</p>\n"
+        "    </main>\n"
+        "  );\n"
+        "}\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["em_dash"]["count"] == 1                      # only the real UI string
+    assert ct["em_dash"]["sites"][0].endswith(":7")          # line numbers preserved
+    assert ct["buzzwords"]["count"] == 0                     # "supercharged" lived in the comment
+
+
+def test_block_comment_edges_unterminated_and_whole_file_scans(tmp_path):
+    # codex 0.2.1 blockers: unterminated /* at EOF; whole-file scans must read blanked text too
+    root = _prose_repo(tmp_path, "blockedge")
+    (root / "app" / "page.tsx").write_text(
+        "export default function A() {\n"
+        "  return (\n"
+        "    <main>\n"
+        "      {/* No setup.\n"
+        "          No config.\n"
+        "          Just code. */}\n"
+        "      {/* It's not a chatbot. It's a teammate. */}\n"
+        "      <p>No lock-in. No seats. Just usage.</p>\n"
+        "    </main>\n"
+        "  );\n"
+        "}\n"
+        "/*\nsupercharged\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["negative_listing"]["count"] == 1              # the real <p>, not the comment
+    assert ct["negative_listing"]["sites"][0].endswith(":8")  # line math on blanked text
+    assert ct["not_x_but_y"]["count"] == 0                    # comment-only contrast never counts
+    assert ct["buzzwords"]["count"] == 0                      # unterminated trailing comment blanked
+
+
+def test_template_literal_comment_markers_documented_tradeoff(tmp_path):
+    # Lexical-blind blanking eats string CONTENT that contains literal /* */ markers — the accepted
+    # false negative (preferred over counting comment prose as copy). This test pins the choice.
+    root = _prose_repo(tmp_path, "tmpl-cmt")
+    (root / "content" / "guide.ts").write_text(
+        "export const tip = `\n/*\nWhat nobody tells you about billing\n*/\n`;\n"
+    )
+    assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 0

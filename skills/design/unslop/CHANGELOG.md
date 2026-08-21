@@ -5,6 +5,13 @@ All notable changes to `unslop` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-08-20
+
+Genesis dogfood (BRO-2196): continuation lines of multi-line `/* … */` / `{/* … */}` comments were
+counted as UI copy (7 of 21 em-dash sites on the first live run were comment prose). Block comments
+are now blanked newline-preserving before the copy scan, so markers, buzzwords and prose patterns
+inside them never count and real sites keep their line numbers.
+
 ## [0.2.0] — 2026-08-20
 
 Absorbed [petergyang/no-ai-slop](https://github.com/petergyang/no-ai-slop) (read verbatim; BRO-2195):

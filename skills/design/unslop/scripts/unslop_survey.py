@@ -195,6 +195,15 @@ def _strip_attrs(line: str) -> str:
     body = RE_CSS_TOKENS.sub(" ", body)     # backgroundColor: "var(--color-surface-elevated)" is not copy; "next-gen" prose survives
     return f"{body} {kept}"
 
+def _blank_block_comments(txt: str) -> str:
+    """Blank /* … */ and {/* … */} comments newline-preserving (line numbers survive), including an
+    unterminated /* running to EOF. Lexical-blind by design: a string literal whose CONTENT contains
+    comment markers is blanked too — a false negative we prefer over counting comment prose as UI
+    copy (7 of 21 em-dash sites on the first live run were comment continuations, BRO-2196)."""
+    out = re.sub(r"/\*.*?\*/", lambda mm: "\n" * mm.group(0).count("\n"), txt, flags=re.S)
+    return re.sub(r"/\*(?:(?!\*/).)*\Z", lambda mm: "\n" * mm.group(0).count("\n"), out, flags=re.S)
+
+
 # --- substance -------------------------------------------------------------
 LEGAL_TERMS = re.compile(r"(^|/)(terms(-of-(service|use))?|tos|terms-and-conditions|legal/terms|conditions)(/|\.|$)", re.I)
 LEGAL_PRIVACY = re.compile(r"(^|/)(privacy(-policy)?|legal/privacy|datenschutz|privacidad)(/|\.|$)", re.I)
@@ -701,7 +710,10 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         )
         is_prose_mdx = p.suffix.lower() == ".mdx" and re.search(r"(^|/)(content|docs?|blog|posts?|articles?)(/|$)", rp, re.I)
         if (is_ui and not is_prose_mdx) or is_copy_module:
-            for i, line in enumerate(lines, 1):
+            # blank block comments with newlines preserved: a continuation line of a multi-line
+            # /* … */ or {/* … */} comment carries no marker prefix and read as UI copy otherwise
+            comment_free = _blank_block_comments(txt)
+            for i, line in enumerate(comment_free.splitlines(), 1):
                 st = line.lstrip()
                 if st.startswith(("//", "/*", "*", "{/*", "<!--", "import ")):
                     continue
@@ -733,11 +745,12 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                             if k == "weasel_attribution" and RE_CITATION.search(code_free):
                                 continue
                             copy_tells[k].append(site(p, i))
-            for m in RE_NOT_X_BUT_Y.finditer(txt):
-                copy_tells["not_x_but_y"].append(site(p, txt.count("\n", 0, m.start()) + 1))
+            # whole-file scans read the same comment-blanked text (newlines preserved → line math holds)
+            for m in RE_NOT_X_BUT_Y.finditer(comment_free):
+                copy_tells["not_x_but_y"].append(site(p, comment_free.count("\n", 0, m.start()) + 1))
             for k, rx in PROSE_PATTERNS_MULTI.items():
-                for m in rx.finditer(txt):
-                    copy_tells[k].append(site(p, txt.count("\n", 0, m.start()) + 1))
+                for m in rx.finditer(comment_free):
+                    copy_tells[k].append(site(p, comment_free.count("\n", 0, m.start()) + 1))
 
         if is_ui or is_copy_module:
             # legal links
