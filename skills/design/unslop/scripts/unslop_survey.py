@@ -195,7 +195,9 @@ def _split_families(value: str) -> tuple[list[str], list[str]]:
     inner: list[str] = []
     val = value
     while True:   # innermost-out; each pass strips ≥1 var() so this terminates at any nesting depth
-        nxt = re.sub(r"var\(\s*--[\w-]+\s*(?:,([^()]*))?\)", lambda m: inner.append(m.group(1) or "") or " ", val, flags=re.I)
+        # the fallback may contain balanced parens ('"Brandon (Text)", serif') — but never a nested
+        # var( (the (?<!var) lookbehind), so the innermost var() always matches first and peels out
+        nxt = re.sub(r"var\(\s*--[\w-]+\s*(?:,((?:[^()]|(?<!var)\([^()]*\))*))?\)", lambda m: inner.append(m.group(1) or "") or " ", val, flags=re.I)
         if nxt == val:
             break
         val = nxt
