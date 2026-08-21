@@ -271,9 +271,9 @@ MUTANTS = [
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[ \\t]*\\n(.*?)\\n---[ \\t]*(?:\\n|$)", re.DOTALL)',
      '_FRONTMATTER_RE = re.compile(r"^\\ufeff?---[^\\S\\n]*\\n(.*?)\\n---[^\\S\\n]*(?:\\n|$)", re.DOTALL)',
      "test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters"),
-    ("M71 the cycle guard reports present instead of absent",
-     '            return False  # YAML anchors and JSON round-trips can build cycles',
-     '            return True  # YAML anchors and JSON round-trips can build cycles',
+    ("M71 the cycle/depth guard reports present instead of absent",
+     '            # an unverified artifact is reported, never thrown. Found in P20 round 13.\n            return False',
+     '            # an unverified artifact is reported, never thrown. Found in P20 round 13.\n            return True',
      "test_substantive_terminates_on_a_cyclic_structure"),
 
     # --- round 12 -------------------------------------------------------------

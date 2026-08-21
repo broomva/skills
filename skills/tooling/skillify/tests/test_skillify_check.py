@@ -2265,22 +2265,30 @@ def test_absurdly_nested_values_fail_closed_instead_of_raising(tmp_path):
     a bare traceback and zero checklist lines, violating this file's own contract that
     an unverified artifact is reported, never thrown. Before round 11, `bool(x)` could
     not recurse at all, so this is strictly a defect of the fix."""
-    deep = "x"
-    for _ in range(2000):
-        deep = {"a": deep}
-    assert mod._substantive(deep) is False          # fails closed, does not raise
-    shallow = "x"
-    for _ in range(20):
-        shallow = {"a": shallow}
-    assert mod._substantive(shallow) is True        # control: real nesting still counts
+    def nest(n):
+        v = "x"
+        for _ in range(n):
+            v = {"a": v}
+        return v
 
-    # and end to end, the checklist reports rather than throwing
+    assert mod._substantive(nest(600)) is False     # fails closed, does not raise
+    assert mod._substantive(nest(20)) is True       # control: real nesting still counts
+
+    # End to end. The nested value is spliced in as TEXT rather than built with
+    # json.dumps: encoding a deeply nested object recurses inside the encoder, and the
+    # first version of this test — depth 2000 through json.dumps — passed locally on
+    # 3.12 and raised RecursionError on CI's 3.11. The TEST blew the stack, not the
+    # gate, which is the failure this very test exists to rule out. Depth 120 clears
+    # the cap of 100 and depends on no interpreter's stack headroom.
+    depth = 120
+    deep_json = '{"a":' * depth + '"x"' + "}" * depth
     d = _j(tmp_path, held_out=0)
     blob = json.loads((d / "evals" / "suite.json").read_text())
-    blob["judge"]["agreement_measured"] = {"value": 0.84, "method": deep}
-    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
-    res = _check(d)
-    assert _step(res, 2)["status"] == "FAIL"
+    blob["judge"]["agreement_measured"] = {"value": 0.84, "method": "__DEEP__"}
+    text = json.dumps(blob).replace('"__DEEP__"', deep_json)
+    assert json.loads(text)["judge"]["agreement_measured"]["method"] != "__DEEP__"
+    (d / "evals" / "suite.json").write_text(text, encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
 
 
 def test_the_nesting_cap_counts_depth_not_containers_visited():
