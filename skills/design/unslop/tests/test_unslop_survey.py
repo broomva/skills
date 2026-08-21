@@ -509,3 +509,10 @@ def test_manifest_metadata_route_is_a_copy_surface(tmp_path):
     ct = us.survey(root)["copy_tells"]
     assert ct["em_dash"]["count"] == 1
     assert ct["buzzwords"]["count"] == 1
+    # the boundary: a build/bundler manifest is data, not copy (path-scoped match)
+    (root / "lib").mkdir()
+    (root / "lib" / "manifest.ts").write_text(
+        'export default { note: "Build manifest — supercharge caching" };\n'
+    )
+    ct2 = us.survey(root)["copy_tells"]
+    assert ct2["em_dash"]["count"] == 1 and ct2["buzzwords"]["count"] == 1  # unchanged

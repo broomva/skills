@@ -49,9 +49,11 @@ SKIP_DIRS = {
 # `<root>/reports/` and `<root>/build/` are artefacts (a real app lost its /reports route to this list once)
 SKIP_TOP_LEVEL_DIRS = {"dist", "build", "out", "reports", "lighthouse", "cypress", "tmp", "temp"}
 # .ts/.js modules that carry landing/marketing copy — scanned for copy + substance tells like UI files
-# manifest: a Next metadata route (app/manifest.ts → /manifest.webmanifest) carries user-facing
-# name/description copy — the PWA install surface (genesis dogfood, BRO-2196)
-RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo|manifest)(\.(?!test|spec|stories|d)[a-z]+)*\.[cm]?[jt]s$", re.I)
+RE_COPY_MODULE = re.compile(r"^(content|copy|site(-?config)?|marketing|landing|messages|i18n|locales?|testimonials?|pricing|faq|hero|strings|seo)(\.(?!test|spec|stories|d)[a-z]+)*\.[cm]?[jt]s$", re.I)
+# a Next METADATA ROUTE at app/manifest.ts (→ /manifest.webmanifest) carries user-facing
+# name/description copy — the PWA install surface (genesis dogfood, BRO-2196). Path-scoped so a
+# build/bundler manifest (lib/manifest.ts, utils/manifest.ts) never counts as copy.
+RE_METADATA_ROUTE_COPY = re.compile(r"(^|/)app/manifest\.[cm]?[jt]s$", re.I)
 # server-side / non-surface files that can never carry a loading state
 RE_SERVER_SIDE_UI = re.compile(r"(^|/)(api|server|middleware|workers?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]sx?$", re.I)
 RE_SERVER_SIDE = re.compile(r"(^|/)(api|server|db|lib|utils?|hooks?|middleware|workers?|scripts?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|middleware\.[jt]s$|(^|/)use-[a-z-]+\.[jt]sx?$", re.I)
@@ -707,7 +709,7 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         is_copy_module = (
             not is_non_surface
             and p.suffix.lower() in SCRIPT_EXT
-            and (bool(RE_COPY_MODULE.match(_segs[-1])) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
+            and (bool(RE_COPY_MODULE.match(_segs[-1])) or bool(RE_METADATA_ROUTE_COPY.search(rp.replace("\\", "/"))) or any(seg.lower() in ("content", "data", "copy", "locales", "locale", "i18n", "messages", "marketing") for seg in _segs[:-1]))
             and not re.search(r"(^|/)(api|server|middleware|hooks?)(/|$)|(^|/)route\.[jt]sx?$|\.server\.[jt]sx?$|(^|/)use-[a-z-]+\.[jt]sx?$", rp, re.I)
         )
         is_prose_mdx = p.suffix.lower() == ".mdx" and re.search(r"(^|/)(content|docs?|blog|posts?|articles?)(/|$)", rp, re.I)

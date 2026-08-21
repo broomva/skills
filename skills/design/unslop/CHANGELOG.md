@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Genesis dogfood finding #2 (BRO-2196, via cross-model review of the arc's own PR): `app/manifest.ts`
 — a Next metadata route serving `/manifest.webmanifest` — carries user-facing name/description copy
-(the PWA install surface) and was not a copy module, so the copy pass missed it. `manifest` joins
-the copy-module basenames.
+(the PWA install surface) and was not a copy module, so the copy pass missed it. The match is
+path-scoped to the metadata route (`app/manifest.ts`, any depth) — a build/bundler `lib/manifest.ts`
+stays data, never copy (cross-model nit on this very fix).
 
 ## [0.2.1] — 2026-08-20
 
