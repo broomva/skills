@@ -191,12 +191,13 @@ else
 fi
 (cd "$GUARD_TMP" && git checkout -q -- file.txt && rm -f .git/cross-review-guard.state)
 
-echo "T17. a file added inside an UNTRACKED DIRECTORY is caught (-uall is load-bearing)"
-# T12 covers a top-level untracked file, which plain `git status --porcelain`
-# reports anyway — so it never tested what -uall buys. Inside an untracked
-# directory, -unormal collapses the whole tree to one '?? newdir/' line that is
-# byte-identical no matter what the reviewer puts in it, and `git diff HEAD`
-# does not see untracked content at all. -uall is the only thing closing that.
+echo "T17. a file added inside an UNTRACKED DIRECTORY is caught"
+# Plain `git status --porcelain` collapses an untracked directory to one
+# '?? newdir/' line that is byte-identical no matter what the reviewer puts in
+# it, and `git diff HEAD` does not see untracked content at all. The untracked
+# CONTENT hash is what closes this. (It was briefly `-uall` on status; the sweep
+# showed that flag became indistinguishable from its absence once contents were
+# hashed, so it was removed rather than left as untested surface.)
 (cd "$GUARD_TMP" && mkdir -p newdir && echo a > newdir/a.txt)
 (cd "$GUARD_TMP" && bash "$CROSS_REVIEW_SH" reviewer-guard capture >/dev/null 2>&1)
 NORMAL_BEFORE=$(cd "$GUARD_TMP" && git -c core.fsmonitor=false status --porcelain=v1)
@@ -261,6 +262,20 @@ else
          "rc=$RC out=$OUT — exit 4 alone is not enough: the mismatch path also returns 4, so without asserting the DIAGNOSIS this test passes with the empty-baseline check deleted"
 fi
 (cd "$GUARD_TMP" && rm -f .git/cross-review-guard.state)
+
+echo "T22. a repo with no commits fails closed rather than capturing an empty baseline"
+# The only place the DIFF error path is reachable on its own: `git status`
+# succeeds in a freshly-init'd repo, `git diff HEAD` does not. Without this, the
+# status guard alone satisfied every error test and the diff guard was untested.
+NOCOMMIT=$(mktemp -d)
+(cd "$NOCOMMIT" && git init -q .) >/dev/null 2>&1
+OUT=$(cd "$NOCOMMIT" && bash "$CROSS_REVIEW_SH" reviewer-guard capture --state="$NOCOMMIT/s" 2>&1); RC=$?
+if [ "$RC" -eq 4 ] && [ ! -s "$NOCOMMIT/s" ]; then
+    ok "T22: no-HEAD repo refuses to capture"
+else
+    fail "T22: no-HEAD repo refuses to capture" "rc=$RC out=$OUT — a baseline written here would certify nothing"
+fi
+rm -rf "$NOCOMMIT"
 
 # ── T14: the dispatch names a read-only agent type ────────────────────────
 echo "T14. Strata B dispatches read-only, not general-purpose"

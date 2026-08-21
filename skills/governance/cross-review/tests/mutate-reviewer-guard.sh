@@ -35,7 +35,7 @@ PY
   else echo "  [KILLED ] $n"; pass=$((pass+1)); fi
   git checkout -q -- "$F"; }
 
-mut "fingerprint ignores untracked names"  '    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 -uall 2>&1); then' '    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 2>&1); then'
+mut "untracked CONTENT hash removed"       '    printf '\"'\"'%s\\n%s\\n%s\\n'\"'\"' \"$st\" \"$df\" \"$untracked\"' '    printf '\"'\"'%s\\n%s\\n'\"'\"' \"$st\" \"$df\"'
 mut "fingerprint ignores tracked edits"    '    if ! df=$(git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>&1); then' '    if ! df=$(true 2>&1); then'
 mut "missing baseline treated as pass"     'An unverifiable review is not a passed review." >&2
                 exit 4' 'An unverifiable review is not a passed review." >&2

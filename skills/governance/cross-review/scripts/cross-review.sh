@@ -121,16 +121,19 @@ guard_fingerprint() {
     # hash of the empty string — identical at capture and verify, i.e. a vacuous
     # pass exactly when nothing could be observed.
     local st df untracked
-    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 -uall 2>&1); then
+    if ! st=$(git -c core.fsmonitor=false status --porcelain=v1 2>&1); then
         echo "reviewer-guard: git status failed: $st" >&2; return 1
     fi
     if ! df=$(git -c core.fsmonitor=false diff HEAD --no-ext-diff --no-textconv 2>&1); then
         echo "reviewer-guard: git diff failed: $df" >&2; return 1
     fi
-    # `status` lists untracked PATHS; it says nothing about their CONTENT, and
-    # `git diff HEAD` does not see untracked files at all. So a reviewer editing a
-    # file that was already untracked at capture was invisible to both. Hash the
-    # bytes as well as the names.
+    # `status` says nothing about untracked CONTENT and `git diff HEAD` does not
+    # see untracked files at all, so a reviewer editing a file that was already
+    # untracked at capture was invisible to both. Hashing the bytes closes that —
+    # and subsumes `-uall`, which enumerated untracked names inside untracked
+    # directories. That flag is deliberately gone: the mutation sweep showed no
+    # test could tell it apart from its absence once contents are hashed, and a
+    # rule nothing can distinguish is one more thing to maintain, not a defence.
     untracked=$(git -c core.fsmonitor=false ls-files --others --exclude-standard -z 2>/dev/null \
         | xargs -0 -I{} shasum -a 256 "{}" 2>/dev/null | sort)
     printf '%s\n%s\n%s\n' "$st" "$df" "$untracked" | shasum -a 256 | awk '{print $1}'
