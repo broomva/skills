@@ -372,10 +372,10 @@ MUTANTS = [
      '        if id(node) in visited:\n            continue\n        visited.add(id(node))',
      '        if False:\n            continue\n        visited.add(id(node))',
      "test_a_recursive_yaml_anchor_terminates"),
-    ("M95 repeated merge keys are reported as duplicates again",
-     '                if name != "<<":',
-     '                if True:',
-     "test_repeated_merge_keys_are_not_duplicates"),
+    # M95 retired in round 17 with the `<<` carve-out it named. The carve-out was
+    # justified by a claim measured to be inverted — repeated `<<` IS last-wins on
+    # PyYAML 6.0.3 — so the mutant asserted the wrong direction of the wrong property.
+    # M102 replaces it, and asserts the carve-out cannot come back.
     ("M96 a duplicate entrypoint is swallowed instead of reported",
      '            issues.append(f"skill.json declares {e.key!r} twice — last-wins would "',
      '            _unused = (f"skill.json declares {e.key!r} twice — last-wins would "',
