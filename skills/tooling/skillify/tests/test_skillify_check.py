@@ -2797,9 +2797,14 @@ def test_step5_detects_a_camelcase_negative_only_trigger_eval(tmp_path):
 
 
 def _alias_dag(levels: int, leaf):
-    """An ACYCLIC graph where every level references the previous one TWICE. `levels=24`
-    is 2^24 paths through ~24 distinct nodes: unreachable for a memoised walk, fatal
-    for one that only caps depth."""
+    """An ACYCLIC graph where every level references the previous one TWICE: 2^levels
+    paths through `levels` distinct nodes. Trivial for a walk with a visited set,
+    infeasible for one without.
+
+    `levels` must be large enough that the undeduplicated walk cannot finish inside the
+    test's timeout, or the mutant that removes the visited set SURVIVES. Measured: at
+    24 (~1.7e7 paths) the undeduplicated walk completes in under 10s and M101 survived;
+    at 30 (~1.1e9) it cannot. The fixture's size is load-bearing, not decorative."""
     node = leaf
     for _ in range(levels):
         node = {"a": node, "b": node}
@@ -2827,13 +2832,13 @@ def test_every_recursive_walk_memoises_not_just_guards_cycles(tmp_path):
     (`cases: &x` / `nested: *x`), and measured against `_walk_for_trigger_keys` it
     returns False in 0.000s — it would have passed while the function was fatal. A
     cycle fixture cannot detect this class; the DAG is the discriminating input."""
-    hollow, real = _alias_dag(24, {"v": ""}), _alias_dag(24, {"v": "x"})
+    hollow, real = _alias_dag(30, {"v": ""}), _alias_dag(30, {"v": "x"})
     assert _with_timeout(10, mod._substantive, hollow) is False
     assert _with_timeout(10, mod._substantive, real) is True
 
-    assert _with_timeout(10, mod._walk_for_trigger_keys, _alias_dag(24, {"v": 1})) is False
+    assert _with_timeout(10, mod._walk_for_trigger_keys, _alias_dag(30, {"v": 1})) is False
     assert _with_timeout(10, mod._walk_for_trigger_keys,
-                         _alias_dag(24, {"should_fire": [1]})) is True
+                         _alias_dag(30, {"should_fire": [1]})) is True
 
     yaml_dag = "\n".join(["l0: &l0 {v: 1}"]
                          + [f"l{i}: &l{i} {{a: *l{i-1}, b: *l{i-1}}}" for i in range(1, 32)])

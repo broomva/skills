@@ -394,13 +394,13 @@ MUTANTS = [
      '    "should_trigger", "should_not_trigger", "shouldTrigger",',
      "test_step5_detects_a_camelcase_negative_only_trigger_eval"),
     # --- round 17: memoisation is the invariant, not cycle detection ----------
-    ("M100 _substantive reverts to a path-set (cycles yes, DAG blowup no)",
-     '        result = any(_substantive(v, _memo, _depth + 1)',
-     '        result = any(_substantive(v, dict(_memo), _depth + 1)',
-     "test_every_recursive_walk_memoises_not_just_guards_cycles"),
-    ("M101 _walk_for_trigger_keys loses its memo",
-     '    key = id(node)\n    if key in _memo:\n        return _memo[key]',
-     '    key = id(node)\n    if False:\n        return _memo[key]',
+    # M100 retired in round 18 with the memo it named. The memo is gone: it could not
+    # coexist honestly with the depth cap (the cap made the answer a function of the
+    # budget, the memo cached it as a property of the node), so `_substantive` became an
+    # iterative walk with a visited set and no cap. M71 covers dropping that set.
+    ("M101 _walk_for_trigger_keys loses its visited set",
+     '        if id(cur) in seen:\n            continue\n        seen.add(id(cur))',
+     '        if False:\n            continue\n        seen.add(id(cur))',
      "test_every_recursive_walk_memoises_not_just_guards_cycles"),
     ("M102 the `<<` carve-out comes back",
      '                if name in seen:\n                    return name\n                seen.add(name)',
