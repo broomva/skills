@@ -59,8 +59,8 @@ deciding an expressibility question. It now asks what **kind** of thing the skil
 | Tier | What it is | Step 2 passes when |
 |---|---|---|
 | **D** — deterministic | there is a pure function in here | `scripts/` present and syntax-valid |
-| **J** — judgment | a well-posed question whose valid answers vary | `evals/admission.md` with a recorded outcome + a rubric + held-out cases + a judge config naming a model distinct from the model under eval + `agreement_floor` **with** `agreement_measured` |
-| **L** — lens | it changes what you attend to, not what you do | a routing eval |
+| **J** — judgment | a well-posed question whose valid answers vary | `evals/admission.md` with a recorded outcome + a rubric + held-out cases + a judge config naming a model distinct from the model under eval + `judge.agreement_floor` **with** `judge.agreement_measured` |
+| **L** — lens | it changes what you attend to, not what you do | a routing eval asserting BOTH polarities |
 
 Declare it in frontmatter (`tier: D`). Only **D** is inferred, from shipped code;
 **J and L must be declared.** Inference decides *which* gate applies, never *whether*

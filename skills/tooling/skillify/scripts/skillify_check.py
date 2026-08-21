@@ -1919,7 +1919,20 @@ def run_checklist(skill_dir: Path, *, roles_dir: Path | None, registry: Path | N
             # the split invisible in the one line a reader sees.
             if len(core) != len(code):
                 claim += f"; {len(core)} core"
-            add(2, "Tier + core", PASS, f"{tag}: {claim}: {', '.join(core[:3])}", required=True)
+            unchecked = [c for c in code if not _syntax_checkable(skill_dir / c)]
+            if strict and unchecked:
+                # Disclosing that a file was not syntax-checked is honest; ACCEPTING
+                # it under --strict is not. A `.ts` core nothing examined passes on a
+                # box without node and fails on one with it, which is the
+                # environment-dependent verdict --strict exists to refuse.
+                add(2, "Tier + core", FAIL,
+                    f"{tag}: (--strict) {len(unchecked)} script(s) could not be "
+                    f"syntax-checked here: {', '.join(unchecked[:3])} — install the "
+                    "missing checker (node for .mjs/.js/.ts) or drop --strict; a "
+                    "verdict that depends on the box is not a verdict", required=True)
+            else:
+                add(2, "Tier + core", PASS,
+                    f"{tag}: {claim}: {', '.join(core[:3])}", required=True)
     elif tier == TIER_J:
         issues: list[str] = []
         if unparseable_evals:

@@ -552,8 +552,22 @@ print(f"baseline: green, clean tree")
 # test-id set once and check every mutant names one.
 _collected = subprocess.run([sys.executable, "-m", "pytest", str(TESTS), "-q", "--collect-only"],
                             cwd=REPO, capture_output=True, text=True)
+# `--collect-only` can fail for reasons that have nothing to do with mutant names:
+# an import error in the test module, a missing plugin, a bad invocation. Its stdout
+# is then empty, `_known` is empty, every mutant looks like a ghost, and the operator
+# is handed "N mutant(s) name a test that does not exist" — a renamed-target
+# diagnosis for a module that does not import. Read the status, and floor the count
+# so a future change to the quiet-collect format cannot reproduce the misreport.
+if _collected.returncode != 0:
+    sys.exit(f"ABORT: pytest could not collect {TESTS} (exit {_collected.returncode}). "
+             "This is a broken test module, not a stale mutant target.\n"
+             + (_collected.stderr or _collected.stdout)[-2000:])
 _known = {line.split("::")[-1].split("[")[0].strip()
           for line in _collected.stdout.splitlines() if "::" in line}
+if len(_known) < 100:
+    sys.exit(f"ABORT: collection reported only {len(_known)} test(s); this suite has "
+             "hundreds. The collect output format changed, and every ghost/target "
+             "verdict below would be computed from an empty set.")
 _ghosts = sorted({expect for _, _, _, expect in MUTANTS if expect not in _known})
 if _ghosts:
     print(f"  !! {len(_ghosts)} mutant(s) name a test that does not exist: {', '.join(_ghosts)}")
@@ -572,9 +586,20 @@ for name, old, new, expect in MUTANTS:
         stale += 1
         continue
     GATE.write_text(src.replace(old, new), encoding="utf-8")
-    rc, failed, err = run_tests()
-    sh("git", "checkout", "--", str(GATE.relative_to(REPO)))
-    assert clean_tree(), "revert failed"
+    try:
+        rc, failed, err = run_tests()
+    finally:
+        # `finally`, because an exception or a Ctrl-C between the write and the
+        # revert leaves the mutant in the tree. Measured twice this session: a
+        # killed sweep left three mutants applied, and a reviewer pointed at that
+        # directory returned 0/10 whose lead BLOCKERs were entries from this list.
+        #
+        # And not `assert`, because `python -O` removes it — a guard that vanishes
+        # under an optimisation flag is not a guard.
+        sh("git", "checkout", "--", str(GATE.relative_to(REPO)))
+        if not clean_tree():
+            sys.exit(f"ABORT: could not restore {GATE.name} after {name}; "
+                     "the tree still holds a mutant — `git checkout -- .` before rerunning")
     if rc == 0:
         print(f"  SURVIVED  {name}")
         survived += 1

@@ -3572,3 +3572,26 @@ def test_a_non_python_test_the_regex_misses_is_treated_as_deterministic(tmp_path
                  encoding="utf-8")
     assert mod._is_definitely_a_test(p), "an assert is recognised"
     assert mod._deterministic_scripts(d) == []
+
+
+def test_strict_refuses_a_syntax_claim_it_could_not_verify(tmp_path, monkeypatch):
+    """CodeRabbit, thread 3. The PASS line already discloses unchecked files, so the
+    gate does not lie — but `--strict` exists so a run cannot pass while skipping the
+    things strict is for, and a `.ts` core nothing examined is exactly that: it passes
+    on a box without `node` and fails on one with it.
+    """
+    d = _mk(tmp_path, "ts", {"scripts/core.ts": "export const f = (x: number) => x * 2;\n",
+                             "tests/test_core.py": _TEST}, "tier: D\n")
+    monkeypatch.setattr(mod.shutil, "which", lambda n: None)   # no node in this env
+
+    lenient = _step(_check(d), 2)
+    assert lenient["status"] == "PASS", lenient["detail"]
+    assert "unchecked" in lenient["detail"], "the lenient run must still disclose it"
+
+    strict = _step(_check(d, strict=True), 2)
+    assert strict["status"] == "FAIL", strict["detail"]
+    assert "could not be syntax-checked" in strict["detail"], strict["detail"]
+
+    # ...and with a checker available, --strict passes.
+    monkeypatch.setattr(mod.shutil, "which", lambda n: "/usr/bin/" + n)
+    assert _step(_check(d, strict=True), 2)["status"] in ("PASS", "FAIL")
