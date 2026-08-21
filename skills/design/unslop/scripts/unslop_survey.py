@@ -127,14 +127,41 @@ RE_EMOJI = re.compile(
 )
 RE_CHECKMARK = re.compile("[✓✔✅☑]")
 RE_NOT_X_BUT_Y = re.compile(
-    r"\b(?:it'?s|this is|we'?re|that'?s)\s+not\s+(?:just\s+|about\s+|a\s+|an\s+|another\s+)?[^.;:\n]{2,60}?[,;—–-]+\s*(?:it'?s|this is|we'?re|that'?s|but)\b",
+    r"\b(?:it'?s|it is|this is|we'?re|that'?s)\s+not\s+(?:just\s+|about\s+|a\s+|an\s+|another\s+)?[^.;:\n]{2,60}?[.,;—–-]+\s*(?:it'?s|this is|we'?re|that'?s|but)\b"
+    r"|\b(?:it|this|that|the [a-z]{2,12}) isn'?t (?:just |about |a |an |another )?[^.;:\n]{2,60}?[.,;—–-]+\s*(?:it'?s|this is|that'?s|but)\b",
     re.I,
 )
+
+# sentence-level prose slop on product surfaces — after petergyang/no-ai-slop (github.com/petergyang/no-ai-slop,
+# read verbatim 2026-08-20), curated to the forms that recur on UI/marketing surfaces with low false-positive
+# risk. Stance kept from that skill: a named pattern is evidence a human can check — never a claim of AI
+# authorship. Single-sentence shapes match per stripped line; multi-sentence shapes match on the whole file.
+PROSE_KEYS = ("faux_insight", "throat_clearing", "colon_reveal", "fake_profound", "importance_puffery",
+              "weasel_attribution", "rhetorical_setup", "dramatic_simple", "superficial_ing", "negative_listing")
+PROSE_PATTERNS = {
+    "faux_insight": re.compile(r"what nobody tells you|what no one tells you|what most people (?:get wrong|miss|don'?t)|the part everyone misses|nobody (?:talks|is talking) about|here'?s what nobody", re.I),
+    "throat_clearing": re.compile(r"here'?s the thing|let me be clear|let'?s be (?:honest|real|clear)|let'?s face it|i'?ll be honest|the uncomfortable truth|truth be told", re.I),
+    "colon_reveal": re.compile(r"\b(?:the best part|the kicker|the catch|the twist|the magic|the secret|the bottom line|plot twist)\s*:", re.I),
+    "fake_profound": re.compile(r"\bthe future (?:of [\w .'-]{1,40})?is (?:already\s+)?(?:here|now)\b|welcome to the future", re.I),
+    "importance_puffery": re.compile(r"a testament to|marks? a pivotal|pivotal moment|plays? a vital role|stands? as a testament|solidif(?:ies|y|ying) (?:its|our|their)|underscor(?:es|ing) (?:its|our|the)", re.I),
+    "weasel_attribution": re.compile(r"experts (?:agree|say)|studies (?:show|suggest)|research shows|science says|scientists (?:agree|say)|industry (?:leaders|reports) (?:agree|suggest|say)|widely regarded as", re.I),
+    "rhetorical_setup": re.compile(r"what if i told you|think about it[.:]|imagine a world|in a world where|picture this[.:]", re.I),
+    "dramatic_simple": re.compile(r"it'?s that (?:simple|easy)\b|it really is that (?:simple|easy)|that'?s it\.\s+that'?s the", re.I),
+    "superficial_ing": re.compile(r",\s*(?:highlighting|underscoring|showcasing|signaling|cementing|reinforcing|demonstrating|reflecting) (?:our|its|their|the) (?:commitment|dedication|passion|mission|importance|significance|value|power|expertise|focus)", re.I),
+}
+PROSE_PATTERNS_MULTI = {
+    "fake_profound": re.compile(r"isn'?t coming[.!]\s+it'?s already here", re.I),
+    "negative_listing": re.compile(r"\bno (?:more )?\w[\w' -]{0,24}\.\s+no \w[\w' -]{0,24}\.\s+(?:no|just|only)\b|\bnot (?:a|an|your) [\w' -]{2,30}\.\s+not (?:a|an|your)\b", re.I),
+}
 BUZZWORDS = [
     r"supercharg(?:e|ed|es|ing)", r"unleash(?:ed|es|ing)?", r"revolutioni[sz](?:e|ed|es|ing)", r"seamless(?:ly)?",
-    r"effortless(?:ly)?", r"next-gen", r"10x", r"game-chang(?:er|ers|ing)", r"cutting-edge", r"state-of-the-art",
+    r"effortless(?:ly)?", r"next-gen", r"10x", r"game[- ]chang(?:er|ers|ing)", r"cutting-edge", r"state-of-the-art",
     r"empower(?:s|ed|ing|ment)?", r"unlock(?:s|ed|ing)?", r"elevat(?:e|es|ed|ing)", r"streamlin(?:e|es|ed|ing)",
     r"harness the power",
+    # no-ai-slop banned-word deltas that read as slop on a product surface (2026-08)
+    r"delv(?:e|es|ed|ing)", r"foster(?:s|ed|ing)?", r"tapestry", r"transformative", r"transform(?:s|ing)? your",
+    r"ever-evolving", r"embark(?:s|ed|ing)?", r"multifaceted", r"meticulous(?:ly)?", r"paramount",
+    r"paradigm[- ]shift(?:s|ing)?", r"this changes everything", r"this is huge",
 ]
 RE_BUZZ = re.compile(r"(?<![\w-])(?:" + "|".join(BUZZWORDS) + r")(?![\w-])", re.I)
 RE_CSS_TOKENS = re.compile(r"var\([^)]*\)|--[\w-]+")   # var(--x) and --x custom properties only — hyphenated PROSE ("next-gen") stays
@@ -523,7 +550,8 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
         for lib, tag in COMPONENT_LIBS.items():
             if dep == lib or dep.startswith(lib + "/"):
                 component_libs.add(tag)
-    copy_tells = {"em_dash": [], "emoji": [], "not_x_but_y": [], "checkmark_bullets": [], "buzzwords": []}
+    copy_tells = {"em_dash": [], "emoji": [], "not_x_but_y": [], "checkmark_bullets": [], "buzzwords": [],
+                  **{k: [] for k in PROSE_KEYS}}
     legal = {"terms_route": None, "privacy_route": None, "terms_link_sites": [], "privacy_link_sites": []}
     async_files: dict[str, dict] = {}
     placeholders: dict[str, list[str]] = defaultdict(list)
@@ -673,10 +701,20 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     copy_tells["emoji"].append(site(p, i))
                 if RE_CHECKMARK.search(code_free):
                     copy_tells["checkmark_bullets"].append(site(p, i))
-                if not RE_CODE_ONLY_LINE.search(line) and RE_BUZZ.search(_strip_attrs(code_free)):
-                    copy_tells["buzzwords"].append(site(p, i))
+                if not RE_CODE_ONLY_LINE.search(line):
+                    # markup-bearing files get the JSX stripper; a plain .ts/.js copy module must not —
+                    # `export const pitch = "Delve…"` parses as an attribute payload and the copy vanishes
+                    prose = _strip_attrs(code_free) if (is_ui or p.suffix.lower() in (".tsx", ".jsx")) else RE_CSS_TOKENS.sub(" ", code_free)
+                    if RE_BUZZ.search(prose):
+                        copy_tells["buzzwords"].append(site(p, i))
+                    for k, rx in PROSE_PATTERNS.items():
+                        if rx.search(prose):
+                            copy_tells[k].append(site(p, i))
             for m in RE_NOT_X_BUT_Y.finditer(txt):
                 copy_tells["not_x_but_y"].append(site(p, txt.count("\n", 0, m.start()) + 1))
+            for k, rx in PROSE_PATTERNS_MULTI.items():
+                for m in rx.finditer(txt):
+                    copy_tells[k].append(site(p, txt.count("\n", 0, m.start()) + 1))
 
         if is_ui or is_copy_module:
             # legal links

@@ -12,7 +12,7 @@ The gate checks PROPERTIES, not a ban-list:
   fonts.deliberate          no AI-default web face as the primary face; system stack only if declared deliberate
   icons.single-system       one icon library; lucide-only needs a stated decision
   tokens.color/radius/shadow  a vocabulary, not drift (distinct-value thresholds)
-  copy.em-dash / emoji / checkmark-bullets / not-x-but-y / buzzwords
+  copy.em-dash / emoji / checkmark-bullets / not-x-but-y / buzzwords / slop-patterns (prose-slop, after no-ai-slop)
   substance.legal           terms + privacy routes exist AND are linked (persuade profile: FAIL; operate: WARN)
   substance.loading-states  async surfaces carry loading state (coverage ≥ 0.8)
   substance.error-states    async surfaces carry error handling (coverage ≥ 0.5, WARN)
@@ -64,6 +64,7 @@ KNOWN_CHECKS = {
     "direction.authored", "detector.clean", "detector.rule", "fonts.deliberate", "icons.single-system",
     "tokens.color", "tokens.radius", "tokens.shadow",
     "copy.em-dash", "copy.emoji", "copy.checkmark-bullets", "copy.not-x-but-y", "copy.buzzwords",
+    "copy.slop-patterns",
     "substance.legal", "substance.loading-states", "substance.error-states", "substance.placeholders",
     "substance.stock-imagery", "substance.claims", "substance.testimonials", "substance.pricing",
     "substance.product-evidence", "motion.reduced-motion", "evidence.render",
@@ -279,6 +280,15 @@ class Gate:
         self.add("copy.not-x-but-y", "FAIL" if nx > 0 else "PASS", f"{nx} “it's not X, it's Y” construction(s)", evidence=ct.get("not_x_but_y", {}).get("sites", []))
         bz = ct.get("buzzwords", {}).get("count", 0)
         self.add("copy.buzzwords", "WARN" if bz > 2 else "PASS", f"{bz} buzzword line(s)", evidence=ct.get("buzzwords", {}).get("sites", []))
+        # every copy_tells key beyond the five legacy ones is a prose-slop pattern (after no-ai-slop):
+        # a pattern the survey adds later is counted here automatically — no per-pattern gate branch to forget.
+        legacy = {"em_dash", "emoji", "checkmark_bullets", "not_x_but_y", "buzzwords"}
+        prose_counts = {k: v.get("count", 0) for k, v in ct.items() if k not in legacy}
+        total = sum(prose_counts.values())
+        named = ", ".join(f"{k}×{n}" for k, n in sorted(prose_counts.items()) if n) or "none"
+        prose_ev = [f"[{k}] {s}" for k, v in sorted(ct.items()) if k not in legacy for s in v.get("sites", [])]
+        self.add("copy.slop-patterns", "FAIL" if total >= 3 else ("WARN" if total else "PASS"),
+                 f"{total} prose-slop pattern site(s): {named}", evidence=prose_ev)
 
         # substance.legal
         lg = s.get("legal", {})

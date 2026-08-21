@@ -71,6 +71,17 @@ the product; cards are the lazy container. Rewrite copy in the voice; strings li
 where the codebase has them, so the rewrite is one place. Delete "it's not X, it's Y", eyebrows, ✓-bullets,
 buzzwords, em dashes; keep the product's own words.
 
+**Voice doctrine (after no-ai-slop).** Make the *minimum effective edit*: fix the named pattern, keep the
+author's vocabulary, cadence, bluntness and humor. Cutting must be proportional to the actual slop — never
+rewrite distinctive copy merely to zero a counter, and never introduce what you're removing elsewhere
+(synonym cycling, robotic one-shape sentences, stacked punchy fragments). A waiver with the reason
+"authored voice, kept deliberately" is the correct green for copy a human wrote on purpose.
+
+**Post-fix self-check** (before step 7, on your own edits): (1) same author recognizably — would they
+sign it? (2) no invented claims, stats, testimonials, or sources; (3) proportional — strong human
+sentences untouched; (4) the fix didn't trade one pattern for another; (5) every remaining
+`copy.slop-patterns` site is either fixed or carries a reasoned waiver.
+
 ## 6. Class D — substance (composes impeccable `harden`, `onboard`; needs a human for truth)
 
 - **States**: route-level loading/error files + Skeleton/aria-busy/Suspense per async component; a
