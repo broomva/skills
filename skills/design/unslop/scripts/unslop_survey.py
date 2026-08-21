@@ -103,7 +103,9 @@ RE_GOOGLE_FONTS = re.compile(r"""fonts\.googleapis\.com/css2?\?([^"'\s)>]+)""") 
 RE_FONT_FACE = re.compile(r"@font-face\s*\{[^}]*font-family\s*:\s*['\"]?([^;'\"}]+)", re.I | re.S)
 RE_TW_FONT = re.compile(r"fontFamily\s*:\s*\{([^}]*)\}", re.S)
 # `--font-sans: Inter, …` is a family; `--font-size-lg: 1.25rem` / `--font-weight-bold: 700` are not.
-RE_CSS_VAR_FONT = re.compile(r"--font-(?!size|weight|style|feature|variant|stretch|smoothing|synthesis|kerning|optical|leading|tracking|line)[a-z0-9-]*\s*:\s*([^;{}]+);", re.I)
+# a namespace prefix (--bv-font-sans, --brand-font-heading) is still a font-token declaration —
+# genesis dogfood: the DS declared every stack under --bv-font-* and fonts.deliberate saw nothing
+RE_CSS_VAR_FONT = re.compile(r"--(?:[a-z0-9]+-)*font-(?!size|weight|style|feature|variant|stretch|smoothing|synthesis|kerning|optical|leading|tracking|line)[a-z0-9-]*\s*:\s*([^;{}]+);", re.I)
 RE_FONT_VALUE_LOOKS_LIKE_FAMILY = re.compile(r"^-?[a-z][a-z0-9 .'\"-]*$", re.I)     # -apple-system is a family
 FONT_KEYWORDS = {"inherit", "initial", "unset", "revert", "revert-layer"}
 # object-style CSS-in-JS / MUI createTheme: fontFamily: "Inter, sans-serif"
@@ -183,6 +185,25 @@ RE_CSS_TOKENS = re.compile(r"var\([^)]*\)|--[\w-]+")   # var(--x) and --x custom
 RE_CODE_ONLY_LINE = re.compile(r"^\s*(import\s|//|/\*|\*|\{/\*|@apply|[.#@][\w-]+\s*\{)")
 # `<h1 className="text-xl">Supercharge…</h1>` must still be scanned: strip attribute payloads, keep the text
 RE_JSX_ATTR = re.compile(r"""\b[\w:-]+\s*=\s*(?:"[^"]*"|'[^']*'|\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})""")
+
+
+def _split_families(value: str) -> tuple[list[str], list[str]]:
+    """Split a font-family VALUE into (declared families, var-fallback families).
+    `fontFamily: "var(--bv-font-mono, ui-monospace, monospace)"` declares NOTHING — it consumes a
+    token; its fallback tail is not a family root (broomva-design dogfood: the tail leaked as fake
+    roots `ui-monospace`×31 and a mangled `monospace)`). Families inside var() count as fallbacks."""
+    inner: list[str] = []
+    val = value
+    for _ in range(3):   # nested var(--a, var(--b, x)) resolves in ≤3 passes
+        nxt = re.sub(r"var\(\s*--[\w-]+\s*(?:,([^()]*))?\)", lambda m: inner.append(m.group(1) or "") or " ", val)
+        if nxt == val:
+            break
+        val = nxt
+    def clean(chunk: str) -> list[str]:
+        return [f.strip().strip("'\"").lower() for f in chunk.split(",") if f.strip()]
+    declared = [f for f in clean(val) if f and f not in FONT_KEYWORDS]
+    fallback = [f for chunk in inner for f in clean(chunk) if f and f not in FONT_KEYWORDS]
+    return declared, fallback
 
 
 # quoted literals only — `alt={"…"}` / `alt={t("key")}` JSX-expression copy is a known gap (i18n keys are not copy anyway)
@@ -673,20 +694,23 @@ def survey(root: Path, detect: bool = False, detector_cmd: str | None = None, de
                     font_sites[fm.group(1).lower()].append(site(p, txt.count("\n", 0, m.start()) + 1))
         if is_style:
             for m in RE_CSS_VAR_FONT.finditer(txt):
-                fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
-                fams = [f for f in fams if f and not f.startswith("var(") and f not in FONT_KEYWORDS and RE_FONT_VALUE_LOOKS_LIKE_FAMILY.match(f) and not re.search(r"\d", f)]
+                fams, var_falls = _split_families(m.group(1))
+                fams = [f for f in fams if RE_FONT_VALUE_LOOKS_LIKE_FAMILY.match(f) and not re.search(r"\d", f)]
                 if fams:
                     font_sites[fams[0]].append(site(p, txt.count("\n", 0, m.start()) + 1))
                     for fam in fams[1:]:
                         font_fallbacks[fam] += 1
+                for fam in var_falls:
+                    font_fallbacks[fam] += 1
         if is_ui or p.suffix.lower() in SCRIPT_EXT:
             for m in RE_OBJ_FONT_FAMILY.finditer(txt):
-                fams = [f.strip().strip("'\"").lower() for f in m.group(1).split(",")]
-                fams = [f for f in fams if f and not f.startswith("var(") and f not in FONT_KEYWORDS]
+                fams, var_falls = _split_families(m.group(1))
                 if fams:
                     font_sites[fams[0]].append(site(p, txt.count("\n", 0, m.start()) + 1))
                     for fam in fams[1:]:
                         font_fallbacks[fam] += 1
+                for fam in var_falls:
+                    font_fallbacks[fam] += 1
 
         # icons + component libs
         for m in RE_IMPORT_FROM.finditer(txt):
