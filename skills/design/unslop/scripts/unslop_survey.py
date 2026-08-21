@@ -158,7 +158,8 @@ RE_CITATION = re.compile(r"\[\d{1,3}\]|https?://|\bdoi\.org|<(?:a|cite|sup)\b", 
 RE_HTML_TAG = re.compile(
     r"</?(?:div|span|p|a|b|i|u|em|strong|small|li|ul|ol|h[1-6]|section|main|aside|img|br|hr|table|thead"
     r"|tbody|td|th|tr|button|input|label|form|select|option|textarea|header|footer|nav|article|figure"
-    r"|figcaption|blockquote|cite|sup|sub|code|pre|video|audio|source|iframe|svg|path)\b[^<>]*>", re.I)
+    r"|figcaption|blockquote|cite|sup|sub|code|pre|video|audio|source|iframe|svg|path|dialog|details"
+    r"|summary|mark|time|address|dl|dt|dd|fieldset|legend|picture|canvas|template|slot)\b[^<>]*>", re.I)
 PROSE_PATTERNS_MULTI = {
     "fake_profound": re.compile(r"isn'?t coming[.!]\s+it'?s already here", re.I),
     "negative_listing": re.compile(r"\bno (?:more )?\w[\w' -]{0,24}\.\s+no \w[\w' -]{0,24}\.\s+(?:no|just|only)\b|\bnot (?:a|an|your) [\w' -]{2,30}\.\s+not (?:a|an|your)\b", re.I),

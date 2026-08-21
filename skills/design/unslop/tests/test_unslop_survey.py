@@ -428,3 +428,12 @@ def test_template_inner_text_in_copy_module_is_scanned(tmp_path):
     )
     ct = us.survey(root)["copy_tells"]
     assert ct["faux_insight"]["count"] == 1, ct["faux_insight"]
+
+
+def test_dialog_template_attrs_stay_invisible(tmp_path):
+    # codex r4 nit: less-common HTML elements route to the tag-first path too
+    root = _prose_repo(tmp_path, "dlg")
+    (root / "content" / "modal.ts").write_text(
+        'export const tip = "<dialog data-headline=\\"What nobody tells you about billing\\">OK</dialog>";\n'
+    )
+    assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 0
