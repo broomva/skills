@@ -47,6 +47,50 @@ try:  # optional, per the module docstring — YAML evals degrade to a regex sca
 except ImportError:  # pragma: no cover - exercised on stdlib-only machines
     yaml = None  # type: ignore[assignment]
 
+def _ext(path: Path) -> str:
+    """The file's suffix, CASEFOLDED. The only way this file asks "what kind of file".
+
+    Every extension match here used to be `_ext(path)`, case-sensitively, at twenty
+    sites. Two of them flipped REQUIRED steps on byte-identical content: a script named
+    `scripts/core.PY` was not code, so tier D never syntax-checked it and step 3 said
+    "no code to test"; an `evals/broken.YAML` was not an eval artifact, so an
+    unparseable file became invisible rather than failing closed. `_is_code_file` had
+    already been widened once past "five suffixes" for a related reason — this closes
+    the same class at every site rather than at the one in front of us.
+    """
+    return path.suffix.lower()
+
+
+def _json_loads(txt: str) -> object:
+    """The json entry point. Duplicate keys always refuse; recursion never escapes.
+
+    Three call sites read JSON in this file and, before this, one of them carried the
+    duplicate-key hook. The other two decided a REQUIRED gate (`skill.json`'s
+    `entrypoint`) and an advisory one. Routing them through one function is what makes
+    the guarantee hold for the NEXT reader someone adds — see
+    `test_no_reader_bypasses_the_shared_guards`, which fails if a raw `json.loads(`
+    appears anywhere outside this function.
+    """
+    return json.loads(txt, object_pairs_hook=_no_duplicate_pairs)
+
+
+def _ast_parse(txt: str) -> "ast.AST":
+    """`ast.parse`, with the two non-SyntaxError failures folded into SyntaxError.
+
+    `ast.parse` raises `RecursionError` on `x = 1+1+1+…` and `MemoryError: Parser stack
+    overflowed` on `not not not …`. Three call sites caught only `SyntaxError`, so a
+    hostile or generated script produced a bare traceback and zero checklist lines —
+    the same contract violation ("an unverified artifact is reported, never thrown")
+    that round 13 fixed at `_substantive` and round 15 at two more sites. Re-raising as
+    SyntaxError means every existing handler keeps working and says the true thing: the
+    gate could not parse this.
+    """
+    try:
+        return ast.parse(txt)
+    except (RecursionError, MemoryError) as e:
+        raise SyntaxError(f"too deeply nested to parse ({type(e).__name__})") from e
+
+
 CODE_EXTS = {".py", ".sh", ".mjs", ".js", ".ts"}
 _TEST_CODE_EXTS = ("py", "sh", "mjs", "js", "ts")
 PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
@@ -396,10 +440,10 @@ def _has_executable_content(path: Path) -> bool:
         return False
     head = txt.splitlines()[:1]
     m = _SHEBANG_RE.match(head[0]) if head else None
-    is_py = path.suffix == ".py" or (m and m.group(1).lower() in _PY_INTERPRETERS)
+    is_py = _ext(path) == ".py" or (m and m.group(1).lower() in _PY_INTERPRETERS)
     if is_py:
         try:
-            body = ast.parse(txt).body
+            body = _ast_parse(txt).body
         except SyntaxError:
             return True  # broken syntax is step 2's other branch, not emptiness
         if body and isinstance(body[0], ast.Expr) and isinstance(
@@ -425,9 +469,9 @@ def _is_code_file(skill_dir: Path, f: Path) -> bool:
     "whenever a .py/.sh/.mjs/.js/.ts ships")."""
     if _is_test_file(f.name) or f.name in {"__init__.py", "conftest.py", "setup.py"}:
         return False
-    if f.suffix in CODE_EXTS:
+    if _ext(f) in CODE_EXTS:
         return True
-    return (not f.suffix and f.is_relative_to(skill_dir / "scripts")
+    return (not _ext(f) and f.is_relative_to(skill_dir / "scripts")
             and bool(f.stat().st_mode & 0o111))
 
 
@@ -492,9 +536,9 @@ def _is_real_test(path: Path) -> bool:
         return False
     if not txt.strip():
         return False
-    if path.suffix == ".py":
+    if _ext(path) == ".py":
         try:
-            tree = ast.parse(txt)
+            tree = _ast_parse(txt)
         except SyntaxError:
             return False
         for node in ast.walk(tree):
@@ -507,7 +551,7 @@ def _is_real_test(path: Path) -> bool:
                 return True
         return False
     stripped = _strip_code_noise(txt)
-    if path.suffix == ".sh":
+    if _ext(path) == ".sh":
         return bool(_BASH_TEST_CONSTRUCT.search(stripped))
     return bool(_JS_TEST_CONSTRUCT.search(stripped))
 
@@ -566,12 +610,17 @@ def _is_trigger_eval(path: Path) -> bool:
     if not txt.strip():
         return False
 
-    if path.suffix == ".json":
+    if _ext(path) == ".json":
         try:
-            return _walk_for_trigger_keys(json.loads(txt))
-        except (json.JSONDecodeError, RecursionError):
+            return _walk_for_trigger_keys(_json_loads(txt))
+        # ValueError, not JSONDecodeError: `_DuplicateKey` is a ValueError but not a
+        # decode error, and routing this reader through the shared `_json_loads` made
+        # it reachable here for the first time. "Not a trigger eval" is the honest
+        # answer for a file whose keys the gate cannot trust — step 5 is advisory, and
+        # `_load_data` reports the duplicate on the gating path.
+        except (ValueError, RecursionError):
             return False
-    if path.suffix in {".yaml", ".yml"}:
+    if _ext(path) in {".yaml", ".yml"}:
         if yaml is not None:
             try:
                 return _walk_for_trigger_keys(yaml.safe_load(txt))
@@ -579,7 +628,7 @@ def _is_trigger_eval(path: Path) -> bool:
                 return False
         # No PyYAML: fall through to the regex rather than silently reporting
         # "no trigger eval" for a file we simply could not parse.
-    if path.suffix in _EVAL_DATA_EXTS - {".json", ".yaml", ".yml"}:
+    if _ext(path) in _EVAL_DATA_EXTS - {".json", ".yaml", ".yml"}:
         return bool(_TRIGGER_ASSERTION_RE.search(txt))
     return bool(_TRIGGER_ASSERTION_RE.search(_strip_code_noise(txt)))
 
@@ -600,11 +649,11 @@ def _walk_for_trigger_keys(node: object, depth: int = 0) -> bool:
 def _syntax_checkable(path: Path) -> bool:
     """Whether this build can actually syntax-check the file. Used so the PASS line
     never claims `syntax ok` about something nothing examined."""
-    if path.suffix in (".py", ".sh"):
+    if _ext(path) in (".py", ".sh"):
         return True
-    if path.suffix in (".mjs", ".js", ".ts"):
+    if _ext(path) in (".mjs", ".js", ".ts"):
         return bool(shutil.which("node"))
-    if not path.suffix:
+    if not _ext(path):
         head = (_read(path) or "").splitlines()[:1]
         m = _SHEBANG_RE.match(head[0]) if head else None
         if not m:
@@ -618,19 +667,19 @@ def _syntax_checkable(path: Path) -> bool:
 def _script_syntax_error(path: Path) -> str | None:
     """Return an error string if the script has a syntax error, else None.
     .mjs/.js/.ts checked only when `node` is present; otherwise not blocked."""
-    if path.suffix == ".py":
+    if _ext(path) == ".py":
         try:
             py_compile.compile(str(path), doraise=True)
         except py_compile.PyCompileError:
             return "python syntax error"
         return None
-    if path.suffix == ".sh":
+    if _ext(path) == ".sh":
         r = subprocess.run(["bash", "-n", str(path)], capture_output=True)
         return None if r.returncode == 0 else "shell syntax error"
-    if path.suffix in (".mjs", ".js", ".ts") and shutil.which("node"):
+    if _ext(path) in (".mjs", ".js", ".ts") and shutil.which("node"):
         r = subprocess.run(["node", "--check", str(path)], capture_output=True)
         return None if r.returncode == 0 else "node syntax error"
-    if not path.suffix:
+    if not _ext(path):
         return _shebang_syntax_error(path)
     return None
 
@@ -663,7 +712,7 @@ def _shebang_syntax_error(path: Path) -> str | None:
         return None if r.returncode == 0 else "shell syntax error"
     if interp in _PY_INTERPRETERS:
         try:
-            ast.parse(_read(path) or "")
+            _ast_parse(_read(path) or "")
         except SyntaxError:
             return "python syntax error"
         return None
@@ -748,7 +797,17 @@ def _internal_ref_issues(skill_dir: Path) -> list[str]:
     sj = skill_dir / "skill.json"
     if sj.is_file():
         try:
-            data = json.loads(sj.read_text(encoding="utf-8", errors="replace"))
+            data = _json_loads(sj.read_text(encoding="utf-8", errors="replace"))
+        except _DuplicateKey as e:
+            # Must be REPORTED, not swallowed. The first version of this fix added the
+            # hook and left the `except ValueError` below to catch it, so the duplicate
+            # was detected and then discarded into `data = None` — which skips the
+            # entrypoint check entirely and PASSES. Detecting a defect and then
+            # dropping it is worse than not detecting it: the gate now has evidence it
+            # is ignoring.
+            data = None
+            issues.append(f"skill.json declares {e.key!r} twice — last-wins would "
+                          "decide which reference this skill advertises")
         # RecursionError is NOT a ValueError, so a deeply nested skill.json crashed the
         # run with a bare traceback. Third sibling site of the same class: round 13
         # capped `_substantive` and left `_load_data`'s json arm and this one uncovered.
@@ -1044,22 +1103,49 @@ def _duplicate_key_in_node(text: str) -> str | None:
     makes. Nested, not just top-level: `judge:` and `execution_contract:` are found by
     `_dig_all` at any depth, so a duplicate at any depth decides a gate.
     """
-    if yaml is None:
-        return None
+    # No `yaml is None` guard: `_load_data` returns `_Unparseable` before calling this
+    # when there is no parser, so such a branch could never execute. Round 15 deleted
+    # two mutants for naming unreachable branches and then added one; not twice.
     try:
         root = yaml.compose(text)
     except Exception:
         return None  # the caller has already reported it as unparseable
+
+    # `visited` is the cycle guard, and its absence was the worst defect of this arc.
+    # A recursive anchor —
+    #
+    #     cases: &x
+    #       nested: *x
+    #
+    # — is a document `safe_load` ACCEPTS (PyYAML builds a self-referential dict), and
+    # this walk popped the same MappingNode and pushed it back forever: no output, no
+    # exit, no traceback. `--survey` hung with it, and `survey()`'s per-skill
+    # `except Exception` cannot catch a non-terminating loop. `_substantive` twelve
+    # lines up has carried exactly this guard since round 11 and it was not carried
+    # over — a fail-closed gate turned into a silent one, which is strictly worse than
+    # the last-wins bypass this function was added to close.
+    #
+    # Visiting each node once is also correct for the question being asked: duplicates
+    # are a property of a single mapping, so a shared (aliased) subtree needs one visit.
+    visited: set[int] = set()
     stack = [root]
     while stack:
         node = stack.pop()
+        if id(node) in visited:
+            continue
+        visited.add(id(node))
         if isinstance(node, getattr(yaml, "MappingNode", ())):
             seen: set[str] = set()
             for k, v in node.value:
                 name = str(getattr(k, "value", ""))
-                if name in seen:
-                    return name
-                seen.add(name)
+                # `<<` is the merge key. Repeating it is legal YAML and PyYAML merges
+                # the referents deterministically (left to right, first wins per key),
+                # so it is NOT last-wins and reporting it as such was both a false
+                # reject and a factually wrong message.
+                if name != "<<":
+                    if name in seen:
+                        return name
+                    seen.add(name)
                 stack.append(v)
         elif isinstance(node, getattr(yaml, "SequenceNode", ())):
             stack.extend(node.value)
@@ -1082,9 +1168,9 @@ def _load_data(path: Path) -> object | None | _Unparseable:
     # same gate enforces correctly ACROSS files while key order inside one file decided
     # it. `_dig_all`'s docstring already says filename order is not a security boundary;
     # neither is key order.
-    if path.suffix == ".json":
+    if _ext(path) == ".json":
         try:
-            return json.loads(txt, object_pairs_hook=_no_duplicate_pairs)
+            return _json_loads(txt)
         except _DuplicateKey as e:
             return _Unparseable(path, f"duplicate key {e.key!r} — last-wins would decide it")
         except RecursionError:
@@ -1095,7 +1181,7 @@ def _load_data(path: Path) -> object | None | _Unparseable:
             return _Unparseable(path, "nested too deeply to parse")
         except ValueError:
             return _Unparseable(path)
-    if path.suffix in {".yaml", ".yml"}:
+    if _ext(path) in {".yaml", ".yml"}:
         if yaml is None:
             return _Unparseable(path)
         try:
@@ -1125,12 +1211,12 @@ def _eval_blobs(skill_dir: Path) -> tuple[list[tuple[Path, dict]], list[_Unparse
     the config is missing, and must never PASS by the file being invisible.
     """
     out: list[tuple[Path, dict]] = []
-    bad: list[Path] = []
+    bad: list[_Unparseable] = []
     d = skill_dir / "evals"
     if not d.is_dir():
         return out, bad
     for f in sorted(d.rglob("*")):
-        if not f.is_file() or f.suffix not in {".json", ".yaml", ".yml"}:
+        if not f.is_file() or _ext(f) not in {".json", ".yaml", ".yml"}:
             continue
         data = _load_data(f)
         if isinstance(data, _Unparseable):
@@ -1279,7 +1365,7 @@ def _held_out_count(skill_dir: Path, blobs: list[tuple[Path, dict]]) -> int:
     d = skill_dir / "evals" / "held-out"
     if d.is_dir():
         for f in d.rglob("*"):
-            if not f.is_file() or f.name.startswith(".") or f.suffix not in _CASE_EXTS:
+            if not f.is_file() or f.name.startswith(".") or _ext(f) not in _CASE_EXTS:
                 continue
             if f.stem.lower() in {"readme", "index", "template", "example"}:
                 continue
@@ -1439,7 +1525,7 @@ def _routing_eval_issue(skill_dir: Path, blobs: list[tuple[Path, dict]],
     """Tier L's core: a routing eval asserting BOTH polarities. A positive-only suite
     structurally cannot see over-triggering, which is the failure mode a lens has."""
     if unparseable:
-        return (f"{len(unparseable)} eval artifact(s) could not be parsed "
+        return (f"{len(unparseable)} eval artifact(s) could not be trusted "
                 f"({_unparseable_detail(unparseable[0])}); "
                 "an unverifiable routing eval is not a routing eval")
     # Polarity is read ONLY from a top-level cases/prompts/tests list. Walking the

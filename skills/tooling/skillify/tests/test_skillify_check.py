@@ -1147,12 +1147,23 @@ def test_unparseable_eval_artifact_fails_closed_for_tier_j(tmp_path):
 
 
 def test_unparseable_eval_artifact_fails_closed_for_tier_l(tmp_path):
-    """An unverifiable routing eval is not a routing eval — and the message must say
-    'could not parse', not 'no routing eval'."""
+    """An unverifiable routing eval is not a routing eval — and the message must say so,
+    not 'no routing eval'.
+
+    The wording is "could not be TRUSTED" rather than "could not be parsed": since the
+    duplicate-key guard landed, this branch also fires for artifacts that parse
+    perfectly and are merely ambiguous, and calling those a parse failure sent an author
+    hunting for a syntax error that was not there."""
     d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
     (d / "evals" / "broken.json").write_text("{not: valid json", encoding="utf-8")
     step2 = _step(_check(d), 2)
-    assert step2["status"] == "FAIL" and "could not be parsed" in step2["detail"]
+    assert step2["status"] == "FAIL" and "could not be trusted" in step2["detail"]
+
+    # and the reason must name the actual defect for the ambiguous case too
+    d2 = _l(tmp_path / "dup", [{"should_fire": True}, {"should_not_fire": True}])
+    (d2 / "evals" / "dup.json").write_text('{"a": 1, "a": 2}', encoding="utf-8")
+    step2b = _step(_check(d2), 2)
+    assert step2b["status"] == "FAIL" and "duplicate key" in step2b["detail"], step2b["detail"]
 
 
 # --- survey robustness (Strata B major 5, codex minor 1) ---------------------
@@ -2533,3 +2544,177 @@ def test_camelcase_negative_polarity_is_recognised(tmp_path):
                         keys[1]: ["what is the weather"]}), encoding="utf-8")
         step2 = _step(_check(d), 2)
         assert step2["status"] == "PASS", f"{keys} -> {step2['detail']}"
+
+
+def test_no_reader_bypasses_the_shared_guards():
+    """The answer to sixteen rounds of one-site fixes, made machine-checkable.
+
+    Seven confirmed instances of "a fix landed at ONE site of a class with several",
+    and a full reader inventory in round 16 found four MORE sites of two classes that
+    had been declared closed one commit earlier. Patching each new site as it surfaces
+    is what produced that sequence. So the guards now live in three helpers, and this
+    test fails if any reader is added that does not go through them:
+
+      * `_ext(path)`      — casefolded suffix. A `scripts/core.PY` used to skip the
+                            tier-D syntax check AND the unit-test step; an
+                            `evals/broken.YAML` made an unparseable eval invisible.
+      * `_json_loads(txt)`— duplicate-key hook. A duplicated `entrypoint` in skill.json
+                            hid a broken reference from the REQUIRED step 1c.
+      * `_ast_parse(txt)` — folds RecursionError/MemoryError into SyntaxError, so a
+                            generated script reports instead of printing a traceback.
+
+    This is a source scan, which is a weaker instrument than a behavioural test — it
+    can be fooled by aliasing or by `getattr`. It is here for the property no
+    behavioural test can express: that a reader *not yet written* inherits the guard.
+    The behavioural tests above cover the sites that exist today."""
+    src = (Path(mod.__file__).read_text(encoding="utf-8")).splitlines()
+
+    def offenders(needle: str, allowed_in: str) -> list[str]:
+        out, current_def = [], ""
+        for i, line in enumerate(src, 1):
+            stripped = line.lstrip()
+            if stripped.startswith("def "):
+                current_def = stripped[4:].split("(")[0]
+            if needle in line and not stripped.startswith("#"):
+                if current_def == allowed_in:
+                    continue
+                out.append(f"{i}: {stripped[:90]}")
+        return out
+
+    assert not offenders(".suffix", "_ext"), (
+        "raw .suffix outside _ext — case-sensitive extension matching is how "
+        f"scripts/core.PY skipped two required steps:\n" + "\n".join(offenders(".suffix", "_ext")))
+    assert not offenders("json.loads(", "_json_loads"), (
+        "raw json.loads outside _json_loads — no duplicate-key hook:\n"
+        + "\n".join(offenders("json.loads(", "_json_loads")))
+    assert not offenders("ast.parse(", "_ast_parse"), (
+        "raw ast.parse outside _ast_parse — RecursionError/MemoryError escape as "
+        "tracebacks:\n" + "\n".join(offenders("ast.parse(", "_ast_parse")))
+
+
+def test_the_shared_guards_actually_guard():
+    """Paired control for the scan above: a source scan proves routing, not behaviour.
+    These three assertions prove the helpers do the thing the scan assumes."""
+    assert mod._ext(Path("a/core.PY")) == ".py"
+    assert mod._ext(Path("a/broken.YAML")) == ".yaml"
+    assert mod._ext(Path("a/noext")) == ""
+
+    assert mod._json_loads('{"a": 1}') == {"a": 1}
+    try:
+        mod._json_loads('{"a": 1, "a": 2}')
+        raise AssertionError("duplicate key must refuse")
+    except ValueError as e:
+        assert getattr(e, "key", None) == "a"
+
+    assert mod._ast_parse("x = 1").body
+    try:
+        mod._ast_parse("x = " + "1+" * 100000 + "1")
+        # some interpreters parse this fine; that is acceptable, the guard is for the
+        # ones that do not
+    except SyntaxError:
+        pass
+    except (RecursionError, MemoryError) as e:
+        raise AssertionError(f"{type(e).__name__} escaped _ast_parse") from e
+
+
+def _with_timeout(seconds, fn, *a, **kw):
+    """Run `fn` under a hard wall-clock limit, raising TimeoutError if it does not
+    return. Needed because the defect these tests cover is NON-TERMINATION: without a
+    limit the mutant that removes the cycle guard would hang the suite instead of
+    failing it, and a hung sweep reports nothing at all."""
+    import signal
+    if not hasattr(signal, "SIGALRM"):            # pragma: no cover - platform guard
+        return fn(*a, **kw)
+
+    def _boom(signum, frame):
+        raise TimeoutError("did not terminate")
+
+    old = signal.signal(signal.SIGALRM, _boom)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return fn(*a, **kw)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def test_a_recursive_yaml_anchor_terminates(tmp_path):
+    """P20 round 16 — the worst defect of the arc, and mine.
+
+    `_duplicate_key_in_node` walks the compose node graph. `yaml.compose` registers an
+    anchor BEFORE composing its children, so
+
+        cases: &x
+          nested: *x
+
+    yields a CYCLIC node graph. `safe_load` accepts the document; the walk popped the
+    same MappingNode and pushed it back forever. No output, no exit code, no traceback
+    — and `--survey` hung with it, because `survey()`'s per-skill `except Exception`
+    cannot catch a loop that never raises. A fail-closed gate turned into a silent one,
+    which is strictly worse than the last-wins bypass the function was added to close.
+
+    `_substantive` twelve lines up has carried this exact guard since round 11, with a
+    comment naming YAML anchors. It was not carried over — the eighth instance of this
+    arc's dominant class, committed in the fix for the seventh."""
+    cyclic = "cases: &x\n  nested: *x\n"
+    assert _with_timeout(10, mod._duplicate_key_in_node, cyclic) is None
+
+    d = _j(tmp_path)
+    (d / "evals" / "cyc.yaml").write_text(cyclic, encoding="utf-8")
+    res = _with_timeout(20, _check, d)
+    assert isinstance(res, list) and res
+
+    # control: a NON-recursive anchor is ordinary YAML and must still be walked
+    assert _with_timeout(10, mod._duplicate_key_in_node, "a: &x {p: 1}\nb: *x\n") is None
+    assert _with_timeout(10, mod._duplicate_key_in_node, "a: &x {p: 1}\nb: *x\na: 2\n") == "a"
+
+
+def test_repeated_merge_keys_are_not_duplicates():
+    """`<<` is the merge key. Repeating it is legal YAML and PyYAML merges the
+    referents deterministically, so it is NOT last-wins — reporting it as a duplicate
+    was both a false reject and a factually wrong message."""
+    merged = ("defaults: &d\n  a: 1\nextra: &e\n  b: 2\n"
+              "m:\n  <<: *d\n  <<: *e\n  c: 3\n")
+    assert mod._duplicate_key_in_node(merged) is None
+    import yaml as _y
+    assert _y.safe_load(merged)["m"] == {"a": 1, "b": 2, "c": 3}   # the merge is real
+    # control: an ordinary repeated key alongside merge keys is still caught
+    assert mod._duplicate_key_in_node(merged.replace("  c: 3\n", "  c: 3\n  c: 4\n")) == "c"
+
+
+def test_a_duplicate_entrypoint_in_skill_json_is_reported_not_swallowed(tmp_path):
+    """The eighth-site fix, and its own first attempt was wrong in an instructive way.
+
+    Adding `object_pairs_hook` made the duplicate RAISE — into an `except ValueError`
+    that set `data = None`, which skips the entrypoint check entirely and PASSES. The
+    defect was detected and then discarded. Detecting and dropping is worse than not
+    detecting: the gate then holds evidence it is ignoring."""
+    d = _skill(tmp_path / "dup", scripts=True, tests=True, tier="D")
+    (d / "skill.json").write_text(
+        '{"name": "d", "entrypoint": "scripts/nope.py", "entrypoint": "scripts/do.py"}',
+        encoding="utf-8")
+    step = _step(_check(d), "1c")
+    assert step["status"] == "FAIL" and "twice" in step["detail"], step["detail"]
+
+    ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
+    (ok / "skill.json").write_text('{"name": "ok", "entrypoint": "scripts/do.py"}', encoding="utf-8")
+    assert _step(_check(ok), "1c")["status"] == "PASS"
+
+
+def test_uppercase_extensions_are_the_same_kind_of_file(tmp_path):
+    """`scripts/core.PY` was not code, so tier D never syntax-checked it and step 3 said
+    "no code to test" — two REQUIRED steps bypassed by byte-identical content under a
+    different filename. Note the fixtures need distinct DIRECTORIES: macOS is
+    case-insensitive, so `ext-PY/` and `ext-py/` are one directory and an earlier
+    version of this check silently compared a tree with itself."""
+    verdicts = {}
+    for label, ext in (("upper", "PY"), ("lower", "py")):
+        d = _skill(tmp_path / label, scripts=False, tests=False, tier="L")
+        (d / "scripts").mkdir(exist_ok=True)
+        (d / "evals").mkdir(exist_ok=True)
+        (d / "scripts" / f"core.{ext}").write_text("def broken(:\n", encoding="utf-8")
+        (d / "evals" / "routing.json").write_text(
+            json.dumps({"should_fire": ["a"], "should_not_fire": ["b"]}), encoding="utf-8")
+        res = _check(d)
+        verdicts[label] = (_step(res, 2)["status"], _step(res, 3)["status"])
+    assert verdicts["upper"] == verdicts["lower"] == ("FAIL", "FAIL"), verdicts
