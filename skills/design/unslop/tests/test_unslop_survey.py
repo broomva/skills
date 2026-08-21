@@ -494,3 +494,25 @@ def test_template_literal_comment_markers_documented_tradeoff(tmp_path):
         "export const tip = `\n/*\nWhat nobody tells you about billing\n*/\n`;\n"
     )
     assert us.survey(root)["copy_tells"]["faux_insight"]["count"] == 0
+
+
+def test_manifest_metadata_route_is_a_copy_surface(tmp_path):
+    # genesis dogfood #2: app/manifest.ts serves /manifest.webmanifest — its description is
+    # user-facing install copy and must be scanned like any copy module
+    root = _prose_repo(tmp_path, "pwa")
+    (root / "app" / "manifest.ts").write_text(
+        'import type { MetadataRoute } from "next";\n'
+        "export default function manifest() {\n"
+        '  return { name: "App", description: "Agent chat — supercharge your day." };\n'
+        "}\n"
+    )
+    ct = us.survey(root)["copy_tells"]
+    assert ct["em_dash"]["count"] == 1
+    assert ct["buzzwords"]["count"] == 1
+    # the boundary: a build/bundler manifest is data, not copy (path-scoped match)
+    (root / "lib").mkdir()
+    (root / "lib" / "manifest.ts").write_text(
+        'export default { note: "Build manifest — supercharge caching" };\n'
+    )
+    ct2 = us.survey(root)["copy_tells"]
+    assert ct2["em_dash"]["count"] == 1 and ct2["buzzwords"]["count"] == 1  # unchanged
