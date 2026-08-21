@@ -2135,7 +2135,15 @@ def survey(root: Path, **kw) -> dict:
     rows: list[dict] = []
     for md in sorted(root.rglob("SKILL.md")):
         d = md.parent
-        if any(part in {"node_modules", ".git", "__pycache__", ".pytest_cache", ".worktrees"}
+        # `.venv` and friends are here because DOGFOODING THE MERGED ARTIFACT found
+        # them: run this on a developer machine and third-party packages that ship
+        # their own SKILL.md — logfire, typer, fastapi — are counted as skills of
+        # this repo. The passing count is unaffected (they all fail), but the
+        # denominator inflates from 96 to 99, and SKILL.md quotes 96. A roster
+        # number that changes with whether someone has installed dependencies is
+        # not a roster number.
+        if any(part in {"node_modules", ".git", "__pycache__", ".pytest_cache",
+                        ".worktrees", ".venv", "venv", "site-packages", ".tox"}
                for part in d.parts):
             continue
         # One odd file mode anywhere must not cost the whole report. This is the
