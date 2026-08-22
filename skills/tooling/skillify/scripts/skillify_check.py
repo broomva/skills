@@ -2135,8 +2135,21 @@ def survey(root: Path, **kw) -> dict:
     rows: list[dict] = []
     for md in sorted(root.rglob("SKILL.md")):
         d = md.parent
-        if any(part in {"node_modules", ".git", "__pycache__", ".pytest_cache", ".worktrees"}
-               for part in d.parts):
+        # `.venv` and friends are here because DOGFOODING THE MERGED ARTIFACT found
+        # them: run this on a developer machine and third-party packages that ship
+        # their own SKILL.md — logfire, typer, fastapi — are counted as skills of
+        # this repo. The passing count is unaffected (they all fail), but the
+        # denominator inflates from 96 to 99, and SKILL.md quotes 96. A roster
+        # number that changes with whether someone has installed dependencies is
+        # not a roster number.
+        # RELATIVE to root, not absolute. `d.parts` includes every ancestor above
+        # the surveyed root, so a checkout living under any directory named `venv`
+        # — /tmp/venv/repo, ~/venv/work/skills — excluded EVERY skill and reported
+        # a roster of zero. That was latent while the list held only `.git` and
+        # `node_modules` (rare as ancestors); adding `venv` made it likely.
+        if any(part in {"node_modules", ".git", "__pycache__", ".pytest_cache",
+                        ".worktrees", ".venv", "venv", "site-packages", ".tox"}
+               for part in d.relative_to(root).parts):
             continue
         # One odd file mode anywhere must not cost the whole report. This is the
         # command the docs tell a reader to run to regenerate the roster numbers;

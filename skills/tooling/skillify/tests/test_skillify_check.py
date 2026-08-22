@@ -3595,3 +3595,60 @@ def test_strict_refuses_a_syntax_claim_it_could_not_verify(tmp_path, monkeypatch
     # ...and with a checker available, --strict passes.
     monkeypatch.setattr(mod.shutil, "which", lambda n: "/usr/bin/" + n)
     assert _step(_check(d, strict=True), 2)["status"] in ("PASS", "FAIL")
+
+
+def test_the_survey_does_not_count_vendored_skills_from_virtualenvs(tmp_path):
+    """Found by dogfooding the MERGED artifact, not by any test.
+
+    `--survey` walked into `.venv` and counted the SKILL.md files that `logfire`,
+    `typer` and `fastapi` ship inside their own packages. On a clean checkout the
+    roster read 96; on a developer machine with dependencies installed it read 99,
+    while SKILL.md documents 96. The passing count was unaffected — all three fail —
+    but a denominator that depends on whether someone ran `pip install` is not a
+    denominator.
+    """
+    root = tmp_path / "root"
+    real = root / "real-skill"
+    real.mkdir(parents=True)
+    (real / "SKILL.md").write_text(
+        "---\nname: real-skill\ndescription: A genuine skill in this repo.\n---\n# body\n",
+        encoding="utf-8")
+
+    for buried in (".venv/lib/python3.12/site-packages/logfire/.agents/skills/x",
+                   "venv/lib/site-packages/typer/.agents/skills/y",
+                   ".tox/py311/lib/site-packages/z/.agents/skills/z"):
+        d = root / buried
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            "---\nname: vendored\ndescription: Ships inside a dependency.\n---\n# body\n",
+            encoding="utf-8")
+
+    rep = mod.survey(root, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 1, f"vendored SKILL.md counted as a skill: {rep['total']}"
+    assert rep["rows"][0]["skill"] == "real-skill"
+
+
+def test_an_excluded_name_above_the_root_excludes_nothing(tmp_path):
+    """The mirror of the fix above, and the bug the fix itself introduced.
+
+    The exclusion matched `d.parts`, which includes every ancestor ABOVE the
+    surveyed root. A checkout living under any directory named `venv` — and people
+    do keep repos in `~/venv/...` — therefore excluded EVERY skill and reported a
+    roster of zero. Latent while the list held only `.git` and `node_modules`, which
+    are rare as ancestor names; adding `venv` made it likely.
+
+    The exclusion is about where a file sits INSIDE the surveyed tree, so it matches
+    relative to root.
+    """
+    root = tmp_path / "venv" / "site-packages" / "repo" / "skills"
+    d = root / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: A real skill under an excluded ancestor name.\n---\n# body\n",
+        encoding="utf-8")
+
+    rep = mod.survey(root, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 1, (
+        "an excluded name ABOVE the root hid every skill in the tree: "
+        f"{rep['total']} found")
+    assert rep["rows"][0]["skill"] == "demo"
