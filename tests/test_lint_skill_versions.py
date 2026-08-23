@@ -206,7 +206,12 @@ class TestTheFenceMustBeExact:
         d.mkdir()
         (d / "SKILL.md").write_text("---yaml\nname: s\ndescription: D.\nversion: 1.0.0\n---\n",
                                     encoding="utf-8")
-        assert lint.lint_skill(d), "a '---yaml' opener was accepted as frontmatter"
+        problems = lint.lint_skill(d)
+        # Assert the REASON, not merely that something was reported. Accepting
+        # the suffix still produces a finding — "unparseable YAML", because the
+        # leftover `yaml` line breaks the parse — so a truthiness assertion
+        # passed either way and a mutation reverting the fence check survived.
+        assert any("frontmatter fence" in x for x in problems), problems
 
     def test_a_plain_fence_still_parses(self, tmp_path, lint):
         """CONTROL for the case above."""
