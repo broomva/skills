@@ -294,6 +294,23 @@ LED=$(newledger t27)
 RC=$(rb record-verdict --run-id=t27 --ledger="$LED" --verdict=CONTINUE --prediction="a.sh:1")
 if [ "$RC" = "2" ]; then ok "T27: too-short prediction refused"; else fail "T27: too-short prediction refused" "exit $RC, want 2"; fi
 
+# ── T28: rows must have the right ARITY ───────────────────────────────────
+# A short ROUND row leaves $6 empty, which silently skips the REFUTED
+# accounting -- the two-refuted stop would then be unreachable on a hand-edited
+# ledger. A long row means something wrote a separator into a value.
+echo "T28. wrong-arity rows fail closed"
+LED=$(newledger t28)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tat a.sh:1 a real prediction\t\t\t\n' > "$LED"
+RC=$(rb budget --run-id=t28 --ledger="$LED")
+LED2=$(newledger t28b)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tat a.sh:1 a real prediction\t\n' > "$LED2"
+RC2=$(rb budget --run-id=t28b --ledger="$LED2")
+if [ "$RC" = "6" ] && [ "$RC2" = "0" ]; then
+    ok "T28: extra-field row STOPs, well-formed row still authorizes"
+else
+    fail "T28: arity" "extra-field exit=$RC (want 6), well-formed exit=$RC2 (want 0)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

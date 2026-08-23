@@ -147,6 +147,8 @@ mutate "prediction location arm dead" "T25" \
     "! printf '%s' \"\$CLEAN_PRED\" | grep -qE ''" 
 mutate "ledger seam ungated"           "T26" 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" != "1" ]; then' 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" = "IMPOSSIBLE" ]; then'
 
+mutate "row arity unchecked" "T28" 'if (NF != 4) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ -n "$($GIT status --porcelain -- "$TARGET")" ]; then

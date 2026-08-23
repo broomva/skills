@@ -228,6 +228,10 @@ analyze() {
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0 }
         $1=="ROUND" {
+            # Strict arity. A short row leaves $6 empty and would silently skip
+            # the REFUTED accounting; a long one means something wrote a field
+            # separator into a value. Neither is a history worth deciding on.
+            if (NF != 6) { badrow=1 }
             rounds++
             if ($3 !~ /^[0-9]+$/ || $3+0 > 10) { badscore=1 }
             else {
@@ -242,6 +246,7 @@ analyze() {
             next
         }
         $1=="VERDICT" {
+            if (NF != 4) { badrow=1 }
             if ($2=="STOP" || $2=="STRUCTURAL") {
                 if (terminal=="") { terminal=$2; directive=$4 }
             } else if ($2=="CONTINUE") { pending=1 }
