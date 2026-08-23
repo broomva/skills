@@ -387,7 +387,17 @@ def _missing_structure_problems(label: str, text: str) -> list[str]:
     """
     problems = []
     for name, rx, head in _REQUIRED_STRUCTURES.get(label, ()):
-        if rx.search(text):
+        found = rx.findall(text)
+        if len(found) > 1:
+            # Two bullets claiming the same derived fact cannot both be the
+            # claim, and `re.search` only ever sees the first — so a second,
+            # wrong one was invisible to validation AND to the count scan,
+            # which strips every anchored match before scanning the residue.
+            problems.append(
+                f"{label}: required {name} appears {len(found)} times — "
+                "a duplicated claim is not a satisfied one, and only the first is read")
+            continue
+        if found:
             continue
         malformed = any(line.startswith(head) for line in text.split("\n"))
         problems.append(
@@ -408,15 +418,15 @@ def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, st
     sizes = {c: len(v) for c, v in disk.items()}
     hi, lo = max(sizes.values()), min(sizes.values())
 
-    m = _TOTAL_SKILLS_RX.search(text)
-    if m and int(m.group("n")) != sum(sizes.values()):
-        problems.append(f"{label}: claims {m.group('n')} skills, disk has {sum(sizes.values())}")
-    m = _TOTAL_BUCKETS_RX.search(text)
-    if m and int(m.group("n")) != len(disk):
-        problems.append(
-            f"{label}: claims {m.group('n')} category buckets, disk has {len(disk)}")
-    m = _LARGEST_RX.search(text)
-    if m:
+    for m in _TOTAL_SKILLS_RX.finditer(text):
+        if int(m.group("n")) != sum(sizes.values()):
+            problems.append(
+                f"{label}: claims {m.group('n')} skills, disk has {sum(sizes.values())}")
+    for m in _TOTAL_BUCKETS_RX.finditer(text):
+        if int(m.group("n")) != len(disk):
+            problems.append(
+                f"{label}: claims {m.group('n')} category buckets, disk has {len(disk)}")
+    for m in _LARGEST_RX.finditer(text):
         winners = {names.get(c, c) for c, n in sizes.items() if n == hi}
         if int(m.group("n")) != hi:
             problems.append(f"{label}: largest bucket says {m.group('n')}, disk has {hi}")
@@ -424,8 +434,7 @@ def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, st
             problems.append(
                 f"{label}: largest bucket says {m.group('name').strip()!r}, "
                 f"disk has {sorted(winners)}")
-    m = _SMALLEST_RX.search(text)
-    if m:
+    for m in _SMALLEST_RX.finditer(text):
         holders = {names.get(c, c) for c, n in sizes.items() if n == lo}
         claimed = {x.strip() for x in m.group("names").split(",") if x.strip()}
         if int(m.group("n")) != lo:
@@ -502,7 +511,18 @@ def _fix_aggregates(label: str, text: str, disk: dict, names: dict[str, str]) ->
         if want is None:
             continue
         if rx.search(text):
-            text = rx.sub(lambda _m, w=want: w, text, count=1)
+            text = rx.sub(lambda _m, w=want: w, text)
+            # Every match is now the same canonical line, so drop the extras.
+            # Replacing only the first left a second, wrong bullet in place.
+            seen = False
+            kept = []
+            for line in text.split("\n"):
+                if line == want:
+                    if seen:
+                        continue
+                    seen = True
+                kept.append(line)
+            text = "\n".join(kept)
             continue
         text = "\n".join(l for l in text.split("\n") if not l.startswith(head))
         block = re.search(r"^## Aggregates\n+", text, re.M)

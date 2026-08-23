@@ -1031,3 +1031,56 @@ class TestAProseRestatementIsAClaimToo:
         _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
         problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
         assert any("unrecognised count claim" in p for p in problems), problems
+
+
+class TestADuplicatedClaimIsNotASatisfiedOne:
+    """`re.search` reads the first match only, so a SECOND aggregate bullet was
+    invisible three ways at once: validation never looked at it, the count scan
+    strips every anchored match before scanning the residue, and --fix replaced
+    only the first. Appending a wrong second bullet left the gate green.
+    """
+
+    HEADS = ["- **Total skills**", "- **Total category buckets**",
+             "- **Largest bucket**", "- **Smallest buckets**"]
+    EXTRA = {
+        "- **Total skills**": "- **Total skills**: 4242",
+        "- **Total category buckets**": "- **Total category buckets**: 4242",
+        "- **Largest bucket**": "- **Largest bucket**: Governance (4242)",
+        "- **Smallest buckets**": "- **Smallest buckets** (4242): Governance",
+    }
+
+    def _duplicated(self, tmp_path, lint, head):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = _default_aggregates(total, buckets).replace(
+            head, self.EXTRA[head] + "\n" + head, 1)
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        return total, buckets
+
+    @pytest.mark.parametrize("head", HEADS)
+    def test_a_duplicated_aggregate_is_reported(self, tmp_path, lint, head):
+        self._duplicated(tmp_path, lint, head)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("appears 2 times" in p for p in problems), problems
+
+    @pytest.mark.parametrize("head", HEADS)
+    def test_the_wrong_value_in_the_second_copy_is_also_reported(self, tmp_path, lint, head):
+        """Validation must read EVERY match, not just the first — otherwise a
+        duplicate is caught only by the count of bullets, and a second copy
+        that happens to be well-formed but wrong slips through."""
+        self._duplicated(tmp_path, lint, head)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("4242" in p for p in problems), problems
+
+    @pytest.mark.parametrize("head", HEADS)
+    def test_fix_collapses_the_duplicate_to_one_correct_bullet(self, tmp_path, lint, head):
+        self._duplicated(tmp_path, lint, head)
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        text = lint._INVENTORY.read_text()
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == [], text
+        assert sum(1 for l in text.split("\n") if l.startswith(head)) == 1, text
+        assert "4242" not in text, text
+
+    def test_a_single_correct_bullet_is_still_clean(self, tmp_path, lint):
+        """POSITIVE CONTROL: 'appears N times' must not fire on one bullet."""
+        _consistent(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
