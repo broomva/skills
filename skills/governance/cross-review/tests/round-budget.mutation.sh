@@ -119,6 +119,20 @@ mutate "stale verdict re-authorizes" "T13" \
     'if [ "$LAST_TYPE" != "VERDICT" ]; then' \
     'if [ "$LAST_TYPE" = "NEVERMATCHES" ]; then'
 
+# ─── The absorbing stops and the fail-closed guards ───────────────────────
+# Each of these was escapable or silent in the first version, so each gets its
+# own proof that the test pinning it can actually fail.
+mutate "defect streak 2->99"        "T1"  'if [ "$MAXNOD" -ge 2 ]; then' 'if [ "$MAXNOD" -ge 99 ]; then'
+mutate "refuted no longer absorbing" "T21" 'if [ "$MAXREF" -ge 2 ]; then' 'if [ "$MAXREF" -ge 99 ]; then'
+mutate "terminal verdict ignored"    "T19" 'if [ -n "$TERMINAL" ]; then
+        if [ "$TERMINAL" = "STRUCTURAL" ]; then' 'if [ -z "$TERMINAL" ] && [ -n "$TERMINAL" ]; then
+        if [ "$TERMINAL" = "STRUCTURAL" ]; then'
+mutate "regression check disabled"   "T5"  'if [ "$REGRESSED" != "0" ]; then' 'if [ "$REGRESSED" = "IMPOSSIBLE" ]; then'
+mutate "bad score fails open"        "T23" '[ "$BADSCORE" != "0" ] || [ "$BADROW" != "0" ] || [ -n "$BADVERDICT" ]' '[ "$BADSCORE" = "IMPOSSIBLE" ]'
+mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
+mutate "prediction location optional"  "T25" 'if [ "${#CLEAN_PRED}" -lt 12 ]' 'if [ "${#CLEAN_PRED}" -lt 0 ]'
+mutate "ledger seam ungated"           "T26" 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" != "1" ]; then' 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" = "IMPOSSIBLE" ]; then'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ -n "$($GIT status --porcelain -- "$TARGET")" ]; then

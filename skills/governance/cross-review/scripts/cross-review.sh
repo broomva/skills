@@ -355,7 +355,27 @@ if [ "$COMMAND" = "pre-push" ]; then
     # Capture here rather than telling the agent to. An instruction printed to
     # stdout is not a baseline: the previous version advertised a guard that
     # nothing in the run actually armed, so every review passed unguarded.
+    # Two DIFFERENT identities, because they answer different questions.
+    #
+    # The reviewer guard is per-INVOCATION: it fingerprints one review, and a
+    # second capture under the same id is a collision worth refusing.
+    #
+    # The round budget is per-ARC: it must survive across invocations, or the
+    # whole control is void. `pp$$` is the PID, so re-running pre-push -- which
+    # the documented loop does EVERY ROUND -- handed back a fresh empty ledger
+    # and reset the budget to "round 1 of 3 free". The round-8 ceiling then cost
+    # one changed string to escape, and the CLI changed it for you.
+    #
+    # Derived from the branch plus the merge-base, so it is stable for an arc and
+    # distinct between arcs. Detached HEAD falls back to the commit itself.
     CR_RUN_ID="pp$$"
+    CR_ARC_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)
+    if [ "$CR_ARC_BRANCH" = "HEAD" ] || [ -z "$CR_ARC_BRANCH" ]; then
+        CR_ARC_BRANCH=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+    fi
+    CR_ARC_BASE=$(git merge-base "$DIFF_BASE" HEAD 2>/dev/null | cut -c1-8 || echo nobase)
+    [ -n "$CR_ARC_BASE" ] || CR_ARC_BASE=nobase
+    CR_ARC_ID=$(printf 'arc-%s-%s' "$CR_ARC_BRANCH" "$CR_ARC_BASE" | tr -c 'A-Za-z0-9._-' '-')
     if bash "${BASH_SOURCE[0]}" reviewer-guard capture --run-id="$CR_RUN_ID"; then
         GUARD_ARMED=1
     else
@@ -403,9 +423,10 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "    4. If score >=7: pass (echo verdict, exit 0)"
         echo "    5. If score <7: fix the specific deductions, rescore, then"
         echo "       record the round and ask whether another is authorized:"
-        echo "         cross-review round record-round --run-id=$CR_RUN_ID \\"
+        echo "         cross-review round record-round --run-id=$CR_ARC_ID \\"
         echo "           --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED]"
-        echo "         cross-review round budget --run-id=$CR_RUN_ID"
+        echo "         cross-review round budget --run-id=$CR_ARC_ID"
+        echo "       (the arc id is stable across pre-push runs -- the guard id is not)"
         echo ""
         echo "  (This script enforces the structure; the agent runs the Codex call)"
     fi

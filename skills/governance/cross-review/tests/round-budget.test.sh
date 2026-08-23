@@ -17,6 +17,10 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RB="$REPO/scripts/round-budget.sh"
 
+# --ledger is gated so it cannot serve as a production budget-reset. The
+# tests are its intended consumer, so they opt in explicitly.
+export ROUND_BUDGET_TEST_LEDGER=1
+
 PASS=0; FAIL=0; FAILED=()
 ok()   { PASS=$((PASS+1)); echo "  [pass] $1"; }
 fail() { FAIL=$((FAIL+1)); FAILED+=("$1"); echo "  [FAIL] $1"; [ -n "${2:-}" ] && echo "         $2"; }
@@ -36,28 +40,41 @@ rbout() { bash "$RB" "$@" 2>&1 || true; }
 echo "── tests/round-budget.test.sh ────────────────────────────────"
 echo ""
 
-# ── T1: NULL CONTROL — nothing is happening, so do not authorize ──────────
-echo "T1. null control: flat score, no reproduced defects -> not authorized"
-LED=$(newledger t2)
-bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no --fingerprints=a.sh:f:x >/dev/null
-bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no --fingerprints=a.sh:f:x >/dev/null
-bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no --fingerprints=a.sh:f:x >/dev/null
+# ── T1: NULL CONTROL — a dead arc must stop, and stop FOR THE RIGHT REASON ──
+#
+# The first version of this test was not a null control and two independent
+# reviewers said so with the same proof: it asserted "3 rounds with no fresh
+# verdict -> exit 5", which an equally ALIVE ledger (rising score, a defect every
+# round) also returns. It measured the round counter, not liveness. It could not
+# have measured liveness, because --defect was recorded and read by nothing.
+#
+# Now --defect is load-bearing, so the null control is real: rounds that
+# reproduce nothing STOP, and the arm below distinguishes them from rounds that
+# reproduce something at the same score.
+echo "T1. null control: rounds that reproduce NO defect stop the arc"
+LED=$(newledger t1)
+bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no >/dev/null
+bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no >/dev/null
 RC=$(rb budget --run-id=null --ledger="$LED")
-if [ "$RC" != "0" ]; then
-    ok "T1: null ledger does NOT authorize (exit $RC)"
+OUT=$(rbout budget --run-id=null --ledger="$LED")
+if [ "$RC" = "6" ] && echo "$OUT" | grep -q "reproduced NO defect"; then
+    ok "T1: dead arc STOPs, and names liveness as the reason"
 else
-    fail "T1: null ledger does NOT authorize" "got AUTHORIZED (exit 0) on a dead ledger — the reflex is vacuous"
+    fail "T1: dead arc STOPs, and names liveness as the reason" "exit $RC: $OUT"
 fi
 
-# ── T2: POLARITY CONTROL for T1 — the gate can still say yes ──────────────
-echo "T2. polarity control: same ledger + a CONTINUE verdict -> authorized"
-bash "$RB" record-verdict --run-id=null --ledger="$LED" --verdict=CONTINUE \
-    --prediction="unhandled empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
-RC=$(rb budget --run-id=null --ledger="$LED")
+# ── T2: POLARITY CONTROL for T1 — same scores, but the rounds are alive ──────
+# Identical score series, identical round count, identical everything except
+# --defect. If this also stopped, T1 would be measuring the counter again.
+echo "T2. polarity control: same flat score, but defects reproduced -> not stopped"
+LED=$(newledger t2)
+bash "$RB" record-round --run-id=live --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=live --ledger="$LED" --score=5 --defect=yes >/dev/null
+RC=$(rb budget --run-id=live --ledger="$LED")
 if [ "$RC" = "0" ]; then
-    ok "T2: gate authorizes when continuation is earned"
+    ok "T2: live arc still authorized — T1 discriminates on liveness, not count"
 else
-    fail "T2: gate authorizes when continuation is earned" "got exit $RC — gate may be always-refuse, voiding T1"
+    fail "T2: live arc still authorized" "exit $RC — T1 may be measuring the round counter again"
 fi
 
 # ── T3: rounds 1-3 are free ───────────────────────────────────────────────
@@ -90,11 +107,11 @@ if [ "$RC" = "6" ]; then ok "T5: STOP on regression (6->5)"; else fail "T5: STOP
 echo "T6. two consecutive REFUTED predictions -> STOP"
 LED=$(newledger t5)
 bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="p1" >/dev/null
+bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
 bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5 --defect=yes --settles=REFUTED >/dev/null
-bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="p2" >/dev/null
+bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="unquoted expansion in emit() at scripts/bar.sh:12" >/dev/null
 bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5 --defect=yes --settles=REFUTED >/dev/null
-bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="p3" >/dev/null
+bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="off-by-one in the retry loop at scripts/baz.sh:41" >/dev/null
 RC=$(rb budget --run-id=ref --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T6: STOP after two REFUTED"; else fail "T6: STOP after two REFUTED" "exit $RC, want 6 — a live CONTINUE must not override it"; fi
 
@@ -103,7 +120,7 @@ echo "T7. round ceiling -> HUMAN, whatever the verdict says"
 LED=$(newledger t6)
 bash "$RB" record-round --run-id=ceil --ledger="$LED" --score=5 --defect=yes >/dev/null
 for i in 2 3 4 5 6 7 8; do
-    bash "$RB" record-verdict --run-id=ceil --ledger="$LED" --verdict=CONTINUE --prediction="p$i" >/dev/null
+    bash "$RB" record-verdict --run-id=ceil --ledger="$LED" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
     bash "$RB" record-round --run-id=ceil --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null
 done
 bash "$RB" record-verdict --run-id=ceil --ledger="$LED" --verdict=CONTINUE --prediction="p9" >/dev/null
@@ -122,7 +139,7 @@ if [ "$RC" = "2" ]; then ok "T8b: whitespace-only prediction refused"; else fail
 echo "T9. a round following CONTINUE must settle the prediction"
 LED=$(newledger t8)
 bash "$RB" record-round --run-id=s1 --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" record-verdict --run-id=s1 --ledger="$LED" --verdict=CONTINUE --prediction="p" >/dev/null
+bash "$RB" record-verdict --run-id=s1 --ledger="$LED" --verdict=CONTINUE --prediction="missing null guard at scripts/qux.sh:7" >/dev/null
 RC=$(rb record-round --run-id=s1 --ledger="$LED" --score=5 --defect=yes)
 if [ "$RC" = "2" ]; then ok "T9: unsettled round refused"; else fail "T9: unsettled round refused" "exit $RC, want 2 — else the two-refuted stop is unreachable"; fi
 
@@ -130,8 +147,8 @@ if [ "$RC" = "2" ]; then ok "T9: unsettled round refused"; else fail "T9: unsett
 echo "T10. CONTINUE verdicts cannot stack without an intervening round"
 LED=$(newledger t9)
 bash "$RB" record-round --run-id=st --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" record-verdict --run-id=st --ledger="$LED" --verdict=CONTINUE --prediction="p1" >/dev/null
-RC=$(rb record-verdict --run-id=st --ledger="$LED" --verdict=CONTINUE --prediction="p2")
+bash "$RB" record-verdict --run-id=st --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
+RC=$(rb record-verdict --run-id=st --ledger="$LED" --verdict=CONTINUE --prediction="unquoted expansion in emit() at scripts/bar.sh:12")
 if [ "$RC" = "2" ]; then ok "T10: stacked CONTINUE refused"; else fail "T10: stacked CONTINUE refused" "exit $RC, want 2"; fi
 
 # ── T11: STRUCTURAL is a stop, and carries its directive ──────────────────
@@ -160,7 +177,7 @@ if [ "$RC" = "3" ]; then ok "T12: PASSED"; else fail "T12: PASSED" "exit $RC, wa
 echo "T13. a verdict already settled by a later round cannot re-authorize"
 LED=$(newledger t12)
 for i in 1 2 3; do bash "$RB" record-round --run-id=stale --ledger="$LED" --score=5 --defect=yes >/dev/null; done
-bash "$RB" record-verdict --run-id=stale --ledger="$LED" --verdict=CONTINUE --prediction="p1" >/dev/null
+bash "$RB" record-verdict --run-id=stale --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
 bash "$RB" record-round --run-id=stale --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null
 RC=$(rb budget --run-id=stale --ledger="$LED")
 if [ "$RC" = "5" ]; then ok "T13: spent verdict does not re-authorize"; else fail "T13: spent verdict does not re-authorize" "exit $RC, want 5"; fi
@@ -170,7 +187,7 @@ echo "T14. tabs in a prediction cannot shift the ledger columns"
 LED=$(newledger t13)
 bash "$RB" record-round --run-id=inj --ledger="$LED" --score=5 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=inj --ledger="$LED" --verdict=CONTINUE \
-    --prediction="$(printf 'evil\tREFUTED\tinjected')" >/dev/null
+    --prediction="$(printf 'evil\tREFUTED\tinjected at scripts/evil.sh:1')" >/dev/null
 LINES=$(grep -c . "$LED")
 COLS=$(tail -1 "$LED" | awk -F'\t' '{print NF}')
 if [ "$LINES" = "2" ] && [ "$COLS" = "4" ]; then
@@ -198,6 +215,75 @@ else
     fi
 fi
 chmod 644 "$LED" 2>/dev/null || true
+
+# ─── Absorbing stops. Every one of these was escapable by appending a row. ───
+
+# ── T19: STOP is honoured DURING the free rounds ──────────────────────────
+# The free-round fast path used to return AUTHORIZED before ever looking at a
+# recorded verdict, so "STOP, no override" was false for rounds 1-3 -- exactly
+# the window where an arc is most likely to be told to stop.
+echo "T19. a STOP verdict is honoured inside the free rounds"
+LED=$(newledger t19)
+bash "$RB" record-round  --run-id=t19 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-verdict --run-id=t19 --ledger="$LED" --verdict=STOP >/dev/null
+RC=$(rb budget --run-id=t19 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T19: STOP beats the free-round path"; else fail "T19: STOP beats the free-round path" "exit $RC, want 6"; fi
+
+# ── T20: a STOP cannot be cleared by appending ────────────────────────────
+echo "T20. appending after STOP does not clear it"
+bash "$RB" record-verdict --run-id=t19 --ledger="$LED" --verdict=CONTINUE \
+    --prediction="another look at scripts/again.sh:5" >/dev/null 2>&1 || true
+bash "$RB" record-round --run-id=t19 --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
+RC=$(rb budget --run-id=t19 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T20: STOP is absorbing"; else fail "T20: STOP is absorbing" "exit $RC, want 6 — a stop you can append your way out of is not a stop"; fi
+
+# ── T21: two REFUTED is absorbing too ─────────────────────────────────────
+echo "T21. a later CONFIRMED does not clear two REFUTED"
+LED=$(newledger t21)
+bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5 --defect=yes >/dev/null
+for pr in "a at scripts/a.sh:1" "b at scripts/b.sh:2"; do
+    bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="$pr" >/dev/null
+    bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5 --defect=yes --settles=REFUTED >/dev/null
+done
+bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="c at scripts/c.sh:3" >/dev/null 2>&1 || true
+bash "$RB" record-round --run-id=t21 --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
+RC=$(rb budget --run-id=t21 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T21: two-REFUTED is absorbing"; else fail "T21: two-REFUTED is absorbing" "exit $RC, want 6"; fi
+
+# ── T22: an unknown verdict token must not read as AUTHORIZED ─────────────
+# The verdict dispatch was a three-arm `case` with no default: an unrecognised
+# token fell off the end and the script's last status was 0, in silence.
+echo "T22. an unrecognised verdict token fails closed"
+LED=$(newledger t22)
+for i in 1 2 3; do bash "$RB" record-round --run-id=t22 --ledger="$LED" --score=5 --defect=yes >/dev/null; done
+printf 'VERDICT\tcontinue\tlowercase is not a token\t\n' >> "$LED"
+RC=$(rb budget --run-id=t22 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T22: unknown verdict -> STOP"; else fail "T22: unknown verdict -> STOP" "exit $RC, want 6 — silent AUTHORIZED is the worst failure here"; fi
+
+# ── T23: a malformed score must not fall through to AUTHORIZED ────────────
+echo "T23. a non-integer score fails closed"
+LED=$(newledger t23)
+printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
+RC=$(rb budget --run-id=t23 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T23: corrupt score -> STOP"; else fail "T23: corrupt score -> STOP" "exit $RC, want 6"; fi
+
+# ── T24: STRUCTURAL without a directive is a stop with no instruction ─────
+echo "T24. STRUCTURAL requires --directive"
+LED=$(newledger t24)
+RC=$(rb record-verdict --run-id=t24 --ledger="$LED" --verdict=STRUCTURAL)
+if [ "$RC" = "2" ]; then ok "T24: bare STRUCTURAL refused"; else fail "T24: bare STRUCTURAL refused" "exit $RC, want 2"; fi
+
+# ── T25: a prediction must name WHERE to look ─────────────────────────────
+echo "T25. a prediction with no location is refused"
+LED=$(newledger t25)
+RC=$(rb record-verdict --run-id=t25 --ledger="$LED" --verdict=CONTINUE --prediction="one more round should do it")
+if [ "$RC" = "2" ]; then ok "T25: locationless prediction refused"; else fail "T25: locationless prediction refused" "exit $RC, want 2 — non-emptiness alone let --prediction=x buy a round"; fi
+
+# ── T26: --ledger is gated so it cannot reset a budget in production ──────
+echo "T26. --ledger requires the test opt-in"
+LED=$(newledger t26)
+RC=$(env -u ROUND_BUDGET_TEST_LEDGER bash "$RB" budget --run-id=t26 --ledger="$LED" >/dev/null 2>&1; echo $?)
+if [ "$RC" = "2" ]; then ok "T26: --ledger gated"; else fail "T26: --ledger gated" "exit $RC, want 2 — a fresh path is the cheapest budget reset"; fi
 
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"

@@ -363,7 +363,8 @@ fi
 
 # ── T17: `round` delegates to the budget controller ───────────────────────
 echo "T17. round subcommand delegates to round-budget.sh"
-OUT=$(bash "$CROSS_REVIEW_SH" round budget --run-id=t17 --ledger="$(mktemp)" 2>&1 || true)
+TMP17=$(mktemp); trap 'rm -f "$TMP17"' EXIT
+OUT=$(ROUND_BUDGET_TEST_LEDGER=1 bash "$CROSS_REVIEW_SH" round budget --run-id=t17 --ledger="$TMP17" 2>&1 || true)
 if echo "$OUT" | grep -q "AUTHORIZED"; then
     ok "T17: round delegation"
 else
@@ -377,6 +378,31 @@ if echo "$OUT" | grep -q "Round budget:" && ! echo "$OUT" | grep -q "Max fix rou
     ok "T18: banner shows dynamic budget"
 else
     fail "T18: banner shows dynamic budget" "banner still advertises a fixed cap"
+fi
+
+# ── T19: the budget's run-id is STABLE across pre-push invocations ────────
+# It used to be `pp$$` -- the PID -- so every pre-push handed back a fresh empty
+# ledger. The documented loop re-runs pre-push each round, so the round-8 ceiling
+# cost one changed string to escape and the CLI changed it for you.
+echo "T19. budget run-id is stable across invocations"
+A=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+B=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+if [ -n "$A" ] && [ "$A" = "$B" ]; then
+    ok "T19: arc id stable ($A)"
+else
+    fail "T19: arc id stable" "run1='$A' run2='$B' — a per-invocation id resets the budget"
+fi
+
+# ── T20: the guard id is NOT stable — it must stay per-invocation ─────────
+# Same-id capture twice is a collision the guard is right to refuse, so the two
+# identities must not be collapsed into one.
+echo "T20. reviewer-guard id stays per-invocation"
+GA=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'reviewer-guard verify --run-id=[^ ]*' | head -1)
+GB=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'reviewer-guard verify --run-id=[^ ]*' | head -1)
+if [ -n "$GA" ] && [ "$GA" != "$GB" ]; then
+    ok "T20: guard id distinct per run"
+else
+    fail "T20: guard id distinct per run" "guard ids matched ('$GA') — a second capture would collide"
 fi
 
 echo ""
