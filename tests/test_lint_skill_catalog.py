@@ -375,6 +375,12 @@ class TestTheTighteningDoesNotOvershoot:
         # depth-3 tripped the scan when only depth-2 was allowlisted
         "No flag is needed (that's only for depth-3+); buckets are exactly one level.",
         "The [`skills-showcase`](skills-showcase/) tool generates a Remotion video (1080x1920).",
+        # The trailing DATE survives every subtraction and is clean only because
+        # it sits far from any fact word — the one line in the corpus that makes
+        # the proximity window load-bearing rather than decorative.
+        ("> 93 skills across 22 category buckets, mirroring the `skills/<category>/` directory "
+         "layout. Regenerated from the README discovery surface (canonical). "
+         "Last updated: 2026-08-18."),
     ]
 
     @pytest.mark.parametrize("line", LEGITIMATE)
@@ -582,3 +588,28 @@ class TestEveryBucketPhrasingIsVerified:
         problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
         assert any("99 category buckets" in p for p in problems), problems
         assert not any("unrecognised" in p for p in problems), problems
+
+
+class TestTheProximityWindow:
+    """No line in the real corpus pins the window: every legitimate number is
+    clean because it gets SUBTRACTED, not because of distance. A mutation
+    setting the window to 100000 therefore survived the whole suite. The bound
+    is real behaviour, so it is tested directly rather than left to a corpus
+    that happens not to exercise it.
+    """
+
+    def test_a_number_far_from_any_fact_word_is_not_a_quantity(self, lint):
+        far = "buckets " + ("filler " * 20) + "2026"
+        assert not lint._states_a_quantity(far), far
+
+    def test_a_number_beside_a_fact_word_is_a_quantity(self, lint):
+        """POSITIVE CONTROL: without it the case above is satisfied by a
+        function that always returns False."""
+        assert lint._states_a_quantity("Median bucket size: 4")
+
+    def test_the_window_is_the_reason_and_not_an_accident(self, lint):
+        """Same string, both sides of the boundary."""
+        near = "buckets " + ("x" * 10) + " 2026"
+        far = "buckets " + ("x" * 200) + " 2026"
+        assert lint._states_a_quantity(near)
+        assert not lint._states_a_quantity(far)
