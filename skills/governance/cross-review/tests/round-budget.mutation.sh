@@ -141,10 +141,12 @@ mutate "terminal verdict ignored"    "T19" 'if [ -n "$TERMINAL" ]; then
 mutate "regression check disabled"   "T5"  'if [ "$REGRESSED" != "0" ]; then' 'if [ "$REGRESSED" = "IMPOSSIBLE" ]; then'
 mutate "bad score fails open"        "T23" '[ "$BADSCORE" != "0" ] || [ "$BADROW" != "0" ] || [ -n "$BADVERDICT" ]' '[ "$BADSCORE" = "IMPOSSIBLE" ]'
 mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
-mutate "prediction length arm dead"   "T27" 'if [ "${#CLEAN_PRED}" -lt 12 ]' 'if [ "${#CLEAN_PRED}" -lt 0 ]'
+# Both arms now live in prediction_is_valid(), which is called from the recorder
+# AND from budget. One definition, so one mutation each.
+mutate "prediction length arm dead"   "T27" '[ "${#pred}" -ge 12 ] || return 1' '[ "${#pred}" -ge 0 ] || return 1'
 mutate "prediction location arm dead" "T25" \
-    "! printf '%s' \"\$CLEAN_PRED\" | grep -qE '[A-Za-z0-9_-]+\\.[A-Za-z]+|/|:[0-9]+'" \
-    "! printf '%s' \"\$CLEAN_PRED\" | grep -qE ''" 
+    "printf '%s' \"\$pred\" | grep -qE '[A-Za-z0-9_-]+\\.[A-Za-z]+|/|:[0-9]+'" \
+    "printf '%s' \"\$pred\" | grep -qE ''" 
 mutate "ledger seam ungated"           "T26" 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" != "1" ]; then' 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" = "IMPOSSIBLE" ]; then'
 
 mutate "row arity unchecked" "T28" 'if (NF != 4) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
