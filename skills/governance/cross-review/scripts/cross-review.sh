@@ -11,7 +11,9 @@
 # otherwise falls back to Strata B. Always runs Strata C in parallel.
 #
 # Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10.
-# Max 3 fix rounds before escalating to user.
+# Round budget is DYNAMIC: 3 free, 4-7 earned by a continuation verdict
+# carrying a falsifiable prediction, >=8 escalates to a human. The budget is
+# kept in a ledger by scripts/round-budget.sh -- see `cross-review round`.
 #
 # Usage:
 #   cross-review pre-push                 # default: gate before push
@@ -23,6 +25,9 @@
 #   cross-review audit --target PATH      # audit-on-demand
 #   cross-review reviewer-guard capture   # fingerprint the tree before review
 #   cross-review reviewer-guard verify    # fail if the reviewer wrote to it
+#   cross-review round budget --run-id=ID # may another fix round run?
+#   cross-review round record-round ...   # log a completed round
+#   cross-review round record-verdict ... # log a continuation verdict
 #   cross-review --help
 #
 # Mutation-proof (REPORTED SIGNAL on pre-push, never a blocker):
@@ -44,7 +49,6 @@ DIFF_BASE="origin/main"
 SPEC=""
 TARGET=""
 CONCERNS=""
-MAX_ROUNDS=3
 RUBRIC="anti-slop"
 OUTPUT_FORMAT="pr-comment"
 MUT_TARGET=""
@@ -74,6 +78,10 @@ case "$COMMAND" in
         ;;
     pre-push|plan|audit|version|reviewer-guard)
         ;;
+    round)
+        # Delegate wholesale: the budget controller owns its own arg surface.
+        exec bash "$(dirname "${BASH_SOURCE[0]}")/round-budget.sh" "$@"
+        ;;
     *)
         echo "cross-review: unknown command '$COMMAND' (try: pre-push | plan | audit | --help)" >&2
         exit 2
@@ -87,7 +95,16 @@ for arg in "$@"; do
         --spec=*) SPEC="${arg#*=}" ;;
         --target=*) TARGET="${arg#*=}" ;;
         --concerns=*) CONCERNS="${arg#*=}" ;;
-        --max-rounds=*) MAX_ROUNDS="${arg#*=}" ;;
+        --max-rounds=*)
+            # Accepted-and-ignored for its whole life: pre-push printed it and
+            # nothing read it. Failing loudly is the entire point of BRO-2240 --
+            # silently honouring a flag that no longer has a meaning would
+            # reproduce the defect this change exists to remove.
+            echo "cross-review: --max-rounds is retired. The budget is dynamic:" >&2
+            echo "  3 free rounds, 4-7 earned by a continuation verdict carrying a" >&2
+            echo "  falsifiable prediction, >=8 escalates to a human." >&2
+            echo "  Drive it with: cross-review round budget --run-id=ID" >&2
+            exit 2 ;;
         --rubric=*) RUBRIC="${arg#*=}" ;;
         --output=*) OUTPUT_FORMAT="${arg#*=}" ;;
         --mutation-target=*) MUT_TARGET="${arg#*=}" ;;
@@ -270,7 +287,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Strata selected:  $SELECTED_STRATA"
     echo "  Diff base:        $DIFF_BASE"
     echo "  Rubric:           $RUBRIC"
-    echo "  Max fix rounds:   $MAX_ROUNDS"
+    echo "  Round budget:     3 free / 4-7 earned / >=8 human (cross-review round)"
     echo "  Rubric file:      $RUBRIC_FILE"
     echo "  Verdict format:   $OUTPUT_FORMAT"
     echo ""
@@ -384,8 +401,11 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        defect as dispatching Strata B as 'general-purpose')"
         echo "    3. Parse Codex's response: score (0-10) + reasoning per rubric dim"
         echo "    4. If score >=7: pass (echo verdict, exit 0)"
-        echo "    5. If score <7: fix the specific deductions, rescore"
-        echo "       Loop max $MAX_ROUNDS rounds, then escalate"
+        echo "    5. If score <7: fix the specific deductions, rescore, then"
+        echo "       record the round and ask whether another is authorized:"
+        echo "         cross-review round record-round --run-id=$CR_RUN_ID \\"
+        echo "           --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED]"
+        echo "         cross-review round budget --run-id=$CR_RUN_ID"
         echo ""
         echo "  (This script enforces the structure; the agent runs the Codex call)"
     fi
@@ -406,7 +426,8 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        advocate. Read references/rubric.md. Score each dimension"
         echo "        and report verdict. You cannot change code: report, do not fix.'"
         echo "    3. Parse the subagent's response"
-        echo "    4. Same loop: ≥7 pass, <7 fix-rescore, max $MAX_ROUNDS rounds"
+        echo "    4. Same loop: ≥7 pass, <7 fix-rescore, then record the round and"
+        echo "       ask the budget whether another is authorized (see Strata A)."
         echo ""
         echo "  (This script enforces the structure; the agent dispatches the subagent)"
     fi

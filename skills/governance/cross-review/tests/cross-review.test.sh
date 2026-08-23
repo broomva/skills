@@ -349,6 +349,36 @@ else
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────
+# ── T16: --max-rounds is retired and fails LOUDLY ─────────────────────────
+# The flag was accepted-and-ignored for its whole life. Silently continuing to
+# accept it would reproduce the exact defect BRO-2240 removes.
+echo "T16. retired --max-rounds exits 2"
+EXIT=0
+bash "$CROSS_REVIEW_SH" pre-push --max-rounds=5 >/dev/null 2>&1 || EXIT=$?
+if [ "$EXIT" = "2" ]; then
+    ok "T16: --max-rounds rejected"
+else
+    fail "T16: --max-rounds rejected" "got exit $EXIT, want 2"
+fi
+
+# ── T17: `round` delegates to the budget controller ───────────────────────
+echo "T17. round subcommand delegates to round-budget.sh"
+OUT=$(bash "$CROSS_REVIEW_SH" round budget --run-id=t17 --ledger="$(mktemp)" 2>&1 || true)
+if echo "$OUT" | grep -q "AUTHORIZED"; then
+    ok "T17: round delegation"
+else
+    fail "T17: round delegation" "output: $OUT"
+fi
+
+# ── T18: pre-push no longer advertises a fixed cap ────────────────────────
+echo "T18. pre-push banner states the dynamic budget"
+OUT=$(bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>&1 || true)
+if echo "$OUT" | grep -q "Round budget:" && ! echo "$OUT" | grep -q "Max fix rounds"; then
+    ok "T18: banner shows dynamic budget"
+else
+    fail "T18: banner shows dynamic budget" "banner still advertises a fixed cap"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"

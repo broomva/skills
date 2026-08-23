@@ -3,7 +3,7 @@ name: cross-review
 tier: D
 primitive: P20
 category: governance
-description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, max 3 fix rounds, verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills always parallel. Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
+description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills always parallel. Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
 ---
 
 # cross-review — bstack P20 Cross-Model Adversarial Review Gate
@@ -60,9 +60,81 @@ ANTI-SLOP RUBRIC (10 points total)
            no critical path untested)
 
 PASS: ≥7/10
-LOOP: <7 → fix the specific deductions → rescore (max 3 rounds)
-ESCALATE: round 3 still <7 → surface to user
+LOOP: <7 → fix the specific deductions → rescore
+BUDGET: 3 free rounds · 4-7 earned by a continuation verdict · ≥8 human
+ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
 ```
+
+### The round budget is dynamic
+
+The old rule was `max 3 rounds`, and it was enforced nowhere — `pre-push` printed
+the number and nothing read it. Practice ran past it routinely (BRO-2190 to 21
+rounds, BRO-2185 to 22, BRO-2079 to 12 and closed unmerged) while the live rule
+was an *unwritten* controller reconstructed from memory each arc.
+
+**Score slope is the wrong signal.** BRO-2185 sat at 5-6 for eighteen consecutive
+rounds, then moved 6→8 in one round once the invariant was hoisted; a plateau-stop
+kills it at ~round 4 and discards the arc that eventually passed. BRO-2079 ran
+twelve rounds on an equally flat score and closed unmerged. Same slope, opposite
+correct answer.
+
+**The currency is a reproduced, executable defect in the change** — not a score
+bump, not reviewer opinion, and never a finding about the *justification* for the
+change. Track it with `cross-review round`:
+
+```bash
+cross-review round record-round   --run-id=$ID --score=5 --defect=yes
+cross-review round budget         --run-id=$ID    # exit 0 authorized, 5 review-required,
+                                                  # 6 stop, 7 human, 3 passed
+cross-review round record-verdict --run-id=$ID --verdict=CONTINUE \
+    --prediction="unhandled empty-input branch in parse_args at scripts/foo.sh:88"
+```
+
+### The continuation review brief
+
+Rounds 4-7 are earned, one at a time, by a review of **the decision to continue** —
+not of the diff. The orchestrator's "one more round because…" is the prose that has
+never been adversarially read, and justification is reliably the weakest part of any
+change.
+
+Dispatch it read-only, same as any stratum. Its input is the round ledger
+(`cross-review round show`), the **last fix's diff only**, and the orchestrator's
+stated rationale. Mandate this template verbatim:
+
+```
+The default is STOP. The burden is on continuation.
+
+VERDICT: CONTINUE | STOP | STRUCTURAL
+  CONTINUE   — requires a PREDICTION: the defect class AND location the next
+               round should surface, and why the last N rounds did not find it.
+               The next round settles it CONFIRMED or REFUTED.
+  STRUCTURAL — another fix round is the wrong move. Name the directive:
+               hoist the invariant | delete the justification | cut the gate |
+               close unmerged.
+  STOP       — the artifact is defective or the surface is exhausted.
+CONFIDENCE: and the ONE thing that would flip this verdict.
+```
+
+`STRUCTURAL` is a verdict, not a regex. The ledger *proposes* the shape ("this
+defect class has now appeared at three distinct locations"); the reviewer
+*disposes*. It is how eighteen rounds of chasing the same defect into a new branch
+each time collapse into one directive.
+
+**Why this is not a rubber stamp.** "Should I extend?" asked cold answers *yes*
+almost always, and a second model rubber-stamping it is worse than the fixed
+counter it replaces — it launders the writer's appetite through something that
+looks independent. Four rules are enforced by `round-budget.sh`, not by the
+agent's discipline:
+
+1. `CONTINUE` requires a non-empty prediction. A continuation that cannot be
+   refuted is an opinion, not a verdict.
+2. A round following `CONTINUE` must settle it. Otherwise rule 3 can never fire.
+3. Two consecutive `REFUTED` predictions stop the loop — no override.
+4. `CONTINUE` verdicts cannot stack without an intervening round.
+
+The ceiling at round 8 is deliberate and is not timidity: an agent that grants
+itself unbounded budget by asking itself has begun acquiring its own resources,
+and the workspace leaves that pillar open **by design**.
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
@@ -270,14 +342,22 @@ weakened P20.
 cross-review pre-push \
   --diff-base origin/main \
   --strata auto \
-  --rubric anti-slop \
-  --max-rounds 3
+  --rubric anti-slop
 ```
+
+`--max-rounds` is **retired** and now exits 2. It was accepted and ignored for its
+whole life; continuing to accept it silently would reproduce the defect the dynamic
+budget removes. Drive the loop with `cross-review round` instead.
 
 Returns:
 - Exit code 0 if verdict ≥ 7
-- Exit code 1 if verdict < 7 after max rounds (with fix recommendations)
+- Exit code 2 on a usage error (including the retired `--max-rounds`)
+- Exit code 4 if the reviewer wrote to the tree — REVIEW INVALID, not a low score
 - Stdout: the verdict + reasoning, formatted as a PR comment
+
+Between rounds, `cross-review round budget --run-id=$ID` answers whether another
+one may run: 0 authorized · 3 passed · 5 continuation review required · 6 stop ·
+7 human.
 
 Agent's job: capture the output, paste into PR description or comment, only push after exit 0.
 
@@ -320,7 +400,8 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
 1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
-2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore. Max 3 rounds.
+2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N --defect=yes|no`. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
+2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).
 5. **When P20 verdict and CI verdict disagree** — P20 is the *quality* gate; CI is the *correctness* gate. Both must pass. P20 cannot override CI; CI cannot substitute for P20.
@@ -338,7 +419,10 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "CodeRabbit + claude-review already reviewed it" | Those are external gates that catch *specific patterns*. P20 is *additional* — the writer's own attempt must face a fresh-context adversarial verdict before merge, not just rubber-stamp validators. |
 | "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
-| "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, max 3 rounds. Don't push override. |
+| "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, ask the budget. Don't push override. |
+| "The reviewer said one more round seems reasonable" | That is the vacuous yes. A `CONTINUE` without a falsifiable prediction is refused by `round-budget.sh` at record time, because a verdict that cannot be wrong is not a verdict. |
+| "The score is flat but each round finds something real — keep going" | Check the *shape* first. Same defect class at a new location each round is `STRUCTURAL`: hoist the invariant instead of taking another swing. Eighteen rounds of BRO-2185 were this. |
+| "We are at round 9 but the last verdict said CONTINUE" | The ceiling overrides every verdict. Escalate through the handback contract with the ledger attached. |
 | "The reviewer noticed a small thing and just fixed it — that's efficient" | Then the finding never existed. A reviewer that writes is optimising for a clean report. Dispatch it read-only; `reviewer-guard verify` exits 4 if it wrote. |
 | "I told the subagent not to edit anything" | A prose instruction is not a capability. `general-purpose` carries `Tools: *`; use `Explore`. The brief is layer 2, the tool set is layer 1. |
 | "Codex is a different vendor, the sandbox is belt-and-braces" | Different weights, same hands. `codex exec` unsandboxed patches the tree as readily as a subagent — pin `-c sandbox_mode=read-only`. |
