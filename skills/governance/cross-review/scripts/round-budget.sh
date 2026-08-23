@@ -139,7 +139,21 @@ LEDGER="$(ledger_path)"
 # silently shift every column to its right and settle the wrong field.
 sanitize() { printf '%s' "${1:-}" | tr '\t\n' '  ' | sed 's/  *$//'; }
 
-read_rows() { [ -f "$LEDGER" ] && cat "$LEDGER" || true; }
+# A ledger that exists but cannot be read must NEVER render as an empty one.
+# The `&& cat || true` this replaces swallowed cat's failure and returned zero
+# rows, which `budget` reads as "no rounds yet" -- i.e. AUTHORIZED. An
+# unreadable ledger failing OPEN is the one direction this controller must not
+# fail in, so an existing-but-unreadable file is an error, not an empty history.
+read_rows() {
+    if [ -f "$LEDGER" ]; then
+        cat "$LEDGER" || {
+            echo "round-budget: ledger exists at $LEDGER but cannot be read." >&2
+            echo "  Refusing to treat it as an empty history: that reads as" >&2
+            echo "  'no rounds yet' and authorizes another round." >&2
+            return 1
+        }
+    fi
+}
 count_rounds() { read_rows | awk -F'\t' '$1=="ROUND"' | wc -l | tr -d ' '; }
 last_row_of() { read_rows | awk -F'\t' -v t="$1" '$1==t' | tail -1; }
 last_row_any() { read_rows | tail -1; }

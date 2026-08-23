@@ -109,6 +109,11 @@ mutate "sanitize passes tabs" "T14" \
     "tr '\\t\\n' '  '" \
     "tr '\\n' ' '"
 
+# The fail-open guard. An unreadable ledger returning zero rows reads as
+# "no rounds yet", which authorizes -- the one direction this controller
+# must never fail in. Mutating the refusal to a success restores that.
+mutate "unreadable ledger fails open" "T15" '            return 1' '            return 0'
+
 # The stale-verdict rule: a spent verdict must not re-authorize.
 mutate "stale verdict re-authorizes" "T13" \
     'if [ "$LAST_TYPE" != "VERDICT" ]; then' \

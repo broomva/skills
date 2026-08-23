@@ -179,6 +179,26 @@ else
     fail "T14: tab-bearing prediction stays in one field" "lines=$LINES cols=$COLS (want 2 and 4)"
 fi
 
+# ── T15: an unreadable ledger must not fail OPEN ──────────────────────────
+# Zero rows reads as "no rounds yet", which authorizes. An existing-but-
+# unreadable ledger must therefore be an error, never an empty history.
+echo "T15. unreadable ledger does not authorize"
+LED=$(newledger t15)
+bash "$RB" record-round --run-id=unread --ledger="$LED" --score=5 --defect=yes >/dev/null
+chmod 000 "$LED"
+if [ -r "$LED" ]; then
+    # running as root, or a filesystem that ignores the mode bits
+    ok "T15: skipped (ledger still readable after chmod 000)"
+else
+    RC=$(rb budget --run-id=unread --ledger="$LED")
+    if [ "$RC" != "0" ]; then
+        ok "T15: unreadable ledger does not authorize (exit $RC)"
+    else
+        fail "T15: unreadable ledger does not authorize" "got AUTHORIZED — fail-open on an unreadable ledger"
+    fi
+fi
+chmod 644 "$LED" 2>/dev/null || true
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi
