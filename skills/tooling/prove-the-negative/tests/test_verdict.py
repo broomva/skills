@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -48,13 +49,44 @@ class TestErrorsNeverPass:
         # A crashed apparatus did not demonstrate liveness.
         assert run_verdict([c("ctl", "control", "error")]).verdict == "INVALID"
 
-    def test_an_errored_DENIAL_assertion_is_FAIL_not_PASS(self):
+    def test_an_errored_DENIAL_assertion_is_INVALID_not_FAIL(self):
         # The subtle one: a probe that crashed proves nothing about what its
         # subject cannot reach, even though the probe was checking a denial.
-        cases = [c("ctl", "control", "pass"), c("egress denied", "assertion", "error")]
+        # "Proves nothing" is the definition of INVALID. Grading it FAIL charges
+        # the apparatus's crash to the subject's account, which is the same
+        # category error as grading a `skipped` probe.
+        cases = [c("ctl", "control", "pass"),
+                 c("reachable", "assertion", "pass"),
+                 c("egress denied", "assertion", "error")]
         r = run_verdict(cases)
-        assert r.verdict == "FAIL"
+        assert r.verdict == "INVALID"
         assert "egress denied" in r.culprits
+
+    def test_an_errored_assertion_is_not_PASS_either(self):
+        cases = [c("ctl", "control", "pass"), c("egress denied", "assertion", "error")]
+        assert run_verdict(cases).verdict != "PASS"
+
+
+class TestAControlOnlySuiteMeasuresNothing:
+    """The mirror image of the headline bug, and just as vacuous. A run whose
+    controls all pass and which then asserts nothing has demonstrated that the
+    apparatus works and NOTHING about the subject. Returning PASS there greens
+    the gate on an empty measurement."""
+
+    def test_a_control_only_suite_is_INVALID_not_PASS(self):
+        assert run_verdict([c("bash executes", "control", "pass")]).verdict == "INVALID"
+
+    def test_several_green_controls_and_no_assertion_is_still_INVALID(self):
+        cases = [c("bash executes", "control", "pass"),
+                 c("cwd is tenant dir", "control", "pass")]
+        assert run_verdict(cases).verdict == "INVALID"
+
+    def test_one_assertion_is_enough_to_be_a_measurement(self):
+        # POSITIVE CONTROL for the two above: they assert a NON-PASS verdict and
+        # would both hold if run_verdict were broken into never returning PASS.
+        cases = [c("bash executes", "control", "pass"),
+                 c("write outside denied", "assertion", "pass")]
+        assert run_verdict(cases).verdict == "PASS"
 
 
 class TestHappyPath:
@@ -102,8 +134,13 @@ class TestExitCodes:
         )
 
     def test_pass_exits_0(self):
-        r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"}])
+        r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"},
+                       {"name": "denied", "kind": "assertion", "outcome": "pass"}])
         assert r.returncode == 0 and "PASS" in r.stdout
+
+    def test_a_control_only_run_exits_2_not_0(self):
+        r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"}])
+        assert r.returncode == 2 and "INVALID" in r.stdout
 
     def test_fail_exits_1(self):
         r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"},
@@ -129,7 +166,8 @@ class TestExitCodes:
         broken outright they would still pass, and the suite would be the very
         all-denials matrix this skill refuses. This case must SUCCEED."""
         f = tmp_path / "cases.json"
-        f.write_text(json.dumps([{"name": "ctl", "kind": "control", "outcome": "pass"}]))
+        f.write_text(json.dumps([{"name": "ctl", "kind": "control", "outcome": "pass"},
+                                 {"name": "denied", "kind": "assertion", "outcome": "pass"}]))
         r = self._run_file(f)
         assert r.returncode == 0 and "PASS" in r.stdout
 
@@ -142,6 +180,23 @@ class TestExitCodes:
 
     def test_a_directory_is_INVALID_not_FAIL(self, tmp_path):
         r = self._run_file(tmp_path)
+        assert r.returncode == 2, r.stderr
+        assert "INVALID" in r.stderr and "Traceback" not in r.stderr
+
+    @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                        reason="root reads a 0o000 file, so the case cannot arise")
+    def test_an_unreadable_file_is_INVALID_not_FAIL(self, tmp_path):
+        """Distinct from missing and from a directory: the path resolves and the
+        file exists, and open() still raises. PermissionError is an OSError, so
+        this passes for the same reason -- but only a test proves the reason
+        holds for every OSError rather than for FileNotFoundError alone."""
+        f = tmp_path / "cases.json"
+        f.write_text("[]")
+        f.chmod(0o000)
+        try:
+            r = self._run_file(f)
+        finally:
+            f.chmod(0o600)
         assert r.returncode == 2, r.stderr
         assert "INVALID" in r.stderr and "Traceback" not in r.stderr
 

@@ -34,8 +34,18 @@ than asking — *"did the file appear?"* beats *"were you able to write it?"*
 
 **3. A crashed probe is never a pass — including for a denial.**
 An assertion that errored proves nothing about what its subject cannot reach.
-Fail it. The tempting shortcut — *"it didn't succeed, so the denial held"* — is
-rule 1 again, one case down.
+The tempting shortcut — *"it didn't succeed, so the denial held"* — is rule 1
+again, one case down. But it is not a `FAIL` either: "proves nothing" is the
+definition of `INVALID`, and grading it `FAIL` charges the apparatus's crash to
+the subject's account. An errored assertion is graded exactly like a skipped
+one, because they are the same thing — a probe that produced no result.
+
+**4. A run that asserts nothing is not a boundary that held.**
+The mirror image of rule 1. Controls green and zero assertions means the
+apparatus works and the subject was never probed; the matrix is empty. That is
+`INVALID`, not `PASS`. Rule 1 catches a suite with nothing that must succeed;
+this catches a suite with nothing that must be denied. Both are ways of
+returning a verdict about a measurement that did not happen.
 
 ## Grade the effect, never the narration
 
@@ -71,8 +81,8 @@ directly (`existsSync` on the path that should not exist) beats any of them.
 | | means | exit |
 |---|---|---|
 | PASS | controls fired, assertions held | 0 |
-| FAIL | controls fired, an assertion broke — **a real finding** | 1 |
-| INVALID | controls did not fire, a case never ran, or the case set could not be read — **you learned nothing** | 2 |
+| FAIL | controls fired, an assertion ran and did not hold — **a real finding** | 1 |
+| INVALID | controls did not fire, nothing was asserted, a case never ran or crashed, or the case set could not be read — **you learned nothing** | 2 |
 
 A `skipped` outcome — the subject declined, the probe never executed — is
 `INVALID`, never `FAIL`. It is a hole in the measurement, not a result about the

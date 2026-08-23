@@ -80,6 +80,16 @@ jobs:
           code=$?
           set -e
           test "$code" -eq 2 || { echo "::error::a control-less suite must exit 2, got $code"; exit 1; }
+      - name: Exit code 2 — controls green and nothing asserted learns nothing either
+        # The mirror of the step above. A control-only matrix used to exit 0:
+        # the apparatus proven live, the subject never probed, reported PASS.
+        run: |
+          set +e
+          echo '[{"name":"ctl","kind":"control","outcome":"pass"}]' | python scripts/verdict.py -
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "::error::an assertion-less suite must exit 2, got $code"; exit 1; }
+
       - name: An unreadable case set is INVALID, not FAIL
         # Regression guard for BRO-2261: `open()` sat outside the try, so a
         # missing file escaped as an uncaught OSError and Python exited 1 —
