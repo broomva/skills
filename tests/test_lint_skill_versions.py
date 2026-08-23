@@ -109,3 +109,106 @@ class TestWhatRemainsExempt:
         pre-release. The fix must not turn every prototype into a failure."""
         raw = b"---\nname: proto\ndescription: A prototype.\n---\n"
         assert lint.lint_skill(_skill(tmp_path, "proto", raw)) == []
+
+
+def _versioned(tmp_path: Path, name: str, version: str = "1.2.3", **files: str) -> Path:
+    """A skill that is versioned and internally consistent, plus whatever extra
+    manifests a case wants to break."""
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: D.\nversion: {version}\n---\n", encoding="utf-8")
+    (d / "CHANGELOG.md").write_text(f"## [{version}]\n- x\n", encoding="utf-8")
+    for filename, body in files.items():
+        (d / filename.replace("__", ".")).write_text(body, encoding="utf-8")
+    return d
+
+
+class TestPackageManifestAgreement:
+    """This rule had NO test at all — replacing `_package_json_version` with
+    `return None` survived the suite, so the whole agreement check could vanish
+    green. These are the controls that make the unreadable cases below mean
+    something.
+    """
+
+    def test_a_disagreeing_pyproject_is_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "py-bad", pyproject__toml='[project]\nversion = "9.9.9"\n')
+        assert any("pyproject" in p and "9.9.9" in p for p in lint.lint_skill(d))
+
+    def test_a_disagreeing_package_json_is_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "js-bad", package__json='{"version": "9.9.9"}')
+        assert any("package.json" in p and "9.9.9" in p for p in lint.lint_skill(d))
+
+    def test_agreeing_manifests_are_clean(self, tmp_path, lint):
+        d = _versioned(tmp_path, "agree",
+                       pyproject__toml='[project]\nversion = "1.2.3"\n',
+                       package__json='{"version": "1.2.3"}')
+        assert lint.lint_skill(d) == []
+
+    def test_absent_manifests_stay_exempt(self, tmp_path, lint):
+        """A skill with no pyproject/package.json has nothing to disagree with."""
+        assert lint.lint_skill(_versioned(tmp_path, "bare")) == []
+
+
+class TestAnUnreadablePackageManifestIsAlsoAFinding:
+    """The same defect class as the SKILL.md fix, in two sibling readers of the
+    same file: `_pyproject_version` and `_package_json_version` converted an
+    unreadable file into `None`, which is what "no such file" also returns. The
+    agreement rule then silently stopped applying to exactly the file most
+    likely to be wrong.
+    """
+
+    @pytest.mark.parametrize("filename,body,expect", [
+        ("pyproject__toml", "[project\nversion = broken", "pyproject.toml could not be read"),
+        ("package__json", '{"version": ', "package.json could not be read"),
+        ("package__json", '["not", "an", "object"]', "not a JSON object"),
+        ("package__json", '{"version": null}', "declares a null version"),
+        ("pyproject__toml", '[project]\nversion =\n', "could not be read"),
+    ])
+    def test_it_is_reported_rather_than_treated_as_absent(
+        self, tmp_path, lint, filename, body, expect
+    ):
+        d = _versioned(tmp_path, f"broken-{abs(hash((filename, body, expect)))}", **{filename: body})
+        problems = lint.lint_skill(d)
+        assert problems, f"{filename}={body!r} silently exempted"
+        assert any(expect in p for p in problems), problems
+
+
+class TestAnEmptyVersionIsADeclarationNotAnAbsence:
+    def test_a_null_skill_version_is_reported(self, tmp_path, lint):
+        """`version:` with no value is an author who meant to version the skill
+        and did not finish — not a pre-release."""
+        d = tmp_path / "nullver"
+        d.mkdir()
+        (d / "SKILL.md").write_text("---\nname: nullver\ndescription: D.\nversion:\n---\n",
+                                    encoding="utf-8")
+        assert any("empty version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
+
+    def test_a_null_metadata_version_is_reported(self, tmp_path, lint):
+        d = tmp_path / "nullmeta"
+        d.mkdir()
+        (d / "SKILL.md").write_text(
+            "---\nname: nullmeta\ndescription: D.\nmetadata:\n  version:\n---\n", encoding="utf-8")
+        assert any("empty version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
+
+    def test_a_genuinely_absent_version_is_still_exempt(self, tmp_path, lint):
+        """CONTROL: the two cases above must not turn every prototype into a
+        failure — that is the overshoot this rule invites."""
+        d = tmp_path / "proto2"
+        d.mkdir()
+        (d / "SKILL.md").write_text("---\nname: proto2\ndescription: D.\n---\n", encoding="utf-8")
+        assert lint.lint_skill(d) == []
+
+
+class TestTheFenceMustBeExact:
+    def test_a_fence_with_a_suffix_is_not_a_fence(self, tmp_path, lint):
+        d = tmp_path / "suffixed"
+        d.mkdir()
+        (d / "SKILL.md").write_text("---yaml\nname: s\ndescription: D.\nversion: 1.0.0\n---\n",
+                                    encoding="utf-8")
+        assert lint.lint_skill(d), "a '---yaml' opener was accepted as frontmatter"
+
+    def test_a_plain_fence_still_parses(self, tmp_path, lint):
+        """CONTROL for the case above."""
+        d = _versioned(tmp_path, "plain-fence")
+        assert lint.lint_skill(d) == []

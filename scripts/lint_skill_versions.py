@@ -63,7 +63,8 @@ def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         return {}, f"is not valid UTF-8 ({exc.reason})"
-    if not text.startswith("---"):
+    first, _, _rest = text.partition("\n")
+    if first.strip() != "---":
         return {}, "does not start with a --- frontmatter fence"
     end = text.find("\n---", 3)
     if end == -1:
@@ -81,6 +82,16 @@ def _frontmatter(skill_md: Path) -> dict:
     return _read_frontmatter(skill_md)[0]
 
 
+def _skill_version_is_explicitly_null(fm: dict) -> bool:
+    """`version:` written with no value is a DECLARATION that failed, not an
+    absence. Treating it as unversioned exempts a manifest whose author plainly
+    intended to version the skill."""
+    if "version" in fm and fm["version"] is None:
+        return True
+    meta = fm.get("metadata")
+    return isinstance(meta, dict) and "version" in meta and meta["version"] is None
+
+
 def _skill_version(fm: dict) -> str | None:
     """Canonical skill version: top-level `version`, else `metadata.version`."""
     if "version" in fm and fm["version"] is not None:
@@ -91,26 +102,43 @@ def _skill_version(fm: dict) -> str | None:
     return None
 
 
-def _pyproject_version(path: Path) -> str | None:
+def _pyproject_version(path: Path) -> tuple[str | None, str | None]:
+    """`(version, reason_it_could_not_be_read)`.
+
+    Absent and unreadable are different answers. Collapsing them into `None`
+    made a malformed pyproject.toml indistinguishable from no pyproject.toml at
+    all, so the version-agreement rule silently stopped applying to exactly the
+    file most likely to be wrong.
+    """
     if not path.exists():
-        return None
+        return None, None
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
-    v = data.get("project", {}).get("version")
-    return str(v) if v is not None else None
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return None, f"pyproject.toml could not be read ({type(exc).__name__})"
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None, None
+    v = project.get("version")
+    if "version" in project and v is None:
+        return None, "pyproject.toml declares an empty [project].version"
+    return (str(v) if v is not None else None), None
 
 
-def _package_json_version(path: Path) -> str | None:
+def _package_json_version(path: Path) -> tuple[str | None, str | None]:
+    """`(version, reason_it_could_not_be_read)` — see `_pyproject_version`."""
     if not path.exists():
-        return None
+        return None, None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"package.json could not be read ({type(exc).__name__})"
+    if not isinstance(data, dict):
+        return None, "package.json is not a JSON object"
     v = data.get("version")
-    return str(v) if v is not None else None
+    if "version" in data and v is None:
+        return None, "package.json declares a null version"
+    return (str(v) if v is not None else None), None
 
 
 def _changelog_has_version(path: Path, version: str) -> bool:
@@ -133,17 +161,23 @@ def lint_skill(skill_dir: Path) -> list[str]:
         return [f"{name}: SKILL.md {unreadable} — cannot determine whether it is versioned"]
     version = _skill_version(fm)
     if version is None:
+        if _skill_version_is_explicitly_null(fm):
+            return [f"{name}: SKILL.md declares an empty version — remove the key or set one"]
         return []  # unversioned → pre-release → exempt
 
     errors: list[str] = []
     if not _SEMVER.match(version):
         errors.append(f"SKILL.md version {version!r} is not valid SemVer (MAJOR.MINOR.PATCH)")
 
-    py = _pyproject_version(skill_dir / "pyproject.toml")
+    py, py_unreadable = _pyproject_version(skill_dir / "pyproject.toml")
+    if py_unreadable:
+        errors.append(f"{py_unreadable} — cannot confirm it agrees with SKILL.md")
     if py is not None and py != version:
         errors.append(f"pyproject version {py!r} != SKILL.md version {version!r}")
 
-    js = _package_json_version(skill_dir / "package.json")
+    js, js_unreadable = _package_json_version(skill_dir / "package.json")
+    if js_unreadable:
+        errors.append(f"{js_unreadable} — cannot confirm it agrees with SKILL.md")
     if js is not None and js != version:
         errors.append(f"package.json version {js!r} != SKILL.md version {version!r}")
 

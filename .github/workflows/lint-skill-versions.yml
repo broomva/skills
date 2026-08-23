@@ -14,6 +14,8 @@ on:
       - 'skills/**/package.json'
       - 'skills/**/CHANGELOG.md'
       - 'scripts/lint_skill_versions.py'
+      - 'tests/test_lint_skill_versions.py'
+      - '.github/workflows/lint-skill-versions.yml'
       - '.github/workflows/lint-skill-versions.yml'
   push:
     branches: [main]
@@ -23,6 +25,8 @@ on:
       - 'skills/**/package.json'
       - 'skills/**/CHANGELOG.md'
       - 'scripts/lint_skill_versions.py'
+      - 'tests/test_lint_skill_versions.py'
+      - '.github/workflows/lint-skill-versions.yml'
   workflow_dispatch:
 
 jobs:
@@ -58,11 +62,42 @@ jobs:
           code=$?
           set -e
           rm -rf skills/tooling/zzz-ci-probe
-          if [ "$code" -eq 0 ]; then
-            echo "::error::a BOM-prefixed manifest must fail the lint, got exit 0"
+          # Exit 1 EXACTLY and no traceback. A crash also exits non-zero, and a
+          # crash whose message happens to contain the probe path would satisfy
+          # a laxer check while proving the linter cannot RUN rather than that
+          # it can detect.
+          if [ "$code" -ne 1 ]; then
+            echo "::error::a BOM-prefixed manifest must exit 1, got $code"
+            cat /tmp/probe.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/probe.txt; then
+            echo "::error::the lint crashed instead of reporting"
             cat /tmp/probe.txt; exit 1
           fi
           grep -q 'zzz-ci-probe' /tmp/probe.txt || {
             echo "::error::the lint went red but never named the skill"
             cat /tmp/probe.txt; exit 1; }
-          echo "a BOM-prefixed manifest is reported by name"
+          echo "a BOM-prefixed manifest is reported by name, exit 1, no crash"
+
+      - name: The gate also catches an unreadable PACKAGE manifest
+        # A second probe for the sibling readers, because the SKILL.md probe
+        # alone would stay green if only that one reader were fixed.
+        run: |
+          mkdir -p skills/tooling/zzz-pkg-probe
+          printf -- '---\nname: zzz-pkg-probe\ndescription: Probe.\nversion: 1.0.0\n---\n' \
+            > skills/tooling/zzz-pkg-probe/SKILL.md
+          printf '## [1.0.0]\n- x\n' > skills/tooling/zzz-pkg-probe/CHANGELOG.md
+          printf '{"version": ' > skills/tooling/zzz-pkg-probe/package.json
+          set +e
+          python3 scripts/lint_skill_versions.py > /tmp/pkg.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-pkg-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::an unreadable package.json must exit 1, got $code"
+            cat /tmp/pkg.txt; exit 1
+          fi
+          grep -q 'zzz-pkg-probe' /tmp/pkg.txt || {
+            echo "::error::the lint went red but never named the skill"
+            cat /tmp/pkg.txt; exit 1; }
+          echo "an unreadable package.json is reported by name"
