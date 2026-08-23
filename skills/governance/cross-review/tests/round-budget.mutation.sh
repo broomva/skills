@@ -151,9 +151,14 @@ mutate "unreadable ledger fails open" "T15" \
 mutate "PASSED reordered above the stops" "T31" \
     'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3' \
     'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6'
-mutate "earned admits any VERDICT row" "T37" \
-    '[ "$LG_LAST_VERDICT" = "CONTINUE" ] || return 1' \
-    '[ "$LG_LAST_VERDICT" != "IMPOSSIBLE" ] || return 1'
+# "Only CONTINUE earns" is ONE rule held at TWO sites: rule_unusable_verdict
+# fires first and stops, rule_earned refuses to admit. Gutting either alone
+# leaves T37 green -- which is defence in depth working, and also why the
+# first attempt here SURVIVED while proving nothing. The mutation therefore
+# targets the single value both read.
+mutate "every verdict reads as CONTINUE" "T37" \
+    'LG_LAST_VERDICT=$(field "$last" 2)' \
+    'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
     'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 mutate "corrupt ledger cannot be reset" "T39" \
