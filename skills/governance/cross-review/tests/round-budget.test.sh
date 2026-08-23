@@ -285,6 +285,15 @@ LED=$(newledger t26)
 RC=$(env -u ROUND_BUDGET_TEST_LEDGER bash "$RB" budget --run-id=t26 --ledger="$LED" >/dev/null 2>&1; echo $?)
 if [ "$RC" = "2" ]; then ok "T26: --ledger gated"; else fail "T26: --ledger gated" "exit $RC, want 2 — a fresh path is the cheapest budget reset"; fi
 
+# ── T27: a prediction must also carry enough SUBSTANCE to settle ──────────
+# The rule has two arms -- length and location -- and a mutation of the length
+# arm alone survived, because the location arm still rejected T25's input. Each
+# arm needs its own case, or half the rule is untested.
+echo "T27. a located but contentless prediction is refused"
+LED=$(newledger t27)
+RC=$(rb record-verdict --run-id=t27 --ledger="$LED" --verdict=CONTINUE --prediction="a.sh:1")
+if [ "$RC" = "2" ]; then ok "T27: too-short prediction refused"; else fail "T27: too-short prediction refused" "exit $RC, want 2"; fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

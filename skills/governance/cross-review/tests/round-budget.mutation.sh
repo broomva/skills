@@ -57,7 +57,8 @@ KILLED=0; SURVIVED=0; declare -a SURVIVORS=()
 mutate() {
     local label="$1" expect="$2" old="$3" new="$4"
 
-    python3 - "$TARGET" "$old" "$new" <<'PY' || return 1
+    if ! python3 - "$TARGET" "$old" "$new" <<'PY'
+
 import sys
 p,old,new=sys.argv[1],sys.argv[2],sys.argv[3]
 s=open(p).read()
@@ -67,6 +68,16 @@ if n!=1:
     sys.exit(1)
 open(p,'w').write(s.replace(old,new))
 PY
+    then
+        # A stale anchor used to `return 1` here, which counted as NEITHER killed
+        # nor survived -- the mutation silently left the accounting, and the
+        # summary still read "0 survived". An unapplied mutation is a broken
+        # proof, not an absent one.
+        echo "  [ERROR]    $label  ->  anchor did not apply; mutation NOT run"
+        SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label ANCHOR ERROR (mutation never applied)")
+        $GIT checkout -- "$TARGET"
+        return 0
+    fi
 
     local out rc
     out=$(bash "$SUITE" 2>&1); rc=$?
@@ -116,8 +127,8 @@ mutate "unreadable ledger fails open" "T15" '            return 1' '            
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
 mutate "stale verdict re-authorizes" "T13" \
-    'if [ "$LAST_TYPE" != "VERDICT" ]; then' \
-    'if [ "$LAST_TYPE" = "NEVERMATCHES" ]; then'
+    'if [ "$(field "$LAST_ANY" 1)" != "VERDICT" ]; then' \
+    'if [ "$(field "$LAST_ANY" 1)" = "NEVERMATCHES" ]; then'
 
 # ─── The absorbing stops and the fail-closed guards ───────────────────────
 # Each of these was escapable or silent in the first version, so each gets its
@@ -130,7 +141,10 @@ mutate "terminal verdict ignored"    "T19" 'if [ -n "$TERMINAL" ]; then
 mutate "regression check disabled"   "T5"  'if [ "$REGRESSED" != "0" ]; then' 'if [ "$REGRESSED" = "IMPOSSIBLE" ]; then'
 mutate "bad score fails open"        "T23" '[ "$BADSCORE" != "0" ] || [ "$BADROW" != "0" ] || [ -n "$BADVERDICT" ]' '[ "$BADSCORE" = "IMPOSSIBLE" ]'
 mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
-mutate "prediction location optional"  "T25" 'if [ "${#CLEAN_PRED}" -lt 12 ]' 'if [ "${#CLEAN_PRED}" -lt 0 ]'
+mutate "prediction length arm dead"   "T27" 'if [ "${#CLEAN_PRED}" -lt 12 ]' 'if [ "${#CLEAN_PRED}" -lt 0 ]'
+mutate "prediction location arm dead" "T25" \
+    "! printf '%s' \"\$CLEAN_PRED\" | grep -qE '[A-Za-z0-9_-]+\\.[A-Za-z]+|/|:[0-9]+'" \
+    "! printf '%s' \"\$CLEAN_PRED\" | grep -qE ''" 
 mutate "ledger seam ungated"           "T26" 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" != "1" ]; then' 'if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" = "IMPOSSIBLE" ]; then'
 
 echo ""
