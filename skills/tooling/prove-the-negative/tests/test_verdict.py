@@ -62,9 +62,12 @@ class TestErrorsNeverPass:
         assert r.verdict == "INVALID"
         assert "egress denied" in r.culprits
 
-    def test_an_errored_assertion_is_not_PASS_either(self):
+    def test_a_lone_errored_assertion_is_INVALID(self):
+        # Asserting only `!= "PASS"` here would hold under the OLD broken
+        # behaviour (FAIL) as well as the new one, so it could not tell the fix
+        # from the defect. Name the verdict.
         cases = [c("ctl", "control", "pass"), c("egress denied", "assertion", "error")]
-        assert run_verdict(cases).verdict != "PASS"
+        assert run_verdict(cases).verdict == "INVALID"
 
 
 class TestAControlOnlySuiteMeasuresNothing:
@@ -137,6 +140,11 @@ class TestExitCodes:
         r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"},
                        {"name": "denied", "kind": "assertion", "outcome": "pass"}])
         assert r.returncode == 0 and "PASS" in r.stdout
+
+    def test_a_lone_errored_assertion_exits_2_not_1(self):
+        r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"},
+                       {"name": "egress denied", "kind": "assertion", "outcome": "error"}])
+        assert r.returncode == 2 and "INVALID" in r.stdout
 
     def test_a_control_only_run_exits_2_not_0(self):
         r = self._run([{"name": "ctl", "kind": "control", "outcome": "pass"}])
