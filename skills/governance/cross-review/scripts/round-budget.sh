@@ -50,7 +50,17 @@
 # "Should I extend?" asked cold answers YES almost always. A second model
 # rubber-stamping that is WORSE than the fixed counter, because it launders the
 # writer's appetite through something that looks independent. Four rules, each
-# enforced here rather than left to the agent's discipline:
+# checked here against the ledger rather than recalled by the agent.
+#
+# The boundary, stated because the first version of this comment overclaimed it
+# and two reviewers were right to block on that: these rules bind the LEDGER.
+# They are absorbing and cannot be cleared by appending, reset by re-running
+# pre-push, or dodged by pointing at another file. They do NOT compel anyone to
+# run `budget` in the first place, and the ledger is a plain file this same
+# agent can delete. This removes ACCIDENTAL drift -- the miscounted round, the
+# stop quietly walked back -- which is what actually went wrong on the arcs that
+# ran to 12, 21 and 22 rounds. It does not bind an agent set on evading it.
+# SKILL.md carries the same statement in full.
 #
 #   1. CONTINUE requires a non-empty --prediction. A continuation with nothing
 #      to settle cannot be wrong, and a verdict that cannot be wrong is not a

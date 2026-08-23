@@ -123,8 +123,9 @@ each time collapse into one directive.
 **Why this is not a rubber stamp.** "Should I extend?" asked cold answers *yes*
 almost always, and a second model rubber-stamping it is worse than the fixed
 counter it replaces — it launders the writer's appetite through something that
-looks independent. Four rules are enforced by `round-budget.sh`, not by the
-agent's discipline:
+looks independent. Four rules are checked by `round-budget.sh` against the
+ledger, so they do not depend on the agent recalling them correctly — see
+*What this enforces, and what it does not* below for the boundary:
 
 1. `CONTINUE` requires a non-empty prediction. A continuation that cannot be
    refuted is an opinion, not a verdict.
@@ -135,6 +136,49 @@ agent's discipline:
 The ceiling at round 8 is deliberate and is not timidity: an agent that grants
 itself unbounded budget by asking itself has begun acquiring its own resources,
 and the workspace leaves that pillar open **by design**.
+
+### What this enforces, and what it does not
+
+The first version of this section claimed the four rules were "enforced by the
+recorder, not by the agent's discipline." Two independent reviewers showed that
+was false, and both were right: every rule yielded to a short sequence of
+*legal* commands. The rules are now genuinely enforced against the ledger — and
+the honest statement of the boundary is part of the mechanism, not a caveat
+appended to it.
+
+**Enforced, and mutation-proved:**
+
+| Property | Why it holds |
+|---|---|
+| A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED` |
+| A budget cannot be reset by re-running `pre-push` | the ledger id is derived from branch + merge-base, not the PID |
+| A budget cannot be reset by pointing at a new file | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER` |
+| An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
+| A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
+| The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
+
+**NOT enforced — the bypasses, stated rather than implied:**
+
+- **Nothing compels the agent to call `budget` at all.** `pre-push` prints the
+  command; it cannot run the loop on the agent's behalf. This is the same shape
+  as the defect it replaces — the old bound was a number no conditional read;
+  this one is a conditional no caller is *required* to run — and pretending
+  otherwise would repeat the original mistake one level up.
+- **The ledger is not a security boundary.** It is a plain file under `.git/`.
+  An agent determined to evade it can edit or delete it. It is bookkeeping that
+  makes drift *visible*, not a control that makes drift impossible.
+- **`--defect=yes` is the agent's own assertion.** The controller enforces that
+  two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
+  actually earned. That judgement belongs to the reviewer's findings.
+- **The ledger is invisible to CI.** It lives in `.git/`, so no workflow can see
+  whether an arc ever ran the loop. Paste `cross-review round show` into the PR
+  alongside the verdict — that is what makes the budget part of the merge
+  artifact rather than a private note.
+
+The value is real but bounded: it removes the *accidental* drift — the miscounted
+round, the stop quietly walked back, the budget reset by a re-invocation — which
+is what actually went wrong across the arcs that ran to 12, 21, and 22 rounds. It
+does not, and cannot, bind an agent that has decided to evade it.
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
