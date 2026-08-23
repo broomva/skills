@@ -797,3 +797,98 @@ class TestWhereARestoredAggregateLands:
         text = lint._INVENTORY.read_text()
         assert "**Largest bucket**" not in text, text
         assert lint.main([]) == 1
+
+
+#: (registry name, head of the bullet, truncated form that states no value)
+TRUNCATIONS = [
+    ("**Total skills** aggregate", "- **Total skills**", "- **Total skills**:"),
+    ("**Total category buckets** aggregate",
+     "- **Total category buckets**", "- **Total category buckets**:"),
+    ("**Largest bucket** aggregate", "- **Largest bucket**", "- **Largest bucket**:"),
+    ("**Smallest buckets** aggregate",
+     "- **Smallest buckets**", "- **Smallest buckets** ():"),
+]
+
+
+class TestATruncatedClaimIsNotASatisfiedOne:
+    """The fifth instance of one shape, and the first living in the SEAM between
+    two checks rather than inside one.
+
+    The registry detector was a PREFIX (`**Largest bucket**:`) while the
+    validator needed the full pattern. A line with its value deleted satisfied
+    the presence check, matched nothing in `_LARGEST_RX`, and was skipped under
+    `if m:` — so check AND --fix both reported success on a claim stating
+    nothing. Presence means parseable now, one notion serving both.
+    """
+
+    def _truncate(self, tmp_path, lint, head, truncated):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = "\n".join(truncated if line.startswith(head) else line
+                          for line in _default_aggregates(total, buckets).split("\n"))
+        _consistent(tmp_path, lint,
+                    inventory=_inventory(irows, total, buckets, aggregates=block))
+        return buckets, total
+
+    @pytest.mark.parametrize("name,head,truncated", TRUNCATIONS)
+    def test_a_truncated_aggregate_is_reported(self, tmp_path, lint, name, head, truncated):
+        self._truncate(tmp_path, lint, head, truncated)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any(name in p and "unparseable" in p for p in problems), problems
+
+    @pytest.mark.parametrize("name,head,truncated", TRUNCATIONS)
+    def test_fix_replaces_it_without_duplicating_it(
+            self, tmp_path, lint, name, head, truncated):
+        buckets, total = self._truncate(tmp_path, lint, head, truncated)
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        text = lint._INVENTORY.read_text()
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == [], text
+        assert sum(1 for l in text.split("\n") if l.startswith(head)) == 1, text
+        # and the restored line carries the value derived from disk
+        assert _default_aggregates(total, buckets).count(
+            [l for l in text.split("\n") if l.startswith(head)][0]) == 1, text
+
+    def test_an_intact_block_is_still_clean(self, tmp_path, lint):
+        """POSITIVE CONTROL: 'present but unparseable' must not fire on the
+        canonical form, or the gate rejects its own output."""
+        _consistent(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+
+class TestAnUnreadableManifestIsAFinding:
+    """Applying BRO-2269 to this script. The sibling linter treats "I could not
+    read the frontmatter" as "there is nothing to check", so a UTF-8 BOM — which
+    is invisible in most editors — silently exempts a skill from every version
+    check. This script read frontmatter the same way.
+    """
+
+    def _skill(self, tmp_path, lint, name, raw: bytes):
+        _consistent(tmp_path, lint)
+        d = tmp_path / "skills" / "governance" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_bytes(raw)
+        return lint
+
+    def test_a_well_formed_manifest_reports_nothing(self, tmp_path, lint):
+        """POSITIVE CONTROL for the cases below."""
+        self._skill(tmp_path, lint, "fine", b"---\nname: fine\ndescription: D.\n---\n")
+        assert lint.unreadable_manifests(lint._SKILLS_DIR) == []
+
+    @pytest.mark.parametrize("label,raw,expect", [
+        ("BOM", "﻿---\nname: b\ndescription: D.\n---\n".encode("utf-8"), "BOM"),
+        ("blank line first", b"\n---\nname: b\ndescription: D.\n---\n", "--- frontmatter fence"),
+        ("no closing fence", b"---\nname: b\ndescription: D.\n", "closing"),
+        ("unparseable YAML", b"---\nname: [unclosed\n---\n", "unparseable YAML"),
+        ("not a mapping", b"---\n- just\n- a list\n---\n", "not a mapping"),
+        ("invalid utf-8", b"---\nname: \xff\xfe bad\n---\n", "not valid UTF-8"),
+    ])
+    def test_an_unreadable_manifest_is_named_with_a_reason(
+            self, tmp_path, lint, label, raw, expect):
+        self._skill(tmp_path, lint, "broken", raw)
+        found = lint.unreadable_manifests(lint._SKILLS_DIR)
+        assert any(expect in f for f in found), (label, found)
+
+    def test_main_exits_1_on_an_unreadable_manifest(self, tmp_path, lint):
+        """It must reach the exit code, not merely the helper."""
+        self._skill(tmp_path, lint, "broken",
+                    "﻿---\nname: broken\ndescription: D.\n---\n".encode("utf-8"))
+        assert lint.main([]) == 1

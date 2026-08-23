@@ -72,18 +72,50 @@ _ROW_SURFACES = ("README.md", "skills-inventory.md")
 _DESC_LIMIT = 200
 
 
-def _frontmatter(skill_md: Path) -> dict:
-    text = skill_md.read_text(encoding="utf-8")
+def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
+    """`(frontmatter, reason_it_could_not_be_read)`.
+
+    Three states, not two. Returning a bare `{}` for an unreadable manifest
+    makes "I could not read this" indistinguishable from "there was nothing to
+    read", and the caller then treats a broken file as an ordinary one — the
+    same collapse that lets a BOM silently exempt a skill from version linting
+    in the sibling script (BRO-2269). A UTF-8 BOM is invisible in most editors
+    and is exactly what a Windows editor or a careless shell redirect produces.
+    """
+    raw = skill_md.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return {}, "starts with a UTF-8 BOM before the --- fence"
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return {}, f"is not valid UTF-8 ({exc.reason})"
     if not text.startswith("---"):
-        return {}
+        return {}, "does not start with a --- frontmatter fence"
     end = text.find("\n---", 3)
     if end == -1:
-        return {}
+        return {}, "has no closing --- fence"
     try:
         data = yaml.safe_load(text[3:end])
-    except yaml.YAMLError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    except yaml.YAMLError as exc:
+        return {}, f"has unparseable YAML frontmatter ({str(exc).splitlines()[0][:60]})"
+    if not isinstance(data, dict):
+        return {}, "frontmatter is not a mapping"
+    return data, None
+
+
+def _frontmatter(skill_md: Path) -> dict:
+    return _read_frontmatter(skill_md)[0]
+
+
+def unreadable_manifests(skills_dir: Path | None = None) -> list[str]:
+    """Every SKILL.md whose frontmatter could not be read, and why."""
+    skills_dir = _SKILLS_DIR if skills_dir is None else skills_dir
+    out = []
+    for skill_md in sorted(skills_dir.glob("*/*/SKILL.md")):
+        reason = _read_frontmatter(skill_md)[1]
+        if reason:
+            out.append(f"{skill_md.parts[-3]}/{skill_md.parts[-2]}: SKILL.md {reason}")
+    return out
 
 
 def _short(description: object, limit: int = _DESC_LIMIT) -> str:
@@ -322,27 +354,44 @@ def _labels(inventory_text: str) -> dict[str, str]:
 #: presence is DECLARED in one place: adding a structure here makes its absence
 #: a finding automatically, instead of relying on whoever adds the next check
 #: to remember the rule.
-_REQUIRED_STRUCTURES: dict[str, tuple[tuple[str, str], ...]] = {
+_REQUIRED_STRUCTURES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "skills-inventory.md": (
-        ("**Largest bucket** aggregate", r"\*\*Largest bucket\*\*:"),
-        ("**Smallest buckets** aggregate", r"\*\*Smallest buckets\*\* \("),
-        ("**Total skills** aggregate", r"\*\*Total skills\*\*:"),
-        ("**Total category buckets** aggregate", r"\*\*Total category buckets\*\*:"),
+        # (name, DETECTOR — the full parseable form, PREFIX — how to find a
+        # malformed instance of it)
+        ("**Total skills** aggregate",
+         r"\*\*Total skills\*\*: \d+", r"^- \*\*Total skills\*\*"),
+        ("**Total category buckets** aggregate",
+         r"\*\*Total category buckets\*\*: \d+", r"^- \*\*Total category buckets\*\*"),
+        ("**Largest bucket** aggregate",
+         r"\*\*Largest bucket\*\*: .+? \(\d+\)", r"^- \*\*Largest bucket\*\*"),
+        ("**Smallest buckets** aggregate",
+         r"\*\*Smallest buckets\*\* \(\d+\): \S", r"^- \*\*Smallest buckets\*\*"),
     ),
 }
 
 
 def _missing_structure_problems(label: str, text: str) -> list[str]:
-    """Report any declared structure this surface no longer contains.
+    """Report any declared structure this surface does not contain IN A FORM
+    ITS VALIDATOR CAN READ.
 
-    A check written as `if match:` verifies the value when present and says
-    nothing when it is gone, so deleting the line is indistinguishable from
-    passing. That is the same mistake as skipping an empty table or exempting
-    every table row, and it is stated here once for every declared structure.
+    The detector is the full parseable pattern, not a prefix, because a
+    presence-check and a validator that disagree about what "present" means
+    leave a seam between them: `- **Largest bucket**:` with the value deleted
+    satisfied a prefix detector while `_LARGEST_RX` matched nothing, so the
+    validator skipped under `if m:` and both check and --fix reported success
+    on a truncated claim. One notion of presence closes it.
     """
-    return [f"{label}: required {name} is missing — deleting a claim is not a way to satisfy it"
-            for name, detector in _REQUIRED_STRUCTURES.get(label, ())
-            if not re.search(detector, text)]
+    problems = []
+    for name, detector, prefix in _REQUIRED_STRUCTURES.get(label, ()):
+        if re.search(detector, text):
+            continue
+        malformed = re.search(prefix, text, re.M)
+        problems.append(
+            f"{label}: required {name} is "
+            + ("present but unparseable — a truncated claim is not a satisfied one"
+               if malformed else
+               "missing — deleting a claim is not a way to satisfy it"))
+    return problems
 
 
 def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, str]) -> list[str]:
@@ -440,8 +489,14 @@ def _restore_missing_aggregates(label: str, text: str, disk: dict) -> str:
     block = re.search(r"^## Aggregates\n+", text, re.M)
     if not block:
         return text
-    for name, detector in _REQUIRED_STRUCTURES[label]:
+    for name, detector, prefix in _REQUIRED_STRUCTURES[label]:
         if re.search(detector, text) or name not in shapes:
+            continue
+        # Drop a malformed instance first, or --fix leaves the truncated line
+        # in place and adds a second, correct one beside it.
+        text = re.sub(prefix + r".*\n", "", text, flags=re.M)
+        block = re.search(r"^## Aggregates\n+", text, re.M)
+        if not block:
             continue
         tail = text[block.end():]
         # Only the BOLD aggregate bullets, so a restored line lands among its
@@ -603,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
     total = sum(len(v) for v in disk.values())
     if args.fix:
         fix(disk)
-        remaining = check(discover(), _load())
+        remaining = unreadable_manifests() + check(discover(), _load())
         if remaining:
             print("✗ --fix could not reconcile:", file=sys.stderr)
             for line in remaining:
@@ -612,7 +667,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✓ catalog rewritten from disk ({total} skills, {len(disk)} buckets)")
         return 0
 
-    problems = check(disk, _load())
+    problems = unreadable_manifests() + check(disk, _load())
     if problems:
         print(f"✗ catalog disagrees with disk ({total} skills, {len(disk)} buckets):",
               file=sys.stderr)
