@@ -314,6 +314,37 @@ def _labels(inventory_text: str) -> dict[str, str]:
                                  inventory_text, re.M)}
 
 
+#: Structures a surface MUST contain, keyed by surface, as (name, detector).
+#: Every "absent reads as consistent" defect in this file's review history was
+#: the same omission spelled in a new place — `if sections:`, then
+#: `if not listed:`, then a blanket `|`-line exemption, then `if m:` on the
+#: superlatives. Four branches, four rounds. The registry exists so that
+#: presence is DECLARED in one place: adding a structure here makes its absence
+#: a finding automatically, instead of relying on whoever adds the next check
+#: to remember the rule.
+_REQUIRED_STRUCTURES: dict[str, tuple[tuple[str, str], ...]] = {
+    "skills-inventory.md": (
+        ("**Largest bucket** aggregate", r"\*\*Largest bucket\*\*:"),
+        ("**Smallest buckets** aggregate", r"\*\*Smallest buckets\*\* \("),
+        ("**Total skills** aggregate", r"\*\*Total skills\*\*:"),
+        ("**Total category buckets** aggregate", r"\*\*Total category buckets\*\*:"),
+    ),
+}
+
+
+def _missing_structure_problems(label: str, text: str) -> list[str]:
+    """Report any declared structure this surface no longer contains.
+
+    A check written as `if match:` verifies the value when present and says
+    nothing when it is gone, so deleting the line is indistinguishable from
+    passing. That is the same mistake as skipping an empty table or exempting
+    every table row, and it is stated here once for every declared structure.
+    """
+    return [f"{label}: required {name} is missing — deleting a claim is not a way to satisfy it"
+            for name, detector in _REQUIRED_STRUCTURES.get(label, ())
+            if not re.search(detector, text)]
+
+
 def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, str]) -> list[str]:
     """Largest/smallest-bucket aggregates, verified against disk.
 
@@ -382,6 +413,47 @@ def _bucket_table_problems(label: str, text: str, disk: dict) -> list[str]:
     for category in sorted(listed - set(disk)):
         problems.append(f"{label}: bucket table lists `{category}`, not on disk")
     return problems
+
+
+def _restore_missing_aggregates(label: str, text: str, disk: dict, names: dict[str, str]) -> str:
+    """Re-insert a declared aggregate that was deleted outright.
+
+    Reporting absence is only half the contract: a --fix that repairs a WRONG
+    value but cannot restore a DELETED one leaves the only remedy for a
+    detected problem being to edit by hand, and the gate stays red forever.
+    Inserted into the `## Aggregates` block; if that block is gone there is no
+    non-arbitrary place to put it, so --fix leaves it and `check` keeps saying
+    so rather than inventing a location.
+    """
+    required = dict(_REQUIRED_STRUCTURES.get(label, ()))
+    if not required or not disk:
+        return text
+    sizes = {c: len(v) for c, v in disk.items()}
+    hi, lo = max(sizes.values()), min(sizes.values())
+    canonical = {
+        "**Total skills** aggregate": f"- **Total skills**: {sum(sizes.values())}",
+        "**Total category buckets** aggregate": f"- **Total category buckets**: {len(disk)}",
+        "**Largest bucket** aggregate":
+            f"- **Largest bucket**: "
+            f"{sorted(names.get(c, c) for c, n in sizes.items() if n == hi)[0]} ({hi})",
+        "**Smallest buckets** aggregate":
+            f"- **Smallest buckets** ({lo}): "
+            + ", ".join(sorted(names.get(c, c) for c, n in sizes.items() if n == lo)),
+    }
+    block = re.search(r"^## Aggregates\n+", text, re.M)
+    if not block:
+        return text
+    for name, detector in _REQUIRED_STRUCTURES.get(label, ()):
+        if re.search(detector, text) or name not in canonical:
+            continue
+        insert_at = block.end()
+        tail = text[insert_at:]
+        # Only the BOLD aggregate bullets, so a restored line lands among its
+        # peers rather than after the trailing prose bullet.
+        bullets = re.match(r"(?:- \*\*.*\n)*", tail)
+        offset = bullets.end() if bullets else 0
+        text = text[:insert_at + offset] + canonical[name] + "\n" + text[insert_at + offset:]
+    return text
 
 
 def _fix_superlatives(text: str, disk: dict, names: dict[str, str]) -> str:
@@ -467,6 +539,7 @@ def check(disk: dict, surfaces: dict[str, tuple[Path, list[_Section], str]]) -> 
                 problems.append(
                     f"{label}: claims {declared} category buckets, disk has {len(disk)}")
                 break
+        problems += _missing_structure_problems(label, text)
         problems += _superlative_problems(label, text, disk, names)
         problems += _bucket_table_problems(label, text, disk)
         for claim in _unverified_count_claims(text):
@@ -517,6 +590,7 @@ def fix(disk: dict) -> None:
     names = _labels(inventory)
     inventory = _rebuild(inventory, _sections(inventory, _INV_HEADING, _INV_ROW), disk,
                          lambda c, n, d, a: f"| `{n}`{a} | {d} |")
+    inventory = _restore_missing_aggregates("skills-inventory.md", inventory, disk, names)
     inventory = _fix_superlatives(inventory, disk, names)
     _INVENTORY.write_text(_recount(inventory, disk, r"(\(`{cat}`\) \| )\d+( \|)"), encoding="utf-8")
 

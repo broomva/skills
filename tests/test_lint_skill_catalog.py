@@ -35,6 +35,13 @@ def lint():
     return _load_module()
 
 
+AGGREGATES = ("\n---\n\n## Aggregates\n\n"
+              "- **Total skills**: {total}\n"
+              "- **Total category buckets**: {nbuckets}\n"
+              "- **Largest bucket**: {largest} ({hi})\n"
+              "- **Smallest buckets** ({lo}): {smallest}\n")
+
+
 SKILLS = {
     "governance": {"alpha": "Alpha does governance things.",
                    "beta": "Beta does other governance things."},
@@ -54,12 +61,25 @@ def _readme(rows: dict[str, list[str]], total: int, buckets: dict[str, int]) -> 
     return "\n".join(out) + "\n"
 
 
-def _inventory(rows: dict[str, list[str]], total: int, buckets: dict[str, int]) -> str:
+def _default_aggregates(total: int, buckets: dict[str, int]) -> str:
+    """The aggregate block every inventory is REQUIRED to carry. Declared in the
+    linter's `_REQUIRED_STRUCTURES`, so a fixture without it is genuinely
+    non-compliant and every test would otherwise trip on the same finding."""
+    hi, lo = max(buckets.values()), min(buckets.values())
+    top = sorted(c.title() for c, n in buckets.items() if n == hi)[0]
+    bottom = ", ".join(sorted(c.title() for c, n in buckets.items() if n == lo))
+    return AGGREGATES.format(total=total, nbuckets=len(buckets),
+                             largest=top, hi=hi, lo=lo, smallest=bottom)
+
+
+def _inventory(rows: dict[str, list[str]], total: int, buckets: dict[str, int],
+               aggregates: str | None = None) -> str:
     out = [f"> {total} skills across 2 category buckets.", ""]
     for cat, lines in rows.items():
         out += [f"## {cat.title()} — `skills/{cat}/` ({buckets[cat]})", "",
                 "| Skill | What it does |", "|---|---|"] + lines + [""]
-    return "\n".join(out) + "\n"
+    body = "\n".join(out) + "\n"
+    return body + (_default_aggregates(total, buckets) if aggregates is None else aggregates)
 
 
 def _catalog_skill(total: int, buckets: dict[str, int]) -> str:
@@ -286,7 +306,7 @@ class TestCountsInEveryForm:
 
     def test_a_total_skills_bullet_is_verified(self, tmp_path, lint):
         _, _s, buckets, total, rrows, irows = _consistent(tmp_path, lint)
-        inv = _inventory(irows, total, buckets) + "\n- **Total skills**: 78\n"
+        inv = _inventory(irows, total, buckets, aggregates=_default_aggregates(total, buckets)) + "\n- **Total skills**: 78\n"
         _consistent(tmp_path, lint, inventory=inv)
         problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
         assert any("claims 78" in p for p in problems), problems
@@ -301,7 +321,7 @@ class TestCountsInEveryForm:
     def test_fix_repairs_every_form_including_the_late_added_ones(self, tmp_path, lint):
         _, _s, buckets, total, rrows, irows = _consistent(tmp_path, lint)
         readme = f"A monorepo of {total + 9} Tier-2 skills.\n\n" + _readme(rrows, total, buckets)
-        inv = _inventory(irows, total, buckets) + "\n- **Total skills**: 78\n"
+        inv = _inventory(irows, total, buckets, aggregates=_default_aggregates(total, buckets)) + "\n- **Total skills**: 78\n"
         _consistent(tmp_path, lint, readme=readme, inventory=inv)
         lint.fix(lint.discover(lint._SKILLS_DIR))
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
@@ -441,11 +461,6 @@ class TestNonSkillContentInASection:
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
 
 
-AGGREGATES = ("\n---\n\n## Aggregates\n\n"
-              "- **Total skills**: {total}\n"
-              "- **Total category buckets**: {nbuckets}\n"
-              "- **Largest bucket**: {largest} ({hi})\n"
-              "- **Smallest buckets** ({lo}): {smallest}\n")
 
 
 class TestAggregatesThatNeverSayTheWordSkill:
@@ -462,7 +477,7 @@ class TestAggregatesThatNeverSayTheWordSkill:
         base = dict(total=total, nbuckets=len(buckets), largest="Tooling",
                     hi=max(buckets.values()), lo=min(buckets.values()), smallest="Governance")
         base.update(over)
-        inv = _inventory(irows, total, buckets) + AGGREGATES.format(**base)
+        inv = _inventory(irows, total, buckets, aggregates="") + AGGREGATES.format(**base)
         _consistent(tmp_path, lint, inventory=inv)
         return lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
 
@@ -550,7 +565,7 @@ class TestTheTwoPropertiesTheSweepFoundUnproven:
         the count branch and leaves the set comparison unexercised. Hold the
         count correct so only the set can fail."""
         _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
-        inv = _inventory(irows, total, buckets) + AGGREGATES.format(
+        inv = _inventory(irows, total, buckets, aggregates="") + AGGREGATES.format(
             total=total, nbuckets=len(buckets), largest="Tooling", hi=max(buckets.values()),
             lo=min(buckets.values()), smallest="Tooling")     # correct count, WRONG set
         _consistent(tmp_path, lint, inventory=inv)
@@ -681,10 +696,63 @@ class TestFixRepairsSuperlativesInBothDirections:
         """Deleting the smallest-branch from _fix_superlatives survived the
         sweep: checking it was tested, FIXING it was not."""
         _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
-        inv = _inventory(irows, total, buckets) + AGGREGATES.format(
+        inv = _inventory(irows, total, buckets, aggregates="") + AGGREGATES.format(
             total=total, nbuckets=len(buckets), largest="Tooling", hi=max(buckets.values()),
             lo=min(buckets.values()), smallest="Tooling")     # wrong set
         _consistent(tmp_path, lint, inventory=inv)
         lint.fix(lint.discover(lint._SKILLS_DIR))
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
         assert "**Smallest buckets** (2): Governance" in lint._INVENTORY.read_text()
+
+
+class TestDeletingAClaimIsNotAWayToSatisfyIt:
+    """The fourth instance of one shape, and the reason a registry exists.
+
+    `_superlative_problems` validated only under `if m:` — it checked the value
+    when the line was present and said nothing when it was gone, so DELETING
+    the aggregate turned the gate green. Same as `if sections:`, as
+    `if not listed:`, as exempting every `|` line. Presence is declared in
+    `_REQUIRED_STRUCTURES` now, so absence is a finding for every entry without
+    each new check having to remember the rule.
+    """
+
+    def _without(self, tmp_path, lint, marker):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = "\n".join(l for l in _default_aggregates(total, buckets).split("\n")
+                          if marker not in l)
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        return lint
+
+    @pytest.mark.parametrize("marker,expected", [
+        ("**Largest bucket**", "**Largest bucket** aggregate"),
+        ("**Smallest buckets**", "**Smallest buckets** aggregate"),
+        ("**Total skills**", "**Total skills** aggregate"),
+        ("**Total category buckets**", "**Total category buckets** aggregate"),
+    ])
+    def test_deleting_a_required_aggregate_is_reported(self, tmp_path, lint, marker, expected):
+        self._without(tmp_path, lint, marker)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any(expected in p and "missing" in p for p in problems), problems
+
+    @pytest.mark.parametrize("marker", ["**Largest bucket**", "**Smallest buckets**",
+                                        "**Total skills**", "**Total category buckets**"])
+    def test_fix_restores_a_deleted_aggregate(self, tmp_path, lint, marker):
+        """Reporting absence is half the contract. A --fix that repairs a WRONG
+        value but cannot restore a DELETED one leaves the gate red with no
+        remedy but hand-editing."""
+        self._without(tmp_path, lint, marker)
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert marker in lint._INVENTORY.read_text()
+
+    def test_a_restored_aggregate_carries_the_value_from_disk(self, tmp_path, lint):
+        self._without(tmp_path, lint, "**Largest bucket**")
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        # fixture: tooling holds 3 (gamma, delta, skills-catalog), governance 2
+        assert "**Largest bucket**: Tooling (3)" in lint._INVENTORY.read_text()
+
+    def test_a_complete_aggregate_block_is_clean(self, tmp_path, lint):
+        """POSITIVE CONTROL: the registry must distinguish absent from present,
+        not report on every run."""
+        _consistent(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
