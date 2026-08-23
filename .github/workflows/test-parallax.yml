@@ -4,8 +4,9 @@ name: test-parallax
 #
 # THIS DIRECTORY IS CANONICAL. It used to be a vendored copy of
 # github.com/broomva/parallax, guarded by a `parallax-sync` job that asserted the
-# two trees were byte-identical. That repo is archived and there is no second copy
-# any more, so the drift gate was DELETED rather than repointed: a diff against a
+# two trees were byte-identical. That repo stops being a development home with
+# this change and is archived read-only, so there is no second copy to keep in
+# step and the drift gate was DELETED rather than repointed: a diff against a
 # frozen tree passes forever and reports nothing, which is worse than no check --
 # it is a green tick that means "the archive still exists".
 #

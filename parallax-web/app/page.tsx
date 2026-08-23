@@ -462,8 +462,8 @@ export default function Home() {
             <h2 className="h">What runs, what does not, and what is unmeasured.</h2>
             <p className="lede">
               Every figure on this page is printed by a command in the Parallax runtime at seed 42
-              over a horizon of 12 steps. There are no customer deployments, no accuracy claims and no
-              benchmark numbers here, because we have none.
+              over a horizon of 12 steps. There are no customer deployments, no accuracy claims and
+              no benchmark numbers here, because we have none.
             </p>
             <div className="state2">
               <div>
@@ -554,10 +554,10 @@ export default function Home() {
               <div>
                 <p className="q">Our context is a mess.</p>
                 <p className="a">
-                  Then the proposal comes back smaller and emptier. The one it made of the
-                  Parallax project directory proposed zero invariants and seven blocking questions,
-                  and said so in the message rather than filling the gaps with something plausible.
-                  An empty slot is information about your context, not a failure of the tool.
+                  Then the proposal comes back smaller and emptier. The one it made of the Parallax
+                  project directory proposed zero invariants and seven blocking questions, and said
+                  so in the message rather than filling the gaps with something plausible. An empty
+                  slot is information about your context, not a failure of the tool.
                 </p>
               </div>
             </div>

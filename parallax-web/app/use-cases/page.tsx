@@ -140,8 +140,8 @@ export default function UseCases() {
           <h2 className="h">Seven stations, and not one of them is a new subsystem.</h2>
           <p className="lede">
             observar → estructurar → predecir → simular → recomendar → medir → recalibrar. Each
-            station below names the operator in the runtime that does the work, because a loop
-            drawn over primitives that do not exist is a diagram, not an architecture.
+            station below names the operator in the runtime that does the work, because a loop drawn
+            over primitives that do not exist is a diagram, not an architecture.
           </p>
 
           <div style={{ marginTop: 40 }} className="loopwrap">

@@ -71,7 +71,11 @@ const CODE_ROOT = "../skills/simulation/parallax/runtime";
  * scoped tree. Both resolve; neither can collide.
  */
 const REPO_ROOT = "..";
-const CITE = /([A-Za-z0-9_\-./]+\.(?:ts|tsx|css|md)):(\d+)(?:-(\d+))?/g;
+// The range separator accepts an en-dash and an em-dash as well as an ASCII
+// hyphen. These specs are typeset prose and an editor that "fixes" 205-240
+// into 205–240 would otherwise make the citation silently unmatched --
+// invisible, and in the direction that reports success.
+const CITE = /([A-Za-z0-9_\-./]+\.(?:ts|tsx|css|md)):(\d+)(?:[-–—](\d+))?/g;
 const SKIP_DIRS = new Set(["node_modules", ".git", ".next", "out", "dist"]);
 
 /** Index basename -> paths, so `handlers.ts:802` resolves without a full path. */
@@ -153,7 +157,8 @@ export function checkSpecCitations(base = ".", codeRoot = CODE_ROOT): Report {
         failures.push({
           spec,
           cite,
-          reason: `ambiguous: ${candidates.length} files named ${path} under ${codeRoot} ` +
+          reason:
+            `ambiguous: ${candidates.length} files named ${path} under ${codeRoot} ` +
             `(${candidates.map((c) => relative(code, c)).join(", ")}). Cite a path, not a basename.`,
         });
         continue;

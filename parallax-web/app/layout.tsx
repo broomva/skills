@@ -12,7 +12,12 @@ const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 // `og:url = http://localhost:3000/` to every crawler and chat client that
 // unfurls it, which is not "no claim", it is a wrong claim that nobody can
 // follow. Override with NEXT_PUBLIC_SITE_URL when the site moves (BRO-2271).
-const site = process.env.NEXT_PUBLIC_SITE_URL ?? `https://broomva.github.io/parallax${base}/`;
+// Deliberately NOT composed with `base`. The two are different things: `base` is
+// the path prefix assets are served under, while this is the one canonical
+// address of the site. Composing them yields /parallax/parallax/ in any build
+// that sets NEXT_PUBLIC_BASE_PATH=/parallax, which is exactly the build that
+// publishes.
+const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://broomva.github.io/parallax/";
 
 export const metadata: Metadata = {
   metadataBase: new URL(site),
