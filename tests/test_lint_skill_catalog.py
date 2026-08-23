@@ -909,3 +909,41 @@ class TestAnUnreadableManifestIsAFinding:
         """POSITIVE CONTROL: main must not always exit 1."""
         _consistent(tmp_path, lint)
         assert lint.main([]) == 0
+
+
+class TestAnEmptyValueIsDistinctFromNoValue:
+    """`- **Total skills**:` and `- **Total skills**: ` are different strings.
+
+    The truncation fixtures produce the first, which fails `\\d+` and `\\d*`
+    alike — so a mutation weakening the quantifier to `\\d*` survived the whole
+    suite. Only the colon-SPACE-then-nothing form distinguishes them, and it is
+    the likelier real-world shape: a half-finished edit, or a value cut by a
+    script that kept the separator.
+    """
+
+    @pytest.mark.parametrize("name,head", [
+        ("**Total skills** aggregate", "- **Total skills**"),
+        ("**Total category buckets** aggregate", "- **Total category buckets**"),
+        ("**Largest bucket** aggregate", "- **Largest bucket**"),
+        ("**Smallest buckets** aggregate", "- **Smallest buckets**"),
+    ])
+    def test_an_empty_value_after_the_separator_is_reported(self, tmp_path, lint, name, head):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        emptied = "\n".join(
+            (head + ": " if not line.startswith("- **Smallest") else "- **Smallest buckets** (): ")
+            if line.startswith(head) else line
+            for line in _default_aggregates(total, buckets).split("\n"))
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=emptied))
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any(name in p and "unparseable" in p for p in problems), problems
+
+    def test_fix_repairs_an_empty_value(self, tmp_path, lint):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        emptied = "\n".join("- **Total skills**: " if line.startswith("- **Total skills**") else line
+                            for line in _default_aggregates(total, buckets).split("\n"))
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=emptied))
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        text = lint._INVENTORY.read_text()
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == [], text
+        assert sum(1 for l in text.split("\n") if l.startswith("- **Total skills**")) == 1, text
+        assert f"- **Total skills**: {total}" in text, text

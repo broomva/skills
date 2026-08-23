@@ -265,8 +265,19 @@ _BUCKET_TOTAL_FORMS = (
 #: derived fact: the inventory shipped "Largest bucket: Orchestration &
 #: autonomy (7)" while tooling held 10 and orchestration held 8 — both the name
 #: and the number wrong, and invisible because the line never says "skill".
-_LARGEST_RX = re.compile(r"(\*\*Largest bucket\*\*: )(.+?)( \((\d+)\))")
-_SMALLEST_RX = re.compile(r"(\*\*Smallest buckets\*\* \()(\d+)(\): )(.+)")
+#: One compiled, BULLET-ANCHORED pattern per aggregate, used for presence,
+#: validation and replacement alike.
+#:
+#: Anchoring is the point. An unanchored detector searches the whole document,
+#: so truncating the real bullet and quoting its correct phrase anywhere else —
+#: a doc that cites its own aggregate is not exotic — satisfied presence while
+#: the canonical line stated nothing. Three regexes (detector / prefix /
+#: validator) also meant three chances to disagree about what "present" means,
+#: and each disagreement was a seam. One match, one meaning.
+_LARGEST_RX = re.compile(r"^- \*\*Largest bucket\*\*: (?P<name>.+?) \((?P<n>\d+)\)$", re.M)
+_SMALLEST_RX = re.compile(r"^- \*\*Smallest buckets\*\* \((?P<n>\d+)\): (?P<names>\S.*)$", re.M)
+_TOTAL_SKILLS_RX = re.compile(r"^- \*\*Total skills\*\*: (?P<n>\d+)$", re.M)
+_TOTAL_BUCKETS_RX = re.compile(r"^- \*\*Total category buckets\*\*: (?P<n>\d+)$", re.M)
 
 #: Numbers that sit next to the word "skill" and are NOT a count of this repo's
 #: skills. Each is allowlisted explicitly rather than by a loose heuristic,
@@ -354,38 +365,31 @@ def _labels(inventory_text: str) -> dict[str, str]:
 #: presence is DECLARED in one place: adding a structure here makes its absence
 #: a finding automatically, instead of relying on whoever adds the next check
 #: to remember the rule.
-_REQUIRED_STRUCTURES: dict[str, tuple[tuple[str, str, str], ...]] = {
+_REQUIRED_STRUCTURES: dict[str, tuple[tuple[str, re.Pattern, str], ...]] = {
     "skills-inventory.md": (
-        # (name, DETECTOR — the full parseable form, PREFIX — how to find a
-        # malformed instance of it)
-        ("**Total skills** aggregate",
-         r"\*\*Total skills\*\*: \d+", r"^- \*\*Total skills\*\*"),
-        ("**Total category buckets** aggregate",
-         r"\*\*Total category buckets\*\*: \d+", r"^- \*\*Total category buckets\*\*"),
-        ("**Largest bucket** aggregate",
-         r"\*\*Largest bucket\*\*: .+? \(\d+\)", r"^- \*\*Largest bucket\*\*"),
-        ("**Smallest buckets** aggregate",
-         r"\*\*Smallest buckets\*\* \(\d+\): \S", r"^- \*\*Smallest buckets\*\*"),
+        ("**Total skills** aggregate", _TOTAL_SKILLS_RX, "- **Total skills**"),
+        ("**Total category buckets** aggregate", _TOTAL_BUCKETS_RX,
+         "- **Total category buckets**"),
+        ("**Largest bucket** aggregate", _LARGEST_RX, "- **Largest bucket**"),
+        ("**Smallest buckets** aggregate", _SMALLEST_RX, "- **Smallest buckets**"),
     ),
 }
 
 
 def _missing_structure_problems(label: str, text: str) -> list[str]:
-    """Report any declared structure this surface does not contain IN A FORM
-    ITS VALIDATOR CAN READ.
+    """Report any declared aggregate this surface does not carry as a canonical,
+    parseable bullet.
 
-    The detector is the full parseable pattern, not a prefix, because a
-    presence-check and a validator that disagree about what "present" means
-    leave a seam between them: `- **Largest bucket**:` with the value deleted
-    satisfied a prefix detector while `_LARGEST_RX` matched nothing, so the
-    validator skipped under `if m:` and both check and --fix reported success
-    on a truncated claim. One notion of presence closes it.
+    The regex is anchored to the bullet AND is the same object the validator
+    uses, so "present" cannot mean one thing here and another there — the seam
+    that let `- **Largest bucket**:` pass, and the seam that let the phrase
+    quoted in unrelated prose stand in for the bullet itself.
     """
     problems = []
-    for name, detector, prefix in _REQUIRED_STRUCTURES.get(label, ()):
-        if re.search(detector, text):
+    for name, rx, head in _REQUIRED_STRUCTURES.get(label, ()):
+        if rx.search(text):
             continue
-        malformed = re.search(prefix, text, re.M)
+        malformed = any(line.startswith(head) for line in text.split("\n"))
         problems.append(
             f"{label}: required {name} is "
             + ("present but unparseable — a truncated claim is not a satisfied one"
@@ -395,33 +399,37 @@ def _missing_structure_problems(label: str, text: str) -> list[str]:
 
 
 def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, str]) -> list[str]:
-    """Largest/smallest-bucket aggregates, verified against disk.
-
-    These are derived facts stated in prose that never says "skill", which is
-    exactly how the inventory came to claim the largest bucket was Orchestration
-    with 7 while tooling held 10.
-    """
+    """Values of the aggregates, read from the SAME anchored matches whose
+    presence was just established. A separate search here is what allowed a
+    validator to look at a different occurrence than the presence check did."""
     problems: list[str] = []
-    if not disk:
+    if not disk or label not in _REQUIRED_STRUCTURES:
         return problems
     sizes = {c: len(v) for c, v in disk.items()}
     hi, lo = max(sizes.values()), min(sizes.values())
+
+    m = _TOTAL_SKILLS_RX.search(text)
+    if m and int(m.group("n")) != sum(sizes.values()):
+        problems.append(f"{label}: claims {m.group('n')} skills, disk has {sum(sizes.values())}")
+    m = _TOTAL_BUCKETS_RX.search(text)
+    if m and int(m.group("n")) != len(disk):
+        problems.append(
+            f"{label}: claims {m.group('n')} category buckets, disk has {len(disk)}")
     m = _LARGEST_RX.search(text)
     if m:
-        claimed_name, claimed_n = m.group(2).strip(), int(m.group(4))
         winners = {names.get(c, c) for c, n in sizes.items() if n == hi}
-        if claimed_n != hi:
-            problems.append(f"{label}: largest bucket says {claimed_n}, disk has {hi}")
-        if claimed_name not in winners:
+        if int(m.group("n")) != hi:
+            problems.append(f"{label}: largest bucket says {m.group('n')}, disk has {hi}")
+        if m.group("name").strip() not in winners:
             problems.append(
-                f"{label}: largest bucket says {claimed_name!r}, disk has {sorted(winners)}")
+                f"{label}: largest bucket says {m.group('name').strip()!r}, "
+                f"disk has {sorted(winners)}")
     m = _SMALLEST_RX.search(text)
     if m:
-        claimed_n = int(m.group(2))
-        claimed = {p.strip() for p in m.group(4).split(",") if p.strip()}
         holders = {names.get(c, c) for c, n in sizes.items() if n == lo}
-        if claimed_n != lo:
-            problems.append(f"{label}: smallest bucket says {claimed_n}, disk has {lo}")
+        claimed = {x.strip() for x in m.group("names").split(",") if x.strip()}
+        if int(m.group("n")) != lo:
+            problems.append(f"{label}: smallest bucket says {m.group('n')}, disk has {lo}")
         if claimed != holders:
             problems.append(
                 f"{label}: smallest buckets say {sorted(claimed)}, disk has {sorted(holders)}")
@@ -429,10 +437,8 @@ def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, st
 
 
 #: Which bucket table each surface MUST carry. Declared rather than inferred
-#: from what happens to be present, because "infer the structure from the file"
-#: is what makes an emptied structure look consistent — the same invariant the
-#: `if sections:` guard got wrong for category tables. Absent or empty is a
-#: FINDING here, in both structures, stated once.
+#: from what happens to be present, because inferring the structure from the
+#: file is what makes an emptied structure look consistent.
 _REQUIRED_BUCKET_TABLES = {
     "README.md": r"\| `skills/([a-z]+)/` \| \d+ \|",
     "skills-catalog/SKILL.md": r"\(`([a-z]+)`\) \| \d+ \|",
@@ -464,58 +470,48 @@ def _bucket_table_problems(label: str, text: str, disk: dict) -> list[str]:
     return problems
 
 
-def _restore_missing_aggregates(label: str, text: str, disk: dict) -> str:
-    """Re-insert a declared aggregate that was deleted outright.
-
-    Inserts the SHAPE only, with placeholder values — `_fix_superlatives` and
-    `_recount` already run afterwards and set every one of these from disk, so
-    computing the values here too was a second implementation of the same
-    derivation that nothing depended on. A mutation putting a stale number in it
-    survived the whole suite, which is what redundant code looks like from the
-    outside: unkillable because it does not matter. Deleted rather than pinned.
-
-    Placed in the `## Aggregates` block among its bold peers; if that block is
-    gone there is no non-arbitrary place for it, so --fix leaves it and `check`
-    keeps reporting it rather than inventing a location.
-    """
-    if not disk or label not in _REQUIRED_STRUCTURES:
-        return text
-    shapes = {
-        "**Total skills** aggregate": "- **Total skills**: 0",
-        "**Total category buckets** aggregate": "- **Total category buckets**: 0",
-        "**Largest bucket** aggregate": "- **Largest bucket**: placeholder (0)",
-        "**Smallest buckets** aggregate": "- **Smallest buckets** (0): placeholder",
-    }
-    block = re.search(r"^## Aggregates\n+", text, re.M)
-    if not block:
-        return text
-    for name, detector, prefix in _REQUIRED_STRUCTURES[label]:
-        if re.search(detector, text) or name not in shapes:
-            continue
-        # Drop a malformed instance first, or --fix leaves the truncated line
-        # in place and adds a second, correct one beside it.
-        text = re.sub(prefix + r".*\n", "", text, flags=re.M)
-        block = re.search(r"^## Aggregates\n+", text, re.M)
-        if not block:
-            continue
-        tail = text[block.end():]
-        # Only the BOLD aggregate bullets, so a restored line lands among its
-        # peers rather than after the trailing prose bullet.
-        bullets = re.match(r"(?:- \*\*.*\n)*", tail)
-        at = block.end() + (bullets.end() if bullets else 0)
-        text = text[:at] + shapes[name] + "\n" + text[at:]
-    return text
-
-
-def _fix_superlatives(text: str, disk: dict, names: dict[str, str]) -> str:
-    if not disk:
-        return text
+def _canonical_aggregates(disk: dict, names: dict[str, str]) -> dict[str, str]:
+    """The correct text of every aggregate bullet, derived from disk."""
     sizes = {c: len(v) for c, v in disk.items()}
     hi, lo = max(sizes.values()), min(sizes.values())
     top = sorted(names.get(c, c) for c, n in sizes.items() if n == hi)[0]
     bottom = ", ".join(sorted(names.get(c, c) for c, n in sizes.items() if n == lo))
-    text = _LARGEST_RX.sub(lambda m: f"{m.group(1)}{top} ({hi})", text)
-    text = _SMALLEST_RX.sub(lambda m: f"{m.group(1)}{lo}{m.group(3)}{bottom}", text)
+    return {
+        "**Total skills** aggregate": f"- **Total skills**: {sum(sizes.values())}",
+        "**Total category buckets** aggregate": f"- **Total category buckets**: {len(disk)}",
+        "**Largest bucket** aggregate": f"- **Largest bucket**: {top} ({hi})",
+        "**Smallest buckets** aggregate": f"- **Smallest buckets** ({lo}): {bottom}",
+    }
+
+
+def _fix_aggregates(label: str, text: str, disk: dict, names: dict[str, str]) -> str:
+    """Repair every declared aggregate: wrong value, truncated, or absent.
+
+    One path for all three, because they were three paths that disagreed. A
+    line the regex matches is REPLACED in place, keeping its position; a line
+    that does not match is deleted and the canonical form inserted among the
+    bold bullets. With no `## Aggregates` block there is no non-arbitrary place
+    for it, so --fix declines and `check` keeps reporting it rather than
+    inventing a location.
+    """
+    if not disk or label not in _REQUIRED_STRUCTURES:
+        return text
+    canonical = _canonical_aggregates(disk, names)
+    for name, rx, head in _REQUIRED_STRUCTURES[label]:
+        want = canonical.get(name)
+        if want is None:
+            continue
+        if rx.search(text):
+            text = rx.sub(lambda _m, w=want: w, text, count=1)
+            continue
+        text = "\n".join(l for l in text.split("\n") if not l.startswith(head))
+        block = re.search(r"^## Aggregates\n+", text, re.M)
+        if not block:
+            continue
+        tail = text[block.end():]
+        bullets = re.match(r"(?:- \*\*.*\n)*", tail)
+        at = block.end() + (bullets.end() if bullets else 0)
+        text = text[:at] + want + "\n" + text[at:]
     return text
 
 
@@ -641,8 +637,7 @@ def fix(disk: dict) -> None:
     names = _labels(inventory)
     inventory = _rebuild(inventory, _sections(inventory, _INV_HEADING, _INV_ROW), disk,
                          lambda c, n, d, a: f"| `{n}`{a} | {d} |")
-    inventory = _restore_missing_aggregates("skills-inventory.md", inventory, disk)
-    inventory = _fix_superlatives(inventory, disk, names)
+    inventory = _fix_aggregates("skills-inventory.md", inventory, disk, names)
     _INVENTORY.write_text(_recount(inventory, disk, r"(\(`{cat}`\) \| )\d+( \|)"), encoding="utf-8")
 
     catalog = _CATALOG_SKILL.read_text(encoding="utf-8")
