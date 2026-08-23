@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 #
 # The rule_* functions in the budget arm are dispatched indirectly as
-# "rule_$rule", which shellcheck reads as never-invoked. That indirection is
-# the point: it is what makes the PRECEDENCE list the single place the
-# stop/pass ordering is written down. Hence, file-wide:
-# shellcheck disable=SC2329
+# "rule_$rule", so shellcheck reads them as never-invoked (SC2329) and their
+# bodies as unreachable (SC2317). That indirection is the point: it is what
+# makes the PRECEDENCE list the single place the stop/pass ordering is
+# written down. Both are disabled file-wide.
+#
+# Note both were reported by CI and NOT by shellcheck 0.11.0 locally. The
+# runner runs a different version, so local-clean is not CI-clean here and
+# has now cost two round-trips; that gap is real and not closed by this file.
+# shellcheck disable=SC2329,SC2317
 # round-budget.sh — bstack P20 dynamic round budget + continuation ledger
 #
 # Replaces the fixed `MAX_ROUNDS=3`, which was printed by pre-push and read by
