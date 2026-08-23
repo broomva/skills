@@ -1,0 +1,77 @@
+name: test-parallax
+
+# Pytest gate for the `parallax` skill (skills/tooling/parallax/). Path-filtered so
+# it runs ONLY when that directory changes.
+#
+# TWO SUITES, AND ONLY ONE OF THEM RUNS HERE.
+#
+# tests/test_parallax_next.py is hermetic: it drives the pure functions and the
+# script's own CLI, with no network and no Parallax checkout. That is what CI
+# measures.
+#
+# tests/test_integration_live_cli.py drives the REAL `parallax` binary and SKIPS
+# when it is not on PATH -- which is always, in this repo, because Parallax lives
+# in github.com/broomva/parallax and is not a dependency here. So CI does NOT
+# verify the remedy table against live CLI output; that binding is established by
+# hand (`bun link` in a parallax checkout, then pytest) and is asserted here only
+# as shape.
+#
+# Saying so matters: a green check beside "test-parallax" would otherwise read as
+# "the skill was verified against Parallax", and it was not.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/parallax/**'
+      - '.github/workflows/test-parallax.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/parallax/**'
+      - '.github/workflows/test-parallax.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-parallax-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest + skillify gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: python3 -m pip install --upgrade pytest pyyaml
+
+      - name: Test
+        # PYTHONDONTWRITEBYTECODE because a same-size edit inside one second reuses
+        # stale bytecode (CPython invalidates on mtime+size), which reports a
+        # mutant as SURVIVED without ever running it.
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m pytest skills/tooling/parallax/tests/ -q
+
+      - name: The live-CLI suite must SKIP here, not silently vanish
+        # If someone deletes the integration file or its skip marker, this notices.
+        # A suite that disappears and a suite that passes look identical in a
+        # summary line.
+        run: |
+          out=$(python3 -m pytest skills/tooling/parallax/tests/test_integration_live_cli.py -q -rs 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "skipped" || {
+            echo "::error::the live-CLI suite did not report as skipped"; exit 1; }
+
+      - name: Remedy table covers every captured error code
+        # The load-bearing assertion, called out as its own step so its failure is
+        # its own line rather than one dot in a pytest summary.
+        run: |
+          python3 -m pytest skills/tooling/parallax/tests/test_parallax_next.py \
+            -q -k "remedy_table_covers or fixture_is_not_empty"
