@@ -299,6 +299,13 @@ mutate "--help keeps its comment markers" "T51" \
     "sed 's/^# \{0,1\}//'" \
     "sed 's/^ZZZZ//'"
 
+# The archiver must not need to READ the file it is moving. `mv` needs write on
+# the directory; the line count is a nicety, and making it mandatory turned the
+# --force escape hatch into an abort on the one input it exists for.
+mutate "archive name read from an unreadable ledger" "T52" \
+    $'lines=$( { wc -l < "$LEDGER"; } 2>/dev/null | tr -d \' \' ) || lines=""' \
+    $'lines=$(wc -l < "$LEDGER" | tr -d \' \')'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

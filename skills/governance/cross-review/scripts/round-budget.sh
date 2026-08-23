@@ -172,8 +172,18 @@ LEDGER="$(ledger_path)"
 # archive it writes is not a previous archive.
 ARCHIVE=""
 archive_ledger() {
-    local tag="${1:-}" base n=0
-    base="$LEDGER.archived${tag:+.$tag}.$(wc -l < "$LEDGER" | tr -d ' ')"
+    local tag="${1:-}" base n=0 lines
+    # The ledger may be UNREADABLE rather than merely unparsable -- a chmod 000,
+    # a bad ACL -- and that is one of the cases --force exists to serve. Deriving
+    # the name by READING it aborts the whole script under `set -e` BEFORE the
+    # mv, so the one loud archiving path becomes no path at all and the operator
+    # is left with `rm`. `mv` itself needs write on the DIRECTORY, not read on
+    # the file, so the move is still available when the count is not.
+    # Braces around the redirect: `wc -l < f 2>/dev/null` silences WC, but the
+    # "Permission denied" is bash's own, emitted before wc ever runs.
+    lines=$( { wc -l < "$LEDGER"; } 2>/dev/null | tr -d ' ' ) || lines=""
+    [ -n "$lines" ] || lines="unknown"
+    base="$LEDGER.archived${tag:+.$tag}.$lines"
     ARCHIVE="$base"
     # Keyed on line count alone, two arcs of equal length silently overwrote.
     while [ -e "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$base.$n"; done

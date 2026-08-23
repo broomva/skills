@@ -672,6 +672,31 @@ else
     fail "T51: help renders" "$HASHED line(s) still carry a leading '#'; --force present: $(printf '%s\n' "$OUT" | grep -qc -- "--force" && echo yes || echo no)"
 fi
 
+# ── T52: an UNREADABLE ledger is exactly what --force is for ──────────────
+# T39 covers UNPARSABLE (readable bytes, bad content). Unreadable is a different
+# failure -- chmod 000, a bad ACL -- and it reached the same branch, so it looked
+# covered. It was not: consolidating the two archive paths made the corrupt one
+# derive its name by READING the ledger, which aborts under `set -e` before the
+# mv. The one loud archiving path became no path at all, exit 1 (not even a
+# documented code), ledger still in place, `rm` the only remaining discard.
+echo "T52. reset --force archives a ledger it cannot read"
+LED=$(newledger t52)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+chmod 000 "$LED"
+if [ -r "$LED" ]; then
+    ok "T52: skipped (ledger still readable after chmod 000)"
+else
+    RC_PLAIN=$(rb reset --run-id=t52 --ledger="$LED")
+    RC_FORCE=$(rb reset --run-id=t52 --ledger="$LED" --force)
+    GONE=$([ -e "$LED" ] && echo no || echo yes)
+    if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$GONE" = "yes" ]; then
+        ok "T52: unreadable ledger refused plainly, archived under --force"
+    else
+        fail "T52: unreadable ledger archive" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), archived=$GONE (want yes)"
+    fi
+fi
+chmod 644 "$LED" 2>/dev/null || true
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi
