@@ -46,12 +46,19 @@
 #   3. two consecutive REFUTED end the loop
 #   4. CONTINUE verdicts cannot stack without an intervening round
 #
-# THE BOUNDARY. These bind the LEDGER. Stops are absorbing and cannot be cleared
-# by appending, reset by re-running pre-push, or dodged by a rebase. They do NOT
-# compel anyone to run `budget`, `--ledger` behind ROUND_BUDGET_TEST_LEDGER still
-# repoints the path, and the ledger is a plain file this agent can delete. This
-# removes ACCIDENTAL drift — the miscounted round, the stop quietly walked back —
-# which is what actually went wrong on the long arcs. SKILL.md states it in full.
+# THE BOUNDARY. These bind the LEDGER. Stops are absorbing: they cannot be
+# cleared by appending, by re-running pre-push, or by a rebase, and `reset`
+# archives only a ledger that DECLARED ITSELF finished. Discarding a stop that
+# nothing declared over takes `reset --force`, which names the stop it discarded
+# on stdout. That sentence used to read "cannot be cleared" full stop, and was
+# false the day it shipped: `reset` reused the budget's own precedence, under
+# which every NONTERMINAL absorbing stop counts as "finished", so one plain
+# `reset` cleared a regression and the next `budget` said "round 1 of 3 free".
+# These do NOT compel anyone to run `budget`, `--ledger` behind
+# ROUND_BUDGET_TEST_LEDGER still repoints the path, and the ledger is a plain
+# file this agent can delete. This removes ACCIDENTAL drift — the miscounted
+# round, the stop quietly walked back — which is what actually went wrong on the
+# long arcs. SKILL.md states it in full.
 #
 # STRUCTURE. Every command that DECIDES on the history passes through one gate
 # (`load_ledger`) -- `show` only renders and takes neither the gate nor the lock.
@@ -68,7 +75,12 @@
 #                                  [--prediction=TEXT] [--directive=TEXT]
 #   round-budget.sh budget         --run-id=ID     # may another round run?
 #   round-budget.sh show           --run-id=ID
-#   round-budget.sh reset          --run-id=ID     # archive a finished arc's ledger
+#   round-budget.sh reset          --run-id=ID [--force]
+#
+# `reset` archives the ledger of an arc that DECLARED ITSELF finished — a
+# recorded STOP/STRUCTURAL verdict, or a passing score. `--force` archives one
+# that did not: a ledger sitting on a nonterminal stop, one at the round ceiling,
+# or one that no longer parses. It applies to `reset` and to nothing else.
 #
 # Exit codes (0/2/4 are taken by cross-review.sh):
 #   0  AUTHORIZED   another round may run
@@ -92,7 +104,11 @@ shift || true
 
 case "$COMMAND" in
     --help|-h|help)
-        sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+        # `\?` is a GNU extension: BSD sed reads it as a literal '?', so the pattern
+        # never matched and --help printed every line with its leading '#' still on
+        # it -- on the one platform this is developed on. `\{0,1\}` is POSIX BRE and
+        # means the same thing to both.
+        sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0 ;;
     record-round|record-verdict|budget|show|reset) ;;
     *) echo "round-budget: unknown command '$COMMAND'" >&2; exit 2 ;;
@@ -125,6 +141,14 @@ for arg in "$@"; do
     esac
 done
 
+# Parsed in the shared loop above, so `budget --force` and `record-round --force`
+# were both accepted and both did nothing. A flag accepted where it has no
+# meaning reads as a flag that had one.
+if [ "$RESET_FORCE" = "1" ] && [ "$COMMAND" != "reset" ]; then
+    echo "round-budget: --force applies to 'reset' only, not '$COMMAND'." >&2
+    exit 2
+fi
+
 [ -n "$RUN_ID" ] || { echo "round-budget: --run-id=ID required" >&2; exit 2; }
 case "$RUN_ID" in
     *[!A-Za-z0-9._-]*) echo "round-budget: --run-id must be [A-Za-z0-9._-]" >&2; exit 2 ;;
@@ -141,6 +165,20 @@ ledger_path() {
     echo "$gd/cross-review-rounds.$RUN_ID.tsv"
 }
 LEDGER="$(ledger_path)"
+
+# One archiver, both callers. The corrupt path wrote `$LEDGER.archived.corrupt.$$`
+# with no never-clobber loop while the healthy path four lines below it had one —
+# and a pid is reused. "It archives rather than deletes" holds only if the
+# archive it writes is not a previous archive.
+ARCHIVE=""
+archive_ledger() {
+    local tag="${1:-}" base n=0
+    base="$LEDGER.archived${tag:+.$tag}.$(wc -l < "$LEDGER" | tr -d ' ')"
+    ARCHIVE="$base"
+    # Keyed on line count alone, two arcs of equal length silently overwrote.
+    while [ -e "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$base.$n"; done
+    mv "$LEDGER" "$ARCHIVE"
+}
 
 # Tabs and newlines are the record separators, so they cannot survive in a field:
 # a prediction containing a tab would shift every column to its right.
@@ -252,6 +290,18 @@ LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""
 # with a newer tail. Stated rather than implied: the recorders lock, the reader
 # does not.
 LG_LAST_TYPE=""; LG_LAST_VERDICT=""; LG_LAST_PRED=""
+
+# The last row's standing. Two questions again, and rule_unusable_verdict is
+# exactly the case where the first is true and the second is false — so the type
+# check is load-bearing in every caller, including rule_earned: field 2 of a
+# hand-written `ROUND` row is an unvalidated round number, and one reading
+# `CONTINUE` would otherwise earn a round with no verdict at all.
+# Spelling the CONTINUE test inline at both rules made ONE rule live at TWO
+# sites, each individually deletable with the suite green. Redundancy no test can
+# tell apart from correctness is not defence in depth; it is a second place to be
+# wrong.
+last_row_is_verdict()   { [ "$LG_LAST_TYPE" = "VERDICT" ]; }
+verdict_earns_a_round() { [ "$LG_LAST_VERDICT" = "CONTINUE" ]; }
 load_ledger() {
     local a
     a="$(analyze)" || exit 6
@@ -405,8 +455,8 @@ rule_free() {
 # rule because a rule's exit code comes from PRECEDENCE: signalling this from
 # inside rule_earned would have exited 0, which is the bug being fixed.
 rule_unusable_verdict() {
-    [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
-    [ "$LG_LAST_VERDICT" != "CONTINUE" ] || return 1
+    last_row_is_verdict || return 1
+    ! verdict_earns_a_round || return 1
     echo "STOP — the last row is a VERDICT carrying an unusable token: '$LG_LAST_VERDICT'"
     echo "  Only CONTINUE earns a round. An EMPTY token is not a bad one to"
     echo "  analyze (absent, not invalid), so it reached the earned path and"
@@ -415,7 +465,7 @@ rule_unusable_verdict() {
 }
 
 rule_review_required() {
-    [ "$LG_LAST_TYPE" != "VERDICT" ] || return 1
+    ! last_row_is_verdict || return 1
     echo "REVIEW-REQUIRED — $LG_N rounds recorded; past the $FREE_ROUNDS free rounds."
     echo "  Run the continuation review, then record its verdict:"
     echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=... [--prediction=...]"
@@ -426,7 +476,7 @@ rule_review_required() {
 # live here. The verdict must be the MOST RECENT row: one already settled by a
 # later round has spent its authority.
 rule_earned() {
-    [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
+    last_row_is_verdict || return 1
     # ...and it must be a CONTINUE. STOP/STRUCTURAL exit at rule_terminal, so
     # "it is a VERDICT row" LOOKED sufficient. It is not: an EMPTY token is
     # not a bad one -- analyze records badverdict=$2, and "" is absent rather
@@ -435,7 +485,7 @@ rule_earned() {
     # a round. The pre-hoist code caught it in an explicit default arm that
     # the comment sweep deleted along with the comment explaining why it
     # existed. Admission is now positive: only CONTINUE earns a round.
-    [ "$LG_LAST_VERDICT" = "CONTINUE" ] || return 1
+    verdict_earns_a_round || return 1
     echo "AUTHORIZED — round $((LG_N+1)), earned by a $LG_LAST_VERDICT verdict."
     echo "  Live prediction: $LG_LAST_PRED"
     echo "  The next recorded round MUST settle it (--settles=CONFIRMED|REFUTED)."
@@ -444,8 +494,50 @@ rule_earned() {
 # Each rule prints its own outcome and returns 0 when it fires. Exit codes
 # are keyed off the rule name so the mapping is visible in one place.
 
-# Codes that mean THE ARC IS OVER. Anything else is a live arc.
+# ─── Two questions, two predicates ───────────────────────────────────────
+#
+#   `budget` asks   "may another ROUND RUN?"
+#   `reset`  asks   "may this LEDGER BE DISCARDED?"
+#
+# These were one function, and they are not the same question. Every NONTERMINAL
+# absorbing stop — a regression, two REFUTED, two no-defect, an unusable verdict
+# token — and the round-8 human ceiling all answer "no, another round may not
+# run", so arc_closed_code reports every one of them as CLOSED. Read as "may this
+# be discarded?" that is exactly backwards: those are the states whose remedy is
+# ESCALATION, and one plain `reset` cleared each of them — no --force, no
+# corruption — after which `budget` said "AUTHORIZED — round 1 of 3 free rounds".
+#
+# Five review rounds each fixed the input they were handed and opened the same
+# hole one caller over, because each added a caller to a predicate answering a
+# different question. So both are written down here, separately, once.
+
+# May another ROUND RUN? Codes that mean the arc is over; anything else is live.
 arc_closed_code() { case "$1" in 3|6|7) return 0 ;; *) return 1 ;; esac; }
+
+# May this LEDGER BE DISCARDED? Strictly narrower, and deliberately not keyed on
+# the exit code. The ledger must DECLARE ITSELF finished, which happens two ways
+# and no third:
+#
+#   - a terminal verdict was recorded. Someone performed the act of ending the
+#     arc; `refuse_past_terminal` then blocks every append, so it is the last
+#     row too and its position adds nothing to check.
+#   - the budget's own answer is PASSED. The arc ended by succeeding.
+#
+# The pass arm reads the RULE NAME, not `LG_SCORE >= PASS_SCORE`. That is what
+# keeps the OLDER defect fixed: a passing round appended after a regression
+# gives first_rule=regressed, so a trailing self-reported 9 cannot launder the
+# stop it was appended past.
+#
+# A bare nonterminal stop and the ceiling are absent on purpose. Neither is a
+# finished arc; each names a remedy — escalate, hand back, change the shape of
+# the fix — and discarding the ledger performs none of them. They stay
+# discardable through --force, which is a different sentence than a plain reset.
+arc_declared_finished() {
+    local rule="$1"
+    if [ -n "$LG_TERMINAL" ]; then return 0; fi
+    if [ "$rule" = "passed" ]; then return 0; fi
+    return 1
+}
 
 # Name:code of the first firing rule, with the rule's own output suppressed.
 first_rule() {
@@ -559,9 +651,24 @@ reset)
     # GATED, because unguarded this is a direct laundering path: archiving a live
     # ledger clears a STOP or STRUCTURAL without the directive ever being
     # executed, and `budget` never consults the archive. "It archives rather than
-    # deletes" is evidence after the fact, not a control. A ledger may be reset
-    # only once it has REACHED an end state — a terminal verdict, or a passing
-    # score. A live arc cannot be reset out from under its own budget.
+    # deletes" is evidence after the fact, not a control.
+    #
+    # The gate is arc_declared_finished, NOT budget's arc_closed_code — see "Two
+    # questions, two predicates". Everything it refuses is refused for one of two
+    # reasons, and the reason decides whether --force applies:
+    #
+    #   CLOSED but not declared finished — a nonterminal stop, or the ceiling.
+    #     --force. There is no in-band way out: refuse_past_terminal blocks the
+    #     very verdict that would declare the arc over, so with no hatch here the
+    #     only discard left is `rm` — the silent unlogged one this command exists
+    #     to replace.
+    #   LIVE — the budget authorizes, or asks for the continuation review.
+    #     No hatch, and none is needed: record the arc's verdict and it is
+    #     declared finished in band. --force does not open this.
+    #
+    # That ordering is the one the shipped version had backwards. An UNREADABLE
+    # ledger, whose stop cannot even be read, demanded --force; a READABLE one
+    # carrying a demonstrated regression demanded nothing.
     with_lock
     if [ ! -f "$LEDGER" ]; then
         echo "round-budget: no ledger at $LEDGER — nothing to reset."
@@ -589,31 +696,42 @@ reset)
             echo "  corrupted. Re-run with --force to archive it anyway." >&2
             exit 6
         fi
-        ARCHIVE="$LEDGER.archived.corrupt.$$"
-        mv "$LEDGER" "$ARCHIVE"
+        archive_ledger corrupt
         echo "round-budget: archived (forced, unreadable) -> $ARCHIVE"
         exit 0
     fi
     load_ledger
-    # Live-vs-finished comes from the SAME precedence `budget` uses. Deciding it
-    # here independently is what let a trailing passing round launder an earlier
-    # nonterminal stop.
     RESET_ENTRY="$(first_rule)"
+    RESET_RULE=${RESET_ENTRY%%:*}
     RESET_CODE=${RESET_ENTRY##*:}
-    if [ -z "$RESET_ENTRY" ] || ! arc_closed_code "$RESET_CODE"; then
+    if [ -z "$RESET_ENTRY" ] || ! arc_declared_finished "$RESET_RULE"; then
+        if [ -n "$RESET_ENTRY" ] && arc_closed_code "$RESET_CODE"; then
+            if [ "$RESET_FORCE" != "1" ]; then
+                echo "round-budget: refusing to reset a STOPPED arc." >&2
+                echo "  budget says: $RESET_RULE (exit $RESET_CODE)." >&2
+                echo "  That is a stop, not a finished arc, and nothing declared it" >&2
+                echo "  over. Its remedy is the one the stop names — escalate, hand" >&2
+                echo "  back, change the shape of the fix — and archiving the ledger" >&2
+                echo "  performs none of them: budget never reads the archive, so the" >&2
+                echo "  next round starts from round 1 as though the stop never was." >&2
+                echo "  Discard it anyway with --force, which says so where it lands." >&2
+                exit 6
+            fi
+            archive_ledger forced
+            echo "round-budget: archived (FORCED past $RESET_RULE) -> $ARCHIVE"
+            echo "  A stop was discarded without being acted on. The next round on"
+            echo "  this arc id starts from round 1."
+            exit 0
+        fi
         echo "round-budget: refusing to reset a LIVE arc." >&2
-        echo "  budget says: ${RESET_ENTRY%%:*} (exit ${RESET_CODE:-none})." >&2
-        echo "  reset retires an arc the budget has CLOSED — passed, stopped, or" >&2
-        echo "  escalated to a human. Clearing one nothing has closed is the" >&2
-        echo "  laundering this gate exists to prevent." >&2
+        echo "  budget says: ${RESET_RULE:-none} (exit ${RESET_CODE:-none})." >&2
+        echo "  reset retires an arc that DECLARED ITSELF finished — a recorded" >&2
+        echo "  STOP/STRUCTURAL verdict, or a passing score. --force does not open" >&2
+        echo "  this one, because nothing here is blocked: a live arc has an in-band" >&2
+        echo "  way to end. Record its verdict." >&2
         exit 6
     fi
-    # Keyed on line count alone, two arcs of equal length silently overwrote each
-    # other -- so "it archives rather than deletes" was not durable. Never clobber.
-    ARCHIVE="$LEDGER.archived.$(wc -l < "$LEDGER" | tr -d ' ')"
-    n=0
-    while [ -e "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$LEDGER.archived.$(wc -l < "$LEDGER" | tr -d ' ').$n"; done
-    mv "$LEDGER" "$ARCHIVE"
+    archive_ledger
     echo "round-budget: archived -> $ARCHIVE"
     echo "  The next round on this arc id starts from round 1."
     ;;
@@ -631,15 +749,13 @@ show)
 budget)
     load_ledger
 
-    if [ "$LG_N" = "0" ]; then
-        if [ -n "$LG_TERMINAL" ]; then
-            echo "STOP — a $LG_TERMINAL verdict is recorded and no round has run since."
-            exit 6
-        fi
-        echo "AUTHORIZED — round 1 of $FREE_ROUNDS free rounds."
-        exit 0
-    fi
-
+    # The empty-ledger case was hand-rolled here, above the precedence that
+    # already decides it: with zero rounds, rule_terminal fires on a recorded
+    # verdict (exit 6) and rule_free on everything else (exit 0, "round 1 of 3"),
+    # in that order, with those codes. Two decision sites survived a refactor
+    # whose entire thesis was one, so the copy is deleted rather than kept in
+    # sync with a precedence it duplicated.
+    #
     # ─── Precedence, as data ──────────────────────────────────────────────
     #
     # Ordering encoded ONCE, in this list, rather than in six sequential `if`

@@ -27,13 +27,19 @@ fail() {
 echo "── tests/cross-review.test.sh ────────────────────────────────"
 echo ""
 
-# ── T1: --help prints usage block ─────────────────────────────────────────
-echo "T1. --help prints Usage"
+# ── T1: --help prints usage block, as TEXT ────────────────────────────────
+# `grep -q "Usage:"` alone could not see the defect it was meant to cover: the
+# help is the file's own comment block with the markers stripped by sed, and the
+# strip used `\?`, a GNU extension BSD sed reads as a literal '?'. So on macOS
+# every line printed with its '#' still on it -- and "# Usage:" contains
+# "Usage:", so this test stayed green through it. Assert the stripping.
+echo "T1. --help prints Usage as text, not as comments"
 OUT=$(bash "$CROSS_REVIEW_SH" --help 2>&1 || true)
-if echo "$OUT" | grep -q "Usage:" && echo "$OUT" | grep -q -- "cross-review pre-push"; then
+HASHED=$(printf '%s\n' "$OUT" | grep -c '^#' || true)
+if echo "$OUT" | grep -q "Usage:" && echo "$OUT" | grep -q -- "cross-review pre-push" && [ "$HASHED" = "0" ]; then
     ok "T1: help renders"
 else
-    fail "T1: help renders" "output: $OUT"
+    fail "T1: help renders" "$HASHED line(s) still carry a leading '#'; output: $OUT"
 fi
 
 # ── T2: version prints version string ─────────────────────────────────────

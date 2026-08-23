@@ -512,6 +512,143 @@ bash "$RB" reset --run-id=t40 --ledger="$LED" >/dev/null
 N_ARCH=$(find "$(dirname "$LED")" -name "$(basename "$LED").archived.*" | wc -l | tr -d ' ')
 if [ "$N_ARCH" = "2" ]; then ok "T40: both archives survive"; else fail "T40: archive clobber" "$N_ARCH archive(s), want 2"; fi
 
+# ─── reset answers a DIFFERENT question than budget ───────────────────────
+#
+# `budget` asks "may another ROUND RUN?"; `reset` asks "may this LEDGER BE
+# DISCARDED?". reset reused budget's precedence, under which every NONTERMINAL
+# absorbing stop and the round-8 ceiling read as "closed", so one plain reset —
+# no --force, no corruption — cleared a stop and the next budget said
+# "AUTHORIZED — round 1 of 3 free rounds". T34 could not catch it: its live arm
+# is a ledger with no stop at all, and its finished arm has an explicit terminal
+# verdict. Every case between the two was unpinned.
+#
+# One test per stop class, because the classes are what the shipped predicate
+# conflated, and each carries its own mutation that widens the predicate by
+# exactly that one class.
+
+# ── T43: a score regression is a stop, not a finished arc ─────────────────
+echo "T43. reset refuses a regression, and --force says what it discarded"
+LED=$(newledger t43)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\n' > "$LED"
+RC_PLAIN=$(rb reset --run-id=t43 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+OUT=$(rbout reset --run-id=t43 --ledger="$LED" --force)
+RC_FORCE=$(rb reset --run-id=t43 --ledger="$LED" --force)
+if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && echo "$OUT" | grep -q "FORCED past regressed"; then
+    ok "T43: regression refused plainly, discarded only by --force"
+else
+    fail "T43: regression is not a finished arc" "plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), out: $OUT"
+fi
+
+# ── T44: two REFUTED predictions is a stop, not a finished arc ────────────
+echo "T44. reset refuses an arc stopped by two REFUTED predictions"
+LED=$(newledger t44)
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\nVERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\n' > "$LED"
+RC=$(rb reset --run-id=t44 --ledger="$LED")
+if [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T44: two-REFUTED stop is not resettable"; else fail "T44: two-REFUTED stop" "exit $RC, want 6 (ledger present: $([ -f "$LED" ] && echo yes || echo no))"; fi
+
+# ── T45: two rounds reproducing nothing is a stop, not a finished arc ─────
+echo "T45. reset refuses an arc stopped by two no-defect rounds"
+LED=$(newledger t45)
+printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\n' > "$LED"
+RC=$(rb reset --run-id=t45 --ledger="$LED")
+if [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T45: no-defect stop is not resettable"; else fail "T45: no-defect stop" "exit $RC, want 6 (ledger present: $([ -f "$LED" ] && echo yes || echo no))"; fi
+
+# ── T46: the human ceiling is an escalation, not a finished arc ───────────
+# The ceiling exists because unbounded self-granted budget is the resource-
+# acquisition pillar the workspace leaves open by design. A reset that clears it
+# hands the agent exactly that: hit 8, reset, start again at round 1.
+echo "T46. reset refuses an arc at the human ceiling"
+LED=$(newledger t46)
+for i in 1 2 3 4 5 6 7 8; do printf 'ROUND\t%s\t5\tyes\t\t-\n' "$i"; done > "$LED"
+RC_BUDGET=$(rb budget --run-id=t46 --ledger="$LED")
+RC=$(rb reset --run-id=t46 --ledger="$LED")
+if [ "$RC_BUDGET" = "7" ] && [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T46: the ceiling is not resettable"; else fail "T46: ceiling stop" "budget=$RC_BUDGET (want 7), reset=$RC (want 6)"; fi
+
+# ── T47: the pass arm reads the RULE, not the score ───────────────────────
+# The predicate reset needs is "did this arc END BY PASSING", not "is the last
+# score >= 7". Keyed on the score, a self-reported 9 appended after a regression
+# reads as a finished arc — which is the older defect this file already pins for
+# `budget` at T31, unpinned for `reset` until now. The two arms of this test are
+# the same ledger minus the regression, so a gate that simply always refuses
+# cannot pass it.
+echo "T47. a trailing self-reported pass does not make a stopped arc finished"
+LED=$(newledger t47)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED"
+RC_LAUNDER=$(rb reset --run-id=t47 --ledger="$LED")
+LED2=$(newledger t47b)
+printf 'ROUND\t1\t3\tyes\t\t-\nROUND\t2\t6\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED2"
+RC_CLEAN=$(rb reset --run-id=t47b --ledger="$LED2")
+if [ "$RC_LAUNDER" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
+    ok "T47: pass-after-regression refused, a clean pass still archives"
+else
+    fail "T47: pass arm reads the rule" "laundered=$RC_LAUNDER (want 6), clean=$RC_CLEAN (want 0)"
+fi
+
+# ── T48: --force is a reset flag, not a global one ────────────────────────
+# Parsed in the shared arg loop, `budget --force` and `record-round --force` were
+# both accepted and both did nothing. A flag accepted where it has no meaning
+# reads as a flag that had one.
+echo "T48. --force is refused by every command that is not reset"
+LED=$(newledger t48)
+RC_BUDGET=$(rb budget --run-id=t48 --ledger="$LED" --force)
+RC_ROUND=$(rb record-round --run-id=t48 --ledger="$LED" --score=5 --defect=yes --force)
+RC_VERDICT=$(rb record-verdict --run-id=t48 --ledger="$LED" --verdict=STOP --force)
+if [ "$RC_BUDGET" = "2" ] && [ "$RC_ROUND" = "2" ] && [ "$RC_VERDICT" = "2" ]; then
+    ok "T48: --force rejected outside reset"
+else
+    fail "T48: --force scope" "budget=$RC_BUDGET round=$RC_ROUND verdict=$RC_VERDICT (want 2 each)"
+fi
+
+# ── T49: --force does not open a LIVE arc ─────────────────────────────────
+# --force exists because a stopped arc has no in-band way out: refuse_past_terminal
+# blocks the very verdict that would declare it over. A LIVE arc has one — record
+# its verdict — so the hatch must not reach it, or --force becomes a plain reset
+# with an extra word.
+echo "T49. --force does not reset a live arc"
+LED=$(newledger t49)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+RC_PLAIN=$(rb reset --run-id=t49 --ledger="$LED")
+RC_FORCE=$(rb reset --run-id=t49 --ledger="$LED" --force)
+if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "6" ] && [ -f "$LED" ]; then
+    ok "T49: live arc refuses --force too"
+else
+    fail "T49: --force reaches a live arc" "plain=$RC_PLAIN force=$RC_FORCE (want 6 each)"
+fi
+
+# ── T50: the corrupt path archives through the SAME never-clobber namer ───
+# It wrote "$LEDGER.archived.corrupt.$$" with no never-clobber loop while the
+# healthy path four lines below it had one. A pid is reused, and "it archives
+# rather than deletes" holds only if the archive it writes is not a previous
+# archive. One archiver, both callers — so the collision is forced here at the
+# name the corrupt path picks.
+echo "T50. a forced archive does not clobber an archive already at its name"
+LED=$(newledger t50)
+printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
+printf 'SENTINEL\n' > "$LED.archived.corrupt.1"
+RC=$(rb reset --run-id=t50 --ledger="$LED" --force)
+KEPT=$(cat "$LED.archived.corrupt.1" 2>/dev/null)
+if [ "$RC" = "0" ] && [ "$KEPT" = "SENTINEL" ] && [ -e "$LED.archived.corrupt.1.1" ]; then
+    ok "T50: corrupt archive steps aside rather than overwriting"
+else
+    fail "T50: corrupt archive clobbers" "exit $RC (want 0), sentinel='$KEPT' (want SENTINEL), sidestep present: $([ -e "$LED.archived.corrupt.1.1" ] && echo yes || echo no)"
+fi
+
+# ── T51: --help is the documentation surface for --force ──────────────────
+# The help is this file's own comment block with the markers stripped by sed,
+# and the strip used `\?` -- a GNU extension that BSD sed reads as a literal
+# '?', so on macOS it matched nothing and every line printed with its '#'. That
+# is the platform this is developed on, so the flag documented in the Usage
+# block was unreadable exactly where it would be read.
+echo "T51. --help renders as text and documents --force"
+OUT=$(rbout --help)
+HASHED=$(printf '%s\n' "$OUT" | grep -c '^#' || true)
+if [ "$HASHED" = "0" ] && printf '%s\n' "$OUT" | grep -q -- "--force"; then
+    ok "T51: help is text, and --force is in it"
+else
+    fail "T51: help renders" "$HASHED line(s) still carry a leading '#'; --force present: $(printf '%s\n' "$OUT" | grep -qc -- "--force" && echo yes || echo no)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

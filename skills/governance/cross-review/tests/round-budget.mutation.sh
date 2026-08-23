@@ -168,16 +168,29 @@ mutate "archive clobbers a prior one" "T40" \
 
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
+# The type test now has ONE definition, read by three rules. Making it always
+# true is the same claim as before: review_required stops firing, so the ledger
+# of a spent verdict no longer routes to "run the continuation review".
 mutate "stale verdict re-authorizes" "T13" \
-    '[ "$LG_LAST_TYPE" != "VERDICT" ] || return 1' \
-    '[ "$LG_LAST_TYPE" = "NEVERMATCHES" ] || return 1'
+    'last_row_is_verdict()   { [ "$LG_LAST_TYPE" = "VERDICT" ]; }' \
+    'last_row_is_verdict()   { [ "$LG_LAST_TYPE" != "NEVERMATCHES" ]; }'
 
 # ─── The absorbing stops and the fail-closed guards ───────────────────────
 # Each of these was escapable or silent in the first version, so each gets its
 # own proof that the test pinning it can actually fail.
 mutate "defect streak 2->99"        "T1"  '[ "$LG_MAXNOD" -ge 2 ] || return 1' '[ "$LG_MAXNOD" -ge 99 ] || return 1'
 mutate "refuted no longer absorbing" "T21" '[ "$LG_MAXREF" -ge 2 ] || return 1' '[ "$LG_MAXREF" -ge 99 ] || return 1'
-mutate "terminal verdict ignored"    "T19" '[ -n "$LG_TERMINAL" ] || return 1' '[ -z "$LG_TERMINAL" ] || return 1'
+# This was `[ -n "$LG_TERMINAL" ]` -> `[ -z ... ]` in rule_terminal: a BRANCH
+# inversion, which this file's own header rules out. It did not disable the
+# rule, it made the rule fire on EVERY ledger. That reddened T19 by accident:
+# record-round exited 6 before writing a row, and the hand-rolled LG_N==0 fast
+# path in `budget` then authorized the empty ledger it left behind. Delete that
+# duplicated decision site and the accident goes with it -- firing everywhere
+# returns 6, which is exactly what T19 asserts, so the mutant SURVIVED while
+# proving nothing. The value form below never captures the verdict at all.
+mutate "terminal verdict ignored"    "T19" \
+    'if (terminal=="") { terminal=$2; directive=$4 }' \
+    'if (terminal=="") { terminal=""; directive=$4 }'
 mutate "regression check disabled"   "T5"  '[ "$LG_REGRESSED" != "0" ] || return 1' '[ "$LG_REGRESSED" = "IMPOSSIBLE" ] || return 1'
 mutate "bad score fails open"        "T23" '[ "$badscore" != "0" ] || [ "$badrow" != "0" ] || [ -n "$badverdict" ]' '[ "$badscore" = "IMPOSSIBLE" ]'
 mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
@@ -220,14 +233,71 @@ mutate "rule4 not enforced at read" "T36" \
 # which is T34's first arm. The old "reset ungated" mutation is dropped: its
 # anchor was the hand-rolled gate this one replaced.
 mutate "reset decides live-ness itself" "T34" \
-    'if [ -z "$RESET_ENTRY" ] || ! arc_closed_code "$RESET_CODE"; then' \
+    'if [ -z "$RESET_ENTRY" ] || ! arc_declared_finished "$RESET_RULE"; then' \
     'if false; then'
 mutate "recorders ignore nonterminal stops" "T42" \
     'arc_closed_code "$code" || return 0' \
     '[ "$code" = "IMPOSSIBLE" ] || return 0'
+# The corrupt branch and the stopped branch both carry this test now, so the
+# anchor carries its indentation. A bare match would be refused as non-unique,
+# which is the guard working, but it is not the proof intended.
 mutate "corrupt reset needs no --force" "T39" \
-    'if [ "$RESET_FORCE" != "1" ]; then' \
-    'if false; then'
+    $'\n        if [ "$RESET_FORCE" != "1" ]; then' \
+    $'\n        if false; then'
+
+# ─── reset's own predicate: one proof per stop class ──────────────────────
+#
+# `arc_declared_finished` is ONE site, which is the fix -- so these do not mutate
+# it once and name four tests off a single kill. Each widens the predicate by
+# EXACTLY ONE stop class and names the test for that class, which is what makes
+# four proofs four proofs rather than one proof cited four times. The first
+# restores the shipped defect for a regression, precisely.
+mutate "reset treats a regression as finished" "T43" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "regressed" ]; then return 0; fi'
+mutate "reset treats two REFUTED as finished" "T44" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "refuted" ]; then return 0; fi'
+mutate "reset treats two no-defect rounds as finished" "T45" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "nodefect" ]; then return 0; fi'
+mutate "reset treats the ceiling as finished" "T46" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "ceiling" ]; then return 0; fi'
+
+# The pass arm reads the RULE NAME. Reading the SCORE instead is the older
+# defect -- a self-reported 9 appended after a regression reads as finished --
+# and it is invisible to all four above, every one of which leaves the arm alone.
+mutate "reset's pass arm reads the score not the rule" "T47" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then return 0; fi'
+
+# The terminal arm, from the other side: refusing what it should permit.
+mutate "reset ignores a recorded terminal verdict" "T34" \
+    'if [ -n "$LG_TERMINAL" ]; then return 0; fi' \
+    'if [ -z "$LG_TERMINAL" ]; then return 0; fi'
+
+# --force's scope, and its reach.
+mutate "--force accepted on any command" "T48" \
+    'if [ "$RESET_FORCE" = "1" ] && [ "$COMMAND" != "reset" ]; then' \
+    'if [ "$RESET_FORCE" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+# Route a LIVE arc into the stopped branch and --force reaches it -- which is
+# exactly what the hatch must not do, because a live arc can be ended in band.
+mutate "--force reaches a live arc" "T49" \
+    'if [ -n "$RESET_ENTRY" ] && arc_closed_code "$RESET_CODE"; then' \
+    'if [ -n "$RESET_ENTRY" ] && [ "$RESET_CODE" != "IMPOSSIBLE" ]; then'
+
+# One archiver, both callers. Restoring the corrupt path's own namer restores
+# the missing never-clobber loop with it -- which is why the two were merged
+# rather than the loop copy-pasted into the second one.
+mutate "corrupt path names its own archive" "T50" \
+    $'        archive_ledger corrupt\n        echo "round-budget: archived (forced, unreadable) -> $ARCHIVE"' \
+    $'        ARCHIVE="$LEDGER.archived.corrupt.$$"\n        mv "$LEDGER" "$ARCHIVE"\n        echo "round-budget: archived (forced, unreadable) -> $ARCHIVE"'
+
+# The help block is documentation only until the markers come off it.
+mutate "--help keeps its comment markers" "T51" \
+    "sed 's/^# \{0,1\}//'" \
+    "sed 's/^ZZZZ//'"
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
