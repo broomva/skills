@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# shellcheck disable=SC2016
+#   The mutation anchors in this file are LITERAL source text and must stay
+#   single-quoted. Expanding "$STREAK" would search for its VALUE, match
+#   nothing, silently no-op every mutation, and report a false SURVIVED for
+#   each -- pointing at a real finding that is not there. SC2016 is exactly
+#   backwards for this file, so it is disabled file-wide rather than per line.
 # tests/round-budget.mutation.sh — a mutation proof PER RULE, not per file.
 #
 # `mutation-proof.sh --strategy stub` neuters the whole script and proves the
@@ -28,7 +35,7 @@ SUITE="$CRDIR/tests/round-budget.test.sh"
 # while files are modified, which would void this guard exactly when it matters.
 GIT="git -c core.fsmonitor=false"
 
-cd "$CRDIR"
+cd "$CRDIR" || { echo "mutation: cannot cd to $CRDIR" >&2; exit 2; }
 if [ -n "$($GIT status --porcelain -- "$TARGET")" ]; then
     echo "mutation: REFUSING to run — $TARGET has uncommitted changes." >&2
     echo "  This sweep reverts to HEAD after every mutation and would destroy them." >&2
