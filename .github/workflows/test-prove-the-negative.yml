@@ -23,6 +23,11 @@ on:
       - '.github/workflows/test-prove-the-negative.yml'
   workflow_dispatch:
 
+# Least privilege: this workflow only reads the checkout. It never pushes, never
+# comments, never publishes — so it has no need of the default write token.
+permissions:
+  contents: read
+
 concurrency:
   group: test-prove-the-negative-${{ github.ref }}
   cancel-in-progress: true
