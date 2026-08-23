@@ -947,3 +947,87 @@ class TestAnEmptyValueIsDistinctFromNoValue:
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == [], text
         assert sum(1 for l in text.split("\n") if l.startswith("- **Total skills**")) == 1, text
         assert f"- **Total skills**: {total}" in text, text
+
+
+class TestAQuotedPhraseIsNotTheBullet:
+    """The round-6 blocker, encoded.
+
+    An unanchored detector searches the whole document, so truncating the real
+    bullet and quoting its correct phrase anywhere else satisfied presence while
+    the canonical line stated nothing. I verified the fix by hand against the
+    live files and did not write this down — and the sweep duly reported that
+    un-anchoring the detectors survived the entire suite. A manual check is not
+    a regression test.
+    """
+
+    CASES = [
+        ("**Total skills** aggregate", "- **Total skills**",
+         "See also: **Total skills**: 5 as reported above."),
+        ("**Total category buckets** aggregate", "- **Total category buckets**",
+         "Quoting: **Total category buckets**: 2 elsewhere."),
+        ("**Largest bucket** aggregate", "- **Largest bucket**",
+         "Quoting: **Largest bucket**: Tooling (3) elsewhere."),
+        ("**Smallest buckets** aggregate", "- **Smallest buckets**",
+         "Quoting: **Smallest buckets** (2): Governance elsewhere."),
+    ]
+
+    @pytest.mark.parametrize("name,head,quoted", CASES)
+    def test_truncating_the_bullet_is_reported_even_when_the_phrase_appears_in_prose(
+            self, tmp_path, lint, name, head, quoted):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = "\n".join(head + ":" if line.startswith(head) else line
+                          for line in _default_aggregates(total, buckets).split("\n"))
+        block += "\n" + quoted + "\n"
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any(name in p and "unparseable" in p for p in problems), problems
+
+    @pytest.mark.parametrize("name,head,quoted", CASES)
+    def test_fix_repairs_the_bullet_and_leaves_the_prose_alone(
+            self, tmp_path, lint, name, head, quoted):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = "\n".join(head + ":" if line.startswith(head) else line
+                          for line in _default_aggregates(total, buckets).split("\n"))
+        block += "\n" + quoted + "\n"
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        text = lint._INVENTORY.read_text()
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        # The AGGREGATE is repaired. The prose sentence may still be reported as
+        # an unverifiable claim, and that is correct: a restatement of a derived
+        # fact in a phrasing nothing can check is exactly what this linter is
+        # for. Only the superlatives have no unanchored form, so only they
+        # surface that way — `**Total skills**: N` in prose IS verifiable and is
+        # verified.
+        assert not any(name in p and ("unparseable" in p or "missing" in p)
+                       for p in problems), problems
+        assert quoted in text, "the prose sentence must survive the repair"
+        assert sum(1 for l in text.split("\n") if l.startswith(head)) == 1, text
+
+    def test_the_prose_sentence_alone_does_not_trip_the_check(self, tmp_path, lint):
+        """POSITIVE CONTROL: with the bullet intact, a sentence quoting the same
+        phrase must NOT be reported, or the gate rejects ordinary documentation."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = _default_aggregates(total, buckets) + "See also: **Total skills**: 5 above.\n"
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+
+class TestAProseRestatementIsAClaimToo:
+    def test_a_wrong_total_stated_in_prose_is_caught(self, tmp_path, lint):
+        """`**Total skills**: N` has an unanchored form, so a restatement is
+        VERIFIED rather than merely tolerated."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = _default_aggregates(total, buckets) + f"See also: **Total skills**: {total + 40}.\n"
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any(f"claims {total + 40}" in p for p in problems), problems
+
+    def test_a_superlative_restated_in_prose_is_reported_as_unverifiable(self, tmp_path, lint):
+        """The superlatives have no unanchored form, so a prose copy cannot be
+        checked — and says so, rather than passing silently."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = _default_aggregates(total, buckets) + "Quoting: **Largest bucket**: Tooling (3).\n"
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("unrecognised count claim" in p for p in problems), problems
