@@ -74,6 +74,7 @@ npx skills add broomva/skills --skill '*'
 | [`audit-harness-usage`](skills/tooling/audit-harness-usage/) | Audit Codex, Claude, Gemini, and Cursor token/cost traces plus Antigravity quotas; emit JSON/CSV/text or a self-contained HTML insights dashboard—no CodexBar runtime dependency |
 | [`broomva-cli`](skills/tooling/broomva-cli/) | CLI for broomva.tech — manage prompts, skills, and context from the terminal |
 | [`disambiguate`](skills/tooling/disambiguate/) | Rewrite a requirement so it can only be read one way — distilled from ASD-STE100 Simplified Technical English, with a stdlib checker for the mechanical ambiguity |
+| [`parallax`](skills/tooling/parallax/) | Drive Parallax — the simulation runtime whose results carry how much of them was real: propose an ontology from a context, a human accepts it before anything runs, then roll it forward. Routes state to the next command and a typed refusal to its remedy, for all 46 error codes |
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
 | [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
@@ -250,7 +251,7 @@ The 90 skills bucket into 22 single-noun categories — one row per `skills/<cat
 |---|---|---|
 | Governance & control | `skills/governance/` | 8 |
 | Orchestration & autonomy | `skills/orchestration/` | 8 |
-| Skill & prompt tooling | `skills/tooling/` | 8 |
+| Skill & prompt tooling | `skills/tooling/` | 9 |
 | Knowledge & memory | `skills/knowledge/` | 8 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 5 |
