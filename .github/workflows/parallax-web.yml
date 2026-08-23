@@ -121,8 +121,9 @@ jobs:
 
       - name: Say plainly that nothing was published
         # Without this line a green tick beside "parallax-web" reads as "the site
-        # is live with these changes". It is not: the published site is frozen on
-        # the archived repo. Green here means the export is buildable, nothing more.
+        # is live with these changes". It is not: the published site is served by
+        # broomva/parallax, which this move archives read-only, so it stays frozen at
+        # the last build made there. Green here means the export is buildable.
         run: |
           {
             echo "## Built, not published"

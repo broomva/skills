@@ -3,9 +3,9 @@ import "./globals.css";
 
 const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 // The address the site is actually reachable at today. This repository does not
-// publish it -- GitHub keeps serving the archived repo's Pages build -- but that
-// is where a reader who follows a share card still lands, so it is the honest
-// canonical origin until something republishes.
+// publish it -- GitHub goes on serving broomva/parallax's Pages build after that
+// repo is archived read-only -- but that is where a reader following a share card
+// still lands, so it is the honest canonical origin until something republishes.
 //
 // The default is deliberately NOT localhost. A localhost fallback reads as
 // cautious and ships worse: the exported HTML then declares

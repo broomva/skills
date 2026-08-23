@@ -96,6 +96,27 @@ page all make.
   different on purpose. Collapsing them makes every refusal look like a crash,
   which is how a fail-closed system gets described as flaky.
 
+## Two security properties, which are design and not defect
+
+Carried here from the pre-move repository's `SECURITY.md`, which did not travel:
+the monorepo root governs that file now, and these two are specific to this
+runtime rather than to the repository it happens to sit in. They are not
+incidental — the first is the reason a domain is not a config file.
+
+- **A domain is executable.** A `TypeRecord` carries `transition` and `invariants`
+  as *functions*, so loading a domain from an untrusted source runs that source's
+  code with the privileges of the host process. Treat third-party domains and
+  plugin models the way you would treat any dependency. "An untrusted domain can
+  run arbitrary code" is expected; a path that runs domain code **without** the
+  operator loading it is not.
+- **The log is append-only, not confidential.** Events, parameters and derivation
+  records are stored as written. Keeping secrets out of action parameters is the
+  caller's job.
+
+Anything that lets one branch read or mutate another's events, that lets a
+`simulated` answer be returned typed as `observed`, or that makes a derivation's
+reproducibility class stronger than its inputs warrant, is a serious bug.
+
 ## Traps, each of which has cost someone an hour
 
 1. **Never read `$?` after a pipe.** `cmd | tail -5; echo $?` reports *tail's*

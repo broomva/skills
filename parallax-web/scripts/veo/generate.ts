@@ -11,9 +11,11 @@
  *   bun run scripts/veo/generate.ts --force    # regenerate everything
  *   bun run scripts/veo/generate.ts --encode   # re-encode from raw, no API calls
  *
- * Raw Veo output lands in out/veo-raw/ (gitignored -- see
- * parallax-web/.gitignore) and is re-encoded into public/scroll-cinema/. The
- * raw file is kept so a re-encode never costs another generation.
+ * Raw Veo output lands in cinema/assets/veo-raw/ (gitignored by the repository
+ * root .gitignore, which covers parallax-web/cinema/assets/) and is re-encoded
+ * into public/scroll-cinema/. The raw file is kept so a re-encode never costs
+ * another generation -- which is also why it must never live under out/, the
+ * Next export directory the build deletes and rewrites.
  */
 
 import { existsSync } from "node:fs";
