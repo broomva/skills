@@ -129,17 +129,78 @@ jobs:
       - name: Demo smoke test
         run: bun run demo
 
-      - name: The layer is installable as shipped
-        # The move's central claim is "installing the skill installs the layer",
-        # and SKILL.md tells a reader to run exactly `bun install && bun link`.
-        # So run exactly that, and assert the thing the reader actually wants:
-        # a `parallax` on PATH that answers. Asserting `bun run bin/parallax.ts`
-        # instead would pass without the link ever working.
+      - name: The layer works from the checkout
+        # Necessary but NOT sufficient -- see the `installed` job, which is the
+        # one that actually tests the claim this change is built on.
         run: |
           bun link
           command -v parallax || { echo "::error::bun link did not put parallax on PATH"; exit 1; }
           parallax help | grep -q "propose" || {
             echo "::error::the linked CLI did not list its own commands"; exit 1; }
+          parallax status
+
+  installed:
+    name: installing the skill installs the layer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # THE CENTRAL CLAIM OF THIS SKILL'S LAYOUT, TESTED AS A USER MEETS IT.
+    #
+    # Linking the runtime out of a repository checkout proves the code works. It
+    # does NOT prove the sentence in SKILL.md, which is "installing the skill
+    # installs the layer" -- because the installer sits between the two and is
+    # free to filter what it copies. If skills.sh ever skipped `runtime/` (it
+    # already filters by extension elsewhere), every checkout-based gate here
+    # would stay green while the published skill shipped instructions for
+    # software that was not in the box.
+    #
+    # So this job installs the skill the way a reader does, into a scratch
+    # directory, and then follows SKILL.md's own three commands from the
+    # INSTALLED copy -- asserting that the `parallax` it puts on PATH resolves
+    # inside the install, not back into this checkout.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the skill from this checkout
+        run: |
+          mkdir -p /tmp/installtest && cd /tmp/installtest
+          npx --yes skills@latest add "$GITHUB_WORKSPACE" --skill parallax -a claude-code
+          test -d .claude/skills/parallax || {
+            echo "::error::the installer produced no skill directory"; exit 1; }
+
+      - name: The runtime survived the installer
+        run: |
+          D=/tmp/installtest/.claude/skills/parallax
+          test -d "$D/runtime" || {
+            echo "::error::the installer STRIPPED runtime/ — 'installing the skill installs the layer' is false"; exit 1; }
+          for f in package.json bin/parallax.ts src/cli.ts src/tools/index.ts; do
+            test -f "$D/runtime/$f" || { echo "::error::installed runtime is missing $f"; exit 1; }
+          done
+          echo "installed runtime: $(find "$D/runtime/src" -name '*.ts' | wc -l | tr -d ' ') source files"
+
+      - name: SKILL.md's own commands, run from the install
+        run: |
+          D=/tmp/installtest/.claude/skills/parallax
+          cd "$D/runtime"
+          bun install
+          bun link
+          command -v parallax || { echo "::error::bun link did not put parallax on PATH"; exit 1; }
+          # The link must resolve INTO the install. If it resolves back into the
+          # repository checkout, this job is testing the checkout again and the
+          # installer is untested -- which is the exact hole it exists to close.
+          target=$(readlink -f "$(command -v parallax)")
+          echo "parallax resolves to: $target"
+          case "$target" in
+            "$D"/*) ;;
+            *) echo "::error::parallax resolved to $target, outside the install"; exit 1 ;;
+          esac
+          parallax help | grep -q "propose" || {
+            echo "::error::the installed CLI did not list its own commands"; exit 1; }
           parallax status
 
   integration:
@@ -176,6 +237,31 @@ jobs:
 
       - name: Install pytest
         run: python3 -m pip install --upgrade pytest pyyaml
+
+      - name: The remedy table is bound to the RUNTIME, not to a snapshot of it
+        # references/error-codes.txt is a captured list, and the pytest suite
+        # asserts REMEDIES covers exactly it. That pair is closed: both sides are
+        # hand-maintained here, so adding an error code to the runtime and
+        # forgetting the fixture leaves the whole thing green while the remedy
+        # table silently stops covering the vocabulary.
+        #
+        # Before the move that was unavoidable -- the runtime was another
+        # repository and there was nothing to derive from. It ships in this
+        # directory now, so the fixture is checked against its actual source.
+        # This is the fixture-is-also-a-test-subject case: mutation-testing the
+        # code while trusting the fixture measures half the pair.
+        working-directory: skills/simulation/parallax
+        run: |
+          grep -oE '"[A-Z][A-Z_]{4,}"' runtime/src/tools/errors.ts \
+            | tr -d '"' | sort -u > /tmp/from-runtime.txt
+          grep -v '^#' references/error-codes.txt | grep -v '^$' | sort -u > /tmp/from-fixture.txt
+          n=$(wc -l < /tmp/from-runtime.txt | tr -d ' ')
+          [ "$n" -gt 0 ] || { echo "::error::extracted 0 codes from errors.ts — the pattern stopped matching"; exit 1; }
+          if ! diff -u /tmp/from-fixture.txt /tmp/from-runtime.txt; then
+            echo "::error::references/error-codes.txt has drifted from runtime/src/tools/errors.ts (- fixture, + runtime). Regenerate it; do not hand-edit."
+            exit 1
+          fi
+          echo "$n error codes: fixture matches the runtime exactly"
 
       - name: The live suite must RUN here, not skip
         # The inverse assertion of the one in the `skill` job, and it is the

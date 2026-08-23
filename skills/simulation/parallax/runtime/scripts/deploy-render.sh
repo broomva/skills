@@ -250,15 +250,25 @@ print_create_paths() {
         1. https://dashboard.render.com/
         2. "New +"  ->  "Blueprint"
         3. Connect the repo:  broomva/skills
-        4. Render looks for render.yaml at the REPOSITORY ROOT. This one is at
-           skills/simulation/parallax/runtime/render.yaml, so the Blueprint flow
-           will not find it unless a root-level render.yaml points here.
+        4. Render defaults to looking for render.yaml at the repository root,
+           but the file may live anywhere: put
+             skills/simulation/parallax/runtime/render.yaml
+           in the "Blueprint Path" field during setup.
+           ("By default, Render looks for the render.yaml file at the root of
+            your repo, but you can define your Blueprint file anywhere" --
+            render.com/docs/infrastructure-as-code)
         5. Name the blueprint, then "Apply" / "Create Resources"
 
-      A Blueprint that Render can read syncs on every later edit. This file is
-      not at the repository root, so until that is resolved it describes the
-      service rather than driving it - which is exactly the drift path B warns
-      about.
+      A Blueprint that Render can read syncs on every later edit, which is the
+      whole reason to prefer this path over B.
+
+      An earlier version of this comment said the Blueprint flow "will not find
+      it unless a root-level render.yaml points here", and that the file
+      therefore only described the service rather than driving it. That was
+      wrong, and wrong in the direction that costs something: it told an
+      operator that the recommended path was blocked by a constraint that does
+      not exist, and pointed them at B - the option this script itself warns
+      drifts.
 
    B) CLI (scriptable, but NOT linked to render.yaml)
       Re-run this script with --create, which runs:

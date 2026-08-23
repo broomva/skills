@@ -100,9 +100,10 @@ page all make.
 
 1. **Never read `$?` after a pipe.** `cmd | tail -5; echo $?` reports *tail's*
    status, so a failed build prints `0`. Redirect to a file and capture directly.
-2. **`out/` and `.parallax/` are gitignored — by this directory's own `.gitignore`,
-   not the monorepo's.** An artifact anyone else needs — a receipt, a screenshot —
-   written to `out/` exists on exactly one laptop. Human-read documents live in
+2. **`out/` and `.parallax/` are gitignored.** Both this directory's `.gitignore`
+   and the monorepo root's cover `.parallax/`; `out/` is covered only here, and the
+   nearest file wins either way. An artifact anyone else needs — a receipt, a
+   screenshot — written to `out/` exists on exactly one laptop. Human-read documents live in
    `parallax-web/`, not here.
 3. **Verify a deploy with `/health`, never a deploy API.** `/health` reports the
    running **commit**. A deploy-status API reports that a deploy was *accepted*, and
@@ -111,7 +112,8 @@ page all make.
    scripts/warm-hub.sh    # deployed commit + how far local HEAD has run ahead
    ```
 4. **A push here does not deploy the hub.** The live service was created against the
-   archived repository, so nothing in this monorepo is wired to it: `render.yaml`
+   original `broomva/parallax` repository (archived as part of this move), so nothing
+   in this monorepo is wired to it: `render.yaml`
    names `broomva/skills`, but a service that already exists does not follow a file
    edit, and there is no deploy workflow here. Deploying is
    `scripts/deploy-render.sh --deploy`; repointing the service at this repository and

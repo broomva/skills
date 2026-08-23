@@ -28,7 +28,17 @@ if (!KEY) {
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BOARD = join(ROOT, "scroll-cinema", "storyboard.json");
-const RAW = join(ROOT, "out", "veo-raw");
+// NOT `out/`. `out/` is the Next static export directory, which the build
+// deletes and rewrites wholesale -- raw Veo footage parked there is destroyed by
+// the next `bun run build`, silently and after it has been paid for.
+//
+// Before the move this collision did not exist: ROOT was the old repository root,
+// so raw lived at `<repo>/out/veo-raw` while the export went to `web/out/`. ROOT
+// is now this package, and the two paths became the same one.
+//
+// `cinema/assets/` is the regenerable-intermediates directory and is already
+// gitignored, which is the property this needs.
+const RAW = join(ROOT, "cinema", "assets", "veo-raw");
 const OUT = join(ROOT, "public", "scroll-cinema");
 const API = "https://generativelanguage.googleapis.com/v1beta";
 

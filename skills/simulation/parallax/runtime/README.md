@@ -80,7 +80,8 @@ nothing.
 
 The landing page at <https://broomva.github.io/parallax/> — with the worked use
 case at </use-cases/> and the full evidence page at </proof/> — is still served
-out of the archived repository and is frozen there. Its source now lives at
+out of the original `broomva/parallax` repository, which is archived read-only as
+part of this move, and is frozen at the last build made there. Its source now lives at
 `parallax-web/` in this monorepo and has not been republished, so a change here
 does not reach that page.
 

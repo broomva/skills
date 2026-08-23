@@ -2,10 +2,17 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-// This repository does not publish the site, so there is no canonical origin to
-// assert. Set NEXT_PUBLIC_SITE_URL at publish time; until then the metadata base
-// is local and says so rather than pointing at an address nothing here serves.
-const site = process.env.NEXT_PUBLIC_SITE_URL ?? `http://localhost:3000${base}/`;
+// The address the site is actually reachable at today. This repository does not
+// publish it -- GitHub keeps serving the archived repo's Pages build -- but that
+// is where a reader who follows a share card still lands, so it is the honest
+// canonical origin until something republishes.
+//
+// The default is deliberately NOT localhost. A localhost fallback reads as
+// cautious and ships worse: the exported HTML then declares
+// `og:url = http://localhost:3000/` to every crawler and chat client that
+// unfurls it, which is not "no claim", it is a wrong claim that nobody can
+// follow. Override with NEXT_PUBLIC_SITE_URL when the site moves (BRO-2271).
+const site = process.env.NEXT_PUBLIC_SITE_URL ?? `https://broomva.github.io/parallax${base}/`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(site),

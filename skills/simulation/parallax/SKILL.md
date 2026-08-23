@@ -36,14 +36,24 @@ npx skills add broomva/skills --skill parallax -g -a claude-code
 
 The runtime comes with it, at [`runtime/`](runtime/) inside the installed skill --
 installing the skill installs the layer. Building it is what puts `parallax` on
-PATH, and it needs [Bun](https://bun.sh):
+PATH, and it needs [Bun](https://bun.sh).
+
+The path below is where `-g -a claude-code` puts it. This block names it in full
+rather than opening with a bare `cd runtime`, because a reader copies these lines
+from wherever they happen to be standing, and a relative `cd` that silently
+depends on an unstated cwd is the same defect this skill's own
+`tests/test_skill_md_claims.py` exists to catch:
 
 ```bash
-cd runtime
+cd ~/.claude/skills/parallax/runtime
 bun install
 bun link            # puts `parallax` on PATH
 parallax help
 ```
+
+Installed somewhere else -- a different agent target, a project-scoped install, or
+a clone of the monorepo -- substitute that location; the three commands are the
+same, and `runtime/` is always directly inside the skill.
 
 Or drive it as tools inside an agent, with no dependency on `ai` or `zod`:
 

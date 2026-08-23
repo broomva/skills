@@ -1,9 +1,16 @@
 """SKILL.md's own claims about itself must be true.
 
 This file exists because the Tests section shipped wrong. It told a reader to run
-`python3 -m pytest skills/simulation/parallax/tests/`, which does not resolve from
-an install (`~/.claude/skills/parallax/` has no `skills/simulation/` prefix), and
-it claimed 29 tests when there were 36.
+`python3 -m pytest skills/tooling/parallax/tests/` -- the repo-relative path at the
+time -- which does not resolve from an install (`~/.claude/skills/parallax/` has no
+`skills/tooling/` prefix), and it claimed 29 tests when there were 36.
+
+That path reads as stale now, because the skill has since moved to
+`skills/simulation/parallax/`. It is left as it was ON PURPOSE: this paragraph is a
+record of a defect that shipped, and silently updating the quoted string to the
+current path would make the record describe a mistake nobody made. The defect was
+never about which directory was named; it was about naming a repo-relative path in
+a document read from an install.
 
 It was found by installing the skill from skills.sh and following its own
 instructions -- not by any test, because no test read the document. Same class as

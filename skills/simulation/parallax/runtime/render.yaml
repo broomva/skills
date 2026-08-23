@@ -74,10 +74,21 @@ services:
     # or `off` to make every deploy manual.
     autoDeployTrigger: commit
 
-    # Without this, every commit to broomva/skills - any skill, any doc -
-    # rebuilds the hub. rootDir scopes the BUILD, not the trigger, so the trigger
-    # needs its own filter. These paths are relative to the REPOSITORY root, not
-    # to rootDir.
+    # A SECOND guard, not the only one. `rootDir` above already scopes the
+    # trigger: "If you set a root directory for your service, Render only
+    # triggers an autodeploy if your changes affect files anywhere under that
+    # directory" (render.com/docs/monorepo-support). So commits to unrelated
+    # skills do not rebuild the hub even without this block.
+    #
+    # An earlier version of this comment claimed rootDir scoped the BUILD but not
+    # the TRIGGER, and that the filter was therefore necessary. That was invented
+    # and is contradicted by the docs above; the filter is kept as an explicit
+    # belt, so that narrowing or removing rootDir cannot silently widen what
+    # deploys, but it is redundant today and should be read that way.
+    #
+    # These paths ARE relative to the REPOSITORY root, not to rootDir -- that
+    # part is real: "Build filter paths ... are always relative to the repo's
+    # root directory".
     buildFilter:
       paths:
         - skills/simulation/parallax/runtime/**

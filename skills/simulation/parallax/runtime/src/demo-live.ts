@@ -77,7 +77,7 @@ interface HubMessage {
   readonly of: number;
 }
 
-/** Every failure here happens in front of an audience, so none of them throw. */
+/** This runs unattended against a live service, so no failure here throws. */
 async function hub(
   path: string,
   init?: RequestInit,
