@@ -150,9 +150,9 @@ appended to it.
 
 | Property | Why it holds |
 |---|---|
-| A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED` |
+| A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. `record-round` also refuses to append past a terminal state |
 | A budget cannot be reset by re-running `pre-push` | the ledger id is derived from branch + merge-base, not the PID |
-| A budget cannot be reset by pointing at a new file | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER` |
+| Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
@@ -170,6 +170,14 @@ appended to it.
 - **`--defect=yes` is the agent's own assertion.** The controller enforces that
   two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
   actually earned. That judgement belongs to the reviewer's findings.
+- **One environment variable reopens the ledger path.**
+  `ROUND_BUDGET_TEST_LEDGER=1 … --ledger=/tmp/fresh` starts a clean budget. The
+  gate makes that a deliberate act rather than an accident; it does not prevent
+  it, and nothing here could — see the first bullet.
+- **"Names a location" is a weak check.** The predicate accepts any path-ish
+  token, so `aaaa/aaaaaaa` passes. It rules out `--prediction=x`, which is the
+  failure that actually occurred; it cannot tell a real location from a
+  plausible-looking one.
 - **The ledger is invisible to CI.** It lives in `.git/`, so no workflow can see
   whether an arc ever ran the loop. Paste `cross-review round show` into the PR
   alongside the verdict — that is what makes the budget part of the merge
