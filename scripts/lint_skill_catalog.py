@@ -223,6 +223,10 @@ _BUCKET_TOTAL_FORMS = (
     r"the (\d+) `skills/<category>/` directory buckets",
     r"the (\d+) monorepo buckets",
     r"\*\*Total category buckets\*\*: (\d+)",
+    # Deliberately last and deliberately loose: the specific forms above are
+    # subtracted first, so this catches any remaining "<n> buckets" phrasing
+    # rather than leaving one more wording to be discovered by a review round.
+    r"(\d+) buckets",
 )
 
 #: Aggregates naming a SUPERLATIVE bucket. Verified against disk like any other
@@ -344,18 +348,39 @@ def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, st
     return problems
 
 
+#: Which bucket table each surface MUST carry. Declared rather than inferred
+#: from what happens to be present, because "infer the structure from the file"
+#: is what makes an emptied structure look consistent — the same invariant the
+#: `if sections:` guard got wrong for category tables. Absent or empty is a
+#: FINDING here, in both structures, stated once.
+_REQUIRED_BUCKET_TABLES = {
+    "README.md": r"\| `skills/([a-z]+)/` \| \d+ \|",
+    "skills-catalog/SKILL.md": r"\(`([a-z]+)`\) \| \d+ \|",
+}
+
+
 def _bucket_table_problems(label: str, text: str, disk: dict) -> list[str]:
-    """A bucket table must name EVERY category, not merely agree about the ones
-    it happens to list. Checking only the rows present lets a deleted row pass."""
+    """A bucket table must exist, be non-empty, and name EVERY category.
+
+    Checking only the rows present lets a deleted row pass; skipping a table
+    with zero matches lets the WHOLE TABLE be deleted and still pass. Both are
+    the same mistake — treating an absent structure as a satisfied one — and it
+    is spelled here exactly once so a third structure cannot reintroduce it.
+    """
     problems = []
-    for pattern in (r"\(`([a-z]+)`\) \| \d+ \|", r"\| `skills/([a-z]+)/` \| \d+ \|"):
-        listed = set(re.findall(pattern, text))
-        if not listed:
-            continue
-        for category in sorted(set(disk) - listed):
-            problems.append(f"{label}: bucket table omits category `{category}`")
-        for category in sorted(listed - set(disk)):
-            problems.append(f"{label}: bucket table lists `{category}`, not on disk")
+    required = _REQUIRED_BUCKET_TABLES.get(label)
+    if required is None:
+        return problems
+    listed = set(re.findall(required, text))
+    if not listed:
+        problems.append(
+            f"{label}: the bucket table is missing or has no rows — an absent table is "
+            "not a consistent one")
+        return problems
+    for category in sorted(set(disk) - listed):
+        problems.append(f"{label}: bucket table omits category `{category}`")
+    for category in sorted(listed - set(disk)):
+        problems.append(f"{label}: bucket table lists `{category}`, not on disk")
     return problems
 
 
@@ -386,8 +411,15 @@ def _unverified_count_claims(text: str) -> list[str]:
     """
     unverified = []
     for lineno, line in enumerate(text.split("\n"), 1):
-        if line.startswith("|") or "](skills/" in line:
-            continue          # table rows are checked structurally
+        # A table row is NOT exempt. Only the parts of it that something else
+        # verifies are removed — the bucket-count cells and the skill-name cell
+        # — and whatever text remains is scanned like any prose. Exempting every
+        # `|` line wholesale made "| Foo | We ship 999 skills |" invisible, the
+        # same absent-check-reads-as-passing mistake as an emptied table.
+        if line.startswith("|"):
+            line = re.sub(r"\| `skills/[a-z]+/` \| \d+ \|", "", line)
+            line = re.sub(r"\(`[a-z]+`\) \| \d+ \|", "", line)
+            line = re.sub(r"^\| \[?`[a-z0-9-]+`\]?(\([^)]*\))?", "", line)
         # Gated on the vocabulary of DERIVED FACTS, not on the word "skill".
         # Gating on "skill" is why "**Total category buckets**: 22" and
         # "**Largest bucket**: … (7)" were invisible: neither line says it.

@@ -613,3 +613,78 @@ class TestTheProximityWindow:
         far = "buckets " + ("x" * 200) + " 2026"
         assert lint._states_a_quantity(near)
         assert not lint._states_a_quantity(far)
+
+
+class TestAnAbsentStructureIsNotAConsistentOne:
+    """The invariant, stated once: a structure that is missing or empty must be
+    a finding, never a pass. It was got wrong twice — `if sections:` for
+    category tables, then `if not listed: continue` for bucket tables — which is
+    the shape where each new branch costs another review round. Both branches
+    are covered here so a third cannot be added quietly.
+    """
+
+    def test_an_emptied_bucket_table_is_reported(self, tmp_path, lint):
+        _, _s, buckets, total, _r, _i = _consistent(tmp_path, lint)
+        gutted = "\n".join(l for l in _catalog_skill(total, buckets).split("\n")
+                           if not re.match(r"\| \w+ \(`[a-z]+`\) \|", l))
+        _consistent(tmp_path, lint, catalog=gutted)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("missing or has no rows" in p for p in problems), problems
+
+    def test_an_emptied_readme_bucket_table_is_reported(self, tmp_path, lint):
+        """The same invariant in the OTHER surface — the branch that would
+        otherwise be the next review round."""
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        gutted = "\n".join(l for l in _readme(rrows, total, buckets).split("\n")
+                           if not re.match(r"\| \w+ \| `skills/[a-z]+/` \| \d+ \|", l))
+        _consistent(tmp_path, lint, readme=gutted)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("missing or has no rows" in p for p in problems), problems
+
+    def test_a_complete_bucket_table_is_still_clean(self, lint, tmp_path):
+        """POSITIVE CONTROL for both: the check must distinguish absent from
+        present, not merely always complain."""
+        _consistent(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+
+class TestClaimsInsideTableRows:
+    def test_a_count_claim_in_a_table_cell_is_reported(self, tmp_path, lint):
+        """Every `|` line was exempted as 'checked structurally', so a claim in
+        a free-text cell was invisible. Only the structurally-verified cells are
+        removed now; the rest is scanned like prose."""
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint,
+                    readme=_readme(rrows, total, buckets) + "\n| Thing | We ship 999 skills |\n")
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("999" in p for p in problems), problems
+
+    def test_a_normal_skill_row_is_not_flagged(self, tmp_path, lint):
+        """POSITIVE CONTROL: scanning cells must not flag the catalog's own
+        rows, or the linter is unusable on the file it governs."""
+        _consistent(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+    def test_a_loose_bucket_phrasing_in_a_cell_is_verified_not_flagged(self, tmp_path, lint):
+        """'inventory across all 22 buckets' is a real derived count that no
+        specific form covered. It is verified, so a WRONG one is reported."""
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint, readme=_readme(rrows, total, buckets)
+                    + "\n| Doc | Inventory across all 77 buckets |\n")
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("77 category buckets" in p for p in problems), problems
+        assert not any("unrecognised" in p for p in problems), problems
+
+
+class TestFixRepairsSuperlativesInBothDirections:
+    def test_fix_repairs_a_wrong_SMALLEST_aggregate(self, tmp_path, lint):
+        """Deleting the smallest-branch from _fix_superlatives survived the
+        sweep: checking it was tested, FIXING it was not."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        inv = _inventory(irows, total, buckets) + AGGREGATES.format(
+            total=total, nbuckets=len(buckets), largest="Tooling", hi=max(buckets.values()),
+            lo=min(buckets.values()), smallest="Tooling")     # wrong set
+        _consistent(tmp_path, lint, inventory=inv)
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert "**Smallest buckets** (2): Governance" in lint._INVENTORY.read_text()
