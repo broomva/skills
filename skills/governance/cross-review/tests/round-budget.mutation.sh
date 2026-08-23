@@ -313,12 +313,14 @@ mutate "--force reaches a live arc" "T49" \
     'if [ -n "$RESET_ENTRY" ] && arc_closed_code "$RESET_CODE"; then' \
     'if [ -n "$RESET_ENTRY" ] && [ "$RESET_CODE" != "IMPOSSIBLE" ]; then'
 
-# One archiver, both callers. Restoring the corrupt path's own namer restores
-# the missing never-clobber loop with it -- which is why the two were merged
-# rather than the loop copy-pasted into the second one.
-mutate "corrupt path names its own archive" "T50" \
-    $'        archive_ledger corrupt\n        echo "round-budget: archived (forced, unreadable) -> $ARCHIVE"' \
-    $'        ARCHIVE="$LEDGER.archived.corrupt.$$"\n        mv "$LEDGER" "$ARCHIVE"\n        echo "round-budget: archived (forced, unreadable) -> $ARCHIVE"'
+# DROPPED: "corrupt path names its own archive" (restoring the pid-based namer).
+# A reviewer showed it was killed for the WRONG reason. A pid namer collides
+# with nothing, so it destroys nothing; T50 was reddening because an expected
+# FILENAME was absent, not because any archive had been overwritten. The
+# invariant that matters -- never destroy an entry already at the chosen name --
+# lives in ONE loop shared by both callers and is mutation-proved once, at T40.
+# A mutation whose kill is about a naming convention rather than a defect is
+# weaker than no mutation, because it reads in the count as if it were one.
 
 # The help block is documentation only until the markers come off it.
 mutate "--help keeps its comment markers" "T51" \

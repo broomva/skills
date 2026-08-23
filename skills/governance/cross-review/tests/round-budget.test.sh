@@ -33,6 +33,12 @@ trap 'rm -rf "$TMP"' EXIT
 # bad fixtures, not missing checks.
 newledger() { echo "$TMP/ledger.$1.tsv"; }
 
+# "It archives rather than deletes" is the whole claim of `reset`, so a positive
+# arm that checks only the exit code -- or only that the original is gone --
+# passes a --force that reported success and did nothing, and passes one that
+# simply deleted the ledger. Count what actually landed.
+archives_of() { find "$(dirname "$1")" -maxdepth 1 -name "$(basename "$1").archived.*" 2>/dev/null | wc -l | tr -d ' '; }
+
 # Run round-budget, capture exit code without tripping the outer pipefail.
 rb() { local rc=0; bash "$RB" "$@" >/dev/null 2>&1 || rc=$?; echo "$rc"; }
 rbout() { bash "$RB" "$@" 2>&1 || true; }
@@ -539,10 +545,11 @@ RC_PLAIN=$(rb reset --run-id=t43 --ledger="$LED")
 STILL=$([ -f "$LED" ] && echo yes || echo no)
 OUT=$(rbout reset --run-id=t43 --ledger="$LED" --force)
 RC_FORCE=$(rb reset --run-id=t43 --ledger="$LED" --force)
-if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && echo "$OUT" | grep -q "FORCED past regressed"; then
+ARCH=$(archives_of "$LED")
+if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ] && echo "$OUT" | grep -q "FORCED past regressed"; then
     ok "T43: regression refused plainly, discarded only by --force"
 else
-    fail "T43: regression is not a finished arc" "plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), out: $OUT"
+    fail "T43: regression is not a finished arc" "plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1), out: $OUT"
 fi
 
 # ── T44: two REFUTED predictions is a stop, not a finished arc ────────────
@@ -552,10 +559,11 @@ printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t
 RC=$(rb reset --run-id=t44 --ledger="$LED")
 STILL=$([ -f "$LED" ] && echo yes || echo no)
 RC_FORCE=$(rb reset --run-id=t44 --ledger="$LED" --force)
-if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ]; then
+ARCH=$(archives_of "$LED")
+if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
     ok "T44: two-REFUTED stop is not resettable, and --force still can"
 else
-    fail "T44: two-REFUTED stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0)"
+    fail "T44: two-REFUTED stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
 fi
 
 # ── T45: two rounds reproducing nothing is a stop, not a finished arc ─────
@@ -565,10 +573,11 @@ printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\n' > "$LED"
 RC=$(rb reset --run-id=t45 --ledger="$LED")
 STILL=$([ -f "$LED" ] && echo yes || echo no)
 RC_FORCE=$(rb reset --run-id=t45 --ledger="$LED" --force)
-if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ]; then
+ARCH=$(archives_of "$LED")
+if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
     ok "T45: no-defect stop is not resettable, and --force still can"
 else
-    fail "T45: no-defect stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0)"
+    fail "T45: no-defect stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
 fi
 
 # ── T46: the human ceiling is an escalation, not a finished arc ───────────
@@ -582,10 +591,11 @@ RC_BUDGET=$(rb budget --run-id=t46 --ledger="$LED")
 RC=$(rb reset --run-id=t46 --ledger="$LED")
 STILL=$([ -f "$LED" ] && echo yes || echo no)
 RC_FORCE=$(rb reset --run-id=t46 --ledger="$LED" --force)
-if [ "$RC_BUDGET" = "7" ] && [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ]; then
+ARCH=$(archives_of "$LED")
+if [ "$RC_BUDGET" = "7" ] && [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
     ok "T46: the ceiling is not resettable, and --force still can"
 else
-    fail "T46: ceiling stop" "budget=$RC_BUDGET (want 7), plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0)"
+    fail "T46: ceiling stop" "budget=$RC_BUDGET (want 7), plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
 fi
 
 # ── T47: the pass arm reads the RULE, not the score ───────────────────────
@@ -650,22 +660,29 @@ else
     fail "T49: --force reaches a live arc" "plain=$RC_PLAIN force=$RC_FORCE (want 6 each), survived=$STILL (want yes), after-verdict=$RC_AFTER (want 0)"
 fi
 
-# ── T50: the corrupt path archives through the SAME never-clobber namer ───
-# It wrote "$LEDGER.archived.corrupt.$$" with no never-clobber loop while the
-# healthy path four lines below it had one. A pid is reused, and "it archives
-# rather than deletes" holds only if the archive it writes is not a previous
-# archive. One archiver, both callers — so the collision is forced here at the
-# name the corrupt path picks.
-echo "T50. a forced archive does not clobber an archive already at its name"
+# ── T50: the corrupt path never destroys what already sits at its name ────
+# The corrupt path wrote "$LEDGER.archived.corrupt.$$" with no never-clobber
+# loop while the healthy path four lines below it had one. One archiver, both
+# callers — so the collision is forced here at the name the corrupt path picks.
+#
+# The assertion is PRESERVED BYTES, not a filename. An earlier version required
+# ".corrupt.1.1" to exist, and a reviewer showed that killed the pid-based
+# mutant for the WRONG reason: a pid namer collides with nothing, so it destroys
+# nothing, and the test was reddening on an absent expected NAME rather than on
+# any clobber. What must hold is that the entry already there survives and the
+# ledger still lands beside it. Its clobber protection is the SAME loop the
+# healthy path uses, mutation-proved once at T40 — one site, one proof.
+echo "T50. a forced archive does not destroy what already sits at its name"
 LED=$(newledger t50)
 printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
 printf 'SENTINEL\n' > "$LED.archived.corrupt.1"
 RC=$(rb reset --run-id=t50 --ledger="$LED" --force)
 KEPT=$(cat "$LED.archived.corrupt.1" 2>/dev/null)
-if [ "$RC" = "0" ] && [ "$KEPT" = "SENTINEL" ] && [ -e "$LED.archived.corrupt.1.1" ]; then
-    ok "T50: corrupt archive steps aside rather than overwriting"
+ARCH=$(archives_of "$LED")
+if [ "$RC" = "0" ] && [ "$KEPT" = "SENTINEL" ] && [ "$ARCH" -ge 2 ]; then
+    ok "T50: the occupied name survives and the ledger lands beside it"
 else
-    fail "T50: corrupt archive clobbers" "exit $RC (want 0), sentinel='$KEPT' (want SENTINEL), sidestep present: $([ -e "$LED.archived.corrupt.1.1" ] && echo yes || echo no)"
+    fail "T50: corrupt archive clobbers" "exit $RC (want 0), sentinel='$KEPT' (want SENTINEL), archives=$ARCH (want >=2)"
 fi
 
 # ── T51: --help is the documentation surface for --force ──────────────────
@@ -700,10 +717,13 @@ else
     RC_PLAIN=$(rb reset --run-id=t52 --ledger="$LED")
     RC_FORCE=$(rb reset --run-id=t52 --ledger="$LED" --force)
     GONE=$([ -e "$LED" ] && echo no || echo yes)
-    if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$GONE" = "yes" ]; then
+    # "gone" alone is satisfied by DELETION -- the outcome this command exists
+    # to replace. The archive must exist.
+    ARCH=$(archives_of "$LED")
+    if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$GONE" = "yes" ] && [ "$ARCH" -ge 1 ]; then
         ok "T52: unreadable ledger refused plainly, archived under --force"
     else
-        fail "T52: unreadable ledger archive" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), archived=$GONE (want yes)"
+        fail "T52: unreadable ledger archive" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), gone=$GONE (want yes), archives=$ARCH (want >=1)"
     fi
 fi
 chmod 644 "$LED" 2>/dev/null || true
