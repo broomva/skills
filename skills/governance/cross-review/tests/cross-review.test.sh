@@ -415,6 +415,19 @@ else
     fail "T20: guard id distinct per run" "guard ids matched ('$GA') — a second capture would collide"
 fi
 
+# ── T21: the round budget prints even when Codex is absent ────────────────
+# It lived inside the Strata A block, which only runs when `codex` is on PATH.
+# The arc id therefore printed on a developer machine and vanished on a CI
+# runner, and T19 failed there for a reason unrelated to what it tested. Every
+# stratum shares one budget, so it must print unconditionally.
+echo "T21. round budget prints on a runner without codex"
+OUT=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+if [ -n "$OUT" ]; then
+    ok "T21: budget section is stratum-independent ($OUT)"
+else
+    fail "T21: budget section is stratum-independent" "no arc id printed without codex on PATH"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"

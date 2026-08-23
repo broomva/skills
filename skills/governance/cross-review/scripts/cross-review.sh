@@ -411,6 +411,32 @@ if [ "$COMMAND" = "pre-push" ]; then
     fi
     echo ""
 
+    # ─── Round budget ────────────────────────────────────────────────────
+    # Printed unconditionally, NOT inside a stratum. It lived in the Strata A
+    # block, which only runs when `codex` is on PATH -- so the arc id printed on
+    # a developer machine and vanished on a CI runner without Codex, and the test
+    # that pinned it passed locally and failed in CI for a reason that had
+    # nothing to do with what it was testing. The budget is the same whichever
+    # evaluator scores the round.
+    echo "  ─── Round budget ────────────────────────────────────────────"
+    echo ""
+    echo "  Arc id: $CR_ARC_ID   (stable across pre-push runs; the guard id is not)"
+    echo ""
+    echo "  After each scored round:"
+    echo "    cross-review round record-round --run-id=$CR_ARC_ID \\"
+    echo "      --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED]"
+    echo "    cross-review round budget --run-id=$CR_ARC_ID"
+    echo ""
+    echo "  budget exits: 0 authorized · 3 passed · 5 continuation review required"
+    echo "                6 stop · 7 human. Rounds 1-3 are free; 4-7 are earned by"
+    echo "                a CONTINUE verdict carrying a located prediction; >=8 is"
+    echo "                a human decision. Stops are absorbing."
+    echo ""
+    echo "  Paste \`cross-review round show --run-id=$CR_ARC_ID\` into the PR with"
+    echo "  the verdict -- the ledger lives in .git/ and is invisible to CI and to"
+    echo "  every human reviewer until you do."
+    echo ""
+
     # Strata A — true cross-vendor via Codex
     if [ "$SELECTED_STRATA" = "A" ] || [ "$SELECTED_STRATA" = "auto" ] && command -v codex >/dev/null 2>&1; then
         echo "  ─── Strata A: cross-vendor (Codex CLI) ──────────────────"
@@ -426,12 +452,8 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        defect as dispatching Strata B as 'general-purpose')"
         echo "    3. Parse Codex's response: score (0-10) + reasoning per rubric dim"
         echo "    4. If score >=7: pass (echo verdict, exit 0)"
-        echo "    5. If score <7: fix the specific deductions, rescore, then"
-        echo "       record the round and ask whether another is authorized:"
-        echo "         cross-review round record-round --run-id=$CR_ARC_ID \\"
-        echo "           --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED]"
-        echo "         cross-review round budget --run-id=$CR_ARC_ID"
-        echo "       (the arc id is stable across pre-push runs -- the guard id is not)"
+        echo "    5. If score <7: fix the deductions, rescore, then drive the round"
+        echo "       budget (printed above, and identical for every stratum)."
         echo ""
         echo "  (This script enforces the structure; the agent runs the Codex call)"
     fi
@@ -452,8 +474,8 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        advocate. Read references/rubric.md. Score each dimension"
         echo "        and report verdict. You cannot change code: report, do not fix.'"
         echo "    3. Parse the subagent's response"
-        echo "    4. Same loop: ≥7 pass, <7 fix-rescore, then record the round and"
-        echo "       ask the budget whether another is authorized (see Strata A)."
+        echo "    4. Same loop: ≥7 pass, <7 fix-rescore, then drive the round budget"
+        echo "       (printed above, and identical for every stratum)."
         echo ""
         echo "  (This script enforces the structure; the agent dispatches the subagent)"
     fi
