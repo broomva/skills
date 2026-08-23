@@ -155,8 +155,8 @@ mutate "unreadable ledger fails open" "T15" \
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
 mutate "stale verdict re-authorizes" "T13" \
-    '[ "$(field "$(last_row_any)" 1)" != "VERDICT" ] || return 1' \
-    '[ "$(field "$(last_row_any)" 1)" = "NEVERMATCHES" ] || return 1'
+    '[ "$LG_LAST_TYPE" != "VERDICT" ] || return 1' \
+    '[ "$LG_LAST_TYPE" = "NEVERMATCHES" ] || return 1'
 
 # ─── The absorbing stops and the fail-closed guards ───────────────────────
 # Each of these was escapable or silent in the first version, so each gets its
