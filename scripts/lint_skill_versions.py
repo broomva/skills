@@ -41,18 +41,44 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILLS_DIR = _REPO_ROOT / "skills"
 
 
-def _frontmatter(skill_md: Path) -> dict:
-    text = skill_md.read_text(encoding="utf-8")
+def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
+    """`(frontmatter, reason_it_could_not_be_read)` — three states, not two.
+
+    A skill is "versioned" iff its frontmatter declares a version, so returning a
+    bare `{}` for a manifest we could not READ made it indistinguishable from a
+    manifest with nothing to read: the skill reported as an unversioned
+    pre-release and silently skipped SemVer validation, pyproject/package.json
+    agreement, and the CHANGELOG requirement, while this lint stayed green.
+
+    A UTF-8 BOM is the realistic trigger — invisible in most editors, and exactly
+    what a Windows editor or a careless shell redirect produces. Measured with a
+    live control: a well-formed manifest carrying `version: not-semver` reports
+    two problems, while BOM / leading-blank-line / unparseable-YAML variants of
+    the SAME invalid version reported none.
+    """
+    raw = skill_md.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return {}, "starts with a UTF-8 BOM before the --- fence"
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return {}, f"is not valid UTF-8 ({exc.reason})"
     if not text.startswith("---"):
-        return {}
+        return {}, "does not start with a --- frontmatter fence"
     end = text.find("\n---", 3)
     if end == -1:
-        return {}
+        return {}, "has no closing --- fence"
     try:
         data = yaml.safe_load(text[3:end])
-    except yaml.YAMLError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    except yaml.YAMLError as exc:
+        return {}, f"has unparseable YAML frontmatter ({str(exc).splitlines()[0][:60]})"
+    if not isinstance(data, dict):
+        return {}, "frontmatter is not a mapping"
+    return data, None
+
+
+def _frontmatter(skill_md: Path) -> dict:
+    return _read_frontmatter(skill_md)[0]
 
 
 def _skill_version(fm: dict) -> str | None:
@@ -99,7 +125,12 @@ def lint_skill(skill_dir: Path) -> list[str]:
     if not skill_md.exists():
         return []
     name = skill_dir.name
-    fm = _frontmatter(skill_md)
+    fm, unreadable = _read_frontmatter(skill_md)
+    if unreadable:
+        # NOT an exemption. "I could not read the manifest" is a finding about
+        # the manifest; treating it as "there is nothing to check" is how a
+        # skill opts out of every rule below by carrying an invisible byte.
+        return [f"{name}: SKILL.md {unreadable} — cannot determine whether it is versioned"]
     version = _skill_version(fm)
     if version is None:
         return []  # unversioned → pre-release → exempt

@@ -37,7 +37,32 @@ jobs:
           python-version: '3.11'
 
       - name: Install PyYAML
-        run: pip install pyyaml
+        run: pip install pyyaml pytest
+
+      - name: Unit tests for the linter
+        run: python3 -m pytest tests/test_lint_skill_versions.py -v
 
       - name: Lint skill versions
         run: python3 scripts/lint_skill_versions.py
+
+      - name: The gate can actually go red
+        # A lint step that only ever reports CLEAN passes just as well when the
+        # linter is broken and finds nothing — which is precisely the defect
+        # this PR fixes, one layer up. Prove the red path from CI.
+        run: |
+          mkdir -p skills/tooling/zzz-ci-probe
+          printf -- '\xef\xbb\xbf---\nname: zzz-ci-probe\ndescription: Probe.\nversion: not-semver\n---\n' \
+            > skills/tooling/zzz-ci-probe/SKILL.md
+          set +e
+          python3 scripts/lint_skill_versions.py > /tmp/probe.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-ci-probe
+          if [ "$code" -eq 0 ]; then
+            echo "::error::a BOM-prefixed manifest must fail the lint, got exit 0"
+            cat /tmp/probe.txt; exit 1
+          fi
+          grep -q 'zzz-ci-probe' /tmp/probe.txt || {
+            echo "::error::the lint went red but never named the skill"
+            cat /tmp/probe.txt; exit 1; }
+          echo "a BOM-prefixed manifest is reported by name"
