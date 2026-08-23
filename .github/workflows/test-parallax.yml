@@ -167,9 +167,14 @@ jobs:
           node-version: '22'
 
       - name: Install the skill from this checkout
+        # `npx --yes` only answers npx's own "install this package?" prompt. The
+        # skills CLI has a SECOND prompt -- installation scope, Project vs Global
+        # -- and on a runner with no TTY it aborts there rather than defaulting.
+        # `-y` answers that one, taking Project scope, which is what puts the
+        # skill at ./.claude/skills/parallax below.
         run: |
           mkdir -p /tmp/installtest && cd /tmp/installtest
-          npx --yes skills@latest add "$GITHUB_WORKSPACE" --skill parallax -a claude-code
+          npx --yes skills@latest add "$GITHUB_WORKSPACE" --skill parallax -a claude-code -y
           test -d .claude/skills/parallax || {
             echo "::error::the installer produced no skill directory"; exit 1; }
 
