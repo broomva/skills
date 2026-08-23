@@ -106,6 +106,43 @@ RECEIPT_REQUIREMENTS = {
     "deployed": {"commit", "pull-request", "merge", "deployment"},
     "live-verified": {"commit", "pull-request", "merge", "deployment", "live-probe"},
 }
+#: Claim TEXT that asserts legal compliance, lawfulness, or legal advice.
+#:
+#: The `type` field is author-supplied, and every legal guard in this file hangs
+#: off `type == "legal-obligation"`. So a claim reading "The service is GDPR
+#: compliant." typed `factual` skipped the binding-source requirement entirely
+#: and validated as `supported` with zero legal sources — the tool's stated
+#: boundary ("without claiming compliance") broken by relabelling a field.
+#:
+#: Detected on what the claim SAYS, because that is what a reader acts on; the
+#: declared type is a routing hint, not evidence about the sentence.
+LEGAL_ASSERTION_PATTERNS = {
+    "compliance assertion": re.compile(
+        # up to three intervening words so "is GDPR compliant", "is fully SOC 2
+        # compliant" and "remains PCI DSS compliant" are all caught -- the
+        # framework name sits exactly there, and a pattern that only allowed
+        # "fully"/"now" missed every real-world phrasing of this claim
+        r"\b(?:is|are|remains?|stays?)\s+(?:\S+\s+){0,3}compliant\b"
+        r"|\bcompl(?:ies|y|iant)\s+with\b"
+        r"|\bin\s+compliance\s+with\b"
+        r"|\bmeets?\s+(?:all\s+)?(?:the\s+)?(?:legal\s+|regulatory\s+|statutory\s+)"
+        r"(?:requirements?|obligations?|duties)\b",
+        re.IGNORECASE,
+    ),
+    "lawfulness assertion": re.compile(
+        r"\b(?:is|are)\s+(?:legal|lawful|permitted by law|authorised by law|authorized by law)\b"
+        r"|\bdoes not (?:violate|breach|infringe)\b"
+        r"|\bno (?:legal )?liability\b",
+        re.IGNORECASE,
+    ),
+    "legal advice": re.compile(
+        r"\b(?:you|we|the company) (?:may|can|are entitled to) lawfully\b"
+        r"|\bno (?:further )?legal review (?:is )?(?:required|needed)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
 FORBIDDEN_CLOSURE_PATTERNS = {
     "legally secure": re.compile(r"\blegally secure\b", re.IGNORECASE),
     "fully compliant": re.compile(r"\bfully compliant\b", re.IGNORECASE),
@@ -597,6 +634,21 @@ def _validate_claims(data: dict[str, Any], errors: list[str]) -> None:
         claim_type = claim.get("type")
         if claim_type not in CLAIM_TYPES:
             errors.append(f"{path}.type: expected one of {sorted(CLAIM_TYPES)}")
+        # Every legal guard below keys off `legal-obligation`, and the type is
+        # author-supplied, so a sentence asserting compliance must be typed as
+        # one no matter what its author wrote. Otherwise the guard is opt-in by
+        # the party it constrains.
+        claim_text = claim.get("claim") if isinstance(claim.get("claim"), str) else ""
+        asserted = sorted(
+            name for name, rx in LEGAL_ASSERTION_PATTERNS.items() if rx.search(claim_text)
+        )
+        if asserted and claim_type != "legal-obligation":
+            errors.append(
+                f"{path}.type: this claim states a {asserted[0]} and must be typed "
+                "'legal-obligation' so that binding-source or counsel coverage is required "
+                f"(declared {claim_type!r})"
+            )
+            claim_type = "legal-obligation"
         if not _nonempty(claim.get("applicability")):
             errors.append(f"{path}.applicability: required")
         evidence = _validate_evidence(
@@ -1176,6 +1228,38 @@ def _validate_launch_disposition(data: dict[str, Any], errors: list[str]) -> Non
         errors.append(
             "launch_disposition.constraints: constraints are permitted only for limited status"
         )
+    # `ready-for-counsel-review` says engineering evidence is READY. Only open
+    # p0 risks constrained it, so it was reachable with an unknown jurisdiction,
+    # zero sources, every coverage row `not-audited` and every claim unresolved
+    # — a status asserting readiness over a body of work that had not begun.
+    # "Nothing was examined" and "everything was examined and is clean" must not
+    # produce the same disposition.
+    if status == "ready-for-counsel-review":
+        if not _list(data.get("sources")):
+            errors.append(
+                "launch_disposition.status: ready-for-counsel-review needs at least one "
+                "source; a review with no sources examined nothing"
+            )
+        rows = _list((data.get("coverage") or {}).get("claim_surfaces"))
+        if rows and not any(
+            isinstance(row, dict) and row.get("status") not in {None, "not-audited"}
+            for row in rows
+        ):
+            errors.append(
+                "launch_disposition.status: ready-for-counsel-review needs at least one "
+                "audited claim surface; every surface is 'not-audited'"
+            )
+        unresolved = [
+            row.get("id")
+            for row in _list(data.get("claims"))
+            if isinstance(row, dict) and row.get("verdict") in {"unverified", "not-audited"}
+        ]
+        if unresolved:
+            errors.append(
+                "launch_disposition.status: ready-for-counsel-review with unresolved "
+                f"claim(s) {sorted(x for x in unresolved if x)}; resolve or downgrade to limited"
+            )
+
     if open_p0:
         if status not in {"blocked", "limited"}:
             errors.append(

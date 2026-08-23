@@ -1456,3 +1456,126 @@ def test_probe_refuses_receipt_overwrite_without_force(
     assert second.returncode == 2
     assert "refusing to overwrite" in second.stderr
     assert receipt.read_bytes() == original
+
+
+# --------------------------------------------------------------------------
+# Adversarial suite (BRO-2265). The skill's stated boundary is an audit
+# "without claiming compliance or replacing counsel". These cases attack that
+# boundary directly rather than exercising the happy path, because the defect
+# they were written for produced PASS and exit 0 on a manifest asserting GDPR
+# compliance with zero legal sources and every coverage row `not-audited`.
+# --------------------------------------------------------------------------
+
+COMPLIANCE_ASSERTIONS = [
+    "The service is GDPR compliant.",
+    "We are fully SOC 2 compliant.",
+    "The platform remains PCI DSS compliant.",
+    "The product complies with the DSA.",
+    "Our processing is in compliance with UK GDPR.",
+    "The service meets all statutory requirements.",
+    "Storing this data is lawful.",
+    "The banner does not violate the ePrivacy Directive.",
+    "No further legal review is required.",
+]
+
+NON_LEGAL_CLAIMS = [
+    "The public credit allocation matches billing enforcement.",
+    "Checkout is disabled pending operator verification.",
+    "The pricing page lists three plans.",
+    "We ship a compliance-readiness checklist as a reference doc.",
+    "Counsel review is scheduled for Q3.",
+]
+
+
+def _sole_claim(manifest: dict, text: str, claim_type: str = "factual") -> dict:
+    manifest = copy.deepcopy(manifest)
+    manifest["claims"] = [{
+        "id": "claim-under-test",
+        "claim": text,
+        "surface": "public marketing",
+        "type": claim_type,
+        "verdict": "supported",
+        "applicability": "All users.",
+        "jurisdiction_ids": ["jurisdiction-unresolved"],
+        "source_ids": [],
+        "evidence": [{
+            "kind": "repo",
+            "locator": "docs/note.md",
+            "sha256": "a" * 64,
+            "observed_at": "2026-08-23T00:00:00Z",
+            "verified_by": "Founder",
+        }],
+        "risk_ids": [],
+        "owner": "Founder",
+        "next_gate": "None.",
+    }]
+    return manifest
+
+
+@pytest.mark.parametrize("text", COMPLIANCE_ASSERTIONS)
+def test_a_compliance_assertion_cannot_be_supported_by_relabelling_its_type(
+    valid_manifest: dict, tmp_path: Path, text: str
+) -> None:
+    """Every legal guard in the script keys off `type == "legal-obligation"`,
+    and the type is author-supplied. Typing a compliance assertion `factual`
+    skipped the binding-source requirement entirely, so the boundary was opt-in
+    by the party it constrains."""
+    result = run_cli("check", str(write_manifest(tmp_path, _sole_claim(valid_manifest, text))))
+    assert result.returncode != 0, result.stdout
+    assert "legal-obligation" in result.stdout
+
+
+@pytest.mark.parametrize("text", NON_LEGAL_CLAIMS)
+def test_an_ordinary_claim_is_not_forced_into_the_legal_path(
+    valid_manifest: dict, tmp_path: Path, text: str
+) -> None:
+    """POSITIVE CONTROL. Without it the rule above is satisfied by a check that
+    rejects every claim, which would make the skill unusable for the commercial
+    and factual claims it exists to inventory."""
+    manifest = _sole_claim(valid_manifest, text)
+    result = run_cli("check", str(write_manifest(tmp_path, manifest)))
+    assert "must be typed 'legal-obligation'" not in result.stdout, result.stdout
+
+
+def test_ready_for_counsel_review_needs_at_least_one_source(
+    valid_manifest: dict, tmp_path: Path
+) -> None:
+    manifest = copy.deepcopy(valid_manifest)
+    manifest["sources"] = []
+    manifest["launch_disposition"]["status"] = "ready-for-counsel-review"
+    result = run_cli("check", str(write_manifest(tmp_path, manifest)))
+    assert result.returncode != 0
+    assert "at least one source" in result.stdout
+
+
+def test_ready_for_counsel_review_needs_an_audited_surface(
+    valid_manifest: dict, tmp_path: Path
+) -> None:
+    """Every surface `not-audited` means the review examined nothing, which must
+    not produce the same disposition as a review that examined everything."""
+    manifest = copy.deepcopy(valid_manifest)
+    for row in manifest["coverage"]["claim_surfaces"]:
+        row["status"] = "not-audited"
+    manifest["launch_disposition"]["status"] = "ready-for-counsel-review"
+    result = run_cli("check", str(write_manifest(tmp_path, manifest)))
+    assert result.returncode != 0
+    assert "not-audited" in result.stdout
+
+
+def test_ready_for_counsel_review_rejects_unresolved_claims(
+    valid_manifest: dict, tmp_path: Path
+) -> None:
+    manifest = copy.deepcopy(valid_manifest)
+    manifest["claims"][0]["verdict"] = "unverified"
+    manifest["launch_disposition"]["status"] = "ready-for-counsel-review"
+    result = run_cli("check", str(write_manifest(tmp_path, manifest)))
+    assert result.returncode != 0
+    assert "unresolved" in result.stdout
+
+
+def test_the_bundled_example_still_passes(valid_manifest: dict, tmp_path: Path) -> None:
+    """POSITIVE CONTROL for all four gates above: they must reject the
+    adversarial shapes without rejecting the shipped example, or the skill
+    cannot be used at all."""
+    result = run_cli("check", str(write_manifest(tmp_path, valid_manifest)))
+    assert result.returncode == 0, result.stdout + result.stderr
