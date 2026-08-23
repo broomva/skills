@@ -70,20 +70,27 @@ jobs:
           code=$?
           set -e
           rm -rf skills/tooling/zzz-ci-probe
-          if [ "$code" -eq 0 ]; then
-            echo "::error::an uncatalogued skill must fail the lint, got exit 0"
-            cat /tmp/probe.txt
-            exit 1
+          # Exit 1 EXACTLY, and no traceback: a crash also exits 1, and a crash
+          # that happens to mention the probe path would satisfy a laxer check
+          # while proving the linter cannot run rather than that it can detect.
+          if [ "$code" -ne 1 ]; then
+            echo "::error::an uncatalogued skill must exit 1, got $code"
+            cat /tmp/probe.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/probe.txt; then
+            echo "::error::the lint crashed instead of reporting"
+            cat /tmp/probe.txt; exit 1
           fi
           grep -q 'zzz-ci-probe' /tmp/probe.txt || {
             echo "::error::the lint went red but never named the uncatalogued skill"
             cat /tmp/probe.txt; exit 1; }
-          echo "the catalog lint reports an uncatalogued skill by name"
+          echo "the catalog lint reports an uncatalogued skill by name, exit 1, no crash"
 
-      - name: --fix converges
-        # --fix must leave the tree passing its own check, and must be a no-op
-        # on an already-clean catalog: a fixer that rewrites on every run would
-        # make every future PR carry unrelated churn.
+      - name: --fix converges, on a clean tree AND after real drift
+        # Two distinct properties, and the first alone is nearly vacuous:
+        #   (a) no-op on an already-clean catalog, or every future PR carries churn
+        #   (b) converges in ONE pass from actual drift — a second --fix after
+        #       repairing something must change nothing further
         run: |
           python3 scripts/lint_skill_catalog.py --fix
           python3 scripts/lint_skill_catalog.py
@@ -91,3 +98,27 @@ jobs:
             skills/tooling/skills-catalog/references/skills-inventory.md \
             skills/tooling/skills-catalog/SKILL.md \
             || { echo "::error::--fix is not idempotent on a clean catalog"; exit 1; }
+
+          # Introduce real drift, repair it, and require the repair to settle.
+          mkdir -p skills/tooling/zzz-converge-probe
+          printf -- '---\nname: zzz-converge-probe\ndescription: Temporary CI probe.\n---\n' \
+            > skills/tooling/zzz-converge-probe/SKILL.md
+          python3 scripts/lint_skill_catalog.py --fix
+          for f in README.md \
+                   skills/tooling/skills-catalog/references/skills-inventory.md \
+                   skills/tooling/skills-catalog/SKILL.md; do
+            cp "$f" "/tmp/$(basename "$f").pass1"
+          done
+          python3 scripts/lint_skill_catalog.py --fix
+          for f in README.md \
+                   skills/tooling/skills-catalog/references/skills-inventory.md \
+                   skills/tooling/skills-catalog/SKILL.md; do
+            cmp -s "$f" "/tmp/$(basename "$f").pass1" || {
+              echo "::error::--fix did not converge in one pass for $f"
+              diff "/tmp/$(basename "$f").pass1" "$f" | head -20; exit 1; }
+          done
+          rm -rf skills/tooling/zzz-converge-probe
+          git checkout -- README.md \
+            skills/tooling/skills-catalog/references/skills-inventory.md \
+            skills/tooling/skills-catalog/SKILL.md
+          echo "--fix converges in one pass from drift, and is a no-op when clean"

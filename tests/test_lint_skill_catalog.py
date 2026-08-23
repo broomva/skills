@@ -12,6 +12,7 @@ count assertion names a number a reader can verify by eye.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -252,3 +253,98 @@ class TestExitCodes:
         assert lint.main([]) == 1
         assert lint.main(["--fix"]) == 0
         assert lint.main([]) == 0
+
+
+class TestCountsInEveryForm:
+    """The linter shipped a review round blind to two real counts.
+
+    README carried "90 Tier-2 skills" and the inventory "**Total skills**: 78"
+    while both also stated the correct 93 elsewhere, and `check` called them
+    consistent — a count linter false-green on drifted counts, which is the
+    failure it exists to end.
+
+    The suite could not catch it because the fixtures only ever contained the
+    count FORMS the implementation already handled. That is the mirror problem
+    one level down: not a test that mirrors the code, but a fixture that does.
+    So the first case below asserts the general property — an unrecognised form
+    is REPORTED, not skipped — rather than enumerating more forms.
+    """
+
+    def test_an_unrecognised_count_form_is_reported_not_ignored(self, tmp_path, lint):
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        readme = _readme(rrows, total, buckets) + "\nWe ship 47 flagship skills this quarter.\n"
+        _consistent(tmp_path, lint, readme=readme)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("unrecognised count claim" in p and "47" in p for p in problems), problems
+
+    def test_a_tier_2_total_is_verified(self, tmp_path, lint):
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        readme = f"A monorepo of {total + 9} Tier-2 skills.\n\n" + _readme(rrows, total, buckets)
+        _consistent(tmp_path, lint, readme=readme)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any(f"claims {total + 9}" in p for p in problems), problems
+
+    def test_a_total_skills_bullet_is_verified(self, tmp_path, lint):
+        _, _s, buckets, total, rrows, irows = _consistent(tmp_path, lint)
+        inv = _inventory(irows, total, buckets) + "\n- **Total skills**: 78\n"
+        _consistent(tmp_path, lint, inventory=inv)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("claims 78" in p for p in problems), problems
+
+    def test_a_wrong_bucket_TOTAL_is_verified(self, tmp_path, lint):
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        readme = _readme(rrows, total, buckets) + "\nOrganised into 9 category buckets.\n"
+        _consistent(tmp_path, lint, readme=readme)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("9 category buckets" in p or "claims 9 category" in p for p in problems), problems
+
+    def test_fix_repairs_every_form_including_the_late_added_ones(self, tmp_path, lint):
+        _, _s, buckets, total, rrows, irows = _consistent(tmp_path, lint)
+        readme = f"A monorepo of {total + 9} Tier-2 skills.\n\n" + _readme(rrows, total, buckets)
+        inv = _inventory(irows, total, buckets) + "\n- **Total skills**: 78\n"
+        _consistent(tmp_path, lint, readme=readme, inventory=inv)
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert f"{total} Tier-2 skills" in lint._README.read_text()
+        assert f"**Total skills**: {total}" in lint._INVENTORY.read_text()
+
+
+class TestSurfaceStructureHoles:
+    def test_a_surface_with_every_table_deleted_is_reported(self, tmp_path, lint):
+        """Zero sections parse when the tables are gone. Guarding the
+        missing-category diagnostic on `if sections:` let an empty catalog with
+        correct totals pass as consistent."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint, readme=f"**{total} skills** in 2 category buckets.\n")
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("no section for category" in p for p in problems), problems
+
+    def test_a_derived_description_containing_a_pipe_is_escaped(self, tmp_path, lint):
+        """An unescaped `|` ends the cell early, rendering a broken row that
+        this file's own regex still re-parses — malformed and self-perpetuating."""
+        tmp, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        d = tmp / "skills/governance/piped"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            "---\nname: piped\ndescription: Routes A | B | C.\n---\n", encoding="utf-8")
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        row = [l for l in lint._README.read_text().split("\n") if "`piped`" in l][0]
+        # Split on UNESCAPED pipes only: a well-formed two-column row yields
+        # ['', name-cell, description-cell, ''].
+        cells = re.split(r"(?<!\\)\|", row)
+        assert len(cells) == 4, f"cell boundaries broken ({len(cells)}): {row!r}"
+        assert "\\|" in row, row
+
+    def test_the_annotation_lands_on_its_own_row_not_merely_in_the_file(self, tmp_path, lint):
+        """Asserting the marker is somewhere in the document would pass if --fix
+        moved it onto the wrong skill."""
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        rrows["tooling"] = [_rrow("tooling", "gamma", "Gamma is a tool.", " **(vendored)**")
+                            if "`gamma`" in r else r for r in rrows["tooling"]]
+        _consistent(tmp_path, lint, readme=_readme(rrows, total, buckets))
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        lines = lint._README.read_text().split("\n")
+        gamma = [l for l in lines if "`gamma`" in l][0]
+        others = [l for l in lines if "**(vendored)**" in l and "`gamma`" not in l]
+        assert "**(vendored)**" in gamma, gamma
+        assert not others, others

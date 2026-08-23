@@ -65,6 +65,10 @@ _STRAY_BULLET = re.compile(r"^- \*\*`([a-z0-9-]+)`\*\*\s*[—-]\s*(.*?)\s*$")
 _README_HEADING = re.compile(r"^### .+? — `skills/(?P<cat>[a-z]+)/`$", re.M)
 _INV_HEADING = re.compile(r"^## .+? — `skills/(?P<cat>[a-z]+)/` \((?P<n>\d+)\)$", re.M)
 
+#: Surfaces that carry per-category tables. `skills-catalog/SKILL.md` states
+#: counts only, so a missing-section diagnostic would be a false positive there.
+_ROW_SURFACES = ("README.md", "skills-inventory.md")
+
 _DESC_LIMIT = 200
 
 
@@ -87,6 +91,10 @@ def _short(description: object, limit: int = _DESC_LIMIT) -> str:
     row being ADDED — an existing row keeps its authored wording, so running
     --fix does not churn 90 descriptions to add one."""
     text = " ".join(str(description or "").split())
+    # A raw `|` ends the markdown cell early, so a frontmatter description
+    # containing one renders a broken row that this file's own row regex still
+    # happily re-parses — malformed, and invisible to the next run.
+    text = text.replace("|", "\\|")
     if len(text) <= limit:
         return text
     return text[:limit].rsplit(" ", 1)[0].rstrip(",;:.") + "…"
@@ -183,17 +191,61 @@ def _rebuild(text: str, sections: list[_Section], disk: dict, render) -> str:
     return "".join(out)
 
 
+#: Every phrasing in which a surface states the TOTAL. One list drives both the
+#: check and the rewrite, so a form can never be verified but not fixed, or the
+#: reverse. `(\d+)` is the count; everything else is matched literally.
+_TOTAL_FORMS = (
+    r"\*\*(\d+) skills\*\*",
+    r"The (\d+) skills bucket",
+    r"(\d+) skills across",
+    r"(\d+) agent skills",
+    r"inventory of the (\d+) skills",
+    r"(\d+) Tier-2 skills",
+    r"\*\*Total skills\*\*: (\d+)",
+)
+
+#: Every phrasing in which a surface states the number of CATEGORY BUCKETS.
+#: Verified against the number of buckets on disk, not allowlisted away — "22"
+#: is as much a derived fact as "93" and drifts the same way.
+_BUCKET_TOTAL_FORMS = (
+    r"\*\*(\d+) single-noun category buckets\*\*",
+    r"(\d+) single-noun categories",
+    r"(\d+) category buckets",
+    r"the (\d+) `skills/<category>/` directory buckets",
+    r"the (\d+) monorepo buckets",
+)
+
+#: Numbers that sit next to the word "skill" and are NOT a count of this repo's
+#: skills. Each is allowlisted explicitly rather than by a loose heuristic,
+#: because the whole point of the scan below is that anything unrecognised gets
+#: REPORTED instead of quietly skipped.
+_NOT_A_SKILL_COUNT = (
+    r"skills\.sh CLI ≥ v[\d.]+",          # a CLI version
+    r"PR #\d+",                            # an upstream PR number
+    r"Tier-2",                             # the tier, not a count
+    r"depth-2",                            # the directory depth
+    r"\(\d+ rows, \d+ marketing domains\)",  # the legacy broader-ecosystem catalog
+    r"[Ss]kills-showcase\S*",              # an output filename (…-showcase.mp4)
+    r"SkillsShowcase",                     # the Remotion composition id
+)
+
+#: A number within a short distance of the word "skill(s)" — the shape of a
+#: count claim, whatever its wording.
+_COUNT_SHAPED = re.compile(r"\d+(?=[^\n]{0,40}?\bskills?\b)|(?<=\bskills\b)[^\n]{0,20}?\d+",
+                           re.IGNORECASE)
+
+
 def _recount(text: str, disk: dict, bucket_rx: str) -> str:
     """Set every derived count. Deliberately anchored, never a blanket
     substitution of the number: `skills-catalog/SKILL.md` carries an unrelated
     "broader-ecosystem catalog (86 rows, 15 marketing domains)" note, and a
     global replace of the old total would silently corrupt it."""
     total = sum(len(v) for v in disk.values())
-    text = re.sub(r"\*\*\d+ skills\*\*", f"**{total} skills**", text)
-    text = re.sub(r"The \d+ skills bucket", f"The {total} skills bucket", text)
-    text = re.sub(r"\d+ skills across", f"{total} skills across", text)
-    text = re.sub(r"\d+ agent skills", f"{total} agent skills", text)
-    text = re.sub(r"inventory of the \d+ skills", f"inventory of the {total} skills", text)
+    for form in _TOTAL_FORMS:
+        # Rebuild the literal with the new number in the capture group's place.
+        text = re.sub(form, lambda m: m.group(0).replace(m.group(1), str(total), 1), text)
+    for form in _BUCKET_TOTAL_FORMS:
+        text = re.sub(form, lambda m: m.group(0).replace(m.group(1), str(len(disk)), 1), text)
     for category, names in disk.items():
         n = len(names)
         text = re.sub(bucket_rx.format(cat=category), rf"\g<1>{n}\g<2>", text)
@@ -201,13 +253,43 @@ def _recount(text: str, disk: dict, bucket_rx: str) -> str:
     return text
 
 
-def _declared_counts(text: str) -> list[int]:
+def _declared_counts(text: str, forms: tuple[str, ...] = _TOTAL_FORMS) -> list[int]:
     """Every total this surface claims, so a check can compare them to disk."""
     found = []
-    for rx in (r"\*\*(\d+) skills\*\*", r"The (\d+) skills bucket", r"(\d+) skills across",
-               r"(\d+) agent skills", r"inventory of the (\d+) skills"):
-        found += [int(m) for m in re.findall(rx, text)]
+    for form in forms:
+        found += [int(m) for m in re.findall(form, text)]
     return found
+
+
+def _unverified_count_claims(text: str) -> list[str]:
+    """Lines that state a number about skills in a form this linter does not
+    recognise.
+
+    Without this, a count the patterns happen not to cover is not "allowed" —
+    it is UNSEEN, and the linter reports the file consistent while the number is
+    wrong. That is the exact failure this whole script exists to end, so an
+    unrecognised claim is reported rather than skipped.
+
+    Measured: README carried "90 Tier-2 skills" and the inventory
+    "**Total skills**: 78" while both also stated the correct 93 elsewhere, and
+    an earlier version of this linter called both files consistent.
+    """
+    unverified = []
+    for lineno, line in enumerate(text.split("\n"), 1):
+        if line.startswith("|") or "](skills/" in line or line.startswith("#"):
+            continue          # table rows and headings are checked structurally
+        if not re.search(r"\bskills?\b", line, re.IGNORECASE):
+            continue
+        residue = line
+        for form in _TOTAL_FORMS + _BUCKET_TOTAL_FORMS:
+            residue = re.sub(form, "", residue)
+        for allowed in _NOT_A_SKILL_COUNT:
+            residue = re.sub(allowed, "", residue)
+        residue = re.sub(r"`[^`]*`", "", residue)          # inline code
+        residue = re.sub(r"https?://\S+", "", residue)     # urls carry digits
+        if _COUNT_SHAPED.search(residue):
+            unverified.append(f"line {lineno}: {line.strip()[:90]}")
+    return unverified
 
 
 def check(disk: dict, surfaces: dict[str, tuple[Path, list[_Section], str]]) -> list[str]:
@@ -231,7 +313,18 @@ def check(disk: dict, surfaces: dict[str, tuple[Path, list[_Section], str]]) -> 
             if declared != total:
                 problems.append(f"{label}: claims {declared} skills, disk has {total}")
                 break
-        if sections:
+        for declared in _declared_counts(text, _BUCKET_TOTAL_FORMS):
+            if declared != len(disk):
+                problems.append(
+                    f"{label}: claims {declared} category buckets, disk has {len(disk)}")
+                break
+        for claim in _unverified_count_claims(text):
+            problems.append(
+                f"{label}: unrecognised count claim, this linter cannot verify it — {claim}")
+        # NOT guarded on `if sections` — a surface whose tables were all deleted
+        # parses as zero sections, and skipping the diagnostic there would let
+        # an empty catalog with correct totals pass as consistent.
+        if label in _ROW_SURFACES:
             covered = {s.category for s in sections}
             for category in sorted(set(disk) - covered):
                 problems.append(f"{label}: no section for category `{category}`")
