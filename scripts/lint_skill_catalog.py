@@ -165,8 +165,16 @@ def _sections(text: str, heading_rx: re.Pattern, row_rx: re.Pattern) -> list[_Se
                 rows[bullet.group(1)] = bullet.group(2)
                 strays.append(bullet.group(1))
                 continue
-            if line.strip():
-                prose.append(line)
+            # Keep BLANK lines too, then trim the ends. Dropping them collapses
+            # a paragraph and its own nested table into one run — a section can
+            # legitimately carry more than the skill table (a platform matrix, a
+            # note), and that content is re-emitted below the rebuilt table
+            # rather than discarded.
+            prose.append(line)
+        while prose and not prose[0].strip():
+            prose.pop(0)
+        while prose and not prose[-1].strip():
+            prose.pop()
         sections.append(_Section(heading.group("cat"), sep, stop, rows, annot, strays, prose))
     return sections
 
@@ -213,7 +221,15 @@ _BUCKET_TOTAL_FORMS = (
     r"(\d+) category buckets",
     r"the (\d+) `skills/<category>/` directory buckets",
     r"the (\d+) monorepo buckets",
+    r"\*\*Total category buckets\*\*: (\d+)",
 )
+
+#: Aggregates naming a SUPERLATIVE bucket. Verified against disk like any other
+#: derived fact: the inventory shipped "Largest bucket: Orchestration &
+#: autonomy (7)" while tooling held 10 and orchestration held 8 — both the name
+#: and the number wrong, and invisible because the line never says "skill".
+_LARGEST_RX = re.compile(r"(\*\*Largest bucket\*\*: )(.+?)( \((\d+)\))")
+_SMALLEST_RX = re.compile(r"(\*\*Smallest buckets\*\* \()(\d+)(\): )(.+)")
 
 #: Numbers that sit next to the word "skill" and are NOT a count of this repo's
 #: skills. Each is allowlisted explicitly rather than by a loose heuristic,
@@ -261,6 +277,75 @@ def _declared_counts(text: str, forms: tuple[str, ...] = _TOTAL_FORMS) -> list[i
     return found
 
 
+def _labels(inventory_text: str) -> dict[str, str]:
+    """`{category: human label}` read from the inventory's own section headings,
+    so a superlative can be checked by the name a reader actually sees."""
+    return {m.group(2): m.group(1)
+            for m in re.finditer(r"^## (.+?) — `skills/([a-z]+)/` \(\d+\)$",
+                                 inventory_text, re.M)}
+
+
+def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, str]) -> list[str]:
+    """Largest/smallest-bucket aggregates, verified against disk.
+
+    These are derived facts stated in prose that never says "skill", which is
+    exactly how the inventory came to claim the largest bucket was Orchestration
+    with 7 while tooling held 10.
+    """
+    problems: list[str] = []
+    if not disk:
+        return problems
+    sizes = {c: len(v) for c, v in disk.items()}
+    hi, lo = max(sizes.values()), min(sizes.values())
+    m = _LARGEST_RX.search(text)
+    if m:
+        claimed_name, claimed_n = m.group(2).strip(), int(m.group(4))
+        winners = {names.get(c, c) for c, n in sizes.items() if n == hi}
+        if claimed_n != hi:
+            problems.append(f"{label}: largest bucket says {claimed_n}, disk has {hi}")
+        if claimed_name not in winners:
+            problems.append(
+                f"{label}: largest bucket says {claimed_name!r}, disk has {sorted(winners)}")
+    m = _SMALLEST_RX.search(text)
+    if m:
+        claimed_n = int(m.group(2))
+        claimed = {p.strip() for p in m.group(4).split(",") if p.strip()}
+        holders = {names.get(c, c) for c, n in sizes.items() if n == lo}
+        if claimed_n != lo:
+            problems.append(f"{label}: smallest bucket says {claimed_n}, disk has {lo}")
+        if claimed != holders:
+            problems.append(
+                f"{label}: smallest buckets say {sorted(claimed)}, disk has {sorted(holders)}")
+    return problems
+
+
+def _bucket_table_problems(label: str, text: str, disk: dict) -> list[str]:
+    """A bucket table must name EVERY category, not merely agree about the ones
+    it happens to list. Checking only the rows present lets a deleted row pass."""
+    problems = []
+    for pattern in (r"\(`([a-z]+)`\) \| \d+ \|", r"\| `skills/([a-z]+)/` \| \d+ \|"):
+        listed = set(re.findall(pattern, text))
+        if not listed:
+            continue
+        for category in sorted(set(disk) - listed):
+            problems.append(f"{label}: bucket table omits category `{category}`")
+        for category in sorted(listed - set(disk)):
+            problems.append(f"{label}: bucket table lists `{category}`, not on disk")
+    return problems
+
+
+def _fix_superlatives(text: str, disk: dict, names: dict[str, str]) -> str:
+    if not disk:
+        return text
+    sizes = {c: len(v) for c, v in disk.items()}
+    hi, lo = max(sizes.values()), min(sizes.values())
+    top = sorted(names.get(c, c) for c, n in sizes.items() if n == hi)[0]
+    bottom = ", ".join(sorted(names.get(c, c) for c, n in sizes.items() if n == lo))
+    text = _LARGEST_RX.sub(lambda m: f"{m.group(1)}{top} ({hi})", text)
+    text = _SMALLEST_RX.sub(lambda m: f"{m.group(1)}{lo}{m.group(3)}{bottom}", text)
+    return text
+
+
 def _unverified_count_claims(text: str) -> list[str]:
     """Lines that state a number about skills in a form this linter does not
     recognise.
@@ -276,13 +361,19 @@ def _unverified_count_claims(text: str) -> list[str]:
     """
     unverified = []
     for lineno, line in enumerate(text.split("\n"), 1):
-        if line.startswith("|") or "](skills/" in line or line.startswith("#"):
-            continue          # table rows and headings are checked structurally
-        if not re.search(r"\bskills?\b", line, re.IGNORECASE):
+        if line.startswith("|") or "](skills/" in line:
+            continue          # table rows are checked structurally
+        # Gated on the vocabulary of DERIVED FACTS, not on the word "skill".
+        # Gating on "skill" is why "**Total category buckets**: 22" and
+        # "**Largest bucket**: … (7)" were invisible: neither line says it.
+        if not re.search(r"\b(skills?|buckets?|categor(?:y|ies)|largest|smallest|total)\b",
+                         line, re.IGNORECASE):
             continue
         residue = line
         for form in _TOTAL_FORMS + _BUCKET_TOTAL_FORMS:
             residue = re.sub(form, "", residue)
+        residue = _LARGEST_RX.sub("", residue)
+        residue = _SMALLEST_RX.sub("", residue)
         for allowed in _NOT_A_SKILL_COUNT:
             residue = re.sub(allowed, "", residue)
         residue = re.sub(r"`[^`]*`", "", residue)          # inline code
@@ -295,6 +386,8 @@ def _unverified_count_claims(text: str) -> list[str]:
 def check(disk: dict, surfaces: dict[str, tuple[Path, list[_Section], str]]) -> list[str]:
     problems: list[str] = []
     total = sum(len(v) for v in disk.values())
+    # Human bucket labels come from the inventory's own headings.
+    names = _labels(surfaces["skills-inventory.md"][2]) if "skills-inventory.md" in surfaces else {}
     for label, (_path, sections, text) in surfaces.items():
         listed: set[str] = set()
         for sec in sections:
@@ -318,6 +411,8 @@ def check(disk: dict, surfaces: dict[str, tuple[Path, list[_Section], str]]) -> 
                 problems.append(
                     f"{label}: claims {declared} category buckets, disk has {len(disk)}")
                 break
+        problems += _superlative_problems(label, text, disk, names)
+        problems += _bucket_table_problems(label, text, disk)
         for claim in _unverified_count_claims(text):
             problems.append(
                 f"{label}: unrecognised count claim, this linter cannot verify it — {claim}")
@@ -363,8 +458,10 @@ def fix(disk: dict) -> None:
     _README.write_text(_recount(readme, disk, r"(\| `skills/{cat}/` \| )\d+( \|)"), encoding="utf-8")
 
     inventory = _INVENTORY.read_text(encoding="utf-8")
+    names = _labels(inventory)
     inventory = _rebuild(inventory, _sections(inventory, _INV_HEADING, _INV_ROW), disk,
                          lambda c, n, d, a: f"| `{n}`{a} | {d} |")
+    inventory = _fix_superlatives(inventory, disk, names)
     _INVENTORY.write_text(_recount(inventory, disk, r"(\(`{cat}`\) \| )\d+( \|)"), encoding="utf-8")
 
     catalog = _CATALOG_SKILL.read_text(encoding="utf-8")

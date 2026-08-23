@@ -393,3 +393,138 @@ class TestTheTighteningDoesNotOvershoot:
         finally:
             lint._NOT_A_SKILL_COUNT = saved
         assert flagged, "no line depends on the allowlist — it is dead configuration"
+
+
+class TestNonSkillContentInASection:
+    """A category section can legitimately carry more than the skill table — a
+    note, a platform matrix, another table entirely. Round 1 of the cross-model
+    review reported that `--fix` DELETES it; that turned out to be wrong (it is
+    preserved), but the blank lines inside it were being collapsed, which runs a
+    paragraph into the table that follows it.
+    """
+
+    def _with_extra(self, tmp_path, lint):
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        rrows["governance"] = rrows["governance"] + [
+            "", "Supported platforms:", "", "| Platform | Status |", "|---|---|",
+            "| Linux | yes |", "| macOS | yes |"]
+        _consistent(tmp_path, lint, readme=_readme(rrows, total, buckets))
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        return lint._README.read_text()
+
+    def test_a_nested_non_skill_table_survives_fix(self, lint, tmp_path):
+        text = self._with_extra(tmp_path, lint)
+        for probe in ("Supported platforms:", "| Platform | Status |",
+                      "| Linux | yes |", "| macOS | yes |"):
+            assert probe in text, f"lost: {probe!r}\n{text}"
+
+    def test_the_blank_line_before_a_nested_table_survives(self, lint, tmp_path):
+        """Without it the paragraph and its table render as one run."""
+        text = self._with_extra(tmp_path, lint)
+        assert "Supported platforms:\n\n| Platform | Status |" in text, text
+
+    def test_the_skill_rows_are_still_rebuilt_around_it(self, lint, tmp_path):
+        """POSITIVE CONTROL: preserving the extra content must not come at the
+        cost of the table this linter exists to maintain."""
+        text = self._with_extra(tmp_path, lint)
+        assert "| [`alpha`](skills/governance/alpha/) |" in text
+        assert "| [`beta`](skills/governance/beta/) |" in text
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+
+AGGREGATES = ("\n---\n\n## Aggregates\n\n"
+              "- **Total skills**: {total}\n"
+              "- **Total category buckets**: {nbuckets}\n"
+              "- **Largest bucket**: {largest} ({hi})\n"
+              "- **Smallest buckets** ({lo}): {smallest}\n")
+
+
+class TestAggregatesThatNeverSayTheWordSkill:
+    """The inventory shipped `**Largest bucket**: Orchestration & autonomy (7)`
+    while tooling held 10 and orchestration held 8 — name and number both wrong,
+    and invisible for two review rounds because the scan was gated on the word
+    "skill" and that line does not contain it. These are derived facts and are
+    checked as such.
+    """
+
+    def _inv_with(self, tmp_path, lint, **over):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        # tooling has 3 (gamma, delta, skills-catalog); governance has 2
+        base = dict(total=total, nbuckets=len(buckets), largest="Tooling",
+                    hi=max(buckets.values()), lo=min(buckets.values()), smallest="Governance")
+        base.update(over)
+        inv = _inventory(irows, total, buckets) + AGGREGATES.format(**base)
+        _consistent(tmp_path, lint, inventory=inv)
+        return lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+
+    def test_a_consistent_aggregates_block_reports_nothing(self, tmp_path, lint):
+        """POSITIVE CONTROL for this whole class."""
+        assert self._inv_with(tmp_path, lint) == []
+
+    def test_a_wrong_largest_count_is_reported(self, tmp_path, lint):
+        problems = self._inv_with(tmp_path, lint, hi=7)
+        assert any("largest bucket says 7" in p for p in problems), problems
+
+    def test_a_wrong_largest_name_is_reported(self, tmp_path, lint):
+        problems = self._inv_with(tmp_path, lint, largest="Governance")
+        assert any("largest bucket says 'Governance'" in p for p in problems), problems
+
+    def test_a_wrong_smallest_count_is_reported(self, tmp_path, lint):
+        problems = self._inv_with(tmp_path, lint, lo=99)
+        assert any("smallest bucket says 99" in p for p in problems), problems
+
+    def test_a_wrong_total_category_buckets_is_reported(self, tmp_path, lint):
+        problems = self._inv_with(tmp_path, lint, nbuckets=999)
+        assert any("999 category buckets" in p for p in problems), problems
+
+    def test_fix_repairs_the_superlatives(self, tmp_path, lint):
+        self._inv_with(tmp_path, lint, hi=7, largest="Governance")
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert "**Largest bucket**: Tooling (3)" in lint._INVENTORY.read_text()
+
+
+class TestCountsAnywhereNotJustInProse:
+    def test_a_count_inside_a_heading_is_reported(self, tmp_path, lint):
+        """Headings were skipped as 'checked structurally', so
+        `## Catalog of 999 skills` passed."""
+        _, _s, buckets, total, rrows, _i = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint,
+                    readme=_readme(rrows, total, buckets) + "\n## Catalog of 999 skills\n")
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("999" in p for p in problems), problems
+
+
+class TestBucketTableCompleteness:
+    def _catalog_with(self, tmp_path, lint, buckets_override):
+        _, _s, buckets, total, _r, _i = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint, catalog=_catalog_skill(total, buckets_override))
+        return lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+
+    def test_a_complete_bucket_table_reports_nothing(self, tmp_path, lint):
+        """POSITIVE CONTROL for the two below."""
+        _, _s, buckets, _t, _r, _i = _consistent(tmp_path, lint)
+        assert self._catalog_with(tmp_path, lint, buckets) == []
+
+    def test_a_deleted_bucket_row_is_reported(self, tmp_path, lint):
+        _, _s, buckets, _t, _r, _i = _consistent(tmp_path, lint)
+        problems = self._catalog_with(tmp_path, lint, {"governance": buckets["governance"]})
+        assert any("omits category `tooling`" in p for p in problems), problems
+
+    def test_a_bucket_row_for_a_category_not_on_disk_is_reported(self, tmp_path, lint):
+        _, _s, buckets, _t, _r, _i = _consistent(tmp_path, lint)
+        problems = self._catalog_with(tmp_path, lint, dict(buckets, ghostcat=4))
+        assert any("`ghostcat`" in p and "not on disk" in p for p in problems), problems
+
+
+class TestBothRowSurfacesAreChecked:
+    def test_deleting_every_table_in_the_INVENTORY_is_reported(self, tmp_path, lint):
+        """The README-only version of this test let `_ROW_SURFACES` be narrowed
+        to ("README.md",) without a single failure — a surviving mutation the
+        cross-model round named explicitly."""
+        _, _s, buckets, total, _r, _i = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint,
+                    inventory=f"> {total} skills across {len(buckets)} category buckets.\n")
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("skills-inventory.md" in p and "no section for category" in p
+                   for p in problems), problems
