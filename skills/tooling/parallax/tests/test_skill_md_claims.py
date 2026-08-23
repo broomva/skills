@@ -58,6 +58,54 @@ def test_the_documented_pytest_path_resolves_from_the_skill_root():
         )
 
 
+def test_every_documented_script_invocation_resolves():
+    """`python3 <path>` in SKILL.md must point at a file this skill ships.
+
+    The pytest-path test above checked one KIND of documented path and this one was
+    the kind it missed: SKILL.md told the reader to run
+    `python3 scripts/parallax_next.py` from the target workspace, where that file
+    does not exist. Worse than a plain failure -- the obvious repair is to cd into
+    the skill directory, which makes the SKILL DIRECTORY the workspace Parallax
+    reads, and that succeeds on the wrong context instead of failing.
+
+    Third instance of one class in this skill's short life (a monorepo-only pytest
+    path, a stale test count, this). So the assertion is over EVERY python3
+    invocation in the document, not the ones already known to be wrong.
+    """
+    blocks = re.findall(r"```bash\n(.*?)```", _text(), re.S)
+    body = "\n".join(blocks)
+    # Resolve the documented ways of naming the skill root back to this directory.
+    body = body.replace('"$HOME/.claude/skills/parallax"', str(SKILL))
+    body = body.replace("$SKILL", str(SKILL))
+    targets = [
+        t.strip('"').strip("'")
+        for t in re.findall(r"python3\s+((?!-m\b)[^\s|;&]+)", body)
+    ]
+    assert targets, "SKILL.md documents no direct python3 script invocation"
+    for t in targets:
+        path = Path(t) if Path(t).is_absolute() else (SKILL / t)
+        assert path.exists(), (
+            f"SKILL.md tells the reader to run `python3 {t}`, which does not exist "
+            f"(resolved to {path})"
+        )
+
+
+def test_the_core_section_does_not_use_a_bare_relative_script_path():
+    """A relative script path is wrong HERE specifically, and silently so.
+
+    These commands run in the workspace being read, not in the skill directory, so
+    `python3 scripts/...` cannot resolve -- and the repair a reader reaches for
+    (cd into the skill) quietly changes which directory Parallax reports on.
+    """
+    for block in re.findall(r"```bash\n(.*?)```", _text(), re.S):
+        for m in re.finditer(r"python3\s+((?!-m\b)[^\s|;&]+)", block):
+            tok = m.group(1)
+            assert not tok.startswith("scripts/"), (
+                f"`python3 {tok}` is relative; address the script from the skill root "
+                "(e.g. \"$SKILL/scripts/...\") so it resolves from the workspace"
+            )
+
+
 def test_the_documented_test_count_matches_what_pytest_collects():
     """`# 36 passed` has to be 36."""
     m = re.search(r"python3 -m pytest \S+ -q\s+#\s*(\d+) passed", _text())

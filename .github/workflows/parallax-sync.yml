@@ -1,0 +1,70 @@
+name: parallax-sync
+
+# skills/tooling/parallax/ IS A VENDORED COPY. The canonical skill lives in the
+# product repo, github.com/broomva/parallax, at skills/parallax/.
+#
+# Two addresses install this skill:
+#   npx skills add broomva/parallax --skill parallax
+#   npx skills add broomva/skills@parallax
+#
+# Both must deliver the same bytes, and "must" is worth nothing without a gate.
+# A vendored copy with no drift check is the failure this repo has seen before:
+# it does not break, it quietly becomes a different skill, and the two addresses
+# start teaching an agent different things.
+#
+# So this job clones the canonical copy and asserts the trees are IDENTICAL --
+# not "close", not "SKILL.md matches". diff -r over the whole directory.
+#
+# To change the skill: change it in broomva/parallax, then copy it here. Editing
+# this copy alone will fail this job, which is the point.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/parallax/**'
+      - '.github/workflows/parallax-sync.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/parallax/**'
+      - '.github/workflows/parallax-sync.yml'
+  # The canonical copy can move without this repo changing at all, so drift can
+  # appear with no commit here to trigger on. Daily catches that.
+  schedule:
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: parallax-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  identical:
+    name: vendored copy matches broomva/parallax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fetch the canonical copy
+        run: git clone --depth 1 https://github.com/broomva/parallax /tmp/canonical
+
+      - name: The canonical path must exist
+        # If upstream moves or renames the skill, `diff -r` against a missing
+        # directory is an error that reads like a diff. Fail on the cause instead,
+        # and say what to do about it.
+        run: |
+          if [ ! -d /tmp/canonical/skills/parallax ]; then
+            echo "::error::broomva/parallax has no skills/parallax/ — the canonical copy moved or was removed. Update this workflow, do not delete the check."
+            exit 1
+          fi
+
+      - name: Byte-identical
+        run: |
+          if ! diff -r /tmp/canonical/skills/parallax skills/tooling/parallax; then
+            echo "::error::the vendored copy has drifted from broomva/parallax. Canonical is the product repo: change it there, then copy it here."
+            exit 1
+          fi
+          echo "identical: $(find skills/tooling/parallax -type f | wc -l | tr -d ' ') files match broomva/parallax@$(git -C /tmp/canonical rev-parse --short HEAD)"
