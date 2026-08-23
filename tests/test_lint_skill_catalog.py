@@ -888,7 +888,24 @@ class TestAnUnreadableManifestIsAFinding:
         assert any(expect in f for f in found), (label, found)
 
     def test_main_exits_1_on_an_unreadable_manifest(self, tmp_path, lint):
-        """It must reach the exit code, not merely the helper."""
-        self._skill(tmp_path, lint, "broken",
-                    "﻿---\nname: broken\ndescription: D.\n---\n".encode("utf-8"))
+        """Corrupts an EXISTING skill rather than adding a broken one.
+
+        Adding one changes the skill COUNT too, so `main` exits 1 through the
+        count mismatch whether or not the unreadable scan is wired in — the
+        test passed while a mutation removing that wiring survived. Corrupting
+        `alpha` in place leaves every count correct, so the exit code can only
+        come from the scan.
+        """
+        _consistent(tmp_path, lint)
+        (tmp_path / "skills/governance/alpha/SKILL.md").write_bytes(
+            "﻿---\nname: alpha\ndescription: Alpha does governance things.\n---\n"
+            .encode("utf-8"))
+        # the catalog itself is untouched and still correct
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert lint.unreadable_manifests(lint._SKILLS_DIR)
         assert lint.main([]) == 1
+
+    def test_main_exits_0_when_that_same_manifest_is_clean(self, tmp_path, lint):
+        """POSITIVE CONTROL: main must not always exit 1."""
+        _consistent(tmp_path, lint)
+        assert lint.main([]) == 0
