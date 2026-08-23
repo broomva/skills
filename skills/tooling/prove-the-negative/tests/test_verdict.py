@@ -114,9 +114,39 @@ class TestExitCodes:
         r = self._run([{"name": "a", "kind": "assertion", "outcome": "pass"}])
         assert r.returncode == 2 and "INVALID" in r.stdout
 
-    def test_unreadable_input_exits_2_not_0(self):
+    def test_unparseable_input_exits_2_not_0(self):
         r = subprocess.run([sys.executable, str(SCRIPT), "-"],
                            input="{not json", text=True, capture_output=True)
+        assert r.returncode == 2
+
+    def _run_file(self, path):
+        return subprocess.run([sys.executable, str(SCRIPT), str(path)],
+                              text=True, capture_output=True)
+
+    def test_a_readable_file_is_graded_at_all(self, tmp_path):
+        """POSITIVE CONTROL for the two tests below, and the reason they mean
+        anything. Both of them assert a NON-ZERO exit; if the file branch were
+        broken outright they would still pass, and the suite would be the very
+        all-denials matrix this skill refuses. This case must SUCCEED."""
+        f = tmp_path / "cases.json"
+        f.write_text(json.dumps([{"name": "ctl", "kind": "control", "outcome": "pass"}]))
+        r = self._run_file(f)
+        assert r.returncode == 0 and "PASS" in r.stdout
+
+    def test_a_missing_file_is_INVALID_not_FAIL(self, tmp_path):
+        """Unreadable is not unparseable. Exit 1 would claim an assertion did
+        not hold -- a finding about the subject -- when nothing was read at all."""
+        r = self._run_file(tmp_path / "nope.json")
+        assert r.returncode == 2, r.stderr
+        assert "INVALID" in r.stderr and "Traceback" not in r.stderr
+
+    def test_a_directory_is_INVALID_not_FAIL(self, tmp_path):
+        r = self._run_file(tmp_path)
+        assert r.returncode == 2, r.stderr
+        assert "INVALID" in r.stderr and "Traceback" not in r.stderr
+
+    def test_a_usage_error_is_INVALID(self):
+        r = subprocess.run([sys.executable, str(SCRIPT)], text=True, capture_output=True)
         assert r.returncode == 2
 
 

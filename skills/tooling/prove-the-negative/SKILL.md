@@ -72,7 +72,7 @@ directly (`existsSync` on the path that should not exist) beats any of them.
 |---|---|---|
 | PASS | controls fired, assertions held | 0 |
 | FAIL | controls fired, an assertion broke — **a real finding** | 1 |
-| INVALID | controls did not fire, or a case never ran — **you learned nothing** | 2 |
+| INVALID | controls did not fire, a case never ran, or the case set could not be read — **you learned nothing** | 2 |
 
 A `skipped` outcome — the subject declined, the probe never executed — is
 `INVALID`, never `FAIL`. It is a hole in the measurement, not a result about the
@@ -82,6 +82,11 @@ boundary. Scoring it `FAIL` raises a false alarm about the subject; scoring it
 Collapsing INVALID into FAIL re-creates the bug at the reporting layer: "we
 measured nothing" starts reading as "we found a problem", and gets triaged as
 noise. Keep them distinct or the discipline dissolves.
+
+That includes the boring input errors. A case file that is missing, is a
+directory, or is not readable is exit **2**, not 1 — the run measured nothing,
+and saying "FAIL" there would be a finding about a subject that was never
+probed.
 
 ## Use
 

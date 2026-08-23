@@ -132,11 +132,19 @@ def parse_cases(raw: object) -> list[Case]:
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print(__doc__, file=sys.stderr)
-        return 2
-    src = sys.stdin.read() if argv[1] == "-" else open(argv[1], encoding="utf8").read()
+        return EXIT["INVALID"]
     try:
+        src = sys.stdin.read() if argv[1] == "-" else open(argv[1], encoding="utf8").read()
         cases = parse_cases(json.loads(src))
-    except (ValueError, json.JSONDecodeError) as e:
+    except (OSError, ValueError) as e:
+        # OSError covers the case set we could not READ (missing file, a
+        # directory, no permission); ValueError covers the one we could not
+        # PARSE, and subsumes both json.JSONDecodeError and the
+        # UnicodeDecodeError of a binary file. Every one of them means the same
+        # thing -- nothing was measured -- so every one of them is INVALID.
+        # Letting OSError escape instead exits 1, which is FAIL: this script
+        # would report "we could not measure" as "we found a problem", the
+        # exact inference the skill exists to refuse.
         print(f"INVALID  unreadable case set: {e}", file=sys.stderr)
         return EXIT["INVALID"]
 
