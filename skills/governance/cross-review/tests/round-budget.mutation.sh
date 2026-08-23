@@ -213,12 +213,13 @@ mutate "rule2 not enforced at read" "T36" \
 mutate "rule4 not enforced at read" "T36" \
     'if (pending==1) badhistory="two CONTINUE verdicts stack with no round between them"' \
     'if (0) badhistory="x"'
-mutate "reset ungated (laundering)" "T34" \
-    'if [ -z "$LG_TERMINAL" ] && { [ "$LG_N" = "0" ] || [ "$LG_SCORE" -lt "$PASS_SCORE" ]; }; then' \
-    'if false; then'
 
 # ─── reset and the recorders now share budget's precedence ────────────────
-mutate "reset decides live-ness itself" "T42" \
+# T34, not T42: T42 pins the RECORDER refusing appends past a nonterminal
+# stop, while gutting reset's own gate is what lets a LIVE ledger be reset —
+# which is T34's first arm. The old "reset ungated" mutation is dropped: its
+# anchor was the hand-rolled gate this one replaced.
+mutate "reset decides live-ness itself" "T34" \
     'if [ -z "$RESET_ENTRY" ] || ! arc_closed_code "$RESET_CODE"; then' \
     'if false; then'
 mutate "recorders ignore nonterminal stops" "T42" \
