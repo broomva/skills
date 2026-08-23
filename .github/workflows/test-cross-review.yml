@@ -50,6 +50,26 @@ jobs:
       # green summary — CI would then be enforcing 40 checks while believing it
       # enforced 41. Unsetting it, and asserting the full count in the summary
       # line, means the green here cannot quietly shrink.
+      # The round budget is the P20 loop controller; a suite CI does not run is
+      # the exact defect it exists to remove. The count is asserted for the same
+      # reason the mutation-proof step asserts its own: a green summary that
+      # quietly shrinks is indistinguishable from one that did not.
+      - name: Tests — round budget
+        run: |
+          set -euo pipefail
+          bash tests/round-budget.test.sh | tee /tmp/rb.out
+          grep -q "42 passed, 0 failed" /tmp/rb.out
+
+      # Per-rule mutation proof. `--strategy stub` on the whole file leaves 4 of
+      # 17 checks passing against a fully neutered target, so every bound and
+      # every anti-vacuity rule carries its own mutation instead. Asserting
+      # "0 survived" is the point: a survivor means a rule is unenforced.
+      - name: Mutation proof — every budget rule
+        run: |
+          set -euo pipefail
+          bash tests/round-budget.mutation.sh | tee /tmp/rbm.out
+          grep -q "31 killed, 0 survived" /tmp/rbm.out
+
       - name: Tests — mutation-proof runner
         run: |
           set -euo pipefail

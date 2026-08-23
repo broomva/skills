@@ -349,6 +349,122 @@ else
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────
+# ── T16: --max-rounds is retired and fails LOUDLY ─────────────────────────
+# The flag was accepted-and-ignored for its whole life. Silently continuing to
+# accept it would reproduce the exact defect BRO-2240 removes.
+echo "T16. retired --max-rounds exits 2"
+EXIT=0
+bash "$CROSS_REVIEW_SH" pre-push --max-rounds=5 >/dev/null 2>&1 || EXIT=$?
+if [ "$EXIT" = "2" ]; then
+    ok "T16: --max-rounds rejected"
+else
+    fail "T16: --max-rounds rejected" "got exit $EXIT, want 2"
+fi
+
+# ── T17: `round` delegates to the budget controller ───────────────────────
+echo "T17. round subcommand delegates to round-budget.sh"
+TMP17=$(mktemp); trap 'rm -f "$TMP17"' EXIT
+OUT=$(ROUND_BUDGET_TEST_LEDGER=1 bash "$CROSS_REVIEW_SH" round budget --run-id=t17 --ledger="$TMP17" 2>&1 || true)
+if echo "$OUT" | grep -q "AUTHORIZED"; then
+    ok "T17: round delegation"
+else
+    fail "T17: round delegation" "output: $OUT"
+fi
+
+# ── T18: pre-push no longer advertises a fixed cap ────────────────────────
+echo "T18. pre-push banner states the dynamic budget"
+OUT=$(bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>&1 || true)
+if echo "$OUT" | grep -q "Round budget:" && ! echo "$OUT" | grep -q "Max fix rounds"; then
+    ok "T18: banner shows dynamic budget"
+else
+    fail "T18: banner shows dynamic budget" "banner still advertises a fixed cap"
+fi
+
+# ── T19: the budget's run-id is STABLE across pre-push invocations ────────
+# It used to be `pp$$` -- the PID -- so every pre-push handed back a fresh empty
+# ledger. The documented loop re-runs pre-push each round, so the round-8 ceiling
+# cost one changed string to escape and the CLI changed it for you.
+echo "T19. budget run-id is stable across invocations"
+# --diff-base is varied deliberately. Under `HEAD` the merge-base is degenerate,
+# so a merge-base-derived id looked stable while actually changing on every
+# commit -- the test passed for an id that reset constantly. Running the two
+# invocations against DIFFERENT bases pins the property that matters: the id
+# depends on the branch and on nothing that moves under a commit or a rebase.
+A=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+B=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD~1 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+BRANCH=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ -n "$A" ] && [ "$A" = "$B" ]; then
+    if [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] && [ "$A" != "budget --run-id=arc-$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')" ]; then
+        fail "T19: arc id stable" "id '$A' is not exactly arc-<branch>; something that moves is baked in"
+    else
+        ok "T19: arc id stable across diff-bases ($A)"
+    fi
+else
+    fail "T19: arc id stable" "base=HEAD gave '$A', base=HEAD~1 gave '$B' — the id moves with the merge-base"
+fi
+
+# ── T20: the guard id is NOT stable — it must stay per-invocation ─────────
+# Same-id capture twice is a collision the guard is right to refuse, so the two
+# identities must not be collapsed into one.
+echo "T20. reviewer-guard id stays per-invocation"
+GA=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'reviewer-guard verify --run-id=[^ ]*' | head -1)
+GB=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'reviewer-guard verify --run-id=[^ ]*' | head -1)
+if [ -n "$GA" ] && [ "$GA" != "$GB" ]; then
+    ok "T20: guard id distinct per run"
+else
+    fail "T20: guard id distinct per run" "guard ids matched ('$GA') — a second capture would collide"
+fi
+
+# ── T21: the round budget prints even when Codex is absent ────────────────
+# It lived inside the Strata A block, which only runs when `codex` is on PATH.
+# The arc id therefore printed on a developer machine and vanished on a CI
+# runner, and T19 failed there for a reason unrelated to what it tested. Every
+# stratum shares one budget, so it must print unconditionally.
+echo "T21. round budget prints on a runner without codex"
+OUT=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+if [ -n "$OUT" ]; then
+    ok "T21: budget section is stratum-independent ($OUT)"
+else
+    fail "T21: budget section is stratum-independent" "no arc id printed without codex on PATH"
+fi
+
+# ── T22: the SKILL.md enforcement table must not describe retired mechanics ──
+# The arc-id row has now been wrong twice: it described `pp$$` after that was
+# replaced, then `branch + merge-base` after THAT was replaced -- and the second
+# time it was falsified by the very commit that was fixing the first. A doc table
+# nothing pins is a doc table that drifts, so the retired mechanics are asserted
+# absent rather than trusted to be updated.
+echo "T22. SKILL.md does not describe retired arc-id mechanics"
+# A POSITIVE assertion on the row, not a banned word. Banning "merge-base"
+# outright also flags the row's own account of what it replaced, and a test that
+# forbids describing history would push the doc toward saying less, not more.
+# What must hold is that the row states the CURRENT derivation.
+SKILL="$REPO/SKILL.md"
+ROW=$(grep -E '^\| .*ledger id' "$SKILL" | head -1)
+if [ -z "$ROW" ]; then
+    fail "T22: arc-id row states the current derivation" "no '| ... ledger id' row found in SKILL.md"
+elif echo "$ROW" | grep -q 'branch alone'; then
+    ok "T22: arc-id row states the current derivation"
+else
+    fail "T22: arc-id row states the current derivation" "row does not say 'branch alone': $ROW"
+fi
+
+# ── T23: every exit code SKILL.md documents is one the script can emit ────
+echo "T23. documented exit codes exist in the controller"
+RB_SH="$REPO/scripts/round-budget.sh"
+# Codes now live in two places: literal `exit N`, and the `name:code` pairs in
+# PRECEDENCE. Checking only the first went red the moment the dispatcher moved
+# them, which is the test being wrong rather than the code.
+MISSING=""
+for code in 0 2 3 5 6 7; do
+    grep -qE "exit $code" "$RB_SH" || grep -qE ":$code( |\")" "$RB_SH" || MISSING="$MISSING $code"
+done
+if [ -z "$MISSING" ]; then
+    ok "T23: all documented exit codes are reachable"
+else
+    fail "T23: all documented exit codes are reachable" "documented but never emitted:$MISSING"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"
