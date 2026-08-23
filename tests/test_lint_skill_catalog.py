@@ -372,6 +372,9 @@ class TestTheTighteningDoesNotOvershoot:
         "> catalog (86 rows, 15 marketing domains). The canonical inventory above",
         "Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.",
         "| `_shared/` | (reserved) shared utilities used by multiple Tier-2 skills |",
+        # depth-3 tripped the scan when only depth-2 was allowlisted
+        "No flag is needed (that's only for depth-3+); buckets are exactly one level.",
+        "The [`skills-showcase`](skills-showcase/) tool generates a Remotion video (1080x1920).",
     ]
 
     @pytest.mark.parametrize("line", LEGITIMATE)
@@ -528,3 +531,54 @@ class TestBothRowSurfacesAreChecked:
         problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
         assert any("skills-inventory.md" in p and "no section for category" in p
                    for p in problems), problems
+
+
+class TestTheTwoPropertiesTheSweepFoundUnproven:
+    """A mutation sweep over the suite above left two mutants alive. Both were
+    tests passing for the wrong reason, not missing behaviour — the exact case
+    where a green suite certifies a property it never exercises.
+    """
+
+    def test_a_wrong_smallest_NAME_SET_is_reported_at_the_correct_count(self, tmp_path, lint):
+        """The existing smallest-bucket test passes a wrong COUNT, which trips
+        the count branch and leaves the set comparison unexercised. Hold the
+        count correct so only the set can fail."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        inv = _inventory(irows, total, buckets) + AGGREGATES.format(
+            total=total, nbuckets=len(buckets), largest="Tooling", hi=max(buckets.values()),
+            lo=min(buckets.values()), smallest="Tooling")     # correct count, WRONG set
+        _consistent(tmp_path, lint, inventory=inv)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("smallest buckets say" in p for p in problems), problems
+
+    def test_a_bucket_claim_that_never_says_skill_is_still_scanned(self, tmp_path, lint):
+        """Every other aggregate case is caught by an ANCHORED form, so the
+        widened fact vocabulary was load-bearing nowhere and could be narrowed
+        back to the word "skill" without failing a test. This line mentions a
+        bucket and a number in a form the linter does not recognise, and says
+        "skill" nowhere — it is verifiable only through the widened gate."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        inv = _inventory(irows, total, buckets) + "\n- **Median bucket size**: 4\n"
+        _consistent(tmp_path, lint, inventory=inv)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("Median bucket size" in p for p in problems), problems
+
+    def test_that_same_line_is_clean_once_it_states_a_derived_fact(self, lint):
+        """POSITIVE CONTROL: the gate must widen coverage, not simply reject
+        every line containing a number and the word bucket."""
+        assert lint._unverified_count_claims("- **Total category buckets**: 22") == []
+
+
+class TestEveryBucketPhrasingIsVerified:
+    def test_single_noun_category_buckets_is_a_verified_form(self, tmp_path, lint):
+        """`skills-catalog/SKILL.md` says "organized into 22 single-noun category
+        buckets". No form covered that exact phrasing, and the scan surfaced it
+        as unverifiable rather than passing it — the design working. It is a
+        real derived count, so it is now VERIFIED rather than allowlisted."""
+        _, _s, buckets, total, _r, _i = _consistent(tmp_path, lint)
+        catalog = _catalog_skill(total, buckets) + \
+            "\nOrganized into 99 single-noun category buckets.\n"
+        _consistent(tmp_path, lint, catalog=catalog)
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("99 category buckets" in p for p in problems), problems
+        assert not any("unrecognised" in p for p in problems), problems

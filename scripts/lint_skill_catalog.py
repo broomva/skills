@@ -218,6 +218,7 @@ _TOTAL_FORMS = (
 _BUCKET_TOTAL_FORMS = (
     r"\*\*(\d+) single-noun category buckets\*\*",
     r"(\d+) single-noun categories",
+    r"(\d+) single-noun category buckets",
     r"(\d+) category buckets",
     r"the (\d+) `skills/<category>/` directory buckets",
     r"the (\d+) monorepo buckets",
@@ -239,16 +240,40 @@ _NOT_A_SKILL_COUNT = (
     r"skills\.sh CLI ≥ v[\d.]+",          # a CLI version
     r"PR #\d+",                            # an upstream PR number
     r"Tier-2",                             # the tier, not a count
-    r"depth-2",                            # the directory depth
+    r"depth-\d+\+?",                        # a directory depth, not a count
     r"\(\d+ rows, \d+ marketing domains\)",  # the legacy broader-ecosystem catalog
     r"[Ss]kills-showcase\S*",              # an output filename (…-showcase.mp4)
     r"SkillsShowcase",                     # the Remotion composition id
 )
 
-#: A number within a short distance of the word "skill(s)" — the shape of a
-#: count claim, whatever its wording.
-_COUNT_SHAPED = re.compile(r"\d+(?=[^\n]{0,40}?\bskills?\b)|(?<=\bskills\b)[^\n]{0,20}?\d+",
-                           re.IGNORECASE)
+#: The vocabulary of facts this catalog derives. Used BOTH to decide whether a
+#: line is making a claim at all, and to decide whether a number on it is part
+#: of that claim.
+_FACT_WORDS = r"(?:skills?|buckets?|categor(?:y|ies)|largest|smallest|total)"
+
+_FACT_WORD_RX = re.compile(rf"\b{_FACT_WORDS}\b", re.IGNORECASE)
+
+
+def _states_a_quantity(residue: str, window: int = 25) -> bool:
+    """True if a number in `residue` sits within `window` characters of a word
+    from the fact vocabulary.
+
+    The proximity requirement is what keeps this from flagging every version
+    string, date and video resolution on a line that happens to mention
+    buckets. The vocabulary is what keeps it from being inert: requiring the
+    word "skill" specifically made the widened line-gate do nothing — "**Median
+    bucket size**: 4" passed the line filter and then matched no number — which
+    a mutation sweep caught by narrowing the vocabulary back with no test
+    failing.
+
+    Written as a scan rather than one regex because the lookbehind would be
+    variable-width, which Python's `re` rejects.
+    """
+    for number in re.finditer(r"\d+", residue):
+        lo = max(0, number.start() - window)
+        if _FACT_WORD_RX.search(residue[lo:number.end() + window]):
+            return True
+    return False
 
 
 def _recount(text: str, disk: dict, bucket_rx: str) -> str:
@@ -366,8 +391,7 @@ def _unverified_count_claims(text: str) -> list[str]:
         # Gated on the vocabulary of DERIVED FACTS, not on the word "skill".
         # Gating on "skill" is why "**Total category buckets**: 22" and
         # "**Largest bucket**: … (7)" were invisible: neither line says it.
-        if not re.search(r"\b(skills?|buckets?|categor(?:y|ies)|largest|smallest|total)\b",
-                         line, re.IGNORECASE):
+        if not re.search(rf"\b{_FACT_WORDS}\b", line, re.IGNORECASE):
             continue
         residue = line
         for form in _TOTAL_FORMS + _BUCKET_TOTAL_FORMS:
@@ -378,7 +402,7 @@ def _unverified_count_claims(text: str) -> list[str]:
             residue = re.sub(allowed, "", residue)
         residue = re.sub(r"`[^`]*`", "", residue)          # inline code
         residue = re.sub(r"https?://\S+", "", residue)     # urls carry digits
-        if _COUNT_SHAPED.search(residue):
+        if _states_a_quantity(residue):
             unverified.append(f"line {lineno}: {line.strip()[:90]}")
     return unverified
 
