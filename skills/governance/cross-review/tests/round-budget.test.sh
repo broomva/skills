@@ -737,13 +737,17 @@ echo "T53. a dangling symlink at the archive name is not clobbered"
 LED=$(newledger t53)
 printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
 ln -s "$TMP/t53-no-such-target" "$LED.archived.1"
+# The fixture must be DANGLING or this test silently exercises `-e` instead of
+# `-L` and passes against the defect. `-e` follows the link, so on a dangling
+# one it is false while `-L` is true.
+DANGLING=$([ ! -e "$LED.archived.1" ] && [ -L "$LED.archived.1" ] && echo yes || echo no)
 RC=$(rb reset --run-id=t53 --ledger="$LED")
 STILL_LINK=$([ -L "$LED.archived.1" ] && echo yes || echo no)
 SIDESTEP=$([ -e "$LED.archived.1.1" ] && echo yes || echo no)
-if [ "$RC" = "0" ] && [ "$STILL_LINK" = "yes" ] && [ "$SIDESTEP" = "yes" ]; then
+if [ "$DANGLING" = "yes" ] && [ "$RC" = "0" ] && [ "$STILL_LINK" = "yes" ] && [ "$SIDESTEP" = "yes" ]; then
     ok "T53: the symlink survives and the archive steps aside"
 else
-    fail "T53: dangling symlink clobbered" "exit $RC (want 0), symlink intact=$STILL_LINK (want yes), sidestep=$SIDESTEP (want yes)"
+    fail "T53: dangling symlink clobbered" "fixture dangling=$DANGLING (want yes), exit $RC (want 0), symlink intact=$STILL_LINK (want yes), sidestep=$SIDESTEP (want yes)"
 fi
 
 echo ""
