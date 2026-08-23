@@ -337,6 +337,33 @@ printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
 RC=$(rb record-round --run-id=t30 --ledger="$LED" --score=5 --defect=yes)
 if [ "$RC" = "6" ]; then ok "T30: corrupt ledger refuses appends"; else fail "T30: corrupt ledger refuses appends" "exit $RC, want 6"; fi
 
+# ── T31: a stop OUTRANKS a passing score ──────────────────────────────────
+# `PASSED` used to be checked above the absorbing stops, so every stop was
+# cleared by appending one round claiming a 7 -- and the score is the agent's own
+# self-report, so the cost of escaping any stop was a single integer.
+echo "T31. a self-reported passing score does not clear a stop"
+LED=$(newledger t31)
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\nROUND\t2\t9\tyes\t\t-\n' > "$LED"
+RC=$(rb budget --run-id=t31 --ledger="$LED")
+LED2=$(newledger t31b)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t8\tyes\t\t-\n' > "$LED2"
+RC2=$(rb budget --run-id=t31b --ledger="$LED2")
+LED3=$(newledger t31c)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t8\tyes\t\t-\n' > "$LED3"
+RC3=$(rb budget --run-id=t31c --ledger="$LED3")
+if [ "$RC" = "6" ] && [ "$RC2" = "6" ] && [ "$RC3" = "3" ]; then
+    ok "T31: stops outrank a pass; a clean arc still passes"
+else
+    fail "T31: stops outrank a pass" "after-STOP=$RC (want 6), after-regression=$RC2 (want 6), clean=$RC3 (want 3)"
+fi
+
+# ── T32: the recorder will not append past a terminal state ───────────────
+echo "T32. record-round refuses to append after a STOP"
+LED=$(newledger t32)
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
+RC=$(rb record-round --run-id=t32 --ledger="$LED" --score=9 --defect=yes)
+if [ "$RC" = "6" ]; then ok "T32: no appending past a stop"; else fail "T32: no appending past a stop" "exit $RC, want 6"; fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

@@ -385,12 +385,22 @@ fi
 # ledger. The documented loop re-runs pre-push each round, so the round-8 ceiling
 # cost one changed string to escape and the CLI changed it for you.
 echo "T19. budget run-id is stable across invocations"
+# --diff-base is varied deliberately. Under `HEAD` the merge-base is degenerate,
+# so a merge-base-derived id looked stable while actually changing on every
+# commit -- the test passed for an id that reset constantly. Running the two
+# invocations against DIFFERENT bases pins the property that matters: the id
+# depends on the branch and on nothing that moves under a commit or a rebase.
 A=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
-B=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+B=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD~1 2>/dev/null | grep -o 'budget --run-id=[^ ]*' | head -1)
+BRANCH=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ -n "$A" ] && [ "$A" = "$B" ]; then
-    ok "T19: arc id stable ($A)"
+    if [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] && [ "$A" != "budget --run-id=arc-$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')" ]; then
+        fail "T19: arc id stable" "id '$A' is not exactly arc-<branch>; something that moves is baked in"
+    else
+        ok "T19: arc id stable across diff-bases ($A)"
+    fi
 else
-    fail "T19: arc id stable" "run1='$A' run2='$B' — a per-invocation id resets the budget"
+    fail "T19: arc id stable" "base=HEAD gave '$A', base=HEAD~1 gave '$B' — the id moves with the merge-base"
 fi
 
 # ── T20: the guard id is NOT stable — it must stay per-invocation ─────────

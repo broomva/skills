@@ -219,7 +219,9 @@ read_rows() {
             echo "round-budget: ledger exists at $LEDGER but cannot be read." >&2
             echo "  Refusing to treat it as an empty history: that reads as" >&2
             echo "  'no rounds yet' and authorizes another round." >&2
-            return 1
+            # 6, not 1: every refusal this script makes is in the documented exit
+            # table, and an undocumented code is one no caller can branch on.
+            exit 6
         }
     fi
 }
@@ -303,6 +305,14 @@ case "$COMMAND" in
 record-round)
     with_lock
     refuse_corrupt_ledger
+    # Appending after a stop was a legal command, which is half of how the stop
+    # got cleared. The ledger must not grow past its own terminal state.
+    if [ -n "$(printf '%s' "$(analyze)" | cut -f6)" ]; then
+        echo "round-budget: a STOP/STRUCTURAL verdict is recorded in $LEDGER." >&2
+        echo "  That state is terminal. Recording another round does not clear it," >&2
+        echo "  and appending past it only grows a history the budget will refuse." >&2
+        exit 6
+    fi
     [ -n "$SCORE" ]  || { echo "round-budget: --score=N required" >&2; exit 2; }
     case "$SCORE" in ''|*[!0-9]*) echo "round-budget: --score must be an integer 0-10" >&2; exit 2 ;; esac
     [ "$SCORE" -le 10 ] || { echo "round-budget: --score must be 0-10" >&2; exit 2; }
@@ -455,19 +465,11 @@ EOF
         exit 0
     fi
 
-    # ─── Terminal SUCCESS outranks everything ─────────────────────────────
-    # Reaching the bar IS the exit. The round-8 ceiling governs CONTINUATION,
-    # not passing: an arc that scores 7 on round 9 is finished, not escalated.
-    if [ "$LAST_SCORE" -ge "$PASS_SCORE" ]; then
-        echo "PASSED — last round scored $LAST_SCORE (>= $PASS_SCORE). No further round needed."
-        exit 3
-    fi
-
-    # ─── Absorbing stops, checked before every fast path ──────────────────
+    # ─── Absorbing stops, checked before EVERY other outcome ──────────────
     # All four are computed over the WHOLE history, so none can be cleared by
-    # appending another row. They sit above the free-round path because rounds
-    # 1-3 are exactly when an arc is most likely to be told to stop, and the
-    # first version returned AUTHORIZED there without ever looking.
+    # appending another row -- including a row claiming a passing score, which
+    # is the edge that re-opened this after the first fix. See the PASSED block
+    # below for why a stop outranks a pass.
     if [ "$REGRESSED" != "0" ]; then
         echo "STOP — the score REGRESSED at some point in this arc."
         echo "  A regression is not a plateau. Escalate rather than take another swing."
@@ -496,6 +498,24 @@ EOF
             echo "STOP — the continuation review returned STOP."
         fi
         exit 6
+    fi
+
+    # ─── Terminal SUCCESS, reached only once no stop has fired ────────────
+    #
+    # This used to sit ABOVE the stops, on the reasoning that "reaching the bar
+    # IS the exit". That was wrong, and it re-opened the absorbing property at
+    # the one adjacent edge that mattered: the score is the AGENT'S OWN
+    # SELF-REPORT, so every stop could be cleared by appending a single round
+    # claiming a 7. A stop that costs one integer to escape is not a stop -- and
+    # the code contradicted its own comment, its own STOP message, and the
+    # SKILL.md row asserting the property.
+    #
+    # A stop therefore outranks a pass. An arc that scores >= 7 AFTER being told
+    # to stop -- or after a regression, or after two refuted predictions -- has
+    # not passed; it has produced a number a human needs to look at.
+    if [ "$LAST_SCORE" -ge "$PASS_SCORE" ]; then
+        echo "PASSED — last round scored $LAST_SCORE (>= $PASS_SCORE). No further round needed."
+        exit 3
     fi
 
     # ─── Bounds ───────────────────────────────────────────────────────────

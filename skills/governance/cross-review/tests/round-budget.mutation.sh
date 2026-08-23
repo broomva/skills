@@ -27,20 +27,26 @@
 set -uo pipefail
 export LC_ALL=C
 
-CRDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRCDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Mutate a COPY, never the tracked tree. The first version edited the real file
+# and reverted with `git checkout --`, so anything reading the repo while the
+# sweep ran -- another agent, a hook, a concurrent test -- saw a mutated
+# artifact, and an interrupted run left one behind. A reviewer observed exactly
+# that: FREE_ROUNDS=99 live in the tracked file mid-review.
+#
+# Working on a copy also removes the clean-tree precondition: there is nothing
+# left to destroy, so the sweep no longer has to refuse on a dirty tree.
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+cp -R "$SRCDIR/." "$SCRATCH/"
+CRDIR="$SCRATCH"
 TARGET="$CRDIR/scripts/round-budget.sh"
 SUITE="$CRDIR/tests/round-budget.test.sh"
-
-# fsmonitor is forced off: a dead daemon makes `git status` report a CLEAN tree
-# while files are modified, which would void this guard exactly when it matters.
-GIT="git -c core.fsmonitor=false"
+PRISTINE="$SCRATCH/.pristine-round-budget.sh"
+cp "$TARGET" "$PRISTINE"
 
 cd "$CRDIR" || { echo "mutation: cannot cd to $CRDIR" >&2; exit 2; }
-if [ -n "$($GIT status --porcelain -- "$TARGET")" ]; then
-    echo "mutation: REFUSING to run — $TARGET has uncommitted changes." >&2
-    echo "  This sweep reverts to HEAD after every mutation and would destroy them." >&2
-    exit 2
-fi
 
 BASE_OUT=$(bash "$SUITE" 2>&1); BASE_RC=$?
 if [ "$BASE_RC" != "0" ]; then
@@ -75,15 +81,20 @@ PY
         # proof, not an absent one.
         echo "  [ERROR]    $label  ->  anchor did not apply; mutation NOT run"
         SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label ANCHOR ERROR (mutation never applied)")
-        $GIT checkout -- "$TARGET"
+        cp "$PRISTINE" "$TARGET"
         return 0
     fi
 
     local out rc
     out=$(bash "$SUITE" 2>&1); rc=$?
-    $GIT checkout -- "$TARGET"
+    cp "$PRISTINE" "$TARGET"
 
-    if echo "$out" | grep -q "\[FAIL\] $expect"; then
+    # The id is matched WITH ITS COLON. An unanchored substring match made an
+    # expectation of "T1" satisfiable by "[FAIL] T13" / "T15" / "T19" -- and it
+    # silently was: this sweep reported "free-round floor 3->99 -> T1 went red"
+    # when the tests that actually reddened were T4 and T13. The bias runs toward
+    # FALSE KILLED, which is the direction that hides survivors.
+    if echo "$out" | grep -q "\[FAIL\] ${expect}:"; then
         echo "  [KILLED]   $label  ->  $expect went red"
         KILLED=$((KILLED+1))
     else
@@ -95,7 +106,10 @@ PY
 echo "── per-rule mutations ────────────────────────────────────────"
 
 # The bounds.
-mutate "free-round floor 3->99"  "T1" 'FREE_ROUNDS=3'   'FREE_ROUNDS=99'
+# T4, not T1. The unanchored match credited this with killing T1 for three
+# commits. T1 is pinned by the defect-streak mutation below, which a reviewer
+# independently confirmed does redden it.
+mutate "free-round floor 3->99"  "T4" 'FREE_ROUNDS=3'   'FREE_ROUNDS=99'
 mutate "human ceiling 8->999"    "T7" 'HUMAN_CEILING=8' 'HUMAN_CEILING=999'
 mutate "pass score 7->99"        "T12" 'PASS_SCORE=7'   'PASS_SCORE=99'
 
@@ -123,7 +137,21 @@ mutate "sanitize passes tabs" "T14" \
 # The fail-open guard. An unreadable ledger returning zero rows reads as
 # "no rounds yet", which authorizes -- the one direction this controller
 # must never fail in. Mutating the refusal to a success restores that.
-mutate "unreadable ledger fails open" "T15" '            return 1' '            return 0'
+# A bare `exit 6` at this indent occurs three times, so the anchor carries the
+# comment above it. A non-unique anchor is refused by the guard rather than
+# applied to whichever site came first.
+mutate "unreadable ledger fails open" "T15" \
+    $'# table, and an undocumented code is one no caller can branch on.\n            exit 6' \
+    $'# table, and an undocumented code is one no caller can branch on.\n            exit 0'
+
+# NOTE on the stop/pass ORDERING -- where the round-2 regression lived.
+# It has no mutation of its own, and that is not an omission. Ordering cannot
+# be expressed as a value mutation: making PASSED unconditional does not move
+# it, so the stops still fire first and every T31 case still passes. It IS
+# pinned -- disabling the terminal-verdict check reddens T31 along with T11,
+# T19 and T20, verified by running it. Claiming a dedicated proof here would
+# be the false credit this sweep was just fixed for.
+
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
 mutate "stale verdict re-authorizes" "T13" \
@@ -156,10 +184,6 @@ mutate "recorder appends to corrupt ledger" "T30" '    local a; a="$(analyze)" |
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
-if [ -n "$($GIT status --porcelain -- "$TARGET")" ]; then
-    echo "mutation: WARNING — target left dirty; reverting." >&2
-    $GIT checkout -- "$TARGET"
-fi
 if [ "$SURVIVED" -gt 0 ]; then
     printf '  survivor: %s\n' "${SURVIVORS[@]}"
     exit 1

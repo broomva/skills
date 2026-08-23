@@ -366,16 +366,21 @@ if [ "$COMMAND" = "pre-push" ]; then
     # and reset the budget to "round 1 of 3 free". The round-8 ceiling then cost
     # one changed string to escape, and the CLI changed it for you.
     #
-    # Derived from the branch plus the merge-base, so it is stable for an arc and
-    # distinct between arcs. Detached HEAD falls back to the commit itself.
+    # Derived from the BRANCH ALONE. The first version appended the merge-base,
+    # which looked more precise and was strictly worse: a routine mid-arc
+    # `git rebase origin/main` moves the merge-base, so the id changed and the
+    # ledger reset. The round-8 ceiling had cost one changed string to escape;
+    # keyed on the merge-base it cost one rebase.
+    #
+    # The branch IS the arc here, so reusing a branch name deliberately reuses
+    # its ledger. Detached HEAD has no arc to speak of and falls back to the
+    # commit, which is the one case where per-commit is the right grain.
     CR_RUN_ID="pp$$"
     CR_ARC_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)
     if [ "$CR_ARC_BRANCH" = "HEAD" ] || [ -z "$CR_ARC_BRANCH" ]; then
-        CR_ARC_BRANCH=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+        CR_ARC_BRANCH="detached-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     fi
-    CR_ARC_BASE=$(git merge-base "$DIFF_BASE" HEAD 2>/dev/null | cut -c1-8 || echo nobase)
-    [ -n "$CR_ARC_BASE" ] || CR_ARC_BASE=nobase
-    CR_ARC_ID=$(printf 'arc-%s-%s' "$CR_ARC_BRANCH" "$CR_ARC_BASE" | tr -c 'A-Za-z0-9._-' '-')
+    CR_ARC_ID=$(printf 'arc-%s' "$CR_ARC_BRANCH" | tr -c 'A-Za-z0-9._-' '-')
     if bash "${BASH_SOURCE[0]}" reviewer-guard capture --run-id="$CR_RUN_ID"; then
         GUARD_ARMED=1
     else
