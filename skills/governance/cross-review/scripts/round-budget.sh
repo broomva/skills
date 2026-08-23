@@ -1,77 +1,58 @@
 #!/usr/bin/env bash
+#
+# The rule_* functions in the budget arm are dispatched indirectly as
+# "rule_$rule", which shellcheck reads as never-invoked. That indirection is
+# the point: it is what makes the PRECEDENCE list the single place the
+# stop/pass ordering is written down. Hence, file-wide:
+# shellcheck disable=SC2329
 # round-budget.sh — bstack P20 dynamic round budget + continuation ledger
 #
-# Replaces the fixed `MAX_ROUNDS=3`, which was never enforced anywhere: it was
-# printed by pre-push and read by nobody. Practice ran past it routinely
-# (BRO-2190 to 21 rounds, BRO-2185 to 22, BRO-2079 to 12 and closed unmerged)
-# while the live rule was an UNWRITTEN controller reconstructed from memory each
-# arc. This script is that controller, written down.
+# Replaces the fixed `MAX_ROUNDS=3`, which was printed by pre-push and read by
+# no conditional. Practice ran past it routinely (BRO-2190 to 21 rounds,
+# BRO-2185 to 22, BRO-2079 to 12 and closed unmerged) while the live rule was an
+# unwritten controller reconstructed from memory each arc. This is that
+# controller, written down.
 #
-# ─── What this script decides, and what it refuses to decide ──────────────
-#
-# It does NOT judge whether a round made progress. That judgement belongs to the
-# reviewer, and handing it to the writer is the exact failure P20 exists to stop.
-# What it owns is the BOOKKEEPING and the BOUNDS:
+# WHAT IT DECIDES. The bookkeeping and the bounds — never whether a round made
+# progress. That judgement belongs to the reviewer; handing it to the writer is
+# the failure P20 exists to stop. What this owns is:
 #
 #   "you claimed CONTINUE at round 4 with prediction P; round 5 recorded P as
 #    REFUTED; that is two in a row; STOP."
 #
-# Bookkeeping is precisely what an agent does badly from recall, and every
-# recorded instance of this loop running long shows the same tell — the round
-# count and the score trajectory get restated from memory, drift, and stop
-# being checkable.
+# THE CURRENCY is a reproduced, executable defect in the change — not a score
+# bump, not reviewer opinion, and never a finding about the justification for
+# the change. Score slope is the wrong signal: BRO-2185 sat at 5-6 for eighteen
+# rounds then moved 6->8 once an invariant was hoisted, while BRO-2079 ran twelve
+# rounds on an equally flat score and closed unmerged. Same slope, opposite
+# correct answer.
 #
-# ─── Why not score slope ──────────────────────────────────────────────────
+# BOUNDS
+#   rounds 1-3   free
+#   rounds 4-7   each earned by a CONTINUE verdict carrying a located prediction
+#   round >= 8   human. Unbounded self-granted budget is the resource-acquisition
+#                pillar the workspace leaves open by design.
 #
-# The obvious dynamic rule (extend while the score climbs) is refuted by the
-# arcs. BRO-2185 sat at 5-6 for eighteen consecutive rounds, then moved 6->8 in
-# one round once the invariant was hoisted; a plateau-stop kills it at ~round 4
-# and discards the arc that eventually passed. BRO-2079 ran twelve rounds on an
-# equally flat score and closed unmerged. Same slope, opposite correct answer.
+# ANTI-VACUITY. "Should I extend?" asked cold answers YES almost always, and a
+# second model rubber-stamping that is worse than the counter it replaces. Four
+# rules, checked against the ledger rather than recalled:
+#   1. CONTINUE requires a prediction naming a location
+#   2. a round following CONTINUE must settle it (else rule 3 never fires)
+#   3. two consecutive REFUTED end the loop
+#   4. CONTINUE verdicts cannot stack without an intervening round
 #
-# The currency is instead a REPRODUCED EXECUTABLE DEFECT IN THE CHANGE. Named,
-# without being named, in .control/asks/bro-2190-tier-model.yaml:78 — "Rounds 20
-# and 21 each returned an EXECUTABLE false accept or false reject, reproduced by
-# construction before being accepted — that is the change, not the account of it."
+# THE BOUNDARY. These bind the LEDGER. Stops are absorbing and cannot be cleared
+# by appending, reset by re-running pre-push, or dodged by a rebase. They do NOT
+# compel anyone to run `budget`, `--ledger` behind ROUND_BUDGET_TEST_LEDGER still
+# repoints the path, and the ledger is a plain file this agent can delete. This
+# removes ACCIDENTAL drift — the miscounted round, the stop quietly walked back —
+# which is what actually went wrong on the long arcs. SKILL.md states it in full.
 #
-# ─── Bounds ───────────────────────────────────────────────────────────────
-#
-#   rounds 1-3   free; no continuation review (the old budget, unchanged)
-#   rounds 4-7   each earned by a CONTINUE verdict carrying a live prediction
-#   round >= 8   human required, whatever the verdict says
-#
-# The ceiling is deliberate and is not timidity. An agent that grants itself
-# unbounded budget by asking itself has started acquiring its own resources;
-# the workspace leaves that pillar open BY DESIGN (research/entities/concept/
-# rsi-self-growth-readiness.md). Round 8 keeps the human as the authority.
-#
-# ─── The anti-vacuity rules (the load-bearing part) ───────────────────────
-#
-# "Should I extend?" asked cold answers YES almost always. A second model
-# rubber-stamping that is WORSE than the fixed counter, because it launders the
-# writer's appetite through something that looks independent. Four rules, each
-# checked here against the ledger rather than recalled by the agent.
-#
-# The boundary, stated because the first version of this comment overclaimed it
-# and two reviewers were right to block on that: these rules bind the LEDGER.
-# They are absorbing and cannot be cleared by appending, reset by re-running
-# pre-push, or dodged by appending. They are NOT dodge-proof: `--ledger` behind
-# ROUND_BUDGET_TEST_LEDGER still repoints the path, and nothing compels anyone to
-# run `budget` in the first place, and the ledger is a plain file this same
-# agent can delete. This removes ACCIDENTAL drift -- the miscounted round, the
-# stop quietly walked back -- which is what actually went wrong on the arcs that
-# ran to 12, 21 and 22 rounds. It does not bind an agent set on evading it.
-# SKILL.md carries the same statement in full.
-#
-#   1. CONTINUE requires a non-empty --prediction. A continuation with nothing
-#      to settle cannot be wrong, and a verdict that cannot be wrong is not a
-#      verdict.
-#   2. A round following a CONTINUE must pass --settles=CONFIRMED|REFUTED. Without
-#      it predictions never settle, and rule 3 becomes unreachable — a live
-#      check that can never fire.
-#   3. Two consecutive REFUTED predictions -> STOP, no override.
-#   4. Two CONTINUE verdicts cannot stack without an intervening round. Otherwise
-#      budget is inflated by recording the same optimism repeatedly.
+# STRUCTURE. Every command passes through one gate (`load_ledger`), and the
+# budget's precedence is one ordered list. Both are deliberate: three review
+# rounds each found a guard living at one caller and not its sibling, or an
+# ordering wrong in one of six sequential branches. One site is one place to be
+# wrong.
 #
 # Usage:
 #   round-budget.sh record-round   --run-id=ID --score=N --defect=yes|no \
@@ -79,16 +60,17 @@
 #   round-budget.sh record-verdict --run-id=ID --verdict=CONTINUE|STOP|STRUCTURAL \
 #                                  [--prediction=TEXT] [--directive=TEXT]
 #   round-budget.sh budget         --run-id=ID     # may another round run?
-#   round-budget.sh reset          --run-id=ID     # archive a finished arc's ledger
 #   round-budget.sh show           --run-id=ID
+#   round-budget.sh reset          --run-id=ID     # archive a finished arc's ledger
 #
-# Exit codes for `budget` (0/2/4 are already taken by cross-review.sh):
-#   0  AUTHORIZED  — another round may run
+# Exit codes (0/2/4 are taken by cross-review.sh):
+#   0  AUTHORIZED   another round may run
 #   2  usage error
-#   3  PASSED      — score >= 7; the gate is done, no further round needed
-#   5  REVIEW-REQ  — rounds 4-7 with no continuation verdict recorded yet
-#   6  STOP        — regression, refuted twice, STOP verdict, or STRUCTURAL
-#   7  HUMAN       — round ceiling reached; escalate
+#   3  PASSED       score >= 7; the gate is done
+#   5  REVIEW-REQ   rounds 4-7 with no continuation verdict recorded
+#   6  STOP         regression, refuted twice, no defect twice, STOP/STRUCTURAL,
+#                   or an unparsable ledger
+#   7  HUMAN        round ceiling reached
 
 set -euo pipefail
 export LC_ALL=C
@@ -123,17 +105,11 @@ for arg in "$@"; do
         --prediction=*)   PREDICTION="${arg#*=}" ;;
         --directive=*)    DIRECTIVE="${arg#*=}" ;;
         --ledger=*)
-            # A test seam, gated so it cannot serve as a production escape
-            # hatch: pointing the controller at a fresh path is the cheapest
-            # way to reset a budget, and an unadvertised flag that does it is
-            # worse than no flag. The ledger is NOT tamper-proof against the
-            # agent it governs -- it is bookkeeping that makes drift visible.
-            # That boundary is documented rather than pretended away.
+            # A test seam, gated so it is not a silent production budget-reset.
+            # It is not a barrier — see THE BOUNDARY above.
             if [ "${ROUND_BUDGET_TEST_LEDGER:-0}" != "1" ]; then
                 echo "round-budget: --ledger is a test-only seam." >&2
-                echo "  Set ROUND_BUDGET_TEST_LEDGER=1 to use it. In an arc the ledger" >&2
-                echo "  path is derived from the run-id so a budget cannot be reset by" >&2
-                echo "  pointing at a new file." >&2
+                echo "  Set ROUND_BUDGET_TEST_LEDGER=1 to use it." >&2
                 exit 2
             fi
             LEDGER_PATH="${arg#*=}" ;;
@@ -146,9 +122,7 @@ case "$RUN_ID" in
     *[!A-Za-z0-9._-]*) echo "round-budget: --run-id must be [A-Za-z0-9._-]" >&2; exit 2 ;;
 esac
 
-# ─── Ledger location ──────────────────────────────────────────────────────
-# Keyed per run-id, like the reviewer guard's state file. Two reviews in one
-# worktree must not share a ledger: a merged round history is not a history.
+# Keyed per run-id: two reviews in one worktree must not share a history.
 ledger_path() {
     if [ -n "$LEDGER_PATH" ]; then echo "$LEDGER_PATH"; return; fi
     local gd
@@ -160,102 +134,65 @@ ledger_path() {
 }
 LEDGER="$(ledger_path)"
 
-# Tabs and newlines are the record separators, so they cannot survive in a
-# field. Stripping them is not cosmetic: a prediction containing a tab would
-# silently shift every column to its right and settle the wrong field.
+# Tabs and newlines are the record separators, so they cannot survive in a field:
+# a prediction containing a tab would shift every column to its right.
 sanitize() { printf '%s' "${1:-}" | tr '\t\n' '  ' | sed 's/  *$//'; }
 
-# A ledger that exists but cannot be read must NEVER render as an empty one.
-# The `&& cat || true` this replaces swallowed cat's failure and returned zero
-# rows, which `budget` reads as "no rounds yet" -- i.e. AUTHORIZED. An
-# unreadable ledger failing OPEN is the one direction this controller must not
-# fail in, so an existing-but-unreadable file is an error, not an empty history.
-# mkdir is atomic on every POSIX filesystem, so it is the portable test-and-set
-# bash has. Without it two concurrent `record-round` calls after one live
-# CONTINUE both pass pending_continue() and spend the same earned round twice.
-# The prediction rule, defined ONCE. It was enforced only in `record-verdict`,
-# so a CONTINUE row that never passed the recorder -- a hand-edited ledger, or a
-# row written by an older version -- authorized a round on read. Validating at
-# the entry point but not against the stored state is the same shape as computing
-# a stop from the ledger's TAIL: the rule holds for the path you came in by, and
-# not for the artifact it is supposed to bind.
-#
-# One function, two callers. Two copies of a regex is how the two sites drift.
+# One definition, called at write AND at read. Enforcing at the entry point but
+# not against the stored artifact is how a hand-edited row buys a round.
+# Deliberately weak: it accepts any path-ish token, and rules out `x`.
 prediction_is_valid() {
     local pred="$1"
     [ "${#pred}" -ge 12 ] || return 1
     printf '%s' "$pred" | grep -qE '[A-Za-z0-9_-]+\.[A-Za-z]+|/|:[0-9]+'
 }
 
+# mkdir is the portable atomic test-and-set. LOCK_DIR is global so the EXIT trap
+# can still resolve it; as a `local` the trap died under `set -u` and never
+# released.
 LOCK_DIR=""
 with_lock() {
     LOCK_DIR="$LEDGER.lock"
     local tries=0
-    # LOCK_DIR is deliberately GLOBAL. As a `local` it was out of scope by the
-    # time the EXIT trap fired, so the trap died on `unbound variable` under
-    # `set -u`, the lock was never released, and every later call spun out its
-    # full retry budget before failing. A lock that is never released is worse
-    # than no lock.
     until mkdir "$LOCK_DIR" 2>/dev/null; do
-        # Every mkdir failure used to read as contention, so an unwritable or
-        # missing parent spun the full retry budget and then misdiagnosed itself.
         if [ ! -d "$LOCK_DIR" ]; then
             echo "round-budget: cannot create $LOCK_DIR — the ledger's directory is" >&2
             echo "  missing or unwritable. This is not lock contention." >&2
             exit 2
         fi
         tries=$((tries+1))
-        if [ "$tries" -gt 50 ]; then
-            echo "round-budget: could not acquire $LOCK_DIR after 50 tries." >&2
-            echo "  If no other run is active, remove it by hand." >&2
-            exit 2
-        fi
+        [ "$tries" -le 50 ] || {
+            echo "round-budget: could not acquire $LOCK_DIR after 50 tries." >&2; exit 2; }
         sleep 0.1
     done
     trap 'if [ -n "$LOCK_DIR" ]; then rmdir "$LOCK_DIR" 2>/dev/null || true; fi' EXIT
 }
 
+# An existing-but-unreadable ledger is an error, never an empty history: zero
+# rows reads as "no rounds yet", which authorizes.
 read_rows() {
     if [ -f "$LEDGER" ]; then
         cat "$LEDGER" || {
             echo "round-budget: ledger exists at $LEDGER but cannot be read." >&2
-            echo "  Refusing to treat it as an empty history: that reads as" >&2
-            echo "  'no rounds yet' and authorizes another round." >&2
-            # 6, not 1: every refusal this script makes is in the documented exit
-            # table, and an undocumented code is one no caller can branch on.
             exit 6
         }
     fi
 }
-count_rounds() { read_rows | awk -F'\t' '$1=="ROUND"' | wc -l | tr -d ' '; }
-last_row_of() { read_rows | awk -F'\t' -v t="$1" '$1==t' | tail -1; }
 last_row_any() { read_rows | tail -1; }
 field() { printf '%s' "$1" | cut -f"$2"; }
 
-# ROUND   round score defect fingerprints settles
-# VERDICT verdict prediction directive   (cols 2,3,4)
-
-# ─── One pass over the WHOLE ledger ───────────────────────────────────────
+# One pass over the WHOLE ledger. Every stop is ABSORBING — computed over all of
+# history, so none can be cleared by appending. Malformed input FAILS CLOSED: a
+# corrupt ledger must not read as "no reason to stop".
 #
-# Every stop condition is ABSORBING: once it has held, it keeps holding. The
-# first version computed each from the TAIL of the ledger, which made all of
-# them escapable by appending -- from a two-REFUTED stop, one CONTINUE plus one
-# CONFIRMED round cleared it and the budget resumed. A stop you can leave by
-# writing another row is not a stop, and every rule here was reachable that way.
-#
-# Malformed input FAILS CLOSED. A non-integer score used to reach `[ "$x" -ge 7 ]`,
-# print "integer expected" to stderr, and fall through to AUTHORIZED -- a corrupt
-# ledger read as "no reason to stop", which is the one direction this must never
-# fail in.
+# ROUND   n score defect fingerprints settles     (6 fields)
+# VERDICT verdict prediction directive            (4 fields)
 analyze() {
     read_rows | awk -F'\t' '
         BEGIN { rounds=0; prev=-1; last=-1; regressed=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0 }
         $1=="ROUND" {
-            # Strict arity. A short row leaves $6 empty and would silently skip
-            # the REFUTED accounting; a long one means something wrote a field
-            # separator into a value. Neither is a history worth deciding on.
             if (NF != 6) { badrow=1 }
             rounds++
             if ($3 !~ /^[0-9]+$/ || $3+0 > 10) { badscore=1 }
@@ -282,53 +219,83 @@ analyze() {
         END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow }'
 }
 
-count_rounds_a()   { printf '%s' "$1" | cut -f1; }
+# ─── The one gate ─────────────────────────────────────────────────────────
+#
+# Every command passes through here. Three review rounds each found a guard
+# living at one caller and not its sibling — corrupt-check in `budget` but not
+# the recorders, terminal-check in `record-round` but not `record-verdict`,
+# prediction validation at write but not at read. One site makes that class of
+# defect unrepresentable, and collapses four redundant `analyze` passes into one.
+LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
+LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""
+load_ledger() {
+    local a
+    a="$(analyze)" || exit 6
+    LG_N=$(printf '%s' "$a" | cut -f1)
+    LG_SCORE=$(printf '%s' "$a" | cut -f2)
+    LG_REGRESSED=$(printf '%s' "$a" | cut -f3)
+    LG_MAXREF=$(printf '%s' "$a" | cut -f4)
+    LG_MAXNOD=$(printf '%s' "$a" | cut -f5)
+    LG_TERMINAL=$(printf '%s' "$a" | cut -f6)
+    LG_PENDING=$(printf '%s' "$a" | cut -f9)
+    LG_DIRECTIVE=$(printf '%s' "$a" | cut -f10)
+    local badscore badverdict badrow
+    badscore=$(printf '%s' "$a" | cut -f7)
+    badverdict=$(printf '%s' "$a" | cut -f8)
+    badrow=$(printf '%s' "$a" | cut -f11)
 
-# The ledger must not grow past its own terminal state. This guard landed in
-# `record-round` only, so `record-verdict` went on appending CONTINUE rows after
-# a STOP -- exit 0, and `analyze` keeps only the FIRST terminal, so those rows
-# were silently dead weight. Not an authorization escape, but the identical
-# "growing a history nothing can decide on" defect, in the sibling recorder.
-# One function, both callers, for the same reason the prediction predicate has
-# one definition.
+    if [ "$badscore" != "0" ] || [ "$badrow" != "0" ] || [ -n "$badverdict" ]; then
+        echo "STOP — the ledger at $LEDGER does not parse."
+        [ "$badscore" != "0" ] && echo "  A round carries a non-integer or out-of-range score."
+        [ -n "$badverdict" ]   && echo "  Unrecognised verdict token: '$badverdict'."
+        [ "$badrow" != "0" ]   && echo "  A row has the wrong shape or arity."
+        echo "  Refusing to act on a history that cannot be read."
+        exit 6
+    fi
+
+    # Every CONTINUE row must satisfy the rule the recorder applies. Rows carry a
+    # "P:" prefix so an EMPTY prediction survives as a line rather than vanishing
+    # — the emptiest vacuous continuation is the one that must not slip through.
+    local preds row vpred old_ifs
+    if ! preds=$(read_rows | awk -F'\t' '$1=="VERDICT" && $2=="CONTINUE" {print "P:" $3}'); then
+        echo "STOP — could not read the CONTINUE rows of $LEDGER to validate them."
+        exit 6
+    fi
+    old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for row in $preds; do
+        vpred=${row#P:}
+        if ! prediction_is_valid "$vpred"; then
+            set +f; IFS=$old_ifs
+            echo "STOP — a CONTINUE row in $LEDGER carries a prediction that would"
+            echo "  not pass the recorder: '$vpred'"
+            echo "  It names nowhere the next round could check, so it cannot be"
+            echo "  settled, so it cannot have earned a round."
+            exit 6
+        fi
+    done
+    set +f
+    IFS=$old_ifs
+}
+
+# The ledger must not grow past its own terminal state. Both recorders, one site.
 refuse_past_terminal() {
-    local t; t="$(printf '%s' "$(analyze)" | cut -f6)"
-    [ -n "$t" ] || return 0
-    echo "round-budget: a $t verdict is recorded in $LEDGER." >&2
-    echo "  That state is terminal: recording more does not clear it, and" >&2
-    echo "  appending past it only grows a history the budget will refuse." >&2
+    [ -n "$LG_TERMINAL" ] || return 0
+    echo "round-budget: a $LG_TERMINAL verdict is recorded in $LEDGER." >&2
+    echo "  That state is terminal: recording more does not clear it." >&2
     echo "" >&2
     echo "  If this arc is FINISHED and the branch is being reused, archive it:" >&2
     echo "    round-budget.sh reset --run-id=$RUN_ID" >&2
-    echo "  Arc ids are branch-derived, so a recycled branch inherits its ledger." >&2
-    echo "  That is deliberate while an arc is live and wrong once it is done," >&2
-    echo "  which is why the remedy is explicit rather than automatic." >&2
     exit 6
-}
-
-# Fail-closed landed in `budget` and nowhere else, so the recorder happily
-# appended to a corrupt history -- growing the thing nothing can decide on.
-refuse_corrupt_ledger() {
-    local a; a="$(analyze)" || exit 6
-    if [ "$(printf '%s' "$a" | cut -f7)" != "0" ] \
-       || [ "$(printf '%s' "$a" | cut -f11)" != "0" ] \
-       || [ -n "$(printf '%s' "$a" | cut -f8)" ]; then
-        echo "round-budget: $LEDGER does not parse; refusing to append to it." >&2
-        echo "  Appending to a corrupt history grows something no decision can" >&2
-        echo "  rest on. Run 'budget' for the diagnosis, then fix or discard it." >&2
-        exit 6
-    fi
-}
-pending_continue() {
-    local a; a="$(analyze)" || return 1
-    printf '%s' "$a" | cut -f9
 }
 
 case "$COMMAND" in
 
 record-round)
     with_lock
-    refuse_corrupt_ledger
+    load_ledger
     refuse_past_terminal
     [ -n "$SCORE" ]  || { echo "round-budget: --score=N required" >&2; exit 2; }
     case "$SCORE" in ''|*[!0-9]*) echo "round-budget: --score must be an integer 0-10" >&2; exit 2 ;; esac
@@ -338,15 +305,12 @@ record-round)
         *) echo "round-budget: --defect=yes|no required (was a reproduced, executable defect found IN THE CHANGE?)" >&2; exit 2 ;;
     esac
 
-    # Anti-vacuity rule 2. A round that follows a CONTINUE must settle that
-    # CONTINUE's prediction. Without this the prediction is decorative and the
-    # two-refuted stop can never fire — a check that cannot fail.
-    if [ "$(pending_continue)" = "1" ]; then
+    # Rule 2: a round following CONTINUE must settle it, or rule 3 never fires.
+    if [ "$LG_PENDING" = "1" ]; then
         case "$SETTLES" in
             CONFIRMED|REFUTED) ;;
             *) echo "round-budget: this round follows a CONTINUE verdict carrying a live" >&2
                echo "  prediction, so --settles=CONFIRMED|REFUTED is required." >&2
-               echo "  An unsettled prediction makes the two-refuted stop unreachable." >&2
                exit 2 ;;
         esac
     else
@@ -355,10 +319,10 @@ record-round)
             *) echo "round-budget: --settles must be CONFIRMED or REFUTED" >&2; exit 2 ;;
         esac
         [ -z "$SETTLES" ] || {
-            echo "round-budget: --settles given but no CONTINUE prediction is live to settle" >&2; exit 2; }
+            echo "round-budget: --settles given but no CONTINUE prediction is live" >&2; exit 2; }
     fi
 
-    N=$(( $(count_rounds) + 1 ))
+    N=$(( LG_N + 1 ))
     printf 'ROUND\t%s\t%s\t%s\t%s\t%s\n' \
         "$N" "$SCORE" "$DEFECT" "$(sanitize "$FINGERPRINTS")" "${SETTLES:--}" >> "$LEDGER"
     echo "round-budget: recorded round $N (score $SCORE, defect=$DEFECT, settles=${SETTLES:--}) -> $LEDGER"
@@ -366,52 +330,37 @@ record-round)
 
 record-verdict)
     with_lock
-    refuse_corrupt_ledger
+    load_ledger
     refuse_past_terminal
     case "$VERDICT" in
         CONTINUE|STOP|STRUCTURAL) ;;
         *) echo "round-budget: --verdict=CONTINUE|STOP|STRUCTURAL required" >&2; exit 2 ;;
     esac
 
-    # Anti-vacuity rule 1. A CONTINUE with nothing to settle cannot be wrong.
-    #
-    # Non-emptiness alone was too weak: `--prediction=x` bought a round, so the
-    # "falsifiable prediction" claim was mostly prose. A prediction must now name
-    # somewhere to look -- a path, or a file:line. That is checkable; genuine
-    # falsifiability is not, and claiming to enforce it would be the same kind of
-    # overclaim. What is enforced is stated exactly, here and in SKILL.md.
+    # Rule 1: a CONTINUE with nothing settleable cannot be wrong, and a verdict
+    # that cannot be wrong is an opinion.
     if [ "$VERDICT" = "CONTINUE" ]; then
         CLEAN_PRED="$(sanitize "$PREDICTION")"
-        # ONE check, not two. A separate `-z` arm was logically subsumed by the
-        # length arm below -- an empty prediction is also a short one -- so no
-        # mutation of it could ever kill a test. A branch that cannot be wrong
-        # is not a safeguard, it is decoration with an error message attached.
         if ! prediction_is_valid "$CLEAN_PRED"; then
             echo "round-budget: --verdict=CONTINUE requires a --prediction that names" >&2
             echo "  WHERE to look -- a path, a file.ext, or a file:line -- and what" >&2
             echo "  class of defect is expected there. Got: '$CLEAN_PRED'" >&2
-            echo "  A continuation the next round cannot settle is an opinion, not a" >&2
-            echo "  verdict; that is the whole reason the prediction is mandatory." >&2
             exit 2
         fi
     fi
 
-    # F4. STRUCTURAL says "another fix round is the wrong move" -- without the
-    # directive naming WHAT to do instead, it is a stop with no instruction, and
-    # the verdict degrades to a blank "Directive:" line in the budget output.
+    # STRUCTURAL without a directive is a stop with no instruction.
     if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then
         echo "round-budget: --verdict=STRUCTURAL requires --directive." >&2
         echo "  Name the move: hoist the invariant | delete the justification |" >&2
-        echo "  cut the gate | close unmerged. A STRUCTURAL verdict with no" >&2
-        echo "  directive is a stop with no instruction." >&2
+        echo "  cut the gate | close unmerged." >&2
         exit 2
     fi
 
-    # Anti-vacuity rule 4. Verdicts cannot stack.
-    if [ "$VERDICT" = "CONTINUE" ] && [ "$(pending_continue)" = "1" ]; then
+    # Rule 4: verdicts cannot stack without an intervening round.
+    if [ "$VERDICT" = "CONTINUE" ] && [ "$LG_PENDING" = "1" ]; then
         echo "round-budget: a CONTINUE verdict is already live and unsettled." >&2
-        echo "  Record the round it authorized before recording another verdict;" >&2
-        echo "  stacking CONTINUEs inflates the budget without earning it." >&2
+        echo "  Record the round it authorized before recording another." >&2
         exit 2
     fi
 
@@ -421,11 +370,9 @@ record-verdict)
     ;;
 
 reset)
-    # Arc ids are branch-derived, so reusing a branch name reuses its ledger. That
-    # is right while an arc is live (a rebase must not reset the budget) and wrong
-    # once it is finished: a fresh arc on a recycled branch would inherit a stale
-    # STOP -- or worse a stale PASSED, which reads as "the gate is done".
-    # Archiving is therefore explicit and loud rather than automatic and silent.
+    # Arc ids are branch-derived, so a recycled branch reuses its ledger. Right
+    # while an arc is live (a rebase must not reset the budget), wrong once it is
+    # finished. Archiving is explicit and loud rather than automatic and silent.
     if [ ! -f "$LEDGER" ]; then
         echo "round-budget: no ledger at $LEDGER — nothing to reset."
         exit 0
@@ -447,173 +394,114 @@ show)
     ;;
 
 budget)
-    A="$(analyze)" || exit 6
-    N=$(printf '%s' "$A" | cut -f1)
-    LAST_SCORE=$(printf '%s' "$A" | cut -f2)
-    REGRESSED=$(printf '%s' "$A" | cut -f3)
-    MAXREF=$(printf '%s' "$A" | cut -f4)
-    MAXNOD=$(printf '%s' "$A" | cut -f5)
-    TERMINAL=$(printf '%s' "$A" | cut -f6)
-    BADSCORE=$(printf '%s' "$A" | cut -f7)
-    BADVERDICT=$(printf '%s' "$A" | cut -f8)
-    DIRECTIVE_OUT=$(printf '%s' "$A" | cut -f10)
-    BADROW=$(printf '%s' "$A" | cut -f11)
+    load_ledger
 
-    # ─── Fail closed on anything unparsable ───────────────────────────────
-    # An unreadable ledger already refuses to read as empty; a MALFORMED one
-    # must refuse just as loudly. "I could not parse it" is not "nothing is
-    # wrong", and the old code let a corrupt score fall through to AUTHORIZED.
-    if [ "$BADSCORE" != "0" ] || [ "$BADROW" != "0" ] || [ -n "$BADVERDICT" ]; then
-        echo "STOP — the ledger at $LEDGER does not parse."
-        [ "$BADSCORE" != "0" ]   && echo "  A round carries a non-integer or out-of-range score."
-        [ -n "$BADVERDICT" ]     && echo "  Unrecognised verdict token: '$BADVERDICT' (want CONTINUE|STOP|STRUCTURAL)."
-        [ "$BADROW" != "0" ]     && echo "  A row has an unrecognised shape."
-        echo "  Refusing to authorize against a ledger that cannot be read as a"
-        echo "  history. Fix or discard it; do not continue past it."
-        exit 6
-    fi
-
-    # Every CONTINUE row in the ledger must satisfy the same rule the recorder
-    # applies. A row that never passed `record-verdict` must not buy a round just
-    # because it is well-formed TSV.
-    # Every row is emitted with a fixed "P:" prefix so that an EMPTY prediction
-    # survives as a line rather than vanishing. The first version skipped empties
-    # with `[ -n "$vpred" ] || continue`, which is precisely the wrong polarity:
-    # a `VERDICT\tCONTINUE\t\t` row -- the emptiest possible vacuous
-    # continuation -- was waved through instead of rejected.
-    #
-    # And no here-doc. The previous construct materialised a temp file, so on
-    # unwritable or full temp storage bash printed "cannot create temp file for
-    # here document" and CARRIED ON into the authorize path: the guard added to
-    # close a fail-open was itself fail-open. Capture, check the capture, then
-    # split on newlines with globbing off.
-    if ! CONT_PREDS=$(read_rows | awk -F'\t' '$1=="VERDICT" && $2=="CONTINUE" {print "P:" $3}'); then
-        echo "STOP — could not read the CONTINUE rows of $LEDGER to validate them."
-        echo "  Unvalidated is not valid; refusing to authorize."
-        exit 6
-    fi
-    _old_ifs=$IFS
-    IFS='
-'
-    set -f
-    for _row in $CONT_PREDS; do
-        vpred=${_row#P:}
-        if ! prediction_is_valid "$vpred"; then
-            set +f; IFS=$_old_ifs
-            echo "STOP — a CONTINUE row in $LEDGER carries a prediction that would"
-            echo "  not pass the recorder: '$vpred'"
-            echo "  It names nowhere the next round could check, so it cannot be"
-            echo "  settled, so it cannot have earned a round."
-            exit 6
-        fi
-    done
-    set +f
-    IFS=$_old_ifs
-
-    if [ "$N" = "0" ]; then
-        # A ledger holding only a STOP verdict and no rounds still stops.
-        if [ -n "$TERMINAL" ]; then
-            echo "STOP — a $TERMINAL verdict is recorded and no round has run since."
+    if [ "$LG_N" = "0" ]; then
+        if [ -n "$LG_TERMINAL" ]; then
+            echo "STOP — a $LG_TERMINAL verdict is recorded and no round has run since."
             exit 6
         fi
         echo "AUTHORIZED — round 1 of $FREE_ROUNDS free rounds."
         exit 0
     fi
 
-    # ─── Absorbing stops, checked before EVERY other outcome ──────────────
-    # All four are computed over the WHOLE history, so none can be cleared by
-    # appending another row -- including a row claiming a passing score, which
-    # is the edge that re-opened this after the first fix. See the PASSED block
-    # below for why a stop outranks a pass.
-    if [ "$REGRESSED" != "0" ]; then
+    # ─── Precedence, as data ──────────────────────────────────────────────
+    #
+    # Ordering encoded ONCE, in this list, rather than in six sequential `if`
+    # blocks. Two of the three review rounds landed on ordering defects — a
+    # ceiling checked in the wrong place, then PASSED checked above the stops —
+    # and six branches are six places to get the order wrong.
+    #
+    # Stops come before PASSED because the score is the agent's OWN SELF-REPORT:
+    # if a pass outranked a stop, every stop would cost one integer to escape.
+    PRECEDENCE="regressed refuted nodefect terminal passed ceiling free review_required earned"
+
+    rule_regressed() {
+        [ "$LG_REGRESSED" != "0" ] || return 1
         echo "STOP — the score REGRESSED at some point in this arc."
-        echo "  A regression is not a plateau. Escalate rather than take another swing."
-        exit 6
-    fi
-    if [ "$MAXREF" -ge 2 ]; then
-        echo "STOP — $MAXREF consecutive predictions were REFUTED."
+        echo "  A regression is not a plateau. Escalate rather than swing again."
+        return 0
+    }
+    rule_refuted() {
+        [ "$LG_MAXREF" -ge 2 ] || return 1
+        echo "STOP — $LG_MAXREF consecutive predictions were REFUTED."
         echo "  The continuation review was wrong twice running about what the next"
-        echo "  round would find. It has no remaining claim on the budget, and this"
-        echo "  does not clear by recording a later CONFIRMED round."
-        exit 6
-    fi
-    if [ "$MAXNOD" -ge 2 ]; then
-        echo "STOP — $MAXNOD consecutive rounds reproduced NO defect in the change."
+        echo "  round would find; this does not clear by recording a later CONFIRMED."
+        return 0
+    }
+    rule_nodefect() {
+        [ "$LG_MAXNOD" -ge 2 ] || return 1
+        echo "STOP — $LG_MAXNOD consecutive rounds reproduced NO defect in the change."
         echo "  The currency of a continuation is a reproduced, executable defect."
-        echo "  Rounds that find nothing do not earn more rounds."
-        exit 6
-    fi
-    if [ -n "$TERMINAL" ]; then
-        if [ "$TERMINAL" = "STRUCTURAL" ]; then
+        return 0
+    }
+    rule_terminal() {
+        [ -n "$LG_TERMINAL" ] || return 1
+        if [ "$LG_TERMINAL" = "STRUCTURAL" ]; then
             echo "STOP (STRUCTURAL) — another fix round is the wrong move."
-            echo "  Directive: $DIRECTIVE_OUT"
+            echo "  Directive: $LG_DIRECTIVE"
             echo "  The defect stream is repeating in CLASS while moving in LOCATION."
             echo "  Change the shape of the fix, do not take another swing at it."
         else
             echo "STOP — the continuation review returned STOP."
         fi
-        exit 6
-    fi
-
-    # ─── Terminal SUCCESS, reached only once no stop has fired ────────────
-    #
-    # This used to sit ABOVE the stops, on the reasoning that "reaching the bar
-    # IS the exit". That was wrong, and it re-opened the absorbing property at
-    # the one adjacent edge that mattered: the score is the AGENT'S OWN
-    # SELF-REPORT, so every stop could be cleared by appending a single round
-    # claiming a 7. A stop that costs one integer to escape is not a stop -- and
-    # the code contradicted its own comment, its own STOP message, and the
-    # SKILL.md row asserting the property.
-    #
-    # A stop therefore outranks a pass. An arc that scores >= 7 AFTER being told
-    # to stop -- or after a regression, or after two refuted predictions -- has
-    # not passed; it has produced a number a human needs to look at.
-    if [ "$LAST_SCORE" -ge "$PASS_SCORE" ]; then
-        echo "PASSED — last round scored $LAST_SCORE (>= $PASS_SCORE). No further round needed."
-        exit 3
-    fi
-
-    # ─── Bounds ───────────────────────────────────────────────────────────
-    if [ "$N" -ge "$HUMAN_CEILING" ]; then
-        echo "HUMAN — $N rounds recorded (ceiling $HUMAN_CEILING)."
+        return 0
+    }
+    rule_passed() {
+        [ "$LG_SCORE" -ge "$PASS_SCORE" ] || return 1
+        echo "PASSED — last round scored $LG_SCORE (>= $PASS_SCORE). No further round needed."
+        return 0
+    }
+    rule_ceiling() {
+        [ "$LG_N" -ge "$HUMAN_CEILING" ] || return 1
+        echo "HUMAN — $LG_N rounds recorded (ceiling $HUMAN_CEILING)."
         echo "  Escalate through the handback contract with the ledger attached."
-        echo "  No verdict buys another round here: unbounded self-granted budget"
-        echo "  is the resource-acquisition pillar the workspace leaves open by"
-        echo "  design. (A passing score is not a continuation; it exits above.)"
-        exit 7
-    fi
-
-    if [ "$N" -lt "$FREE_ROUNDS" ]; then
-        echo "AUTHORIZED — round $((N+1)) of $FREE_ROUNDS free rounds."
-        exit 0
-    fi
-
-    # ─── Rounds 4..7: a live CONTINUE is required ─────────────────────────
-    # The verdict must be the MOST RECENT row. One already settled by a later
-    # round has spent its authority; reusing it is how a single CONTINUE would
-    # buy three rounds.
-    LAST_ANY="$(last_row_any)"
-    if [ "$(field "$LAST_ANY" 1)" != "VERDICT" ]; then
-        echo "REVIEW-REQUIRED — $N rounds recorded; past the $FREE_ROUNDS free rounds."
+        echo "  No verdict buys another round here."
+        return 0
+    }
+    rule_free() {
+        [ "$LG_N" -lt "$FREE_ROUNDS" ] || return 1
+        echo "AUTHORIZED — round $((LG_N+1)) of $FREE_ROUNDS free rounds."
+        return 0
+    }
+    # Split from rule_earned so each rule owns ONE outcome. Fused, the rule chose
+    # the message while the dispatcher re-evaluated the same condition to choose
+    # the exit code -- the same condition in two places, which is the defect class
+    # this restructure exists to remove.
+    rule_review_required() {
+        [ "$(field "$(last_row_any)" 1)" != "VERDICT" ] || return 1
+        echo "REVIEW-REQUIRED — $LG_N rounds recorded; past the $FREE_ROUNDS free rounds."
         echo "  Run the continuation review, then record its verdict:"
         echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=... [--prediction=...]"
         echo "  The brief's default is STOP; the burden is on continuation."
-        exit 5
-    fi
-
-    LAST_VERDICT=$(field "$LAST_ANY" 2)
-    if [ "$LAST_VERDICT" = "CONTINUE" ]; then
-        echo "AUTHORIZED — round $((N+1)), earned by a CONTINUE verdict."
-        echo "  Live prediction: $(field "$LAST_ANY" 3)"
+        return 0
+    }
+    # STOP/STRUCTURAL are caught by rule_terminal, so CONTINUE is all that can be
+    # live here. The verdict must be the MOST RECENT row: one already settled by a
+    # later round has spent its authority.
+    rule_earned() {
+        local last; last="$(last_row_any)"
+        [ "$(field "$last" 1)" = "VERDICT" ] || return 1
+        echo "AUTHORIZED — round $((LG_N+1)), earned by a $(field "$last" 2) verdict."
+        echo "  Live prediction: $(field "$last" 3)"
         echo "  The next recorded round MUST settle it (--settles=CONFIRMED|REFUTED)."
-        exit 0
-    fi
-
-    # Unreachable: STOP/STRUCTURAL exit above, anything else is caught by the
-    # parse guard. An explicit arm all the same -- the first version fell off the
-    # end of a three-arm `case` with no default and returned 0 = AUTHORIZED in
-    # silence, which is the worst possible way for this script to be wrong.
-    echo "STOP — unhandled verdict state '$LAST_VERDICT' in $LEDGER." >&2
+        return 0
+    }
+    # Each rule prints its own outcome and returns 0 when it fires. Exit codes
+    # are keyed off the rule name so the mapping is visible in one place.
+    for rule in $PRECEDENCE; do
+        if "rule_$rule"; then
+            case "$rule" in
+                regressed|refuted|nodefect|terminal) exit 6 ;;
+                passed)  exit 3 ;;
+                ceiling) exit 7 ;;
+                free)            exit 0 ;;
+                review_required) exit 5 ;;
+                earned)          exit 0 ;;
+            esac
+        fi
+    done
+    echo "STOP — no precedence rule matched for $LEDGER; refusing to guess." >&2
     exit 6
     ;;
 esac

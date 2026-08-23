@@ -115,6 +115,19 @@ VERDICT: CONTINUE | STOP | STRUCTURAL
 CONFIDENCE: and the ONE thing that would flip this verdict.
 ```
 
+**After a `STRUCTURAL` verdict.** It is an absorbing stop, so `budget` refuses
+every further round on that ledger — deliberately: it means *another fix round on
+this shape is the wrong move*. Once the directive has actually been executed the
+artifact is a different shape, and the sequence is:
+
+1. execute the directive (hoist / delete / cut / close)
+2. `cross-review round reset --run-id=$ID` — archives the ledger, loudly
+3. run a fresh review round against the reshaped artifact
+
+Step 2 is the one that could be abused, which is why it archives rather than
+deletes and prints where it went. Doing it *without* step 1 is laundering a stop,
+and the archived ledger is the evidence either way.
+
 `STRUCTURAL` is a verdict, not a regex. The ledger *proposes* the shape ("this
 defect class has now appeared at three distinct locations"); the reviewer
 *disposes*. It is how eighteen rounds of chasing the same defect into a new branch
@@ -150,12 +163,13 @@ appended to it.
 
 | Property | Why it holds |
 |---|---|
-| A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. `record-round` also refuses to append past a terminal state |
+| A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. both recorders refuse to append past a terminal state |
 | A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
+| One guard site, not one per caller | every command passes through `load_ledger`, and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |
 
 **NOT enforced — the bypasses, stated rather than implied:**
 

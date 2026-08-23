@@ -123,11 +123,11 @@ mutate "pass score 7->99"        "T12" 'PASS_SCORE=7'   'PASS_SCORE=99'
 # have to target a branch that no longer exists, which is why the redundant `-z`
 # arm was removed rather than kept for the sake of a proof.
 mutate "rule2 settles optional" "T9" \
-    'if [ "$(pending_continue)" = "1" ]; then' \
-    'if [ "$(pending_continue)" = "9" ]; then'
+    'if [ "$LG_PENDING" = "1" ]; then' \
+    'if [ "$LG_PENDING" = "9" ]; then'
 mutate "rule4 stacking allowed" "T10" \
-    'if [ "$VERDICT" = "CONTINUE" ] && [ "$(pending_continue)" = "1" ]; then' \
-    'if [ "$VERDICT" = "CONTINUE" ] && [ "$(pending_continue)" = "9" ]; then'
+    'if [ "$VERDICT" = "CONTINUE" ] && [ "$LG_PENDING" = "1" ]; then' \
+    'if [ "$VERDICT" = "CONTINUE" ] && [ "$LG_PENDING" = "9" ]; then'
 
 # Field-separator sanitising.
 mutate "sanitize passes tabs" "T14" \
@@ -141,8 +141,8 @@ mutate "sanitize passes tabs" "T14" \
 # comment above it. A non-unique anchor is refused by the guard rather than
 # applied to whichever site came first.
 mutate "unreadable ledger fails open" "T15" \
-    $'# table, and an undocumented code is one no caller can branch on.\n            exit 6' \
-    $'# table, and an undocumented code is one no caller can branch on.\n            exit 0'
+    $'ledger exists at $LEDGER but cannot be read." >&2\n            exit 6' \
+    $'ledger exists at $LEDGER but cannot be read." >&2\n            exit 0'
 
 # NOTE on the stop/pass ORDERING -- where the round-2 regression lived.
 # It has no mutation of its own, and that is not an omission. Ordering cannot
@@ -155,19 +155,17 @@ mutate "unreadable ledger fails open" "T15" \
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
 mutate "stale verdict re-authorizes" "T13" \
-    'if [ "$(field "$LAST_ANY" 1)" != "VERDICT" ]; then' \
-    'if [ "$(field "$LAST_ANY" 1)" = "NEVERMATCHES" ]; then'
+    '[ "$(field "$(last_row_any)" 1)" != "VERDICT" ] || return 1' \
+    '[ "$(field "$(last_row_any)" 1)" = "NEVERMATCHES" ] || return 1'
 
 # ─── The absorbing stops and the fail-closed guards ───────────────────────
 # Each of these was escapable or silent in the first version, so each gets its
 # own proof that the test pinning it can actually fail.
-mutate "defect streak 2->99"        "T1"  'if [ "$MAXNOD" -ge 2 ]; then' 'if [ "$MAXNOD" -ge 99 ]; then'
-mutate "refuted no longer absorbing" "T21" 'if [ "$MAXREF" -ge 2 ]; then' 'if [ "$MAXREF" -ge 99 ]; then'
-mutate "terminal verdict ignored"    "T19" 'if [ -n "$TERMINAL" ]; then
-        if [ "$TERMINAL" = "STRUCTURAL" ]; then' 'if [ -z "$TERMINAL" ] && [ -n "$TERMINAL" ]; then
-        if [ "$TERMINAL" = "STRUCTURAL" ]; then'
-mutate "regression check disabled"   "T5"  'if [ "$REGRESSED" != "0" ]; then' 'if [ "$REGRESSED" = "IMPOSSIBLE" ]; then'
-mutate "bad score fails open"        "T23" '[ "$BADSCORE" != "0" ] || [ "$BADROW" != "0" ] || [ -n "$BADVERDICT" ]' '[ "$BADSCORE" = "IMPOSSIBLE" ]'
+mutate "defect streak 2->99"        "T1"  '[ "$LG_MAXNOD" -ge 2 ] || return 1' '[ "$LG_MAXNOD" -ge 99 ] || return 1'
+mutate "refuted no longer absorbing" "T21" '[ "$LG_MAXREF" -ge 2 ] || return 1' '[ "$LG_MAXREF" -ge 99 ] || return 1'
+mutate "terminal verdict ignored"    "T19" '[ -n "$LG_TERMINAL" ] || return 1' '[ -z "$LG_TERMINAL" ] || return 1'
+mutate "regression check disabled"   "T5"  '[ "$LG_REGRESSED" != "0" ] || return 1' '[ "$LG_REGRESSED" = "IMPOSSIBLE" ] || return 1'
+mutate "bad score fails open"        "T23" '[ "$badscore" != "0" ] || [ "$badrow" != "0" ] || [ -n "$badverdict" ]' '[ "$badscore" = "IMPOSSIBLE" ]'
 mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
 # Both arms now live in prediction_is_valid(), which is called from the recorder
 # AND from budget. One definition, so one mutation each.
@@ -180,16 +178,19 @@ mutate "ledger seam ungated"           "T26" 'if [ "${ROUND_BUDGET_TEST_LEDGER:-
 mutate "row arity unchecked" "T28" 'if (NF != 4) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 
 mutate "read-time prediction check off" "T29" 'if ! prediction_is_valid "$vpred"; then' 'if false; then'
-mutate "recorder appends to corrupt ledger" "T30" '    local a; a="$(analyze)" || exit 6' '    local a; a="$(analyze)" || exit 6; return 0'
+# NOTE: the recorder's corrupt-ledger guard has no separate mutation any more.
+# It is the SAME check as "bad score fails open" now that every command passes
+# through load_ledger -- one site, one proof. That single mutation reddens T23
+# and T30 together, which is the hoist working rather than coverage lost.
 
-mutate "blank predictions skipped again" "T33" 'vpred=${_row#P:}' 'vpred=${_row#P:}; [ -n "$vpred" ] || continue'
+mutate "blank predictions skipped again" "T33" 'vpred=${row#P:}' 'vpred=${row#P:}; [ -n "$vpred" ] || continue'
 
 # $'...' so the newline is a REAL newline: a plain single-quoted "\n" is a
 # literal backslash-n and matches nothing, which the accounting then reports
 # as an ANCHOR ERROR rather than letting it pass silently.
 mutate "record-verdict may pass a terminal" "T35" \
-    $'record-verdict)\n    with_lock\n    refuse_corrupt_ledger\n    refuse_past_terminal' \
-    $'record-verdict)\n    with_lock\n    refuse_corrupt_ledger'
+    $'record-verdict)\n    with_lock\n    load_ledger\n    refuse_past_terminal' \
+    $'record-verdict)\n    with_lock\n    load_ledger'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
