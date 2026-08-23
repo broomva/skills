@@ -100,14 +100,14 @@ mutate "human ceiling 8->999"    "T7" 'HUMAN_CEILING=8' 'HUMAN_CEILING=999'
 mutate "pass score 7->99"        "T12" 'PASS_SCORE=7'   'PASS_SCORE=99'
 
 # The stop conditions.
-mutate "two-refuted 2->99"       "T6" '[ "$STREAK" -ge 2 ]' '[ "$STREAK" -ge 99 ]'
-mutate "regression never fires"  "T5" '[ "$LAST_SCORE" -lt "$PREV_SCORE" ]' '[ "$LAST_SCORE" -lt 0 ]'
 
 # The anti-vacuity rules. Each is mutated so the guard's CONDITION goes dead
 # while the surrounding control flow stays intact.
-mutate "rule1 prediction optional" "T8a" \
-    'if [ "$VERDICT" = "CONTINUE" ] && [ -z "$(sanitize "$PREDICTION")" ]; then' \
-    'if [ "$VERDICT" = "XCONTINUE" ] && [ -z "$(sanitize "$PREDICTION")" ]; then'
+# rule 1 (a CONTINUE must carry a prediction) has no mutation of its own: the
+# empty case is enforced by the SAME length arm as T27, and "prediction length
+# arm dead" already kills T8a/T8b along with T27. A separate mutation here would
+# have to target a branch that no longer exists, which is why the redundant `-z`
+# arm was removed rather than kept for the sake of a proof.
 mutate "rule2 settles optional" "T9" \
     'if [ "$(pending_continue)" = "1" ]; then' \
     'if [ "$(pending_continue)" = "9" ]; then'

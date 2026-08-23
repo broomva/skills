@@ -302,16 +302,16 @@ record-verdict)
     # overclaim. What is enforced is stated exactly, here and in SKILL.md.
     if [ "$VERDICT" = "CONTINUE" ]; then
         CLEAN_PRED="$(sanitize "$PREDICTION")"
-        if [ -z "$CLEAN_PRED" ]; then
-            echo "round-budget: --verdict=CONTINUE requires a non-empty --prediction." >&2
-            echo "  A continuation that cannot be refuted is an opinion, not a verdict." >&2
-            exit 2
-        fi
+        # ONE check, not two. A separate `-z` arm was logically subsumed by the
+        # length arm below -- an empty prediction is also a short one -- so no
+        # mutation of it could ever kill a test. A branch that cannot be wrong
+        # is not a safeguard, it is decoration with an error message attached.
         if [ "${#CLEAN_PRED}" -lt 12 ] || ! printf '%s' "$CLEAN_PRED" | grep -qE '[A-Za-z0-9_-]+\.[A-Za-z]+|/|:[0-9]+'; then
-            echo "round-budget: --prediction must name WHERE to look -- a path, a" >&2
-            echo "  file.ext, or a file:line -- and say what class of defect is" >&2
-            echo "  expected there. Got: '$CLEAN_PRED'" >&2
-            echo "  A prediction with no location cannot be settled by the next round." >&2
+            echo "round-budget: --verdict=CONTINUE requires a --prediction that names" >&2
+            echo "  WHERE to look -- a path, a file.ext, or a file:line -- and what" >&2
+            echo "  class of defect is expected there. Got: '$CLEAN_PRED'" >&2
+            echo "  A continuation the next round cannot settle is an opinion, not a" >&2
+            echo "  verdict; that is the whole reason the prediction is mandatory." >&2
             exit 2
         fi
     fi
