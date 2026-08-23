@@ -311,6 +311,32 @@ else
     fail "T28: arity" "extra-field exit=$RC (want 6), well-formed exit=$RC2 (want 0)"
 fi
 
+# ── T29: a CONTINUE row must satisfy the rule at READ time too ────────────
+# Rule 1 was enforced only in record-verdict, so a row that never passed the
+# recorder still bought a round. Validating at the entry point but not against
+# the stored artifact is the same shape as computing a stop from the TAIL.
+echo "T29. a crafted CONTINUE row with no location does not authorize"
+LED=$(newledger t29)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tone more round should do it\t\n' > "$LED"
+RC=$(rb budget --run-id=t29 --ledger="$LED")
+LED2=$(newledger t29b)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tempty-input branch at scripts/foo.sh:88\t\n' > "$LED2"
+RC2=$(rb budget --run-id=t29b --ledger="$LED2")
+if [ "$RC" = "6" ] && [ "$RC2" = "0" ]; then
+    ok "T29: vacuous CONTINUE row STOPs, located one still authorizes"
+else
+    fail "T29: read-time prediction check" "vacuous exit=$RC (want 6), located exit=$RC2 (want 0)"
+fi
+
+# ── T30: the recorder must not append to a corrupt ledger ─────────────────
+# Fail-closed landed in budget and nowhere else, so record-* grew a history that
+# no decision could rest on.
+echo "T30. record-* refuses to append to a corrupt ledger"
+LED=$(newledger t30)
+printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
+RC=$(rb record-round --run-id=t30 --ledger="$LED" --score=5 --defect=yes)
+if [ "$RC" = "6" ]; then ok "T30: corrupt ledger refuses appends"; else fail "T30: corrupt ledger refuses appends" "exit $RC, want 6"; fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

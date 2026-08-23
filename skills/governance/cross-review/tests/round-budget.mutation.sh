@@ -149,6 +149,9 @@ mutate "ledger seam ungated"           "T26" 'if [ "${ROUND_BUDGET_TEST_LEDGER:-
 
 mutate "row arity unchecked" "T28" 'if (NF != 4) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 
+mutate "read-time prediction check off" "T29" 'if ! prediction_is_valid "$vpred"; then' 'if false; then'
+mutate "recorder appends to corrupt ledger" "T30" '    local a; a="$(analyze)" || exit 6' '    local a; a="$(analyze)" || exit 6; return 0'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ -n "$($GIT status --porcelain -- "$TARGET")" ]; then

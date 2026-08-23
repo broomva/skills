@@ -171,6 +171,20 @@ sanitize() { printf '%s' "${1:-}" | tr '\t\n' '  ' | sed 's/  *$//'; }
 # mkdir is atomic on every POSIX filesystem, so it is the portable test-and-set
 # bash has. Without it two concurrent `record-round` calls after one live
 # CONTINUE both pass pending_continue() and spend the same earned round twice.
+# The prediction rule, defined ONCE. It was enforced only in `record-verdict`,
+# so a CONTINUE row that never passed the recorder -- a hand-edited ledger, or a
+# row written by an older version -- authorized a round on read. Validating at
+# the entry point but not against the stored state is the same shape as computing
+# a stop from the ledger's TAIL: the rule holds for the path you came in by, and
+# not for the artifact it is supposed to bind.
+#
+# One function, two callers. Two copies of a regex is how the two sites drift.
+prediction_is_valid() {
+    local pred="$1"
+    [ "${#pred}" -ge 12 ] || return 1
+    printf '%s' "$pred" | grep -qE '[A-Za-z0-9_-]+\.[A-Za-z]+|/|:[0-9]+'
+}
+
 LOCK_DIR=""
 with_lock() {
     LOCK_DIR="$LEDGER.lock"
@@ -181,6 +195,13 @@ with_lock() {
     # full retry budget before failing. A lock that is never released is worse
     # than no lock.
     until mkdir "$LOCK_DIR" 2>/dev/null; do
+        # Every mkdir failure used to read as contention, so an unwritable or
+        # missing parent spun the full retry budget and then misdiagnosed itself.
+        if [ ! -d "$LOCK_DIR" ]; then
+            echo "round-budget: cannot create $LOCK_DIR — the ledger's directory is" >&2
+            echo "  missing or unwritable. This is not lock contention." >&2
+            exit 2
+        fi
         tries=$((tries+1))
         if [ "$tries" -gt 50 ]; then
             echo "round-budget: could not acquire $LOCK_DIR after 50 tries." >&2
@@ -258,6 +279,20 @@ analyze() {
 }
 
 count_rounds_a()   { printf '%s' "$1" | cut -f1; }
+
+# Fail-closed landed in `budget` and nowhere else, so the recorder happily
+# appended to a corrupt history -- growing the thing nothing can decide on.
+refuse_corrupt_ledger() {
+    local a; a="$(analyze)" || exit 6
+    if [ "$(printf '%s' "$a" | cut -f7)" != "0" ] \
+       || [ "$(printf '%s' "$a" | cut -f11)" != "0" ] \
+       || [ -n "$(printf '%s' "$a" | cut -f8)" ]; then
+        echo "round-budget: $LEDGER does not parse; refusing to append to it." >&2
+        echo "  Appending to a corrupt history grows something no decision can" >&2
+        echo "  rest on. Run 'budget' for the diagnosis, then fix or discard it." >&2
+        exit 6
+    fi
+}
 pending_continue() {
     local a; a="$(analyze)" || return 1
     printf '%s' "$a" | cut -f9
@@ -267,6 +302,7 @@ case "$COMMAND" in
 
 record-round)
     with_lock
+    refuse_corrupt_ledger
     [ -n "$SCORE" ]  || { echo "round-budget: --score=N required" >&2; exit 2; }
     case "$SCORE" in ''|*[!0-9]*) echo "round-budget: --score must be an integer 0-10" >&2; exit 2 ;; esac
     [ "$SCORE" -le 10 ] || { echo "round-budget: --score must be 0-10" >&2; exit 2; }
@@ -303,6 +339,7 @@ record-round)
 
 record-verdict)
     with_lock
+    refuse_corrupt_ledger
     case "$VERDICT" in
         CONTINUE|STOP|STRUCTURAL) ;;
         *) echo "round-budget: --verdict=CONTINUE|STOP|STRUCTURAL required" >&2; exit 2 ;;
@@ -321,7 +358,7 @@ record-verdict)
         # length arm below -- an empty prediction is also a short one -- so no
         # mutation of it could ever kill a test. A branch that cannot be wrong
         # is not a safeguard, it is decoration with an error message attached.
-        if [ "${#CLEAN_PRED}" -lt 12 ] || ! printf '%s' "$CLEAN_PRED" | grep -qE '[A-Za-z0-9_-]+\.[A-Za-z]+|/|:[0-9]+'; then
+        if ! prediction_is_valid "$CLEAN_PRED"; then
             echo "round-budget: --verdict=CONTINUE requires a --prediction that names" >&2
             echo "  WHERE to look -- a path, a file.ext, or a file:line -- and what" >&2
             echo "  class of defect is expected there. Got: '$CLEAN_PRED'" >&2
@@ -391,6 +428,22 @@ budget)
         echo "  history. Fix or discard it; do not continue past it."
         exit 6
     fi
+
+    # Every CONTINUE row in the ledger must satisfy the same rule the recorder
+    # applies. A row that never passed `record-verdict` must not buy a round just
+    # because it is well-formed TSV.
+    while IFS= read -r vpred; do
+        [ -n "$vpred" ] || continue
+        if ! prediction_is_valid "$vpred"; then
+            echo "STOP — a CONTINUE row in $LEDGER carries a prediction that would"
+            echo "  not pass the recorder: '$vpred'"
+            echo "  It names nowhere the next round could check, so it cannot be"
+            echo "  settled, so it cannot have earned a round."
+            exit 6
+        fi
+    done <<EOF
+$(read_rows | awk -F'\t' '$1=="VERDICT" && $2=="CONTINUE" {print $3}')
+EOF
 
     if [ "$N" = "0" ]; then
         # A ledger holding only a STOP verdict and no rounds still stops.
