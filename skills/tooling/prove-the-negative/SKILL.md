@@ -37,6 +37,33 @@ An assertion that errored proves nothing about what its subject cannot reach.
 Fail it. The tempting shortcut — *"it didn't succeed, so the denial held"* — is
 rule 1 again, one case down.
 
+## Grade the effect, never the narration
+
+Rule 2 is the one most likely to be violated by the person who just wrote rule 2.
+
+A grader that regex-matches what the subject *said* collapses four distinct
+outcomes onto two output shapes:
+
+| outcome | what a narration-grader sees |
+|---|---|
+| denied, with a message | matches → PASS |
+| denied **silently** | empty → FAIL *(false alarm)* |
+| **never attempted** | prose → FAIL *(false alarm)* |
+| **genuinely succeeded** | empty → FAIL *(safe by luck, not design)* |
+
+Worse are assertions written as the **negation** of narration —
+`!output.includes(sibling)`, `!/^0$/` for a denied `sudo`. A subject that simply
+declines to run the probe emits prose containing none of those tokens, and the
+case **PASSES**. That is fail-open, and it is how a cross-tenant isolation check
+came to be scored by something that cannot distinguish *"the sibling is
+invisible"* from *"the agent refused to look."*
+
+The fix is structural, not a better regex: **have the probe write its result to
+a file, and grade the file.** The subject's reply is discarded. Then the three
+states are distinguishable — the file is absent (never ran), or its bytes say
+denied, or its bytes say it worked — and an effect the harness can observe
+directly (`existsSync` on the path that should not exist) beats any of them.
+
 ## Verdicts are three-valued
 
 `PASS` / `FAIL` / **`INVALID`**, and the third is the point.
@@ -45,7 +72,12 @@ rule 1 again, one case down.
 |---|---|---|
 | PASS | controls fired, assertions held | 0 |
 | FAIL | controls fired, an assertion broke — **a real finding** | 1 |
-| INVALID | controls did not fire — **you learned nothing** | 2 |
+| INVALID | controls did not fire, or a case never ran — **you learned nothing** | 2 |
+
+A `skipped` outcome — the subject declined, the probe never executed — is
+`INVALID`, never `FAIL`. It is a hole in the measurement, not a result about the
+boundary. Scoring it `FAIL` raises a false alarm about the subject; scoring it
+`PASS` is the original bug in miniature.
 
 Collapsing INVALID into FAIL re-creates the bug at the reporting layer: "we
 measured nothing" starts reading as "we found a problem", and gets triaged as

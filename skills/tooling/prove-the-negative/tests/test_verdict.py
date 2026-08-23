@@ -118,3 +118,34 @@ class TestExitCodes:
         r = subprocess.run([sys.executable, str(SCRIPT), "-"],
                            input="{not json", text=True, capture_output=True)
         assert r.returncode == 2
+
+
+class TestSkippedIsAHoleNotAResult:
+    """A probe the subject declined to run measured nothing. Scoring it FAIL
+    raises a false alarm; scoring it PASS is the original bug in miniature."""
+
+    def test_a_skipped_assertion_makes_the_run_INVALID(self):
+        cases = [c("ctl", "control", "pass"),
+                 c("write outside denied", "assertion", "skipped")]
+        r = run_verdict(cases)
+        assert r.verdict == "INVALID"
+        assert "write outside denied" in r.culprits
+
+    def test_skipped_is_not_FAIL(self):
+        # Measured: an agent declined a probe on its own judgment and a
+        # narration-reading grader recorded a confinement failure that had not
+        # happened. A disposition is not a boundary result in either direction.
+        skipped = run_verdict([c("ctl", "control", "pass"), c("x", "assertion", "skipped")])
+        broke = run_verdict([c("ctl", "control", "pass"), c("x", "assertion", "fail")])
+        assert skipped.verdict == "INVALID"
+        assert broke.verdict == "FAIL"
+
+    def test_skipped_is_not_PASS(self):
+        assert run_verdict([c("ctl", "control", "pass"),
+                            c("x", "assertion", "skipped")]).verdict != "PASS"
+
+    def test_a_skipped_CONTROL_is_INVALID_too(self):
+        assert run_verdict([c("ctl", "control", "skipped")]).verdict == "INVALID"
+
+    def test_skipped_parses(self):
+        assert parse_cases([{"name": "x", "kind": "assertion", "outcome": "skipped"}])[0].outcome == "skipped"
