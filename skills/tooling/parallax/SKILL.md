@@ -141,6 +141,20 @@ verify both shas after every push.
 
 ## Tests
 
+Run from the skill's own directory, so it works both in the monorepo and from an
+install (`~/.claude/skills/parallax/`), where no `skills/tooling/` prefix exists:
+
 ```bash
-python3 -m pytest skills/tooling/parallax/tests/ -q    # 29 passed
+# from the skill's own directory -- in the monorepo that is
+# skills/tooling/parallax/, from an install it is ~/.claude/skills/parallax/
+python3 -m pytest tests/ -q          # 41 passed (34 hermetic + 7 live-CLI)
 ```
+
+The 7 live-CLI tests **skip** unless `parallax` is on PATH (`bun link` in a parallax
+checkout). A run reporting `34 passed, 7 skipped` is the expected result without it;
+`41 passed` means the remedy table was checked against the real binary.
+
+`tests/test_skill_md_claims.py` asserts the path and the count above are true, because
+this section was wrong when it shipped: it named `skills/tooling/parallax/tests/`,
+which does not resolve from an install, and said 29 when there were 36. A documented
+command a reader copies and cannot run teaches them the skill is broken.
