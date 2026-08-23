@@ -157,7 +157,7 @@ def _open_questions(status: dict[str, Any]) -> list[dict[str, Any]]:
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
-def next_step(status: dict[str, Any]) -> tuple[str, str] | None:
+def next_step(status: dict[str, Any]) -> tuple[str | None, str] | None:
     """(command, why) for a StatusValue, or None if the state is not one we know.
 
     Mirrors the state machine in src/tools/handlers.ts: a pending head takes
@@ -165,10 +165,16 @@ def next_step(status: dict[str, Any]) -> tuple[str, str] | None:
     to PROPOSED even in a workspace that has already run.
     """
     if status.get("readable") is False:
+        # No command, deliberately. Returning `parallax status` here -- the command
+        # that produced this very result -- invites an agent to retry it in the same
+        # workspace forever. Nothing Parallax offers fixes an unreadable directory;
+        # the remedy is outside the tool.
         return (
-            "parallax status",
-            "The workspace is not readable. Nothing can be proposed from a directory that "
-            "cannot be read -- and note a DENIED read reports as empty, not as an error.",
+            None,
+            "The workspace is not readable, and no Parallax command changes that. Give the "
+            "session a readable working directory, then start again. Note a DENIED read "
+            "reports as an EMPTY directory rather than an error, so an unexpectedly empty "
+            "workspace is the same symptom wearing a different face.",
         )
 
     state = status.get("state")
@@ -282,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
     command, why = step
     if a.json:
         print(json.dumps({"state": doc.get("state"), "known": True, "next": command, "why": why}))
+    elif command is None:
+        # Determined, and the determination is "no Parallax command applies".
+        print(f"next: (none -- this needs a change outside Parallax)\nwhy:  {why}")
     else:
         print(f"next: {command}\nwhy:  {why}")
     return 0

@@ -3,6 +3,11 @@ name: test-parallax
 # Pytest gate for the `parallax` skill (skills/tooling/parallax/). Path-filtered so
 # it runs ONLY when that directory changes.
 #
+# THIS DIRECTORY IS A VENDORED COPY. Canonical is github.com/broomva/parallax at
+# skills/parallax/, which runs the same suite in its own `skill` workflow. Editing
+# this copy alone will pass here and then FAIL `parallax-sync`, which is the point:
+# change it upstream, then copy it here.
+#
 # TWO SUITES, AND ONLY ONE OF THEM RUNS HERE.
 #
 # tests/test_parallax_next.py is hermetic: it drives the pure functions and the

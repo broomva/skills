@@ -1,6 +1,9 @@
 """Unit tests for the parallax skill's deterministic core.
 
-Run: python3 -m pytest skills/tooling/parallax/tests/ -q
+Run from the skill's own directory (relative on purpose -- this skill has three
+homes and no absolute path is correct in all of them):
+
+    python3 -m pytest tests/ -q
 """
 
 from __future__ import annotations
@@ -147,8 +150,18 @@ def test_unreadable_workspace_short_circuits_every_state():
     # readable:false must win even when the state field says something actionable.
     step = pn.next_step(_status("IDLE", readable=False))
     assert step is not None
-    assert step[0] == "parallax status"
     assert "DENIED" in step[1]
+
+
+def test_unreadable_workspace_returns_no_command_rather_than_looping():
+    """It must NOT return `parallax status` -- the command that produced this result.
+
+    An agent following the router mechanically would retry it in the same workspace
+    forever. Nothing Parallax offers fixes an unreadable directory.
+    """
+    step = pn.next_step(_status("IDLE", readable=False))
+    assert step is not None
+    assert step[0] is None, f"expected no command, got {step[0]!r}"
 
 
 def test_unknown_state_returns_none_rather_than_a_default():
