@@ -525,6 +525,11 @@ if [ "$N_ARCH" = "2" ]; then ok "T40: both archives survive"; else fail "T40: ar
 # One test per stop class, because the classes are what the shipped predicate
 # conflated, and each carries its own mutation that widens the predicate by
 # exactly that one class.
+#
+# Every one of them asserts BOTH arms -- refused plainly, archived under --force.
+# Asserting only the refusal is the vacuity T1/T2 exist to rule out: a gate that
+# refuses EVERYTHING passes a refusal-only test while being useless, and the
+# --force arm is this file's T2 for each class.
 
 # ── T43: a score regression is a stop, not a finished arc ─────────────────
 echo "T43. reset refuses a regression, and --force says what it discarded"
@@ -545,14 +550,26 @@ echo "T44. reset refuses an arc stopped by two REFUTED predictions"
 LED=$(newledger t44)
 printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\nVERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\n' > "$LED"
 RC=$(rb reset --run-id=t44 --ledger="$LED")
-if [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T44: two-REFUTED stop is not resettable"; else fail "T44: two-REFUTED stop" "exit $RC, want 6 (ledger present: $([ -f "$LED" ] && echo yes || echo no))"; fi
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t44 --ledger="$LED" --force)
+if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ]; then
+    ok "T44: two-REFUTED stop is not resettable, and --force still can"
+else
+    fail "T44: two-REFUTED stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0)"
+fi
 
 # ── T45: two rounds reproducing nothing is a stop, not a finished arc ─────
 echo "T45. reset refuses an arc stopped by two no-defect rounds"
 LED=$(newledger t45)
 printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\n' > "$LED"
 RC=$(rb reset --run-id=t45 --ledger="$LED")
-if [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T45: no-defect stop is not resettable"; else fail "T45: no-defect stop" "exit $RC, want 6 (ledger present: $([ -f "$LED" ] && echo yes || echo no))"; fi
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t45 --ledger="$LED" --force)
+if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ]; then
+    ok "T45: no-defect stop is not resettable, and --force still can"
+else
+    fail "T45: no-defect stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0)"
+fi
 
 # ── T46: the human ceiling is an escalation, not a finished arc ───────────
 # The ceiling exists because unbounded self-granted budget is the resource-
@@ -563,7 +580,13 @@ LED=$(newledger t46)
 for i in 1 2 3 4 5 6 7 8; do printf 'ROUND\t%s\t5\tyes\t\t-\n' "$i"; done > "$LED"
 RC_BUDGET=$(rb budget --run-id=t46 --ledger="$LED")
 RC=$(rb reset --run-id=t46 --ledger="$LED")
-if [ "$RC_BUDGET" = "7" ] && [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T46: the ceiling is not resettable"; else fail "T46: ceiling stop" "budget=$RC_BUDGET (want 7), reset=$RC (want 6)"; fi
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t46 --ledger="$LED" --force)
+if [ "$RC_BUDGET" = "7" ] && [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ]; then
+    ok "T46: the ceiling is not resettable, and --force still can"
+else
+    fail "T46: ceiling stop" "budget=$RC_BUDGET (want 7), plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0)"
+fi
 
 # ── T47: the pass arm reads the RULE, not the score ───────────────────────
 # The predicate reset needs is "did this arc END BY PASSING", not "is the last
