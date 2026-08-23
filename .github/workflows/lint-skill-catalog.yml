@@ -1,0 +1,93 @@
+name: lint-skill-catalog
+
+# Keeps the three catalog surfaces honest against what is actually on disk:
+#   README.md
+#   skills/tooling/skills-catalog/references/skills-inventory.md
+#   skills/tooling/skills-catalog/SKILL.md
+#
+# They were maintained by hand and were wrong essentially always — measured on
+# main at 391a76a, disk had 93 skills, README listed 91 while claiming 90, and
+# the inventory listed 87, with six shipped skills never catalogued at all.
+#
+# Runs on ANY change under skills/ (not just to the catalog files), because the
+# failure being caught is precisely a skill landing without its catalog row.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/**'
+      - 'README.md'
+      - 'scripts/lint_skill_catalog.py'
+      - 'tests/test_lint_skill_catalog.py'
+      - '.github/workflows/lint-skill-catalog.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**'
+      - 'README.md'
+      - 'scripts/lint_skill_catalog.py'
+      - 'tests/test_lint_skill_catalog.py'
+      - '.github/workflows/lint-skill-catalog.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-skill-catalog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install pyyaml pytest
+
+      - name: Unit tests for the linter
+        run: python3 -m pytest tests/test_lint_skill_catalog.py -v
+
+      - name: The catalog agrees with disk
+        run: python3 scripts/lint_skill_catalog.py
+
+      - name: The gate can actually go red
+        # A lint step that only ever reports CLEAN passes just as well when the
+        # linter is broken and finds nothing. Prove the red path from CI: add a
+        # skill on disk with no catalog row and require a non-zero exit.
+        run: |
+          mkdir -p skills/tooling/zzz-ci-probe
+          printf -- '---\nname: zzz-ci-probe\ndescription: Temporary CI probe.\n---\n' \
+            > skills/tooling/zzz-ci-probe/SKILL.md
+          set +e
+          python3 scripts/lint_skill_catalog.py > /tmp/probe.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-ci-probe
+          if [ "$code" -eq 0 ]; then
+            echo "::error::an uncatalogued skill must fail the lint, got exit 0"
+            cat /tmp/probe.txt
+            exit 1
+          fi
+          grep -q 'zzz-ci-probe' /tmp/probe.txt || {
+            echo "::error::the lint went red but never named the uncatalogued skill"
+            cat /tmp/probe.txt; exit 1; }
+          echo "the catalog lint reports an uncatalogued skill by name"
+
+      - name: --fix converges
+        # --fix must leave the tree passing its own check, and must be a no-op
+        # on an already-clean catalog: a fixer that rewrites on every run would
+        # make every future PR carry unrelated churn.
+        run: |
+          python3 scripts/lint_skill_catalog.py --fix
+          python3 scripts/lint_skill_catalog.py
+          git diff --exit-code -- README.md \
+            skills/tooling/skills-catalog/references/skills-inventory.md \
+            skills/tooling/skills-catalog/SKILL.md \
+            || { echo "::error::--fix is not idempotent on a clean catalog"; exit 1; }
