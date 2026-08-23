@@ -151,7 +151,7 @@ appended to it.
 | Property | Why it holds |
 |---|---|
 | A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. `record-round` also refuses to append past a terminal state |
-| A budget cannot be reset by re-running `pre-push` | the ledger id is derived from branch + merge-base, not the PID |
+| A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |

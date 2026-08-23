@@ -351,11 +351,32 @@ RC2=$(rb budget --run-id=t31b --ledger="$LED2")
 LED3=$(newledger t31c)
 printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t8\tyes\t\t-\n' > "$LED3"
 RC3=$(rb budget --run-id=t31c --ledger="$LED3")
-if [ "$RC" = "6" ] && [ "$RC2" = "6" ] && [ "$RC3" = "3" ]; then
-    ok "T31: stops outrank a pass; a clean arc still passes"
+# All FOUR stops, not two. The ordering was pinned for terminal-then-pass and
+# regression-then-pass only; moving PASSED above the refuted or no-defect stop
+# alone left the suite green. A predicate with four arms needs four cases.
+LED4=$(newledger t31d)
+{
+    printf 'ROUND\t1\t5\tyes\t\t-\n'
+    printf 'VERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\n'
+    printf 'VERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\n'
+    printf 'ROUND\t4\t9\tyes\t\t-\n'
+} > "$LED4"
+RC4=$(rb budget --run-id=t31d --ledger="$LED4")
+LED5=$(newledger t31e)
+printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED5"
+RC5=$(rb budget --run-id=t31e --ledger="$LED5")
+if [ "$RC" = "6" ] && [ "$RC2" = "6" ] && [ "$RC4" = "6" ] && [ "$RC5" = "6" ] && [ "$RC3" = "3" ]; then
+    ok "T31: all four stops outrank a pass; a clean arc still passes"
 else
-    fail "T31: stops outrank a pass" "after-STOP=$RC (want 6), after-regression=$RC2 (want 6), clean=$RC3 (want 3)"
+    fail "T31: all four stops outrank a pass" "terminal=$RC regression=$RC2 refuted=$RC4 no-defect=$RC5 (want 6 each), clean=$RC3 (want 3)"
 fi
+
+# ── T35: record-verdict is guarded by the terminal state too ──────────────
+echo "T35. record-verdict refuses to append past a terminal state"
+LED=$(newledger t35)
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
+RC=$(rb record-verdict --run-id=t35 --ledger="$LED" --verdict=CONTINUE --prediction="a defect at scripts/x.sh:9")
+if [ "$RC" = "6" ]; then ok "T35: no verdict appended past a stop"; else fail "T35: no verdict appended past a stop" "exit $RC, want 6"; fi
 
 # ── T32: the recorder will not append past a terminal state ───────────────
 echo "T32. record-round refuses to append after a STOP"
@@ -363,6 +384,32 @@ LED=$(newledger t32)
 printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
 RC=$(rb record-round --run-id=t32 --ledger="$LED" --score=9 --defect=yes)
 if [ "$RC" = "6" ]; then ok "T32: no appending past a stop"; else fail "T32: no appending past a stop" "exit $RC, want 6"; fi
+
+# ── T33: a BLANK CONTINUE prediction is the emptiest vacuous continuation ──
+# The read-time check skipped empty predictions with `[ -n "$v" ] || continue`,
+# which is exactly the wrong polarity: the one row carrying no claim at all was
+# waved through while a merely weak one was rejected.
+echo "T33. a blank CONTINUE prediction does not authorize"
+LED=$(newledger t33)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\t\t\n' > "$LED"
+RC=$(rb budget --run-id=t33 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T33: blank prediction STOPs"; else fail "T33: blank prediction STOPs" "exit $RC, want 6"; fi
+
+# ── T34: reset archives a finished arc rather than silently inheriting it ──
+# Branch-derived ids mean a recycled branch reuses its ledger. That is right
+# while an arc is live and wrong once it is done -- a fresh arc must not inherit
+# a stale PASSED, which reads as "the gate is already satisfied".
+echo "T34. reset archives the ledger and restarts the budget"
+LED=$(newledger t34)
+bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" reset --run-id=t34 --ledger="$LED" >/dev/null
+OUT=$(rbout budget --run-id=t34 --ledger="$LED")
+if echo "$OUT" | grep -q "round 1 of"; then
+    ok "T34: reset restarts the budget"
+else
+    fail "T34: reset restarts the budget" "$OUT"
+fi
 
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"

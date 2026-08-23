@@ -428,6 +428,40 @@ else
     fail "T21: budget section is stratum-independent" "no arc id printed without codex on PATH"
 fi
 
+# ── T22: the SKILL.md enforcement table must not describe retired mechanics ──
+# The arc-id row has now been wrong twice: it described `pp$$` after that was
+# replaced, then `branch + merge-base` after THAT was replaced -- and the second
+# time it was falsified by the very commit that was fixing the first. A doc table
+# nothing pins is a doc table that drifts, so the retired mechanics are asserted
+# absent rather than trusted to be updated.
+echo "T22. SKILL.md does not describe retired arc-id mechanics"
+# A POSITIVE assertion on the row, not a banned word. Banning "merge-base"
+# outright also flags the row's own account of what it replaced, and a test that
+# forbids describing history would push the doc toward saying less, not more.
+# What must hold is that the row states the CURRENT derivation.
+SKILL="$REPO/SKILL.md"
+ROW=$(grep -E '^\| .*ledger id' "$SKILL" | head -1)
+if [ -z "$ROW" ]; then
+    fail "T22: arc-id row states the current derivation" "no '| ... ledger id' row found in SKILL.md"
+elif echo "$ROW" | grep -q 'branch alone'; then
+    ok "T22: arc-id row states the current derivation"
+else
+    fail "T22: arc-id row states the current derivation" "row does not say 'branch alone': $ROW"
+fi
+
+# ── T23: every exit code SKILL.md documents is one the script can emit ────
+echo "T23. documented exit codes exist in the controller"
+RB_SH="$REPO/scripts/round-budget.sh"
+MISSING=""
+for code in 0 2 3 5 6 7; do
+    grep -qE "exit $code" "$RB_SH" || MISSING="$MISSING $code"
+done
+if [ -z "$MISSING" ]; then
+    ok "T23: all documented exit codes are reachable"
+else
+    fail "T23: all documented exit codes are reachable" "documented but never emitted:$MISSING"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"

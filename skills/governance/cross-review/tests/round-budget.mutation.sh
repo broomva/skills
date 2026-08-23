@@ -182,6 +182,15 @@ mutate "row arity unchecked" "T28" 'if (NF != 4) { badrow=1 }' 'if (NF != 99) { 
 mutate "read-time prediction check off" "T29" 'if ! prediction_is_valid "$vpred"; then' 'if false; then'
 mutate "recorder appends to corrupt ledger" "T30" '    local a; a="$(analyze)" || exit 6' '    local a; a="$(analyze)" || exit 6; return 0'
 
+mutate "blank predictions skipped again" "T33" 'vpred=${_row#P:}' 'vpred=${_row#P:}; [ -n "$vpred" ] || continue'
+
+# $'...' so the newline is a REAL newline: a plain single-quoted "\n" is a
+# literal backslash-n and matches nothing, which the accounting then reports
+# as an ANCHOR ERROR rather than letting it pass silently.
+mutate "record-verdict may pass a terminal" "T35" \
+    $'record-verdict)\n    with_lock\n    refuse_corrupt_ledger\n    refuse_past_terminal' \
+    $'record-verdict)\n    with_lock\n    refuse_corrupt_ledger'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

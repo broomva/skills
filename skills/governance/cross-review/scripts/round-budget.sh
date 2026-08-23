@@ -55,7 +55,8 @@
 # The boundary, stated because the first version of this comment overclaimed it
 # and two reviewers were right to block on that: these rules bind the LEDGER.
 # They are absorbing and cannot be cleared by appending, reset by re-running
-# pre-push, or dodged by pointing at another file. They do NOT compel anyone to
+# pre-push, or dodged by appending. They are NOT dodge-proof: `--ledger` behind
+# ROUND_BUDGET_TEST_LEDGER still repoints the path, and nothing compels anyone to
 # run `budget` in the first place, and the ledger is a plain file this same
 # agent can delete. This removes ACCIDENTAL drift -- the miscounted round, the
 # stop quietly walked back -- which is what actually went wrong on the arcs that
@@ -78,6 +79,7 @@
 #   round-budget.sh record-verdict --run-id=ID --verdict=CONTINUE|STOP|STRUCTURAL \
 #                                  [--prediction=TEXT] [--directive=TEXT]
 #   round-budget.sh budget         --run-id=ID     # may another round run?
+#   round-budget.sh reset          --run-id=ID     # archive a finished arc's ledger
 #   round-budget.sh show           --run-id=ID
 #
 # Exit codes for `budget` (0/2/4 are already taken by cross-review.sh):
@@ -103,7 +105,7 @@ case "$COMMAND" in
     --help|-h|help)
         sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
         exit 0 ;;
-    record-round|record-verdict|budget|show) ;;
+    record-round|record-verdict|budget|show|reset) ;;
     *) echo "round-budget: unknown command '$COMMAND'" >&2; exit 2 ;;
 esac
 
@@ -282,6 +284,28 @@ analyze() {
 
 count_rounds_a()   { printf '%s' "$1" | cut -f1; }
 
+# The ledger must not grow past its own terminal state. This guard landed in
+# `record-round` only, so `record-verdict` went on appending CONTINUE rows after
+# a STOP -- exit 0, and `analyze` keeps only the FIRST terminal, so those rows
+# were silently dead weight. Not an authorization escape, but the identical
+# "growing a history nothing can decide on" defect, in the sibling recorder.
+# One function, both callers, for the same reason the prediction predicate has
+# one definition.
+refuse_past_terminal() {
+    local t; t="$(printf '%s' "$(analyze)" | cut -f6)"
+    [ -n "$t" ] || return 0
+    echo "round-budget: a $t verdict is recorded in $LEDGER." >&2
+    echo "  That state is terminal: recording more does not clear it, and" >&2
+    echo "  appending past it only grows a history the budget will refuse." >&2
+    echo "" >&2
+    echo "  If this arc is FINISHED and the branch is being reused, archive it:" >&2
+    echo "    round-budget.sh reset --run-id=$RUN_ID" >&2
+    echo "  Arc ids are branch-derived, so a recycled branch inherits its ledger." >&2
+    echo "  That is deliberate while an arc is live and wrong once it is done," >&2
+    echo "  which is why the remedy is explicit rather than automatic." >&2
+    exit 6
+}
+
 # Fail-closed landed in `budget` and nowhere else, so the recorder happily
 # appended to a corrupt history -- growing the thing nothing can decide on.
 refuse_corrupt_ledger() {
@@ -305,14 +329,7 @@ case "$COMMAND" in
 record-round)
     with_lock
     refuse_corrupt_ledger
-    # Appending after a stop was a legal command, which is half of how the stop
-    # got cleared. The ledger must not grow past its own terminal state.
-    if [ -n "$(printf '%s' "$(analyze)" | cut -f6)" ]; then
-        echo "round-budget: a STOP/STRUCTURAL verdict is recorded in $LEDGER." >&2
-        echo "  That state is terminal. Recording another round does not clear it," >&2
-        echo "  and appending past it only grows a history the budget will refuse." >&2
-        exit 6
-    fi
+    refuse_past_terminal
     [ -n "$SCORE" ]  || { echo "round-budget: --score=N required" >&2; exit 2; }
     case "$SCORE" in ''|*[!0-9]*) echo "round-budget: --score must be an integer 0-10" >&2; exit 2 ;; esac
     [ "$SCORE" -le 10 ] || { echo "round-budget: --score must be 0-10" >&2; exit 2; }
@@ -350,6 +367,7 @@ record-round)
 record-verdict)
     with_lock
     refuse_corrupt_ledger
+    refuse_past_terminal
     case "$VERDICT" in
         CONTINUE|STOP|STRUCTURAL) ;;
         *) echo "round-budget: --verdict=CONTINUE|STOP|STRUCTURAL required" >&2; exit 2 ;;
@@ -402,6 +420,22 @@ record-verdict)
     echo "round-budget: recorded verdict $VERDICT -> $LEDGER"
     ;;
 
+reset)
+    # Arc ids are branch-derived, so reusing a branch name reuses its ledger. That
+    # is right while an arc is live (a rebase must not reset the budget) and wrong
+    # once it is finished: a fresh arc on a recycled branch would inherit a stale
+    # STOP -- or worse a stale PASSED, which reads as "the gate is done".
+    # Archiving is therefore explicit and loud rather than automatic and silent.
+    if [ ! -f "$LEDGER" ]; then
+        echo "round-budget: no ledger at $LEDGER — nothing to reset."
+        exit 0
+    fi
+    ARCHIVE="$LEDGER.archived.$(wc -l < "$LEDGER" | tr -d ' ')"
+    mv "$LEDGER" "$ARCHIVE"
+    echo "round-budget: archived -> $ARCHIVE"
+    echo "  The next round on this arc id starts from round 1."
+    ;;
+
 show)
     if [ ! -f "$LEDGER" ]; then echo "round-budget: no ledger at $LEDGER"; exit 0; fi
     echo "  Ledger: $LEDGER"
@@ -442,18 +476,39 @@ budget)
     # Every CONTINUE row in the ledger must satisfy the same rule the recorder
     # applies. A row that never passed `record-verdict` must not buy a round just
     # because it is well-formed TSV.
-    while IFS= read -r vpred; do
-        [ -n "$vpred" ] || continue
+    # Every row is emitted with a fixed "P:" prefix so that an EMPTY prediction
+    # survives as a line rather than vanishing. The first version skipped empties
+    # with `[ -n "$vpred" ] || continue`, which is precisely the wrong polarity:
+    # a `VERDICT\tCONTINUE\t\t` row -- the emptiest possible vacuous
+    # continuation -- was waved through instead of rejected.
+    #
+    # And no here-doc. The previous construct materialised a temp file, so on
+    # unwritable or full temp storage bash printed "cannot create temp file for
+    # here document" and CARRIED ON into the authorize path: the guard added to
+    # close a fail-open was itself fail-open. Capture, check the capture, then
+    # split on newlines with globbing off.
+    if ! CONT_PREDS=$(read_rows | awk -F'\t' '$1=="VERDICT" && $2=="CONTINUE" {print "P:" $3}'); then
+        echo "STOP — could not read the CONTINUE rows of $LEDGER to validate them."
+        echo "  Unvalidated is not valid; refusing to authorize."
+        exit 6
+    fi
+    _old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for _row in $CONT_PREDS; do
+        vpred=${_row#P:}
         if ! prediction_is_valid "$vpred"; then
+            set +f; IFS=$_old_ifs
             echo "STOP — a CONTINUE row in $LEDGER carries a prediction that would"
             echo "  not pass the recorder: '$vpred'"
             echo "  It names nowhere the next round could check, so it cannot be"
             echo "  settled, so it cannot have earned a round."
             exit 6
         fi
-    done <<EOF
-$(read_rows | awk -F'\t' '$1=="VERDICT" && $2=="CONTINUE" {print $3}')
-EOF
+    done
+    set +f
+    IFS=$_old_ifs
 
     if [ "$N" = "0" ]; then
         # A ledger holding only a STOP verdict and no rounds still stops.
