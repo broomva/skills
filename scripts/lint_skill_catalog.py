@@ -415,44 +415,40 @@ def _bucket_table_problems(label: str, text: str, disk: dict) -> list[str]:
     return problems
 
 
-def _restore_missing_aggregates(label: str, text: str, disk: dict, names: dict[str, str]) -> str:
+def _restore_missing_aggregates(label: str, text: str, disk: dict) -> str:
     """Re-insert a declared aggregate that was deleted outright.
 
-    Reporting absence is only half the contract: a --fix that repairs a WRONG
-    value but cannot restore a DELETED one leaves the only remedy for a
-    detected problem being to edit by hand, and the gate stays red forever.
-    Inserted into the `## Aggregates` block; if that block is gone there is no
-    non-arbitrary place to put it, so --fix leaves it and `check` keeps saying
-    so rather than inventing a location.
+    Inserts the SHAPE only, with placeholder values — `_fix_superlatives` and
+    `_recount` already run afterwards and set every one of these from disk, so
+    computing the values here too was a second implementation of the same
+    derivation that nothing depended on. A mutation putting a stale number in it
+    survived the whole suite, which is what redundant code looks like from the
+    outside: unkillable because it does not matter. Deleted rather than pinned.
+
+    Placed in the `## Aggregates` block among its bold peers; if that block is
+    gone there is no non-arbitrary place for it, so --fix leaves it and `check`
+    keeps reporting it rather than inventing a location.
     """
-    required = dict(_REQUIRED_STRUCTURES.get(label, ()))
-    if not required or not disk:
+    if not disk or label not in _REQUIRED_STRUCTURES:
         return text
-    sizes = {c: len(v) for c, v in disk.items()}
-    hi, lo = max(sizes.values()), min(sizes.values())
-    canonical = {
-        "**Total skills** aggregate": f"- **Total skills**: {sum(sizes.values())}",
-        "**Total category buckets** aggregate": f"- **Total category buckets**: {len(disk)}",
-        "**Largest bucket** aggregate":
-            f"- **Largest bucket**: "
-            f"{sorted(names.get(c, c) for c, n in sizes.items() if n == hi)[0]} ({hi})",
-        "**Smallest buckets** aggregate":
-            f"- **Smallest buckets** ({lo}): "
-            + ", ".join(sorted(names.get(c, c) for c, n in sizes.items() if n == lo)),
+    shapes = {
+        "**Total skills** aggregate": "- **Total skills**: 0",
+        "**Total category buckets** aggregate": "- **Total category buckets**: 0",
+        "**Largest bucket** aggregate": "- **Largest bucket**: placeholder (0)",
+        "**Smallest buckets** aggregate": "- **Smallest buckets** (0): placeholder",
     }
     block = re.search(r"^## Aggregates\n+", text, re.M)
     if not block:
         return text
-    for name, detector in _REQUIRED_STRUCTURES.get(label, ()):
-        if re.search(detector, text) or name not in canonical:
+    for name, detector in _REQUIRED_STRUCTURES[label]:
+        if re.search(detector, text) or name not in shapes:
             continue
-        insert_at = block.end()
-        tail = text[insert_at:]
+        tail = text[block.end():]
         # Only the BOLD aggregate bullets, so a restored line lands among its
         # peers rather than after the trailing prose bullet.
         bullets = re.match(r"(?:- \*\*.*\n)*", tail)
-        offset = bullets.end() if bullets else 0
-        text = text[:insert_at + offset] + canonical[name] + "\n" + text[insert_at + offset:]
+        at = block.end() + (bullets.end() if bullets else 0)
+        text = text[:at] + shapes[name] + "\n" + text[at:]
     return text
 
 
@@ -590,7 +586,7 @@ def fix(disk: dict) -> None:
     names = _labels(inventory)
     inventory = _rebuild(inventory, _sections(inventory, _INV_HEADING, _INV_ROW), disk,
                          lambda c, n, d, a: f"| `{n}`{a} | {d} |")
-    inventory = _restore_missing_aggregates("skills-inventory.md", inventory, disk, names)
+    inventory = _restore_missing_aggregates("skills-inventory.md", inventory, disk)
     inventory = _fix_superlatives(inventory, disk, names)
     _INVENTORY.write_text(_recount(inventory, disk, r"(\(`{cat}`\) \| )\d+( \|)"), encoding="utf-8")
 
