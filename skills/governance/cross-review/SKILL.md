@@ -169,7 +169,7 @@ appended to it.
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
-| One guard site, not one per caller | every command passes through `load_ledger`, and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |
+| One guard site, not one per caller | every command that reads or mutates the history passes through `load_ledger` (`show` only renders), and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |
 
 **NOT enforced — the bypasses, stated rather than implied:**
 

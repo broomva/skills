@@ -399,16 +399,36 @@ if [ "$RC" = "6" ]; then ok "T33: blank prediction STOPs"; else fail "T33: blank
 # Branch-derived ids mean a recycled branch reuses its ledger. That is right
 # while an arc is live and wrong once it is done -- a fresh arc must not inherit
 # a stale PASSED, which reads as "the gate is already satisfied".
-echo "T34. reset archives the ledger and restarts the budget"
+# Reset is GATED. Unguarded it is a laundering path: archiving a live ledger
+# clears a STOP without the directive ever being executed, and budget never
+# consults the archive. The original T34 blessed exactly that — it reset a live
+# two-round ledger and asserted the restart worked.
+echo "T34. reset retires a FINISHED arc and refuses a live one"
 LED=$(newledger t34)
 bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5 --defect=yes >/dev/null
 bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" reset --run-id=t34 --ledger="$LED" >/dev/null
+RC_LIVE=$(rb reset --run-id=t34 --ledger="$LED")
+bash "$RB" record-verdict --run-id=t34 --ledger="$LED" --verdict=STRUCTURAL --directive="hoist the invariant" >/dev/null
+RC_DONE=$(rb reset --run-id=t34 --ledger="$LED")
 OUT=$(rbout budget --run-id=t34 --ledger="$LED")
-if echo "$OUT" | grep -q "round 1 of"; then
-    ok "T34: reset restarts the budget"
+if [ "$RC_LIVE" = "6" ] && [ "$RC_DONE" = "0" ] && echo "$OUT" | grep -q "round 1 of"; then
+    ok "T34: live reset refused, finished reset archives and restarts"
 else
-    fail "T34: reset restarts the budget" "$OUT"
+    fail "T34: reset gating" "live=$RC_LIVE (want 6), finished=$RC_DONE (want 0), after: $OUT"
+fi
+
+# ── T36: rules 2 and 4 hold against the STORED ledger, not only at write ──
+echo "T36. an illegal history is refused at read time"
+LED=$(newledger t36)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tdefect at scripts/a.sh:1\t\nROUND\t4\t5\tyes\t\t-\n' > "$LED"
+RC_UNSETTLED=$(rb budget --run-id=t36 --ledger="$LED")
+LED2=$(newledger t36b)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tdefect at scripts/a.sh:1\t\nVERDICT\tCONTINUE\tother at scripts/b.sh:2\t\n' > "$LED2"
+RC_STACKED=$(rb budget --run-id=t36b --ledger="$LED2")
+if [ "$RC_UNSETTLED" = "6" ] && [ "$RC_STACKED" = "6" ]; then
+    ok "T36: unsettled round and stacked verdicts both refused at read time"
+else
+    fail "T36: read-time history rules" "unsettled=$RC_UNSETTLED stacked=$RC_STACKED (want 6 each)"
 fi
 
 echo ""

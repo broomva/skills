@@ -192,6 +192,17 @@ mutate "record-verdict may pass a terminal" "T35" \
     $'record-verdict)\n    with_lock\n    load_ledger\n    refuse_past_terminal' \
     $'record-verdict)\n    with_lock\n    load_ledger'
 
+# ─── Rules that must hold against the STORED ledger, not only at write ────
+mutate "rule2 not enforced at read" "T36" \
+    'if (pending==1 && $6=="-") badhistory="a round follows a CONTINUE without settling its prediction"' \
+    'if (0) badhistory="x"'
+mutate "rule4 not enforced at read" "T36" \
+    'if (pending==1) badhistory="two CONTINUE verdicts stack with no round between them"' \
+    'if (0) badhistory="x"'
+mutate "reset ungated (laundering)" "T34" \
+    'if [ -z "$LG_TERMINAL" ] && { [ "$LG_N" = "0" ] || [ "$LG_SCORE" -lt "$PASS_SCORE" ]; }; then' \
+    'if false; then'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

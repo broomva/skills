@@ -196,7 +196,8 @@ analyze() {
     read_rows | awk -F'\t' '
         BEGIN { rounds=0; prev=-1; last=-1; regressed=0
                 ref=0; maxref=0; nod=0; maxnod=0
-                terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0 }
+                terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
+                badhistory="" }
         $1=="ROUND" {
             if (NF != 6) { badrow=1 }
             rounds++
@@ -209,6 +210,10 @@ analyze() {
             if ($6=="REFUTED")   { ref++; if (ref>maxref) maxref=ref }
             else if ($6=="CONFIRMED") ref=0
             else if ($6!="-")    badrow=1
+            # Rule 2 against the STORED history: a round following a live
+            # CONTINUE must settle it. Enforced only at record-round before, so a
+            # hand-edited or older row spent a CONTINUE without ever settling it.
+            if (pending==1 && $6=="-") badhistory="a round follows a CONTINUE without settling its prediction"
             pending=0
             next
         }
@@ -216,12 +221,16 @@ analyze() {
             if (NF != 4) { badrow=1 }
             if ($2=="STOP" || $2=="STRUCTURAL") {
                 if (terminal=="") { terminal=$2; directive=$4 }
-            } else if ($2=="CONTINUE") { pending=1 }
+            } else if ($2=="CONTINUE") {
+                # Rule 4 against the STORED history: verdicts cannot stack.
+                if (pending==1) badhistory="two CONTINUE verdicts stack with no round between them"
+                pending=1
+            }
             else { badverdict=$2 }
             next
         }
         NF>0 { badrow=1 }
-        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow }'
+        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory }'
 }
 
 # ─── The one gate ─────────────────────────────────────────────────────────
@@ -233,6 +242,9 @@ analyze() {
 # defect unrepresentable, and collapses four redundant `analyze` passes into one.
 LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
 LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""
+# Snapshotted in load_ledger so the rules never re-read the file: rereading mixed
+# stale globals with a newer tail whenever anything appended concurrently.
+LG_LAST_TYPE=""; LG_LAST_VERDICT=""; LG_LAST_PRED=""
 load_ledger() {
     local a
     a="$(analyze)" || exit 6
@@ -244,10 +256,23 @@ load_ledger() {
     LG_TERMINAL=$(printf '%s' "$a" | cut -f6)
     LG_PENDING=$(printf '%s' "$a" | cut -f9)
     LG_DIRECTIVE=$(printf '%s' "$a" | cut -f10)
-    local badscore badverdict badrow
+    local badscore badverdict badrow badhistory last
     badscore=$(printf '%s' "$a" | cut -f7)
     badverdict=$(printf '%s' "$a" | cut -f8)
     badrow=$(printf '%s' "$a" | cut -f11)
+    badhistory=$(printf '%s' "$a" | cut -f12)
+    last="$(last_row_any)"
+    LG_LAST_TYPE=$(field "$last" 1)
+    LG_LAST_VERDICT=$(field "$last" 2)
+    LG_LAST_PRED=$(field "$last" 3)
+
+    if [ -n "$badhistory" ]; then
+        echo "STOP — $LEDGER records a history the recorder would have refused:"
+        echo "  $badhistory"
+        echo "  A rule the recorder enforces must hold for the STORED ledger too,"
+        echo "  or a hand-edited row buys what no command could."
+        exit 6
+    fi
 
     if [ "$badscore" != "0" ] || [ "$badrow" != "0" ] || [ -n "$badverdict" ]; then
         echo "STOP — the ledger at $LEDGER does not parse."
@@ -377,10 +402,27 @@ record-verdict)
 reset)
     # Arc ids are branch-derived, so a recycled branch reuses its ledger. Right
     # while an arc is live (a rebase must not reset the budget), wrong once it is
-    # finished. Archiving is explicit and loud rather than automatic and silent.
+    # finished.
+    #
+    # GATED, because unguarded this is a direct laundering path: archiving a live
+    # ledger clears a STOP or STRUCTURAL without the directive ever being
+    # executed, and `budget` never consults the archive. "It archives rather than
+    # deletes" is evidence after the fact, not a control. A ledger may be reset
+    # only once it has REACHED an end state — a terminal verdict, or a passing
+    # score. A live arc cannot be reset out from under its own budget.
+    with_lock
     if [ ! -f "$LEDGER" ]; then
         echo "round-budget: no ledger at $LEDGER — nothing to reset."
         exit 0
+    fi
+    load_ledger
+    if [ -z "$LG_TERMINAL" ] && { [ "$LG_N" = "0" ] || [ "$LG_SCORE" -lt "$PASS_SCORE" ]; }; then
+        echo "round-budget: refusing to reset a LIVE ledger." >&2
+        echo "  $LG_N round(s) recorded, last score ${LG_SCORE}, no terminal verdict." >&2
+        echo "  reset retires a FINISHED arc — one that reached a STOP or STRUCTURAL" >&2
+        echo "  verdict, or a passing score. Resetting a live one clears a budget" >&2
+        echo "  nothing has closed, which is the laundering this gate prevents." >&2
+        exit 6
     fi
     ARCHIVE="$LEDGER.archived.$(wc -l < "$LEDGER" | tr -d ' ')"
     mv "$LEDGER" "$ARCHIVE"
@@ -419,7 +461,10 @@ budget)
     #
     # Stops come before PASSED because the score is the agent's OWN SELF-REPORT:
     # if a pass outranked a stop, every stop would cost one integer to escape.
-    PRECEDENCE="regressed refuted nodefect terminal passed ceiling free review_required earned"
+    # ONE source of truth for both the ORDER and the EXIT CODE. Keeping names in
+    # a list and codes in a separate `case` wrote each rule in three places —
+    # list, function name, case arm — which could disagree.
+    PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3 ceiling:7 free:0 review_required:5 earned:0"
 
     rule_regressed() {
         [ "$LG_REGRESSED" != "0" ] || return 1
@@ -474,7 +519,7 @@ budget)
     # the exit code -- the same condition in two places, which is the defect class
     # this restructure exists to remove.
     rule_review_required() {
-        [ "$(field "$(last_row_any)" 1)" != "VERDICT" ] || return 1
+        [ "$LG_LAST_TYPE" != "VERDICT" ] || return 1
         echo "REVIEW-REQUIRED — $LG_N rounds recorded; past the $FREE_ROUNDS free rounds."
         echo "  Run the continuation review, then record its verdict:"
         echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=... [--prediction=...]"
@@ -485,26 +530,24 @@ budget)
     # live here. The verdict must be the MOST RECENT row: one already settled by a
     # later round has spent its authority.
     rule_earned() {
-        local last; last="$(last_row_any)"
-        [ "$(field "$last" 1)" = "VERDICT" ] || return 1
-        echo "AUTHORIZED — round $((LG_N+1)), earned by a $(field "$last" 2) verdict."
-        echo "  Live prediction: $(field "$last" 3)"
+        [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
+        echo "AUTHORIZED — round $((LG_N+1)), earned by a $LG_LAST_VERDICT verdict."
+        echo "  Live prediction: $LG_LAST_PRED"
         echo "  The next recorded round MUST settle it (--settles=CONFIRMED|REFUTED)."
         return 0
     }
     # Each rule prints its own outcome and returns 0 when it fires. Exit codes
     # are keyed off the rule name so the mapping is visible in one place.
-    for rule in $PRECEDENCE; do
-        if "rule_$rule"; then
-            case "$rule" in
-                regressed|refuted|nodefect|terminal) exit 6 ;;
-                passed)  exit 3 ;;
-                ceiling) exit 7 ;;
-                free)            exit 0 ;;
-                review_required) exit 5 ;;
-                earned)          exit 0 ;;
-            esac
+    for entry in $PRECEDENCE; do
+        rule=${entry%%:*}
+        code=${entry##*:}
+        # A named rule with no function would otherwise surface as "command not
+        # found" inside an `if`, i.e. as a silently skipped rule.
+        if ! declare -F "rule_$rule" >/dev/null 2>&1; then
+            echo "round-budget: PRECEDENCE names '$rule' but rule_$rule does not exist." >&2
+            exit 6
         fi
+        if "rule_$rule"; then exit "$code"; fi
     done
     echo "STOP — no precedence rule matched for $LEDGER; refusing to guess." >&2
     exit 6
