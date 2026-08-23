@@ -431,6 +431,58 @@ else
     fail "T36: read-time history rules" "unsettled=$RC_UNSETTLED stacked=$RC_STACKED (want 6 each)"
 fi
 
+# ── T37: only CONTINUE earns a round ──────────────────────────────────────
+# An EMPTY verdict token is not a BAD one to analyze -- absent, not invalid -- so
+# it passed arity, set no terminal, set no pending, was skipped by the
+# CONTINUE-only re-validation, and bought a round. The pre-hoist code caught this
+# in a default arm that the comment sweep deleted.
+echo "T37. a VERDICT row with an unusable token does not earn a round"
+LED=$(newledger t37)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\t\t\t\n' > "$LED"
+RC=$(rb budget --run-id=t37 --ledger="$LED")
+LED2=$(newledger t37b)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\tCONTINUE\tdefect at scripts/a.sh:1\t\n' > "$LED2"
+RC2=$(rb budget --run-id=t37b --ledger="$LED2")
+if [ "$RC" = "6" ] && [ "$RC2" = "0" ]; then
+    ok "T37: empty token STOPs, CONTINUE still earns"
+else
+    fail "T37: only CONTINUE earns" "empty=$RC (want 6), continue=$RC2 (want 0)"
+fi
+
+# ── T38: ROUND rows are arity-checked too ─────────────────────────────────
+# T28 pinned arity with VERDICT fixtures only, so `if (NF != 6)` was a surviving
+# mutant: gutting it left all tests green.
+echo "T38. a wrong-arity ROUND row fails closed"
+LED=$(newledger t38)
+printf 'ROUND\t1\t5\tyes\t\t-\tSMUGGLED\tEXTRA\n' > "$LED"
+RC=$(rb budget --run-id=t38 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T38: extra-field ROUND row STOPs"; else fail "T38: ROUND arity" "exit $RC, want 6"; fi
+
+# ── T39: reset still serves the case it exists for ────────────────────────
+# Routing reset through the fail-closed gate meant a CORRUPT ledger could not be
+# reset -- budget says "fix or discard it" and the only discard left was `rm`,
+# turning the one loud archiving path into a silent unlogged deletion.
+echo "T39. a corrupt ledger can still be archived"
+LED=$(newledger t39)
+printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
+RC=$(rb reset --run-id=t39 --ledger="$LED")
+if [ "$RC" = "0" ] && [ ! -f "$LED" ]; then
+    ok "T39: corrupt ledger archived, not stranded"
+else
+    fail "T39: corrupt ledger archived" "exit $RC, ledger still present: $([ -f "$LED" ] && echo yes || echo no)"
+fi
+
+# ── T40: archiving never clobbers a previous archive ──────────────────────
+# Keyed on line count alone, two arcs of equal length silently overwrote.
+echo "T40. a second archive of equal length does not clobber the first"
+LED=$(newledger t40)
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
+bash "$RB" reset --run-id=t40 --ledger="$LED" >/dev/null
+printf 'ROUND\t1\t9\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
+bash "$RB" reset --run-id=t40 --ledger="$LED" >/dev/null
+N_ARCH=$(find "$(dirname "$LED")" -name "$(basename "$LED").archived.*" | wc -l | tr -d ' ')
+if [ "$N_ARCH" = "2" ]; then ok "T40: both archives survive"; else fail "T40: archive clobber" "$N_ARCH archive(s), want 2"; fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

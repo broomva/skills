@@ -144,13 +144,22 @@ mutate "unreadable ledger fails open" "T15" \
     $'ledger exists at $LEDGER but cannot be read." >&2\n            exit 6' \
     $'ledger exists at $LEDGER but cannot be read." >&2\n            exit 0'
 
-# NOTE on the stop/pass ORDERING -- where the round-2 regression lived.
-# It has no mutation of its own, and that is not an omission. Ordering cannot
-# be expressed as a value mutation: making PASSED unconditional does not move
-# it, so the stops still fire first and every T31 case still passes. It IS
-# pinned -- disabling the terminal-verdict check reddens T31 along with T11,
-# T19 and T20, verified by running it. Claiming a dedicated proof here would
-# be the false credit this sweep was just fixed for.
+# ─── The structures the hoist introduced, each with its own proof ─────────
+# The pre-hoist note here said ordering "cannot be expressed as a value
+# mutation". The hoist made that false -- ordering IS a value now, and declining
+# the proof on an invalidated rationale is how a new shape ships unmutated.
+mutate "PASSED reordered above the stops" "T31" \
+    'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3' \
+    'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6'
+mutate "earned admits any VERDICT row" "T37" \
+    '[ "$LG_LAST_VERDICT" = "CONTINUE" ] || return 1' \
+    '[ "$LG_LAST_VERDICT" != "IMPOSSIBLE" ] || return 1'
+mutate "ROUND arity unchecked" "T38" \
+    'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+mutate "corrupt ledger cannot be reset" "T39" \
+    'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
+mutate "archive clobbers a prior one" "T40" \
+    'while [ -e "$ARCHIVE" ]; do' 'while false; do' 
 
 
 # The stale-verdict rule: a spent verdict must not re-authorize.

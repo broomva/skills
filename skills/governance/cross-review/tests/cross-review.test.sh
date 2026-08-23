@@ -452,9 +452,12 @@ fi
 # ── T23: every exit code SKILL.md documents is one the script can emit ────
 echo "T23. documented exit codes exist in the controller"
 RB_SH="$REPO/scripts/round-budget.sh"
+# Codes now live in two places: literal `exit N`, and the `name:code` pairs in
+# PRECEDENCE. Checking only the first went red the moment the dispatcher moved
+# them, which is the test being wrong rather than the code.
 MISSING=""
 for code in 0 2 3 5 6 7; do
-    grep -qE "exit $code" "$RB_SH" || MISSING="$MISSING $code"
+    grep -qE "exit $code" "$RB_SH" || grep -qE ":$code( |\")" "$RB_SH" || MISSING="$MISSING $code"
 done
 if [ -z "$MISSING" ]; then
     ok "T23: all documented exit codes are reachable"

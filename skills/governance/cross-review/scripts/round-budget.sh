@@ -53,7 +53,9 @@
 # removes ACCIDENTAL drift — the miscounted round, the stop quietly walked back —
 # which is what actually went wrong on the long arcs. SKILL.md states it in full.
 #
-# STRUCTURE. Every command passes through one gate (`load_ledger`), and the
+# STRUCTURE. Every command that DECIDES on the history passes through one gate
+# (`load_ledger`) -- `show` only renders and takes neither the gate nor the lock.
+# The
 # budget's precedence is one ordered list. Both are deliberate: three review
 # rounds each found a guard living at one caller and not its sibling, or an
 # ordering wrong in one of six sequential branches. One site is one place to be
@@ -242,8 +244,12 @@ analyze() {
 # defect unrepresentable, and collapses four redundant `analyze` passes into one.
 LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
 LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""
-# Snapshotted in load_ledger so the rules never re-read the file: rereading mixed
-# stale globals with a newer tail whenever anything appended concurrently.
+# Snapshotted in load_ledger so the RULES never re-read the file. This bounds the
+# inconsistency; it does not remove it. load_ledger itself still reads the ledger
+# more than once (analyze, the tail, the CONTINUE rows) and `budget` takes no
+# lock, so a concurrent append between those reads can still pair an old LG_N
+# with a newer tail. Stated rather than implied: the recorders lock, the reader
+# does not.
 LG_LAST_TYPE=""; LG_LAST_VERDICT=""; LG_LAST_PRED=""
 load_ledger() {
     local a
@@ -415,6 +421,20 @@ reset)
         echo "round-budget: no ledger at $LEDGER — nothing to reset."
         exit 0
     fi
+    # A CORRUPT ledger is exactly the case reset must still serve: `budget` tells
+    # the operator to "fix or discard it", and routing reset through the same
+    # fail-closed gate left `rm` as the only discard -- turning the one loud,
+    # archiving escape hatch into a silent unlogged deletion. So: corruption is
+    # a reason to PERMIT the archive, not to refuse it.
+    # Probed in a SUBSHELL: load_ledger exits rather than returning, so a bare
+    # `if ! load_ledger` would take the whole script down with it.
+    if ! ( load_ledger ) >/dev/null 2>&1; then
+        echo "round-budget: $LEDGER does not parse — archiving it is the remedy."
+        ARCHIVE="$LEDGER.archived.corrupt.$$"
+        mv "$LEDGER" "$ARCHIVE"
+        echo "round-budget: archived -> $ARCHIVE"
+        exit 0
+    fi
     load_ledger
     if [ -z "$LG_TERMINAL" ] && { [ "$LG_N" = "0" ] || [ "$LG_SCORE" -lt "$PASS_SCORE" ]; }; then
         echo "round-budget: refusing to reset a LIVE ledger." >&2
@@ -424,7 +444,11 @@ reset)
         echo "  nothing has closed, which is the laundering this gate prevents." >&2
         exit 6
     fi
+    # Keyed on line count alone, two arcs of equal length silently overwrote each
+    # other -- so "it archives rather than deletes" was not durable. Never clobber.
     ARCHIVE="$LEDGER.archived.$(wc -l < "$LEDGER" | tr -d ' ')"
+    n=0
+    while [ -e "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$LEDGER.archived.$(wc -l < "$LEDGER" | tr -d ' ').$n"; done
     mv "$LEDGER" "$ARCHIVE"
     echo "round-budget: archived -> $ARCHIVE"
     echo "  The next round on this arc id starts from round 1."
@@ -464,7 +488,7 @@ budget)
     # ONE source of truth for both the ORDER and the EXIT CODE. Keeping names in
     # a list and codes in a separate `case` wrote each rule in three places —
     # list, function name, case arm — which could disagree.
-    PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3 ceiling:7 free:0 review_required:5 earned:0"
+    PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3 ceiling:7 free:0 unusable_verdict:6 review_required:5 earned:0"
 
     rule_regressed() {
         [ "$LG_REGRESSED" != "0" ] || return 1
@@ -518,6 +542,20 @@ budget)
     # the message while the dispatcher re-evaluated the same condition to choose
     # the exit code -- the same condition in two places, which is the defect class
     # this restructure exists to remove.
+    # Fires when the last row is a VERDICT that is neither terminal (handled
+    # above) nor CONTINUE — i.e. an empty or unrecognised token. It needs its own
+    # rule because a rule's exit code comes from PRECEDENCE: signalling this from
+    # inside rule_earned would have exited 0, which is the bug being fixed.
+    rule_unusable_verdict() {
+        [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
+        [ "$LG_LAST_VERDICT" != "CONTINUE" ] || return 1
+        echo "STOP — the last row is a VERDICT carrying an unusable token: '$LG_LAST_VERDICT'"
+        echo "  Only CONTINUE earns a round. An EMPTY token is not a bad one to"
+        echo "  analyze (absent, not invalid), so it reached the earned path and"
+        echo "  bought a round. Admission is positive now: CONTINUE or nothing."
+        return 0
+    }
+
     rule_review_required() {
         [ "$LG_LAST_TYPE" != "VERDICT" ] || return 1
         echo "REVIEW-REQUIRED — $LG_N rounds recorded; past the $FREE_ROUNDS free rounds."
@@ -531,6 +569,15 @@ budget)
     # later round has spent its authority.
     rule_earned() {
         [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
+        # ...and it must be a CONTINUE. STOP/STRUCTURAL exit at rule_terminal, so
+        # "it is a VERDICT row" LOOKED sufficient. It is not: an EMPTY token is
+        # not a bad one -- analyze records badverdict=$2, and "" is absent rather
+        # than invalid -- so `VERDICT\t\t\t` passed arity, set no terminal, set
+        # no pending, was skipped by the CONTINUE-only re-validation, and bought
+        # a round. The pre-hoist code caught it in an explicit default arm that
+        # the comment sweep deleted along with the comment explaining why it
+        # existed. Admission is now positive: only CONTINUE earns a round.
+        [ "$LG_LAST_VERDICT" = "CONTINUE" ] || return 1
         echo "AUTHORIZED — round $((LG_N+1)), earned by a $LG_LAST_VERDICT verdict."
         echo "  Live prediction: $LG_LAST_PRED"
         echo "  The next recorded round MUST settle it (--settles=CONFIRMED|REFUTED)."
