@@ -185,13 +185,33 @@ archive_ledger() {
     [ -n "$lines" ] || lines="unknown"
     base="$LEDGER.archived${tag:+.$tag}.$lines"
     ARCHIVE="$base"
-    # Keyed on line count alone, two arcs of equal length silently overwrote.
-    # `-e` alone is not "is something already here": it FOLLOWS the link, so a
-    # DANGLING symlink at the chosen name tests false, the loop stops there, and
-    # the mv destroys that entry -- the one thing this loop exists to prevent.
-    # `-L` is what sees the link itself.
-    while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$base.$n"; done
-    mv "$LEDGER" "$ARCHIVE"
+    # Keyed on line count alone, two arcs of equal length silently overwrote, so
+    # the name steps aside until it is free. But `[ -e ]` then `mv` is
+    # check-then-ACT: between the two, anything in this directory can take the
+    # name, and `mv` then destroys what appeared -- the one thing this exists to
+    # prevent. The per-ledger lock closes that window against another
+    # round-budget and against nothing else.
+    #
+    # `ln` IS the test. link(2) fails with EEXIST if the destination exists --
+    # including a DANGLING symlink, which `[ -e ]` could not see at all because
+    # it follows the link. Reservation and test are one operation, so there is
+    # no window. Same directory throughout, so never cross-device; and hard-
+    # linking needs write+search on the DIRECTORY, not read on the file, so an
+    # unreadable ledger still archives.
+    #
+    # If this dies between the link and the unlink, the ledger SURVIVES beside a
+    # copy: the budget is preserved and a stray archive is left. That is the
+    # safe direction for a stop.
+    while ! ln "$LEDGER" "$ARCHIVE" 2>/dev/null; do
+        if [ ! -e "$ARCHIVE" ] && [ ! -L "$ARCHIVE" ]; then
+            echo "round-budget: cannot archive $LEDGER to $ARCHIVE." >&2
+            echo "  The name is free, so this is not a collision -- the ledger's" >&2
+            echo "  directory is unwritable, or the link crossed a device." >&2
+            exit 2
+        fi
+        n=$((n+1)); ARCHIVE="$base.$n"
+    done
+    rm -f "$LEDGER"
 }
 
 # Tabs and newlines are the record separators, so they cannot survive in a field:

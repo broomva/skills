@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/round-budget.mutation.sh | tee /tmp/rbm.out
-          grep -q "42 killed, 0 survived" /tmp/rbm.out
+          grep -q "41 killed, 0 survived" /tmp/rbm.out
 
       - name: Tests — mutation-proof runner
         run: |

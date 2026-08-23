@@ -185,12 +185,18 @@ mutate "ROUND arity unchecked" "T38" \
     'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 mutate "corrupt ledger cannot be reset" "T39" \
     'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
+# `ln` is both the test and the reservation, so "does something already sit at
+# this name?" has no separate site to mutate any more -- `ln -f` is the mutation,
+# because forcing is the only way to destroy what is there.
+#
+# The separate "dangling symlink reads as absent" mutation is DROPPED with the
+# `-e`/`-L` pair it targeted. link(2) fails with EEXIST on a symlink whether or
+# not it dangles, so that case is now UNREPRESENTABLE rather than guarded, and
+# there is no arm left to break. T53 stays as a regression test and is reddened
+# by the mutation below, along with T40.
 mutate "archive clobbers a prior one" "T40" \
-    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' 'while false; do'
-# The symlink arm on its own: `-e` follows the link, so dropping `-L` leaves a
-# DANGLING symlink at the chosen name reading as absent.
-mutate "dangling symlink reads as absent" "T53" \
-    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' 'while [ -e "$ARCHIVE" ]; do' 
+    'ln "$LEDGER" "$ARCHIVE" 2>/dev/null' \
+    'ln -f "$LEDGER" "$ARCHIVE" 2>/dev/null' 
 
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
