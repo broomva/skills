@@ -756,3 +756,44 @@ class TestDeletingAClaimIsNotAWayToSatisfyIt:
         not report on every run."""
         _consistent(tmp_path, lint)
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+
+class TestWhereARestoredAggregateLands:
+    """Placement is behaviour, not cosmetics: the `## Aggregates` block ends
+    with a prose bullet, and an earlier version appended the restored line after
+    it. A mutation loosening the anchor back survived the suite.
+    """
+
+    def _restore(self, tmp_path, lint, trailing_prose=True):
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        block = "\n".join(l for l in _default_aggregates(total, buckets).split("\n")
+                          if "**Largest bucket**" not in l)
+        if trailing_prose:
+            block += "- Taxonomy = the buckets, installed path-independently.\n"
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=block))
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        return lint._INVENTORY.read_text()
+
+    def test_it_lands_among_the_bold_bullets_not_after_the_prose_one(self, tmp_path, lint):
+        text = self._restore(tmp_path, lint)
+        lines = [l for l in text.split("\n") if l.startswith("- ")]
+        restored = next(i for i, l in enumerate(lines) if "**Largest bucket**" in l)
+        prose = next(i for i, l in enumerate(lines) if l.startswith("- Taxonomy"))
+        assert restored < prose, lines
+
+    def test_the_prose_bullet_still_survives(self, tmp_path, lint):
+        """POSITIVE CONTROL: landing in the right place must not come at the
+        cost of eating the line it was ordered against."""
+        assert "- Taxonomy =" in self._restore(tmp_path, lint)
+
+    def test_with_no_aggregates_block_fix_declines_rather_than_guessing(self, tmp_path, lint):
+        """There is no non-arbitrary place for the line, so --fix must leave it
+        and `check` must keep reporting it — not append it at the top of the
+        file. `main --fix` therefore exits non-zero rather than claiming
+        success, the same refusal as an uncatalogued new category."""
+        _, _s, buckets, total, _r, irows = _consistent(tmp_path, lint)
+        _consistent(tmp_path, lint, inventory=_inventory(irows, total, buckets, aggregates=""))
+        assert lint.main(["--fix"]) == 1
+        text = lint._INVENTORY.read_text()
+        assert "**Largest bucket**" not in text, text
+        assert lint.main([]) == 1
