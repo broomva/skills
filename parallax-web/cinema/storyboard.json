@@ -1,0 +1,60 @@
+{
+  "title": "Parallax — la decisión que no tomaste",
+  "_style": "Applied to EVERY still. The arc is real room -> luminous model of the same room -> fork -> real room again. No readable text anywhere: every word on this page lives in the DOM layer, never in generated pixels.",
+  "style": "cinematic still, ARRI Alexa 35, 40mm anamorphic prime, shallow depth of field, practical tungsten warmth against cool dusk window light, volumetric haze, fine film grain, muted amber and teal palette, photographic not illustrative",
+  "negative": "text, lettering, signage, numbers, watermark, logo, user interface, screens, phone displays, warped hands, extra fingers, distortion, low quality, oversaturated, cartoon, illustration, 3d render look",
+  "width": 1600,
+  "height": 900,
+  "fps": 24,
+  "seconds": 6,
+  "gop": 8,
+  "models": {
+    "image": "gemini-3-pro-image",
+    "video": "veo-3.1-fast-generate-preview"
+  },
+  "scenes": [
+    {
+      "id": "servicio",
+      "title": "Un negocio real, un viernes cualquiera.",
+      "body": "Varias sedes, inventario que se mueve, turnos que alguien acomodó de memoria. Nada de esto vive en un sistema.",
+      "image": "wide interior of a small busy restaurant kitchen pass in Bogota at dusk, stainless steel counter, hanging pans, stacked crates of produce, two cooks working in the background out of focus, warm tungsten practicals against cool blue window light, steam drifting through the light"
+    },
+    {
+      "id": "cierre",
+      "title": "Toda decisión operativa se toma una sola vez.",
+      "body": "Cambias un precio, un turno, un pedido. El mundo se mueve — y la alternativa nunca se observa.",
+      "image": "the same restaurant kitchen after closing, empty and still, chairs stacked in the dining room beyond, a single overhead lamp left on above the steel counter, cold blue night through the windows, deep shadow, one warm pool of light"
+    },
+    {
+      "id": "gemelo",
+      "title": "Parallax reconstruye el negocio desde lo que ya hay.",
+      "body": "Sedes, inventario, turnos, proveedores — propuestos desde tus propias fuentes, no desde un formulario que alguien tuvo que llenar.",
+      "image": "the same kitchen rendered as a luminous volumetric model, surfaces reduced to glowing pale edges and floating planes suspended in dark space, shelves reading as stacked layers of light, no people, cold cyan and white against black, faint haze catching the geometry"
+    },
+    {
+      "id": "compuerta",
+      "title": "Nada corre hasta que lo aceptas.",
+      "body": "Un modelo que nadie revisó no debería poder producir números que se ven autoritativos. Falla cerrado: sin unidades, no se activa.",
+      "image": "the luminous model of the kitchen held behind a single vertical plane of pale light crossing the frame, the geometry beyond it dimmed and paused, the plane bright and hard edged, dark empty foreground, cold white and deep blue"
+    },
+    {
+      "id": "bifurcacion",
+      "title": "Bifurcas la historia y cambias exactamente una cosa.",
+      "body": "Mismo estado inicial, misma semilla, una política distinta. El ángulo entre las dos ramas es la medición — eso significa la palabra parallax.",
+      "image": "two overlapping translucent copies of the same luminous kitchen drifting apart left and right against black, the left copy dense and hot with amber interference where its geometry crowds, the right copy calm sparse and cool cyan, a widening dark gap between them"
+    },
+    {
+      "id": "regreso",
+      "title": "Y cada número dice cuánto de él fue real.",
+      "body": "Tipado observado o simulado desde que nace, hasta el recibo y hasta la API. Un simulador que no puede mentir sobre ser un simulador.",
+      "image": "the real restaurant kitchen again the following evening, warm and unhurried, one cook plating calmly at the pass, crates neatly stocked on the shelves behind, golden tungsten light, soft steam, the dining room glowing softly beyond"
+    }
+  ],
+  "motions": [
+    "camera drifts slowly forward toward the pass as the cooks leave frame and the practicals dim one by one, steam thinning, movement easing to a stop in the quiet room",
+    "the warm surfaces drain of colour and resolve into a luminous wireframe of the same kitchen, glowing pale cyan edges and floating shelf planes suspended in black, the camera continuing its slow forward drift, dust motes hardening into points of light, settling as the geometry finishes forming",
+    "a vertical plane of pale light sweeps in from the right and halts at frame centre, the drifting geometry slowing and settling against it, camera holding steady",
+    "the luminous room separates into two overlapping copies drifting apart left and right, camera pulling back evenly to hold both as the gap between them opens",
+    "the two copies collapse back into one and warm colour floods in from the frame edges, camera settling gently forward into the real room, motion easing to rest"
+  ]
+}

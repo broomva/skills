@@ -1,0 +1,39 @@
+{
+  "generatedFrom": "scroll-cinema/storyboard.json",
+  "model": "veo-3.1-fast-generate-preview",
+  "clips": [
+    "01-recorded.mp4",
+    "02-now.mp4",
+    "03-proposal.mp4",
+    "04-accept.mp4",
+    "05-divergence.mp4",
+    "06-held.mp4"
+  ],
+  "posters": ["p00.webp", "p01.webp", "p02.webp", "p03.webp", "p04.webp", "p05.webp", "p06.webp"],
+  "beats": [
+    {
+      "id": "01-recorded",
+      "beat": "Every operating decision is taken once."
+    },
+    {
+      "id": "02-now",
+      "beat": "The alternative is never observed."
+    },
+    {
+      "id": "03-proposal",
+      "beat": "Parallax proposes a model of your context."
+    },
+    {
+      "id": "04-accept",
+      "beat": "You accept it. Only then does anything run."
+    },
+    {
+      "id": "05-divergence",
+      "beat": "Same seed, same state. One decision different."
+    },
+    {
+      "id": "06-held",
+      "beat": "One branch held its invariant."
+    }
+  ]
+}

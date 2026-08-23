@@ -1,0 +1,7 @@
+# Demo artifacts. A receipt written here exists on exactly one laptop.
+out/
+
+# Per-workspace Parallax thread state, written by any command run in place.
+.parallax/
+
+node_modules/
