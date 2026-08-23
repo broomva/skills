@@ -348,3 +348,48 @@ class TestSurfaceStructureHoles:
         others = [l for l in lines if "**(vendored)**" in l and "`gamma`" not in l]
         assert "**(vendored)**" in gamma, gamma
         assert not others, others
+
+
+class TestTheTighteningDoesNotOvershoot:
+    """Bidirectional proof for the unrecognised-count scan.
+
+    Making a permissive check strict is the classic way to trade a false-green
+    for a false-red: the scan now flags any number near the word "skill", and
+    the real README and inventory are full of numbers that are not skill counts
+    — a CLI version, an upstream PR number, an output filename, the directory
+    depth, a legacy catalog's row count.
+
+    Every line below is real prose from the surfaces this linter governs, and
+    every one of them must come back CLEAN. Without these, the previous class
+    could be satisfied by a scan that simply reports everything.
+    """
+
+    LEGITIMATE = [
+        "> **Note:** **requires skills.sh CLI ≥ v1.5.8** (PR #1272), which discovers buckets.",
+        "npx remotion render SkillsShowcase out/skills-showcase.mp4",
+        "Skills are bucketed by single-noun **category** at `skills/<category>/<name>/` (depth-2).",
+        '> the video dataset still reflects the legacy "broader-ecosystem" catalog',
+        "> catalog (86 rows, 15 marketing domains). The canonical inventory above",
+        "Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.",
+        "| `_shared/` | (reserved) shared utilities used by multiple Tier-2 skills |",
+    ]
+
+    @pytest.mark.parametrize("line", LEGITIMATE)
+    def test_real_prose_is_not_flagged_as_an_unverifiable_count(self, lint, line):
+        assert lint._unverified_count_claims(line) == [], line
+
+    def test_a_genuinely_unverifiable_count_still_is_flagged(self, lint):
+        """POSITIVE CONTROL for the seven cases above: if the scan were disabled
+        outright they would all pass while it caught nothing."""
+        assert lint._unverified_count_claims("We ship 47 flagship skills this quarter.")
+
+    def test_the_allowlist_is_load_bearing_not_decorative(self, lint):
+        """Each allowlist entry must actually be why its line is clean — remove
+        the allowlist and the real prose starts failing."""
+        saved = lint._NOT_A_SKILL_COUNT
+        lint._NOT_A_SKILL_COUNT = ()
+        try:
+            flagged = [l for l in self.LEGITIMATE if lint._unverified_count_claims(l)]
+        finally:
+            lint._NOT_A_SKILL_COUNT = saved
+        assert flagged, "no line depends on the allowlist — it is dead configuration"
