@@ -462,14 +462,43 @@ if [ "$RC" = "6" ]; then ok "T38: extra-field ROUND row STOPs"; else fail "T38: 
 # Routing reset through the fail-closed gate meant a CORRUPT ledger could not be
 # reset -- budget says "fix or discard it" and the only discard left was `rm`,
 # turning the one loud archiving path into a silent unlogged deletion.
-echo "T39. a corrupt ledger can still be archived"
+# Archiving a corrupt ledger AUTOMATICALLY made corruption a bypass of the
+# live-arc gate: append one junk line to a live ledger and the budget restarts.
+# The remedy stays reachable and becomes deliberate.
+echo "T39. a corrupt ledger is archivable, but only deliberately"
 LED=$(newledger t39)
 printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
-RC=$(rb reset --run-id=t39 --ledger="$LED")
-if [ "$RC" = "0" ] && [ ! -f "$LED" ]; then
-    ok "T39: corrupt ledger archived, not stranded"
+RC_PLAIN=$(rb reset --run-id=t39 --ledger="$LED")
+RC_FORCE=$(rb reset --run-id=t39 --ledger="$LED" --force)
+if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ ! -f "$LED" ]; then
+    ok "T39: refused without --force, archived with it"
 else
-    fail "T39: corrupt ledger archived" "exit $RC, ledger still present: $([ -f "$LED" ] && echo yes || echo no)"
+    fail "T39: corrupt reset gating" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), present=$([ -f "$LED" ] && echo yes || echo no)"
+fi
+
+# ── T41: corrupting a LIVE ledger must not launder it ─────────────────────
+echo "T41. junk appended to a live ledger does not buy a reset"
+LED=$(newledger t41)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nJUNK\n' > "$LED"
+RC=$(rb reset --run-id=t41 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T41: corrupt-then-reset refused"; else fail "T41: corrupt-then-reset" "exit $RC, want 6"; fi
+
+# ── T42: a trailing pass cannot launder a NONTERMINAL absorbing stop ──────
+# The recorders refused only past a terminal VERDICT, so the ledger grew past a
+# no-defect / refuted / regression stop and the appended pass then read as
+# "finished" to reset. Live-vs-finished now comes from the budget's precedence.
+echo "T42. a passing round cannot be appended past a nonterminal stop"
+LED=$(newledger t42)
+bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5 --defect=no >/dev/null
+bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5 --defect=no >/dev/null
+RC_APPEND=$(rb record-round --run-id=t42 --ledger="$LED" --score=7 --defect=yes)
+LED2=$(newledger t42b)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\n' > "$LED2"
+RC_REG=$(rb record-round --run-id=t42b --ledger="$LED2" --score=9 --defect=yes)
+if [ "$RC_APPEND" = "6" ] && [ "$RC_REG" = "6" ]; then
+    ok "T42: no appending past a nonterminal stop (no-defect and regression)"
+else
+    fail "T42: nonterminal stop is absorbing for recorders" "nodefect=$RC_APPEND regression=$RC_REG (want 6 each)"
 fi
 
 # ── T40: archiving never clobbers a previous archive ──────────────────────

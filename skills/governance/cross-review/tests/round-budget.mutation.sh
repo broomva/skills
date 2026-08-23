@@ -217,6 +217,17 @@ mutate "reset ungated (laundering)" "T34" \
     'if [ -z "$LG_TERMINAL" ] && { [ "$LG_N" = "0" ] || [ "$LG_SCORE" -lt "$PASS_SCORE" ]; }; then' \
     'if false; then'
 
+# ─── reset and the recorders now share budget's precedence ────────────────
+mutate "reset decides live-ness itself" "T42" \
+    'if [ -z "$RESET_ENTRY" ] || ! arc_closed_code "$RESET_CODE"; then' \
+    'if false; then'
+mutate "recorders ignore nonterminal stops" "T42" \
+    'arc_closed_code "$code" || return 0' \
+    '[ "$code" = "IMPOSSIBLE" ] || return 0'
+mutate "corrupt reset needs no --force" "T39" \
+    'if [ "$RESET_FORCE" != "1" ]; then' \
+    'if false; then'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

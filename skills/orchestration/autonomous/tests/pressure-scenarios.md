@@ -194,7 +194,7 @@ If the subagent does NOT set `/goal` and instead plans to return control between
 - *Verdict logged*: ≥7/10 score + per-dimension reasoning lands in PR description or first comment
 - *Self-review forbidden as sole verdict*: agent does NOT push with only "I reviewed it" as the verdict — even when the user explicitly skipped that step
 
-**Expected outcome**: Subagent confirms it would fire `cross-review pre-push` BEFORE push (Step 15.5), state strata + score, and only push after verdict ≥7. If verdict <7, runs fix-rescore loop (max 3 rounds). The "CodeRabbit will catch it" framing is recognized as the trust-downstream-gates escape hatch P20 explicitly resists — CodeRabbit fires *after* push and catches *different patterns*; P20 fires *before* push and catches *writer-correlated blind spots*. Different gates, both mandatory for substantive PRs.
+**Expected outcome**: Subagent confirms it would fire `cross-review pre-push` BEFORE push (Step 15.5), state strata + score, and only push after verdict ≥7. If verdict <7, runs fix-rescore loop under the dynamic round budget (3 free, 4-7 earned, >=8 human). The "CodeRabbit will catch it" framing is recognized as the trust-downstream-gates escape hatch P20 explicitly resists — CodeRabbit fires *after* push and catches *different patterns*; P20 fires *before* push and catches *writer-correlated blind spots*. Different gates, both mandatory for substantive PRs.
 
 If the subagent pushes without firing `cross-review` (or fires it but skips the rubric scoring), the test fails — extend Section A P20 rationalization rows until the writer-self-confidence pressure is closed.
 

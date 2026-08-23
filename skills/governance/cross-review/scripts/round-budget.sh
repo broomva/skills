@@ -99,7 +99,7 @@ case "$COMMAND" in
 esac
 
 RUN_ID=""; SCORE=""; DEFECT=""; FINGERPRINTS=""; SETTLES=""
-VERDICT=""; PREDICTION=""; DIRECTIVE=""; LEDGER_PATH=""
+VERDICT=""; PREDICTION=""; DIRECTIVE=""; LEDGER_PATH=""; RESET_FORCE=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -111,6 +111,7 @@ for arg in "$@"; do
         --verdict=*)      VERDICT="${arg#*=}" ;;
         --prediction=*)   PREDICTION="${arg#*=}" ;;
         --directive=*)    DIRECTIVE="${arg#*=}" ;;
+        --force)          RESET_FORCE=1 ;;
         --ledger=*)
             # A test seam, gated so it is not a silent production budget-reset.
             # It is not a barrier — see THE BOUNDARY above.
@@ -318,13 +319,158 @@ load_ledger() {
 
 # The ledger must not grow past its own terminal state. Both recorders, one site.
 refuse_past_terminal() {
-    [ -n "$LG_TERMINAL" ] || return 0
-    echo "round-budget: a $LG_TERMINAL verdict is recorded in $LEDGER." >&2
-    echo "  That state is terminal: recording more does not clear it." >&2
+    # Was: "is a terminal VERDICT recorded?". That let the ledger grow past every
+    # NONTERMINAL absorbing stop -- two no-defect rounds, a regression, two
+    # refuted -- and a trailing passing round then read as "finished" to reset.
+    # Now: whatever `budget` would say. One predicate, every caller.
+    local entry code
+    entry="$(first_rule)"
+    [ -n "$entry" ] || return 0
+    code=${entry##*:}
+    arc_closed_code "$code" || return 0
+    echo "round-budget: this arc is CLOSED — ${entry%%:*} (exit $code)." >&2
+    echo "  Recording more does not clear it; run 'budget' for the full reason." >&2
     echo "" >&2
     echo "  If this arc is FINISHED and the branch is being reused, archive it:" >&2
     echo "    round-budget.sh reset --run-id=$RUN_ID" >&2
     exit 6
+}
+
+# ─── The decision, at module scope ───────────────────────────────────────
+#
+# Hoisted out of the `budget` arm so the RECORDERS and `reset` decide
+# live-vs-finished from the SAME precedence. They each had their own notion
+# before, which is how a ledger grew past its own absorbing stop and a
+# trailing passing round then read as "finished" to reset. Same class as
+# every other defect in this arc: one predicate, two implementations.
+# ONE source of truth for both the ORDER and the EXIT CODE. Keeping names in
+# a list and codes in a separate `case` wrote each rule in three places —
+# list, function name, case arm — which could disagree.
+PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3 ceiling:7 free:0 unusable_verdict:6 review_required:5 earned:0"
+
+rule_regressed() {
+    [ "$LG_REGRESSED" != "0" ] || return 1
+    echo "STOP — the score REGRESSED at some point in this arc."
+    echo "  A regression is not a plateau. Escalate rather than swing again."
+    return 0
+}
+rule_refuted() {
+    [ "$LG_MAXREF" -ge 2 ] || return 1
+    echo "STOP — $LG_MAXREF consecutive predictions were REFUTED."
+    echo "  The continuation review was wrong twice running about what the next"
+    echo "  round would find; this does not clear by recording a later CONFIRMED."
+    return 0
+}
+rule_nodefect() {
+    [ "$LG_MAXNOD" -ge 2 ] || return 1
+    echo "STOP — $LG_MAXNOD consecutive rounds reproduced NO defect in the change."
+    echo "  The currency of a continuation is a reproduced, executable defect."
+    return 0
+}
+rule_terminal() {
+    [ -n "$LG_TERMINAL" ] || return 1
+    if [ "$LG_TERMINAL" = "STRUCTURAL" ]; then
+        echo "STOP (STRUCTURAL) — another fix round is the wrong move."
+        echo "  Directive: $LG_DIRECTIVE"
+        echo "  The defect stream is repeating in CLASS while moving in LOCATION."
+        echo "  Change the shape of the fix, do not take another swing at it."
+    else
+        echo "STOP — the continuation review returned STOP."
+    fi
+    return 0
+}
+rule_passed() {
+    [ "$LG_SCORE" -ge "$PASS_SCORE" ] || return 1
+    echo "PASSED — last round scored $LG_SCORE (>= $PASS_SCORE). No further round needed."
+    return 0
+}
+rule_ceiling() {
+    [ "$LG_N" -ge "$HUMAN_CEILING" ] || return 1
+    echo "HUMAN — $LG_N rounds recorded (ceiling $HUMAN_CEILING)."
+    echo "  Escalate through the handback contract with the ledger attached."
+    echo "  No verdict buys another round here."
+    return 0
+}
+rule_free() {
+    [ "$LG_N" -lt "$FREE_ROUNDS" ] || return 1
+    echo "AUTHORIZED — round $((LG_N+1)) of $FREE_ROUNDS free rounds."
+    return 0
+}
+# Split from rule_earned so each rule owns ONE outcome. Fused, the rule chose
+# the message while the dispatcher re-evaluated the same condition to choose
+# the exit code -- the same condition in two places, which is the defect class
+# this restructure exists to remove.
+# Fires when the last row is a VERDICT that is neither terminal (handled
+# above) nor CONTINUE — i.e. an empty or unrecognised token. It needs its own
+# rule because a rule's exit code comes from PRECEDENCE: signalling this from
+# inside rule_earned would have exited 0, which is the bug being fixed.
+rule_unusable_verdict() {
+    [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
+    [ "$LG_LAST_VERDICT" != "CONTINUE" ] || return 1
+    echo "STOP — the last row is a VERDICT carrying an unusable token: '$LG_LAST_VERDICT'"
+    echo "  Only CONTINUE earns a round. An EMPTY token is not a bad one to"
+    echo "  analyze (absent, not invalid), so it reached the earned path and"
+    echo "  bought a round. Admission is positive now: CONTINUE or nothing."
+    return 0
+}
+
+rule_review_required() {
+    [ "$LG_LAST_TYPE" != "VERDICT" ] || return 1
+    echo "REVIEW-REQUIRED — $LG_N rounds recorded; past the $FREE_ROUNDS free rounds."
+    echo "  Run the continuation review, then record its verdict:"
+    echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=... [--prediction=...]"
+    echo "  The brief's default is STOP; the burden is on continuation."
+    return 0
+}
+# STOP/STRUCTURAL are caught by rule_terminal, so CONTINUE is all that can be
+# live here. The verdict must be the MOST RECENT row: one already settled by a
+# later round has spent its authority.
+rule_earned() {
+    [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
+    # ...and it must be a CONTINUE. STOP/STRUCTURAL exit at rule_terminal, so
+    # "it is a VERDICT row" LOOKED sufficient. It is not: an EMPTY token is
+    # not a bad one -- analyze records badverdict=$2, and "" is absent rather
+    # than invalid -- so `VERDICT\t\t\t` passed arity, set no terminal, set
+    # no pending, was skipped by the CONTINUE-only re-validation, and bought
+    # a round. The pre-hoist code caught it in an explicit default arm that
+    # the comment sweep deleted along with the comment explaining why it
+    # existed. Admission is now positive: only CONTINUE earns a round.
+    [ "$LG_LAST_VERDICT" = "CONTINUE" ] || return 1
+    echo "AUTHORIZED — round $((LG_N+1)), earned by a $LG_LAST_VERDICT verdict."
+    echo "  Live prediction: $LG_LAST_PRED"
+    echo "  The next recorded round MUST settle it (--settles=CONFIRMED|REFUTED)."
+    return 0
+}
+# Each rule prints its own outcome and returns 0 when it fires. Exit codes
+# are keyed off the rule name so the mapping is visible in one place.
+
+# Codes that mean THE ARC IS OVER. Anything else is a live arc.
+arc_closed_code() { case "$1" in 3|6|7) return 0 ;; *) return 1 ;; esac; }
+
+# Name:code of the first firing rule, with the rule's own output suppressed.
+first_rule() {
+    local entry rule
+    for entry in $PRECEDENCE; do
+        rule=${entry%%:*}
+        if ! declare -F "rule_$rule" >/dev/null 2>&1; then
+            echo "round-budget: PRECEDENCE names '$rule' but rule_$rule does not exist." >&2
+            exit 6
+        fi
+        if "rule_$rule" >/dev/null 2>&1; then printf '%s' "$entry"; return 0; fi
+    done
+    printf ''
+}
+
+decide_and_exit() {
+    local entry rule code
+    entry="$(first_rule)"
+    if [ -z "$entry" ]; then
+        echo "STOP — no precedence rule matched for $LEDGER; refusing to guess." >&2
+        exit 6
+    fi
+    rule=${entry%%:*}; code=${entry##*:}
+    "rule_$rule"          # re-run for its message
+    exit "$code"
 }
 
 case "$COMMAND" in
@@ -429,19 +575,37 @@ reset)
     # Probed in a SUBSHELL: load_ledger exits rather than returning, so a bare
     # `if ! load_ledger` would take the whole script down with it.
     if ! ( load_ledger ) >/dev/null 2>&1; then
-        echo "round-budget: $LEDGER does not parse — archiving it is the remedy."
+        # A corrupt ledger must stay discardable -- `budget` says "fix or discard
+        # it", and refusing here would leave `rm` as the only discard, turning the
+        # one loud archiving path into a silent deletion. But archiving it
+        # AUTOMATICALLY made corruption a bypass of the live-arc gate: append one
+        # junk line to a live ledger and the budget restarts. So the remedy stays
+        # reachable and becomes DELIBERATE.
+        if [ "$RESET_FORCE" != "1" ]; then
+            echo "round-budget: $LEDGER does not parse." >&2
+            echo "  Archiving it is the remedy, but discarding an unreadable ledger" >&2
+            echo "  is a deliberate act: whatever budget it held cannot be read, so" >&2
+            echo "  this cannot distinguish a finished arc from a live one that was" >&2
+            echo "  corrupted. Re-run with --force to archive it anyway." >&2
+            exit 6
+        fi
         ARCHIVE="$LEDGER.archived.corrupt.$$"
         mv "$LEDGER" "$ARCHIVE"
-        echo "round-budget: archived -> $ARCHIVE"
+        echo "round-budget: archived (forced, unreadable) -> $ARCHIVE"
         exit 0
     fi
     load_ledger
-    if [ -z "$LG_TERMINAL" ] && { [ "$LG_N" = "0" ] || [ "$LG_SCORE" -lt "$PASS_SCORE" ]; }; then
-        echo "round-budget: refusing to reset a LIVE ledger." >&2
-        echo "  $LG_N round(s) recorded, last score ${LG_SCORE}, no terminal verdict." >&2
-        echo "  reset retires a FINISHED arc — one that reached a STOP or STRUCTURAL" >&2
-        echo "  verdict, or a passing score. Resetting a live one clears a budget" >&2
-        echo "  nothing has closed, which is the laundering this gate prevents." >&2
+    # Live-vs-finished comes from the SAME precedence `budget` uses. Deciding it
+    # here independently is what let a trailing passing round launder an earlier
+    # nonterminal stop.
+    RESET_ENTRY="$(first_rule)"
+    RESET_CODE=${RESET_ENTRY##*:}
+    if [ -z "$RESET_ENTRY" ] || ! arc_closed_code "$RESET_CODE"; then
+        echo "round-budget: refusing to reset a LIVE arc." >&2
+        echo "  budget says: ${RESET_ENTRY%%:*} (exit ${RESET_CODE:-none})." >&2
+        echo "  reset retires an arc the budget has CLOSED — passed, stopped, or" >&2
+        echo "  escalated to a human. Clearing one nothing has closed is the" >&2
+        echo "  laundering this gate exists to prevent." >&2
         exit 6
     fi
     # Keyed on line count alone, two arcs of equal length silently overwrote each
@@ -485,118 +649,6 @@ budget)
     #
     # Stops come before PASSED because the score is the agent's OWN SELF-REPORT:
     # if a pass outranked a stop, every stop would cost one integer to escape.
-    # ONE source of truth for both the ORDER and the EXIT CODE. Keeping names in
-    # a list and codes in a separate `case` wrote each rule in three places —
-    # list, function name, case arm — which could disagree.
-    PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3 ceiling:7 free:0 unusable_verdict:6 review_required:5 earned:0"
-
-    rule_regressed() {
-        [ "$LG_REGRESSED" != "0" ] || return 1
-        echo "STOP — the score REGRESSED at some point in this arc."
-        echo "  A regression is not a plateau. Escalate rather than swing again."
-        return 0
-    }
-    rule_refuted() {
-        [ "$LG_MAXREF" -ge 2 ] || return 1
-        echo "STOP — $LG_MAXREF consecutive predictions were REFUTED."
-        echo "  The continuation review was wrong twice running about what the next"
-        echo "  round would find; this does not clear by recording a later CONFIRMED."
-        return 0
-    }
-    rule_nodefect() {
-        [ "$LG_MAXNOD" -ge 2 ] || return 1
-        echo "STOP — $LG_MAXNOD consecutive rounds reproduced NO defect in the change."
-        echo "  The currency of a continuation is a reproduced, executable defect."
-        return 0
-    }
-    rule_terminal() {
-        [ -n "$LG_TERMINAL" ] || return 1
-        if [ "$LG_TERMINAL" = "STRUCTURAL" ]; then
-            echo "STOP (STRUCTURAL) — another fix round is the wrong move."
-            echo "  Directive: $LG_DIRECTIVE"
-            echo "  The defect stream is repeating in CLASS while moving in LOCATION."
-            echo "  Change the shape of the fix, do not take another swing at it."
-        else
-            echo "STOP — the continuation review returned STOP."
-        fi
-        return 0
-    }
-    rule_passed() {
-        [ "$LG_SCORE" -ge "$PASS_SCORE" ] || return 1
-        echo "PASSED — last round scored $LG_SCORE (>= $PASS_SCORE). No further round needed."
-        return 0
-    }
-    rule_ceiling() {
-        [ "$LG_N" -ge "$HUMAN_CEILING" ] || return 1
-        echo "HUMAN — $LG_N rounds recorded (ceiling $HUMAN_CEILING)."
-        echo "  Escalate through the handback contract with the ledger attached."
-        echo "  No verdict buys another round here."
-        return 0
-    }
-    rule_free() {
-        [ "$LG_N" -lt "$FREE_ROUNDS" ] || return 1
-        echo "AUTHORIZED — round $((LG_N+1)) of $FREE_ROUNDS free rounds."
-        return 0
-    }
-    # Split from rule_earned so each rule owns ONE outcome. Fused, the rule chose
-    # the message while the dispatcher re-evaluated the same condition to choose
-    # the exit code -- the same condition in two places, which is the defect class
-    # this restructure exists to remove.
-    # Fires when the last row is a VERDICT that is neither terminal (handled
-    # above) nor CONTINUE — i.e. an empty or unrecognised token. It needs its own
-    # rule because a rule's exit code comes from PRECEDENCE: signalling this from
-    # inside rule_earned would have exited 0, which is the bug being fixed.
-    rule_unusable_verdict() {
-        [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
-        [ "$LG_LAST_VERDICT" != "CONTINUE" ] || return 1
-        echo "STOP — the last row is a VERDICT carrying an unusable token: '$LG_LAST_VERDICT'"
-        echo "  Only CONTINUE earns a round. An EMPTY token is not a bad one to"
-        echo "  analyze (absent, not invalid), so it reached the earned path and"
-        echo "  bought a round. Admission is positive now: CONTINUE or nothing."
-        return 0
-    }
-
-    rule_review_required() {
-        [ "$LG_LAST_TYPE" != "VERDICT" ] || return 1
-        echo "REVIEW-REQUIRED — $LG_N rounds recorded; past the $FREE_ROUNDS free rounds."
-        echo "  Run the continuation review, then record its verdict:"
-        echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=... [--prediction=...]"
-        echo "  The brief's default is STOP; the burden is on continuation."
-        return 0
-    }
-    # STOP/STRUCTURAL are caught by rule_terminal, so CONTINUE is all that can be
-    # live here. The verdict must be the MOST RECENT row: one already settled by a
-    # later round has spent its authority.
-    rule_earned() {
-        [ "$LG_LAST_TYPE" = "VERDICT" ] || return 1
-        # ...and it must be a CONTINUE. STOP/STRUCTURAL exit at rule_terminal, so
-        # "it is a VERDICT row" LOOKED sufficient. It is not: an EMPTY token is
-        # not a bad one -- analyze records badverdict=$2, and "" is absent rather
-        # than invalid -- so `VERDICT\t\t\t` passed arity, set no terminal, set
-        # no pending, was skipped by the CONTINUE-only re-validation, and bought
-        # a round. The pre-hoist code caught it in an explicit default arm that
-        # the comment sweep deleted along with the comment explaining why it
-        # existed. Admission is now positive: only CONTINUE earns a round.
-        [ "$LG_LAST_VERDICT" = "CONTINUE" ] || return 1
-        echo "AUTHORIZED — round $((LG_N+1)), earned by a $LG_LAST_VERDICT verdict."
-        echo "  Live prediction: $LG_LAST_PRED"
-        echo "  The next recorded round MUST settle it (--settles=CONFIRMED|REFUTED)."
-        return 0
-    }
-    # Each rule prints its own outcome and returns 0 when it fires. Exit codes
-    # are keyed off the rule name so the mapping is visible in one place.
-    for entry in $PRECEDENCE; do
-        rule=${entry%%:*}
-        code=${entry##*:}
-        # A named rule with no function would otherwise surface as "command not
-        # found" inside an `if`, i.e. as a silently skipped rule.
-        if ! declare -F "rule_$rule" >/dev/null 2>&1; then
-            echo "round-budget: PRECEDENCE names '$rule' but rule_$rule does not exist." >&2
-            exit 6
-        fi
-        if "rule_$rule"; then exit "$code"; fi
-    done
-    echo "STOP — no precedence rule matched for $LEDGER; refusing to guess." >&2
-    exit 6
+    decide_and_exit
     ;;
 esac
