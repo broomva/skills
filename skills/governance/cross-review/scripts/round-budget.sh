@@ -186,7 +186,11 @@ archive_ledger() {
     base="$LEDGER.archived${tag:+.$tag}.$lines"
     ARCHIVE="$base"
     # Keyed on line count alone, two arcs of equal length silently overwrote.
-    while [ -e "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$base.$n"; done
+    # `-e` alone is not "is something already here": it FOLLOWS the link, so a
+    # DANGLING symlink at the chosen name tests false, the loop stops there, and
+    # the mv destroys that entry -- the one thing this loop exists to prevent.
+    # `-L` is what sees the link itself.
+    while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$base.$n"; done
     mv "$LEDGER" "$ARCHIVE"
 }
 

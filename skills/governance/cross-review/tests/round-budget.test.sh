@@ -617,10 +617,15 @@ LED=$(newledger t48)
 RC_BUDGET=$(rb budget --run-id=t48 --ledger="$LED" --force)
 RC_ROUND=$(rb record-round --run-id=t48 --ledger="$LED" --score=5 --defect=yes --force)
 RC_VERDICT=$(rb record-verdict --run-id=t48 --ledger="$LED" --verdict=STOP --force)
-if [ "$RC_BUDGET" = "2" ] && [ "$RC_ROUND" = "2" ] && [ "$RC_VERDICT" = "2" ]; then
-    ok "T48: --force rejected outside reset"
+# Polarity: a gate that rejected --force EVERYWHERE would pass the three above.
+# It must still be accepted by the one command it belongs to.
+LED2=$(newledger t48b)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\n' > "$LED2"
+RC_ACCEPTED=$(rb reset --run-id=t48b --ledger="$LED2" --force)
+if [ "$RC_BUDGET" = "2" ] && [ "$RC_ROUND" = "2" ] && [ "$RC_VERDICT" = "2" ] && [ "$RC_ACCEPTED" = "0" ]; then
+    ok "T48: --force rejected outside reset, accepted by it"
 else
-    fail "T48: --force scope" "budget=$RC_BUDGET round=$RC_ROUND verdict=$RC_VERDICT (want 2 each)"
+    fail "T48: --force scope" "budget=$RC_BUDGET round=$RC_ROUND verdict=$RC_VERDICT (want 2 each), reset=$RC_ACCEPTED (want 0)"
 fi
 
 # ── T49: --force does not open a LIVE arc ─────────────────────────────────
@@ -633,10 +638,16 @@ LED=$(newledger t49)
 printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
 RC_PLAIN=$(rb reset --run-id=t49 --ledger="$LED")
 RC_FORCE=$(rb reset --run-id=t49 --ledger="$LED" --force)
-if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "6" ] && [ -f "$LED" ]; then
-    ok "T49: live arc refuses --force too"
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+# Polarity, and the in-band route named in the refusal message: record the
+# verdict and the SAME ledger becomes resettable with no --force at all. Both
+# arms refusing would otherwise be satisfied by a reset that never says yes.
+bash "$RB" record-verdict --run-id=t49 --ledger="$LED" --verdict=STOP >/dev/null 2>&1
+RC_AFTER=$(rb reset --run-id=t49 --ledger="$LED")
+if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_AFTER" = "0" ]; then
+    ok "T49: live arc refuses --force; recording its verdict is the way out"
 else
-    fail "T49: --force reaches a live arc" "plain=$RC_PLAIN force=$RC_FORCE (want 6 each)"
+    fail "T49: --force reaches a live arc" "plain=$RC_PLAIN force=$RC_FORCE (want 6 each), survived=$STILL (want yes), after-verdict=$RC_AFTER (want 0)"
 fi
 
 # ── T50: the corrupt path archives through the SAME never-clobber namer ───
@@ -696,6 +707,24 @@ else
     fi
 fi
 chmod 644 "$LED" 2>/dev/null || true
+
+# ── T53: "already here" must mean the ENTRY, not what it points at ────────
+# `[ -e ]` follows the link. A DANGLING symlink at the chosen archive name tests
+# FALSE, so the never-clobber loop stopped there and the mv destroyed that
+# entry -- the precise event the loop exists to prevent, in the one case its own
+# test could not see.
+echo "T53. a dangling symlink at the archive name is not clobbered"
+LED=$(newledger t53)
+printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
+ln -s "$TMP/t53-no-such-target" "$LED.archived.1"
+RC=$(rb reset --run-id=t53 --ledger="$LED")
+STILL_LINK=$([ -L "$LED.archived.1" ] && echo yes || echo no)
+SIDESTEP=$([ -e "$LED.archived.1.1" ] && echo yes || echo no)
+if [ "$RC" = "0" ] && [ "$STILL_LINK" = "yes" ] && [ "$SIDESTEP" = "yes" ]; then
+    ok "T53: the symlink survives and the archive steps aside"
+else
+    fail "T53: dangling symlink clobbered" "exit $RC (want 0), symlink intact=$STILL_LINK (want yes), sidestep=$SIDESTEP (want yes)"
+fi
 
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"

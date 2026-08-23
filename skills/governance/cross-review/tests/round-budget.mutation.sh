@@ -85,21 +85,43 @@ PY
         return 0
     fi
 
-    local out rc
+    local out rc failed_n passed_n
     out=$(bash "$SUITE" 2>&1); rc=$?
     cp "$PRISTINE" "$TARGET"
 
-    # The id is matched WITH ITS COLON. An unanchored substring match made an
-    # expectation of "T1" satisfiable by "[FAIL] T13" / "T15" / "T19" -- and it
-    # silently was: this sweep reported "free-round floor 3->99 -> T1 went red"
-    # when the tests that actually reddened were T4 and T13. The bias runs toward
-    # FALSE KILLED, which is the direction that hides survivors.
-    if echo "$out" | grep -q "\[FAIL\] ${expect}:"; then
-        echo "  [KILLED]   $label  ->  $expect went red"
-        KILLED=$((KILLED+1))
-    else
+    # ATTRIBUTION, not merely redness. A kill is credited on three signals, not
+    # one:
+    #
+    #   1. the named test is red -- matched WITH ITS COLON. An unanchored
+    #      substring made an expectation of "T1" satisfiable by "[FAIL] T13" /
+    #      "T15" / "T19", and it silently was: this sweep reported "free-round
+    #      floor 3->99 -> T1 went red" when the tests that actually reddened
+    #      were T4 and T13.
+    #   2. something is still GREEN. A mutant that breaks the script GLOBALLY
+    #      reddens the named test too, and "the suite went red" then says
+    #      nothing about the rule the mutation was aimed at. This arc shipped
+    #      exactly that: a BRANCH inversion credited with killing T19 was
+    #      reddening it through a crash path, and it SURVIVED the moment the
+    #      duplicated decision site it rode on was deleted.
+    #   3. the BREADTH is printed. A mutation aimed at one rule that reddens
+    #      half the suite is not wrong, but it is weaker evidence than one that
+    #      reddens its own test, and that difference belongs in the log rather
+    #      than in a reviewer's head.
+    #
+    # Both bad outcomes count as SURVIVED. An unattributed kill is an unproven
+    # gate, and the whole point of the sweep is that those fail the run.
+    failed_n=$(printf '%s\n' "$out" | grep -c '^  \[FAIL\]' || true)
+    passed_n=$(printf '%s\n' "$out" | grep -c '^  \[pass\]' || true)
+
+    if ! printf '%s\n' "$out" | grep -q "\[FAIL\] ${expect}:"; then
         echo "  [SURVIVED] $label  ->  $expect still passed (suite exit $rc)"
         SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label expected $expect")
+    elif [ "$passed_n" -eq 0 ]; then
+        echo "  [UNATTRIB] $label  ->  EVERY assertion red; $expect proves nothing here"
+        SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label UNATTRIBUTED (mutant broke the suite globally)")
+    else
+        echo "  [KILLED]   $label  ->  $expect went red ($failed_n of $((failed_n+passed_n)) red)"
+        KILLED=$((KILLED+1))
     fi
 }
 
@@ -164,7 +186,11 @@ mutate "ROUND arity unchecked" "T38" \
 mutate "corrupt ledger cannot be reset" "T39" \
     'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
 mutate "archive clobbers a prior one" "T40" \
-    'while [ -e "$ARCHIVE" ]; do' 'while false; do' 
+    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' 'while false; do'
+# The symlink arm on its own: `-e` follows the link, so dropping `-L` leaves a
+# DANGLING symlink at the chosen name reading as absent.
+mutate "dangling symlink reads as absent" "T53" \
+    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' 'while [ -e "$ARCHIVE" ]; do' 
 
 
 # The stale-verdict rule: a spent verdict must not re-authorize.

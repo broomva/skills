@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/round-budget.test.sh | tee /tmp/rb.out
-          grep -q "52 passed, 0 failed" /tmp/rb.out
+          grep -q "53 passed, 0 failed" /tmp/rb.out
 
       # Per-rule mutation proof. `--strategy stub` on the whole file leaves 4 of
       # 17 checks passing against a fully neutered target, so every bound and
@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/round-budget.mutation.sh | tee /tmp/rbm.out
-          grep -q "42 killed, 0 survived" /tmp/rbm.out
+          grep -q "43 killed, 0 survived" /tmp/rbm.out
 
       - name: Tests — mutation-proof runner
         run: |
