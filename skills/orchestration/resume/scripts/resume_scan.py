@@ -66,6 +66,17 @@ ASYNC_LAUNCH_RE = re.compile(r"Async agent launched successfully", re.I)
 BG_LAUNCH_RE = re.compile(r"Command running in background with ID:\s*([A-Za-z0-9_-]+)")
 BG_OUTPUT_RE = re.compile(r"[Oo]utput is being written to:\s*(\S+)")
 
+# --- workflows ---------------------------------------------------------
+# Copied byte-for-byte from a real receipt, not composed to fit the regex:
+#   "Workflow launched in background. Task ID: wi666ztu1
+#    Summary: ...
+#    Transcript dir: .../subagents/workflows/wf_7fb5aef4-ebc"
+# It carries neither `agentId:` nor the background-shell wording, so it
+# matched no branch and every workflow fell through the "already reported"
+# path — 169 receipts in this corpus, 100% silently dropped.
+WF_LAUNCH_RE = re.compile(r"Workflow launched in background\. Task ID:\s*(\S+)")
+WF_DIR_RE = re.compile(r"Transcript dir:\s*(\S+)")
+
 NOTIF_RE = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 NOTIF_ID_RE = re.compile(r"<task-id>\s*([^<]+?)\s*</task-id>")
 NOTIF_TOOLUSE_RE = re.compile(r"<tool-use-id>\s*([^<]+?)\s*</tool-use-id>")
@@ -75,8 +86,15 @@ NOTIF_SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.S)
 # `Task` is retained though it is unattested in the local corpus: it costs
 # nothing and an absent alias is cheaper than a missed spawn.
 AGENT_TOOLS = ("Agent", "Task", "Workflow")
-# These run inside the parent process and CANNOT outlive it.
-IN_PROCESS_TOOLS = AGENT_TOOLS
+# `Agent`/`Task` run inside the parent process and cannot outlive it.
+# `Workflow` is deliberately NOT here. Its receipt says "launched in
+# background", and a corpus check of 153 workflow transcript dirs was
+# inconclusive: 152 stopped with the parent, 1 wrote 26 minutes later — and
+# the parent's mtime moves on resume, so neither number settles it. Asserting
+# either model would be a claim the evidence does not support, and the two
+# failure directions are not symmetric: calling a live workflow "dead" invites
+# re-running work that is still going. Workflows report `unknown` instead.
+IN_PROCESS_TOOLS = ("Agent", "Task")
 BG_TOOLS = ("Bash",)
 
 # A completion whose status is not success is not an all-clear.
@@ -163,6 +181,18 @@ def _all_jsonl(d: str) -> list[str]:
         return [e.path for e in os.scandir(d) if e.name.endswith(".jsonl")]
     except OSError:
         return []
+
+
+def _newest_in_dir(d: str) -> str | None:
+    """A workflow's receipt names a DIRECTORY, not a file."""
+    best, best_m = None, -1.0
+    for root, _dirs, files in os.walk(d):
+        for fn in files:
+            fp = os.path.join(root, fn)
+            m = _mtime(fp)
+            if m > best_m:
+                best, best_m = fp, m
+    return best
 
 
 def _mtime(p: str) -> float:
@@ -360,6 +390,11 @@ def find_spawns(recs: list[dict]) -> list[dict]:
                 if ASYNC_LAUNCH_RE.search(s):
                     m, o = AGENT_ID_RE.search(s), OUTPUT_FILE_RE.search(s)
                     aid, out = (m.group(1) if m else None), (o.group(1) if o else None)
+                elif WF_LAUNCH_RE.search(s):
+                    m, o = WF_LAUNCH_RE.search(s), WF_DIR_RE.search(s)
+                    aid, out = m.group(1), (o.group(1) if o else None)
+                    meta = dict(meta)
+                    meta["kind"] = "workflow"
                 elif BG_LAUNCH_RE.search(s):
                     m, o = BG_LAUNCH_RE.search(s), BG_OUTPUT_RE.search(s)
                     aid, out = m.group(1), (o.group(1) if o else None)
@@ -624,15 +659,20 @@ def scan(session_path: str, max_chars: int | None = None,
             s["state"] = "unreported"
             durable = durable_transcript(session_path, s.get("worker_id"))
             s["durable_transcript"] = durable
-            s["digest"] = digest_output(durable or s.get("output_file"),
-                                        max_chars=max_chars)
+            src = durable or s.get("output_file")
+            if s.get("kind") == "workflow" and src and os.path.isdir(src):
+                src = _newest_in_dir(src)
+            s["digest"] = digest_output(src, max_chars=max_chars)
             age = s["digest"].get("mtime_age_s")
             # Liveness is a property of the spawn KIND first. Agent/Task/
             # Workflow run in-process and cannot outlive the parent, so a
             # recent mtime on one of those means the PARENT died recently —
             # not that the worker lives. Flagging them was a guaranteed false
             # positive on fast resumes, which is when resumes happen.
-            if s["tool"] in IN_PROCESS_TOOLS:
+            if s.get("kind") == "workflow":
+                # Not asserted either way — see IN_PROCESS_TOOLS above.
+                s["liveness"] = "unknown-workflow"
+            elif s["tool"] in IN_PROCESS_TOOLS:
                 s["liveness"] = "dead-with-parent"
             elif age is None:
                 s["liveness"] = "unknown-no-output-file"
@@ -682,6 +722,11 @@ def _emit_worker(out: list[str], s: dict, header: str) -> None:
         out.append("               re-running a live deploy or migration is worse than waiting.")
     elif live == "dead-with-parent":
         out.append("  liveness   : dead — runs in-process, died with the parent")
+    elif live == "unknown-workflow":
+        out.append("  liveness   : ** UNKNOWN — a workflow. Its receipt says 'launched in")
+        out.append("               background' and the corpus does not settle whether it")
+        out.append("               outlives the parent. Verify before re-running anything")
+        out.append("               with side effects.")
     elif live == "unknown-no-output-file":
         out.append("  liveness   : ** UNKNOWN — no output file, so liveness cannot be")
         out.append("               determined. Verify before re-running anything with side effects.")
