@@ -1,3 +1,5 @@
+import type { ColumnSpec, ColumnType, TableSpec } from "./core/ontology";
+import type { Origin } from "./core/provenance";
 import { DEFAULT_DOMAIN, DOMAIN_KEYS } from "./tools/domains";
 import { type AnyErrorCode, fail, ok, type ParallaxError, type Result } from "./tools/errors";
 import * as handlers from "./tools/handlers";
@@ -66,7 +68,7 @@ export const COMMANDS: Record<string, CommandSpec> = {
   propose: {
     summary: "Read a context and propose an ontology from what is actually in it.",
     usage:
-      "parallax propose [--kind agent-workspace|filesystem|business-data] [--root <abs>] [--within <rel>] [--table <name>:<col,col>] [--json]",
+      "parallax propose [--kind agent-workspace|filesystem|business-data] [--root <abs>] [--within <rel>] [--table <name>[#<rows>]:<col[:type[:origin]]>,...] [--json]",
     allowed: ["kind", "root", "within", "table", "chunk-chars", "json"],
     required: [],
   },
@@ -272,29 +274,131 @@ function answers(argv: Argv): Result<Array<{ n?: number; slot?: string; text: st
   return ok(out);
 }
 
-/** `--table <name>:<col,col,col>`, repeatable. */
-function tables(argv: Argv): Result<Array<{ name: string; columns: string[] }>, CliError> {
-  const out: Array<{ name: string; columns: string[] }> = [];
+/** The declared column types, in one place. Mirrors the guard in src/hub/app.ts. */
+const COLUMN_TYPES: readonly ColumnType[] = ["string", "number", "boolean", "date"];
+function isColumnType(v: unknown): v is ColumnType {
+  return typeof v === "string" && (COLUMN_TYPES as readonly string[]).includes(v);
+}
+
+/**
+ * `--table <name>[#<rows>]:<col[:type[:origin]]>,...`, repeatable.
+ *
+ * Three shapes, in increasing order of what the caller is willing to claim:
+ *
+ *   --table leads:company,nit                      a schema. No data claimed.
+ *   --table leads#40:company:string,nit:string     40 rows -- but see below.
+ *   --table leads#40:company:string:observed,nit:string:observed
+ *
+ * The middle one is REFUSED, on purpose, by `proposeOntology`: claiming rows is
+ * claiming knowledge of the world, and provenance is assigned at birth, so a row
+ * count with untagged columns has already thrown the distinction away. It is
+ * verbose to type -- that is the honest cost of asserting that forty records
+ * exist.
+ *
+ * Everything after the first `:` is columns, and a column's own parts are split
+ * on `:` too, which is why the row count hangs off the NAME with `#` rather than
+ * adding a second delimiter to an already-overloaded one.
+ */
+function tables(argv: Argv): Result<TableSpec[], CliError> {
+  const out: TableSpec[] = [];
   for (const raw of argv.values.table ?? []) {
     const colon = raw.indexOf(":");
     if (colon <= 0 || colon === raw.length - 1) {
-      return fail("BAD_FLAG_VALUE", "--table takes <name>:<col,col>", {
+      return fail("BAD_FLAG_VALUE", "--table takes <name>[#<rows>]:<col[:type[:origin]]>,...", {
         flag: "table",
         given: raw,
       });
     }
-    const columns = raw
-      .slice(colon + 1)
-      .split(",")
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0);
+
+    let name = raw.slice(0, colon);
+    let rowCount: number | undefined;
+    const hash = name.indexOf("#");
+    if (hash >= 0) {
+      const digits = name.slice(hash + 1);
+      name = name.slice(0, hash);
+      if (!/^\d+$/.test(digits)) {
+        return fail(
+          "BAD_FLAG_VALUE",
+          "--table row count must be a whole number, as <name>#<rows>",
+          {
+            flag: "table",
+            given: raw,
+          },
+        );
+      }
+      rowCount = Number(digits);
+    }
+    if (name.length === 0) {
+      return fail("BAD_FLAG_VALUE", "--table needs a table name before the colon", {
+        flag: "table",
+        given: raw,
+      });
+    }
+
+    const columns: ColumnSpec[] = [];
+    for (const chunk of raw.slice(colon + 1).split(",")) {
+      const parts = chunk.split(":").map((s) => s.trim());
+      const colName = parts[0] ?? "";
+      // An empty segment is a REFUSAL, not a skip. `leads:company,,nit` used to
+      // yield two columns and say nothing, so a typo silently produced a table
+      // with a column missing -- and this file already refuses an unknown flag
+      // for exactly that reason: something quietly dropped is a choice the
+      // caller did not make and cannot see.
+      if (colName.length === 0) {
+        return fail("BAD_FLAG_VALUE", "--table has an empty column between commas", {
+          flag: "table",
+          given: raw,
+        });
+      }
+      // Likewise a fourth positional part. `company:string:observed:GARBAGE`
+      // parsed happily and threw GARBAGE away.
+      if (parts.length > 3) {
+        return fail(
+          "BAD_FLAG_VALUE",
+          `column "${colName}" has ${parts.length} parts; the grammar is <col>[:<type>[:<origin>]]`,
+          { flag: "table", given: raw },
+        );
+      }
+      const type = parts[1];
+      const origin = parts[2];
+      if (type !== undefined && type.length > 0 && !isColumnType(type)) {
+        return fail(
+          "BAD_FLAG_VALUE",
+          `unknown column type "${type}"; use string, number, boolean or date`,
+          {
+            flag: "table",
+            given: raw,
+          },
+        );
+      }
+      if (
+        origin !== undefined &&
+        origin.length > 0 &&
+        origin !== "observed" &&
+        origin !== "simulated"
+      ) {
+        return fail(
+          "BAD_FLAG_VALUE",
+          `column origin must be "observed" or "simulated", not "${origin}"`,
+          {
+            flag: "table",
+            given: raw,
+          },
+        );
+      }
+      columns.push({
+        name: colName,
+        ...(type === undefined || type.length === 0 ? {} : { type: type as ColumnType }),
+        ...(origin === undefined || origin.length === 0 ? {} : { origin: origin as Origin }),
+      });
+    }
     if (columns.length === 0) {
       return fail("BAD_FLAG_VALUE", "--table needs at least one column", {
         flag: "table",
         given: raw,
       });
     }
-    out.push({ name: raw.slice(0, colon), columns });
+    out.push({ name, columns, ...(rowCount === undefined ? {} : { rowCount }) });
   }
   return ok(out);
 }

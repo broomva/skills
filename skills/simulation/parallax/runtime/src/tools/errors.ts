@@ -73,6 +73,13 @@ export type AnyErrorCode =
   | "SOURCE_EMPTY"
   | "UNSUPPORTED_SOURCE"
   | "DEGENERATE_CONTEXT"
+  // business-data ingress: the boundary now enforces what its message always claimed
+  | "COLUMNS_REQUIRED"
+  | "INVALID_ROW_COUNT"
+  | "ORIGIN_REQUIRED"
+  | "DUPLICATE_TABLE"
+  | "DUPLICATE_COLUMN"
+  | "SLOT_COLLISION"
   | "BLOCKING_QUESTIONS_OPEN"
   | "NO_TRANSITION"
   | "NO_INVARIANTS"

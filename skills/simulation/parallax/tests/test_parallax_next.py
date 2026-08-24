@@ -67,7 +67,14 @@ def test_remedy_table_covers_exactly_the_captured_code_set():
 def test_the_fixture_is_not_empty():
     # A fixture that silently parsed to nothing would make the test above vacuous:
     # set() == set() passes and proves nothing.
-    assert len(_fixture_codes()) == 46
+    #
+    # The count is hardcoded ON PURPOSE, as a tripwire. Deriving it from the file
+    # it is checking would make this test agree with any fixture, including an
+    # empty one. Adding a code to the runtime is supposed to land here and make
+    # someone write the remedy -- which is exactly what it did when the
+    # business-data ingress gained COLUMNS_REQUIRED, INVALID_ROW_COUNT and
+    # ORIGIN_REQUIRED (46 -> 49).
+    assert len(_fixture_codes()) == 52
 
 
 def test_unknown_code_is_reported_as_unknown_not_guessed():

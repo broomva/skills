@@ -142,7 +142,7 @@ def test_the_hermetic_and_live_split_adds_up():
 
 
 def test_the_remedy_count_claimed_in_prose_is_the_real_one():
-    """SKILL.md says 'all 46 error codes'. The fixture is the authority."""
+    """SKILL.md says 'all N error codes'. The fixture is the authority."""
     m = re.search(r"remedy for \*\*all (\d+)\*\*\s*\n?error codes", _text())
     if m is None:
         m = re.search(r"all \*\*(\d+)\*\*\s*\n?error codes", _text())

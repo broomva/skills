@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import type { Origin } from "./provenance";
 import { fail, ok, type ParallaxError, type Result } from "./result";
 import type { ActionSpec, InvariantSpec, State, TypeRecord } from "./types";
 
@@ -42,7 +43,43 @@ export type ContextSource =
    * itself.
    */
   | { kind: "agent-workspace"; root?: string }
-  | { kind: "business-data"; tables: Array<{ name: string; columns: string[] }> };
+  | { kind: "business-data"; tables: TableSpec[] };
+
+/**
+ * What a column is declared to hold. Deliberately small: these four are what a
+ * proposer can turn into a typed slot without guessing. An unrecognised type is
+ * not coerced into `string` -- it stays unknown and raises a blocking question,
+ * because a wrong type that runs is worse than a question that stops.
+ */
+export type ColumnType = "string" | "number" | "boolean" | "date";
+
+export interface ColumnSpec {
+  readonly name: string;
+  /** Absent means "not declared", which is a blocking question, not a default. */
+  readonly type?: ColumnType;
+  /**
+   * Where this column's VALUES came from. Absent is legal for a schema sketch
+   * and illegal once `rowCount` claims rows exist -- see `TableSpec.rowCount`.
+   *
+   * This is on the column and not derived later because `provenance.ts` types
+   * values at birth: there is no operator that adds provenance afterwards, so a
+   * supplier that omits it has destroyed the distinction permanently.
+   */
+  readonly origin?: Origin;
+}
+
+export interface TableSpec {
+  readonly name: string;
+  readonly columns: ColumnSpec[];
+  /**
+   * How many rows the supplier actually has. Absent means "a schema, no data
+   * yet" and proposes zero; present means the supplier is making a claim about
+   * the world, and every column must then carry an `origin`. Claiming rows
+   * without saying where they came from is refused at the boundary rather than
+   * defaulted -- a default there is a lie with a safe-sounding name.
+   */
+  readonly rowCount?: number;
+}
 
 /** A question the proposer could not answer and a human must. */
 export interface OpenQuestion {
@@ -66,7 +103,16 @@ export interface OntologyProposal {
 }
 
 export type ProposeError = ParallaxError<
-  "SOURCE_UNREADABLE" | "SOURCE_EMPTY" | "UNSUPPORTED_SOURCE" | "DEGENERATE_CONTEXT"
+  | "SOURCE_UNREADABLE"
+  | "SOURCE_EMPTY"
+  | "UNSUPPORTED_SOURCE"
+  | "DEGENERATE_CONTEXT"
+  | "COLUMNS_REQUIRED"
+  | "INVALID_ROW_COUNT"
+  | "ORIGIN_REQUIRED"
+  | "DUPLICATE_TABLE"
+  | "DUPLICATE_COLUMN"
+  | "SLOT_COLLISION"
 >;
 
 export type AcceptError = ParallaxError<
@@ -202,27 +248,185 @@ function proposeFromDirectory(
   return ok({ ...proposal, id: proposalId(proposal) });
 }
 
+/**
+ * The empty value for a declared column type.
+ *
+ * `undefined` for an undeclared column is deliberate and is the whole point of
+ * the blocking question raised beside it: an untyped slot that silently became
+ * `""` would run, and running on a guess is what this product exists to refuse.
+ */
+function zeroFor(type: ColumnType | undefined): unknown {
+  switch (type) {
+    case "number":
+      return 0;
+    case "boolean":
+      return false;
+    case "string":
+    case "date":
+      return "";
+    default:
+      // `null`, not `undefined`. A pending proposal is persisted with
+      // JSON.stringify, which DELETES a key whose value is undefined -- so the
+      // slot this deliberately left untyped vanished entirely on the way to
+      // disk, and every surface downstream saw a proposal that had never
+      // mentioned the column. The blocking question survived and the thing it
+      // asked about did not.
+      return null;
+  }
+}
+
 function proposeFromTables(
   source: Extract<ContextSource, { kind: "business-data" }>,
 ): Result<OntologyProposal, ProposeError> {
   if (source.tables.length === 0) {
     return fail("SOURCE_EMPTY", "no tables supplied");
   }
+
+  // Validated HERE, not per surface. The CLI, the tool surface and the hub all
+  // reach the proposer through this function, so one check covers three
+  // callers; a copy in each is three chances to drift. These are core codes and
+  // propagate to every surface unchanged.
+  const tableNames = new Set<string>();
+  for (const t of source.tables) {
+    // Duplicates are refused rather than merged. Two columns of the same name
+    // build ONE state slot and TWO evidence lines, and the renderer shows the
+    // first -- so `company` declared observed and then simulated displays as
+    // observed, and the contradicting line is invisible. The flattering half
+    // winning by document order is the worst available outcome.
+    if (tableNames.has(t.name)) {
+      return fail("DUPLICATE_TABLE", `table ${t.name} is supplied more than once`, {
+        table: t.name,
+      });
+    }
+    tableNames.add(t.name);
+    const columnNames = new Set<string>();
+    for (const c of t.columns) {
+      if (columnNames.has(c.name)) {
+        return fail(
+          "DUPLICATE_COLUMN",
+          `table ${t.name} declares column ${c.name} more than once; one slot cannot carry two provenances`,
+          { table: t.name, column: c.name },
+        );
+      }
+      columnNames.add(c.name);
+    }
+    if (t.columns.length === 0) {
+      // The boundary already SAID this -- "needs at least one table with its
+      // columns" -- and then only counted tables. A message describing a check
+      // that does not exist is worse than no message: it is read as a guarantee.
+      return fail("COLUMNS_REQUIRED", `table ${t.name} has no columns`, { table: t.name });
+    }
+    if (t.rowCount !== undefined && (!Number.isInteger(t.rowCount) || t.rowCount < 0)) {
+      return fail(
+        "INVALID_ROW_COUNT",
+        `table ${t.name} reports a row count that is not a whole number >= 0`,
+        {
+          table: t.name,
+          given: t.rowCount,
+        },
+      );
+    }
+    if (t.rowCount !== undefined && t.rowCount > 0) {
+      // Claiming rows is claiming knowledge of the world. `provenance.ts` types
+      // values at birth and has no operator that adds provenance later, so a
+      // supplier who omits it here has destroyed the distinction permanently --
+      // and defaulting to `simulated` would be a lie with a safe-sounding name.
+      const untagged = t.columns.filter((c) => c.origin === undefined).map((c) => c.name);
+      if (untagged.length > 0) {
+        return fail(
+          "ORIGIN_REQUIRED",
+          `table ${t.name} reports ${t.rowCount} row(s) but ${untagged.length} column(s) do not say whether their values were observed or simulated`,
+          { table: t.name, columns: untagged },
+        );
+      }
+    }
+  }
+  // Slot names are CONSTRUCTED -- `${table}.${column}` and `${table}_rows` -- so
+  // uniqueness of the inputs does not give uniqueness of the outputs. Table `a`
+  // with column `b.c` and table `a.b` with column `c` both build `a.b.c`, and
+  // neither name is a duplicate of anything. One slot then carries two evidence
+  // lines, the renderer shows the first, and an `observed` claim silently masks
+  // a `simulated` one -- the same defect the duplicate-name checks above close,
+  // arriving through a door those checks cannot see.
+  //
+  // Checking the built keys covers both, and covers whatever a future delimiter
+  // change would open. It is the constructed name that has to be unique, because
+  // it is the constructed name that indexes the state.
+  const claimed = new Map<string, string>();
+  for (const t of source.tables) {
+    for (const key of [`${t.name}_rows`, ...t.columns.map((c) => `${t.name}.${c.name}`)]) {
+      const owner = key.endsWith("_rows") ? `table ${t.name}` : `table ${t.name}`;
+      const prior = claimed.get(key);
+      if (prior !== undefined) {
+        return fail(
+          "SLOT_COLLISION",
+          `state slot ${key} is claimed by ${prior} and again by ${owner}; one slot cannot hold two columns`,
+          { slot: key, first: prior, second: owner },
+        );
+      }
+      claimed.set(key, owner);
+    }
+  }
+
   const initial: State = {};
   const evidence: Array<{ slot: string; from: string }> = [];
   const actions: ActionSpec[] = [];
   const openQuestions: OpenQuestion[] = [];
 
   for (const t of source.tables) {
-    initial[`${t.name}_rows`] = 0;
-    evidence.push({ slot: `state.${t.name}_rows`, from: `table ${t.name}` });
+    // The row count is the supplier's, not a placeholder. This used to be a
+    // hardcoded 0, which meant forty judged records and an empty table produced
+    // a byte-identical proposal -- so the accept gate showed a human the same
+    // thing in both cases and asked them to sign it.
+    const rows = t.rowCount ?? 0;
+    initial[`${t.name}_rows`] = rows;
+    evidence.push({
+      slot: `state.${t.name}_rows`,
+      from:
+        t.rowCount === undefined
+          ? `table ${t.name} (schema only -- no row count supplied)`
+          : `table ${t.name}, ${rows} row(s) reported by the supplier`,
+    });
+
+    // One slot per column. `columns` was required at the boundary and then
+    // discarded here; an interface that demands evidence it does not use is a
+    // poor look for this product specifically.
+    for (const c of t.columns) {
+      const slot = `${t.name}.${c.name}`;
+      initial[slot] = zeroFor(c.type);
+      // The origin describes the COLUMN'S VALUES in the supplier's data. It does
+      // NOT describe the value sitting in `initial`, which is a placeholder this
+      // runtime manufactured and nobody read. Writing "-- observed" beside a
+      // zero it invented would be the product asserting it had read something it
+      // had not, which is the one thing it exists not to do.
+      evidence.push({
+        slot: `state.${slot}`,
+        from: `column ${c.name} of ${t.name}${c.type ? ` (${c.type})` : ""}${
+          c.origin ? `; supplier reports its values ${c.origin}` : ""
+        } -- the value here is an empty placeholder, not a reading`,
+      });
+      if (c.type === undefined) {
+        openQuestions.push({
+          slot: `state.${slot}`,
+          question: `What type is column "${c.name}" of ${t.name}? Declared types are string, number, boolean, date. It is left untyped rather than guessed.`,
+          blocking: true,
+        });
+      }
+    }
+
     actions.push({ name: `insert_${t.name}`, actor: "system", params: { n: "number" } });
     evidence.push({ slot: `action.insert_${t.name}`, from: `table ${t.name}` });
-    openQuestions.push({
-      slot: `action.insert_${t.name}.n`,
-      question: `What unit is "n" for insert_${t.name}? Rows, items, or currency?`,
-      blocking: true,
-    });
+
+    // Ask only what cannot be inferred. A supplier that reported a row count has
+    // already told us `n` counts rows; asking anyway is the proposer making a
+    // human answer a question it held the answer to.
+    if (t.rowCount === undefined) {
+      openQuestions.push({
+        slot: `action.insert_${t.name}.n`,
+        question: `What unit is "n" for insert_${t.name}? Rows, items, or currency? Supply a row count on the table and this answers itself.`,
+        blocking: true,
+      });
+    }
   }
 
   const proposal: OntologyProposal = {
@@ -239,10 +443,37 @@ function proposeFromTables(
   return ok({ ...proposal, id: proposalId(proposal) });
 }
 
+/**
+ * The identity of a proposal is everything the human was shown.
+ *
+ * `evidence` and `openQuestions` are in the hash, and that is not tidiness. The
+ * id is what acceptance is keyed on -- `ActiveOntology.proposalId` is "the hash
+ * of the exact proposal that was accepted" -- so anything a reader saw and
+ * weighed has to be inside it, or two documents that differ in front of them are
+ * the same document to the gate.
+ *
+ * It used to hash `{slug, initial, actions}` only, and that was harmless for
+ * exactly as long as `evidence` was derived from the same names those three were
+ * derived from. Once a column could say whether its values were OBSERVED or
+ * SIMULATED, it stopped being harmless: two proposals identical but for that one
+ * word produced the same id, so a human accepting "we read this" also accepted
+ * "we guessed this". That is the failure this product exists to refuse, arriving
+ * through the door of its own identity function.
+ *
+ * The rule this encodes: widening what a proposal MEANS requires widening what
+ * identifies it, in the same change.
+ */
 function proposalId(p: Omit<OntologyProposal, "id">): string {
   // Imported lazily to keep this module readable; hash.ts owns canonicalisation.
   const { h } = require("./hash") as typeof import("./hash");
-  return h({ slug: p.slug, initial: p.initial, actions: p.actions });
+  return h({
+    slug: p.slug,
+    source: p.source,
+    initial: p.initial,
+    actions: p.actions,
+    evidence: p.evidence,
+    openQuestions: p.openQuestions,
+  });
 }
 
 /**
