@@ -10,6 +10,7 @@ is indistinguishable from three passes unless something in the set must fail.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -251,7 +252,7 @@ class TestTheFourthReaderFailsTheOtherWay:
     def test_an_unreadable_changelog_is_reported_not_raised(self, tmp_path, lint):
         d = self._with_changelog(tmp_path, "badbytes", b"## [1.0.0]\n- \xff\xfe not utf-8\n")
         problems = lint.lint_skill(d)          # must not raise
-        assert any("CHANGELOG.md could not be read" in p for p in problems), problems
+        assert any("CHANGELOG.md" in p and "not valid UTF-8" in p for p in problems), problems
 
     def test_an_unreadable_changelog_does_not_masquerade_as_a_missing_section(
         self, tmp_path, lint
@@ -283,3 +284,54 @@ class TestTheVersionedTallyAgreesWithTheFindings:
         assert lint.main() == 1                      # the unreadable one is a finding
         err = capsys.readouterr().err
         assert "bom" in err, err
+
+
+class TestEveryReaderSurvivesAnUnreadableFILE:
+    """The round-2 surviving mutation: removing `OSError` from a package
+    reader's exception tuple failed nothing, because every "unreadable" test
+    exercised malformed SYNTAX — never a file the OS refuses to open.
+
+    Each reader had its own exception tuple catching a different subset, so a
+    permission-denied SKILL.md and a non-UTF-8 pyproject.toml both escaped as
+    tracebacks while the suite stayed green. One shared reader now, and these
+    cases pin it per file.
+    """
+
+    FILES = ["SKILL.md", "pyproject.toml", "package.json", "CHANGELOG.md"]
+
+    def _skill(self, tmp_path, name):
+        d = tmp_path / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: D.\nversion: 1.0.0\n---\n", encoding="utf-8")
+        (d / "CHANGELOG.md").write_text("## [1.0.0]\n", encoding="utf-8")
+        (d / "pyproject.toml").write_text('[project]\nversion = "1.0.0"\n', encoding="utf-8")
+        (d / "package.json").write_text('{"version": "1.0.0"}', encoding="utf-8")
+        return d
+
+    def test_a_fully_readable_skill_is_clean(self, tmp_path, lint):
+        """CONTROL: all four files present and consistent."""
+        assert lint.lint_skill(self._skill(tmp_path, "allgood")) == []
+
+    @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                        reason="root can read a 0o000 file, so the case cannot arise")
+    @pytest.mark.parametrize("filename", FILES)
+    def test_a_permission_denied_file_is_reported_not_raised(self, tmp_path, lint, filename):
+        d = self._skill(tmp_path, f"denied-{filename.replace('.', '-')}")
+        target = d / filename
+        target.chmod(0o000)
+        try:
+            problems = lint.lint_skill(d)      # must not raise
+        finally:
+            target.chmod(0o644)
+        assert problems, f"{filename}: an unopenable file was silently exempted"
+        assert any(filename in p and "could not be read" in p for p in problems), problems
+
+    @pytest.mark.parametrize("filename", ["pyproject.toml", "package.json", "CHANGELOG.md"])
+    def test_a_non_utf8_file_is_reported_not_raised(self, tmp_path, lint, filename):
+        """The mirror gap: the package readers caught OSError but not
+        UnicodeDecodeError, so invalid bytes tracebacked."""
+        d = self._skill(tmp_path, f"bytes-{filename.replace('.', '-')}")
+        (d / filename).write_bytes(b"\xff\xfe not utf-8 at all\n")
+        problems = lint.lint_skill(d)          # must not raise
+        assert any(filename in p and "not valid UTF-8" in p for p in problems), problems

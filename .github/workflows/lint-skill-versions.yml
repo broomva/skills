@@ -16,7 +16,6 @@ on:
       - 'scripts/lint_skill_versions.py'
       - 'tests/test_lint_skill_versions.py'
       - '.github/workflows/lint-skill-versions.yml'
-      - '.github/workflows/lint-skill-versions.yml'
   push:
     branches: [main]
     paths:

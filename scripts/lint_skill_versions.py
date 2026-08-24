@@ -41,6 +41,37 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILLS_DIR = _REPO_ROOT / "skills"
 
 
+def _read_bytes(path: Path) -> tuple[bytes | None, str | None]:
+    """`(raw, reason_it_could_not_be_read)` for any file this linter opens.
+
+    Every reader in this file previously had its OWN exception tuple, and each
+    caught a DIFFERENT subset: the manifest reader caught UnicodeDecodeError but
+    not OSError, the package readers caught OSError but not UnicodeDecodeError.
+    So a permission-denied SKILL.md and a non-UTF-8 pyproject.toml both escaped
+    as tracebacks while every "unreadable" test passed — the tests exercised
+    malformed SYNTAX, never an unreadable FILE.
+
+    One reader, one exception surface. A new caller inherits the coverage
+    instead of re-deciding it.
+    """
+    try:
+        return path.read_bytes(), None
+    except OSError as exc:
+        return None, f"{path.name} could not be read ({type(exc).__name__})"
+
+
+def _read_utf8(path: Path) -> tuple[str | None, str | None]:
+    """`_read_bytes` plus decoding, so decode failures are reported alike."""
+    raw, unreadable = _read_bytes(path)
+    if unreadable:
+        return None, unreadable
+    assert raw is not None
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError as exc:
+        return None, f"{path.name} is not valid UTF-8 ({exc.reason})"
+
+
 def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
     """`(frontmatter, reason_it_could_not_be_read)` — three states, not two.
 
@@ -56,19 +87,27 @@ def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
     two problems, while BOM / leading-blank-line / unparseable-YAML variants of
     the SAME invalid version reported none.
     """
-    raw = skill_md.read_bytes()
+    raw, unreadable = _read_bytes(skill_md)
+    if unreadable:
+        return {}, unreadable
+    assert raw is not None
     if raw.startswith(b"\xef\xbb\xbf"):
         return {}, "starts with a UTF-8 BOM before the --- fence"
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         return {}, f"is not valid UTF-8 ({exc.reason})"
-    first, _, _rest = text.partition("\n")
-    if first.strip() != "---":
+    lines = text.split("\n")
+    # EXACT fences at both ends. `first.strip()` accepted a whitespace-decorated
+    # opener, and `find("\n---")` accepted `---yaml` as a CLOSING fence — the
+    # same laxness the opening check had already been tightened against, left
+    # in place at the other end.
+    if not lines or lines[0] != "---":
         return {}, "does not start with a --- frontmatter fence"
-    end = text.find("\n---", 3)
-    if end == -1:
+    closing = next((i for i, line in enumerate(lines[1:], 1) if line == "---"), None)
+    if closing is None:
         return {}, "has no closing --- fence"
+    end = len("\n".join(lines[:closing]))
     try:
         data = yaml.safe_load(text[3:end])
     except yaml.YAMLError as exc:
@@ -112,9 +151,13 @@ def _pyproject_version(path: Path) -> tuple[str | None, str | None]:
     """
     if not path.exists():
         return None, None
+    text, unreadable = _read_utf8(path)
+    if unreadable:
+        return None, unreadable
+    assert text is not None
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
         return None, f"pyproject.toml could not be read ({type(exc).__name__})"
     project = data.get("project")
     if not isinstance(project, dict):
@@ -129,9 +172,13 @@ def _package_json_version(path: Path) -> tuple[str | None, str | None]:
     """`(version, reason_it_could_not_be_read)` — see `_pyproject_version`."""
     if not path.exists():
         return None, None
+    text, unreadable = _read_utf8(path)
+    if unreadable:
+        return None, unreadable
+    assert text is not None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
         return None, f"package.json could not be read ({type(exc).__name__})"
     if not isinstance(data, dict):
         return None, "package.json is not a JSON object"
@@ -153,10 +200,10 @@ def _changelog_has_version(path: Path, version: str) -> tuple[bool, str | None]:
     """
     if not path.exists():
         return False, None
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return False, f"CHANGELOG.md could not be read ({type(exc).__name__})"
+    text, unreadable = _read_utf8(path)
+    if unreadable:
+        return False, unreadable
+    assert text is not None
     return f"## [{version}]" in text, None
 
 
