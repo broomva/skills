@@ -93,10 +93,42 @@ jobs:
           set -e
           rm -rf skills/tooling/zzz-pkg-probe
           if [ "$code" -ne 1 ]; then
-            echo "::error::an unreadable package.json must exit 1, got $code"
+            echo "::error::a malformed package.json must exit 1, got $code"
+            cat /tmp/pkg.txt; exit 1
+          fi
+          # The traceback rejection landed in the FIRST probe only, so this one
+          # would have accepted a crash as proof of detection.
+          if grep -q 'Traceback' /tmp/pkg.txt; then
+            echo "::error::the lint crashed instead of reporting"
             cat /tmp/pkg.txt; exit 1
           fi
           grep -q 'zzz-pkg-probe' /tmp/pkg.txt || {
             echo "::error::the lint went red but never named the skill"
             cat /tmp/pkg.txt; exit 1; }
-          echo "an unreadable package.json is reported by name"
+          echo "a malformed package.json is reported by name, exit 1, no crash"
+
+      - name: The gate catches a DANGLING SYMLINK, which .exists() calls absent
+        # The round-3 blocker. `.exists()` follows the link and answers False, so
+        # a broken SKILL.md read as "unversioned" and exempted the skill from
+        # every rule. Nothing about that is visible to a probe that plants a
+        # readable file, so it needs its own red path.
+        run: |
+          mkdir -p skills/tooling/zzz-link-probe
+          ln -s /nonexistent/target skills/tooling/zzz-link-probe/SKILL.md
+          set +e
+          python3 scripts/lint_skill_versions.py > /tmp/link.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-link-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::a dangling SKILL.md must exit 1, got $code"
+            cat /tmp/link.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/link.txt; then
+            echo "::error::the lint crashed instead of reporting"
+            cat /tmp/link.txt; exit 1
+          fi
+          grep -q 'broken symlink' /tmp/link.txt || {
+            echo "::error::a dangling manifest went unreported or was miscalled"
+            cat /tmp/link.txt; exit 1; }
+          echo "a dangling SKILL.md is reported as a broken symlink, exit 1, no crash"
