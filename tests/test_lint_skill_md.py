@@ -172,6 +172,34 @@ class TestDiscoveryReportsWhatItCouldNotEnumerate:
         _found, unwalkable = lint.discover(tmp_path / "skills")
         assert any("is a directory, not a manifest" in u for u in unwalkable), unwalkable
 
+    def test_a_symlinked_skill_directory_is_reported_not_skipped(self, tmp_path, lint):
+        """`followlinks=True` invites a loop, so a symlinked directory is not
+        entered — but silently not entering one is the same omission this linter
+        exists to remove. The old gate missed these too, so reporting is not a
+        behaviour regression; it is the omission being surfaced instead of taken.
+        Found by asking of my own fix: can a real skill be MISSED?"""
+        outside = tmp_path / "elsewhere" / "linked-skill"
+        outside.mkdir(parents=True)
+        (outside / "SKILL.md").write_text("---\nname: X\ndescription: d\n---\n",
+                                          encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked-skill").symlink_to(outside)
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert any("symlinked directory holding a SKILL.md" in u for u in unwalkable), unwalkable
+
+    def test_a_symlinked_directory_without_a_manifest_is_left_alone(self, tmp_path, lint):
+        """CONTROL: a symlinked assets or references directory is ordinary and
+        must not be reported, or the fix for an omission becomes a false red."""
+        outside = tmp_path / "other"
+        outside.mkdir()
+        (outside / "notes.md").write_text("x", encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "assets").symlink_to(outside)
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert unwalkable == [], unwalkable
+
     def test_a_normal_tree_is_discovered_at_every_depth(self, tmp_path, lint):
         """CONTROL: the walk must find everything `rglob` did."""
         for rel in ["a", "b/skills/c", "d/e/f"]:

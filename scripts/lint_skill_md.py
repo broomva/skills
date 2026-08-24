@@ -142,6 +142,18 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
         if "extensions" in rel.parts:
             subdirs[:] = []
             continue
+        # A symlinked DIRECTORY is not entered — `followlinks=True` invites a
+        # loop — but silently not entering one is the same omission this file
+        # exists to remove. The old gate missed these too, so this is not a
+        # behaviour regression; it is the omission being reported instead of
+        # taken. `skills/` currently holds zero symlinks, so nothing real
+        # changes today.
+        for sub in subdirs:
+            link = Path(root) / sub
+            if link.is_symlink() and (link / "SKILL.md").exists():
+                unwalkable.append(
+                    f"{rel / sub}: is a symlinked directory holding a SKILL.md and was "
+                    "NOT entered; move the skill into the repository or remove the link")
         if "SKILL.md" in files:
             found.append(Path(root) / "SKILL.md")
         elif "SKILL.md" in subdirs:
