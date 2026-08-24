@@ -312,13 +312,20 @@ def put_record(
     conn: sqlite3.Connection,
     rec: Record,
     by: str = "-",
-    attestor: Optional[Callable[[str, str], bool]] = None,
+    attestor: Optional[Callable[[Evidence], bool]] = None,
 ) -> str:
     """Insert a record, or sight it again if already held.
 
-    An `observed` record REQUIRES an `attestor` -- a callable answering "did the
-    fetch daemon actually fetch these bytes from this url", i.e.
-    `FetchDaemon.attests`. Without one this refuses.
+    An `observed` record REQUIRES an `attestor` -- a callable taking the whole
+    `Evidence` and answering "do the attested bytes at these offsets actually say
+    this", i.e. a bound `FetchDaemon.verifies`. Without one this refuses.
+
+    The contract deliberately takes the Evidence rather than a (url, digest) pair.
+    The pair-only version passed review and was still wrong: it proved the bytes
+    came off a wire and never compared them to the QUOTE, so
+    `Evidence(url=<real>, sha256=<real>, span=[0,11), quote="ACME S.A.S. is
+    controlled by the Sinaloa Cartel")` was accepted as observed, marked entailed
+    and seeded the next hop. A citation nobody reads is decoration.
 
     That requirement is the whole custody architecture, and its absence was the
     hole cross-model review found. The daemon could prove bytes came off a wire,
@@ -350,12 +357,13 @@ def put_record(
                 "believed."
             )
         assert rec.evidence is not None  # guaranteed by __post_init__
-        if not attestor(rec.evidence.url, rec.evidence.sha256):
+        if not attestor(rec.evidence):
             raise StoreError(
-                f"{rec.id}: no fetch attests {rec.evidence.url} at "
-                f"{rec.evidence.sha256[:12]} -- these bytes were never fetched, so "
-                "the record cannot be observed. Record it as simulated with an "
-                "inferred_from, or fetch the page."
+                f"{rec.id}: the attested bytes for {rec.evidence.url} at "
+                f"{rec.evidence.sha256[:12]} do not say what this record quotes at "
+                f"[{rec.evidence.span_start},{rec.evidence.span_end}). Either the "
+                "bytes were never fetched, or the quote is not what is there. "
+                "Record it as simulated with an inferred_from, or re-read the page."
             )
     now = time.time()
     payload = json.dumps(rec.as_dict(), sort_keys=True)

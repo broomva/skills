@@ -61,6 +61,15 @@ class RedirectRefusal(FetchError):
     """The response came from a different url than the one requested."""
 
 
+class NotAttested(FetchError):
+    """No chained log row pairs this url with these bytes.
+
+    Distinct from ChainBroken on purpose. "The log does not mention this" and
+    "the log cannot be trusted about anything" are different facts with different
+    consequences: the first refuses one record, the second refuses the run.
+    """
+
+
 class ChainBroken(FetchError):
     """The fetch log does not verify, so nothing in it may be attested.
 
@@ -186,9 +195,17 @@ def append_row(log_path: Path, row: dict, key: Optional[bytes] = None) -> dict:
             body["mac"] = _row_mac(prev_mac, {k: v for k, v in body.items() if k != "mac"}, key)
             with log_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(body, sort_keys=True) + "\n")
+            head = {"mac": body["mac"], "rows": seq + 1}
+            # MAC the head itself. Without this it is plain metadata: an adversary
+            # who truncates the log copies {mac, rows} from the last surviving row
+            # and the sidecar agrees -- the one component of a deliberately keyed
+            # chain that a keyless attacker could forge.
+            head["hmac"] = hmac.new(
+                key, json.dumps(head, sort_keys=True, separators=(",", ":")).encode(),
+                hashlib.sha256,
+            ).hexdigest()
             _head_path(log_path).write_text(
-                json.dumps({"mac": body["mac"], "rows": seq + 1}, sort_keys=True) + "\n",
-                encoding="utf-8",
+                json.dumps(head, sort_keys=True) + "\n", encoding="utf-8"
             )
             return body
         finally:
@@ -240,6 +257,13 @@ def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str
     if not head_path.exists():
         return False, "head sidecar missing -- truncation would be undetectable"
     head = json.loads(head_path.read_text())
+    claimed_hmac = head.pop("hmac", None)
+    expected_hmac = hmac.new(
+        key, json.dumps(head, sort_keys=True, separators=(",", ":")).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if claimed_hmac != expected_hmac:
+        return False, "head sidecar is not authentic -- it was rewritten without the key"
     if head.get("rows") != n or head.get("mac") != prev_mac:
         return False, (
             f"head says {head.get('rows')} rows ending {str(head.get('mac'))[:12]}, "
@@ -497,7 +521,7 @@ class FetchDaemon:
         # caller's assertion rather than what happened.
         receipt = self.receipt_for(res.url, res.sha256)
         if receipt is None:
-            raise ChainBroken(
+            raise NotAttested(
                 f"{res.url}: no chained log row pairs this url with {res.sha256[:12]}"
             )
         ok, why = self.usable_as_evidence(receipt)
@@ -508,7 +532,7 @@ class FetchDaemon:
                 f"span [{span_start},{span_end}) is empty or inverted -- a citation "
                 "must point at bytes that exist"
             )
-        payload = (self.dir / res.snapshot).read_bytes()
+        payload = self.open_attested(res.url, res.sha256)
         if span_end > len(payload):
             raise FetchError(
                 f"span [{span_start},{span_end}) runs past the artifact "
@@ -523,11 +547,76 @@ class FetchDaemon:
         return {
             "url": res.url,
             "sha256": res.sha256,
-            "snapshot": res.snapshot,
+            # From the digest, not from res.snapshot -- the caller does not get to
+            # name the file its own citation is read out of.
+            "snapshot": f"snapshots/{res.sha256}",
             "span_start": span_start,
             "span_end": span_end,
             "quote": quote.decode("utf-8", errors="replace"),
         }
+
+    def open_attested(self, url: str, digest: str) -> bytes:
+        """The bytes this daemon attested for (url, digest). The only reader.
+
+        The path is derived from the DIGEST, never from a caller-supplied field.
+        evidence_for previously re-read the receipt out of the chained log to
+        defeat a forged status -- and then dereferenced `res.snapshot`, the very
+        field it had just finished arguing must not be trusted. Handing it a real
+        url, a real digest and `snapshot="authored.bin"` returned a quote from the
+        caller's own file; `snapshot="../OUTSIDE.txt"` read outside the run
+        directory entirely.
+
+        Content addressing is what makes this safe: the digest IS the filename, so
+        there is nothing left for a caller to point at. The re-hash is not
+        paranoia -- it catches a snapshot replaced after the fetch.
+        """
+        if (url, digest) not in self.pairs():   # pairs() raises if the chain is broken
+            raise NotAttested(
+                f"{url}: no chained log row pairs this url with {digest[:12]} -- "
+                "these bytes were never fetched"
+            )
+        target = self.snapshots / digest
+        if not target.is_file():
+            raise FetchError(f"{digest[:12]}: attested but its snapshot is missing")
+        payload = target.read_bytes()
+        actual = sha256_of(payload)
+        if actual != digest:
+            raise FetchError(
+                f"{digest[:12]}: the stored snapshot now hashes to {actual[:12]} -- "
+                "it was replaced after the fetch"
+            )
+        return payload
+
+    def verifies(
+        self, url: str, digest: str, span_start: int, span_end: int, quote: str
+    ) -> bool:
+        """Do the attested bytes at [span_start, span_end) actually say `quote`?
+
+        The question the whole architecture exists to make answerable, and the one
+        nothing asked. Custody proved a (url, digest) pair came off a wire and then
+        never used those bytes to check the sentence a human reads -- so a
+        fabricated quote entered the map carrying a genuine attestation, which is
+        strictly worse than no custody, because the metadata is what makes the
+        fabrication look verified.
+
+        store.Evidence's own docstring argues for byte offsets over substring
+        search: "an offset is a location it had to commit to before the check ran".
+        This is where that commitment is finally redeemed.
+        """
+        try:
+            payload = self.open_attested(url, digest)
+        except ChainBroken:
+            # Deliberately NOT swallowed. A broken chain is not "this quote does
+            # not check out"; it is "this log is not evidence about anything", and
+            # a caller reading False here would draw the smaller conclusion. Same
+            # rule attests() follows -- and this method violated it on the first
+            # pass by catching the base class.
+            raise
+        except FetchError:
+            return False
+        if span_start < 0 or span_end <= span_start or span_end > len(payload):
+            return False
+        return payload[span_start:span_end].decode("utf-8", errors="replace") == quote
 
     def receipt_for(self, url: str, digest: str) -> Optional[FetchResult]:
         """The daemon's own logged record of a fetch, or None.

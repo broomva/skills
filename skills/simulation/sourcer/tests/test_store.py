@@ -26,8 +26,8 @@ import store as S  # noqa: E402
 # Stands in for FetchDaemon.attests. Tests about the STORE are not about custody,
 # so they say so explicitly rather than leaving the requirement unexercised --
 # and test_observed_record_requires_an_attestor asserts the requirement itself.
-ATTESTS_ALL = lambda url, digest: True   # noqa: E731
-ATTESTS_NONE = lambda url, digest: False  # noqa: E731
+ATTESTS_ALL = lambda ev: True   # noqa: E731
+ATTESTS_NONE = lambda ev: False  # noqa: E731
 
 
 def ev(url="https://example.com/a", digest="a" * 64, start=0, end=5, quote="ACME"):
@@ -455,7 +455,7 @@ def test_unattested_evidence_is_refused(tmp_path):
                       quote="FAKE")
     rec = S.Record(id="x1", kind="node", canonical_key="k", depth=3, layer="L2",
                    origin="observed", evidence=fake)
-    with pytest.raises(S.StoreError, match="no fetch attests"):
+    with pytest.raises(S.StoreError, match="do not say what this record quotes"):
         S.put_record(conn, rec, attestor=ATTESTS_NONE)
     assert S.inventory(conn)["total"] == 0
     assert S.expandable_ids(conn) == []
@@ -471,5 +471,6 @@ def test_the_attestor_is_asked_about_the_cited_pair(tmp_path):
     """Not merely called -- called with the url and digest the record cites."""
     conn = S.connect(tmp_path / "s.db")
     seen = []
-    S.put_record(conn, node(id="n1"), attestor=lambda u, d: (seen.append((u, d)), True)[1])
-    assert seen == [("https://example.com/a", "a" * 64)]
+    S.put_record(conn, node(id="n1"),
+                 attestor=lambda ev: (seen.append((ev.url, ev.sha256, ev.quote)), True)[1])
+    assert seen == [("https://example.com/a", "a" * 64, "ACME")]

@@ -47,7 +47,7 @@ def test_a_real_fetch_becomes_an_observed_record(rig):
     ev = d.evidence_for(res, 0, 11)
     rec = S.Record(id="acme", kind="node", canonical_key="org::acme", depth=0,
                    layer="L2", origin="observed", evidence=S.Evidence(**ev))
-    assert S.put_record(conn, rec, attestor=d.attests) == "inserted"
+    assert S.put_record(conn, rec, attestor=lambda ev: d.verifies(ev.url, ev.sha256, ev.span_start, ev.span_end, ev.quote)) == "inserted"
     S.set_verdict(conn, "acme", "entailed")
     assert S.expandable_ids(conn) == ["acme"]
     assert S.get_record(conn, "acme")["evidence"]["quote"] == "ACME S.A.S."
@@ -69,8 +69,8 @@ def test_fabricated_evidence_cannot_enter_the_store(rig):
                             snapshot=f"snapshots/{digest}", span_start=0,
                             span_end=11, quote="ACME S.A.S."),
     )
-    with pytest.raises(S.StoreError, match="no fetch attests"):
-        S.put_record(conn, rec, attestor=d.attests)
+    with pytest.raises(S.StoreError, match="do not say what this record quotes"):
+        S.put_record(conn, rec, attestor=lambda ev: d.verifies(ev.url, ev.sha256, ev.span_start, ev.span_end, ev.quote))
     assert S.inventory(conn)["total"] == 0
 
 
@@ -87,7 +87,7 @@ def test_a_tampered_log_blocks_ingestion_entirely(rig):
                                        snapshot=res.snapshot, span_start=0,
                                        span_end=11, quote="ACME S.A.S."))
     with pytest.raises(F.ChainBroken):
-        S.put_record(conn, rec, attestor=d.attests)
+        S.put_record(conn, rec, attestor=lambda ev: d.verifies(ev.url, ev.sha256, ev.span_start, ev.span_end, ev.quote))
 
 
 def test_a_404_cannot_become_evidence_end_to_end(rig):

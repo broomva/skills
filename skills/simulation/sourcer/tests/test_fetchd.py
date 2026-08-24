@@ -84,12 +84,33 @@ def test_missing_chain_key_is_a_refusal_not_a_default(tmp_path, monkeypatch):
 
 
 def test_key_is_never_written_into_the_run_directory(tmp_path):
-    """A key stored beside the log is readable by whatever can read the log."""
+    """A key beside the log is readable by whatever can read the log.
+
+    Checks the raw bytes AND the encodings a leak actually takes. The first
+    version compared raw bytes only, so review wrote key.hex() into every log row
+    and the guard passed while the chain secret was fully recoverable from the run
+    directory -- the leak that matters is almost never the literal bytes.
+    """
+    import base64
+
     d = daemon(tmp_path)
     d.fetch("https://example.com/a")
+    forms = {
+        "raw": KEY,
+        "hex": KEY.hex().encode(),
+        "hex-upper": KEY.hex().upper().encode(),
+        "b64": base64.b64encode(KEY),
+        "b64-nopad": base64.b64encode(KEY).rstrip(b"="),
+        "b32": base64.b32encode(KEY),
+        "utf8": KEY.decode("utf-8", errors="ignore").encode(),
+    }
     for p in d.dir.rglob("*"):
-        if p.is_file():
-            assert KEY not in p.read_bytes(), f"chain key leaked into {p.name}"
+        if not p.is_file():
+            continue
+        blob = p.read_bytes()
+        for label, form in forms.items():
+            if form:
+                assert form not in blob, f"chain key leaked as {label} into {p.name}"
 
 
 # ----------------------------------------------------------------- chaining
@@ -312,14 +333,28 @@ def test_chain_cache_is_invalidated_by_a_write(tmp_path):
 def test_every_public_check_has_a_caller():
     """Structural guard against the defect class, not just this instance.
 
-    The bug was an orphaned check. Assert that each verification helper is
-    referenced somewhere beyond its own definition, so the next one that loses
-    its caller fails here rather than in production.
+    Counts real CALL SITES via the AST. The first version counted raw substrings,
+    so review deleted the only call to usable_as_evidence and the guard still
+    passed -- the `def` line and a docstring mention summed to two. A gate its own
+    producer trivially satisfies verifies nothing, and this one was about exactly
+    that failure mode while exhibiting it.
     """
+    import ast
+
     src = (Path(__file__).resolve().parents[1] / "scripts" / "fetchd.py").read_text()
-    for fn in ("verify_chain", "usable_as_evidence", "chain_ok"):
-        uses = src.count(fn)
-        assert uses >= 2, f"{fn} appears {uses}x -- defined and never called"
+    tree = ast.parse(src)
+    called: dict[str, int] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            f = n.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if name:
+                called[name] = called.get(name, 0) + 1
+    for fn in ("verify_chain", "usable_as_evidence", "chain_ok", "open_attested"):
+        assert called.get(fn, 0) >= 1, (
+            f"{fn} has {called.get(fn, 0)} call sites in fetchd.py -- defined and "
+            "never called, which is an absent check rather than a weak one"
+        )
 
 
 # ------------------------------- evidence construction goes through the check
@@ -459,3 +494,87 @@ def test_robots_failure_is_not_permission(tmp_path):
         assert p.allows("https://example.com/a") is False
     finally:
         rparser.RobotFileParser.read = orig
+
+
+# ---------------------- the quote is finally checked (BLOCKER, adjudicator)
+
+
+def test_evidence_reads_from_the_digest_not_the_caller_s_path(tmp_path):
+    """evidence_for dereferenced res.snapshot -- the field it argued not to trust.
+
+    A real url, a real digest and snapshot="authored.bin" returned a quote from
+    the caller's own file, wearing a genuine attestation.
+    """
+    d = daemon(tmp_path)
+    res = d.fetch("https://example.com/a")          # b"ACME S.A.S. hires a CTO"
+    (d.dir / "authored.bin").write_bytes(b"ACME S.A.S. was founded by Nobody McFake")
+
+    spoof = F.FetchResult(url=res.url, sha256=res.sha256, snapshot="authored.bin",
+                          status=200, tool="urllib", retrieved_at=res.retrieved_at,
+                          n_bytes=res.n_bytes)
+    ev = d.evidence_for(spoof, 0, 11)
+    assert ev["quote"] == "ACME S.A.S.", "read from the attested bytes"
+    assert ev["snapshot"] == f"snapshots/{res.sha256}", "path derived from the digest"
+
+
+def test_evidence_ignores_a_traversing_snapshot_path(tmp_path):
+    d = daemon(tmp_path)
+    res = d.fetch("https://example.com/a")
+    (tmp_path / "OUTSIDE.txt").write_bytes(b"anything at all outside the run")
+    spoof = F.FetchResult(url=res.url, sha256=res.sha256, snapshot="../../OUTSIDE.txt",
+                          status=200, tool="urllib", retrieved_at=res.retrieved_at,
+                          n_bytes=res.n_bytes)
+    ev = d.evidence_for(spoof, 0, 11)
+    assert ev["quote"] == "ACME S.A.S."
+
+
+def test_verifies_rejects_a_quote_the_bytes_do_not_support(tmp_path):
+    d = daemon(tmp_path)
+    res = d.fetch("https://example.com/a")
+    assert d.verifies(res.url, res.sha256, 0, 11, "ACME S.A.S.") is True
+    assert d.verifies(res.url, res.sha256, 0, 11,
+                      "ACME S.A.S. is controlled by the Sinaloa Cartel") is False
+
+
+def test_verifies_is_false_for_an_unattested_digest(tmp_path):
+    d = daemon(tmp_path)
+    d.fetch("https://example.com/a")
+    assert d.verifies("https://example.com/a", "c" * 64, 0, 4, "ACME") is False
+
+
+def test_verifies_raises_rather_than_returning_false_on_a_broken_chain(tmp_path):
+    """Fatal not falsy -- the rule attests() follows, which verifies() first broke."""
+    d = daemon(tmp_path)
+    res = d.fetch("https://example.com/a")
+    with d.log.open("a") as fh:
+        fh.write('{"kind":"fetch","url":"u","sha256":"z","seq":9,"mac":"nope"}\n')
+    with pytest.raises(F.ChainBroken):
+        d.verifies(res.url, res.sha256, 0, 11, "ACME S.A.S.")
+
+
+def test_a_snapshot_replaced_after_the_fetch_is_caught(tmp_path):
+    d = daemon(tmp_path)
+    res = d.fetch("https://example.com/a")
+    (d.snapshots / res.sha256).write_bytes(b"swapped out afterwards")
+    with pytest.raises(F.FetchError, match="replaced after the fetch"):
+        d.open_attested(res.url, res.sha256)
+
+
+def test_the_head_sidecar_cannot_be_forged_without_the_key(tmp_path):
+    """Truncate, then copy {mac, rows} from the last surviving row.
+
+    The sidecar was plain metadata -- the one component of a deliberately keyed
+    chain a keyless adversary could rewrite.
+    """
+    d = daemon(tmp_path)
+    d.fetch("https://example.com/a")
+    d.fetch("https://example.com/missing")
+
+    lines = [ln for ln in d.log.read_text().splitlines() if ln.strip()]
+    d.log.write_text("\n".join(lines[:-1]) + "\n")
+    surviving = json.loads(lines[-2])
+    F._head_path(d.log).write_text(
+        json.dumps({"mac": surviving["mac"], "rows": len(lines) - 1}, sort_keys=True) + "\n"
+    )
+    ok, reason = F.verify_chain(d.log, KEY)
+    assert not ok and "not authentic" in reason
