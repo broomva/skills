@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 96 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
+> 97 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
 
 ## Governance & control — `skills/governance/` (9)
 
@@ -16,7 +16,7 @@
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 | `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
-## Orchestration & autonomy — `skills/orchestration/` (8)
+## Orchestration & autonomy — `skills/orchestration/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -28,6 +28,7 @@
 | `p9` | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
+| `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
 
 ## Skill & prompt tooling — `skills/tooling/` (9)
 
@@ -41,7 +42,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 96 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 97 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -217,8 +218,8 @@
 
 ## Aggregates
 
-- **Total skills**: 96
+- **Total skills**: 97
 - **Total category buckets**: 23
-- **Largest bucket**: Governance & control, Skill & prompt tooling (9)
+- **Largest bucket**: Governance & control, Orchestration & autonomy, Skill & prompt tooling (9)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
