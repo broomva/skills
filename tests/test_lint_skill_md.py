@@ -284,3 +284,72 @@ class TestTheEntryPoint:
         r = _run(tmp_path)
         assert r.returncode == 0, r.stdout
         assert "OK — 1 SKILL.md files conform" in r.stdout
+
+
+class TestNameIsFullMatched:
+    """`$` matches BEFORE a trailing newline, so `NAME_RE.match("good\\n")` was
+    true. The second time I wrote that bug in one day — PR #189 had the identical
+    defect in its SemVer check — which is why the assertion here goes through
+    `lint_skill_md` rather than asking the compiled pattern."""
+
+    @pytest.mark.parametrize("literal", ['"x\\n"', '"x "', '" x"'])
+    def test_whitespace_decorated_names_are_rejected(self, tmp_path, lint, literal):
+        md = _skill(tmp_path, "x", f"---\nname: {literal}\ndescription: d\n---\n")
+        assert any("`name`" in p for p in lint.lint_skill_md(md)), literal
+
+    def test_a_plain_name_is_still_accepted(self, tmp_path, lint):
+        """CONTROL for the above."""
+        assert lint.lint_skill_md(_skill(tmp_path, "plain")) == []
+
+
+class TestDuplicateKeysCannotConcealAViolation:
+    def test_a_duplicate_name_is_reported(self, tmp_path, lint):
+        """PyYAML keeps the LAST of duplicate keys silently, so `name: BAD`
+        followed by `name: x` validated as `x` — a valid declaration concealing
+        an invalid one, below the layer that checks names."""
+        md = _skill(tmp_path, "x", "---\nname: BAD\nname: x\ndescription: d\n---\n")
+        assert any("duplicate key" in p for p in lint.lint_skill_md(md))
+
+    def test_an_unhashable_key_is_reported_not_raised(self, tmp_path, lint):
+        """The duplicate check tests `key in mapping`, which raises TypeError for
+        a sequence key — legal YAML, never valid frontmatter."""
+        md = _skill(tmp_path, "x", "---\n? [a, b]\n: c\nname: x\ndescription: d\n---\n")
+        problems = lint.lint_skill_md(md)
+        assert any("unhashable key" in p for p in problems), problems
+
+    def test_distinct_keys_are_unaffected(self, tmp_path, lint):
+        """CONTROL."""
+        assert lint.lint_skill_md(_skill(tmp_path, "d2")) == []
+
+
+class TestAVanishedManifestIsNotAnExemption:
+    def test_a_manifest_deleted_after_discovery_is_reported(self, tmp_path, lint):
+        """`lint_skill_md` is only ever called on a path discovery returned, so
+        "absent" cannot mean "no skill lives here" — it means the manifest went
+        away between being found and being read. Returning [] made that a silent
+        exemption, which is this linter's own defect class."""
+        md = _skill(tmp_path, "vanish", "---\nname: WRONG-CASE\ndescription: d\n---\n")
+        found, _ = lint.discover(tmp_path / "skills")
+        assert md in found
+        md.unlink()
+        assert any("vanished" in p for p in lint.lint_skill_md(md))
+
+
+class TestDescriptionType:
+    @pytest.mark.parametrize("value,reported", [
+        ("A real description.", False),
+        ("42", False),
+        ("", True),
+    ])
+    def test_string_descriptions(self, tmp_path, lint, value, reported):
+        md = _skill(tmp_path, "d3", f"---\nname: d3\ndescription: '{value}'\n---\n")
+        problems = [p for p in lint.lint_skill_md(md) if "description" in p]
+        assert bool(problems) == reported, (value, problems)
+
+    def test_a_non_string_description_is_reported(self, tmp_path, lint):
+        md = _skill(tmp_path, "d4", "---\nname: d4\ndescription: 42\n---\n")
+        assert any("must be a string" in p for p in lint.lint_skill_md(md))
+
+    def test_a_list_description_is_reported(self, tmp_path, lint):
+        md = _skill(tmp_path, "d5", "---\nname: d5\ndescription:\n  - a\n  - b\n---\n")
+        assert any("must be a string" in p for p in lint.lint_skill_md(md))

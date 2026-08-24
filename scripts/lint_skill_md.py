@@ -43,9 +43,36 @@ import yaml
 
 #: ASCII deliberately: `\w`-style classes are Unicode-aware, and a name is a
 #: directory name and a URL component, not prose.
-NAME_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$", re.ASCII)
+#: Used with `fullmatch`, deliberately. `$` matches BEFORE a trailing newline, so
+#: `NAME_RE.match("good\n")` was true — and a directory name can carry that
+#: newline too, letting the parent-match check agree with it.
+NAME_RE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*", re.ASCII)
 MAX_NAME = 64
 FENCE = b"---"
+
+
+class _NoDuplicateKeys(yaml.SafeLoader):
+    """PyYAML keeps the LAST of duplicate keys and says nothing, so
+    `name: BAD` followed by `name: good` validated as `good` — a valid
+    declaration concealing an invalid one."""
+
+
+def _construct_unique(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError:
+            raise yaml.YAMLError(f"unhashable key {key!r}") from None
+        if duplicate:
+            raise yaml.YAMLError(f"duplicate key {key!r}")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_NoDuplicateKeys.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique)
 
 
 def _read_bytes(path: Path) -> tuple[bytes | None, str | None]:
@@ -96,7 +123,7 @@ def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
     except UnicodeDecodeError as exc:
         return {}, f"frontmatter is not valid UTF-8 ({exc.reason})", True
     try:
-        data = yaml.safe_load(body)
+        data = yaml.load(body, Loader=_NoDuplicateKeys)
     except yaml.YAMLError as exc:
         # FLATTENED, not truncated. A PyYAML error is several lines including a
         # caret diagram; printing it raw broke the one-error-per-line format the
@@ -177,7 +204,11 @@ def lint_skill_md(skill_md: Path) -> list[str]:
     """
     fm, unreadable, present = read_frontmatter(skill_md)
     if not present:
-        return []
+        # This function is only ever called on a path DISCOVERY returned, so
+        # "absent" here does not mean "no skill lives here" — it means the
+        # manifest went away between being found and being read. Returning []
+        # made that a silent exemption.
+        return [f"{skill_md}: vanished between discovery and reading"]
     if unreadable:
         # NOT an exemption. "I could not read the manifest" is a finding about
         # the manifest.
@@ -191,7 +222,7 @@ def lint_skill_md(skill_md: Path) -> list[str]:
         errors.append(f"{skill_md}: `name` must be a string, got {type(name).__name__}")
     elif len(name) > MAX_NAME:
         errors.append(f"{skill_md}: `name` exceeds {MAX_NAME} chars ({len(name)})")
-    elif not NAME_RE.match(name):
+    elif not NAME_RE.fullmatch(name):
         errors.append(
             f"{skill_md}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* "
             "(lowercase, hyphens, no leading/trailing/consecutive)")
@@ -199,8 +230,13 @@ def lint_skill_md(skill_md: Path) -> list[str]:
         errors.append(
             f"{skill_md}: `name`='{name}' does not match parent dir '{parent}' "
             "(agentskills.io §Name)")
-    if not fm.get("description"):
+    description = fm.get("description")
+    if not description:
         errors.append(f"{skill_md}: missing required field `description`")
+    elif not isinstance(description, str):
+        errors.append(
+            f"{skill_md}: `description` must be a string, got "
+            f"{type(description).__name__}")
     return errors
 
 
