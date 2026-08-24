@@ -75,11 +75,19 @@ demonstrably lost eight agents. Subagents launch **asynchronously**:
 
 ### 1. Scan before you say anything
 
+The script lives beside this file, not in your working directory. Use the
+skill's base directory (the harness prints it when the skill loads):
+
 ```bash
-python3 scripts/resume_scan.py                 # current cwd's newest session
-python3 scripts/resume_scan.py --json          # machine-readable
-python3 scripts/resume_scan.py --session <path.jsonl>
+SKILL_DIR=~/.claude/skills/resume        # or the base directory printed above
+
+python3 "$SKILL_DIR/scripts/resume_scan.py"                    # newest session for cwd
+python3 "$SKILL_DIR/scripts/resume_scan.py" --json             # machine-readable
+python3 "$SKILL_DIR/scripts/resume_scan.py" --session <path.jsonl>
 ```
+
+A bare `python3 scripts/resume_scan.py` resolves against your CWD and fails —
+measured on first use, which is why the path is spelled out here.
 
 It reports the termination cause, every async spawn, which ones never
 reported, and a bounded digest of what each dead agent had achieved —
@@ -151,7 +159,7 @@ you are now doing. One short paragraph.
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
 ```
 
-31 unit tests covering session location (including the worktree fallback where
+36 unit tests covering session location (including the worktree fallback where
 the mangled path does not exist), async-spawn parsing, spawn↔completion
 matching by both agent id and tool-use id, termination classification in both
 polarities, and the digest's hard bound.

@@ -454,7 +454,15 @@ def render(result: dict) -> str:
                 out.append("  last words :")
                 for ln in d["final_text"].splitlines()[:12]:
                     out.append(f"    | {ln[:110]}")
-            out.append("  action     : fold the above into the arc; re-spawn ONLY the unfinished part")
+            # Deliberately NOT prescriptive. The script cannot tell a finished
+            # agent from a partial one, and asserting either pre-empts the
+            # three-way triage in SKILL.md step 4. Measured: on a real session
+            # all six recovered agents had emitted a terminal verdict — the
+            # earlier hardcoded "re-spawn the unfinished part" was wrong for
+            # every one of them.
+            out.append("  triage     : does the above show the work FINISHED (fold in, do not")
+            out.append("               re-spawn), PARTIAL (re-spawn the remainder), or too little")
+            out.append("               to tell (re-spawn from the prompt)? — SKILL.md step 4")
         if s.get("prompt"):
             out.append("  orig prompt:")
             for ln in s["prompt"].splitlines()[:6]:

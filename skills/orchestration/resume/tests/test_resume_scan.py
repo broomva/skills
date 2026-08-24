@@ -314,3 +314,31 @@ def test_main_json_output(tmp_path, capsys):
     p = write_session(tmp_path, recs)
     assert rs.main(["--session", p, "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["spawns_total"] == 1
+
+
+def test_skill_md_test_count_matches_reality():
+    """The count SKILL.md advertises must be the count pytest reports.
+
+    Added because dogfooding caught SKILL.md claiming 31 tests when 35 existed
+    — a doc that drifted the moment tests were added, with nothing to notice.
+
+    Counts what pytest COLLECTS, not `def test_` lines: one test here is
+    parametrized six ways, so the two numbers differ by five. The first version
+    of this test counted defs and disagreed with the suite it was policing,
+    which is the same class of error it exists to catch.
+    """
+    import re as _re
+    import subprocess
+    here = os.path.dirname(os.path.abspath(__file__))
+    skill = open(os.path.join(here, "..", "SKILL.md"), encoding="utf-8").read()
+    claimed = _re.search(r"(\d+) unit tests", skill)
+    assert claimed, "SKILL.md no longer states a test count"
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", here],
+        capture_output=True, text=True, timeout=120,
+    )
+    collected = _re.search(r"(\d+) tests? collected", proc.stdout)
+    assert collected, f"could not read collection count from:\n{proc.stdout[-500:]}"
+    assert int(claimed.group(1)) == int(collected.group(1)), (
+        f"SKILL.md claims {claimed.group(1)} tests, pytest collects {collected.group(1)}"
+    )
