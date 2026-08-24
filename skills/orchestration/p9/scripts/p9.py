@@ -624,6 +624,46 @@ def is_terminal(state: PRState) -> bool:
     return state in {PRState.MERGED, PRState.ESCALATED, PRState.ABANDONED}
 
 
+# BRO-2305. What the concurrency ceiling counts over — deliberately NOT
+# `is_terminal`. The ceiling bounds *watcher work in flight*, not *open PRs*.
+#
+# A row parked in GREEN or MERGE_READY has no live watcher process and no
+# transition p9 itself can make: it is waiting on something outside p9 — the
+# merge gate, a reviewer, a policy class that does not match. Counting those
+# meant one PR that went green and did not merge pinned the slot forever, and
+# since `watch` is the only transition into GREEN, the whole lifecycle became
+# unreachable for that repo. That is the identical failure BRO-1988 fixed on
+# the repo axis, reappearing on the state axis, and its rationale applies
+# verbatim: an unreachable lifecycle is a worse failure than one extra
+# concurrent watcher.
+#
+# The red states are deliberately NOT exempt, and the distinction is the whole
+# design. GREEN/MERGE_READY mean *success awaiting an external gate*;
+# RED_CLASSIFIED/RED_UNCLASSIFIED mean *a failure needing attention*. Holding
+# the slot on red is intentional back-pressure — do not start watching new
+# work while something is broken — and `TestRewatchCeiling::
+# test_distinct_pr_still_blocked_at_ceiling` pins exactly that.
+#
+# Kept separate from `is_terminal` on purpose: `open_prs`, `cleanup`, `reap`,
+# `status` and the governor all consume that predicate, and widening it would
+# change all of them together. This one has exactly one caller.
+_CEILING_EXEMPT: frozenset[PRState] = frozenset({
+    PRState.GREEN,
+    PRState.MERGE_READY,
+})
+
+
+def counts_against_ceiling(state: PRState) -> bool:
+    """Does a row in ``state`` occupy a concurrency slot?
+
+    True for states where p9 still has work to do or a failure to answer for
+    — PUSHED, WATCHING, HEALING, RED_CLASSIFIED, RED_UNCLASSIFIED. False for
+    terminals, and for the parked states in ``_CEILING_EXEMPT`` where p9 has
+    concluded *successfully* and an external actor must move first.
+    """
+    return not is_terminal(state) and state not in _CEILING_EXEMPT
+
+
 class WaitState(str, enum.Enum):
     """States for generic (non-PR) waits — `p9 wait-for` (BRO-1701).
 
@@ -2207,6 +2247,9 @@ def enforce_concurrency_ceiling(
     non-terminal row — e.g. a RED fold from a transient gh error — would
     block its own re-watch at max_concurrent_prs=1."""
     rows = open_prs(session_id=session_id)
+    # BRO-2305: bound watcher work in flight, not open PRs.
+    rows = [r for r in rows
+            if counts_against_ceiling(PRState(r["to_state"]))]
     if repo is not None:
         want = repo_key(repo)
         rows = [r for r in rows if repo_key(r.get("repo", "")) == want]
