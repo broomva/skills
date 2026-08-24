@@ -22,7 +22,7 @@ import sys
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 VERDICTS = {
@@ -205,6 +205,16 @@ EVIDENCE_KINDS = {
 TIME_SENSITIVE_EVIDENCE = EVIDENCE_KINDS
 HASH_REQUIRED_EVIDENCE = EVIDENCE_KINDS
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+
+#: Evidence kinds whose `locator` names a file inside the repository under
+#: review. For these, and only these, the declared `sha256` is a claim the tool
+#: can CHECK rather than merely shape-validate.
+FILE_BACKED_EVIDENCE = {"repo", "test"}
+
+#: `pricing.tsx:1`, `src/a.ts:10-40`, or a bare path. The line span identifies
+#: WHERE in the file the evidence is; the digest covers the whole file, because
+#: a digest over a line range would silently survive edits above it.
+_LOCATOR_RX = re.compile(r"^(?P<path>.+?)(?::(?P<start>\d+)(?:-(?P<end>\d+))?)?$")
 MAX_CLOCK_SKEW = timedelta(minutes=5)
 MAX_EVIDENCE_AGE = timedelta(days=370)
 CUSTOM_COVERAGE_ID_RE = re.compile(r"^(?:sector|custom):[a-z0-9][a-z0-9-]*$")
@@ -1021,7 +1031,9 @@ def _validate_residual_risks(data: dict[str, Any], errors: list[str]) -> None:
             )
 
 
-def _validate_launch_disposition(data: dict[str, Any], errors: list[str]) -> None:
+def _validate_launch_disposition(
+    data: dict[str, Any], errors: list[str], repo_root: Path | None = None
+) -> None:
     launch = data.get("launch_disposition")
     if not isinstance(launch, dict):
         errors.append("launch_disposition: object required")
@@ -1235,6 +1247,20 @@ def _validate_launch_disposition(data: dict[str, Any], errors: list[str]) -> Non
     # "Nothing was examined" and "everything was examined and is clean" must not
     # produce the same disposition.
     if status == "ready-for-counsel-review":
+        # A digest that was never recomputed records that somebody TYPED a
+        # digest. `"a" * 64` passed the shape check, so a manifest could assert
+        # counsel-readiness over evidence no tool had ever opened. Verification
+        # needs the repository, so without `--repo-root` this status is not
+        # attainable — the same three-valued rule the rest of this file follows:
+        # "not measured" is its own answer, distinct from "measured and clean".
+        unbound = [path for path, _item in _iter_file_backed_evidence(data)]
+        if unbound and repo_root is None:
+            errors.append(
+                "launch_disposition.status: ready-for-counsel-review rests on "
+                f"{len(unbound)} file-backed evidence digest(s) that were not verified; "
+                "re-run `check --repo-root <path>` so the digests are recomputed against "
+                "the artifacts, or downgrade to limited"
+            )
         if not _list(data.get("sources")):
             errors.append(
                 "launch_disposition.status: ready-for-counsel-review needs at least one "
@@ -1351,8 +1377,87 @@ def _validate_lifecycle(data: dict[str, Any], errors: list[str]) -> None:
         )
 
 
-def validate_manifest(data: dict[str, Any]) -> list[str]:
+def _iter_file_backed_evidence(node: Any, path: str = "") -> Any:
+    """Walk the manifest for evidence items whose locator names a repo file.
+
+    Keyed on `kind` rather than on position, so a new place that carries
+    evidence inherits verification instead of waiting for someone to remember to
+    wire it. Lifecycle receipts share the locator/sha256 shape but carry their
+    own kinds, so they are not swept up here.
+    """
+    if isinstance(node, dict):
+        if node.get("kind") in FILE_BACKED_EVIDENCE and "locator" in node:
+            yield path, node
+        for key, value in node.items():
+            yield from _iter_file_backed_evidence(value, f"{path}.{key}" if path else key)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _iter_file_backed_evidence(value, f"{path}[{index}]")
+
+
+def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
+    """Recompute every file-backed evidence digest against the artifact.
+
+    Before this, `sha256` was only shape-validated: 64 hex characters passed, so
+    `"a" * 64` — the literal value in this skill's own test fixtures — satisfied
+    the requirement. A digest that is never recomputed records that somebody
+    typed a digest, not that the evidence says what the manifest claims.
+
+    Every branch that cannot complete the check is a FINDING, never a pass:
+    missing file, unreadable file, and a locator escaping the repo are all
+    reported. "I could not verify this" is not "this verified".
+    """
     errors: list[str] = []
+    try:
+        root = repo_root.resolve(strict=True)
+    except OSError as exc:
+        return [f"--repo-root {repo_root}: not a readable directory ({type(exc).__name__})"]
+    if not root.is_dir():
+        return [f"--repo-root {repo_root}: not a directory"]
+
+    for path, item in _iter_file_backed_evidence(data):
+        locator = str(item.get("locator", ""))
+        declared = str(item.get("sha256", "")).lower()
+        match = _LOCATOR_RX.match(locator)
+        if not match or not match.group("path").strip():
+            errors.append(f"{path}.locator: {locator!r} names no file to verify")
+            continue
+        rel = match.group("path").strip()
+        if PurePosixPath(rel).is_absolute() or Path(rel).is_absolute():
+            errors.append(f"{path}.locator: {rel!r} must be relative to the repository root")
+            continue
+        target = (root / rel)
+        try:
+            resolved = target.resolve(strict=True)
+        except OSError as exc:
+            errors.append(
+                f"{path}.locator: {rel!r} does not resolve under the repository root "
+                f"({type(exc).__name__}) — the digest binds to nothing")
+            continue
+        if root not in resolved.parents and resolved != root:
+            errors.append(f"{path}.locator: {rel!r} escapes the repository root")
+            continue
+        if resolved.is_dir():
+            errors.append(f"{path}.locator: {rel!r} is a directory, not an artifact")
+            continue
+        try:
+            actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        except OSError as exc:
+            errors.append(
+                f"{path}.locator: {rel!r} could not be read ({type(exc).__name__}) — "
+                "the digest could not be checked")
+            continue
+        if actual != declared:
+            errors.append(
+                f"{path}.sha256: declared {declared[:12]}... but {rel} hashes to "
+                f"{actual[:12]}... — the evidence does not match the artifact")
+    return errors
+
+
+def validate_manifest(data: dict[str, Any], *, repo_root: Path | None = None) -> list[str]:
+    errors: list[str] = []
+    if repo_root is not None:
+        errors.extend(verify_evidence_digests(data, repo_root))
     if data.get("schema_version") != 1:
         errors.append("schema_version: expected integer 1")
     project = data.get("project")
@@ -1379,7 +1484,7 @@ def validate_manifest(data: dict[str, Any]) -> list[str]:
     _validate_claims(data, errors)
     _validate_controls(data, errors)
     _validate_residual_risks(data, errors)
-    _validate_launch_disposition(data, errors)
+    _validate_launch_disposition(data, errors, repo_root)
     _validate_lifecycle(data, errors)
 
     statement = data.get("completion_statement")
@@ -1444,10 +1549,10 @@ def validate_manifest(data: dict[str, Any]) -> list[str]:
     return errors
 
 
-def check_manifest(path: Path, *, as_json: bool) -> int:
+def check_manifest(path: Path, *, as_json: bool, repo_root: Path | None = None) -> int:
     try:
         data = load_json(path)
-        errors = validate_manifest(data)
+        errors = validate_manifest(data, repo_root=repo_root)
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         errors = [str(exc)]
     result = {"ok": not errors, "manifest": str(path), "errors": errors}
@@ -1777,6 +1882,14 @@ def build_parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="validate a manifest")
     check.add_argument("manifest", type=Path)
     check.add_argument("--json", action="store_true", dest="as_json")
+    check.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Repository root to resolve file-backed evidence locators against. "
+             "Without it, `repo` and `test` digests are NOT verified and "
+             "ready-for-counsel-review is unattainable.",
+    )
 
     probe = sub.add_parser("probe", help="probe declared web surfaces")
     probe.add_argument("manifest", type=Path)
@@ -1797,7 +1910,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return init_manifest(args.output, force=args.force)
     if args.command == "check":
-        return check_manifest(args.manifest, as_json=args.as_json)
+        return check_manifest(args.manifest, as_json=args.as_json, repo_root=args.repo_root)
     if args.command == "probe":
         return probe_manifest(
             args.manifest,

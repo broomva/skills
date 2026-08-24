@@ -149,11 +149,27 @@ placeholder, remove `project.template_marker`, set `project.template` to
 `false`, then run:
 
 ```bash
-python3 scripts/legal_readiness.py check legal-readiness.json
+python3 scripts/legal_readiness.py check legal-readiness.json --repo-root .
 ```
 
-The validator checks structure, provenance bindings, explicit coverage, and
-bounded launch state—not evidence authenticity or legal correctness. It rejects
+`--repo-root` binds the evidence to the artifacts. Every `repo` and `test`
+evidence item names a file, and its `sha256` is recomputed from that file and
+compared. Without the flag those digests are only shape-checked—64 hex
+characters, which `"a" * 64` satisfies—so a digest records that somebody typed
+one, not that the evidence says what the manifest claims. A locator that names
+no file, escapes the repository root, points at a directory, or cannot be read
+is a finding, never a pass.
+
+Because that check needs the repository, **`ready-for-counsel-review` is not
+attainable without `--repo-root`** when the manifest carries any file-backed
+evidence. A status asserting counsel-readiness may not rest on digests no tool
+has opened; "not measured" is a distinct answer from "measured and clean".
+
+The validator checks structure, provenance bindings, explicit coverage, bounded
+launch state, and—given `--repo-root`—that file-backed evidence digests match
+their artifacts. It does not check the authenticity of evidence it cannot open
+(statutes, counsel memoranda, dashboards), and it never checks legal
+correctness. It rejects
 unsupported closure phrases, evidence-free supported/contradicted/inapplicable
 claims, nonbinding legal-obligation support, unresolved applicability without a
 next gate, unlinked P0 risks, future receipts, and lifecycle states without

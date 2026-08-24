@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -1579,3 +1580,128 @@ def test_the_bundled_example_still_passes(valid_manifest: dict, tmp_path: Path) 
     cannot be used at all."""
     result = run_cli("check", str(write_manifest(tmp_path, valid_manifest)))
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.fixture()
+def lr():
+    """The script as a module. Most of this suite drives the CLI through
+    subprocess; the digest checks need the validator directly so a failure
+    points at a line rather than an exit code."""
+    return load_script_module()
+
+
+def _repo_evidence(locator: str, digest: str) -> dict:
+    return {
+        "kind": "repo",
+        "locator": locator,
+        "verified_by": "reviewer",
+        "observed_at": "2026-08-10T00:00:00-05:00",
+        "sha256": digest,
+    }
+
+
+def _with_repo_evidence(manifest: dict, item: dict) -> dict:
+    data = copy.deepcopy(manifest)
+    data["claims"][0]["evidence"] = [item]
+    return data
+
+
+class TestEvidenceDigestsBindToAnArtifact:
+    """`sha256` was only SHAPE-validated: 64 hex characters passed, so `"a" * 64`
+    — the literal value in this suite's own fixtures — satisfied the
+    requirement. A digest that is never recomputed records that somebody typed a
+    digest, not that the evidence says what the manifest claims.
+    """
+
+    def test_a_fabricated_digest_is_reported(self, tmp_path, valid_manifest, lr):
+        (tmp_path / "pricing.tsx").write_text("real content\n", encoding="utf-8")
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("pricing.tsx:1", "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        assert any("does not match the artifact" in e for e in errors), errors
+
+    def test_a_correct_digest_is_accepted(self, tmp_path, valid_manifest, lr):
+        """CONTROL: the check must not report on every input, or the case above
+        proves only that it rejects things."""
+        body = b"real content\n"
+        (tmp_path / "pricing.tsx").write_bytes(body)
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("pricing.tsx:1", hashlib.sha256(body).hexdigest()))
+        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        assert not [e for e in errors if "sha256" in e or "locator" in e], errors
+
+    def test_a_digest_that_matched_stops_matching_when_the_file_changes(
+        self, tmp_path, valid_manifest, lr
+    ):
+        """The property the digest exists for: it must NOTICE an edit."""
+        target = tmp_path / "pricing.tsx"
+        target.write_bytes(b"v1\n")
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("pricing.tsx", hashlib.sha256(b"v1\n").hexdigest()))
+        assert not [e for e in lr.validate_manifest(data, repo_root=tmp_path)
+                    if "sha256" in e]
+        target.write_bytes(b"v2\n")
+        assert any("does not match the artifact" in e
+                   for e in lr.validate_manifest(data, repo_root=tmp_path))
+
+    @pytest.mark.parametrize("locator,expect", [
+        ("no/such/file.tsx", "does not resolve"),
+        ("../outside.tsx", "does not resolve"),
+        ("/etc/passwd", "must be relative"),
+    ])
+    def test_an_unresolvable_locator_is_a_finding_not_a_pass(
+        self, tmp_path, valid_manifest, locator, expect, lr
+    ):
+        """Every branch that cannot COMPLETE the check is a finding. A locator
+        naming nothing is the purest form of a digest binding to nothing."""
+        data = _with_repo_evidence(valid_manifest, _repo_evidence(locator, "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        assert any(expect in e for e in errors), errors
+
+    def test_a_directory_locator_is_a_finding(self, tmp_path, valid_manifest, lr):
+        (tmp_path / "src").mkdir()
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("src", "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        assert any("is a directory, not an artifact" in e for e in errors), errors
+
+    def test_an_unreadable_repo_root_is_a_finding(self, tmp_path, valid_manifest, lr):
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("a.tsx", "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=tmp_path / "nope")
+        assert any("not a readable directory" in e for e in errors), errors
+
+    def test_non_file_backed_evidence_is_left_alone(self, tmp_path, valid_manifest, lr):
+        """CONTROL: a `law` or `counsel` citation has no file to hash, and must
+        not be dragged into a check it cannot satisfy."""
+        data = copy.deepcopy(valid_manifest)
+        data["claims"][0]["evidence"] = [{
+            "kind": "law", "locator": "https://example.gov/statute",
+            "verified_by": "counsel", "observed_at": "2026-08-10T00:00:00-05:00",
+            "sha256": "c" * 64,
+        }]
+        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        assert not [e for e in errors if "locator" in e or "artifact" in e], errors
+
+
+class TestCounselReadinessRequiresVerifiedDigests:
+    def test_it_is_unattainable_without_a_repo_root(self, valid_manifest, lr):
+        """A status asserting counsel-readiness may not rest on digests no tool
+        has opened. Verification needs the repository, so without `--repo-root`
+        the status is not available — "not measured" is its own answer."""
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("pricing.tsx", "a" * 64))
+        data["launch_disposition"]["status"] = "ready-for-counsel-review"
+        errors = lr.validate_manifest(data)
+        assert any("were not verified" in e for e in errors), errors
+
+    def test_a_manifest_with_no_file_backed_evidence_is_unaffected(self, valid_manifest, lr):
+        """CONTROL: the gate keys on evidence that COULD be verified, so a
+        manifest citing only statutes is not blocked by a check it cannot run."""
+        data = copy.deepcopy(valid_manifest)
+        data["claims"][0]["evidence"] = [{
+            "kind": "law", "locator": "https://example.gov/statute",
+            "verified_by": "counsel", "observed_at": "2026-08-10T00:00:00-05:00",
+            "sha256": "c" * 64,
+        }]
+        data["launch_disposition"]["status"] = "ready-for-counsel-review"
+        assert not [e for e in lr.validate_manifest(data)
+                    if "were not verified" in e]
