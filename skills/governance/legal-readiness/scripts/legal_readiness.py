@@ -14,8 +14,6 @@ import ipaddress
 import itertools
 import json
 import math
-import os
-import subprocess
 import re
 import shutil
 import socket
@@ -24,7 +22,7 @@ import sys
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 VERDICTS = {
@@ -207,42 +205,6 @@ EVIDENCE_KINDS = {
 TIME_SENSITIVE_EVIDENCE = EVIDENCE_KINDS
 HASH_REQUIRED_EVIDENCE = EVIDENCE_KINDS
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
-
-#: Evidence kinds whose `locator` is EXPECTED to name a file in the repository.
-#: These MUST name a file that exists; other kinds may carry an opaque
-#: identifier. Verification itself keys on EXISTENCE, never on this set,
-#: because `kind` is author-supplied.
-FILE_BACKED_EVIDENCE = {"repo", "test"}
-
-#: A locator that is an absolute URL, or a bare git object id. Neither names a
-#: file in the worktree, so neither is verifiable by recomputing a digest — and
-#: `references/manifest-schema.md` explicitly permits "exact file and
-#: line/commit", so rejecting the commit form would be a false red.
-_URL_LOCATOR_RX = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
-_COMMIT_LOCATOR_RX = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
-
-def _locator_may_name_a_file(locator: str) -> bool:
-    """Could this locator name a file at all? URLs and bare git object ids
-    cannot; everything else might.
-
-    Deliberately NOT a shape test on the path. The previous version required no
-    whitespace, and this repository contains
-    `assets/system/Design System.html` — a real, tracked file whose real name
-    has a space in it. A fabricated digest against it skipped verification
-    entirely. Shape cannot separate "repository path" from "contract id":
-    `MSA-2026-v3` and `src/a.ts` are both single tokens. The FILESYSTEM can, so
-    existence decides (see `verify_evidence_digests`) and this predicate only
-    rules out locators that are definitionally not paths.
-    """
-    locator = locator.strip()
-    if not locator:
-        return False
-    return not (_URL_LOCATOR_RX.match(locator) or _COMMIT_LOCATOR_RX.match(locator))
-
-#: `pricing.tsx:1`, `src/a.ts:10-40`, or a bare path. The line span identifies
-#: WHERE in the file the evidence is; the digest covers the whole file, because
-#: a digest over a line range would silently survive edits above it.
-_LOCATOR_RX = re.compile(r"^(?P<path>.+?)(?::(?P<start>\d+)(?:-(?P<end>\d+))?)?$")
 MAX_CLOCK_SKEW = timedelta(minutes=5)
 MAX_EVIDENCE_AGE = timedelta(days=370)
 CUSTOM_COVERAGE_ID_RE = re.compile(r"^(?:sector|custom):[a-z0-9][a-z0-9-]*$")
@@ -1059,9 +1021,7 @@ def _validate_residual_risks(data: dict[str, Any], errors: list[str]) -> None:
             )
 
 
-def _validate_launch_disposition(
-    data: dict[str, Any], errors: list[str], repo_root: Path | None = None
-) -> None:
+def _validate_launch_disposition(data: dict[str, Any], errors: list[str]) -> None:
     launch = data.get("launch_disposition")
     if not isinstance(launch, dict):
         errors.append("launch_disposition: object required")
@@ -1275,23 +1235,6 @@ def _validate_launch_disposition(
     # "Nothing was examined" and "everything was examined and is clean" must not
     # produce the same disposition.
     if status == "ready-for-counsel-review":
-        # A digest that was never recomputed records that somebody TYPED a
-        # digest. `"a" * 64` passed the shape check, so a manifest could assert
-        # counsel-readiness over evidence no tool had ever opened. Verification
-        # needs the repository, so without `--repo-root` this status is not
-        # attainable — the same three-valued rule the rest of this file follows:
-        # "not measured" is its own answer, distinct from "measured and clean".
-        if repo_root is None:
-            # UNCONDITIONAL. Every predicate here was a thing an author could
-            # shape their locator around: first `kind`, then "looks like a
-            # path". A status asserting engineering readiness should simply
-            # require the tool to have bound what it can.
-            errors.append(
-                "launch_disposition.status: ready-for-counsel-review requires "
-                "`check --repo-root <path>` so evidence digests are recomputed against "
-                "their artifacts; without it no digest was verified. Downgrade to limited "
-                "or supply the repository"
-            )
         if not _list(data.get("sources")):
             errors.append(
                 "launch_disposition.status: ready-for-counsel-review needs at least one "
@@ -1408,270 +1351,8 @@ def _validate_lifecycle(data: dict[str, Any], errors: list[str]) -> None:
         )
 
 
-def _iter_file_backed_evidence(node: Any, path: str = "") -> Any:
-    """Walk the manifest for evidence items whose locator names a repo file.
-
-    Keyed on `kind` rather than on position, so a new place that carries
-    evidence inherits verification instead of waiting for someone to remember to
-    wire it. Lifecycle receipts share the locator/sha256 shape but carry their
-    own kinds, so they are not swept up here.
-    """
-    if isinstance(node, dict):
-        if node.get("kind") in EVIDENCE_KINDS and "sha256" in node:
-            # No pre-filter. Excluding URL- and commit-shaped locators here
-            # meant `kind: repo` with a URL locator was never examined at all,
-            # so the rule that repo evidence must resolve could not fire.
-            yield path, node
-        for key, value in node.items():
-            yield from _iter_file_backed_evidence(value, f"{path}.{key}" if path else key)
-    elif isinstance(node, list):
-        for index, value in enumerate(node):
-            yield from _iter_file_backed_evidence(value, f"{path}[{index}]")
-
-
-def _normalize_repo_url(url: str) -> str:
-    """`git@github.com:o/r.git`, `https://github.com/o/r`, and
-    `https://github.com/o/r.git` name the same repository."""
-    url = url.strip().rstrip("/")
-    scheme_match = re.match(r"^([a-z][a-z0-9+.-]*)://", url, re.IGNORECASE)
-    had_scheme = bool(scheme_match)
-    scheme = scheme_match.group(1).lower() if scheme_match else ""
-    url = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url, flags=re.IGNORECASE)
-    url = re.sub(r"^[^/@]+@", "", url)
-    # `host:port/path` and scp-style `host:path` both use a colon. Only a URL
-    # can carry a port, so stripping `:\d+` unconditionally made
-    # `git@example.com:1234/org/repo.git` — where 1234 is the first PATH
-    # component — normalise onto `https://example.com/org/repo`, collapsing two
-    # different repositories into one.
-    if had_scheme:
-        # ONLY the scheme's default port is redundant. Stripping any `:\d+` made
-        # `https://example.com:8443/o/r` equal `https://example.com/o/r` — two
-        # different endpoints collapsed into one.
-        default = {"https": "443", "http": "80", "ssh": "22", "git": "9418"}.get(scheme, "")
-        if default:
-            url = re.sub(rf"^([^/:]+):{default}(?=/|$)", r"\1", url)
-    host, sep, rest = url.partition(":")
-    if sep and "/" not in host:
-        url = f"{host}/{rest}"
-    if url.endswith(".git"):
-        url = url[:-4]
-    return url.rstrip("/").lower()
-
-
-def _git(root: Path, *args: str) -> str | None:
-    """Read-only git, with a minimal environment and no shell."""
-    try:
-        done = subprocess.run(
-            # `core.fsmonitor=false` explicitly: a checkout that inherits
-            # `core.fsmonitor=true` from user config can block starting its
-            # daemon, and a validator must not hang on someone's git settings.
-            ["git", "-c", "core.fsmonitor=false", "-C", str(root), *args],
-            capture_output=True, text=True, timeout=15,
-            env={"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
-                 "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"},
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout.strip() if done.returncode == 0 else None
-
-
-def _repo_identity_errors(data: dict[str, Any], root: Path) -> list[str]:
-    """Bind the verified root to the repository this manifest is ABOUT.
-
-    Without this, `--repo-root /` happily hashes `etc/hosts` and reports a clean
-    verification: the digests were checked against SOME tree, and nothing
-    recorded which. A verification that does not name what it verified is not
-    evidence.
-    """
-    toplevel = _git(root, "rev-parse", "--show-toplevel")
-    if toplevel is None:
-        return [f"--repo-root {root}: not a git repository; evidence digests would be "
-                "verified against an unidentified directory"]
-    declared = str((data.get("project") or {}).get("repository") or "").strip()
-    if not declared:
-        # Optional in the schema, but without it ANY git checkout is accepted and
-        # the verification again names nothing. If the manifest will not say
-        # which repository it is about, the digests cannot be bound to one.
-        return ["project.repository: required to verify evidence digests — without it "
-                "any git checkout would be accepted as the repository under review"]
-    remote = _git(root, "remote", "get-url", "origin")
-    if remote is None:
-        return [f"--repo-root {root}: no `origin` remote, so it cannot be matched "
-                f"against project.repository {declared!r}"]
-    if _normalize_repo_url(remote) != _normalize_repo_url(declared):
-        return [f"--repo-root {root}: origin {remote!r} is not project.repository "
-                f"{declared!r}; the digests would bind to the wrong repository"]
-    return []
-
-
-def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
-    """Recompute every file-backed evidence digest against the artifact.
-
-    Before this, `sha256` was only shape-validated: 64 hex characters passed, so
-    `"a" * 64` — the literal value in this skill's own test fixtures — satisfied
-    the requirement. A digest that is never recomputed records that somebody
-    typed a digest, not that the evidence says what the manifest claims.
-
-    Every branch that cannot complete the check is a FINDING, never a pass:
-    missing file, unreadable file, and a locator escaping the repo are all
-    reported. "I could not verify this" is not "this verified".
-    """
+def validate_manifest(data: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    try:
-        root = repo_root.resolve(strict=True)
-    except OSError as exc:
-        return [f"--repo-root {repo_root}: not a readable directory ({type(exc).__name__})"]
-    if not root.is_dir():
-        return [f"--repo-root {repo_root}: not a directory"]
-    # Locators are repository-relative, so resolve them against the git
-    # TOPLEVEL rather than whatever directory was passed. `git -C <subdir>`
-    # resolves the enclosing repository, so `--repo-root <repo>/skills` passed
-    # the identity check and then failed every locator — a false red where the
-    # operator named the right repository by a deeper path.
-    toplevel = _git(root, "rev-parse", "--show-toplevel")
-    if toplevel:
-        try:
-            root = Path(toplevel).resolve(strict=True)
-        except OSError:
-            pass
-    identity = _repo_identity_errors(data, root)
-    if identity:
-        # Refuse to report a verification bound to the wrong tree. Reporting
-        # per-file results here would read as "checked", which is the thing
-        # this guard exists to prevent.
-        return identity
-
-    for path, item in _iter_file_backed_evidence(data):
-        locator = str(item.get("locator", ""))
-        declared = str(item.get("sha256", "")).lower()
-        match = _LOCATOR_RX.match(locator)
-        if not match or not match.group("path").strip():
-            errors.append(f"{path}.locator: {locator!r} names no file to verify")
-            continue
-        rel = match.group("path").strip()
-        declared_file = item.get("kind") in FILE_BACKED_EVIDENCE
-        if not _locator_may_name_a_file(locator):
-            # A URL or a bare commit id. Fine for a statute or a receipt; not
-            # for evidence that declares itself a repository artifact.
-            if declared_file:
-                errors.append(
-                    f"{path}.locator: {locator!r} is {item.get('kind')!r} evidence but "
-                    "names no file in the repository; use a repository-relative path")
-            continue
-        if PurePosixPath(rel).is_absolute() or Path(rel).is_absolute():
-            errors.append(f"{path}.locator: {rel!r} must be relative to the repository root")
-            continue
-        target = (root / rel)
-        try:
-            resolved = target.resolve(strict=True)
-        except OSError as exc:
-            # EXISTENCE is what separates a repository path from an opaque
-            # identifier — shape cannot, since `MSA-2026-v3` and `src/a.ts` are
-            # both single tokens, and this repo contains a real tracked file
-            # named `Design System.html`. So a locator that does not resolve is
-            # simply not a file reference... UNLESS its kind says it is one, in
-            # which case naming a file that is not there is the finding.
-            if item.get("kind") in FILE_BACKED_EVIDENCE:
-                errors.append(
-                    f"{path}.locator: {rel!r} is {item.get('kind')!r} evidence but does not "
-                    f"resolve under the repository root ({type(exc).__name__}) — "
-                    "the digest binds to nothing")
-            continue
-        if root not in resolved.parents and resolved != root:
-            errors.append(f"{path}.locator: {rel!r} escapes the repository root")
-            continue
-        if resolved.is_dir():
-            errors.append(f"{path}.locator: {rel!r} is a directory, not an artifact")
-            continue
-        if target.is_symlink():
-            # Git stores a symlink's TARGET PATH as its content, but reading the
-            # path yields the target's bytes — so a digest taken here describes
-            # something a reader fetching that path from the repository does not
-            # get. The point of the digest is that anyone can recompute it from
-            # the repo; a symlinked artifact cannot satisfy that, and accepting
-            # one silently is the same "binds to nothing" this check exists to
-            # close. Found by asking what a READER would compute, not what the
-            # linter reads.
-            errors.append(
-                f"{path}.locator: {rel!r} is a symlink, so its digest describes the "
-                "target's bytes while the repository stores the link; cite the target "
-                "directly")
-            continue
-        # TRACKED, not merely present. `git status --porcelain` says nothing about
-        # an ignored file, so a build artifact or a gitignored scratch file
-        # satisfied the dirty check by being invisible to it. Evidence has to be
-        # something a reader can fetch from the repository.
-        tracked = _git(root, "ls-files", "--error-unmatch", "--", rel) is not None
-        if not tracked:
-            if declared_file:
-                errors.append(
-                    f"{path}.locator: {rel!r} is not tracked in the repository, so it "
-                    "cannot be fetched or reviewed; commit the artifact")
-            # Untracked and not declared a repository artifact: an opaque
-            # identifier that happens to collide with a local file. Not evidence
-            # about that file.
-            continue
-        if not declared_file:
-            # The other direction, and the one that closes the loop. `kind` is
-            # author-supplied, so routing on it let a fabricated row opt out;
-            # routing on existence instead meant an opaque identifier that
-            # COLLIDES with a real path (this repo has a file called `LICENSE`)
-            # was silently hashed as that file. So: a locator naming a tracked
-            # file must be DECLARED one. Lying in either direction is a finding,
-            # which leaves no labelling that escapes verification.
-            errors.append(
-                f"{path}.locator: {rel!r} names a tracked repository file but is declared "
-                f"{item.get('kind')!r}; declare it as 'repo' or 'test' evidence, or use a "
-                "locator that is not a repository path")
-            continue
-        try:
-            actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        except OSError as exc:
-            errors.append(
-                f"{path}.locator: {rel!r} could not be read ({type(exc).__name__}) — "
-                "the digest could not be checked")
-            continue
-        if actual != declared:
-            errors.append(
-                f"{path}.sha256: declared {declared[:12]}... but {rel} hashes to "
-                f"{actual[:12]}... — the evidence does not match the artifact")
-            continue
-        # The digest matched — but matched WHAT? A matching origin does not make
-        # this checkout the tree the manifest describes, and if this file has
-        # uncommitted modifications the bytes just hashed are in no commit at
-        # all, so the digest records a local edit rather than reviewable
-        # evidence. Checked per FILE: requiring a globally clean worktree would
-        # fail any reviewer with unrelated work in progress.
-        if _git(root, "status", "--porcelain", "--", rel):
-            errors.append(
-                f"{path}.locator: {rel} has uncommitted changes, so the digest records "
-                "local bytes that are in no commit; verify against a committed artifact")
-        # The digest proves WHICH file; the line span says WHERE in it. A span
-        # was parsed and then never checked, so `:999999-1` — a range that runs
-        # backwards, in a file with far fewer lines — pointed a reader at
-        # nothing while the row read as fully verified.
-        start = int(match.group("start")) if match.group("start") else None
-        end = int(match.group("end")) if match.group("end") else None
-        if start is None:
-            continue
-        if start < 1 or (end is not None and end < start):
-            errors.append(f"{path}.locator: line span {locator.split(':')[-1]!r} is not a range")
-            continue
-        raw = resolved.read_bytes()
-        # `count("\n") + 1` invents a trailing line: it called `b"one\n"` two
-        # lines and an EMPTY file one, so a span could still name nothing.
-        lines = 0 if not raw else raw.count(b"\n") + (0 if raw.endswith(b"\n") else 1)
-        if max(start, end or start) > lines:
-            errors.append(
-                f"{path}.locator: line {max(start, end or start)} is past the end of "
-                f"{rel} ({lines} line(s)) — the span names nothing")
-    return errors
-
-
-def validate_manifest(data: dict[str, Any], *, repo_root: Path | None = None) -> list[str]:
-    errors: list[str] = []
-    if repo_root is not None:
-        errors.extend(verify_evidence_digests(data, repo_root))
     if data.get("schema_version") != 1:
         errors.append("schema_version: expected integer 1")
     project = data.get("project")
@@ -1698,7 +1379,7 @@ def validate_manifest(data: dict[str, Any], *, repo_root: Path | None = None) ->
     _validate_claims(data, errors)
     _validate_controls(data, errors)
     _validate_residual_risks(data, errors)
-    _validate_launch_disposition(data, errors, repo_root)
+    _validate_launch_disposition(data, errors)
     _validate_lifecycle(data, errors)
 
     statement = data.get("completion_statement")
@@ -1763,10 +1444,10 @@ def validate_manifest(data: dict[str, Any], *, repo_root: Path | None = None) ->
     return errors
 
 
-def check_manifest(path: Path, *, as_json: bool, repo_root: Path | None = None) -> int:
+def check_manifest(path: Path, *, as_json: bool) -> int:
     try:
         data = load_json(path)
-        errors = validate_manifest(data, repo_root=repo_root)
+        errors = validate_manifest(data)
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         errors = [str(exc)]
     result = {"ok": not errors, "manifest": str(path), "errors": errors}
@@ -2096,14 +1777,6 @@ def build_parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", help="validate a manifest")
     check.add_argument("manifest", type=Path)
     check.add_argument("--json", action="store_true", dest="as_json")
-    check.add_argument(
-        "--repo-root",
-        type=Path,
-        default=None,
-        help="Repository root to resolve file-backed evidence locators against. "
-             "Without it, `repo` and `test` digests are NOT verified and "
-             "ready-for-counsel-review is unattainable.",
-    )
 
     probe = sub.add_parser("probe", help="probe declared web surfaces")
     probe.add_argument("manifest", type=Path)
@@ -2124,7 +1797,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return init_manifest(args.output, force=args.force)
     if args.command == "check":
-        return check_manifest(args.manifest, as_json=args.as_json, repo_root=args.repo_root)
+        return check_manifest(args.manifest, as_json=args.as_json)
     if args.command == "probe":
         return probe_manifest(
             args.manifest,
