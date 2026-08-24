@@ -265,12 +265,12 @@ class TestTheFourthReaderFailsTheOtherWay:
         assert not any("missing a '## [" in p for p in problems), problems
 
 
-class TestTheVersionedTallyAgreesWithTheFindings:
-    def test_an_unreadable_manifest_is_not_counted_as_versioned(self, tmp_path, lint, capsys):
-        """`main` counted versioned skills through the two-state reader, so a
-        manifest `lint_skill` reported as unreadable was silently tallied as an
-        unversioned pre-release. The number a reader trusts and the findings
-        must come from the same read."""
+class TestAnUnreadableManifestReachesMain:
+    def test_an_unreadable_manifest_reaches_the_exit_code(self, tmp_path, lint, capsys):
+        """The finding must reach `main`'s exit code and output, not merely the
+        helper. (The versioned TALLY is deliberately not asserted: it is printed
+        only on the success path, which an unreadable manifest can never reach,
+        so any claim about it is unobservable.)"""
         good = tmp_path / "good"
         good.mkdir()
         (good / "SKILL.md").write_text(
@@ -358,26 +358,3 @@ class TestBothFenceEndsAreExact:
         """CONTROL for the case above."""
         body = "---\nname: closed-well\ndescription: D.\nversion: 1.0.0\n---\n"
         assert lint.lint_skill(self._skill(tmp_path, "closed-well", body)) == []
-
-
-class TestTheTallyNumberItself:
-    def test_the_versioned_count_excludes_an_unreadable_manifest(self, tmp_path, lint, capsys):
-        """Asserting only that `main` exits 1 left the COUNT unchecked, so a
-        mutation restoring the two-state tally survived. The number a reader
-        trusts is the thing being claimed, so assert the number."""
-        for name, raw in (
-            ("v1", "---\nname: v1\ndescription: D.\nversion: 1.0.0\n---\n".encode("utf-8")),
-            ("v2", "---\nname: v2\ndescription: D.\nversion: 2.0.0\n---\n".encode("utf-8")),
-            ("bom", "﻿---\nname: bom\ndescription: D.\nversion: 3.0.0\n---\n".encode("utf-8")),
-        ):
-            d = tmp_path / name
-            d.mkdir()
-            (d / "SKILL.md").write_bytes(raw)
-            (d / "CHANGELOG.md").write_text(
-                f"## [{'1.0.0' if name == 'v1' else '2.0.0' if name == 'v2' else '3.0.0'}]\n",
-                encoding="utf-8")
-        lint._SKILLS_DIR = tmp_path
-        lint.main()
-        out = capsys.readouterr()
-        # two readable versioned skills; the BOM one must NOT be tallied
-        assert "3 versioned" not in (out.out + out.err), out.out + out.err

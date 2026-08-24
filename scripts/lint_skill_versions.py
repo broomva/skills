@@ -281,11 +281,13 @@ def main() -> int:
     versioned = 0
     for skill_dir in _iter_skill_dirs():
         skill_md = skill_dir / "SKILL.md"
-        # Read once, three-valued, so the tally and the findings cannot
-        # disagree: an unreadable manifest is neither "versioned" nor silently
-        # counted as a clean pre-release.
-        fm, unreadable = _read_frontmatter(skill_md)
-        if not unreadable and _skill_version(fm) is not None:
+        # No three-state guard here on purpose. An unreadable manifest yields
+        # {} -> _skill_version None -> already uncounted, AND the count is only
+        # printed on the success path, which an unreadable manifest can never
+        # reach because it is itself a finding. A guard here is unobservable in
+        # both directions; a mutation sweep proved it by leaving the "fix"
+        # unkillable, which is what redundant code looks like from outside.
+        if _skill_version(_frontmatter(skill_md)) is not None:
             versioned += 1
         all_errors.extend(lint_skill(skill_dir))
 
