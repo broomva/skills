@@ -460,6 +460,16 @@ class TestChangelogHeadingIsDeclaredNotMerelyMentioned:
         ("  ## [1.2.3] - 2026-01-01\n", True),
         (" ## [1.2.3]\n", True),
         ("    ## [1.2.3]\n", False),   # 4 spaces is an indented CODE BLOCK
+        # CommonMark: a closing fence may be followed ONLY by whitespace, so
+        # ```not-a-close does not close the block and the heading after it is
+        # still inside the example.
+        ("```\nex\n```not-a-close\n## [1.2.3]\n", False),
+        ("```\nex\n```\n## [1.2.3]\n", True),
+        ("```\nex\n```   \n## [1.2.3]\n", True),
+        ("```\nex\n`````\n## [1.2.3]\n", True),   # a LONGER closer still closes
+        # The version must END the bracket; a prefix names a different release.
+        ("## [1.2.3]not-a-release\n", False),
+        ("## [1.2.30]\n", False),
         ("see the ## [1.2.3] section\n", False),
         ("### [1.2.3]\n", False),
         ("## [1.2.4]\n", False),

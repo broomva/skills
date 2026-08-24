@@ -50,7 +50,10 @@ _SEMVER = re.compile(
 #: nothing, nothing was stripped, and the example heading inside it counted as a
 #: release — so the strictest-looking half of this rule produced the false green.
 _FENCE_RX = re.compile(
-    r"^ {0,3}(?P<f>`{3,}|~{3,}).*?(?:^ {0,3}(?P=f)[^\n]*$|\Z)", re.M | re.S)
+    r"^ {0,3}(?P<f>`{3,}|~{3,})[^\n]*$"          # opener, with an info string
+    r".*?"
+    r"(?:^ {0,3}(?P=f)[`~]*[ \t]*$|\Z)",         # closer: whitespace ONLY after it
+    re.M | re.S)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILLS_DIR = _REPO_ROOT / "skills"
@@ -292,7 +295,10 @@ def _changelog_has_version(path: Path, version: str) -> tuple[bool, str | None]:
         # and rejecting them was a false RED on valid CHANGELOGs. Safe only
         # BECAUSE the fence pattern above also accepts an indented opener —
         # loosening one without the other would let an indented example count.
-        re.search(rf"^ {{0,3}}\#\#[^\S\n]+\[{re.escape(version)}\]", body, re.M) is not None,
+        # The version must END the bracket: `## [1.2.3]not-a-release` names a
+        # different thing and was matching as a prefix.
+        re.search(rf"^ {{0,3}}\#\#[^\S\n]+\[{re.escape(version)}\](?=[ \t]*$|[ \t])",
+                  body, re.M) is not None,
         None,
     )
 
