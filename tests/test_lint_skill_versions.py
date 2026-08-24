@@ -638,3 +638,63 @@ class TestEveryDeclarationIsValidatedNotJustTheWinner:
             "---\nname: agree\ndescription: D.\nversion: 1.2.3\n"
             "metadata:\n  version: 1.2.3\n---\n", encoding="utf-8")
         assert lint.lint_skill(d) == []
+
+
+class TestAManifestThatIsADirectoryIsNotAnAbsence:
+    """Round 5: `os.walk` sorts a directory — or a symlink to one — into
+    dirnames, so a SKILL.md of that shape never appeared in `files` and the
+    skill was skipped with no finding and no `onerror`. The dangling-symlink fix
+    did not cover it: that one lands in `files`, this one does not."""
+
+    @pytest.fixture
+    def tree(self, tmp_path, lint, monkeypatch):
+        root = tmp_path / "skills" / "tooling"
+        root.mkdir(parents=True)
+        monkeypatch.setattr(lint, "_SKILLS_DIR", tmp_path / "skills")
+        return root
+
+    def test_a_plain_directory_named_skill_md_is_reported(self, tree, lint):
+        (tree / "victim").mkdir()
+        (tree / "victim" / "SKILL.md").mkdir()
+        _dirs, unwalkable = lint._iter_skill_dirs()
+        assert any("is a directory, not a manifest" in u for u in unwalkable), unwalkable
+
+    def test_a_symlink_to_a_directory_is_reported(self, tree, lint, tmp_path):
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (tree / "victim").mkdir()
+        (tree / "victim" / "SKILL.md").symlink_to(target)
+        assert lint.main() == 1
+
+    def test_a_directory_with_no_skill_md_at_all_is_silent(self, tree, lint):
+        """CONTROL: only a SKILL.md-shaped entry is a finding. An ordinary
+        subdirectory must not manufacture one."""
+        (tree / "just-a-dir" / "nested").mkdir(parents=True)
+        assert lint._iter_skill_dirs() == ([], [])
+
+
+class TestDuplicateKeysCannotEraseADeclaration:
+    """Round 5: PyYAML and `json.loads` both keep the LAST of duplicate keys and
+    say nothing, so `version: not-semver` followed by `version: 1.2.3` erased
+    the invalid declaration — defeating the every-declaration check *at the
+    parser*, below the layer where that check can see."""
+
+    def test_a_duplicate_frontmatter_key_is_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "dup")
+        (d / "SKILL.md").write_text(
+            "---\nname: dup\ndescription: D.\nversion: not-semver\nversion: 1.2.3\n---\n",
+            encoding="utf-8")
+        problems = lint.lint_skill(d)
+        assert any("duplicate key" in p for p in problems), problems
+
+    def test_a_duplicate_package_json_key_is_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "dupjson",
+                       package__json='{"version": "9.9.9", "version": "1.2.3"}')
+        problems = lint.lint_skill(d)
+        assert problems, "a duplicate package.json key was silently collapsed"
+
+    def test_distinct_keys_are_still_accepted(self, tmp_path, lint):
+        """CONTROL: rejecting duplicates must not reject ordinary manifests."""
+        d = _versioned(tmp_path, "distinct",
+                       package__json='{"name": "x", "version": "1.2.3"}')
+        assert lint.lint_skill(d) == []

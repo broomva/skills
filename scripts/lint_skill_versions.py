@@ -94,6 +94,37 @@ def _read_utf8(path: Path) -> tuple[str | None, str | None]:
         return None, f"is not valid UTF-8 ({exc.reason})"
 
 
+class _NoDuplicateKeys(yaml.SafeLoader):
+    """PyYAML keeps the LAST of duplicate keys and says nothing, so
+    `version: not-semver` followed by `version: 1.2.3` erased the invalid
+    declaration this lint exists to report — defeating the every-declaration
+    check at the parser, below where that check can see."""
+
+
+def _construct_unique(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.YAMLError(f"duplicate key {key!r}")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_NoDuplicateKeys.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique)
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict:
+    """`json.loads` has the same behaviour as PyYAML here."""
+    out: dict = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate key {key!r}")
+        out[key] = value
+    return out
+
+
 def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
     """`(frontmatter, reason_it_could_not_be_read)` — three states, not two.
 
@@ -139,7 +170,7 @@ def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
         return {}, "has no closing --- fence", True
     end = len("\n".join(lines[:closing]))
     try:
-        data = yaml.safe_load(text[3:end])
+        data = yaml.load(text[3:end], Loader=_NoDuplicateKeys)
     except yaml.YAMLError as exc:
         return {}, f"has unparseable YAML frontmatter ({str(exc).splitlines()[0][:60]})", True
     if not isinstance(data, dict):
@@ -167,15 +198,6 @@ def _declared_versions(fm: dict) -> list[tuple[str, Any]]:
         found.append(("metadata.version", meta["version"]))
     return found
 
-
-def _skill_version_is_explicitly_null(fm: dict) -> bool:
-    """`version:` written with no value is a DECLARATION that failed, not an
-    absence. Treating it as unversioned exempts a manifest whose author plainly
-    intended to version the skill."""
-    if "version" in fm and fm["version"] is None:
-        return True
-    meta = fm.get("metadata")
-    return isinstance(meta, dict) and "version" in meta and meta["version"] is None
 
 
 def _skill_version(fm: dict) -> str | None:
@@ -222,8 +244,8 @@ def _package_json_version(path: Path) -> tuple[str | None, str | None]:
     if text is None:
         return None, None  # genuinely absent — package.json is optional
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
+        data = json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+    except (json.JSONDecodeError, ValueError) as exc:
         return None, f"package.json is not valid JSON ({type(exc).__name__})"
     if not isinstance(data, dict):
         return None, "package.json is not a JSON object"
@@ -353,11 +375,19 @@ def _iter_skill_dirs() -> tuple[list[Path], list[str]]:
     # so the local suite passed while CI went green on nothing. `os.walk` reports
     # directory entries by name and behaves the same on both.
     for root, _subdirs, files in os.walk(_SKILLS_DIR, followlinks=False, onerror=_record):
-        if "SKILL.md" not in files:
-            continue
         skill_dir = Path(root)
         rel = skill_dir.relative_to(_SKILLS_DIR)
         if "extensions" in rel.parts:
+            continue
+        if "SKILL.md" not in files:
+            if "SKILL.md" in _subdirs:
+                # `os.walk` sorts a directory — or a symlink to one — into
+                # dirnames, so a SKILL.md of that shape was absent from `files`
+                # and skipped in silence. Same sentence as the rest of this
+                # file: something IS there and we could not read it.
+                unwalkable.append(
+                    f"{rel}/SKILL.md: is a directory, not a manifest — "
+                    "the skill was NOT checked")
             continue
         dirs.append(skill_dir)
     return sorted(dirs), unwalkable
