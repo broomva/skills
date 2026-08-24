@@ -955,7 +955,7 @@ class TestASkillDirectoryMustHaveAManifest:
     def test_a_nested_skills_container_is_not_reported(self, tmp_path, lint):
         """The false red this rule is bounded to avoid.
 
-        `skills/video/content-engine/skills/` holds five real nested skills and
+        `skills/video/content-engine/skills/` holds four real nested skills and
         no manifest of its own. A rule reading "any directory holding files
         needs a SKILL.md" would fail the live repository — trading this false
         green for a worse false red."""
@@ -1008,4 +1008,98 @@ class TestASkillDirectoryMustHaveAManifest:
         odd.mkdir(parents=True)
         _found, findings = lint.discover(tmp_path / "skills")
         assert any("is a directory, not a manifest" in f for f in findings), findings
+        assert not any("no SKILL.md" in f for f in findings), findings
+
+
+class TestTheManifestRuleCoversEverySkillPosition:
+    """Round 2. Cross-model review scored the first cut 4/10 and was right on
+    every count: the rule closed the shape at ONE position and left it open at
+    three others. Each was reproduced before being fixed."""
+
+    def test_a_nested_sub_skill_needs_a_manifest_too(self, tmp_path, lint):
+        """`<...>/skills/<child>` is a skill position. A depth-2 test exempted
+        it, so `content-engine/skills/naked/` exited 0 — the same defect one
+        layer down from where it was just fixed."""
+        _skill(tmp_path, "parent")
+        naked = tmp_path / "skills" / "tooling" / "parent" / "skills" / "naked" / "scripts"
+        naked.mkdir(parents=True)
+        (naked / "impl.py").write_text("x = 1\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert any("naked" in f and "no SKILL.md" in f for f in findings), findings
+
+    def test_a_skills_container_is_still_not_asked_for_a_manifest(self, tmp_path, lint):
+        """The false red the position rule must not create: the container that
+        HOLDS nested skills carries no manifest of its own on the live tree."""
+        _skill(tmp_path, "parent")
+        child = tmp_path / "skills" / "tooling" / "parent" / "skills" / "child"
+        child.mkdir(parents=True)
+        (child / "SKILL.md").write_text(
+            "---\nname: child\ndescription: A description.\n---\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_directory_holding_only_pruned_content_stays_exempt(
+            self, tmp_path, lint):
+        """The finding NOT taken, pinned so it is not re-litigated.
+
+        Review argued that reading `files or subdirs` after `_prune` exempts a
+        directory whose only content is `.claude/`. True, and closing it breaks
+        13 tests that make `node_modules/`, `.venv/`, `.tox/` and `extensions/`
+        count as content — a far worse false red. A tree this linter has opted
+        out of walking is not evidence that a skill is here, and no directory on
+        the live tree has only pruned content. Hole with no instance; false red
+        with 13."""
+        _skill(tmp_path, "good")
+        vendored = tmp_path / "skills" / "tooling" / "dotty" / "node_modules" / "pkg"
+        vendored.mkdir(parents=True)
+        (vendored / "index.js").write_text("x\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_file_directly_in_the_skill_directory_counts_as_content(
+            self, tmp_path, lint):
+        """Every earlier test put the file in a `scripts/` subdirectory, so
+        `subdirs` was always non-empty and the mutant `(files or subdirs)` ->
+        `subdirs` survived the sweep: a skill holding only loose files read as
+        empty. The guard needs BOTH halves pinned, one test each."""
+        _skill(tmp_path, "good")
+        flat = tmp_path / "skills" / "tooling" / "flat"
+        flat.mkdir(parents=True)
+        (flat / "impl.py").write_text("x = 1\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert any("flat" in f and "no SKILL.md" in f for f in findings), findings
+
+    def test_a_symlinked_directory_at_a_skill_position_stays_exempt(
+            self, tmp_path, lint):
+        """The second finding NOT taken, pinned so it is not re-litigated.
+
+        A symlinked directory never becomes an `os.walk` root, so it cannot be
+        seen by the missing-manifest branch. Review called that a way to occupy
+        a skill position and stay exempt. Correct — and not closeable by
+        position: at depth 2 a linked `assets/` is indistinguishable from a
+        linked skill, and five CONTROL tests exist to stop exactly that false
+        red. `skills/` holds zero symlinks, so the exempt case has no instance
+        and the false red would have five."""
+        _skill(tmp_path, "good")
+        target = tmp_path / "elsewhere" / "scripts"
+        target.mkdir(parents=True)
+        (target / "impl.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "skills" / "tooling" / "linked").symlink_to(
+            tmp_path / "elsewhere", target_is_directory=True)
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_symlinked_skill_holding_a_manifest_keeps_its_own_diagnosis(
+            self, tmp_path, lint):
+        """Two branches now match a symlinked skill directory. The one naming
+        the actionable fix — move it into the repository — must win."""
+        _skill(tmp_path, "good")
+        target = tmp_path / "elsewhere"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text(
+            "---\nname: linked\ndescription: A description.\n---\n", encoding="utf-8")
+        (tmp_path / "skills" / "tooling" / "linked").symlink_to(
+            target, target_is_directory=True)
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert any("holding a SKILL.md" in f for f in findings), findings
         assert not any("no SKILL.md" in f for f in findings), findings
