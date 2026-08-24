@@ -136,9 +136,12 @@ and answers yes only for an arc that **declared itself finished**: a recorded
 `STOP`/`STRUCTURAL` verdict, or a passing score. A `STRUCTURAL` stop is
 therefore still cleared by step 2, which is what makes the sequence above work.
 A **nonterminal** stop is not: its remedy is the one the stop names, and it takes
-`reset --force`, which prints the stop it discarded. A **live** arc is refused
-outright, `--force` included — nothing there is blocked, so record its verdict
-instead.
+`reset --force`, which prints the stop it discarded. A **live** arc that still
+PARSES is refused, `--force` included — nothing there is blocked, so record its
+verdict instead. Corrupting it first is the one way through, and deliberately
+so: a corrupt ledger must stay discardable or `rm` becomes the only escape, and
+that one is silent. This one lands as `.archived.corrupt.` and needs `--force`
+to say it on purpose.
 
 Doing step 2 without step 1 is still laundering a stop; the difference is that
 the tool now says so on the stops it can recognise.
@@ -179,7 +182,7 @@ appended to it.
 | Property | Why it holds |
 |---|---|
 | A stop cannot be cleared by appending | every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. both recorders refuse to append past a terminal state |
-| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. Nonterminal stops and the ceiling need `--force`, which names what it discarded; a live arc is refused with or without it. One test per stop class, one mutation per class |
+| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. Nonterminal stops and the ceiling need `--force`, which names what it discarded; a live arc that still parses is refused with or without it — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
 | A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |

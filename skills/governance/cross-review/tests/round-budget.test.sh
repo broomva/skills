@@ -812,6 +812,34 @@ else
     fail "T55: unusable-verdict stop" "budget=$RC_BUDGET (want 6), plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
 fi
 
+# ── T56: corrupting a live ledger IS the way past the live gate ───────────
+# T49 pins "--force does not open a LIVE arc". That is true only while the
+# ledger still PARSES: append one junk line and it takes the corrupt path, which
+# --force is allowed to archive on purpose — a corrupt ledger must stay
+# discardable, or `rm` becomes the only escape and that one is silent.
+#
+# So the hole is real and it is chosen. This test pins it as BEHAVIOUR rather
+# than leaving it as an undocumented gap, because SKILL.md used to claim a live
+# arc was refused "--force included" full stop, which is false the moment the
+# file is corrupted. Both halves are asserted: it goes through, and it lands
+# LOUDLY under .archived.corrupt. so the escape is auditable.
+echo "T56. corrupting a live ledger routes it to the corrupt path, loudly"
+LED=$(newledger t56)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+RC_LIVE=$(rb reset --run-id=t56 --ledger="$LED" --force)
+printf 'GARBAGE\n' >> "$LED"
+RC_CORRUPT_PLAIN=$(rb reset --run-id=t56 --ledger="$LED")
+RC_CORRUPT_FORCE=$(rb reset --run-id=t56 --ledger="$LED" --force)
+CORRUPT_ARCHIVES=$(find "$(dirname "$LED")" -maxdepth 1 -type f -name "$(basename "$LED").archived.corrupt.*" 2>/dev/null | wc -l | tr -d ' ')
+# RC_LIVE=6 is the polarity arm: without it, a reset that archived EVERYTHING
+# would satisfy the rest of this test.
+if [ "$RC_LIVE" = "6" ] && [ "$RC_CORRUPT_PLAIN" = "6" ] && [ "$RC_CORRUPT_FORCE" = "0" ] && [ "$CORRUPT_ARCHIVES" = "1" ]; then
+    ok "T56: live+force refused; corrupt+force archives once, under .corrupt."
+else
+    fail "T56: corrupt-path escape not as documented" \
+        "live+force=$RC_LIVE (want 6), corrupt+plain=$RC_CORRUPT_PLAIN (want 6), corrupt+force=$RC_CORRUPT_FORCE (want 0), corrupt archives=$CORRUPT_ARCHIVES (want 1)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi
