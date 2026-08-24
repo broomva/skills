@@ -404,14 +404,32 @@ class TestSemVerIsAsciiAndAnchored:
     `.match()` on `^...$` accepted both "1.2.3\\n" and the Arabic-Indic
     "1٢.0.0" as valid SemVer."""
 
-    @pytest.mark.parametrize("version", ["1.2.3\n", "1٢.0.0", "1.2.3-1٢", "1.2.3 ", "v1.2.3", "1.2"])
-    def test_invalid_versions_are_rejected(self, lint, version):
-        assert not lint._SEMVER.fullmatch(version), f"{version!r} accepted as SemVer"
+    # Exercised through `lint_skill`, not against `_SEMVER` directly. Asserting
+    # on the compiled object tests the pattern; it does not test that the linter
+    # USES it correctly, and a `fullmatch` -> `match` mutation at the call site
+    # survived a suite that only ever asked the regex.
+    @pytest.mark.parametrize("literal", [
+        '"1.2.3\\n"',   # trailing newline: `$` matches before it, `fullmatch` does not
+        '"1.2.3 "',      # trailing space
+        '"1٢.0.0"',      # Arabic-Indic digit, matched by a Unicode-aware `\\d`
+        '"1.2.3-1٢"',
+        '"v1.2.3"',
+        '"1.2"',
+    ])
+    def test_invalid_versions_are_rejected(self, tmp_path, lint, literal):
+        d = tmp_path / f"sv-{abs(hash(literal))}"
+        d.mkdir()
+        (d / "SKILL.md").write_text(
+            f"---\nname: sv\ndescription: D.\nversion: {literal}\n---\n", encoding="utf-8")
+        problems = lint.lint_skill(d)
+        assert any("not valid SemVer" in p for p in problems), (literal, problems)
 
     @pytest.mark.parametrize("version", ["0.0.4", "1.2.3", "10.20.30", "1.2.3-rc.1", "1.2.3-rc.1+build.5"])
-    def test_valid_versions_are_accepted(self, lint, version):
-        """CONTROL: tightening must not reject the spec's own examples."""
-        assert lint._SEMVER.fullmatch(version), f"{version!r} rejected as SemVer"
+    def test_valid_versions_are_accepted(self, tmp_path, lint, version):
+        """CONTROL: tightening must not reject the spec's own examples — the
+        false-red half of the proof."""
+        d = _versioned(tmp_path, f"ok-{abs(hash(version))}", version=f'"{version}"')
+        assert not [p for p in lint.lint_skill(d) if "not valid SemVer" in p]
 
 
 class TestChangelogHeadingIsDeclaredNotMerelyMentioned:
