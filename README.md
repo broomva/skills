@@ -234,7 +234,7 @@ npx skills add broomva/skills --skill '*'
 
 | Skill | What it does |
 |---|---|
-| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 46 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 49 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
 
 ### Commerce & procurement — `skills/commerce/`
 

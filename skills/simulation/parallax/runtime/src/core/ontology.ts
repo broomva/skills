@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import type { Origin } from "./provenance";
 import { fail, ok, type ParallaxError, type Result } from "./result";
 import type { ActionSpec, InvariantSpec, State, TypeRecord } from "./types";
 
@@ -42,7 +43,43 @@ export type ContextSource =
    * itself.
    */
   | { kind: "agent-workspace"; root?: string }
-  | { kind: "business-data"; tables: Array<{ name: string; columns: string[] }> };
+  | { kind: "business-data"; tables: TableSpec[] };
+
+/**
+ * What a column is declared to hold. Deliberately small: these four are what a
+ * proposer can turn into a typed slot without guessing. An unrecognised type is
+ * not coerced into `string` -- it stays unknown and raises a blocking question,
+ * because a wrong type that runs is worse than a question that stops.
+ */
+export type ColumnType = "string" | "number" | "boolean" | "date";
+
+export interface ColumnSpec {
+  readonly name: string;
+  /** Absent means "not declared", which is a blocking question, not a default. */
+  readonly type?: ColumnType;
+  /**
+   * Where this column's VALUES came from. Absent is legal for a schema sketch
+   * and illegal once `rowCount` claims rows exist -- see `TableSpec.rowCount`.
+   *
+   * This is on the column and not derived later because `provenance.ts` types
+   * values at birth: there is no operator that adds provenance afterwards, so a
+   * supplier that omits it has destroyed the distinction permanently.
+   */
+  readonly origin?: Origin;
+}
+
+export interface TableSpec {
+  readonly name: string;
+  readonly columns: ColumnSpec[];
+  /**
+   * How many rows the supplier actually has. Absent means "a schema, no data
+   * yet" and proposes zero; present means the supplier is making a claim about
+   * the world, and every column must then carry an `origin`. Claiming rows
+   * without saying where they came from is refused at the boundary rather than
+   * defaulted -- a default there is a lie with a safe-sounding name.
+   */
+  readonly rowCount?: number;
+}
 
 /** A question the proposer could not answer and a human must. */
 export interface OpenQuestion {
@@ -66,7 +103,13 @@ export interface OntologyProposal {
 }
 
 export type ProposeError = ParallaxError<
-  "SOURCE_UNREADABLE" | "SOURCE_EMPTY" | "UNSUPPORTED_SOURCE" | "DEGENERATE_CONTEXT"
+  | "SOURCE_UNREADABLE"
+  | "SOURCE_EMPTY"
+  | "UNSUPPORTED_SOURCE"
+  | "DEGENERATE_CONTEXT"
+  | "COLUMNS_REQUIRED"
+  | "INVALID_ROW_COUNT"
+  | "ORIGIN_REQUIRED"
 >;
 
 export type AcceptError = ParallaxError<
@@ -202,11 +245,69 @@ function proposeFromDirectory(
   return ok({ ...proposal, id: proposalId(proposal) });
 }
 
+/**
+ * The empty value for a declared column type.
+ *
+ * `undefined` for an undeclared column is deliberate and is the whole point of
+ * the blocking question raised beside it: an untyped slot that silently became
+ * `""` would run, and running on a guess is what this product exists to refuse.
+ */
+function zeroFor(type: ColumnType | undefined): unknown {
+  switch (type) {
+    case "number":
+      return 0;
+    case "boolean":
+      return false;
+    case "string":
+    case "date":
+      return "";
+    default:
+      return undefined;
+  }
+}
+
 function proposeFromTables(
   source: Extract<ContextSource, { kind: "business-data" }>,
 ): Result<OntologyProposal, ProposeError> {
   if (source.tables.length === 0) {
     return fail("SOURCE_EMPTY", "no tables supplied");
+  }
+
+  // Validated HERE, not per surface. The CLI, the tool surface and the hub all
+  // reach the proposer through this function, so one check covers three
+  // callers; a copy in each is three chances to drift. These are core codes and
+  // propagate to every surface unchanged.
+  for (const t of source.tables) {
+    if (t.columns.length === 0) {
+      // The boundary already SAID this -- "needs at least one table with its
+      // columns" -- and then only counted tables. A message describing a check
+      // that does not exist is worse than no message: it is read as a guarantee.
+      return fail("COLUMNS_REQUIRED", `table ${t.name} has no columns`, { table: t.name });
+    }
+    if (t.rowCount !== undefined && (!Number.isInteger(t.rowCount) || t.rowCount < 0)) {
+      return fail(
+        "INVALID_ROW_COUNT",
+        `table ${t.name} reports a row count that is not a whole number >= 0`,
+        {
+          table: t.name,
+          given: t.rowCount,
+        },
+      );
+    }
+    if (t.rowCount !== undefined && t.rowCount > 0) {
+      // Claiming rows is claiming knowledge of the world. `provenance.ts` types
+      // values at birth and has no operator that adds provenance later, so a
+      // supplier who omits it here has destroyed the distinction permanently --
+      // and defaulting to `simulated` would be a lie with a safe-sounding name.
+      const untagged = t.columns.filter((c) => c.origin === undefined).map((c) => c.name);
+      if (untagged.length > 0) {
+        return fail(
+          "ORIGIN_REQUIRED",
+          `table ${t.name} reports ${t.rowCount} row(s) but ${untagged.length} column(s) do not say whether their values were observed or simulated`,
+          { table: t.name, columns: untagged },
+        );
+      }
+    }
   }
   const initial: State = {};
   const evidence: Array<{ slot: string; from: string }> = [];
@@ -214,15 +315,54 @@ function proposeFromTables(
   const openQuestions: OpenQuestion[] = [];
 
   for (const t of source.tables) {
-    initial[`${t.name}_rows`] = 0;
-    evidence.push({ slot: `state.${t.name}_rows`, from: `table ${t.name}` });
+    // The row count is the supplier's, not a placeholder. This used to be a
+    // hardcoded 0, which meant forty judged records and an empty table produced
+    // a byte-identical proposal -- so the accept gate showed a human the same
+    // thing in both cases and asked them to sign it.
+    const rows = t.rowCount ?? 0;
+    initial[`${t.name}_rows`] = rows;
+    evidence.push({
+      slot: `state.${t.name}_rows`,
+      from:
+        t.rowCount === undefined
+          ? `table ${t.name} (schema only -- no row count supplied)`
+          : `table ${t.name}, ${rows} row(s) reported by the supplier`,
+    });
+
+    // One slot per column. `columns` was required at the boundary and then
+    // discarded here; an interface that demands evidence it does not use is a
+    // poor look for this product specifically.
+    for (const c of t.columns) {
+      const slot = `${t.name}.${c.name}`;
+      initial[slot] = zeroFor(c.type);
+      evidence.push({
+        slot: `state.${slot}`,
+        from: `column ${c.name} of ${t.name}${c.type ? ` (${c.type})` : ""}${
+          c.origin ? ` -- ${c.origin}` : ""
+        }`,
+      });
+      if (c.type === undefined) {
+        openQuestions.push({
+          slot: `state.${slot}`,
+          question: `What type is column "${c.name}" of ${t.name}? Declared types are string, number, boolean, date. It is left untyped rather than guessed.`,
+          blocking: true,
+        });
+      }
+    }
+
     actions.push({ name: `insert_${t.name}`, actor: "system", params: { n: "number" } });
     evidence.push({ slot: `action.insert_${t.name}`, from: `table ${t.name}` });
-    openQuestions.push({
-      slot: `action.insert_${t.name}.n`,
-      question: `What unit is "n" for insert_${t.name}? Rows, items, or currency?`,
-      blocking: true,
-    });
+
+    // Ask only what cannot be inferred. A supplier that reported a row count has
+    // already told us `n` counts rows; asking anyway is the proposer making a
+    // human answer a question it held the answer to.
+    if (t.rowCount === undefined) {
+      openQuestions.push({
+        slot: `action.insert_${t.name}.n`,
+        question: `What unit is "n" for insert_${t.name}? Rows, items, or currency? Supply a row count on the table and this answers itself.`,
+        blocking: true,
+      });
+    }
   }
 
   const proposal: OntologyProposal = {

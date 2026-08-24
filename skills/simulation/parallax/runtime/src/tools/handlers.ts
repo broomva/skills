@@ -24,6 +24,7 @@ import {
   type ContextSource,
   type OntologyProposal,
   proposeOntology,
+  type TableSpec,
   worldOf,
 } from "../core/ontology";
 import {
@@ -118,7 +119,7 @@ export interface ProposeInput {
    * mistake never announces itself.
    */
   readonly root?: string;
-  readonly tables?: Array<{ name: string; columns: string[] }>;
+  readonly tables?: TableSpec[];
   readonly chunkChars?: number;
 }
 

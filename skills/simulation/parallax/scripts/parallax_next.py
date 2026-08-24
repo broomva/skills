@@ -66,6 +66,22 @@ REMEDIES: dict[str, str] = {
         "The directory is broken, not Parallax. Say so rather than reporting a defect."
     ),
     "TABLES_REQUIRED": "kind is `business-data`, so `tables` is required.",
+    "COLUMNS_REQUIRED": (
+        "A table was supplied with an empty `columns` array. Name its columns. This used "
+        "to be accepted -- the boundary said it needed columns and only counted tables -- "
+        "so an older caller that 'worked' may now correctly refuse."
+    ),
+    "INVALID_ROW_COUNT": (
+        "`rowCount` must be a whole number >= 0. Omit it entirely to propose a schema with "
+        "no data; do not send -1 or a float to mean 'unknown'."
+    ),
+    "ORIGIN_REQUIRED": (
+        "The table claims rows exist but some columns do not say where their values came "
+        "from. Tag each column `observed` (read from an artifact you can produce) or "
+        "`simulated` (concluded, matched, or estimated). Do NOT tag everything `simulated` "
+        "to get past this: provenance is assigned at birth and nothing downstream can "
+        "recover it, so a wrong tag is permanent. `detail.columns` lists the untagged ones."
+    ),
     # pending-proposal addressing
     "NO_PENDING_PROPOSAL": "Nothing is pending. Run `parallax propose` first.",
     "UNKNOWN_REF": "No proposal starts with that ref. `parallax status` lists the pending ones.",

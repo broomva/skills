@@ -6,10 +6,17 @@ import type { ChannelMessage } from "../channel/conversation";
 import { parseReply, renderProposal, resolveAccept } from "../channel/conversation";
 import { h } from "../core/hash";
 import { EventLog } from "../core/log";
-import type { ContextSource, OntologyProposal } from "../core/ontology";
+import type {
+  ColumnSpec,
+  ColumnType,
+  ContextSource,
+  OntologyProposal,
+  TableSpec,
+} from "../core/ontology";
 import { activate, proposeOntology, worldOf } from "../core/ontology";
 import type { Certificate, Objective, Score, Trajectory } from "../core/ops";
 import { certifyPolicy, rolloutCertified, score, traceHash } from "../core/ops";
+import type { Origin } from "../core/provenance";
 import { fail, ok, type ParallaxError, type Result } from "../core/result";
 import type { Violation } from "../core/types";
 import { bindDomain, LEDGER_KEY, shieldedPolicy } from "./domain";
@@ -57,6 +64,12 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 // cannot do: it reports the commit this instance is running.
 const DEFAULT_LANDING = resolve(HERE, "..", "..", "hub-static");
 const PKG = resolve(HERE, "..", "..", "package.json");
+
+/** The declared column types, in one place. A new type is added here and nowhere else. */
+const COLUMN_TYPES: readonly ColumnType[] = ["string", "number", "boolean", "date"];
+function isColumnType(v: unknown): v is ColumnType {
+  return typeof v === "string" && (COLUMN_TYPES as readonly string[]).includes(v);
+}
 
 function readVersion(): string {
   try {
@@ -836,24 +849,85 @@ function readSource(
         field: "tables",
       });
     }
-    const parsed: Array<{ name: string; columns: string[] }> = [];
+    const parsed: TableSpec[] = [];
     for (const t of tables) {
       if (typeof t !== "object" || t === null) {
         return fail("INVALID_FIELD", "each table must be an object", { field: "tables" });
       }
       const row = t as Record<string, unknown>;
       const name = row.name;
-      const columns = row.columns;
       if (typeof name !== "string" || name.trim().length === 0) {
         return fail("INVALID_FIELD", "each table needs a non-empty name", { field: "tables" });
       }
-      if (!Array.isArray(columns) || columns.some((c) => typeof c !== "string")) {
-        return fail("INVALID_FIELD", `table ${name} needs an array of column names`, {
+      // Columns arrive as objects now, so that a column can carry its declared
+      // type and where its values came from. A bare string is still accepted and
+      // means exactly "a column with that name, nothing declared about it" --
+      // which the proposer then raises as a blocking question rather than
+      // guessing. Shape only is checked here; whether the combination is legal
+      // (columns present, row count sane, origins supplied when rows are
+      // claimed) is decided once, in proposeOntology, for all three surfaces.
+      const rawColumns = row.columns;
+      if (!Array.isArray(rawColumns)) {
+        return fail("INVALID_FIELD", `table ${name} needs an array of columns`, {
           field: "tables",
           table: name,
         });
       }
-      parsed.push({ name, columns: columns as string[] });
+      const columns: ColumnSpec[] = [];
+      for (const c of rawColumns) {
+        if (typeof c === "string") {
+          columns.push({ name: c });
+          continue;
+        }
+        if (typeof c !== "object" || c === null) {
+          return fail("INVALID_FIELD", `table ${name}: each column is a name or an object`, {
+            field: "tables",
+            table: name,
+          });
+        }
+        const col = c as Record<string, unknown>;
+        if (typeof col.name !== "string" || col.name.trim().length === 0) {
+          return fail("INVALID_FIELD", `table ${name}: each column needs a non-empty name`, {
+            field: "tables",
+            table: name,
+          });
+        }
+        if (col.type !== undefined && !isColumnType(col.type)) {
+          return fail("INVALID_FIELD", `table ${name}: column ${col.name} has an unknown type`, {
+            field: "tables",
+            table: name,
+            given: col.type,
+          });
+        }
+        if (col.origin !== undefined && col.origin !== "observed" && col.origin !== "simulated") {
+          return fail(
+            "INVALID_FIELD",
+            `table ${name}: column ${col.name} origin must be "observed" or "simulated"`,
+            {
+              field: "tables",
+              table: name,
+              given: col.origin,
+            },
+          );
+        }
+        columns.push({
+          name: col.name,
+          ...(col.type === undefined ? {} : { type: col.type }),
+          ...(col.origin === undefined ? {} : { origin: col.origin as Origin }),
+        });
+      }
+      const rowCount = row.rowCount;
+      if (rowCount !== undefined && typeof rowCount !== "number") {
+        return fail("INVALID_FIELD", `table ${name}: rowCount must be a number`, {
+          field: "tables",
+          table: name,
+        });
+      }
+      parsed.push({
+        name,
+        columns,
+        ...(rowCount === undefined ? {} : { rowCount }),
+      });
     }
     return ok({ source: { kind: "business-data", tables: parsed }, root: contextRoot });
   }

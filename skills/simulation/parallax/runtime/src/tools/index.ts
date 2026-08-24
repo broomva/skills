@@ -1,3 +1,4 @@
+import type { TableSpec } from "../core/ontology";
 import { DEFAULT_DOMAIN, DOMAIN_KEYS } from "./domains";
 import type { AnyErrorCode, ParallaxError } from "./errors";
 import * as handlers from "./handlers";
@@ -144,7 +145,34 @@ const SPECS: ParallaxToolSpec[] = [
           optional: true,
           fields: {
             name: { kind: "string", description: "Table name.", minLength: 1 },
-            columns: { kind: "strings", description: "Column names in that table." },
+            columns: {
+              kind: "objects",
+              description:
+                "The columns in that table. At least one is required. Declare a type where you know it; an undeclared column is left untyped and raises a blocking question rather than being guessed at.",
+              fields: {
+                name: { kind: "string", description: "Column name.", minLength: 1 },
+                type: {
+                  kind: "string",
+                  description:
+                    "What the column holds. Omit if you genuinely do not know -- that becomes a question a human answers, which is better than a wrong type that runs.",
+                  enum: ["string", "number", "boolean", "date"],
+                  optional: true,
+                },
+                origin: {
+                  kind: "string",
+                  description:
+                    'Where this column\'s VALUES came from. "observed" means read from an artifact you can produce; "simulated" means concluded, matched or estimated. REQUIRED once rowCount claims rows exist -- provenance is assigned at birth and nothing downstream can recover it, so guessing here is permanent.',
+                  enum: ["observed", "simulated"],
+                  optional: true,
+                },
+              },
+            },
+            rowCount: {
+              kind: "number",
+              description:
+                "How many rows you actually have. Omit for a schema with no data yet. Supplying it also answers the units question the proposer would otherwise have to ask.",
+              optional: true,
+            },
           },
         },
         chunkChars: CHUNK_FIELD,
@@ -154,9 +182,7 @@ const SPECS: ParallaxToolSpec[] = [
       handlers.propose({
         kind: input.kind as "agent-workspace" | "business-data",
         ...(typeof input.within === "string" ? { within: input.within } : {}),
-        ...(Array.isArray(input.tables)
-          ? { tables: input.tables as Array<{ name: string; columns: string[] }> }
-          : {}),
+        ...(Array.isArray(input.tables) ? { tables: input.tables as TableSpec[] } : {}),
         chunkChars: input.chunkChars as number,
       }),
   ),
