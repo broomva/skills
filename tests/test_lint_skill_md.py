@@ -201,14 +201,23 @@ class TestDiscoveryReportsWhatItCouldNotEnumerate:
         assert unwalkable == [], unwalkable
 
     def test_a_normal_tree_is_discovered_at_every_depth(self, tmp_path, lint):
-        """CONTROL: the walk must find everything `rglob` did."""
-        for rel in ["a", "b/skills/c", "d/e/f"]:
+        """CONTROL: the walk must find everything `rglob` did.
+
+        `b` and `d` carry manifests of their own, which the original fixture
+        omitted. That was not incidental: a skill directory with no manifest is
+        now a finding, and the live tree agrees — all 97 depth-2 directories
+        carry one, `video/content-engine` included, and it is the only real
+        directory that nests skills beneath itself. The fixture asserted a shape
+        the repository does not contain. Restoring the manifests strengthens the
+        control rather than relaxing it: it now proves discovery at the
+        container level AND beneath it, 5 manifests instead of 3."""
+        for rel in ["a", "b", "b/skills/c", "d", "d/e/f"]:
             p = tmp_path / "skills" / "tooling" / rel
-            p.mkdir(parents=True)
+            p.mkdir(parents=True, exist_ok=True)
             (p / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
         found, unwalkable = lint.discover(tmp_path / "skills")
         assert unwalkable == []
-        assert len(found) == 3, found
+        assert len(found) == 5, found
 
     def test_extensions_are_excluded(self, tmp_path, lint):
         p = tmp_path / "skills" / "tooling" / "x" / "extensions" / "priv"
@@ -908,3 +917,95 @@ class TestTheReportedCountMatchesWhatGitTracks:
         assert reported == len(expected), (
             f"linter counted {reported}, git tracks {len(expected)} "
             "— it is walking files this repository does not ship")
+
+
+class TestASkillDirectoryMustHaveAManifest:
+    """The sixth false green in this file, and the first at the discovery layer.
+
+    The five before it were about READING a manifest — a BOM, invalid UTF-8, an
+    unlistable subtree, a dangling symlink, duplicate keys. Every one assumed a
+    manifest existed. Nothing asked whether a skill HAD one, so a directory
+    shipping `scripts/` and `tests/` and no `SKILL.md` was not failed: it was
+    invisible, and the gate that runs on every PR printed OK.
+
+    Found live on broomva/skills#199, where `skills/simulation/sourcer/` shipped
+    3180 lines behind a linter reporting `OK — 101 SKILL.md files pass`.
+    """
+
+    def test_a_manifestless_skill_directory_is_reported(self, tmp_path, lint):
+        _skill(tmp_path, "good")
+        naked = tmp_path / "skills" / "tooling" / "naked" / "scripts"
+        naked.mkdir(parents=True)
+        (naked / "impl.py").write_text("x = 1\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert any("tooling/naked" in f and "no SKILL.md" in f for f in findings), findings
+
+    def test_it_reaches_the_exit_code(self, tmp_path, lint):
+        """Through the real entry point. A finding that stops at `discover` is
+        not a gate, and one good skill keeps the manifest count non-zero — which
+        is exactly how this stayed invisible."""
+        _skill(tmp_path, "good")
+        naked = tmp_path / "skills" / "tooling" / "naked" / "scripts"
+        naked.mkdir(parents=True)
+        (naked / "impl.py").write_text("x = 1\n", encoding="utf-8")
+        r = _run(tmp_path)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "no SKILL.md" in r.stdout, r.stdout
+
+    def test_a_nested_skills_container_is_not_reported(self, tmp_path, lint):
+        """The false red this rule is bounded to avoid.
+
+        `skills/video/content-engine/skills/` holds five real nested skills and
+        no manifest of its own. A rule reading "any directory holding files
+        needs a SKILL.md" would fail the live repository — trading this false
+        green for a worse false red."""
+        _skill(tmp_path, "parent")
+        child = tmp_path / "skills" / "tooling" / "parent" / "skills" / "child"
+        child.mkdir(parents=True)
+        (child / "SKILL.md").write_text(
+            "---\nname: child\ndescription: A description.\n---\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_skills_own_subdirectories_are_not_reported(self, tmp_path, lint):
+        """`scripts/` and `tests/` inside a skill are not themselves skills."""
+        _skill(tmp_path, "good")
+        for sub in ("scripts", "tests", "references"):
+            d = tmp_path / "skills" / "tooling" / "good" / sub
+            d.mkdir(parents=True)
+            (d / "f.txt").write_text("x\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_category_directory_is_not_reported(self, tmp_path, lint):
+        """`skills/tooling/` holds skills and is not one."""
+        _skill(tmp_path, "good")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert not any(f.startswith("tooling:") for f in findings), findings
+
+    def test_an_empty_directory_is_not_a_skill(self, tmp_path, lint):
+        _skill(tmp_path, "good")
+        (tmp_path / "skills" / "tooling" / "empty").mkdir(parents=True)
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_pruned_directory_is_still_pruned(self, tmp_path, lint):
+        """`extensions/` is opted out of by name, and adding a rule about
+        missing manifests must not drag it back in."""
+        _skill(tmp_path, "good")
+        ext = tmp_path / "skills" / "tooling" / "good" / "extensions" / "thing"
+        ext.mkdir(parents=True)
+        (ext / "impl.py").write_text("x = 1\n", encoding="utf-8")
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert findings == [], findings
+
+    def test_a_skill_md_directory_keeps_its_own_diagnosis(self, tmp_path, lint):
+        """Both branches match a directory named `SKILL.md`, and the specific
+        one must win. Mine was written first in the chain and swallowed it —
+        the more precise finding became the vaguer one."""
+        _skill(tmp_path, "good")
+        odd = tmp_path / "skills" / "tooling" / "odd" / "SKILL.md"
+        odd.mkdir(parents=True)
+        _found, findings = lint.discover(tmp_path / "skills")
+        assert any("is a directory, not a manifest" in f for f in findings), findings
+        assert not any("no SKILL.md" in f for f in findings), findings

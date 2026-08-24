@@ -237,8 +237,27 @@ def _holds_a_manifest(link: Path) -> bool:
     return unreadable
 
 
+def _is_skill_dir(rel: Path) -> bool:
+    """Is `rel` (relative to `skills/`) a position where a skill lives?
+
+    Exactly `<category>/<skill>`. Deliberately NOT "any directory holding
+    files": `skills/video/content-engine/skills/` is a container for nested
+    skills and holds no manifest of its own, and the five manifests beneath it
+    are already found on their own rows. Widening this to any depth would turn
+    every such container into a false red, which is the usual way a fix for a
+    false green becomes a worse problem than the one it replaced.
+    """
+    return len(rel.parts) == 2
+
+
 def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
-    """`(skill_dirs_manifests, reasons_a_subtree_could_not_be_enumerated)`.
+    """`(manifests_found, findings_about_the_tree_itself)`.
+
+    The second element was named for the only thing it used to carry — subtrees
+    that could not be enumerated. It now also carries skill directories that
+    ship no manifest, which is a finding about the tree rather than about any
+    one manifest, and so has nowhere else to live. Both are the same sentence:
+    something here was NOT checked, and saying so is the point.
 
     `os.walk` with `onerror`, NOT `rglob`. Two reasons:
 
@@ -294,6 +313,16 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
             unwalkable.append(
                 f"{rel}/SKILL.md: is a directory, not a manifest — "
                 "the skill was NOT checked")
+        elif _is_skill_dir(rel) and (files or subdirs):
+            # The gate validated every manifest it FOUND and never asked whether
+            # a skill had one, so a skill shipping scripts/ and tests/ and no
+            # SKILL.md was not failed — it was invisible, and the run said OK.
+            # Reading a manifest and requiring a manifest are different checks;
+            # only the first was here. `files or subdirs` keeps an empty
+            # directory out of it, because an empty directory is not a skill.
+            unwalkable.append(
+                f"{rel}: is a skill directory with no SKILL.md — "
+                "a skill without a manifest is not checked by anything")
     return sorted(found), unwalkable
 
 
