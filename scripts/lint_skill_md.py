@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""Validate every `skills/**/SKILL.md` against the agentskills.io spec.
+
+Enforced per skill:
+  1. YAML frontmatter delimited by EXACT `---` lines at both ends;
+  2. required fields `name` and `description`;
+  3. `name` is lowercase alphanumerics and single hyphens, <= 64 chars, with no
+     leading, trailing or consecutive hyphens;
+  4. `name` matches the parent directory name (spec section "Name").
+
+Nested sub-skills (`skills/<x>/skills/<sub>/SKILL.md`) are checked identically.
+`extensions/` is excluded: those are skill-private, not independently
+installable.
+
+This was a 66-line heredoc inside `.github/workflows/lint-skill-md.yml`, which
+meant the gate running on every pull request had no tests and could not be run
+locally. It had three FALSE GREENS, each measured against a control proving the
+linter did catch an ordinary bad name:
+
+  - `---yaml` was accepted as a closing fence (`text.find("\\n---", 3)`), so
+    everything after it was ignored;
+  - `errors="replace"` turned invalid UTF-8 into U+FFFD, so a mangled manifest
+    "parsed";
+  - an unlistable subtree was silently dropped. The `if not skill_mds` guard
+    only fires when the WHOLE tree is empty, so in a real repository a hidden
+    violation simply vanished.
+
+Plus two crashes-instead-of-reports: a dangling symlink and an unreadable file
+both exited on a traceback.
+
+Pure stdlib + PyYAML. No network.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+#: ASCII deliberately: `\w`-style classes are Unicode-aware, and a name is a
+#: directory name and a URL component, not prose.
+#: Used with `fullmatch`, deliberately. `$` matches BEFORE a trailing newline, so
+#: `NAME_RE.match("good\n")` was true — and a directory name can carry that
+#: newline too, letting the parent-match check agree with it.
+NAME_RE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*", re.ASCII)
+MAX_NAME = 64
+FENCE = b"---"
+
+
+class _NoDuplicateKeys(yaml.SafeLoader):
+    """PyYAML keeps the LAST of duplicate keys and says nothing, so
+    `name: BAD` followed by `name: good` validated as `good` — a valid
+    declaration concealing an invalid one."""
+
+
+def _construct_unique(loader, node, deep=False):
+    """Reject duplicate keys the author WROTE, then hand construction back.
+
+    Getting here took three attempts, each trading one failure for another:
+
+      - skipping `flatten_mapping` turned `<<: *anchor` into an error;
+      - calling it first made merged fields indistinguishable from written ones,
+        so an explicit key OVERRIDING a merged one read as a duplicate;
+      - comparing CONSTRUCTED keys made YAML-distinct keys collide in Python
+        (`1` and `true` are different keys but `1 == True`), and constructing
+        them eagerly broke recursive aliases that `safe_load` accepts.
+
+    All three came from re-implementing construction. So this only decides
+    duplication — on the key NODES, by `(tag, value)`, which is YAML's own
+    notion of identity — and then delegates to `SafeConstructor`, which already
+    flattens merges, resolves recursive aliases, and reports an unhashable key
+    as a proper error rather than a traceback.
+    """
+    seen: set[tuple[str, str]] = set()
+    for key_node, _value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
+        if not isinstance(key_node, yaml.ScalarNode):
+            # A sequence or mapping used as a key. Never valid frontmatter, and
+            # SafeConstructor reports it accurately; nothing to add here.
+            continue
+        identity = (key_node.tag, key_node.value)
+        if identity in seen:
+            raise yaml.YAMLError(f"duplicate key {key_node.value!r}")
+        seen.add(identity)
+    # A GENERATOR, like PyYAML's own `construct_yaml_map`: yielding the empty
+    # dict before filling it is what lets a recursive alias (`&a` referring to
+    # the mapping it is inside) see the object under construction. Returning it
+    # eagerly raised a ConstructorError on documents `safe_load` accepts.
+    data: dict = {}
+    yield data
+    data.update(
+        yaml.constructor.SafeConstructor.construct_mapping(loader, node, deep=deep))
+
+
+_NoDuplicateKeys.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique)
+
+
+def _read_bytes(path: Path) -> tuple[bytes | None, str | None]:
+    """`(raw, reason_it_could_not_be_read)`.
+
+    `(None, None)` means genuinely ABSENT. Three states, not two: the inline
+    version had none of them, so a dangling symlink and a permission-denied file
+    both ended the run on a traceback rather than reporting the manifest.
+    """
+    try:
+        return path.read_bytes(), None
+    except FileNotFoundError:
+        # A dangling symlink is not an absence: something IS there, naming a
+        # target that is not.
+        if path.is_symlink():
+            return None, "is a broken symlink"
+        return None, None
+    except OSError as exc:
+        return None, f"could not be read ({type(exc).__name__})"
+
+
+def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
+    """`(frontmatter, reason_it_could_not_be_read, it_exists)`.
+
+    Fences are located in BYTES and only the frontmatter region is decoded, so
+    invalid UTF-8 in a skill's prose body is not this linter's business while
+    invalid UTF-8 in the frontmatter is a finding. Decoding the whole file with
+    `errors="replace"` made both invisible.
+    """
+    raw, unreadable = _read_bytes(skill_md)
+    if unreadable:
+        return {}, unreadable, True
+    if raw is None:
+        return {}, None, False
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return {}, "starts with a UTF-8 BOM before the --- fence", True
+    # ALL THREE CommonMark line endings. The inline version read in text mode,
+    # where Python's universal-newline handling normalises CR, LF and CRLF
+    # alike; normalising only CRLF here made a bare-CR manifest — which the old
+    # gate accepted — report "missing YAML frontmatter". A false red introduced
+    # by moving from text mode to bytes.
+    lines = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+    # EXACT equality at BOTH ends. `startswith("---")` accepted a decorated
+    # opener and `find("\n---")` accepted `---yaml` as a closer, which is the
+    # false green: a lax closing fence silently truncates the document.
+    if not lines or lines[0] != FENCE:
+        return {}, "missing YAML frontmatter (no leading ---)", True
+    closing = next((i for i, line in enumerate(lines[1:], 1) if line == FENCE), None)
+    if closing is None:
+        return {}, "unclosed YAML frontmatter", True
+    try:
+        body = b"\n".join(lines[1:closing]).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return {}, f"frontmatter is not valid UTF-8 ({exc.reason})", True
+    try:
+        data = yaml.load(body, Loader=_NoDuplicateKeys)
+    except Exception as exc:  # noqa: BLE001 — see below
+        # Deliberately broad, and caught by INTENT rather than by type. A PyYAML
+        # constructor runs arbitrary code to build a value, and enumerating what
+        # it can raise did not converge: YAMLError, then ValueError from a
+        # timestamp, then RecursionError from deep nesting, then KeyError from
+        # `!!bool wat` and AttributeError from `!!timestamp wat`. Every one of
+        # those reached a user as a traceback. At a parser boundary in a LINTER
+        # the rule is simple — if the value could not be constructed, that is a
+        # finding about the manifest. The `try` covers one call, so this cannot
+        # swallow a defect elsewhere in this file.
+        # Not just YAMLError. PyYAML's implicit resolvers construct values, and
+        # `description: 2024-13-40` resolves as a timestamp whose constructor
+        # raises ValueError straight through — a traceback instead of a report,
+        # from a manifest a human could plausibly write.
+        # FLATTENED, not truncated. A PyYAML error is several lines including a
+        # caret diagram; printing it raw broke the one-error-per-line format the
+        # rest of the report relies on, and truncating to the first line threw
+        # away the line/column that makes it actionable.
+        detail = " ".join(part.strip() for part in str(exc).split("\n") if part.strip())
+        return {}, f"malformed YAML — {detail}", True
+    if data is None:
+        return {}, None, True
+    if not isinstance(data, dict):
+        return {}, "frontmatter is not a mapping", True
+    return data, None, True
+
+
+def _holds_a_manifest(link: Path) -> bool:
+    """Does this symlinked directory contain a SKILL.md at ANY depth?
+
+    Checking only `link/SKILL.md` missed `link/nested/SKILL.md`, so a linked-in
+    package whose skill sat one level down was still omitted in silence. The
+    walk does not follow further links, so a cycle inside the target cannot
+    spin here either.
+    """
+    # `os.walk` SWALLOWS a directory it cannot list and walks on, so the
+    # `except OSError` this replaces never fired: an unreadable subtree inside
+    # the link read as a subtree with nothing in it, and the link went
+    # unreported. That is the same defect `discover` already fixes one level up,
+    # reintroduced in the helper written to fix the symlink case.
+    unreadable = False
+
+    def _cannot_tell(_exc: OSError) -> None:
+        nonlocal unreadable
+        unreadable = True
+
+    for _root, subdirs, files in os.walk(link, followlinks=False,
+                                         onerror=_cannot_tell):
+        # Same exclusion as `discover`, or a linked tree holding ONLY an
+        # `extensions/` manifest — which this linter does not check — would be
+        # reported as a skill it declined to enter.
+        if "extensions" in subdirs:
+            subdirs.remove("extensions")
+        if "SKILL.md" in files:
+            return True
+    # Fail CLOSED: if we could not read part of it, say yes so the link is
+    # REPORTED rather than assumed empty.
+    return unreadable
+
+
+def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
+    """`(skill_dirs_manifests, reasons_a_subtree_could_not_be_enumerated)`.
+
+    `os.walk` with `onerror`, NOT `rglob`. Two reasons:
+
+      - on Python 3.11 — which the workflow pins — `Path.rglob` filters
+        candidates through `Path.exists()`, which FOLLOWS symlinks, so a
+        dangling `SKILL.md` is never yielded at all. On 3.12+ it is yielded and
+        then crashes. Broken either way, differently per version.
+      - `os.walk` silently swallows a directory it cannot list, so an EACCES
+        subtree read as a subtree with nothing in it. Enumerating is a
+        measurement; failing it is a finding, not a smaller tree.
+    """
+    found: list[Path] = []
+    unwalkable: list[str] = []
+
+    def _record(exc: OSError) -> None:
+        where = getattr(exc, "filename", None) or skills_dir
+        try:
+            where = Path(where).relative_to(skills_dir)
+        except ValueError:
+            pass
+        unwalkable.append(
+            f"{where}: directory could not be listed ({type(exc).__name__}) — "
+            "the skills under it were NOT checked")
+
+    for root, subdirs, files in os.walk(skills_dir, followlinks=False, onerror=_record):
+        rel = Path(root).relative_to(skills_dir)
+        # Prune from the PARENT's subdirs, before descent. Checking
+        # `"extensions" in rel.parts` once already INSIDE the directory was too
+        # late: `os.walk` had to LIST it to get there, so an unreadable
+        # `extensions/` fired `onerror` and produced a finding about a subtree
+        # this linter has deliberately opted out of. Pruning here means descent
+        # never happens, which made that check unreachable — a mutation sweep
+        # found it unkillable, which is what redundant code looks like from
+        # outside, so it is gone rather than pinned.
+        if "extensions" in subdirs:
+            subdirs.remove("extensions")
+        # A symlinked DIRECTORY is not entered — `followlinks=True` invites a
+        # loop — but silently not entering one is the same omission this file
+        # exists to remove. The old gate missed these too, so this is not a
+        # behaviour regression; it is the omission being reported instead of
+        # taken. `skills/` currently holds zero symlinks, so nothing real
+        # changes today.
+        for sub in subdirs:
+            link = Path(root) / sub
+            if link.is_symlink() and _holds_a_manifest(link):
+                unwalkable.append(
+                    f"{rel / sub}: is a symlinked directory holding a SKILL.md and was "
+                    "NOT entered; move the skill into the repository or remove the link")
+        if "SKILL.md" in files:
+            found.append(Path(root) / "SKILL.md")
+        elif "SKILL.md" in subdirs:
+            # `os.walk` sorts a directory — or a symlink to one — into dirnames,
+            # so a SKILL.md of that shape never appears in `files`.
+            unwalkable.append(
+                f"{rel}/SKILL.md: is a directory, not a manifest — "
+                "the skill was NOT checked")
+    return sorted(found), unwalkable
+
+
+def lint_skill_md(skill_md: Path) -> list[str]:
+    """Errors for one manifest.
+
+    Messages are byte-identical to the inline version's for every input the old
+    gate handled, so the EXTRACTION is provably behaviour-preserving and any
+    output difference is attributable to a fix rather than to the move. The one
+    deliberate wording change is the UTF-8 BOM case: the old gate reported it as
+    "missing YAML frontmatter", which sent readers looking for a fence that was
+    right there.
+    """
+    fm, unreadable, present = read_frontmatter(skill_md)
+    if not present:
+        # This function is only ever called on a path DISCOVERY returned, so
+        # "absent" here does not mean "no skill lives here" — it means the
+        # manifest went away between being found and being read. Returning []
+        # made that a silent exemption.
+        return [f"{skill_md}: vanished between discovery and reading"]
+    if unreadable:
+        # NOT an exemption. "I could not read the manifest" is a finding about
+        # the manifest.
+        return [f"{skill_md}: {unreadable}"]
+    parent = skill_md.parent.name
+    errors: list[str] = []
+    name = fm.get("name")
+    if not name:
+        errors.append(f"{skill_md}: missing required field `name`")
+    elif not isinstance(name, str):
+        errors.append(f"{skill_md}: `name` must be a string, got {type(name).__name__}")
+    elif len(name) > MAX_NAME:
+        errors.append(f"{skill_md}: `name` exceeds {MAX_NAME} chars ({len(name)})")
+    elif not NAME_RE.fullmatch(name):
+        errors.append(
+            f"{skill_md}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* "
+            "(lowercase, hyphens, no leading/trailing/consecutive)")
+    elif name != parent:
+        errors.append(
+            f"{skill_md}: `name`='{name}' does not match parent dir '{parent}' "
+            "(agentskills.io §Name)")
+    description = fm.get("description")
+    if not description:
+        errors.append(f"{skill_md}: missing required field `description`")
+    elif not isinstance(description, str):
+        errors.append(
+            f"{skill_md}: `description` must be a string, got "
+            f"{type(description).__name__}")
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--skills-dir", type=Path, default=Path("skills"))
+    args = parser.parse_args(argv)
+    skills_dir = args.skills_dir
+
+    if not skills_dir.is_dir():
+        print(f"ERROR: no skills/ dir at {skills_dir}")
+        return 1
+
+    skill_mds, unwalkable = discover(skills_dir)
+    if not skill_mds and not unwalkable:
+        print(f"ERROR: no SKILL.md found under {skills_dir}/")
+        return 1
+
+    print(f"linting {len(skill_mds)} SKILL.md files\n")
+
+    # Seeded from discovery: a subtree we could not enumerate is a finding by
+    # construction, not a smaller tree. The old `if not skill_mds` guard fired
+    # only when EVERYTHING was unreadable, so one good skill was enough to hide
+    # an unlistable sibling.
+    errors: list[str] = list(unwalkable)
+    for md in skill_mds:
+        errors.extend(lint_skill_md(md))
+
+    if errors:
+        print("FAIL — frontmatter violations:\n")
+        for err in errors:
+            print(f"  {err}")
+        print(f"\n{len(errors)} error(s) across {len(skill_mds)} skill(s)")
+        return 1
+    # NOT "conform to agentskills.io spec". The spec also caps `description` at
+    # 1024 characters and 33 of the 99 current manifests exceed it, so that
+    # claim was broader than anything this gate checked. A gate that overclaims
+    # is how an unchecked rule stays unchecked.
+    print(f"OK — {len(skill_mds)} SKILL.md files pass the frontmatter checks "
+          "(fences, name syntax, name/dir match, description present)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

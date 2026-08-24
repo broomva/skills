@@ -1,22 +1,42 @@
 name: lint-skill-md
 
-# Validates every skills/<name>/SKILL.md against the agentskills.io spec:
-#   - required frontmatter fields: name + description
-#   - `name` is lowercase + hyphens + ≤64 chars, no leading/trailing/consecutive hyphens
-#   - `name` matches parent directory name (per spec §Name)
-#   - nested sub-skills (e.g. skills/<x>/skills/<sub>/SKILL.md) checked the same way
+# Validates every skills/**/SKILL.md against the agentskills.io spec:
+#   - frontmatter delimited by EXACT `---` lines at both ends
+#   - required fields: name + description
+#   - `name` is lowercase + hyphens + <=64 chars, no leading/trailing/consecutive
+#   - `name` matches the parent directory name (spec §Name)
+#   - nested sub-skills (skills/<x>/skills/<sub>/SKILL.md) checked the same way
+#
+# The linter used to be a heredoc inlined in this file, which meant the gate
+# running on every pull request had no tests and could not be run locally. It
+# carried three false greens. It now lives in scripts/lint_skill_md.py with
+# tests/test_lint_skill_md.py, and the probes below prove each red path is
+# reachable — a lint step that only ever reports CLEAN passes just as well when
+# the linter is broken and finds nothing.
 #
 # Fast (<3s). Hermetic (pure Python + PyYAML, no network).
 
 on:
   pull_request:
     paths:
-      - 'skills/**/SKILL.md'
+      # `skills/**`, not `skills/**/SKILL.md`: adding a skill as a SYMLINKED
+      # DIRECTORY, or deleting a manifest, changes no path matching the
+      # narrower glob, so the gate would not run on exactly the changes it
+      # exists to catch.
+      - 'skills/**'
+      - 'scripts/lint_skill_md.py'
+      - 'tests/test_lint_skill_md.py'
       - '.github/workflows/lint-skill-md.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/**/SKILL.md'
+      # `skills/**`, not `skills/**/SKILL.md`: adding a skill as a SYMLINKED
+      # DIRECTORY, or deleting a manifest, changes no path matching the
+      # narrower glob, so the gate would not run on exactly the changes it
+      # exists to catch.
+      - 'skills/**'
+      - 'scripts/lint_skill_md.py'
+      - 'tests/test_lint_skill_md.py'
       - '.github/workflows/lint-skill-md.yml'
   workflow_dispatch:
 
@@ -32,75 +52,104 @@ jobs:
           python-version: '3.11'
 
       - name: Install PyYAML
-        run: pip install pyyaml
+        run: pip install pyyaml pytest
+
+      - name: Unit tests for the linter
+        run: python3 -m pytest tests/test_lint_skill_md.py -v
 
       - name: Lint SKILL.md frontmatter
+        run: python3 scripts/lint_skill_md.py
+
+      - name: The gate catches a lax closing fence
+        # `---yaml` was accepted as a closing fence, so everything after it was
+        # ignored. Exit 1 EXACTLY and no traceback: a crash also exits non-zero,
+        # and would prove the linter cannot RUN rather than that it can detect.
         run: |
-          python3 - <<'PYEOF'
-          import os, re, sys, yaml
-          from pathlib import Path
+          mkdir -p skills/tooling/zzz-fence-probe
+          printf -- '---\nname: zzz-fence-probe\ndescription: Probe.\n---yaml\nname: EVIL\n' \
+            > skills/tooling/zzz-fence-probe/SKILL.md
+          set +e
+          python3 scripts/lint_skill_md.py > /tmp/fence.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-fence-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::a lax closing fence must exit 1, got $code"; cat /tmp/fence.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/fence.txt; then
+            echo "::error::the lint crashed instead of reporting"; cat /tmp/fence.txt; exit 1
+          fi
+          grep -q 'zzz-fence-probe' /tmp/fence.txt || {
+            echo "::error::the lint went red but never named the skill"; cat /tmp/fence.txt; exit 1; }
+          echo "a lax closing fence is reported by name, exit 1, no crash"
 
-          NAME_RE = re.compile(r'^[a-z][a-z0-9]*(-[a-z0-9]+)*$')
-          MAX_NAME = 64
+      - name: The gate catches invalid UTF-8
+        # `errors="replace"` turned every invalid byte into U+FFFD, so a mangled
+        # manifest "parsed" and the gate reported conformance.
+        run: |
+          mkdir -p skills/tooling/zzz-utf8-probe
+          printf -- '---\nname: zzz-utf8-probe\ndescription: \xff\xfe\n---\n' \
+            > skills/tooling/zzz-utf8-probe/SKILL.md
+          set +e
+          python3 scripts/lint_skill_md.py > /tmp/utf8.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-utf8-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::invalid UTF-8 must exit 1, got $code"; cat /tmp/utf8.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/utf8.txt; then
+            echo "::error::the lint crashed instead of reporting"; cat /tmp/utf8.txt; exit 1
+          fi
+          grep -q 'not valid UTF-8' /tmp/utf8.txt || {
+            echo "::error::invalid UTF-8 went unreported"; cat /tmp/utf8.txt; exit 1; }
+          echo "invalid UTF-8 is reported, exit 1, no crash"
 
-          errors = []
-          # Discover every SKILL.md under skills/ at ANY depth, so the linter
-          # covers all canonical discoverable-skill layouts uniformly:
-          #   - skills/<category>/<name>/SKILL.md      (category-bucketed skills, depth-2)
-          #   - skills/<category>/<name>/skills/<sub>/  (nested-sub-skill idiom, e.g. content-engine)
-          #   - skills/<name>/SKILL.md                  (legacy flat / single-file)
-          # Internal artifacts like .../extensions/<y>/SKILL.md are excluded —
-          # they're skill-private extensions, not independently-installable skills.
-          # (Keying on rglob rather than fixed-depth globs is what makes the
-          # category-bucket layout — skills/<category>/<name>/ — lintable.)
-          skill_mds = sorted(
-              p for p in Path("skills").rglob("SKILL.md")
-              if "extensions" not in p.relative_to("skills").parts
-          )
-          if not skill_mds:
-              print("ERROR: no SKILL.md found under skills/")
-              sys.exit(1)
+      - name: The gate catches a subtree it cannot LIST
+        # The worst of the three: `if not skill_mds` only fires when the WHOLE
+        # tree is empty, so one readable skill was enough to hide an unlistable
+        # sibling holding a violation. The probe keeps the rest of the repo in
+        # place precisely so that guard would NOT save it.
+        run: |
+          mkdir -p skills/tooling/zzz-eacces-probe/inner
+          printf -- '---\nname: TOTALLY-INVALID\ndescription: Probe.\n---\n' \
+            > skills/tooling/zzz-eacces-probe/inner/SKILL.md
+          chmod 000 skills/tooling/zzz-eacces-probe
+          set +e
+          python3 scripts/lint_skill_md.py > /tmp/eacces.txt 2>&1
+          code=$?
+          set -e
+          chmod 755 skills/tooling/zzz-eacces-probe
+          rm -rf skills/tooling/zzz-eacces-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::an unlistable subtree must exit 1, got $code"; cat /tmp/eacces.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/eacces.txt; then
+            echo "::error::the lint crashed instead of reporting"; cat /tmp/eacces.txt; exit 1
+          fi
+          grep -q 'could not be listed' /tmp/eacces.txt || {
+            echo "::error::an unlistable subtree was silently dropped"; cat /tmp/eacces.txt; exit 1; }
+          echo "an unlistable subtree is reported, exit 1, no crash"
 
-          print(f"linting {len(skill_mds)} SKILL.md files\n")
-
-          for md in skill_mds:
-              parent = md.parent.name
-              text = md.read_text(encoding="utf-8", errors="replace")
-              if not text.startswith("---"):
-                  errors.append(f"{md}: missing YAML frontmatter (no leading ---)")
-                  continue
-              end = text.find("\n---", 3)
-              if end < 0:
-                  errors.append(f"{md}: unclosed YAML frontmatter")
-                  continue
-              try:
-                  fm = yaml.safe_load(text[3:end]) or {}
-              except yaml.YAMLError as e:
-                  errors.append(f"{md}: malformed YAML — {e}")
-                  continue
-              if not isinstance(fm, dict):
-                  errors.append(f"{md}: frontmatter is not a mapping")
-                  continue
-              name = fm.get("name")
-              if not name:
-                  errors.append(f"{md}: missing required field `name`")
-              else:
-                  if not isinstance(name, str):
-                      errors.append(f"{md}: `name` must be a string, got {type(name).__name__}")
-                  elif len(name) > MAX_NAME:
-                      errors.append(f"{md}: `name` exceeds {MAX_NAME} chars ({len(name)})")
-                  elif not NAME_RE.match(name):
-                      errors.append(f"{md}: `name`='{name}' must match [a-z][a-z0-9]*(-[a-z0-9]+)* (lowercase, hyphens, no leading/trailing/consecutive)")
-                  elif name != parent:
-                      errors.append(f"{md}: `name`='{name}' does not match parent dir '{parent}' (agentskills.io §Name)")
-              if not fm.get("description"):
-                  errors.append(f"{md}: missing required field `description`")
-
-          if errors:
-              print("FAIL — frontmatter violations:\n")
-              for e in errors:
-                  print(f"  {e}")
-              print(f"\n{len(errors)} error(s) across {len(skill_mds)} skill(s)")
-              sys.exit(1)
-          print(f"OK — {len(skill_mds)} SKILL.md files conform to agentskills.io spec")
-          PYEOF
+      - name: The gate catches a dangling manifest
+        # `Path.rglob` filters candidates through `Path.exists()`, which follows
+        # symlinks, so on this job's Python 3.11 a dangling SKILL.md was never
+        # yielded; on 3.12+ it was yielded and then crashed.
+        run: |
+          mkdir -p skills/tooling/zzz-link-probe
+          ln -s /nonexistent/target skills/tooling/zzz-link-probe/SKILL.md
+          set +e
+          python3 scripts/lint_skill_md.py > /tmp/link.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-link-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::a dangling SKILL.md must exit 1, got $code"; cat /tmp/link.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/link.txt; then
+            echo "::error::the lint crashed instead of reporting"; cat /tmp/link.txt; exit 1
+          fi
+          grep -q 'broken symlink' /tmp/link.txt || {
+            echo "::error::a dangling manifest went unreported or was miscalled"
+            cat /tmp/link.txt; exit 1; }
+          echo "a dangling SKILL.md is reported, exit 1, no crash"
