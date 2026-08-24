@@ -525,3 +525,37 @@ class TestAnExplicitKeyMayOverrideAMergedOne:
         """CONTROL: restoring override support must not restore duplicates."""
         md = _skill(tmp_path, "dup2", "---\nname: A\nname: dup2\ndescription: d\n---\n")
         assert any("duplicate key" in p for p in lint.lint_skill_md(md))
+
+
+class TestTheLoaderAgreesWithSafeLoad:
+    """The behaviour-preservation claim in its strongest form.
+
+    Replacing `safe_load` with a custom constructor cost two consecutive
+    FALSE REDS on valid YAML — first `<<: *anchor` rejected outright, then an
+    explicit key overriding a merged one read as a duplicate. Both were caught
+    by review rather than by a test, because the tests asserted specific
+    messages instead of asserting that valid documents still parse the same.
+
+    So the property, not the symptom: for any document without duplicate keys,
+    this loader must return exactly what `safe_load` returns.
+    """
+
+    @pytest.mark.parametrize("doc", [
+        "name: a\ndescription: d\n",
+        "b: &b\n  x: 1\n<<: *b\nname: a\n",
+        "b: &b\n  x: 1\n  name: base\n<<: *b\nname: a\n",
+        "b: &b\n  name: base\nname: a\n<<: *b\n",
+        "p: &p\n  x: 1\nq: &q\n  y: 2\n<<: [*p, *q]\nname: a\n",
+        "p: &p\n  x: 1\nq: &q\n  <<: *p\n  y: 2\n<<: *q\nname: a\n",
+        "name: a\nmeta:\n  k: v\n  l: w\n",
+        "name: a\ntags:\n  - x\n  - y\n",
+        "name: a\ndescription:\n",
+        'name: a\ndescription: "x: y"\n',
+        "name: a\ndescription: |\n  line1\n  line2\n",
+        "a: &v text\nname: a\nd: *v\n",
+        "~: 1\nname: a\n",
+        "yes: 1\nno: 2\nname: a\n",
+    ])
+    def test_valid_documents_parse_identically(self, lint, doc):
+        import yaml
+        assert yaml.load(doc, Loader=lint._NoDuplicateKeys) == yaml.safe_load(doc)
