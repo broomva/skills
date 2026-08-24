@@ -23,6 +23,7 @@ Pure stdlib + PyYAML; no network.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import tomllib
@@ -299,12 +300,23 @@ def _iter_skill_dirs() -> list[Path]:
     EVERY skill) escaped the SemVer + CHANGELOG check.
     """
     dirs: list[Path] = []
-    for skill_md in sorted(_SKILLS_DIR.rglob("SKILL.md")):
-        rel = skill_md.relative_to(_SKILLS_DIR)
+    # `os.walk`, NOT `rglob`. On Python 3.11 `Path.rglob` filters candidates
+    # through `Path.exists()`, which FOLLOWS symlinks, so a dangling SKILL.md is
+    # never yielded and the skill is not merely exempt — it does not exist. The
+    # same absent-reads-as-consistent defect, relocated from the reader to
+    # DISCOVERY, where a unit test calling `lint_skill` directly cannot see it.
+    # It is also version-dependent: 3.12 lists the dangling entry, 3.11 does not,
+    # so the local suite passed while CI went green on nothing. `os.walk` reports
+    # directory entries by name and behaves the same on both.
+    for root, _subdirs, files in os.walk(_SKILLS_DIR, followlinks=False):
+        if "SKILL.md" not in files:
+            continue
+        skill_dir = Path(root)
+        rel = skill_dir.relative_to(_SKILLS_DIR)
         if "extensions" in rel.parts:
             continue
-        dirs.append(skill_md.parent)
-    return dirs
+        dirs.append(skill_dir)
+    return sorted(dirs)
 
 
 def main() -> int:

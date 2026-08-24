@@ -508,3 +508,53 @@ class TestCrlfIsALineEndingNotAFenceDefect:
         fm, unreadable, present = lint._read_frontmatter(d / "SKILL.md")
         assert (present, unreadable) == (True, None)
         assert fm["version"] == "1.0.0", fm
+
+
+class TestDiscoverySeesWhatTheReaderCanReport:
+    """CI caught what this suite could not: every test above calls `lint_skill`
+    directly, so none of them exercise DISCOVERY. On Python 3.11 `Path.rglob`
+    filters candidates through `Path.exists()`, which follows symlinks, so a
+    dangling SKILL.md was never yielded — the skill did not merely pass, it was
+    never looked at, and the whole broken-symlink fix was unreachable from the
+    real entry point. Version-dependent too: 3.12 lists it, 3.11 does not, so
+    the local suite was green while CI proved the gate could not go red.
+    """
+
+    def _skills_tree(self, tmp_path, lint, monkeypatch):
+        root = tmp_path / "skills" / "tooling"
+        root.mkdir(parents=True)
+        monkeypatch.setattr(lint, "_SKILLS_DIR", tmp_path / "skills")
+        return root
+
+    def test_a_dangling_manifest_is_discovered(self, tmp_path, lint, monkeypatch):
+        root = self._skills_tree(tmp_path, lint, monkeypatch)
+        (root / "dangling").mkdir()
+        (root / "dangling" / "SKILL.md").symlink_to(tmp_path / "no-such-target")
+        assert (root / "dangling") in lint._iter_skill_dirs()
+
+    def test_the_entry_point_goes_red_on_a_dangling_manifest(
+        self, tmp_path, lint, monkeypatch, capsys
+    ):
+        """Through `main()`, the way CI runs it — not through `lint_skill`."""
+        root = self._skills_tree(tmp_path, lint, monkeypatch)
+        (root / "dangling").mkdir()
+        (root / "dangling" / "SKILL.md").symlink_to(tmp_path / "no-such-target")
+        assert lint.main() == 1
+        captured = capsys.readouterr()
+        assert "broken symlink" in captured.out + captured.err
+
+    def test_a_normal_tree_is_still_fully_discovered(self, tmp_path, lint, monkeypatch):
+        """CONTROL: the walk must find everything rglob did, at any depth."""
+        root = self._skills_tree(tmp_path, lint, monkeypatch)
+        for rel in ["a", "b/skills/c", "d/e/f"]:
+            (root / rel).mkdir(parents=True)
+            (root / rel / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        found = lint._iter_skill_dirs()
+        assert {(root / r) for r in ["a", "b/skills/c", "d/e/f"]} <= set(found)
+
+    def test_extensions_are_still_excluded(self, tmp_path, lint, monkeypatch):
+        root = self._skills_tree(tmp_path, lint, monkeypatch)
+        (root / "x" / "extensions" / "priv").mkdir(parents=True)
+        (root / "x" / "extensions" / "priv" / "SKILL.md").write_text(
+            "---\nname: p\n---\n", encoding="utf-8")
+        assert not [d for d in lint._iter_skill_dirs() if "extensions" in d.parts]
