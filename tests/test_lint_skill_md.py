@@ -676,3 +676,73 @@ class TestExcludedSubtreesArePruned:
             assert any("could not be listed" in u for u in unwalkable), unwalkable
         finally:
             hidden.parent.chmod(0o755)
+
+
+class TestExclusionIsPrunedBeforeDescent:
+    """The previous pruning fix was one level too late. `os.walk` has to LIST a
+    directory to reach the body of the loop, so an unreadable `extensions/`
+    fired `onerror` before `subdirs[:] = []` could run — producing a finding
+    about a subtree this linter has deliberately opted out of. Pruning now
+    happens in the PARENT's `subdirs`, before descent."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_an_unreadable_extensions_directory_is_not_reported(self, tmp_path, lint):
+        _skill(tmp_path, "ok")
+        ext = tmp_path / "skills" / "tooling" / "x" / "extensions"
+        (ext / "priv").mkdir(parents=True)
+        ext.chmod(0o000)
+        try:
+            _found, unwalkable = lint.discover(tmp_path / "skills")
+            assert unwalkable == [], unwalkable
+        finally:
+            ext.chmod(0o755)
+
+    def test_a_readable_extensions_manifest_is_still_excluded(self, tmp_path, lint):
+        """CONTROL: pruning earlier must not change WHAT is excluded."""
+        _skill(tmp_path, "ok")
+        ext = tmp_path / "skills" / "tooling" / "x" / "extensions" / "priv"
+        ext.mkdir(parents=True)
+        (ext / "SKILL.md").write_text("---\nname: WRONG\n---\n", encoding="utf-8")
+        found, _unwalkable = lint.discover(tmp_path / "skills")
+        assert not [p for p in found if "extensions" in p.parts]
+
+
+class TestDeeplyNestedValuesAreReported:
+    def test_a_recursion_error_becomes_a_finding(self, tmp_path, lint):
+        """PyYAML recurses while constructing, so a deeply nested value raises
+        `RecursionError` — which is not a `YAMLError`, `ValueError` or
+        `TypeError`, and so came out as a traceback."""
+        body = "---\nname: deep\ndescription: " + "[" * 2000 + "]" * 2000 + "\n---\n"
+        md = _skill(tmp_path, "deep", body)
+        problems = lint.lint_skill_md(md)
+        assert problems and any("malformed YAML" in p for p in problems), problems
+
+
+class TestAnUnwalkableOnlyTreeIsNotCalledEmpty:
+    """`if not skill_mds:` replacing `if not skill_mds and not unwalkable:`
+    survived: every entry-point test with an unwalkable subtree also created a
+    readable skill, so nothing covered a tree that is ENTIRELY unreadable — which
+    would report the misleading generic "no SKILL.md found" instead of naming
+    the directory it could not list."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_it_names_what_it_could_not_list(self, tmp_path, lint, capsys, monkeypatch):
+        tooling = tmp_path / "skills" / "tooling"
+        hidden = tooling / "hidden"
+        (hidden / "inner").mkdir(parents=True)
+        hidden.chmod(0o000)
+        try:
+            monkeypatch.setattr(lint, "_SKILLS_DIR", tmp_path / "skills", raising=False)
+            r = _run(tmp_path)
+            assert r.returncode == 1, r.stdout
+            assert "could not be listed" in r.stdout, r.stdout
+            assert "no SKILL.md found" not in r.stdout, r.stdout
+        finally:
+            hidden.chmod(0o755)
+
+    def test_a_genuinely_empty_tree_still_says_so(self, tmp_path):
+        """CONTROL: an empty skills/ is a different thing from an unreadable
+        one, and must keep its own message."""
+        (tmp_path / "skills").mkdir()
+        r = _run(tmp_path)
+        assert r.returncode == 1 and "no SKILL.md found" in r.stdout

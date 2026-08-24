@@ -155,7 +155,7 @@ def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
         return {}, f"frontmatter is not valid UTF-8 ({exc.reason})", True
     try:
         data = yaml.load(body, Loader=_NoDuplicateKeys)
-    except (yaml.YAMLError, ValueError, TypeError) as exc:
+    except (yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
         # Not just YAMLError. PyYAML's implicit resolvers construct values, and
         # `description: 2024-13-40` resolves as a timestamp whose constructor
         # raises ValueError straight through — a traceback instead of a report,
@@ -229,6 +229,13 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
 
     for root, subdirs, files in os.walk(skills_dir, followlinks=False, onerror=_record):
         rel = Path(root).relative_to(skills_dir)
+        # Prune from the PARENT's subdirs, before descent. Pruning only once
+        # already inside `extensions/` was too late: `os.walk` had to LIST the
+        # directory to get here, so an unreadable `extensions/` fired `onerror`
+        # and produced a finding about a subtree this linter has deliberately
+        # opted out of — a false red on an exclusion.
+        if "extensions" in subdirs:
+            subdirs.remove("extensions")
         if "extensions" in rel.parts:
             subdirs[:] = []
             continue
