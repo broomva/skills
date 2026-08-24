@@ -153,18 +153,27 @@ python3 scripts/legal_readiness.py check legal-readiness.json --repo-root .
 ```
 
 `--repo-root` binds the evidence to the artifacts. Any evidence row whose
-`locator` is **path-shaped** has its `sha256` recomputed from that file and
-compared. Without the flag those digests are only shape-checked—64 hex
+`locator` **resolves to a file in the repository** has its `sha256` recomputed
+from that file and compared. Without the flag those digests are only shape-checked—64 hex
 characters, which `"a" * 64` satisfies—so a digest records that somebody typed
 one, not that the evidence says what the manifest claims. A locator that names
 no file, escapes the repository root, points at a directory, cannot be read, or
 carries a line span past the end of the file is a finding, never a pass.
 
-Verification keys on the **locator**, never on `kind`. `kind` is written by the
-manifest's author, so routing on it would let a fabricated row opt out by
-relabelling `repo` to `other`—both are allowed kinds. Locators that name no
-worktree file are left alone: absolute URLs, bare commit identifiers (which this
-schema permits), and prose citations have no artifact to hash.
+Verification keys on **existence**, never on `kind` and never on the locator's
+shape. `kind` is written by the manifest's author, so routing on it would let a
+fabricated row opt out by relabelling `repo` to `other`—both are allowed kinds.
+Shape fails in both directions: this repository contains a real tracked file
+named `Design System.html`, while `MSA-2026-v3` and `src/a.ts` are both single
+tokens. So a locator that resolves to a file is verified whatever it is called,
+and one that does not—an absolute URL, a bare commit identifier, a contract ID,
+a registry receipt—is left alone. Evidence declaring itself `repo` or `test`
+must resolve; naming a file that is not there is the finding.
+
+A digest that matches is also checked against `git status` for that file: if the
+artifact has uncommitted changes the digest records a local edit, not reviewable
+evidence. This is per file, so unrelated work in progress does not block a
+review.
 
 `--repo-root` must be a git checkout whose `origin` matches
 `project.repository`. Otherwise `--repo-root /` would hash `etc/hosts` and
@@ -172,10 +181,13 @@ report a clean verification—digests checked against *some* tree, with nothing
 recording which. A verification that does not name what it verified is not
 evidence.
 
-Because that check needs the repository, **`ready-for-counsel-review` is not
-attainable without `--repo-root`** when the manifest carries any path-shaped
-evidence locator. The gate uses the same predicate as the verifier, so the
-bypass cannot reopen in whichever one is laxer. A status asserting counsel-readiness may not rest on digests no tool
+**`ready-for-counsel-review` requires `--repo-root`, unconditionally.** Every
+narrower predicate tried here was something an author could shape a locator
+around—first `kind`, then "looks like a path"—so the status simply requires that
+the tool was given the repository. `project.repository` is also required for
+verification: without it any checkout would be accepted, and the verification
+would again name nothing. Other dispositions (`limited`, `blocked`) are
+unaffected. A status asserting counsel-readiness may not rest on digests no tool
 has opened; "not measured" is a distinct answer from "measured and clean".
 
 The validator checks structure, provenance bindings, explicit coverage, bounded
