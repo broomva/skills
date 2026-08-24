@@ -29,7 +29,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import Literal, Optional, Protocol
 
 # --------------------------------------------------------------------------
 # The provenance lattice -- mirrors provenance.ts exactly.
@@ -61,6 +61,18 @@ Verdict = Literal["unchecked", "entailed", "refuted", "inconclusive"]
 Layer = Literal["L2", "L3"]
 
 KIND = ("node", "edge")
+
+
+class SupportsAdmits(Protocol):
+    """Whatever decides an observed record may enter -- in practice FetchDaemon.
+
+    A Protocol rather than a Callable so the store names the CAPABILITY it needs
+    instead of a signature any lambda satisfies. `admitter=lambda ev: True` no
+    longer type-checks, and the thing a reviewer must look for in a diff is a
+    hand-rolled object rather than an inline expression.
+    """
+
+    def admits(self, ev) -> bool: ...
 
 
 class StoreError(Exception):
@@ -312,20 +324,25 @@ def put_record(
     conn: sqlite3.Connection,
     rec: Record,
     by: str = "-",
-    attestor: Optional[Callable[[Evidence], bool]] = None,
+    admitter: Optional["SupportsAdmits"] = None,
 ) -> str:
     """Insert a record, or sight it again if already held.
 
-    An `observed` record REQUIRES an `attestor` -- a callable taking the whole
-    `Evidence` and answering "do the attested bytes at these offsets actually say
-    this", i.e. a bound `FetchDaemon.verifies`. Without one this refuses.
+    An `observed` record REQUIRES an `admitter` -- an object with `.admits(ev)`,
+    which in practice is the `FetchDaemon` that fetched the bytes. Without one
+    this refuses.
 
-    The contract deliberately takes the Evidence rather than a (url, digest) pair.
-    The pair-only version passed review and was still wrong: it proved the bytes
-    came off a wire and never compared them to the QUOTE, so
-    `Evidence(url=<real>, sha256=<real>, span=[0,11), quote="ACME S.A.S. is
-    controlled by the Sinaloa Cartel")` was accepted as observed, marked entailed
-    and seeded the next hop. A citation nobody reads is decoration.
+    It takes the OBJECT rather than a callable, and that is the whole point. The
+    previous contract was `Callable[[Evidence], bool]`, and no method on
+    FetchDaemon had that shape -- so every caller hand-wrote an adapter, every
+    adapter wired to the narrowest available check, and the three guarantees
+    `evidence_for` uniquely owned (status/emptiness, the whitespace-span refusal,
+    and snapshot-derived-from-digest) were all bypassed at the one door that
+    decides what a human reads. A contract nothing implements is a contract each
+    caller invents.
+
+    `FetchDaemon.admits` composes every check the daemon can make. The store asks
+    one question and cannot be handed a weaker one by accident.
 
     That requirement is the whole custody architecture, and its absence was the
     hole cross-model review found. The daemon could prove bytes came off a wire,
@@ -349,15 +366,15 @@ def put_record(
     have an exception for the copy that lost a race.
     """
     if rec.origin == "observed":
-        if attestor is None:
+        if admitter is None:
             raise StoreError(
-                f"{rec.id}: an observed record requires an attestor. Its evidence "
-                "claims bytes came from a url, and nothing here has checked that "
-                "-- pass FetchDaemon.attests so the claim is verified rather than "
-                "believed."
+                f"{rec.id}: an observed record requires an admitter. Its evidence "
+                "claims bytes came from a url and that they say a particular "
+                "thing, and nothing here has checked either -- pass the "
+                "FetchDaemon that fetched them."
             )
         assert rec.evidence is not None  # guaranteed by __post_init__
-        if not attestor(rec.evidence):
+        if not admitter.admits(rec.evidence):
             raise StoreError(
                 f"{rec.id}: the attested bytes for {rec.evidence.url} at "
                 f"{rec.evidence.sha256[:12]} do not say what this record quotes at "
@@ -418,14 +435,22 @@ def set_verdict(
     """
     if verdict == "refuted" and not refutation:
         raise StoreError(f"{record_id}: refuted requires a refutation reason")
+    # The lock comes FIRST. The previous version read the current verdict, then
+    # began the transaction, so between the two another verifier could commit a
+    # refutation that this call then overwrote without a supersedes reason -- the
+    # round-3 defect reopened as a race. Checking state you read outside the lock
+    # is checking a copy.
+    conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(
         "SELECT payload, verdict FROM records WHERE id = ?", (record_id,)
     ).fetchone()
     if row is None:
+        conn.execute("ROLLBACK")
         raise StoreError(f"{record_id}: no such record")
 
     current = row["verdict"]
     if current == "refuted" and verdict != "refuted" and not supersedes:
+        conn.execute("ROLLBACK")
         raise StoreError(
             f"{record_id}: leaving a refuted verdict requires an explicit "
             "`supersedes` reason. A refutation is evidence, and evidence is not "
@@ -433,11 +458,6 @@ def set_verdict(
             "and both stay on the record."
         )
 
-    # IMMEDIATE takes the write lock up front, so the read of MAX(seq) and the
-    # payload update below cannot interleave with another verifier's. Without it
-    # two concurrent set_verdict calls raced on both the sequence number and the
-    # payload, and one verdict was silently lost.
-    conn.execute("BEGIN IMMEDIATE")
     seq = conn.execute(
         "SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM verdicts WHERE record_id = ?",
         (record_id,),
@@ -578,23 +598,31 @@ def claim(
     )
 
 
-def finish(conn: sqlite3.Connection, key: str, claim_token: str) -> None:
+def finish(
+    conn: sqlite3.Connection, key: str, claim_token: str, now: Optional[float] = None
+) -> None:
     """Mark an item done. Only the holder of the current lease may.
 
     The token requirement is not ceremony: `finish(key)` used to succeed for any
     caller, including one that had never claimed the item, so a key could be
     marked done before it was ever crawled and the run would still look complete.
     """
+    t = time.time() if now is None else now
+    # The lease is part of the predicate, not merely the token. Checking the token
+    # alone let a worker whose lease had already lapsed -- and whose item was
+    # therefore available to anyone -- still mark it done, so work that was never
+    # completed by its holder counted as complete.
     cur = conn.execute(
         "UPDATE frontier SET done_at = ?, lease_until = NULL"
-        " WHERE key = ? AND claim_token = ? AND done_at IS NULL",
-        (time.time(), key, claim_token),
+        " WHERE key = ? AND claim_token = ? AND done_at IS NULL"
+        "   AND lease_until IS NOT NULL AND lease_until >= ?",
+        (t, key, claim_token, t),
     )
     conn.commit()
     if cur.rowcount != 1:
         raise StoreError(
-            f"{key}: refusing to finish -- no open item with that claim token. "
-            "The lease may have expired and been reclaimed by another worker."
+            f"{key}: refusing to finish -- no item held under that claim token with "
+            "a live lease. It expired, was reclaimed, or was never claimed by you."
         )
 
 
@@ -643,8 +671,14 @@ def inventory(conn: sqlite3.Connection) -> dict:
         }
 
     total = conn.execute("SELECT COUNT(*) AS n FROM records").fetchone()["n"]
+    n_conflicts = len(conflicts(conn))
     return {
+        # `total` counts identities; `payloads_held` counts everything the run
+        # paid for, including re-sightings whose substance differed. Reporting
+        # only the first would satisfy "record everything" in storage and break it
+        # in retrieval, which is the same claim being true and false at once.
         "total": total,
+        "payloads_held": total + n_conflicts,
         "by_depth": dict(sorted(group("depth").items())),
         "by_origin": group("origin"),
         "by_verdict": group("verdict"),
@@ -661,6 +695,7 @@ def select(
     origin: Optional[Origin] = None,
     verdict: Optional[Verdict] = None,
     layer: Optional[Layer] = None,
+    include_conflicts: bool = True,
 ) -> list[dict]:
     """Filter the map without re-crawling it.
 
@@ -680,10 +715,25 @@ def select(
     if layer is not None:
         clauses.append("layer = ?"); args.append(layer)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    return [
+    out = [
         json.loads(r["payload"])
         for r in conn.execute(f"SELECT payload FROM records{where} ORDER BY id", args)
     ]
+    if not include_conflicts:
+        return out
+    # Conflicting re-sightings are records the run paid for and chose to keep.
+    # Excluding them from every reader made them invisible to everything except
+    # conflicts(), so the data existed and could not be found.
+    def matches(p: dict) -> bool:
+        return (
+            (max_depth is None or p.get("depth", 0) <= max_depth)
+            and (origin is None or p.get("origin") == origin)
+            and (verdict is None or p.get("verdict") == verdict)
+            and (layer is None or p.get("layer") == layer)
+        )
+
+    out.extend(c["payload"] for c in conflicts(conn) if matches(c["payload"]))
+    return sorted(out, key=lambda p: (p.get("id", ""), p.get("depth", 0)))
 
 
 def expandable_ids(conn: sqlite3.Connection) -> list[str]:

@@ -216,37 +216,73 @@ def append_row(log_path: Path, row: dict, key: Optional[bytes] = None) -> dict:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
-def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str]:
-    """Recompute every MAC. Returns (ok, reason).
+def verify_run(
+    run_dir: Path, key: Optional[bytes] = None
+) -> tuple[bool, str, list]:
+    """Verify the chain AND that plan.json is still the plan genesis committed to.
 
-    Returns a reason rather than raising so the gate suite can report which row
-    broke: "the log is bad" is not actionable, "row 412 was edited" is.
+    The fourth instance of this module's recurring failure: seal_plan hashed the
+    plan into the genesis row, and nothing ever compared that digest to the file
+    again. Rewriting plan.json after sealing -- max_depth 2 to 99, budget 50 to
+    5000 -- left verify_chain returning True, so the sealed denominator, the whole
+    point of sealing, was a check with no reader.
+
+    A run is what its plan says it is. Checking the chain without checking the
+    plan verifies that rows were not edited while saying nothing about what they
+    were supposed to be rows OF.
     """
     key = key or _chain_key()
-    if not log_path.exists():
-        return False, "fetch log does not exist"
-    prev_mac = ""
-    n = 0
-    rows = []
-    for i, line in enumerate(log_path.read_text().splitlines()):
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            return False, (
-                f"row {i}: unparseable -- a torn write or a truncated line. A "
-                "malformed log is not a log that says nothing; it is one that "
-                "cannot be trusted about anything."
-            )
-        rows.append(row)
+    log_path = run_dir / "fetchlog.jsonl"
+    ok, reason, rows = verify_chain(log_path, key)
+    if not ok:
+        return False, reason, []
+
+    plan_path = run_dir / "plan.json"
+    if not plan_path.exists():
+        return False, "plan.json is missing -- the run has no declared scope", []
+    first = rows[0]
+    if first.get("kind") != "genesis":
+        return False, "no genesis row to anchor the plan to", []
+    actual = sha256_of(plan_path.read_bytes())
+    if actual != first.get("plan_digest"):
+        return False, (
+            f"plan.json hashes to {actual[:12]} but genesis committed to "
+            f"{str(first.get('plan_digest'))[:12]} -- the plan was rewritten after "
+            "the run began, so what was found is being measured against a "
+            "denominator it did not start with"
+        ), []
+    # The rows are RETURNED, not merely blessed. A caller that receives a boolean
+    # has to go and read the file again, and the second read is a different read
+    # -- which is how an appended row was once consumed as verified. Handing back
+    # the verified objects removes the window instead of checking it twice.
+    return True, reason, rows
+
+
+def _verify_rows(rows: list, key: bytes) -> tuple[bool, str]:
+    """Verify an already-parsed row list. The single source of chain truth.
+
+    Extracted so `verify_chain` (which reads the file) and `verified_rows` (which
+    consumes what it read) run the SAME logic over the SAME objects. Two
+    implementations of "is this chain valid" would be two things that can
+    disagree, which is the defect this function exists to close, one level up.
+    """
+    prev_mac, n = "", 0
+    for i, row in enumerate(rows):
         if n == 0 and row.get("kind") != "genesis":
             return False, (
-                "row 0 is not the genesis row -- a log that starts mid-run has "
-                "no anchor to the sealed plan, so it verifies without being about "
+                "row 0 is not the genesis row -- a log that starts mid-run has no "
+                "anchor to the sealed plan, so it verifies without being about "
                 "anything in particular"
             )
         if row.get("seq") != n:
+            # Defence in depth, and honestly redundant: `seq` is inside the MAC,
+            # so a row whose sequence is wrong already fails the MAC check below.
+            # Kept because it names the failure precisely ("row dropped or
+            # reordered") where a MAC mismatch says only "something changed", and
+            # a reader chasing a broken run deserves the specific sentence.
+            # A mutation sweep will report this line as survivable. That is true
+            # and is not a reason to delete it -- but it IS a reason not to claim
+            # it as load-bearing.
             return False, f"row {i}: seq {row.get('seq')!r}, expected {n} (row dropped or reordered)"
         claimed = row.get("mac")
         recomputed = _row_mac(prev_mac, {k: v for k, v in row.items() if k != "mac"}, key)
@@ -256,7 +292,30 @@ def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str
         n += 1
     if n == 0:
         return False, "fetch log is empty -- an empty chain verifies vacuously"
+    return True, f"{n} rows chained"
 
+
+def _read_rows(log_path: Path) -> tuple[Optional[list], str]:
+    """Parse the log, or say why it cannot be parsed."""
+    if not log_path.exists():
+        return None, "fetch log does not exist"
+    rows = []
+    for i, line in enumerate(log_path.read_text().splitlines()):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            return None, (
+                f"row {i}: unparseable -- a torn write or a truncated line. A "
+                "malformed log is not a log that says nothing; it is one that "
+                "cannot be trusted about anything."
+            )
+    return rows, ""
+
+
+def _check_head(log_path: Path, rows: list, key: bytes) -> tuple[bool, str]:
+    """The head sidecar: authentic, and agreeing with the log it describes."""
     head_path = _head_path(log_path)
     if not head_path.exists():
         return False, "head sidecar missing -- truncation would be undetectable"
@@ -268,12 +327,36 @@ def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str
     ).hexdigest()
     if claimed_hmac != expected_hmac:
         return False, "head sidecar is not authentic -- it was rewritten without the key"
-    if head.get("rows") != n or head.get("mac") != prev_mac:
+    last_mac = rows[-1].get("mac") if rows else ""
+    if head.get("rows") != len(rows) or head.get("mac") != last_mac:
         return False, (
             f"head says {head.get('rows')} rows ending {str(head.get('mac'))[:12]}, "
-            f"log has {n} ending {prev_mac[:12]} -- the log was truncated or replaced"
+            f"log has {len(rows)} ending {str(last_mac)[:12]} -- the log was "
+            "truncated or replaced"
         )
-    return True, f"{n} rows chained"
+    return True, ""
+
+
+def verify_chain(
+    log_path: Path, key: Optional[bytes] = None
+) -> tuple[bool, str, list]:
+    """Recompute every MAC, check the head, and RETURN the verified rows.
+
+    Returning them is the point. A caller handed only a boolean must read the file
+    again to use it, and the second read is a different read -- which is how a row
+    appended between the two was once consumed as though it had been checked.
+    """
+    key = key or _chain_key()
+    rows, err = _read_rows(log_path)
+    if rows is None:
+        return False, err, []
+    ok, reason = _verify_rows(rows, key)
+    if not ok:
+        return False, reason, []
+    head_ok, head_reason = _check_head(log_path, rows, key)
+    if not head_ok:
+        return False, head_reason, []
+    return True, reason, rows
 
 
 # --------------------------------------------------------------------------
@@ -321,13 +404,12 @@ class Politeness:
                     # the whole site, and guessing otherwise is not ours to do.
                     self._robots[host] = None
                     return False
-                if exc.code >= 400:
-                    # An explicit absence (404 and friends) is the documented
-                    # "no restrictions" case. Naming the codes matters: the
-                    # earlier bare `except Exception` also converted parser
-                    # defects, malformed urls and programming errors into
-                    # permission, so the one branch nobody wanted was the
-                    # default.
+                if 400 <= exc.code < 500:
+                    # An explicit absence -- 404 and friends -- is the documented
+                    # "no restrictions" case. The bound is deliberate: `>= 400`
+                    # also permitted 5xx, so a server having a bad day read as a
+                    # site consenting to be crawled. A 503 is the absence of an
+                    # answer, not the answer "yes".
                     self._robots[host] = rp
                     return True
                 self._robots[host] = None
@@ -392,25 +474,24 @@ class FetchDaemon:
     # -- transport ---------------------------------------------------------
 
     @staticmethod
-    def _http(url: str) -> tuple[int, bytes]:
+    def _http(url: str) -> tuple[int, bytes, str]:
+        """Transport contract: (status, bytes, final_url).
+
+        `final_url` is returned rather than compared here on purpose. The redirect
+        refusal used to live in this method, which every test replaces with a
+        stub -- so the check sat on the one path no test could reach, coverage
+        showed this function at 0%, and a mutation sweep found the refusal dead.
+        A transport reports what happened; `fetch` decides what it means.
+        """
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                # urllib follows redirects silently. Attesting the bytes to the
-                # url we ASKED for rather than the one that answered would let a
-                # crawl cite example.com for content served by anywhere-else.
-                final = resp.url
-                if _canonical_url(final) != _canonical_url(url):
-                    raise RedirectRefusal(
-                        f"{url} redirected to {final} -- refetch the final url so "
-                        "the attested pair names where the bytes actually came from"
-                    )
-                return resp.status, resp.read(MAX_BYTES)
+                return resp.status, resp.read(MAX_BYTES), resp.url
         except urllib.error.HTTPError as exc:
             # The error body is NOT evidence, but the status is a fact worth
             # recording -- a 404 body stored and read as a page is a defect this
             # daemon is meant to make impossible, so the status travels with it.
-            return exc.code, exc.read(MAX_BYTES)
+            return exc.code, exc.read(MAX_BYTES), exc.url if hasattr(exc, "url") else url
 
     # -- api ---------------------------------------------------------------
 
@@ -453,7 +534,23 @@ class FetchDaemon:
             raise RobotsRefusal(f"robots.txt disallows {url}")
         self.politeness.wait(url)
 
-        status, payload = self.transport(url)
+        result = self.transport(url)
+        # Tolerate a 2-tuple transport (no redirect information) by treating the
+        # requested url as final, so an older stub degrades to "no redirect" rather
+        # than to "redirects unchecked".
+        if len(result) == 3:
+            status, payload, final_url = result
+        else:
+            status, payload = result
+            final_url = url
+        # urllib follows redirects silently. Attesting bytes to the url we ASKED
+        # for rather than the one that ANSWERED would let a crawl cite
+        # example.com for content served from anywhere else.
+        if _canonical_url(final_url) != _canonical_url(url):
+            raise RedirectRefusal(
+                f"{url} redirected to {final_url} -- refetch the final url so the "
+                "attested pair names where the bytes actually came from"
+            )
         digest = sha256_of(payload)
         self.snapshots.mkdir(parents=True, exist_ok=True)
 
@@ -622,6 +719,49 @@ class FetchDaemon:
             return False
         return payload[span_start:span_end].decode("utf-8", errors="replace") == quote
 
+    def admits(self, ev) -> bool:
+        """The single admission decision. Everything the daemon knows, composed.
+
+        `put_record` takes a `Callable[[Evidence], bool]` and NO method here had
+        that shape, so every caller hand-wrote an adapter and the only adapter
+        that existed wired to `verifies()` -- which checks quote-equality and
+        nothing else. All three guarantees `evidence_for` uniquely owned were
+        therefore bypassed at the door that decides what a human reads: the
+        status/emptiness refusal, the whitespace-span refusal, and the rule that
+        a snapshot path is derived from the digest rather than supplied.
+
+        The previous fixes each lived at one site. This is the one place they all
+        live, and it is the only thing the store is given.
+
+        Returns False for "this evidence is not admissible" and RAISES
+        ChainBroken for "the log cannot be trusted about anything" -- those are
+        different facts and a caller must not collapse them.
+        """
+        receipt = self.receipt_for(ev.url, ev.sha256)      # raises if chain broken
+        if receipt is None:
+            return False
+        ok, _why = self.usable_as_evidence(receipt)        # status, emptiness
+        if not ok:
+            return False
+        if ev.snapshot != f"snapshots/{ev.sha256}":        # path derived, not given
+            return False
+        try:
+            payload = self.open_attested(ev.url, ev.sha256)
+        except ChainBroken:
+            raise
+        except FetchError:
+            return False
+        if ev.span_start < 0 or ev.span_end <= ev.span_start:
+            return False
+        if ev.span_end > len(payload):
+            return False
+        if not payload[ev.span_start:ev.span_end].strip():  # a span saying nothing
+            return False
+        # Delegate the comparison rather than repeating it. Two spellings of "do
+        # these bytes say this" are two things that can drift, and this module's
+        # whole failure history is checks that disagree with their consumers.
+        return self.verifies(ev.url, ev.sha256, ev.span_start, ev.span_end, ev.quote)
+
     def receipt_for(self, url: str, digest: str) -> Optional[FetchResult]:
         """The daemon's own logged record of a fetch, or None.
 
@@ -656,37 +796,31 @@ class FetchDaemon:
         weaker check, it is an absent one, and the grep that finds zero callers
         is cheaper than the reasoning that assumes one.
         """
-        ok, reason = self.chain_ok()
+        rows = self.verified_rows()
+        return {
+            (r["url"], r["sha256"]) for r in rows if r.get("kind") == "fetch"
+        }
+
+    def verified_rows(self) -> list[dict]:
+        """Parse, verify, and return the rows -- one read, consumed as verified.
+
+        The previous version called chain_ok() and then re-read the file. Codex
+        drove a deterministic interleaving: an un-MACed row appended between the
+        two reads was consumed as though verified, and a forged observed+entailed
+        record reached expandable_ids(). Verifying one copy and using another is
+        the same failure as verifying and using nothing.
+
+        Also checks the plan, so nothing can be attested out of a run whose
+        declared scope was rewritten underneath it.
+        """
+        ok, reason, rows = verify_run(self.dir, self.key)
         if not ok:
             raise ChainBroken(
-                f"refusing to attest anything from an unverifiable fetch log: "
-                f"{reason}. Every (url, digest) pair in it is unusable, because "
-                "a log that can be edited can be edited to contain any pair."
+                f"refusing to attest anything from an unverifiable run: {reason}. "
+                "Every (url, digest) pair is unusable, because a log that can be "
+                "edited can be edited to contain any pair."
             )
-        out: set[tuple[str, str]] = set()
-        for line in self.log.read_text().splitlines():
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            if row.get("kind") == "fetch":
-                out.add((row["url"], row["sha256"]))
-        return out
-
-    def chain_ok(self) -> tuple[bool, str]:
-        """Verify the log's chain. Not memoised, deliberately.
-
-        The first version cached on (st_size, st_mtime_ns). Both are attacker-
-        controlled: a same-length edit followed by `os.utime` restoring the
-        original mtime hits the cache, and a broken chain then reads as verified.
-        Cross-model review demonstrated it.
-
-        Any cache key cheap enough to be worth having is derived from metadata an
-        editor can restore; a key that is not -- hashing the file -- costs the
-        same as the verification it was meant to skip. So the optimisation is
-        removed rather than made subtler. Verification is one HMAC per row and
-        the caller is doing network I/O.
-        """
-        return verify_chain(self.log, self.key)
+        return rows
 
     def attests(self, url: str, digest: str) -> bool:
         """Did THIS daemon fetch THESE bytes from THIS url?

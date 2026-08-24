@@ -26,8 +26,21 @@ import store as S  # noqa: E402
 # Stands in for FetchDaemon.attests. Tests about the STORE are not about custody,
 # so they say so explicitly rather than leaving the requirement unexercised --
 # and test_observed_record_requires_an_attestor asserts the requirement itself.
-ATTESTS_ALL = lambda ev: True   # noqa: E731
-ATTESTS_NONE = lambda ev: False  # noqa: E731
+class _Admitter:
+    """Stand-in for FetchDaemon. Tests about the STORE are not about custody, so
+    they say which answer they want explicitly -- and the requirement itself is
+    asserted by test_observed_record_requires_an_admitter."""
+
+    def __init__(self, answer, seen=None):
+        self.answer, self.seen = answer, seen if seen is not None else []
+
+    def admits(self, ev):
+        self.seen.append(ev)
+        return self.answer
+
+
+ATTESTS_ALL = _Admitter(True)
+ATTESTS_NONE = _Admitter(False)
 
 
 def ev(url="https://example.com/a", digest="a" * 64, start=0, end=5, quote="ACME"):
@@ -122,7 +135,7 @@ def test_depth_and_layer_are_validated():
 def test_refuted_record_is_retained_with_its_refutation(tmp_path):
     """The operator's rule: a claim paid for in tokens is kept even when wrong."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "the span does not mention this person")
 
     got = S.get_record(conn, "n1")
@@ -141,11 +154,11 @@ def test_nothing_in_the_module_deletes():
 
 def test_every_origin_and_verdict_survives_and_is_counted(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="a", depth=0, verdict="entailed"), attestor=ATTESTS_ALL)
-    S.put_record(conn, node(id="b", depth=1, origin="simulated"), attestor=ATTESTS_ALL)
-    S.put_record(conn, node(id="c", depth=2), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="a", depth=0, verdict="entailed"), admitter=ATTESTS_ALL)
+    S.put_record(conn, node(id="b", depth=1, origin="simulated"), admitter=ATTESTS_ALL)
+    S.put_record(conn, node(id="c", depth=2), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "c", "refuted", "no such span")
-    S.put_record(conn, node(id="d", depth=2, verdict="inconclusive"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="d", depth=2, verdict="inconclusive"), admitter=ATTESTS_ALL)
 
     inv = S.inventory(conn)
     assert inv["total"] == 4, "every record is retained regardless of verdict"
@@ -179,8 +192,8 @@ def test_expandable_ids_agrees_with_the_dataclass(tmp_path):
         node(id="bad", verdict="inconclusive"),
     ]
     for r in recs:
-        S.put_record(conn, r, attestor=ATTESTS_ALL)
-    S.put_record(conn, node(id="ref"), attestor=ATTESTS_ALL)
+        S.put_record(conn, r, admitter=ATTESTS_ALL)
+    S.put_record(conn, node(id="ref"), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "ref", "refuted", "nope")
 
     from_query = set(S.expandable_ids(conn))
@@ -193,8 +206,8 @@ def test_expandable_ids_agrees_with_the_dataclass(tmp_path):
 
 def test_second_sighting_does_not_duplicate_but_is_counted(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    assert S.put_record(conn, node(id="n1"), by="w1", attestor=ATTESTS_ALL) == "inserted"
-    assert S.put_record(conn, node(id="n1"), by="w2", attestor=ATTESTS_ALL) == "sighted"
+    assert S.put_record(conn, node(id="n1"), by="w1", admitter=ATTESTS_ALL) == "inserted"
+    assert S.put_record(conn, node(id="n1"), by="w2", admitter=ATTESTS_ALL) == "sighted"
     assert S.inventory(conn)["total"] == 1
     assert S.sighting_count(conn, "n1") == 2
 
@@ -202,9 +215,9 @@ def test_second_sighting_does_not_duplicate_but_is_counted(tmp_path):
 def test_sighting_does_not_overwrite_a_verdict(tmp_path):
     """A later sighting is corroboration, not a correction that silently reopens."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "checked and wrong")
-    S.put_record(conn, node(id="n1"), by="w2", attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), by="w2", admitter=ATTESTS_ALL)
     assert S.get_record(conn, "n1")["verdict"] == "refuted"
     assert S.inventory(conn)["by_verdict"] == {"refuted": 1}
     assert S.expandable_ids(conn) == []
@@ -213,8 +226,8 @@ def test_sighting_does_not_overwrite_a_verdict(tmp_path):
 def test_a_differing_re_sighting_is_kept_as_a_conflict(tmp_path):
     """'Record everything' has no exception for the copy that lost a race."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1", depth=1), by="w1", attestor=ATTESTS_ALL)
-    out = S.put_record(conn, node(id="n1", depth=1, attrs={"role": "CTO"}), by="w2", attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1", depth=1), by="w1", admitter=ATTESTS_ALL)
+    out = S.put_record(conn, node(id="n1", depth=1, attrs={"role": "CTO"}), by="w2", admitter=ATTESTS_ALL)
     assert out == "conflicted"
     cf = S.conflicts(conn)
     assert len(cf) == 1 and cf[0]["payload"]["attrs"] == {"role": "CTO"}
@@ -235,14 +248,14 @@ def test_generated_columns_cannot_be_written_directly(tmp_path):
     refuses the write outright.
     """
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n2", origin="simulated"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n2", origin="simulated"), admitter=ATTESTS_ALL)
     with pytest.raises(sqlite3.OperationalError, match="generated column"):
         conn.execute("UPDATE records SET origin='observed' WHERE id='n2'")
 
 
 def test_a_simulated_record_can_never_become_expandable_by_a_column_write(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n2", origin="simulated"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n2", origin="simulated"), admitter=ATTESTS_ALL)
     for col in ("origin", "verdict"):
         with pytest.raises(sqlite3.OperationalError):
             conn.execute(f"UPDATE records SET {col}='x' WHERE id='n2'")
@@ -261,7 +274,7 @@ def test_a_refutation_cannot_be_silently_erased(tmp_path):
     disproof -- the exact inverse of "record everything".
     """
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "the span does not say this")
     with pytest.raises(S.StoreError, match="requires an explicit `supersedes`"):
         S.set_verdict(conn, "n1", "entailed")
@@ -271,7 +284,7 @@ def test_a_refutation_cannot_be_silently_erased(tmp_path):
 
 def test_superseding_a_refutation_keeps_both_on_the_record(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "misread the span")
     S.set_verdict(conn, "n1", "entailed", supersedes="re-read at the right offsets")
 
@@ -284,7 +297,7 @@ def test_superseding_a_refutation_keeps_both_on_the_record(tmp_path):
 
 def test_verdict_history_is_append_only(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "inconclusive")
     S.set_verdict(conn, "n1", "refuted", "resolved against it")
     assert len(S.verdict_history(conn, "n1")) == 3
@@ -356,7 +369,7 @@ def test_a_stale_token_cannot_finish_a_reclaimed_item(tmp_path):
     S.push_frontier(conn, "acme", 0)
     dead = S.claim(conn, "w1", max_depth=4, lease=10.0, now=1000.0)
     S.claim(conn, "w2", max_depth=4, now=1011.0)
-    with pytest.raises(S.StoreError, match="no open item with that claim token"):
+    with pytest.raises(S.StoreError, match="no item held under that claim token"):
         S.finish(conn, "acme", dead["claim_token"])
 
 
@@ -367,7 +380,7 @@ def test_finish_requires_a_claim_token(tmp_path):
     """finish(key) used to succeed for a caller that never claimed the item."""
     conn = S.connect(tmp_path / "s.db")
     S.push_frontier(conn, "acme", 0)
-    with pytest.raises(S.StoreError, match="no open item with that claim token"):
+    with pytest.raises(S.StoreError, match="no item held under that claim token"):
         S.finish(conn, "acme", "not-a-real-token")
     assert S.frontier_stats(conn)["done"] == 0
 
@@ -378,6 +391,64 @@ def test_finish_with_the_right_token_completes(tmp_path):
     row = S.claim(conn, "w1", max_depth=4)
     S.finish(conn, "acme", row["claim_token"])
     assert S.frontier_stats(conn)["done"] == 1
+
+
+def test_an_expired_lease_cannot_finish_even_unreclaimed(tmp_path):
+    """finish checked the token and not the lease.
+
+    A worker whose lease had lapsed -- whose item was therefore available to
+    anyone -- could still mark it done, so work never completed by its holder
+    counted as complete. Nobody had to reclaim it first for this to be wrong.
+    """
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 0)
+    row = S.claim(conn, "w1", max_depth=4, lease=1.0, now=1000.0)
+    with pytest.raises(S.StoreError, match="no item held under that claim token"):
+        S.finish(conn, "acme", row["claim_token"], now=1002.0)
+    assert S.frontier_stats(conn, now=1002.0)["done"] == 0
+
+
+def test_a_concurrent_refutation_is_not_overwritten(tmp_path):
+    """set_verdict read the current verdict BEFORE taking the lock.
+
+    Between that read and the write another verifier could commit a refutation,
+    which this call then overwrote with no supersedes reason -- the round-3
+    defect reopened as a race. Simulated by interleaving explicitly, because the
+    natural race is rare and rarity is not safety.
+    """
+    db = tmp_path / "s.db"
+    conn = S.connect(db)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
+
+    other = S.connect(db)
+    S.set_verdict(other, "n1", "refuted", "committed by a sibling verifier")
+
+    with pytest.raises(S.StoreError, match="requires an explicit `supersedes`"):
+        S.set_verdict(conn, "n1", "entailed")
+    assert S.get_record(conn, "n1")["verdict"] == "refuted"
+    assert S.expandable_ids(conn) == []
+
+
+def test_a_conflicting_payload_is_visible_to_readers(tmp_path):
+    """'Record everything' was satisfied on write and broken on read.
+
+    A differing re-sighting was stored and then invisible to inventory() and
+    select() -- data that exists and cannot be found.
+    """
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="n1", depth=1), by="w1", admitter=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1", depth=1, attrs={"role": "CTO"}), by="w2",
+                 admitter=ATTESTS_ALL)
+
+    inv = S.inventory(conn)
+    assert inv["total"] == 1, "one identity"
+    assert inv["payloads_held"] == 2, "two payloads were paid for"
+    assert inv["conflicts"] == 1
+
+    rows = S.select(conn)
+    assert len(rows) == 2, "both payloads are reachable"
+    assert any(r["attrs"] == {"role": "CTO"} for r in rows)
+    assert len(S.select(conn, include_conflicts=False)) == 1
 
 
 # ------------------------------------------------------------ concurrency
@@ -436,7 +507,7 @@ def test_frontier_stats_reports_an_honest_remainder(tmp_path):
 # ------------------------- custody reaches the store (BLOCKER, strata B)
 
 
-def test_observed_record_requires_an_attestor(tmp_path):
+def test_observed_record_requires_an_admitter(tmp_path):
     """The architectural hole: the daemon could prove custody and the store never asked.
 
     A Record carrying an entirely invented Evidence -- a url never requested, a
@@ -444,7 +515,7 @@ def test_observed_record_requires_an_attestor(tmp_path):
     one entry point and the other entry point did not use it.
     """
     conn = S.connect(tmp_path / "s.db")
-    with pytest.raises(S.StoreError, match="requires an attestor"):
+    with pytest.raises(S.StoreError, match="requires an admitter"):
         S.put_record(conn, node(id="x1"))
 
 
@@ -456,7 +527,7 @@ def test_unattested_evidence_is_refused(tmp_path):
     rec = S.Record(id="x1", kind="node", canonical_key="k", depth=3, layer="L2",
                    origin="observed", evidence=fake)
     with pytest.raises(S.StoreError, match="do not say what this record quotes"):
-        S.put_record(conn, rec, attestor=ATTESTS_NONE)
+        S.put_record(conn, rec, admitter=ATTESTS_NONE)
     assert S.inventory(conn)["total"] == 0
     assert S.expandable_ids(conn) == []
 
@@ -470,10 +541,11 @@ def test_a_simulated_record_needs_no_attestor(tmp_path):
 def test_the_attestor_is_asked_about_the_cited_pair(tmp_path):
     """Not merely called -- called with the url and digest the record cites."""
     conn = S.connect(tmp_path / "s.db")
-    seen = []
-    S.put_record(conn, node(id="n1"),
-                 attestor=lambda ev: (seen.append((ev.url, ev.sha256, ev.quote)), True)[1])
-    assert seen == [("https://example.com/a", "a" * 64, "ACME")]
+    spy = _Admitter(True)
+    S.put_record(conn, node(id="n1"), admitter=spy)
+    assert [(e.url, e.sha256, e.quote) for e in spy.seen] == [
+        ("https://example.com/a", "a" * 64, "ACME")
+    ]
 
 
 # --------------------------- round-2 leftovers, now closed
@@ -513,7 +585,7 @@ def test_concurrent_set_verdict_loses_nothing(tmp_path):
     """Two verifiers racing used to interleave and drop one verdict entirely."""
     db = tmp_path / "s.db"
     conn = S.connect(db)
-    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="n1"), admitter=ATTESTS_ALL)
 
     errors: list[BaseException] = []
 
@@ -543,8 +615,8 @@ def test_concurrent_set_verdict_loses_nothing(tmp_path):
 def test_select_filters_the_map_without_recrawling(tmp_path):
     """'Record everything, filter downstream' needs a downstream filter."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="a", depth=0, verdict="entailed"), attestor=ATTESTS_ALL)
-    S.put_record(conn, node(id="b", depth=3), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="a", depth=0, verdict="entailed"), admitter=ATTESTS_ALL)
+    S.put_record(conn, node(id="b", depth=3), admitter=ATTESTS_ALL)
     S.put_record(conn, node(id="c", depth=1, origin="simulated"))
 
     assert [r["id"] for r in S.select(conn, max_depth=1)] == ["a", "c"]
@@ -556,7 +628,7 @@ def test_select_filters_the_map_without_recrawling(tmp_path):
 def test_layer_is_read_by_something(tmp_path):
     """It was validated, stored and read by nothing -- which is a field that does not work."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="a"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="a"), admitter=ATTESTS_ALL)
     assert S.inventory(conn)["by_layer"] == {"L2": 1}
     assert [r["id"] for r in S.select(conn, layer="L2")] == ["a"]
     assert S.select(conn, layer="L3") == []
