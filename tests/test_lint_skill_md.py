@@ -598,3 +598,81 @@ class TestDuplicateDetectionIsNotNameSpecific:
         md = _skill(tmp_path, "dd",
                     "---\nname: dd\ndescription: A\ndescription: B\n---\n")
         assert any("duplicate key 'description'" in p for p in lint.lint_skill_md(md))
+
+
+class TestAllThreeLineEndingsAreNormalised:
+    """The FOURTH false red I introduced in this PR while fixing false greens.
+
+    The inline version read in TEXT mode, where Python's universal-newline
+    handling normalises CR, LF and CRLF alike. Moving to bytes — necessary, so
+    that invalid UTF-8 in a prose body is not this linter's business — dropped
+    that, and normalising only CRLF made a bare-CR manifest the old gate
+    ACCEPTED report "missing YAML frontmatter".
+    """
+
+    @pytest.mark.parametrize("raw", [
+        b"---\nname: le\ndescription: A description.\n---\nbody\n",
+        b"---\r\nname: le\r\ndescription: A description.\r\n---\r\nbody\r\n",
+        b"---\rname: le\rdescription: A description.\r---\rbody\r",
+        b"---\r\nname: le\rdescription: A description.\n---\nbody\n",
+    ])
+    def test_a_well_formed_manifest_parses_in_any_line_ending(self, tmp_path, lint, raw):
+        assert lint.lint_skill_md(_skill(tmp_path, "le", raw)) == []
+
+    def test_a_violation_is_still_caught_through_bare_cr(self, tmp_path, lint):
+        """CONTROL: normalising must not become a way to pass."""
+        md = _skill(tmp_path, "le2", b"---\rname: WRONG-CASE\rdescription: d\r---\r")
+        assert any("`name`" in p for p in lint.lint_skill_md(md))
+
+
+class TestValueConstructionErrorsAreReported:
+    def test_an_impossible_timestamp_is_reported_not_raised(self, tmp_path, lint):
+        """PyYAML's implicit resolvers CONSTRUCT values, and `2024-13-40`
+        resolves as a timestamp whose constructor raises ValueError straight
+        through `yaml.YAMLError` — a traceback instead of a report, from a
+        manifest a human could plausibly write."""
+        md = _skill(tmp_path, "ts", "---\nname: ts\ndescription: 2024-13-40\n---\n")
+        problems = lint.lint_skill_md(md)
+        assert problems and all("Traceback" not in p for p in problems)
+        assert any("malformed YAML" in p for p in problems), problems
+
+    def test_a_valid_date_is_still_accepted(self, tmp_path, lint):
+        """CONTROL: a real date resolves to a `datetime.date`, which is a
+        non-string description and reported as such — not as malformed YAML."""
+        md = _skill(tmp_path, "ts2", "---\nname: ts2\ndescription: 2024-01-02\n---\n")
+        assert any("must be a string" in p for p in lint.lint_skill_md(md))
+
+
+class TestExcludedSubtreesArePruned:
+    """`subdirs[:] = []` survived mutation: dropping it still hides every
+    readable `extensions/` manifest, because the `continue` catches them
+    anyway. What pruning actually buys is not descending — so an unreadable
+    descendant of an EXCLUDED subtree cannot raise a finding about a tree this
+    linter has deliberately opted out of."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_an_unreadable_descendant_of_extensions_is_not_reported(self, tmp_path, lint):
+        _skill(tmp_path, "ok")
+        ext = tmp_path / "skills" / "tooling" / "x" / "extensions" / "priv"
+        ext.mkdir(parents=True)
+        (ext / "SKILL.md").write_text("---\nname: WRONG\n---\n", encoding="utf-8")
+        ext.chmod(0o000)
+        try:
+            found, unwalkable = lint.discover(tmp_path / "skills")
+            assert unwalkable == [], unwalkable
+            assert not [p for p in found if "extensions" in p.parts]
+        finally:
+            ext.chmod(0o755)
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_an_unreadable_NON_excluded_subtree_is_still_reported(self, tmp_path, lint):
+        """CONTROL: pruning must apply only to the exclusion."""
+        _skill(tmp_path, "ok")
+        hidden = tmp_path / "skills" / "tooling" / "hidden" / "inner"
+        hidden.mkdir(parents=True)
+        hidden.parent.chmod(0o000)
+        try:
+            _found, unwalkable = lint.discover(tmp_path / "skills")
+            assert any("could not be listed" in u for u in unwalkable), unwalkable
+        finally:
+            hidden.parent.chmod(0o755)

@@ -135,7 +135,12 @@ def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
         return {}, None, False
     if raw.startswith(b"\xef\xbb\xbf"):
         return {}, "starts with a UTF-8 BOM before the --- fence", True
-    lines = raw.replace(b"\r\n", b"\n").split(b"\n")
+    # ALL THREE CommonMark line endings. The inline version read in text mode,
+    # where Python's universal-newline handling normalises CR, LF and CRLF
+    # alike; normalising only CRLF here made a bare-CR manifest — which the old
+    # gate accepted — report "missing YAML frontmatter". A false red introduced
+    # by moving from text mode to bytes.
+    lines = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
     # EXACT equality at BOTH ends. `startswith("---")` accepted a decorated
     # opener and `find("\n---")` accepted `---yaml` as a closer, which is the
     # false green: a lax closing fence silently truncates the document.
@@ -150,7 +155,11 @@ def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
         return {}, f"frontmatter is not valid UTF-8 ({exc.reason})", True
     try:
         data = yaml.load(body, Loader=_NoDuplicateKeys)
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError, TypeError) as exc:
+        # Not just YAMLError. PyYAML's implicit resolvers construct values, and
+        # `description: 2024-13-40` resolves as a timestamp whose constructor
+        # raises ValueError straight through — a traceback instead of a report,
+        # from a manifest a human could plausibly write.
         # FLATTENED, not truncated. A PyYAML error is several lines including a
         # caret diagram; printing it raw broke the one-error-per-line format the
         # rest of the report relies on, and truncating to the first line threw
