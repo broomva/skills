@@ -80,10 +80,11 @@ nothing.
 
 The landing page at <https://broomva.github.io/parallax/> — with the worked use
 case at </use-cases/> and the full evidence page at </proof/> — is still served
-out of the original `broomva/parallax` repository, which is archived read-only as
-part of this move, and is frozen at the last build made there. Its source now lives at
-`parallax-web/` in this monorepo and has not been republished, so a change here
-does not reach that page.
+out of the original `broomva/parallax` repository, which is archived read-only and
+is frozen at the last build made there. Its source lives in that same repository at
+`web/`, and a copy that briefly lived in this monorepo has been removed — it
+published nothing (this repository has no Pages site), so it was a build gate over
+a page nobody here could republish. Nothing in this monorepo reaches that page.
 
 The hub is <https://parallax-hub.onrender.com>. `GET /health` reports the commit
 the server is running, which is the only field on it that a stale image cannot
