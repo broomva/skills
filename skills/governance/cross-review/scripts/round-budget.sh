@@ -175,10 +175,11 @@ archive_ledger() {
     local tag="${1:-}" base n=0 lines
     # The ledger may be UNREADABLE rather than merely unparsable -- a chmod 000,
     # a bad ACL -- and that is one of the cases --force exists to serve. Deriving
-    # the name by READING it aborts the whole script under `set -e` BEFORE the
-    # mv, so the one loud archiving path becomes no path at all and the operator
-    # is left with `rm`. `mv` itself needs write on the DIRECTORY, not read on
-    # the file, so the move is still available when the count is not.
+    # the name by READING it aborts the whole script under `set -e` before the
+    # archive ever happens, so the one loud archiving path becomes no path at
+    # all and the operator is left with `rm`. Linking needs write+search on the
+    # DIRECTORY, not read on the file, so the archive is still available when
+    # the count is not.
     # Braces around the redirect: `wc -l < f 2>/dev/null` silences WC, but the
     # "Permission denied" is bash's own, emitted before wc ever runs.
     lines=$( { wc -l < "$LEDGER"; } 2>/dev/null | tr -d ' ' ) || lines=""
@@ -186,11 +187,11 @@ archive_ledger() {
     base="$LEDGER.archived${tag:+.$tag}.$lines"
     ARCHIVE="$base"
     # Keyed on line count alone, two arcs of equal length silently overwrote, so
-    # the name steps aside until it is free. But `[ -e ]` then `mv` is
-    # check-then-ACT: between the two, anything in this directory can take the
-    # name, and `mv` then destroys what appeared -- the one thing this exists to
-    # prevent. The per-ledger lock closes that window against another
-    # round-budget and against nothing else.
+    # the name steps aside until it is free. But `[ -e ]` then `mv` -- which is
+    # what this was -- is check-then-ACT: between the two, anything in this
+    # directory can take the name, and the move then destroys what appeared,
+    # which is the one thing this exists to prevent. The per-ledger lock closes
+    # that window against another round-budget and against nothing else.
     #
     # `ln` IS the test. link(2) fails with EEXIST if the destination exists --
     # including a DANGLING symlink, which `[ -e ]` could not see at all because
