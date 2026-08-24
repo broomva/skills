@@ -1810,15 +1810,22 @@ class TestVerificationRoutesOnTheLocatorNotTheLabel:
 
     @pytest.mark.parametrize("kind", sorted({"repo", "test", "other", "dashboard",
                                              "policy", "law", "counsel", "invoice"}))
-    def test_a_path_shaped_locator_is_verified_whatever_the_kind(
+    def test_no_label_lets_a_fabricated_digest_pass(
         self, tmp_path, valid_manifest, lr, kind
     ):
+        """The invariant stated as the PROPERTY rather than as one message: a
+        fabricated digest against a real tracked file must produce a finding
+        under every allowed kind. `repo`/`test` get a digest mismatch; any other
+        label gets a mislabel, because a locator naming a tracked file has to be
+        declared one. Lying in either direction is caught, and that is what
+        leaves no labelling that escapes verification."""
         root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
         (root / "pricing.tsx").write_bytes(b"real\n")
         data = copy.deepcopy(valid_manifest)
         data["claims"][0]["evidence"] = [dict(_repo_evidence("pricing.tsx:1", "a" * 64), kind=kind)]
         errors = _validated(lr, data, root)
-        assert any("does not match the artifact" in e for e in errors), (kind, errors)
+        assert any(("does not match the artifact" in e) or ("is declared" in e)
+                   for e in errors), (kind, errors)
 
     @pytest.mark.parametrize("locator", [
         "https://example.gov/statute",
@@ -1988,10 +1995,62 @@ class TestExistenceDecidesNotShape:
         target = repo / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"real\n")
-        data = _with_repo_evidence(valid_manifest,
-                                   dict(_repo_evidence(name, "a" * 64), kind="other"))
+        data = _with_repo_evidence(valid_manifest, _repo_evidence(name, "a" * 64))
         errors = _validated(lr, data, repo)
         assert any("does not match the artifact" in e for e in errors), (name, errors)
+
+    def test_a_tracked_file_declared_as_something_else_is_a_mislabel(
+        self, repo, valid_manifest, lr
+    ):
+        """Routing on `kind` let a fabricated row opt out; routing on existence
+        instead meant an opaque identifier COLLIDING with a real path was
+        silently hashed as that file — this repo has one called `LICENSE`. A
+        locator naming a tracked file must be declared one, so the collision is
+        an actionable finding rather than a wrong hash."""
+        (repo / "LICENSE").write_bytes(b"a license\n")
+        data = _with_repo_evidence(valid_manifest,
+                                   dict(_repo_evidence("LICENSE", "a" * 64), kind="contract"))
+        errors = _validated(lr, data, repo)
+        assert any("names a tracked repository file but is declared" in e
+                   for e in errors), errors
+
+    def test_an_untracked_collision_is_not_evidence_about_that_file(
+        self, repo, valid_manifest, lr
+    ):
+        """CONTROL: an identifier colliding with an UNTRACKED local file is just
+        an identifier. Hashing it would be inventing evidence."""
+        (repo / "MSA-2026-v3").write_bytes(b"local scratch\n")
+        data = _with_repo_evidence(valid_manifest,
+                                   dict(_repo_evidence("MSA-2026-v3", "a" * 64), kind="contract"))
+        assert not [e for e in lr.validate_manifest(data, repo_root=repo)
+                    if "locator" in e or "sha256" in e]
+
+    @pytest.mark.parametrize("locator", ["https://example.com/x",
+                                         "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"])
+    @pytest.mark.parametrize("kind", ["repo", "test"])
+    def test_repo_evidence_may_not_hide_behind_a_url_or_commit(
+        self, repo, valid_manifest, lr, kind, locator
+    ):
+        """The walker pre-filtered URL- and commit-shaped locators, so
+        `kind: repo` with a URL was never examined and the rule that repo
+        evidence must resolve could not fire."""
+        data = _with_repo_evidence(valid_manifest,
+                                   dict(_repo_evidence(locator, "a" * 64), kind=kind))
+        errors = _validated(lr, data, repo)
+        assert any("names no file in the repository" in e for e in errors), errors
+
+    def test_an_untracked_repo_artifact_is_a_finding(self, repo, valid_manifest, lr):
+        """`git status --porcelain` says nothing about an ignored file, so a
+        gitignored scratch file satisfied the dirty check by being invisible to
+        it. Evidence must be something a reader can fetch."""
+        (repo / ".gitignore").write_bytes(b"secret.tsx\n")
+        (repo / "secret.tsx").write_bytes(b"ignored\n")
+        _commit_all(repo)
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("secret.tsx", hashlib.sha256(b"ignored\n").hexdigest()))
+        errors = lr.validate_manifest(data, repo_root=repo)
+        assert any("is not tracked" in e for e in errors), errors
 
     @pytest.mark.parametrize("kind,locator", [
         ("contract", "MSA-2026-v3"),
@@ -2115,3 +2174,21 @@ class TestLineCountingDoesNotInventALine:
         errors = _validated(lr, _with_repo_evidence(
             valid_manifest, _repo_evidence("a.tsx:1", digest)), root)
         assert any("past the end" in e for e in errors), errors
+
+
+class TestOnlyTheDefaultPortIsRedundant:
+    @pytest.mark.parametrize("a,b", [
+        ("https://example.com:443/o/r", "https://example.com/o/r"),
+        ("http://example.com:80/o/r", "http://example.com/o/r"),
+    ])
+    def test_a_default_port_is_stripped(self, lr, a, b):
+        assert lr._normalize_repo_url(a) == lr._normalize_repo_url(b)
+
+    @pytest.mark.parametrize("a,b", [
+        ("https://example.com:8443/o/r", "https://example.com/o/r"),
+        ("https://example.com:8443/o/r", "https://example.com:9443/o/r"),
+        ("git@example.com:1234/org/repo.git", "https://example.com/org/repo"),
+    ])
+    def test_a_non_default_port_is_significant(self, lr, a, b):
+        """Stripping any `:\\d+` collapsed two different endpoints into one."""
+        assert lr._normalize_repo_url(a) != lr._normalize_repo_url(b)

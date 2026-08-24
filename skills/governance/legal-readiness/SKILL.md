@@ -165,10 +165,18 @@ shape. `kind` is written by the manifest's author, so routing on it would let a
 fabricated row opt out by relabelling `repo` to `other`—both are allowed kinds.
 Shape fails in both directions: this repository contains a real tracked file
 named `Design System.html`, while `MSA-2026-v3` and `src/a.ts` are both single
-tokens. So a locator that resolves to a file is verified whatever it is called,
-and one that does not—an absolute URL, a bare commit identifier, a contract ID,
-a registry receipt—is left alone. Evidence declaring itself `repo` or `test`
-must resolve; naming a file that is not there is the finding.
+tokens. So a locator that resolves to a **tracked** file is verified whatever it is
+called, and one that does not—an absolute URL, a bare commit identifier, a
+contract ID, a registry receipt—is left alone.
+
+The rule runs in **both directions**, which is what closes it: evidence
+declaring itself `repo` or `test` must resolve to a tracked file, and a locator
+that resolves to a tracked file must be declared `repo` or `test`. Otherwise an
+opaque identifier that happens to collide with a real path would be silently
+hashed as that file—this repository contains one called `LICENSE`. Lying in
+either direction is a finding, so no label escapes verification. Untracked is
+also a finding for `repo`/`test`: `git status` says nothing about an ignored
+file, and evidence must be something a reader can fetch.
 
 A digest that matches is also checked against `git status` for that file: if the
 artifact has uncommitted changes the digest records a local edit, not reviewable

@@ -1417,11 +1417,10 @@ def _iter_file_backed_evidence(node: Any, path: str = "") -> Any:
     own kinds, so they are not swept up here.
     """
     if isinstance(node, dict):
-        if (
-            node.get("kind") in EVIDENCE_KINDS
-            and "sha256" in node
-            and _locator_may_name_a_file(str(node.get("locator", "")))
-        ):
+        if node.get("kind") in EVIDENCE_KINDS and "sha256" in node:
+            # No pre-filter. Excluding URL- and commit-shaped locators here
+            # meant `kind: repo` with a URL locator was never examined at all,
+            # so the rule that repo evidence must resolve could not fire.
             yield path, node
         for key, value in node.items():
             yield from _iter_file_backed_evidence(value, f"{path}.{key}" if path else key)
@@ -1434,7 +1433,9 @@ def _normalize_repo_url(url: str) -> str:
     """`git@github.com:o/r.git`, `https://github.com/o/r`, and
     `https://github.com/o/r.git` name the same repository."""
     url = url.strip().rstrip("/")
-    had_scheme = bool(re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE))
+    scheme_match = re.match(r"^([a-z][a-z0-9+.-]*)://", url, re.IGNORECASE)
+    had_scheme = bool(scheme_match)
+    scheme = scheme_match.group(1).lower() if scheme_match else ""
     url = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url, flags=re.IGNORECASE)
     url = re.sub(r"^[^/@]+@", "", url)
     # `host:port/path` and scp-style `host:path` both use a colon. Only a URL
@@ -1443,7 +1444,12 @@ def _normalize_repo_url(url: str) -> str:
     # component — normalise onto `https://example.com/org/repo`, collapsing two
     # different repositories into one.
     if had_scheme:
-        url = re.sub(r"^([^/:]+):\d+(?=/|$)", r"\1", url)
+        # ONLY the scheme's default port is redundant. Stripping any `:\d+` made
+        # `https://example.com:8443/o/r` equal `https://example.com/o/r` — two
+        # different endpoints collapsed into one.
+        default = {"https": "443", "http": "80", "ssh": "22", "git": "9418"}.get(scheme, "")
+        if default:
+            url = re.sub(rf"^([^/:]+):{default}(?=/|$)", r"\1", url)
     host, sep, rest = url.partition(":")
     if sep and "/" not in host:
         url = f"{host}/{rest}"
@@ -1543,6 +1549,15 @@ def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
             errors.append(f"{path}.locator: {locator!r} names no file to verify")
             continue
         rel = match.group("path").strip()
+        declared_file = item.get("kind") in FILE_BACKED_EVIDENCE
+        if not _locator_may_name_a_file(locator):
+            # A URL or a bare commit id. Fine for a statute or a receipt; not
+            # for evidence that declares itself a repository artifact.
+            if declared_file:
+                errors.append(
+                    f"{path}.locator: {locator!r} is {item.get('kind')!r} evidence but "
+                    "names no file in the repository; use a repository-relative path")
+            continue
         if PurePosixPath(rel).is_absolute() or Path(rel).is_absolute():
             errors.append(f"{path}.locator: {rel!r} must be relative to the repository root")
             continue
@@ -1567,6 +1582,33 @@ def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
             continue
         if resolved.is_dir():
             errors.append(f"{path}.locator: {rel!r} is a directory, not an artifact")
+            continue
+        # TRACKED, not merely present. `git status --porcelain` says nothing about
+        # an ignored file, so a build artifact or a gitignored scratch file
+        # satisfied the dirty check by being invisible to it. Evidence has to be
+        # something a reader can fetch from the repository.
+        tracked = _git(root, "ls-files", "--error-unmatch", "--", rel) is not None
+        if not tracked:
+            if declared_file:
+                errors.append(
+                    f"{path}.locator: {rel!r} is not tracked in the repository, so it "
+                    "cannot be fetched or reviewed; commit the artifact")
+            # Untracked and not declared a repository artifact: an opaque
+            # identifier that happens to collide with a local file. Not evidence
+            # about that file.
+            continue
+        if not declared_file:
+            # The other direction, and the one that closes the loop. `kind` is
+            # author-supplied, so routing on it let a fabricated row opt out;
+            # routing on existence instead meant an opaque identifier that
+            # COLLIDES with a real path (this repo has a file called `LICENSE`)
+            # was silently hashed as that file. So: a locator naming a tracked
+            # file must be DECLARED one. Lying in either direction is a finding,
+            # which leaves no labelling that escapes verification.
+            errors.append(
+                f"{path}.locator: {rel!r} names a tracked repository file but is declared "
+                f"{item.get('kind')!r}; declare it as 'repo' or 'test' evidence, or use a "
+                "locator that is not a repository path")
             continue
         try:
             actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
