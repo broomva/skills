@@ -310,7 +310,7 @@ def verify_records(root: Path, run_id: str, records: Iterable[Record]) -> None:
         )
 
 
-def emit_table_arg(table: str, records: list[Record]) -> str:
+def emit_table_arg(table: str, records: list[Record], *, evidence_verified: bool = False) -> str:
     """Build the `--table` value Parallax's CLI grammar expects.
 
     `<name>#<rows>:<col>:<type>:<origin>,...` -- and the row count is len(records),
@@ -318,6 +318,19 @@ def emit_table_arg(table: str, records: list[Record]) -> str:
     type-preserving rather than lossy: the observed/simulated distinction the
     provider established survives into the proposal a human accepts.
     """
+    # The default is to REFUSE. `verify_records` is called by the CLI, and a
+    # library caller reaching this function directly would otherwise skip it --
+    # so the one check the whole layer rests on would be enforced by the entry
+    # point a reviewer happened to look at, and absent from the one they did not.
+    #
+    # An unverified emit is still possible; it just has to be said out loud.
+    if not evidence_verified and any(f.evidence is not None for r in records for f in r.fields):
+        raise ProviderError(
+            "EVIDENCE_UNVERIFIED",
+            "records contain observed fields but their artifacts were not verified; "
+            "call verify_records(root, run_id, records) first, or pass evidence_verified=True "
+            "to state deliberately that they were checked some other way",
+        )
     if not table or not table.strip():
         raise ProviderError("TABLE_NAME_REQUIRED", "a table needs a name")
     bad = [c for c in _RESERVED if c in table]
@@ -365,12 +378,19 @@ def emit_table_arg(table: str, records: list[Record]) -> str:
     return f"{table}#{len(records)}:{','.join(parts)}"
 
 
-def emit_command(table: str, records: list[Record]) -> list[str]:
+def emit_command(table: str, records: list[Record], *, evidence_verified: bool = False) -> list[str]:
     """The argv a caller runs. A list, so nothing depends on shell quoting."""
-    return ["parallax", "propose", "--kind", "business-data", "--table", emit_table_arg(table, records)]
+    return [
+        "parallax",
+        "propose",
+        "--kind",
+        "business-data",
+        "--table",
+        emit_table_arg(table, records, evidence_verified=evidence_verified),
+    ]
 
 
-def emit_command_line(table: str, records: list[Record]) -> str:
+def emit_command_line(table: str, records: list[Record], *, evidence_verified: bool = False) -> str:
     """The same thing as a line a human can paste, quoted by shlex.
 
     Printing `" ".join(argv)` was fine only while every name was
@@ -378,7 +398,7 @@ def emit_command_line(table: str, records: list[Record]) -> str:
     string is a convenience, and the convenience is the part that can be made to
     execute something else.
     """
-    return shlex.join(emit_command(table, records))
+    return shlex.join(emit_command(table, records, evidence_verified=evidence_verified))
 
 
 # ---------------------------------------------------------------------------
@@ -651,12 +671,14 @@ def _load_records(path: str) -> list[Record]:
 def _emit(args: argparse.Namespace) -> int:
     records = _load_records(args.records)
     observed = any(f.evidence is not None for r in records for f in r.fields)
+    verified = False
     if observed and not args.unverified:
         # The default is to CHECK. `--unverified` exists so that a caller who
         # genuinely has no run directory can still emit, and it is a flag rather
         # than a fallback so that skipping the check is a decision someone typed.
         verify_records(Path(args.root), args.run, records)
-    print(emit_command_line(args.table, records))
+        verified = True
+    print(emit_command_line(args.table, records, evidence_verified=verified or args.unverified))
     return 0
 
 

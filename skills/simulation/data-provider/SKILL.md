@@ -118,7 +118,7 @@ the same shape Parallax uses, so one branch handles both.
 |---|---|
 | `UNCLASSIFIED_FIELD` | Add `evidence` or `inferred_from`. Do not pick `simulated` to get past it. |
 | `EVIDENCE_INCOMPLETE` | Evidence needs a url, a **64-hex** sha256, and a snapshot path. A short or absent digest is a citation that cannot be checked wearing the word that means it was. |
-| `EVIDENCE_UNVERIFIED` | A cited artifact is missing, or no longer hashes to its digest. Not downgraded to `simulated` — that would hide a broken pipeline behind a plausible table. |
+| `EVIDENCE_UNVERIFIED` | Either a cited artifact is missing / no longer hashes to its digest, or observed records reached `emit_table_arg` without having been verified at all. Not downgraded to `simulated` — that would hide a broken pipeline behind a plausible table. |
 | `RESERVED_CHARACTER` | A name contains `,` `:` or `#`. Those are `--table` delimiters, so such a name **injects extra columns** rather than producing a bad one. |
 | `RECORDS_MALFORMED` / `RECORDS_UNREADABLE` | The records file is not readable, or not a JSON list of objects. |
 | `AMBIGUOUS_ORIGIN` | The field has both. It is one or the other. |
@@ -131,7 +131,7 @@ the same shape Parallax uses, so one branch handles both.
 
 ```bash
 cd skills/simulation/data-provider
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 52 tests
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 54 tests
 ```
 
 `PYTHONDONTWRITEBYTECODE` because a same-size edit inside one second reuses stale

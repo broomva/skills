@@ -156,7 +156,7 @@ class TestTypeInference:
 class TestEmit:
     def test_the_row_count_is_counted_not_declared(self):
         rows = [p.Record([p.make_field("company", f"C{i}", evidence=ev())]) for i in range(3)]
-        assert p.emit_table_arg("leads", rows).startswith("leads#3:")
+        assert p.emit_table_arg("leads", rows, evidence_verified=True).startswith("leads#3:")
 
     def test_origins_survive_into_the_invocation(self):
         rows = [
@@ -167,7 +167,7 @@ class TestEmit:
                 ]
             )
         ]
-        arg = p.emit_table_arg("leads", rows)
+        arg = p.emit_table_arg("leads", rows, evidence_verified=True)
         assert "company:string:observed" in arg
         assert "score:number:simulated" in arg
 
@@ -183,10 +183,29 @@ class TestEmit:
             p.Record([p.make_field("mixed", 1, evidence=ev())]),
             p.Record([p.make_field("mixed", "two", evidence=ev())]),
         ]
-        arg = p.emit_table_arg("leads", rows)
+        arg = p.emit_table_arg("leads", rows, evidence_verified=True)
         assert "mixed::observed" in arg, arg
         # and NOT a guessed type
         assert "mixed:string" not in arg
+
+    def test_emitting_observed_records_UNVERIFIED_is_refused_by_default(self):
+        """The library path must not be a way around the check.
+
+        `verify_records` is called by the CLI. A caller importing this module and
+        reaching `emit_table_arg` directly would otherwise skip it entirely -- so
+        the one check the whole layer rests on would be enforced at the entry
+        point a reviewer happened to look at and absent from the one they did not.
+        Unverified emit is still possible; it just has to be said out loud.
+        """
+        rows = [p.Record([p.make_field("company", "A", evidence=ev())])]
+        with pytest.raises(p.ProviderError) as e:
+            p.emit_table_arg("leads", rows)
+        assert e.value.code == "EVIDENCE_UNVERIFIED"
+
+    def test_records_with_no_evidence_need_no_such_assertion(self):
+        # Nothing claims to have been read, so there is nothing to verify.
+        rows = [p.Record([p.make_field("score", 1, inferred_from="model")])]
+        assert p.emit_table_arg("leads", rows).startswith("leads#1:")
 
     def test_emitting_nothing_is_refused_with_a_reason(self):
         with pytest.raises(p.ProviderError) as e:
@@ -195,7 +214,7 @@ class TestEmit:
 
     def test_the_command_is_argv_not_a_shell_string(self):
         rows = [p.Record([p.make_field("company", "A", evidence=ev())])]
-        cmd = p.emit_command("leads", rows)
+        cmd = p.emit_command("leads", rows, evidence_verified=True)
         assert cmd[:5] == ["parallax", "propose", "--kind", "business-data", "--table"]
         assert len(cmd) == 6
 
@@ -454,12 +473,12 @@ class TestGrammarSafety:
     def test_a_table_name_with_a_delimiter_is_refused(self):
         rows = [p.Record([p.make_field("company", "A", evidence=ev())])]
         with pytest.raises(p.ProviderError) as e:
-            p.emit_table_arg("le,ads", rows)
+            p.emit_table_arg("le,ads", rows, evidence_verified=True)
         assert e.value.code == "RESERVED_CHARACTER"
 
     def test_the_pasteable_line_is_shell_quoted(self):
         rows = [p.Record([p.make_field("company", "A", evidence=ev())])]
-        line = p.emit_command_line("leads", rows)
+        line = p.emit_command_line("leads", rows, evidence_verified=True)
         assert line.startswith("parallax propose --kind business-data --table ")
 
 
