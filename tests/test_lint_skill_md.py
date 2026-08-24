@@ -353,3 +353,27 @@ class TestDescriptionType:
     def test_a_list_description_is_reported(self, tmp_path, lint):
         md = _skill(tmp_path, "d5", "---\nname: d5\ndescription:\n  - a\n  - b\n---\n")
         assert any("must be a string" in p for p in lint.lint_skill_md(md))
+
+
+class TestASymlinkCycleDoesNotHang:
+    def test_discovery_terminates_on_a_self_referential_link(self, tmp_path, lint):
+        """The property `followlinks=False` actually protects.
+
+        A mutation sweep found that flipping it to `True` SURVIVED the suite:
+        the symlinked-directory test only asserted the link was reported, which
+        stays true either way. What `False` really buys is termination — a
+        directory linked to its own ancestor walks forever with `True`. Pinning
+        the report without pinning the loop left the flag unprotected.
+        """
+        tooling = tmp_path / "skills" / "tooling"
+        (tooling / "real").mkdir(parents=True)
+        (tooling / "real" / "SKILL.md").write_text(
+            "---\nname: real\ndescription: A description.\n---\n", encoding="utf-8")
+        # skills/tooling/real/loop -> skills/  (points back above itself)
+        (tooling / "real" / "loop").symlink_to(tmp_path / "skills")
+
+        found, _unwalkable = lint.discover(tmp_path / "skills")
+
+        # Terminates, and the genuine skill is still found exactly once.
+        assert [p for p in found if p.parent.name == "real"] == [
+            tooling / "real" / "SKILL.md"]
