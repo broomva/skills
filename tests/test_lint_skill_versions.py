@@ -449,6 +449,17 @@ class TestChangelogHeadingIsDeclaredNotMerelyMentioned:
         ("##   [1.2.3]\n", True),
         ("```\n## [1.2.3]\n```\n", False),
         ("~~~\n## [1.2.3]\n~~~\n", False),
+        # CommonMark: a fence may be indented up to three spaces and may run to
+        # end of document unclosed. Requiring a CLOSING fence meant an unclosed
+        # one matched nothing, so nothing was stripped and the example counted.
+        ("```\n## [1.2.3]\n", False),
+        ("~~~\n## [1.2.3]\n", False),
+        ("  ```\n  ## [1.2.3]\n  ```\n", False),
+        ("```\nex\n```\n## [1.2.3]\n", True),
+        # ...and the false RED that pairs with it: 1-3 spaces is still a heading.
+        ("  ## [1.2.3] - 2026-01-01\n", True),
+        (" ## [1.2.3]\n", True),
+        ("    ## [1.2.3]\n", False),   # 4 spaces is an indented CODE BLOCK
         ("see the ## [1.2.3] section\n", False),
         ("### [1.2.3]\n", False),
         ("## [1.2.4]\n", False),
@@ -698,3 +709,20 @@ class TestDuplicateKeysCannotEraseADeclaration:
         d = _versioned(tmp_path, "distinct",
                        package__json='{"name": "x", "version": "1.2.3"}')
         assert lint.lint_skill(d) == []
+
+
+class TestAnUnhashableKeyIsAFindingNotACrash:
+    def test_a_sequence_used_as_a_key_is_reported(self, tmp_path, lint):
+        """This file's defect class INVERTED, and introduced by its own fix: the
+        duplicate-key constructor tested `key in mapping`, which raises
+        TypeError for a sequence key. Legal YAML, never valid frontmatter, and
+        it crashed the whole lint with a traceback instead of reporting."""
+        d = _versioned(tmp_path, "unhashable")
+        (d / "SKILL.md").write_text(
+            "---\n? [a, b]\n: c\nversion: 1.2.3\n---\n", encoding="utf-8")
+        problems = lint.lint_skill(d)
+        assert any("unhashable key" in p for p in problems), problems
+
+    def test_ordinary_scalar_keys_are_unaffected(self, tmp_path, lint):
+        """CONTROL."""
+        assert lint.lint_skill(_versioned(tmp_path, "scalar-keys")) == []

@@ -45,7 +45,12 @@ _SEMVER = re.compile(
 )
 
 #: A ``## [x.y.z]`` heading inside a fenced block is an EXAMPLE, not a release.
-_FENCE_RX = re.compile(r"^(?P<f>```+|~~~+).*?^(?P=f)[^\n]*$", re.M | re.S)
+#: CommonMark lets a fence be indented up to three spaces and lets it run to end
+#: of document unclosed. Requiring a closing fence meant an UNCLOSED one matched
+#: nothing, nothing was stripped, and the example heading inside it counted as a
+#: release — so the strictest-looking half of this rule produced the false green.
+_FENCE_RX = re.compile(
+    r"^ {0,3}(?P<f>`{3,}|~{3,}).*?(?:^ {0,3}(?P=f)[^\n]*$|\Z)", re.M | re.S)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILLS_DIR = _REPO_ROOT / "skills"
@@ -105,7 +110,15 @@ def _construct_unique(loader, node, deep=False):
     mapping = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
-        if key in mapping:
+        try:
+            duplicate = key in mapping
+        except TypeError:
+            # An unhashable key (a sequence or mapping used as one) is legal
+            # YAML and never valid frontmatter. Raising TypeError out of a
+            # constructor crashed the whole lint with a traceback — this file's
+            # own defect class inverted, introduced by its own fix.
+            raise yaml.YAMLError(f"unhashable key {key!r}") from None
+        if duplicate:
             raise yaml.YAMLError(f"duplicate key {key!r}")
         mapping[key] = loader.construct_object(value_node, deep=deep)
     return mapping
@@ -275,7 +288,11 @@ def _changelog_has_version(path: Path, version: str) -> tuple[bool, str | None]:
     # heading in a usage example satisfied the requirement to DECLARE it.
     body = _FENCE_RX.sub("", text)
     return (
-        re.search(rf"^\#\#[^\S\n]+\[{re.escape(version)}\]", body, re.M) is not None,
+        # Up to three leading spaces: CommonMark treats them as an ATX heading,
+        # and rejecting them was a false RED on valid CHANGELOGs. Safe only
+        # BECAUSE the fence pattern above also accepts an indented opener —
+        # loosening one without the other would let an indented example count.
+        re.search(rf"^ {{0,3}}\#\#[^\S\n]+\[{re.escape(version)}\]", body, re.M) is not None,
         None,
     )
 
