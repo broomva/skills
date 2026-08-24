@@ -28,6 +28,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -93,7 +94,7 @@ def _read_utf8(path: Path) -> tuple[str | None, str | None]:
         return None, f"is not valid UTF-8 ({exc.reason})"
 
 
-def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
+def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
     """`(frontmatter, reason_it_could_not_be_read)` — three states, not two.
 
     A skill is "versioned" iff its frontmatter declares a version, so returning a
@@ -148,6 +149,23 @@ def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
 
 def _frontmatter(skill_md: Path) -> dict:
     return _read_frontmatter(skill_md)[0]
+
+
+def _declared_versions(fm: dict) -> list[tuple[str, Any]]:
+    """EVERY place this manifest declares a version, as `(where, value)`.
+
+    `_skill_version` answers "which declaration wins", which is a different
+    question from "what did the author declare". Checking only the winner meant
+    a top-level `version: 1.2.3` beside `metadata.version: not-semver` reported
+    nothing: the invalid declaration was real, present, and never examined.
+    """
+    found: list[tuple[str, Any]] = []
+    if "version" in fm:
+        found.append(("version", fm["version"]))
+    meta = fm.get("metadata")
+    if isinstance(meta, dict) and "version" in meta:
+        found.append(("metadata.version", meta["version"]))
+    return found
 
 
 def _skill_version_is_explicitly_null(fm: dict) -> bool:
@@ -253,17 +271,25 @@ def lint_skill(skill_dir: Path) -> list[str]:
         # skill opts out of every rule below by carrying an invisible byte.
         return [f"{name}: SKILL.md {unreadable} — cannot determine whether it is versioned"]
     errors: list[str] = []
-    # Checked BEFORE and INDEPENDENTLY of `_skill_version`. Running it only when
-    # no canonical version was found let `version: 1.2.3` + `metadata.version:`
-    # (null) pass: one failed declaration is invisible behind one that worked.
-    if _skill_version_is_explicitly_null(fm):
-        errors.append("SKILL.md declares an empty version — remove the key or set one")
+    # EVERY declaration is checked, before and independently of which one wins.
+    # Validating only the winner let a failed declaration hide behind a working
+    # one — first as a null, then as a second, invalid, NON-null value.
+    declared = _declared_versions(fm)
+    for where, value in declared:
+        if value is None:
+            errors.append(
+                f"SKILL.md declares an empty {where} — remove the key or set one")
+        elif not _SEMVER.fullmatch(str(value)):
+            errors.append(
+                f"SKILL.md {where} {str(value)!r} is not valid SemVer (MAJOR.MINOR.PATCH)")
+    distinct = {str(v) for _w, v in declared if v is not None}
+    if len(distinct) > 1:
+        errors.append(
+            f"SKILL.md declares conflicting versions {sorted(distinct)} — "
+            "one manifest, one version")
     version = _skill_version(fm)
     if version is None:
         return [f"{name}: {e}" for e in errors]  # unversioned → pre-release → exempt
-
-    if not _SEMVER.fullmatch(version):
-        errors.append(f"SKILL.md version {version!r} is not valid SemVer (MAJOR.MINOR.PATCH)")
 
     py, py_unreadable = _pyproject_version(skill_dir / "pyproject.toml")
     if py_unreadable:
@@ -288,7 +314,7 @@ def lint_skill(skill_dir: Path) -> list[str]:
     return [f"{name}: {e}" for e in errors]
 
 
-def _iter_skill_dirs() -> list[Path]:
+def _iter_skill_dirs() -> tuple[list[Path], list[str]]:
     """Every directory under skills/ that holds a SKILL.md, at any depth.
 
     Mirrors the md-linter's nested traversal (skills/<name>/ and
@@ -300,6 +326,24 @@ def _iter_skill_dirs() -> list[Path]:
     EVERY skill) escaped the SemVer + CHANGELOG check.
     """
     dirs: list[Path] = []
+    unwalkable: list[str] = []
+
+    def _record(exc: OSError) -> None:
+        """`os.walk` swallows a directory it cannot list and walks on. That is
+        this file's defect class at the traversal layer: a subtree we could not
+        ENUMERATE reported as a subtree with nothing in it, so a skill with an
+        invalid version vanished and `main()` printed "0 versioned skill(s)
+        consistent" and exited 0. Enumerating is a measurement; failing it is a
+        finding, not a smaller tree."""
+        where = getattr(exc, "filename", None) or _SKILLS_DIR
+        try:
+            where = Path(where).relative_to(_SKILLS_DIR)
+        except ValueError:
+            pass
+        unwalkable.append(
+            f"{where}: directory could not be listed ({type(exc).__name__}) — "
+            "the skills under it were NOT checked")
+
     # `os.walk`, NOT `rglob`. On Python 3.11 `Path.rglob` filters candidates
     # through `Path.exists()`, which FOLLOWS symlinks, so a dangling SKILL.md is
     # never yielded and the skill is not merely exempt — it does not exist. The
@@ -308,7 +352,7 @@ def _iter_skill_dirs() -> list[Path]:
     # It is also version-dependent: 3.12 lists the dangling entry, 3.11 does not,
     # so the local suite passed while CI went green on nothing. `os.walk` reports
     # directory entries by name and behaves the same on both.
-    for root, _subdirs, files in os.walk(_SKILLS_DIR, followlinks=False):
+    for root, _subdirs, files in os.walk(_SKILLS_DIR, followlinks=False, onerror=_record):
         if "SKILL.md" not in files:
             continue
         skill_dir = Path(root)
@@ -316,7 +360,7 @@ def _iter_skill_dirs() -> list[Path]:
         if "extensions" in rel.parts:
             continue
         dirs.append(skill_dir)
-    return sorted(dirs)
+    return sorted(dirs), unwalkable
 
 
 def main() -> int:
@@ -324,9 +368,10 @@ def main() -> int:
         print(f"no skills/ dir at {_SKILLS_DIR}", file=sys.stderr)
         return 2
 
-    all_errors: list[str] = []
+    skill_dirs, unwalkable = _iter_skill_dirs()
+    all_errors: list[str] = list(unwalkable)
     versioned = 0
-    for skill_dir in _iter_skill_dirs():
+    for skill_dir in skill_dirs:
         skill_md = skill_dir / "SKILL.md"
         # No three-state guard here on purpose. An unreadable manifest yields
         # {} -> _skill_version None -> already uncounted, AND the count is only

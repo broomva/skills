@@ -132,3 +132,32 @@ jobs:
             echo "::error::a dangling manifest went unreported or was miscalled"
             cat /tmp/link.txt; exit 1; }
           echo "a dangling SKILL.md is reported as a broken symlink, exit 1, no crash"
+
+      - name: The gate catches a subtree it cannot LIST
+        # Round 4, the same defect at the traversal layer: `os.walk` swallows an
+        # unlistable directory and walks on, so an EACCES subtree read as a
+        # subtree with nothing in it. The lint printed "0 versioned skill(s)
+        # consistent" and exited 0 over a skill it never opened.
+        run: |
+          mkdir -p skills/tooling/zzz-eacces-probe
+          printf -- '---\nname: zzz-eacces-probe\ndescription: Probe.\nversion: not-semver\n---\n' \
+            > skills/tooling/zzz-eacces-probe/SKILL.md
+          chmod 000 skills/tooling/zzz-eacces-probe
+          set +e
+          python3 scripts/lint_skill_versions.py > /tmp/eacces.txt 2>&1
+          code=$?
+          set -e
+          chmod 755 skills/tooling/zzz-eacces-probe
+          rm -rf skills/tooling/zzz-eacces-probe
+          if [ "$code" -ne 1 ]; then
+            echo "::error::an unlistable subtree must exit 1, got $code"
+            cat /tmp/eacces.txt; exit 1
+          fi
+          if grep -q 'Traceback' /tmp/eacces.txt; then
+            echo "::error::the lint crashed instead of reporting"
+            cat /tmp/eacces.txt; exit 1
+          fi
+          grep -q 'could not be listed' /tmp/eacces.txt || {
+            echo "::error::an unlistable subtree was silently dropped"
+            cat /tmp/eacces.txt; exit 1; }
+          echo "an unlistable subtree is reported, exit 1, no crash"

@@ -118,6 +118,10 @@ class TestWhatRemainsExempt:
 
 
 def _versioned(tmp_path: Path, name: str, version: str = "1.2.3", **files: str) -> Path:
+    # `version` is the VALUE. Callers that need YAML quoting pass `yaml_literal`;
+    # passing '"1.2.3"' here wrote `## ["1.2.3"]` into the CHANGELOG, so every
+    # "valid version is accepted" case actually raised a missing-CHANGELOG error
+    # that the assertion filtered out — a control passing on a filtered failure.
     """A skill that is versioned and internally consistent, plus whatever extra
     manifests a case wants to break."""
     d = tmp_path / name
@@ -198,7 +202,7 @@ class TestAnEmptyVersionIsADeclarationNotAnAbsence:
         d.mkdir()
         (d / "SKILL.md").write_text(
             "---\nname: nullmeta\ndescription: D.\nmetadata:\n  version:\n---\n", encoding="utf-8")
-        assert any("empty version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
+        assert any("empty metadata.version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
 
     def test_a_genuinely_absent_version_is_still_exempt(self, tmp_path, lint):
         """CONTROL: the two cases above must not turn every prototype into a
@@ -428,8 +432,10 @@ class TestSemVerIsAsciiAndAnchored:
     def test_valid_versions_are_accepted(self, tmp_path, lint, version):
         """CONTROL: tightening must not reject the spec's own examples — the
         false-red half of the proof."""
-        d = _versioned(tmp_path, f"ok-{abs(hash(version))}", version=f'"{version}"')
-        assert not [p for p in lint.lint_skill(d) if "not valid SemVer" in p]
+        d = _versioned(tmp_path, f"ok-{abs(hash(version))}", version=version)
+        # The WHOLE result, not a filtered slice: filtering to "not valid SemVer"
+        # is what hid the fixture's own CHANGELOG breakage.
+        assert lint.lint_skill(d) == []
 
 
 class TestChangelogHeadingIsDeclaredNotMerelyMentioned:
@@ -483,7 +489,7 @@ class TestEveryDeclarationIsChecked:
         (d / "SKILL.md").write_text(
             "---\nname: mixed\ndescription: D.\nversion: 1.2.3\nmetadata:\n  version:\n---\n",
             encoding="utf-8")
-        assert any("empty version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
+        assert any("empty metadata.version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
 
 
 class TestCrlfIsALineEndingNotAFenceDefect:
@@ -530,7 +536,8 @@ class TestDiscoverySeesWhatTheReaderCanReport:
         root = self._skills_tree(tmp_path, lint, monkeypatch)
         (root / "dangling").mkdir()
         (root / "dangling" / "SKILL.md").symlink_to(tmp_path / "no-such-target")
-        assert (root / "dangling") in lint._iter_skill_dirs()
+        found, unwalkable = lint._iter_skill_dirs()
+        assert (root / "dangling") in found and unwalkable == []
 
     def test_the_entry_point_goes_red_on_a_dangling_manifest(
         self, tmp_path, lint, monkeypatch, capsys
@@ -549,7 +556,7 @@ class TestDiscoverySeesWhatTheReaderCanReport:
         for rel in ["a", "b/skills/c", "d/e/f"]:
             (root / rel).mkdir(parents=True)
             (root / rel / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
-        found = lint._iter_skill_dirs()
+        found, _ = lint._iter_skill_dirs()
         assert {(root / r) for r in ["a", "b/skills/c", "d/e/f"]} <= set(found)
 
     def test_extensions_are_still_excluded(self, tmp_path, lint, monkeypatch):
@@ -557,4 +564,77 @@ class TestDiscoverySeesWhatTheReaderCanReport:
         (root / "x" / "extensions" / "priv").mkdir(parents=True)
         (root / "x" / "extensions" / "priv" / "SKILL.md").write_text(
             "---\nname: p\n---\n", encoding="utf-8")
-        assert not [d for d in lint._iter_skill_dirs() if "extensions" in d.parts]
+        found, _ = lint._iter_skill_dirs()
+        assert not [d for d in found if "extensions" in d.parts]
+
+
+class TestAnUnlistableDirectoryIsAFindingNotASmallerTree:
+    """The round-4 blocker: the same defect at the TRAVERSAL layer. `os.walk`
+    swallows a directory it cannot list and walks on, so an EACCES subtree read
+    as a subtree containing nothing — `main()` printed "0 versioned skill(s)
+    consistent" and exited 0 on a tree holding a skill with an invalid version.
+    """
+
+    @pytest.fixture
+    def locked_tree(self, tmp_path, lint, monkeypatch):
+        root = tmp_path / "skills" / "tooling"
+        root.mkdir(parents=True)
+        locked = root / "locked"
+        locked.mkdir()
+        (locked / "SKILL.md").write_text(
+            "---\nname: locked\nversion: not-semver\n---\n", encoding="utf-8")
+        monkeypatch.setattr(lint, "_SKILLS_DIR", tmp_path / "skills")
+        locked.chmod(0o000)
+        yield locked
+        locked.chmod(0o755)
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_it_is_reported(self, lint, locked_tree):
+        _dirs, unwalkable = lint._iter_skill_dirs()
+        assert unwalkable, "an unlistable directory was silently dropped"
+        assert any("could not be listed" in u for u in unwalkable), unwalkable
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_it_reaches_the_exit_code(self, lint, locked_tree, capsys):
+        """Through `main()`: the finding is worthless if it never leaves
+        discovery. This is what the CI probe exercises."""
+        assert lint.main() == 1
+        out = capsys.readouterr()
+        assert "could not be listed" in out.out + out.err
+
+    def test_a_listable_tree_reports_nothing(self, tmp_path, lint, monkeypatch):
+        """CONTROL: the walk must not manufacture findings on a normal tree."""
+        root = tmp_path / "skills" / "tooling" / "ok"
+        root.mkdir(parents=True)
+        (root / "SKILL.md").write_text("---\nname: ok\n---\n", encoding="utf-8")
+        monkeypatch.setattr(lint, "_SKILLS_DIR", tmp_path / "skills")
+        assert lint._iter_skill_dirs() == ([root], [])
+
+
+class TestEveryDeclarationIsValidatedNotJustTheWinner:
+    """Round 4: `version: 1.2.3` beside `metadata.version: not-semver` returned
+    `[]`. `_skill_version` answers which declaration WINS; that is a different
+    question from what the author declared, and only the winner was validated."""
+
+    def test_an_invalid_losing_declaration_is_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "conflict")
+        (d / "SKILL.md").write_text(
+            "---\nname: conflict\ndescription: D.\nversion: 1.2.3\n"
+            "metadata:\n  version: not-semver\n---\n", encoding="utf-8")
+        problems = lint.lint_skill(d)
+        assert any("metadata.version" in p and "not valid SemVer" in p for p in problems), problems
+
+    def test_two_valid_but_different_declarations_are_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "two")
+        (d / "SKILL.md").write_text(
+            "---\nname: two\ndescription: D.\nversion: 1.2.3\n"
+            "metadata:\n  version: 9.9.9\n---\n", encoding="utf-8")
+        assert any("conflicting versions" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
+
+    def test_two_agreeing_declarations_are_clean(self, tmp_path, lint):
+        """CONTROL: saying the same thing twice is redundant, not wrong."""
+        d = _versioned(tmp_path, "agree")
+        (d / "SKILL.md").write_text(
+            "---\nname: agree\ndescription: D.\nversion: 1.2.3\n"
+            "metadata:\n  version: 1.2.3\n---\n", encoding="utf-8")
+        assert lint.lint_skill(d) == []
