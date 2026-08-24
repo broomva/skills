@@ -37,6 +37,26 @@ import time
 
 PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 
+# Every bound in one place. Two review rounds found caps duplicated at the use
+# site (the 1200 char cap lived at three lines despite a commit claiming to
+# single-source it) and constants that no test could falsify — widening them
+# changed behaviour with the suite green. A literal at a use site is a bound
+# nobody can check; these are named, imported, and asserted in tests/.
+LIMITS = {
+    "digest_chars": 1200,       # recovered prose per worker
+    "digest_tail_records": 400, # how deep into a worker's log to read
+    "prompt_render_chars": 4000,# prompt shown in the text render
+    "summary_chars": 300,       # a completion notice's summary
+    "command_chars": 400,       # a background shell's command line
+    "evidence_chars": 160,      # window after a termination match
+    "last_words_lines": 12,     # lines of recovered prose shown
+    "files_listed": 20,         # files_touched entries kept
+    "file_path_chars": 200,     # each entry's length
+    "cwd_probe_lines": 40,      # records read to confirm a transcript's cwd
+    "live_window_s": 90,        # recent-output window for liveness
+    "termination_tail": 400,    # records scanned back for a termination
+}
+
 # --- in-process agents -------------------------------------------------
 AGENT_ID_RE = re.compile(r"agentId:\s*([A-Za-z0-9_-]+)")
 OUTPUT_FILE_RE = re.compile(r"output_file:\s*(\S+)")
@@ -64,20 +84,30 @@ OK_STATUSES = ("completed", "success", "succeeded", "done")
 
 ERROR_PREFIX_RE = re.compile(
     r"^\s*(?:API Error\b|\[Request interrupted|Login expired|"
-    r"Claude usage limit|Usage limit reached|You've hit your)", re.I)
+    r"Claude usage limit|Usage limit reached|You've hit your|"
+    r"Failed to authenticate|Prompt is too long|Your computer went to sleep)", re.I)
 
 TERMINATION_SIGNATURES = [
-    ("auth_expired",  re.compile(r"Login expired|Please run /login|authentication_error|invalid[_ ]api[_ ]key|OAuth token has expired|\b401\b", re.I)),
+    # 'OAuth session expired' is the real noun; 'token' matched nothing, so
+    # the /login remedy could never fire on a genuine auth death.
+    ("auth_expired",  re.compile(r"Login expired|Please run /login|authentication_error|invalid[_ ]api[_ ]key|Failed to authenticate|OAuth (session|token) expired|OAuth token has expired|\b401\b", re.I)),
     # `resets Aug 10 at 7am` is the dominant production form (53 of 61 sampled
     # api-error records). An earlier signature required the literal "resets at"
     # and matched none of them — the fixtures had been written to satisfy the
     # regex rather than copied from what the harness emits.
-    ("usage_limit",   re.compile(r"usage limit|limit reached|hit your (weekly|daily|5-hour) limit|resets\s+(at|\w+\s+\d+\s+at)|credit balance", re.I)),
+    # Copied from what the harness emits, not written to satisfy the regex.
+    # 'session limit' alone is 39 of 801 sampled api-error records, and
+    # 'resets 1:50pm' has no 'at'.
+    ("usage_limit",   re.compile(r"usage limit|limit reached|hit your \w+[\w-]* limit|resets\s+\S|credit balance", re.I)),
     ("rate_limited",  re.compile(r"rate.?limit|\b429\b", re.I)),
     ("api_overload",  re.compile(r"\b529\b|Overloaded", re.I)),
     ("api_5xx",       re.compile(r"\b5(00|02|03)\b|Internal server error|Bad gateway|Service unavailable", re.I)),
     ("network",       re.compile(r"ENOTFOUND|ECONNRESET|ETIMEDOUT|ConnectionRefused|Connection error|Connection lost|Connection closed mid-response|Response stalled mid-stream|socket hang up|fetch failed|Unable to connect|Can't reach the API|\b52[0-4]\b", re.I)),
     ("user_interrupt", re.compile(r"\[Request interrupted|Interrupted by user", re.I)),
+    # SKILL.md names "a laptop that slept" as a target cause; it was unclassified.
+    ("machine_slept", re.compile(r"computer went to sleep|machine went to sleep", re.I)),
+    ("context_too_long", re.compile(r"Prompt is too long|context length exceeded", re.I)),
+    ("stalled",       re.compile(r"response stopped arriving|stopped responding", re.I)),
 ]
 
 # Recovered text is printed into an agent's context and then, per SKILL.md
@@ -87,13 +117,24 @@ TERMINATION_SIGNATURES = [
 # does not make the output safe to publish.
 SECRET_PATTERNS = [
     ("anthropic-key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}")),
-    ("openai-key",    re.compile(r"\bsk-[A-Za-z0-9]{20,}")),
+    # sk-proj-/sk-svcacct- carry hyphens, so a [A-Za-z0-9]+ class misses them.
+    # Needs the vendor prefix or a long opaque run: a bare `sk-` followed by
+    # ordinary words was masking prose and URLs.
+    ("openai-key",    re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{20,}"
+                                 r"|\bsk-[A-Za-z0-9]{32,}")),
     ("github-token",  re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}")),
     ("github-pat",    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}")),
+    ("gitlab-token",  re.compile(r"\bglpat-[A-Za-z0-9_\-]{16,}")),
+    ("npm-token",     re.compile(r"\bnpm_[A-Za-z0-9]{30,}")),
     ("aws-key",       re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
     ("slack-token",   re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}")),
     ("google-key",    re.compile(r"\bAIza[A-Za-z0-9_\-]{30,}")),
-    ("bearer",        re.compile(r"(?i)\b(?:authorization|bearer)\s*[:=]\s*\S{12,}")),
+    # The scheme sits BETWEEN the header and the credential
+    # ("Authorization: Bearer <tok>"), so a pattern demanding the delimiter
+    # immediately after the keyword matched neither production form.
+    ("auth-header",   re.compile(
+        r"(?i)\bauthorization\s*[:=]\s*(?:bearer|basic|token)?\s*[A-Za-z0-9._+/=\-]{12,}")),
+    ("bearer",        re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._+/=\-]{12,}")),
     ("pem",           re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
 ]
 
@@ -173,7 +214,8 @@ def find_session(cwd: str, projects_dir: str = PROJECTS_DIR, skip: int = 0) -> s
     return sessions[skip] if len(sessions) > skip else None
 
 
-def _declares_cwd(path: str, target: str, probe_lines: int = 40) -> bool:
+def _declares_cwd(path: str, target: str, probe_lines: int | None = None) -> bool:
+    probe_lines = LIMITS["cwd_probe_lines"] if probe_lines is None else probe_lines
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             for i, line in enumerate(fh):
@@ -287,18 +329,29 @@ def find_spawns(recs: list[dict]) -> list[dict]:
         for b in _blocks(rec):
             if b.get("type") == "tool_use" and b.get("name") in AGENT_TOOLS + BG_TOOLS:
                 inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                # The tool CALL is authoritative about intent; the result text
+                # is not. A foreground Bash whose stdout merely contains
+                # "Command running in background with ID: ..." — a grep over
+                # this very corpus does exactly that — was classified as a live
+                # background worker. Trust the input flag, not the echo.
+                if b.get("name") in BG_TOOLS and not inp.get("run_in_background"):
+                    continue
+                if b.get("id") is None:
+                    continue  # an id-less call cannot be paired with a result
                 pending[b.get("id")] = {
                     "tool_use_id": b.get("id"),
                     "tool": b.get("name"),
                     "kind": "background-shell" if b.get("name") in BG_TOOLS else "agent",
                     "description": inp.get("description") or inp.get("name") or "",
-                    "command": (inp.get("command") or "")[:400],
-                    "prompt": inp.get("prompt") or "",
+                    "command": str(inp.get("command") or "")[:LIMITS["command_chars"]],
+                    "prompt": inp.get("prompt") if isinstance(inp.get("prompt"), str) else "",
                     "subagent_type": inp.get("subagent_type") or "",
                     "spawned_at": (rec.get("timestamp") or "")[:19],
                     "index": idx,
                 }
             elif b.get("type") == "tool_result":
+                if b.get("tool_use_id") is None:
+                    continue
                 meta = pending.pop(b.get("tool_use_id"), None)
                 if not meta:
                     continue
@@ -332,6 +385,12 @@ def find_completions(recs: list[dict]) -> dict[str, dict]:
     """
     done: dict[str, dict] = {}
     for rec in recs:
+        # An ASSISTANT record containing this markup is prose ABOUT the format
+        # — a transcript discussing it (this repo's own fixtures do) could
+        # otherwise forge a completion. The harness emits notifications on
+        # queue-operation / attachment / user records.
+        if rec.get("type") == "assistant":
+            continue
         try:
             text = json.dumps(rec)
         except (TypeError, ValueError):
@@ -347,7 +406,7 @@ def find_completions(recs: list[dict]) -> dict[str, dict]:
             tu = NOTIF_TOOLUSE_RE.search(body)
             done[tid.group(1)] = {
                 "status": (status.group(1) if status else "unknown").strip(),
-                "summary": (summary.group(1) if summary else "").replace("\\n", " ")[:300],
+                "summary": (summary.group(1) if summary else "").replace("\\n", " ")[:LIMITS["summary_chars"]],
                 "tool_use_id": tu.group(1) if tu else None,
             }
     return done
@@ -367,13 +426,15 @@ def _termination_text(rec: dict) -> str:
     for b in _blocks(rec):
         if b.get("type") != "text":
             continue
-        t = (b.get("text") or "").lstrip()
+        raw = b.get("text")
+        t = raw.lstrip() if isinstance(raw, str) else ""
         if t and ERROR_PREFIX_RE.match(t):
             parts.append(t)
     return "\n".join(parts)
 
 
-def find_termination(recs: list[dict], tail: int = 400) -> dict:
+def find_termination(recs: list[dict], tail: int | None = None) -> dict:
+    tail = LIMITS["termination_tail"] if tail is None else tail
     for rec in reversed(recs[-tail:]):
         text = _termination_text(rec)
         if not text.strip():
@@ -381,7 +442,7 @@ def find_termination(recs: list[dict], tail: int = 400) -> dict:
         for kind, pat in TERMINATION_SIGNATURES:
             m = pat.search(text)
             if m:
-                ev, _ = redact(text[max(0, m.start() - 60): m.start() + 160])
+                ev, _ = redact(text[max(0, m.start() - 60): m.start() + LIMITS["evidence_chars"]])
                 return {"kind": kind, "evidence": ev.replace("\n", " ").strip(),
                         "at": (rec.get("timestamp") or "")[:19]}
     # An api-error record we could not classify must NOT read as "ended
@@ -402,10 +463,12 @@ def _last_timestamp(recs: list[dict]) -> float | None:
         ts = rec.get("timestamp")
         if not ts:
             continue
+        if not isinstance(ts, str):
+            continue
         try:
             from datetime import datetime
             return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, AttributeError):
             continue
     return None
 
@@ -428,15 +491,26 @@ def durable_transcript(session_path: str, worker_id: str | None) -> str | None:
     if ext != ".jsonl":
         return None
     cand = os.path.join(base, "subagents", f"agent-{worker_id}.jsonl")
-    return cand if os.path.exists(cand) else None
+    if os.path.exists(cand):
+        return cand
+    # Workflow workers land under subagents/workflows/ — 160 artifacts across
+    # 17 sessions here — so not searching it left the durable claim true for
+    # plain agents only.
+    import glob as _glob
+    hits = _glob.glob(os.path.join(base, "subagents", "workflows", "**",
+                                   f"agent-{worker_id}.jsonl"), recursive=True)
+    return hits[0] if hits else None
 
 
-def digest_output(path: str, max_chars: int = 1200, tail_records: int = 400) -> dict:
+def digest_output(path: str, max_chars: int | None = None,
+                  tail_records: int | None = None) -> dict:
     """Bounded, redacted digest of a dead worker's surviving output.
 
     NEVER returns the whole file: these reach ~1.5 MB and the harness warns
     that reading one raw overflows the parent's context.
     """
+    max_chars = LIMITS["digest_chars"] if max_chars is None else max_chars
+    tail_records = LIMITS["digest_tail_records"] if tail_records is None else tail_records
     if max_chars < 1:
         raise ValueError("max_chars must be >= 1")
     if not path:
@@ -509,12 +583,16 @@ def digest_output(path: str, max_chars: int = 1200, tail_records: int = 400) -> 
         "tool_counts": dict(sorted(tools.items(), key=lambda kv: -kv[1])),
         # Bounded like final_text: 40 unbounded paths serialized to 16 KB in
         # a payload whose cap was advertised as 1200 chars.
-        "files_touched": [f[:200] for f in sorted(files)[:20]],
+        "files_touched": [f[:LIMITS["file_path_chars"]]
+                          for f in sorted(files)[:LIMITS["files_listed"]]],
         "mtime_age_s": int(time.time() - st.st_mtime),
     }
 
 
-def scan(session_path: str, max_chars: int = 1200, live_window_s: int = 90) -> dict:
+def scan(session_path: str, max_chars: int | None = None,
+         live_window_s: int | None = None) -> dict:
+    max_chars = LIMITS["digest_chars"] if max_chars is None else max_chars
+    live_window_s = LIMITS["live_window_s"] if live_window_s is None else live_window_s
     if max_chars < 1:
         raise ValueError("max_chars must be >= 1")
     recs, unparsable = load(session_path)
@@ -622,15 +700,29 @@ def _emit_worker(out: list[str], s: dict, header: str) -> None:
                        + (" …" if len(d["files_touched"]) > 6 else ""))
         if d.get("final_text"):
             out.append("  last words :")
-            for ln in d["final_text"].splitlines()[:12]:
+            for ln in d["final_text"].splitlines()[:LIMITS["last_words_lines"]]:
                 out.append(f"    | {ln[:110]}")
     out.append("  triage     : does the above show the work FINISHED (fold in, do not")
     out.append("               re-spawn), PARTIAL (re-spawn the remainder), or too little")
     out.append("               to tell (re-spawn from the prompt)? — SKILL.md step 4")
     if s.get("prompt"):
-        out.append(f"  orig prompt ({len(s['prompt'])} chars, complete):")
-        for ln in s["prompt"].splitlines()[:8]:
-            out.append(f"    > {ln[:110]}")
+        # Round 1 cut this at 2,000 chars silently. Round 2 cut it at 880 (8
+        # lines x 110) and LABELLED IT COMPLETE, and a test asserted the word
+        # "complete" — so the suite pinned the false claim. Measured: 46 of 46
+        # real prompts exceeded that budget, so the label was wrong every
+        # single time. Either it is whole, or the render says it is not.
+        prompt = s["prompt"]
+        budget = LIMITS["prompt_render_chars"]
+        shown = prompt[:budget]
+        if len(prompt) <= budget:
+            out.append(f"  orig prompt ({len(prompt)} chars, complete):")
+        else:
+            out.append(f"  orig prompt ({len(prompt)} chars, TRUNCATED to {budget} "
+                       f"for display — re-spawn from --json, which carries it whole):")
+        for ln in shown.splitlines():
+            out.append(f"    > {ln}")
+        if len(prompt) > budget:
+            out.append(f"    > [... {len(prompt) - budget} more chars — use --json ...]")
     elif s.get("command"):
         out.append(f"  command    : {s['command'][:200]}")
 
@@ -707,9 +799,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cwd", default=os.getcwd(), help="working dir whose session to find")
     ap.add_argument("--projects-dir", default=PROJECTS_DIR)
     ap.add_argument("--json", action="store_true", help="emit raw JSON")
-    ap.add_argument("--max-chars", type=int, default=1200,
+    ap.add_argument("--max-chars", type=int, default=LIMITS["digest_chars"],
                     help="hard cap on recovered text per worker (must be >= 1)")
-    ap.add_argument("--live-window", type=int, default=90,
+    ap.add_argument("--live-window", type=int, default=LIMITS["live_window_s"],
                     help="seconds of recent output that may indicate a live process")
     ap.add_argument("--previous", action="store_true",
                     help="scan the session BEFORE the newest — use when the crash "
@@ -737,6 +829,9 @@ def main(argv: list[str] | None = None) -> int:
                   + ("   <- default" if i == 0 else "   <- --previous" if i == 1 else ""))
         return 0
 
+    if args.session and (args.previous or args.list_sessions):
+        print("resume_scan: --session overrides --previous/--list-sessions",
+              file=sys.stderr)
     session = args.session or (candidates[args.previous:] or [None])[0]
     if not session:
         which = "previous session" if args.previous else "session transcript"

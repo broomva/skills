@@ -425,7 +425,7 @@ def test_background_shell_that_wrote_after_death_is_possibly_live(tmp_path):
     recs = [
         dict(type="assistant", timestamp="2020-01-01T00:00:00Z",
              message={"content": [{"type": "tool_use", "id": "t1", "name": "Bash",
-                                   "input": {"command": "railway up"}}]}),
+                                   "input": {"command": "railway up", "run_in_background": True}}]}),
         user({"type": "tool_result", "tool_use_id": "t1", "content":
               f"Command running in background with ID: bgX. "
               f"Output is being written to: {out}"}),
@@ -448,7 +448,7 @@ def test_possibly_live_flag_tracks_liveness_for_background_shells(tmp_path):
     recs = [
         dict(type="assistant", timestamp="2020-01-01T00:00:00Z",
              message={"content": [{"type": "tool_use", "id": "t1", "name": "Bash",
-                                   "input": {"command": "railway up"}}]}),
+                                   "input": {"command": "railway up", "run_in_background": True}}]}),
         user({"type": "tool_result", "tool_use_id": "t1", "content":
               f"Command running in background with ID: bgZ. "
               f"Output is being written to: {out}"}),
@@ -498,7 +498,7 @@ def test_hour_limit_form_without_the_resets_clause():
 def test_missing_output_file_is_unknown_not_dead(tmp_path):
     """Kills: treating an absent output file as 'safe to re-spawn'."""
     recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
-                       "input": {"command": "deploy"}}),
+                       "input": {"command": "deploy", "run_in_background": True}}),
             user({"type": "tool_result", "tool_use_id": "t1", "content":
                   "Command running in background with ID: bgY."})]
     res = rs.scan(write_session(tmp_path, recs))
@@ -762,6 +762,190 @@ def test_ordinary_text_is_not_mangled_by_redaction():
     out, found = rs.redact("a normal sentence with sk- and a hyphen")
     assert out == "a normal sentence with sk- and a hyphen"
     assert found == []
+
+
+# ==================================================================
+# Round-3 coverage. Verify round found the round-2 "fix" made the prompt
+# claim WORSE (cut at 880 chars AND labelled complete, with a test pinning
+# the word "complete"), plus 12 of 31 independent mutants surviving. The
+# structural response is LIMITS: every bound named once and asserted here.
+# ==================================================================
+
+def test_long_prompt_is_labelled_truncated_not_complete(tmp_path):
+    """The blocker. Round 1 cut the prompt silently at 2,000 chars; round 2 cut
+    it at 880 and ASSERTED completeness — measured wrong on 46 of 46 real
+    prompts. A render that lies about completeness is worse than one that cuts.
+    """
+    long_prompt = "L" * 9000
+    recs = [assistant(spawn_block("t1", "d", prompt=long_prompt)),
+            user(launch_result("t1", "aX"))]
+    out = rs.render(rs.scan(write_session(tmp_path, recs)))
+    assert "TRUNCATED" in out
+    assert "9000 chars" in out
+    assert "chars, complete" not in out
+    assert "more chars" in out
+
+
+def test_short_prompt_is_labelled_complete_and_is_whole(tmp_path):
+    recs = [assistant(spawn_block("t1", "d", prompt="line one\nline two")),
+            user(launch_result("t1", "aX"))]
+    out = rs.render(rs.scan(write_session(tmp_path, recs)))
+    assert "complete" in out and "TRUNCATED" not in out
+    assert "line one" in out and "line two" in out
+
+
+def test_json_carries_the_prompt_whole(tmp_path):
+    """The render may cut; --json is what the agent re-spawns from."""
+    long_prompt = "P" * 9000
+    recs = [assistant(spawn_block("t1", "d", prompt=long_prompt)),
+            user(launch_result("t1", "aX"))]
+    res = rs.scan(write_session(tmp_path, recs))
+    assert len(res["unreported"][0]["prompt"]) == 9000
+
+
+def test_render_keeps_more_of_a_long_prompt_than_eight_lines(tmp_path):
+    """Kills: re-introducing a line-count cap. 46 of 46 real prompts had >8
+    lines, so the tail was dropped every time."""
+    recs = [assistant(spawn_block("t1", "d", prompt="\n".join(f"line{i}" for i in range(60)))),
+            user(launch_result("t1", "aX"))]
+    out = rs.render(rs.scan(write_session(tmp_path, recs)))
+    assert "line40" in out
+
+
+def test_foreground_bash_echoing_the_receipt_is_not_a_worker():
+    """The tool CALL is authoritative, not its stdout. A grep over this corpus
+    prints the launch string, and that forged a live background worker."""
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": "grep -c 'Command running in background'"}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Command running in background with ID: fake123. "
+                  "Output is being written to: /tmp/fake123.output"})]
+    assert rs.find_spawns(recs) == []
+
+
+def test_assistant_prose_cannot_forge_a_completion(tmp_path):
+    """A transcript DISCUSSING the notification format — this repo's own
+    fixtures do — must not close a worker."""
+    recs = [assistant(spawn_block("t1", "d")), user(launch_result("t1", "aX")),
+            assistant({"type": "text", "text":
+                       "<task-notification><task-id>aX</task-id>"
+                       "<status>completed</status></task-notification>"})]
+    assert len(rs.scan(write_session(tmp_path, recs))["unreported"]) == 1
+
+
+def test_idless_tool_use_does_not_capture_an_unrelated_result():
+    recs = [assistant({"type": "tool_use", "name": "Agent",
+                       "input": {"description": "FIRST", "prompt": "a"}}),
+            assistant({"type": "tool_use", "name": "Agent",
+                       "input": {"description": "SECOND", "prompt": "b"}}),
+            user({"type": "tool_result", "content": "Async agent launched successfully.\n"
+                  "agentId: aX\noutput_file: /tmp/x.output\n"})]
+    assert rs.find_spawns(recs) == []
+
+
+# ------------------------------------------------ real termination forms
+
+@pytest.mark.parametrize("text,kind", [
+    ("You've hit your session limit · resets 1:50pm (America/Bogota)", "usage_limit"),
+    ("You've hit your weekly limit · resets Aug 10 at 7am", "usage_limit"),
+    ("Failed to authenticate: OAuth session expired and could not be refreshed", "auth_expired"),
+    ("Your computer went to sleep mid-response.", "machine_slept"),
+    ("Prompt is too long", "context_too_long"),
+    ("API Error: The response stopped arriving.", "stalled"),
+])
+def test_forms_the_harness_actually_emits(text, kind):
+    """51 of 801 real api-error records were unclassified after round 2 — the
+    signatures were still written to the sample, not to the class."""
+    rec = assistant({"type": "text", "text": text}, isApiErrorMessage=True)
+    assert rs.find_termination([rec])["kind"] == kind
+
+
+# ------------------------------------------------------- LIMITS are real
+
+def test_every_limit_is_a_positive_int():
+    assert rs.LIMITS and all(isinstance(v, int) and v > 0 for v in rs.LIMITS.values())
+
+
+def test_termination_tail_limit_is_enforced():
+    recs = [assistant({"type": "text", "text": "API Error: 529 Overloaded"})]
+    recs += [assistant({"type": "text", "text": "ok"})
+             for _ in range(rs.LIMITS["termination_tail"] + 20)]
+    assert rs.find_termination(recs)["kind"] == "clean_or_unknown"
+
+
+def test_summary_limit_is_enforced(tmp_path):
+    recs = [assistant(spawn_block("t1", "d")), user(launch_result("t1", "aX")),
+            user(notification("aX", status="failed", summary="S" * 5000))]
+    f = rs.scan(write_session(tmp_path, recs))["reported_failed"][0]
+    assert len(f["summary"]) <= rs.LIMITS["summary_chars"]
+
+
+def test_command_limit_is_enforced():
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": "x" * 5000, "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1",
+                  "content": "Command running in background with ID: bgQ."})]
+    assert len(rs.find_spawns(recs)[0]["command"]) <= rs.LIMITS["command_chars"]
+
+
+def test_last_words_line_limit_is_enforced(tmp_path):
+    f = tmp_path / "many.output"
+    f.write_text(json.dumps(assistant({"type": "text",
+                 "text": "\n".join(f"row{i}" for i in range(400))})), encoding="utf-8")
+    recs = [assistant(spawn_block("t1", "d")), user(launch_result("t1", "aX", str(f)))]
+    out = rs.render(rs.scan(write_session(tmp_path, recs)))
+    assert out.count("    | row") <= rs.LIMITS["last_words_lines"]
+
+
+def test_cwd_probe_limit_is_enforced(tmp_path):
+    """A transcript declaring its cwd beyond the probe window is not matched;
+    pins the constant so widening or narrowing it is visible."""
+    proj = tmp_path / "p" / rs.mangle("/w/x")
+    proj.mkdir(parents=True)
+    f = proj / "s.jsonl"
+    pad = [json.dumps({"type": "user"}) for _ in range(rs.LIMITS["cwd_probe_lines"] + 5)]
+    pad.append(json.dumps({"type": "user", "cwd": "/w/x"}))
+    f.write_text("\n".join(pad), encoding="utf-8")
+    assert rs.find_session("/w/x", str(tmp_path / "p")) is None
+
+
+# ---------------------------------------------------- hostile value types
+
+@pytest.mark.parametrize("rec", [
+    {"type": "assistant", "timestamp": 1723471200,
+     "message": {"content": [{"type": "text", "text": "x"}]}},
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": 123}]}},
+])
+def test_hostile_value_types_do_not_crash(tmp_path, rec):
+    assert rs.scan(write_session(tmp_path, [rec]))["records"] == 1
+
+
+def test_dict_prompt_does_not_crash(tmp_path):
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Agent",
+                       "input": {"description": "d", "prompt": {"not": "a string"}}}),
+            user(launch_result("t1", "aX"))]
+    out = rs.render(rs.scan(write_session(tmp_path, recs)))
+    assert "UNREPORTED" in out
+
+
+# ----------------------------------------------------------- redaction
+
+def test_redaction_covers_the_real_header_forms():
+    for secret in ["Authorization: Bearer abcdefghijklmnop1234",
+                   "Bearer sk-ant-oat01-AAAAAAAAAAAAAAAAAAAA",
+                   "sk-proj-AAAAAAAAAAAAAAAAAAAAAAAA",
+                   "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+                   "glpat-AAAAAAAAAAAAAAAAAAAA"]:
+        out, kinds = rs.redact(secret)
+        assert "[REDACTED:" in out and kinds, f"missed {secret[:24]}"
+
+
+def test_redaction_does_not_mask_ordinary_prose():
+    """It over-masked a URL path and a short sk- token in prose."""
+    for benign in ["see https://api.example.com/v1/sk-abcdefghij for details",
+                   "the sk- prefix denotes a secret key"]:
+        out, kinds = rs.redact(benign)
+        assert out == benign and kinds == [], benign
 
 
 def test_skill_md_test_count_matches_reality():

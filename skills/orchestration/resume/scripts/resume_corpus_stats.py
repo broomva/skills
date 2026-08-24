@@ -32,7 +32,17 @@ import json
 import os
 import re
 import sys
-from collections import Counter
+
+# Share the scanner's parsing and signatures rather than restating them. Two
+# review rounds found this file carrying the ROUND-1 versions after the
+# scanner was fixed — a sibling site keeping the old behaviour is how a fix
+# reads as landed while half the codebase still has the defect.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from resume_scan import (  # noqa: E402
+    TERMINATION_SIGNATURES,
+    _blocks as _rs_blocks,
+    record_text as _rs_text,
+)
 
 PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 
@@ -51,14 +61,16 @@ INJECTED = ("<system-reminder>", "<local-command-caveat>", "Caveat:")
 SPAWN_TOOLS = ("Agent", "Task", "Workflow")
 QUERY_TOOLS = ("TaskOutput", "SendMessage", "TaskStop")
 
+# Derived from the scanner's own signature table, so the two can never drift:
+# a form the scanner learns to classify is a form this counts.
+_SIG = dict(TERMINATION_SIGNATURES)
 PRECEDING = {
-    "api_error": re.compile(
-        r"API Error|Connection error|Connection lost|fetch failed|ECONNRESET|"
-        r"ETIMEDOUT|ENOTFOUND|ConnectionRefused|socket hang up|Overloaded|"
-        r"Internal server error|\b52[09]\b|\b50[023]\b", re.I),
-    "auth": re.compile(r"Login expired|Please run /login|authentication_error|\b401\b", re.I),
-    "interrupt": re.compile(r"\[Request interrupted|Interrupted by user", re.I),
-    "usage_limit": re.compile(r"usage limit|limit reached|resets at", re.I),
+    "api_error": re.compile("|".join(
+        _SIG[k].pattern for k in ("network", "api_overload", "api_5xx", "rate_limited",
+                                  "stalled") if k in _SIG) + r"|API Error", re.I),
+    "auth": _SIG["auth_expired"],
+    "interrupt": _SIG["user_interrupt"],
+    "usage_limit": _SIG["usage_limit"],
 }
 
 DEATH_RE = re.compile(
@@ -66,34 +78,17 @@ DEATH_RE = re.compile(
     r"hit (an|the) .{0,25}limit)\b", re.I)
 
 
-def _blocks(rec):
-    msg = rec.get("message") or {}
-    content = msg.get("content")
-    if isinstance(content, list):
-        for b in content:
-            if isinstance(b, dict):
-                yield b
-    elif isinstance(content, str) and content:
-        yield {"type": "text", "text": content}
-
-
-def _text(rec) -> str:
-    out = []
-    for b in _blocks(rec):
-        t = b.get("type")
-        if t == "text":
-            out.append(b.get("text") or "")
-        elif t == "tool_result":
-            c = b.get("content")
-            if isinstance(c, str):
-                out.append(c)
-            elif isinstance(c, list):
-                out.extend(x.get("text", "") for x in c if isinstance(x, dict))
-    return " ".join(out)
+_blocks = _rs_blocks
+_text = _rs_text
 
 
 def _user_prose(rec) -> str | None:
     """The typed text of a human turn, or None if this is not one."""
+    # A transcript line can be any JSON value; a bare int from raw stdout
+    # raised AttributeError here after the same guard had been added to the
+    # scanner. The fix had landed at one site only.
+    if not isinstance(rec, dict):
+        return None
     if rec.get("type") != "user" or rec.get("isSidechain"):
         return None
     parts = []
@@ -115,9 +110,11 @@ def load(path: str) -> list[dict]:
                 if not line:
                     continue
                 try:
-                    recs.append(json.loads(line))
+                    obj = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(obj, dict):
+                    recs.append(obj)
     except OSError:
         return []
     return recs
