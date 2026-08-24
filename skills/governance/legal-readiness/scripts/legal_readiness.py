@@ -1438,10 +1438,17 @@ def _normalize_repo_url(url: str) -> str:
     url = url.strip().rstrip("/")
     url = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url, flags=re.IGNORECASE)
     url = re.sub(r"^[^/@]+@", "", url)
-    url = url.replace(":", "/", 1) if "/" not in url.split(":")[0] else url
+    # `host:port/path` and scp-style `host:path` both use a colon and mean
+    # different things. Treating every colon as a path separator turned
+    # `github.com:443/o/r` into `github.com/443/o/r`, so an ordinary URL with an
+    # explicit port did not match the same repository written without one.
+    url = re.sub(r"^([^/:]+):\d+(?=/|$)", r"\1", url)
+    host, sep, rest = url.partition(":")
+    if sep and "/" not in host:
+        url = f"{host}/{rest}"
     if url.endswith(".git"):
         url = url[:-4]
-    return url.lower()
+    return url.rstrip("/").lower()
 
 
 def _git(root: Path, *args: str) -> str | None:
@@ -1502,6 +1509,17 @@ def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
         return [f"--repo-root {repo_root}: not a readable directory ({type(exc).__name__})"]
     if not root.is_dir():
         return [f"--repo-root {repo_root}: not a directory"]
+    # Locators are repository-relative, so resolve them against the git
+    # TOPLEVEL rather than whatever directory was passed. `git -C <subdir>`
+    # resolves the enclosing repository, so `--repo-root <repo>/skills` passed
+    # the identity check and then failed every locator — a false red where the
+    # operator named the right repository by a deeper path.
+    toplevel = _git(root, "rev-parse", "--show-toplevel")
+    if toplevel:
+        try:
+            root = Path(toplevel).resolve(strict=True)
+        except OSError:
+            pass
     identity = _repo_identity_errors(data, root)
     if identity:
         # Refuse to report a verification bound to the wrong tree. Reporting

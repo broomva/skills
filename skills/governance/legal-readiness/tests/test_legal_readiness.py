@@ -1866,3 +1866,60 @@ class TestALineSpanMustNameSomething:
             assert not errors, (span, errors)
         else:
             assert any(expect in e for e in errors), (span, errors)
+
+
+class TestRepoUrlNormalisation:
+    """Found by attacking the normaliser rather than waiting for a review round:
+    `host:port/path` and scp-style `host:path` both use a colon and mean
+    different things, so treating every colon as a path separator turned
+    `github.com:443/o/r` into `github.com/443/o/r`. An ordinary URL with an
+    explicit port did not match the same repository written without one."""
+
+    @pytest.mark.parametrize("a,b", [
+        ("https://github.com:443/o/r", "https://github.com/o/r"),
+        ("ssh://git@github.com:22/o/r.git", "git@github.com:o/r.git"),
+        ("git@github.com:o/r.git", "https://github.com/o/r"),
+        ("https://github.com/o/r/", "https://github.com/o/r"),
+        ("HTTPS://GitHub.com/O/R.git", "https://github.com/o/r"),
+    ])
+    def test_equivalent_spellings_agree(self, lr, a, b):
+        assert lr._normalize_repo_url(a) == lr._normalize_repo_url(b)
+
+    @pytest.mark.parametrize("a,b", [
+        ("https://github.com/o/r", "https://gitlab.com/o/r"),
+        ("https://github.com/o/r", "https://github.com/o/r2"),
+        ("https://github.com/o/r", "https://github.com/o2/r"),
+        ("https://evil.com/github.com/o/r", "https://github.com/o/r"),
+    ])
+    def test_different_repositories_stay_different(self, lr, a, b):
+        """The false-green half: two DIFFERENT repositories must not normalise
+        equal, or the identity check waves through the wrong tree."""
+        assert lr._normalize_repo_url(a) != lr._normalize_repo_url(b)
+
+
+class TestASubdirectoryOfTheRightRepositoryWorks:
+    def test_locators_resolve_against_the_git_toplevel(self, tmp_path, valid_manifest, lr):
+        """`git -C <subdir>` resolves the ENCLOSING repository, so a deeper
+        `--repo-root` passed the identity check and then failed every locator —
+        a false red where the operator named the right repository by a deeper
+        path. Locators are repository-relative, so they resolve against the
+        toplevel."""
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "nested").mkdir()
+        body = b"real\n"
+        (root / "a.tsx").write_bytes(body)
+        data = _with_repo_evidence(
+            valid_manifest, _repo_evidence("a.tsx", hashlib.sha256(body).hexdigest()))
+        errors = lr.validate_manifest(data, repo_root=root / "nested")
+        assert not [e for e in errors if "locator" in e or "sha256" in e], errors
+
+    def test_a_fabricated_digest_is_still_caught_from_a_subdirectory(
+        self, tmp_path, valid_manifest, lr
+    ):
+        """CONTROL: resolving from the toplevel must not become a way to pass."""
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "nested").mkdir()
+        (root / "a.tsx").write_bytes(b"real\n")
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("a.tsx", "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=root / "nested")
+        assert any("does not match the artifact" in e for e in errors), errors
