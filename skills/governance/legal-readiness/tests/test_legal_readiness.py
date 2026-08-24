@@ -2192,3 +2192,50 @@ class TestOnlyTheDefaultPortIsRedundant:
     def test_a_non_default_port_is_significant(self, lr, a, b):
         """Stripping any `:\\d+` collapsed two different endpoints into one."""
         assert lr._normalize_repo_url(a) != lr._normalize_repo_url(b)
+
+
+class TestASymlinkedArtifactCannotBeCited:
+    """Found by asking what a READER would compute, rather than what the linter
+    reads — the question that has caught more here than any single round.
+
+    Git stores a symlink's TARGET PATH as its content, but reading the path
+    yields the target's bytes. So a digest taken through a symlink describes
+    something a reader fetching that path from the repository does not get. The
+    whole point of the digest is that anyone can recompute it from the repo, and
+    a symlinked artifact cannot satisfy that.
+    """
+
+    def test_a_tracked_symlink_is_refused(self, tmp_path, valid_manifest, lr):
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "real.txt").write_bytes(b"real content\n")
+        (root / "link.txt").symlink_to("real.txt")
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("link.txt", hashlib.sha256(b"real content\n").hexdigest()))
+        errors = _validated(lr, data, root)
+        assert any("is a symlink" in e for e in errors), errors
+
+    def test_the_target_itself_is_accepted(self, tmp_path, valid_manifest, lr):
+        """CONTROL: refusing the link must not refuse the file it points at."""
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "real.txt").write_bytes(b"real content\n")
+        (root / "link.txt").symlink_to("real.txt")
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("real.txt", hashlib.sha256(b"real content\n").hexdigest()))
+        assert not [e for e in _validated(lr, data, root)
+                    if "locator" in e or "sha256" in e]
+
+    def test_the_digest_git_would_serve_is_not_silently_accepted_either(
+        self, tmp_path, valid_manifest, lr
+    ):
+        """The other half: hashing what git STORES for the link (the target
+        path, `b"real.txt"`) must not become a way to pass either. Neither
+        digest is right, because the locator is the wrong thing to cite."""
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "real.txt").write_bytes(b"real content\n")
+        (root / "link.txt").symlink_to("real.txt")
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("link.txt", hashlib.sha256(b"real.txt").hexdigest()))
+        assert any("is a symlink" in e for e in _validated(lr, data, root))

@@ -1583,6 +1583,20 @@ def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
         if resolved.is_dir():
             errors.append(f"{path}.locator: {rel!r} is a directory, not an artifact")
             continue
+        if target.is_symlink():
+            # Git stores a symlink's TARGET PATH as its content, but reading the
+            # path yields the target's bytes — so a digest taken here describes
+            # something a reader fetching that path from the repository does not
+            # get. The point of the digest is that anyone can recompute it from
+            # the repo; a symlinked artifact cannot satisfy that, and accepting
+            # one silently is the same "binds to nothing" this check exists to
+            # close. Found by asking what a READER would compute, not what the
+            # linter reads.
+            errors.append(
+                f"{path}.locator: {rel!r} is a symlink, so its digest describes the "
+                "target's bytes while the repository stores the link; cite the target "
+                "directly")
+            continue
         # TRACKED, not merely present. `git status --porcelain` says nothing about
         # an ignored file, so a build artifact or a gitignored scratch file
         # satisfied the dirty check by being invisible to it. Evidence has to be
