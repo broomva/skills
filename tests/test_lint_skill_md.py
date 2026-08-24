@@ -566,7 +566,13 @@ class TestTheLoaderAgreesWithSafeLoad:
     ])
     def test_valid_documents_parse_identically(self, lint, doc):
         import yaml
-        assert yaml.load(doc, Loader=lint._NoDuplicateKeys) == yaml.safe_load(doc)
+        mine = yaml.load(doc, Loader=lint._NoDuplicateKeys)
+        want = yaml.safe_load(doc)
+        # `repr`, not `==`. Two self-referential dicts compared with `==` blow
+        # the recursion limit — Python's cycle detection covers identity, not
+        # two structurally-equal distinct objects. `repr` renders a cycle as
+        # `{...}` and terminates, which is exactly the comparison wanted here.
+        assert repr(mine) == repr(want)
 
 
 class TestDuplicateDetectionIsNotNameSpecific:
