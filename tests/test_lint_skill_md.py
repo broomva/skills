@@ -555,7 +555,34 @@ class TestTheLoaderAgreesWithSafeLoad:
         "a: &v text\nname: a\nd: *v\n",
         "~: 1\nname: a\n",
         "yes: 1\nno: 2\nname: a\n",
+        # The cases the first version of this list MISSED, which is the lesson:
+        # a fixed list of documents I thought of is not a property. Both were
+        # found by review, not by the battery.
+        "1: a\ntrue: b\nname: x\n",      # YAML-distinct keys that collide in Python
+        "1: a\n1.0: b\nname: x\n",       # int vs float, same Python hash
+        "'1': a\n1: b\nname: x\n",       # str vs int, distinct by tag
+        "&a\nself: *a\nname: x\n",       # recursive alias to the enclosing map
+        "a: &m\n  k: *m\nname: x\n",     # recursion one level down
     ])
     def test_valid_documents_parse_identically(self, lint, doc):
         import yaml
         assert yaml.load(doc, Loader=lint._NoDuplicateKeys) == yaml.safe_load(doc)
+
+
+class TestDuplicateDetectionIsNotNameSpecific:
+    """A mutation from `if duplicate:` to `if duplicate and key == "name":`
+    survived, because every duplicate-key test used `name`. The rule is about
+    duplication, not about one field."""
+
+    @pytest.mark.parametrize("field", ["name", "description", "version", "foo"])
+    def test_any_duplicated_key_is_rejected(self, lint, field):
+        import yaml
+        doc = f"name: x\ndescription: d\n{field}: A\n{field}: B\n"
+        with pytest.raises(yaml.YAMLError, match="duplicate key"):
+            yaml.load(doc, Loader=lint._NoDuplicateKeys)
+
+    def test_a_duplicate_description_reaches_the_report(self, tmp_path, lint):
+        """Through `lint_skill_md`, not just the loader."""
+        md = _skill(tmp_path, "dd",
+                    "---\nname: dd\ndescription: A\ndescription: B\n---\n")
+        assert any("duplicate key 'description'" in p for p in lint.lint_skill_md(md))

@@ -58,41 +58,43 @@ class _NoDuplicateKeys(yaml.SafeLoader):
 
 
 def _construct_unique(loader, node, deep=False):
-    """Reject duplicate keys the author WROTE, without breaking YAML merges.
+    """Reject duplicate keys the author WROTE, then hand construction back.
 
-    Two failure modes were traded against each other here before this settled:
+    Getting here took three attempts, each trading one failure for another:
 
-      - skipping `flatten_mapping` turned `<<: *anchor` — which the old gate
-        accepted — into a ConstructorError;
+      - skipping `flatten_mapping` turned `<<: *anchor` into an error;
       - calling it first made merged fields indistinguishable from written ones,
-        so an explicit key OVERRIDING a merged one read as a duplicate. That is
-        valid YAML and the override is the whole point of a merge.
+        so an explicit key OVERRIDING a merged one read as a duplicate;
+      - comparing CONSTRUCTED keys made YAML-distinct keys collide in Python
+        (`1` and `true` are different keys but `1 == True`), and constructing
+        them eagerly broke recursive aliases that `safe_load` accepts.
 
-    So duplicates are checked among the EXPLICIT keys only, before flattening,
-    and the merge is expanded afterwards with later entries winning — which is
-    what puts an explicit override ahead of the merged value.
+    All three came from re-implementing construction. So this only decides
+    duplication — on the key NODES, by `(tag, value)`, which is YAML's own
+    notion of identity — and then delegates to `SafeConstructor`, which already
+    flattens merges, resolves recursive aliases, and reports an unhashable key
+    as a proper error rather than a traceback.
     """
-    seen: set = set()
+    seen: set[tuple[str, str]] = set()
     for key_node, _value_node in node.value:
         if key_node.tag == "tag:yaml.org,2002:merge":
             continue
-        key = loader.construct_object(key_node, deep=deep)
-        try:
-            duplicate = key in seen
-        except TypeError:
-            raise yaml.YAMLError(f"unhashable key {key!r}") from None
-        if duplicate:
-            raise yaml.YAMLError(f"duplicate key {key!r}")
-        seen.add(key)
-
-    loader.flatten_mapping(node)
-    mapping = {}
-    for key_node, value_node in node.value:
-        # Later wins: `flatten_mapping` puts merged pairs first, so an explicit
-        # key written after the merge correctly overrides it.
-        mapping[loader.construct_object(key_node, deep=deep)] = (
-            loader.construct_object(value_node, deep=deep))
-    return mapping
+        if not isinstance(key_node, yaml.ScalarNode):
+            # A sequence or mapping used as a key. Never valid frontmatter, and
+            # SafeConstructor reports it accurately; nothing to add here.
+            continue
+        identity = (key_node.tag, key_node.value)
+        if identity in seen:
+            raise yaml.YAMLError(f"duplicate key {key_node.value!r}")
+        seen.add(identity)
+    # A GENERATOR, like PyYAML's own `construct_yaml_map`: yielding the empty
+    # dict before filling it is what lets a recursive alias (`&a` referring to
+    # the mapping it is inside) see the object under construction. Returning it
+    # eagerly raised a ConstructorError on documents `safe_load` accepts.
+    data: dict = {}
+    yield data
+    data.update(
+        yaml.constructor.SafeConstructor.construct_mapping(loader, node, deep=deep))
 
 
 _NoDuplicateKeys.add_constructor(
