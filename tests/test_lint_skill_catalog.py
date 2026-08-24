@@ -1084,3 +1084,48 @@ class TestADuplicatedClaimIsNotASatisfiedOne:
         """POSITIVE CONTROL: 'appears N times' must not fire on one bullet."""
         _consistent(tmp_path, lint)
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+
+class TestFixDoesExactlyWhatCheckDemandsAndNoMore:
+    """`check` never verifies row ORDER, but `--fix` used to sort — so it
+    rewrote files its own checker called clean, and every future PR would have
+    carried that churn.
+
+    Found only by dogfooding: another session maintained this catalog BY HAND
+    for a new bucket and a moved skill, `check` reported consistent, and `--fix`
+    still moved three rows. The CI idempotence step missed it because it only
+    ever ran on a tree `--fix` had already produced — comparing a fixer's output
+    to itself.
+    """
+
+    def _unsorted(self, tmp_path, lint):
+        """A catalog that is CORRECT but not alphabetically ordered."""
+        _, _s, buckets, total, rrows, irows = _consistent(tmp_path, lint)
+        for rows in (rrows, irows):
+            for cat in rows:
+                rows[cat] = list(reversed(rows[cat]))
+        _consistent(tmp_path, lint, readme=_readme(rrows, total, buckets),
+                    inventory=_inventory(irows, total, buckets))
+
+    def test_an_unsorted_but_correct_catalog_is_clean(self, tmp_path, lint):
+        """CONTROL: order is not something `check` has an opinion about."""
+        self._unsorted(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+    def test_fix_does_not_reorder_an_already_consistent_catalog(self, tmp_path, lint):
+        self._unsorted(tmp_path, lint)
+        before = {p: p.read_text() for p in (lint._README, lint._INVENTORY, lint._CATALOG_SKILL)}
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        for path, text in before.items():
+            assert path.read_text() == text, f"--fix rewrote a clean file: {path.name}"
+
+    def test_a_new_row_still_lands_in_an_unsorted_table(self, tmp_path, lint):
+        """POSITIVE CONTROL: preserving order must not stop `--fix` adding what
+        is genuinely missing, or the no-op above is satisfied by doing nothing."""
+        self._unsorted(tmp_path, lint)
+        d = lint._SKILLS_DIR / "governance" / "zeta"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text("---\nname: zeta\ndescription: Z.\n---\n", encoding="utf-8")
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert "`zeta`" in lint._README.read_text()

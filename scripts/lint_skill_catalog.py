@@ -212,18 +212,47 @@ def _sections(text: str, heading_rx: re.Pattern, row_rx: re.Pattern) -> list[_Se
 
 
 def _rebuild(text: str, sections: list[_Section], disk: dict, render) -> str:
-    """Rewrite each section's table from (existing rows ∪ disk), sorted."""
+    """Rewrite each section's table from (existing rows ∪ disk).
+
+    EXISTING ROWS KEEP THEIR ORDER. Sorting them looked tidier and was wrong:
+    `check` never verifies order, so a sorting `--fix` rewrote files its own
+    checker called clean, and every future PR would have carried that churn.
+    Caught by running `--fix` over a catalog another session had maintained BY
+    HAND — `check` reported consistent and `--fix` still moved three rows.
+
+    The rule this encodes: a fixer may do exactly what its checker demands and
+    no more. Anything extra is an opinion the check does not hold, applied to
+    someone else's file.
+
+    New rows are appended in sorted order, which is the only place an ordering
+    choice is unavoidable.
+    """
     out: list[str] = []
     cursor = 0
     for sec in sections:
-        merged = dict(sec.rows)
-        for name, desc in disk.get(sec.category, {}).items():
-            merged.setdefault(name, desc)
-        keep = {n: merged[n] for n in sorted(disk.get(sec.category, {})) if n in merged}
+        on_disk = disk.get(sec.category, {})
+        keep = {n: d for n, d in sec.rows.items() if n in on_disk}      # original order
+        for name in sorted(set(on_disk) - set(keep)):                   # then the new ones
+            keep[name] = on_disk[name]
         body = "\n".join(render(sec.category, n, keep[n], sec.annot.get(n, "")) for n in keep)
         body += "\n"
         if sec.prose:
             body += "\n" + "\n".join(sec.prose) + "\n"
+        original = text[sec.start:sec.stop]
+        # If this section's rows are unchanged, emit the ORIGINAL bytes rather
+        # than a re-render. Re-rendering an unchanged section still normalises
+        # blank lines in whatever prose trails it, so `--fix` edited files
+        # `check` called clean — the same "fix does more than check demands"
+        # asymmetry as sorting, one layer down and invisible to a row-level diff.
+        unchanged = (
+            not sec.strays                      # a bullet is a row by CONTENT but not by FORM,
+                                                # and normalising its form is the whole point
+            and len(keep) == len(sec.rows)
+            and all(sec.rows.get(n) == d for n, d in keep.items())
+            and list(keep) == [n for n in sec.rows if n in keep]   # same order, too
+        )
+        if unchanged:
+            body = original
         out.append(text[cursor:sec.start])
         out.append(body)
         cursor = sec.stop
