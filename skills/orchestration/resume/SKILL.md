@@ -187,7 +187,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
 python3 scripts/resume_corpus_stats.py          # regenerates the table above
 ```
 
-102 unit tests. Coverage is deliberately weighted toward the paths a green
+106 unit tests. Coverage is deliberately weighted toward the paths a green
 suite hid: notification records in all three shapes, background-shell
 detection, liveness in both polarities, failed/killed completions, non-dict
 JSON lines (raw stdout crashed the digest on 11% of real files), truncated

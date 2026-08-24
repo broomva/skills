@@ -436,6 +436,65 @@ def test_background_shell_that_wrote_after_death_is_possibly_live(tmp_path):
     assert "POSSIBLY STILL RUNNING" in rs.render(res)
 
 
+def test_possibly_live_flag_tracks_liveness_for_background_shells(tmp_path):
+    """Kills: possibly_live pinned to False.
+
+    `liveness` was covered but the derived boolean the render and SKILL.md
+    both key on was not — pinning one field and not its sibling is how a
+    guard goes inert while the suite stays green.
+    """
+    out = tmp_path / "bg.output"
+    out.write_text("building", encoding="utf-8")
+    recs = [
+        dict(type="assistant", timestamp="2020-01-01T00:00:00Z",
+             message={"content": [{"type": "tool_use", "id": "t1", "name": "Bash",
+                                   "input": {"command": "railway up"}}]}),
+        user({"type": "tool_result", "tool_use_id": "t1", "content":
+              f"Command running in background with ID: bgZ. "
+              f"Output is being written to: {out}"}),
+    ]
+    u = rs.scan(write_session(tmp_path, recs))["unreported"][0]
+    assert u["possibly_live"] is True
+
+
+def test_recoverable_false_when_nothing_survived(tmp_path):
+    """Kills: recoverable hardcoded True.
+
+    Uses a file that EXISTS and parses but carries nothing, so the check
+    reaches the return statement instead of an early-out on a missing file.
+    """
+    f = tmp_path / "blank.output"
+    f.write_text(json.dumps({"type": "user", "message": {"content": []}}), encoding="utf-8")
+    d = rs.digest_output(str(f))
+    assert d["recoverable"] is False
+
+
+def test_render_labels_the_prompt_block(tmp_path):
+    """Kills: deleting the prompt HEADER while its lines still print.
+
+    Asserting only that the prompt text appears let the labelled contract be
+    removed — an agent reading the output could not tell prompt from prose.
+    """
+    recs = [assistant(spawn_block("t1", "d", prompt="RESPAWN-ME")),
+            user(launch_result("t1", "aX"))]
+    out = rs.render(rs.scan(write_session(tmp_path, recs)))
+    assert "orig prompt" in out
+    assert "complete" in out
+    assert "RESPAWN-ME" in out
+
+
+def test_hour_limit_form_without_the_resets_clause():
+    """Kills: removing the 'hit your <N> limit' branch.
+
+    The other branch ('resets Aug 10 at') covers the common phrasing, so a
+    form carrying ONLY this branch is needed — a rule spelled per-branch is
+    forgotten per-branch.
+    """
+    rec = assistant({"type": "text", "text": "You've hit your 5-hour limit"},
+                    isApiErrorMessage=True)
+    assert rs.find_termination([rec])["kind"] == "usage_limit"
+
+
 def test_missing_output_file_is_unknown_not_dead(tmp_path):
     """Kills: treating an absent output file as 'safe to re-spawn'."""
     recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
