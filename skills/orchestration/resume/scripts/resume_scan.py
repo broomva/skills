@@ -87,13 +87,7 @@ NOTIF_SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.S)
 # nothing and an absent alias is cheaper than a missed spawn.
 AGENT_TOOLS = ("Agent", "Task", "Workflow")
 # `Agent`/`Task` run inside the parent process and cannot outlive it.
-# `Workflow` is deliberately NOT here. Its receipt says "launched in
-# background", and a corpus check of 153 workflow transcript dirs was
-# inconclusive: 152 stopped with the parent, 1 wrote 26 minutes later — and
-# the parent's mtime moves on resume, so neither number settles it. Asserting
-# either model would be a claim the evidence does not support, and the two
-# failure directions are not symmetric: calling a live workflow "dead" invites
-# re-running work that is still going. Workflows report `unknown` instead.
+# Workflows are decided earlier, by kind — see the liveness block in scan().
 IN_PROCESS_TOOLS = ("Agent", "Task")
 BG_TOOLS = ("Bash",)
 
@@ -184,15 +178,23 @@ def _all_jsonl(d: str) -> list[str]:
 
 
 def _newest_in_dir(d: str) -> str | None:
-    """A workflow's receipt names a DIRECTORY, not a file."""
-    best, best_m = None, -1.0
+    """The most useful transcript inside a workflow's directory.
+
+    NOT simply the newest file: `journal.jsonl` — the workflow's own
+    lifecycle ledger — is newest in 52 of 161 real workflow dirs (32%), and
+    it digests to nothing, so the scan printed "recovery: NONE" while the
+    `agent-*.jsonl` transcripts sat beside it. Prefer a worker transcript;
+    fall back to the newest file only when there is none.
+    """
+    agents: list[tuple[float, str]] = []
+    others: list[tuple[float, str]] = []
     for root, _dirs, files in os.walk(d):
         for fn in files:
             fp = os.path.join(root, fn)
-            m = _mtime(fp)
-            if m > best_m:
-                best, best_m = fp, m
-    return best
+            (agents if fn.startswith("agent-") and fn.endswith(".jsonl")
+             else others).append((_mtime(fp), fp))
+    pool = agents or others
+    return max(pool)[1] if pool else None
 
 
 def _mtime(p: str) -> float:
@@ -387,7 +389,13 @@ def find_spawns(recs: list[dict]) -> list[dict]:
                     continue
                 s = _text_of(b)
                 aid = out = None
-                if ASYNC_LAUNCH_RE.search(s):
+                # A run_in_background Bash is a background shell even if its
+                # stdout happens to echo a workflow receipt; the tool call is
+                # authoritative, so it is checked before the text patterns.
+                if meta.get("kind") == "background-shell" and BG_LAUNCH_RE.search(s):
+                    m, o = BG_LAUNCH_RE.search(s), BG_OUTPUT_RE.search(s)
+                    aid, out = m.group(1), (o.group(1) if o else None)
+                elif ASYNC_LAUNCH_RE.search(s):
                     m, o = AGENT_ID_RE.search(s), OUTPUT_FILE_RE.search(s)
                     aid, out = (m.group(1) if m else None), (o.group(1) if o else None)
                 elif WF_LAUNCH_RE.search(s):
@@ -526,15 +534,12 @@ def durable_transcript(session_path: str, worker_id: str | None) -> str | None:
     if ext != ".jsonl":
         return None
     cand = os.path.join(base, "subagents", f"agent-{worker_id}.jsonl")
-    if os.path.exists(cand):
-        return cand
-    # Workflow workers land under subagents/workflows/ — 160 artifacts across
-    # 17 sessions here — so not searching it left the durable claim true for
-    # plain agents only.
-    import glob as _glob
-    hits = _glob.glob(os.path.join(base, "subagents", "workflows", "**",
-                                   f"agent-{worker_id}.jsonl"), recursive=True)
-    return hits[0] if hits else None
+    # No workflows branch here on purpose. A workflow's worker_id is its Task
+    # ID (`w…`), while every durable file on disk is `agent-a…jsonl`; a glob
+    # for `agent-<taskid>.jsonl` matched 0 of 170 workflow spawns. A workflow
+    # reaches its transcripts through its `Transcript dir:` instead
+    # (_digest_source -> _newest_in_dir).
+    return cand if os.path.exists(cand) else None
 
 
 def digest_output(path: str, max_chars: int | None = None,
@@ -624,6 +629,42 @@ def digest_output(path: str, max_chars: int | None = None,
     }
 
 
+def _digest_source(session_path: str, s: dict) -> str | None:
+    """Where to read a worker's surviving output from.
+
+    ONE function, called by both the unreported and the reported-failed
+    limbs. They diverged before: the directory handling was added to one and
+    not the other, and 2 of 3 real failed workflows printed "recovery: NONE"
+    beside a directory holding 92 transcripts. A shared resolver is the only
+    thing that stops that recurring.
+    """
+    src = durable_transcript(session_path, s.get("worker_id")) or s.get("output_file")
+    s["durable_transcript"] = durable_transcript(session_path, s.get("worker_id"))
+    if src and os.path.isdir(src):
+        src = _newest_in_dir(src)
+    return src
+
+
+def _redact_worker(s: dict) -> None:
+    """Mask secrets in EVERY field that is printed or serialized.
+
+    SKILL.md claimed the scan "masks those patterns in everything it prints".
+    It masked only the digest prose and the termination evidence, while the
+    command line and the original prompt went out raw in both the render and
+    --json — measured with a real bearer token appearing four times. A
+    guarantee that covers two of five fields is a false guarantee.
+    """
+    found: list[str] = []
+    for field in ("command", "prompt", "summary", "description"):
+        val = s.get(field)
+        if isinstance(val, str) and val:
+            masked, kinds = redact(val)
+            s[field] = masked
+            found.extend(kinds)
+    if found:
+        s["redacted_fields"] = sorted(set(found))
+
+
 def scan(session_path: str, max_chars: int | None = None,
          live_window_s: int | None = None) -> dict:
     max_chars = LIMITS["digest_chars"] if max_chars is None else max_chars
@@ -651,18 +692,12 @@ def scan(session_path: str, max_chars: int | None = None,
             # attention, so it is not folded into the silent "reported" bucket.
             s["state"] = "reported" if status in OK_STATUSES else "reported_failed"
             if s["state"] == "reported_failed":
-                durable = durable_transcript(session_path, s.get("worker_id"))
-                s["durable_transcript"] = durable
-                s["digest"] = digest_output(durable or s.get("output_file"),
+                s["digest"] = digest_output(_digest_source(session_path, s),
                                             max_chars=max_chars)
         else:
             s["state"] = "unreported"
-            durable = durable_transcript(session_path, s.get("worker_id"))
-            s["durable_transcript"] = durable
-            src = durable or s.get("output_file")
-            if s.get("kind") == "workflow" and src and os.path.isdir(src):
-                src = _newest_in_dir(src)
-            s["digest"] = digest_output(src, max_chars=max_chars)
+            s["digest"] = digest_output(_digest_source(session_path, s),
+                                        max_chars=max_chars)
             age = s["digest"].get("mtime_age_s")
             # Liveness is a property of the spawn KIND first. Agent/Task/
             # Workflow run in-process and cannot outlive the parent, so a
@@ -689,6 +724,9 @@ def scan(session_path: str, max_chars: int | None = None,
                                  else "dead")
             s["possibly_live"] = s["liveness"] == "possibly-live"
             s["recent_write_s"] = age
+
+    for s in spawns:
+        _redact_worker(s)
 
     return {
         "session": session_path,

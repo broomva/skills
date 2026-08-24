@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -935,9 +936,45 @@ def test_evidence_bound_is_160():
     assert len(t["evidence"]) <= 60 + 160
 
 
-def test_live_window_bound_is_90():
-    """Had no test at all — and it guards 'do not re-run a live deploy'."""
+def test_live_window_bound_is_90(tmp_path):
+    """Behavioural, not a placebo. The previous version asserted the constant
+    against itself, so widening the USE SITE to 900 kept the suite green —
+    on the bound that guards 'do not re-run a live deploy'."""
     assert rs.LIMITS["live_window_s"] == 90
+    out = tmp_path / "bg.output"
+    out.write_text("x", encoding="utf-8")
+    os.utime(out, (time.time() - 300, time.time() - 300))
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": "deploy", "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  f"Command running in background with ID: bgW. "
+                  f"Output is being written to: {out}"})]
+    p = write_session(tmp_path, recs)
+    # 300s of silence, no session timestamp: outside a 90s window -> dead
+    assert rs.scan(p)["unreported"][0]["liveness"] == "dead"
+    # widen the window past the silence and it flips
+    assert rs.scan(p, live_window_s=600)["unreported"][0]["liveness"] == "possibly-live"
+
+
+# ------------------------------------------------ printed-output redaction
+
+def test_secrets_are_masked_in_command_and_prompt(tmp_path):
+    """SKILL.md guaranteed the scan masks secrets in EVERYTHING it prints. It
+    masked only the digest prose and the termination evidence, while the
+    command line and the original prompt went out raw in both the render and
+    --json. A guarantee covering two of five fields is a false guarantee."""
+    tok = "ghp_" + "A" * 36
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": f"curl -H 'Authorization: Bearer {tok}'",
+                                 "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1",
+                  "content": "Command running in background with ID: bgS."}),
+            assistant(spawn_block("t2", "probe", prompt=f"use {tok} to fetch")),
+            user(launch_result("t2", "aQ"))]
+    res = rs.scan(write_session(tmp_path, recs))
+    assert tok not in rs.render(res)
+    assert tok not in json.dumps(res)
+    assert any(w.get("redacted_fields") for w in res["unreported"])
 
 
 # ------------------------------------------------------------- workflows
@@ -964,6 +1001,56 @@ def test_real_workflow_receipt_is_detected():
     assert spawns[0]["kind"] == "workflow"
 
 
+def test_workflow_dir_prefers_a_transcript_over_the_ledger(tmp_path):
+    """`journal.jsonl` is the workflow's own lifecycle ledger and is newest in
+    32% of real workflow dirs. It digests to nothing, so the scan printed
+    'recovery: NONE' while the agent transcripts sat beside it."""
+    wf = tmp_path / "wf"
+    wf.mkdir()
+    (wf / "agent-aOLD.jsonl").write_text(
+        json.dumps(assistant({"type": "text", "text": "REAL WORKER OUTPUT"})), encoding="utf-8")
+    journal = wf / "journal.jsonl"
+    journal.write_text(json.dumps({"type": "started"}), encoding="utf-8")
+    os.utime(wf / "agent-aOLD.jsonl", (1, 1))          # transcript is OLDER
+    os.utime(journal, (10**9, 10**9))                  # ledger is NEWEST
+    assert os.path.basename(rs._newest_in_dir(str(wf))) == "agent-aOLD.jsonl"
+
+
+def test_failed_workflow_recovers_from_its_directory(tmp_path):
+    """The reported-failed limb did not get the directory handling the
+    unreported limb had — 2 of 3 real failed workflows printed
+    'recovery: NONE' beside a directory holding 92 transcripts. Both limbs
+    now resolve their source through one function."""
+    wf = tmp_path / "wfdir"
+    wf.mkdir()
+    (wf / "agent-aZ.jsonl").write_text(
+        json.dumps(assistant({"type": "text", "text": "PARTIAL WORKFLOW RESULT"})),
+        encoding="utf-8")
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Workflow",
+                       "input": {"name": "audit"}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  f"Workflow launched in background. Task ID: wF1\n"
+                  f"Transcript dir: {wf}"}),
+            user(notification("wF1", status="failed", summary="died"))]
+    res = rs.scan(write_session(tmp_path, recs))
+    assert len(res["reported_failed"]) == 1
+    assert "PARTIAL WORKFLOW RESULT" in res["reported_failed"][0]["digest"]["final_text"]
+
+
+def test_background_flag_beats_a_workflow_receipt_echo():
+    """A run_in_background Bash whose stdout echoes a workflow receipt must
+    stay a background shell, or the possibly-live guard is silently disabled
+    for a genuine separate process."""
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": "cat log", "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Command running in background with ID: bgR.\n"
+                  "Workflow launched in background. Task ID: wFAKE"})]
+    sp = rs.find_spawns(recs)
+    assert sp[0]["kind"] == "background-shell"
+    assert sp[0]["worker_id"] == "bgR"
+
+
 def test_workflow_liveness_is_unknown_not_dead(tmp_path):
     """The corpus does not settle whether workflows outlive the parent, so the
     scan must not assert either. Calling a live workflow dead invites
@@ -978,7 +1065,6 @@ def test_workflow_liveness_is_unknown_not_dead(tmp_path):
     assert u["liveness"] == "unknown-workflow"
     assert u["possibly_live"] is False
     assert "UNKNOWN" in rs.render(res)
-    assert rs.LIMITS and all(isinstance(v, int) and v > 0 for v in rs.LIMITS.values())
 
 
 

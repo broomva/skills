@@ -168,12 +168,18 @@ doing now. One short paragraph.
 Recovered text is other sessions' output. Surviving worker files in this author's corpus contained secret-shaped
 strings (`sk-ant-`, `ghp_`, `github_pat_`, `AKIA…`, `xoxb-`, bearer headers).
 
-The scan masks those patterns in everything it prints and names what it
-masked. **This is a blunt instrument and does not make the output safe to
-publish**: it matches shapes, not secrets, so an unusual credential format,
-customer data, or private source passes straight through. Treat scan output as
-sensitive, keep it in the session, and do not paste it into a PR, an issue, or
-a chat channel without reading it first.
+The scan masks secret-shaped strings in the fields it prints — recovered
+prose, termination evidence, and each worker's command, prompt, summary and
+description — and names what it masked. That list is the guarantee; nothing
+wider is claimed. An earlier version of this paragraph promised masking in
+"everything it prints" while the command line and the prompt went out raw in
+both the render and `--json`.
+
+**Even within that list it is a blunt instrument and does not make the output
+safe to publish**: it matches shapes, not secrets, so an unusual credential
+format, customer data, or private source passes straight through. File paths
+and tool names are not masked at all. Treat scan output as sensitive, keep it
+in the session, and read it before pasting it anywhere.
 
 ## Anti-rationalization
 
@@ -202,10 +208,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
 python3 scripts/resume_corpus_stats.py          # regenerates the table above
 ```
 
-135 unit tests. Coverage is deliberately weighted toward the paths a green
+139 unit tests. Coverage is deliberately weighted toward the paths a green
 suite hid: notification records in all three shapes, background-shell
 detection, liveness in both polarities, failed/killed completions, non-dict
-JSON lines (raw stdout crashed the digest on 11% of real files), truncated
+JSON lines (raw stdout is valid JSON per line and crashed the digest), truncated
 tails, zero-record files, directories and FIFOs, and secret redaction.
 
 Both false-positive classes in termination detection are pinned by regression
