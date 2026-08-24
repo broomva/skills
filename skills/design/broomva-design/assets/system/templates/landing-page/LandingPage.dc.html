@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<!-- @template name="Landing page" description="Marketing page: dark hero with orbs and CalSans, principles grid, scoreboard, footer." -->
+<helmet><script src="./ds-base.js"></script></helmet>
+<div style="width: 100vw; min-height: 100vh; background: var(--background); color: var(--foreground); font-family: var(--bv-font-sans); overflow-x: hidden;">
+
+  <!-- Hero — dark marketing surface; orbs are allowed here only -->
+  <section data-theme="dark" data-display-font="calsans" style="position: relative; background: var(--background); color: var(--foreground); overflow: hidden;">
+    <div style="position: absolute; width: 620px; height: 620px; border-radius: 999px; top: -280px; left: -180px; background: radial-gradient(circle, oklch(0.35 0.09 262 / 0.55), transparent 70%); filter: blur(60px); pointer-events: none;"></div>
+    <div style="position: absolute; width: 520px; height: 520px; border-radius: 999px; bottom: -260px; right: -140px; background: radial-gradient(circle, oklch(0.32 0.08 285 / 0.5), transparent 70%); filter: blur(60px); pointer-events: none;"></div>
+
+    <header style="position: relative; display: flex; align-items: center; gap: 10px; max-width: 1040px; margin: 0 auto; padding: 22px 32px;">
+      <img src="../../assets/broomva-blackhole-logo.png" alt="Broomva" style="width: 26px; height: 26px; border-radius: 7px;"></img>
+      <span style="font-size: 15px; font-weight: 500;">Broomva</span>
+      <nav style="margin-left: auto; display: flex; align-items: center; gap: 4px;">
+        <a href="#principles" style="color: var(--muted-foreground); text-decoration: none; font-size: 13.5px; padding: 6px 10px; border-radius: var(--bv-radius-lg);" style-hover="background: var(--bv-frost-8); color: var(--foreground);">Why Broomva</a>
+        <a href="#gate" style="color: var(--muted-foreground); text-decoration: none; font-size: 13.5px; padding: 6px 10px; border-radius: var(--bv-radius-lg);" style-hover="background: var(--bv-frost-8); color: var(--foreground);">The gate</a>
+        <button onClick="{{ ctaClick }}" style="margin-left: 8px; height: 32px; padding: 0 14px; border-radius: var(--bv-radius-full); border: 1px solid var(--bv-border-15); background: var(--card); color: var(--foreground); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;" style-hover="background: var(--bv-frost-8);">{{ ctaSecondary }}</button>
+      </nav>
+    </header>
+
+    <div style="position: relative; max-width: 1040px; margin: 0 auto; padding: 64px 32px 88px; display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 56px; align-items: center;">
+      <div style="display: flex; flex-direction: column; gap: 22px;">
+        <h1 style="margin: 0; font-family: var(--bv-font-display); font-size: 52px; line-height: 1.06; letter-spacing: -0.02em; font-weight: 600;">{{ headline }}</h1>
+        <p style="margin: 0; font-size: 17px; line-height: 1.6; color: var(--muted-foreground); max-width: 46ch;">{{ subhead }}</p>
+        <div style="display: flex; align-items: center; gap: 10px; padding-top: 6px;">
+          <button onClick="{{ ctaClick }}" style="height: 44px; padding: 0 22px; border-radius: var(--bv-radius-full); border: none; background: var(--primary); color: var(--primary-foreground); font: inherit; font-size: 14.5px; font-weight: 500; cursor: pointer;" style-hover="background: var(--bv-ink-hover);">{{ ctaPrimary }}</button>
+          <span style="font-size: 12.5px; color: var(--muted-foreground);">{{ ctaNote }}</span>
+        </div>
+      </div>
+      <div style="min-width: 0;">
+        <x-import component-from-global-scope="BroomvaDesignSystem_5727d9.Undertow" hint-size="100%,220px">
+          <x-import component-from-global-scope="BroomvaDesignSystem_5727d9.RunCard" state="needs-you" agent="claude" duration="3h 40m" title="Ported the billing reducer to event sourcing" asks="approve the schema migration" receipts="{{ heroReceipts }}" on-approve="{{ noop }}" on-send-back="{{ noop }}" hint-size="100%,210px"></x-import>
+        </x-import>
+      </div>
+    </div>
+  </section>
+
+  <!-- Principles -->
+  <section id="principles" style="max-width: 1040px; margin: 0 auto; padding: 72px 32px 24px;">
+    <h2 style="margin: 0 0 8px; font-size: 28px; font-weight: 600; letter-spacing: -0.015em;">Autonomy is the moat. Control is the engine.</h2>
+    <p style="margin: 0 0 32px; font-size: 15px; color: var(--muted-foreground); max-width: 58ch;">The scarce resource is not tokens or compute. It is how long an agent runs before you must look. Broomva makes that legible and calm.</p>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;">
+      <sc-for list="{{ principles }}" as="p" hint-placeholder-count="3">
+        <div style="border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-xl); background: var(--card); box-shadow: var(--bv-shadow-edge); padding: 20px; display: flex; flex-direction: column; gap: 8px;">
+          <span style="font-size: 15.5px; font-weight: 600;">{{ p.title }}</span>
+          <span style="font-size: 13.5px; line-height: 1.55; color: var(--muted-foreground);">{{ p.body }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <!-- The gate / scoreboard -->
+  <section id="gate" style="max-width: 1040px; margin: 0 auto; padding: 48px 32px 72px;">
+    <div style="border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-2xl); background: var(--bv-canvas-soft); padding: 32px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 32px; align-items: center;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span style="font-size: 20px; font-weight: 600; letter-spacing: -0.01em;">Keep score in unsupervised hours</span>
+        <span style="font-size: 14px; line-height: 1.6; color: var(--muted-foreground); max-width: 52ch;">Hours of agent work compress to what changed, what it decided, and what it asks. A fast, confident look earns the next longer run. Never a progress bar.</span>
+      </div>
+      <div style="display: flex; gap: 36px;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-size: 34px; font-weight: 600; letter-spacing: -0.02em;">{{ statHours }}</span>
+          <span style="font-size: 12.5px; color: var(--muted-foreground);">unsupervised today</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-size: 34px; font-weight: 600; letter-spacing: -0.02em;">{{ statLooks }}</span>
+          <span style="font-size: 12.5px; color: var(--muted-foreground);">looks from you</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer style="border-top: 1px solid var(--bv-border-5);">
+    <div style="max-width: 1040px; margin: 0 auto; padding: 24px 32px; display: flex; align-items: center; gap: 10px;">
+      <img src="../../assets/broomva-blackhole-logo.png" alt="Broomva" style="width: 20px; height: 20px; border-radius: 6px;"></img>
+      <span style="font-size: 13px; color: var(--muted-foreground);">Broomva</span>
+      <nav style="margin-left: auto; display: flex; gap: 18px;">
+        <a href="#" style="font-size: 12.5px; color: var(--muted-foreground); text-decoration: none;" style-hover="color: var(--foreground);">Product</a>
+        <a href="#" style="font-size: 12.5px; color: var(--muted-foreground); text-decoration: none;" style-hover="color: var(--foreground);">Docs</a>
+        <a href="#" style="font-size: 12.5px; color: var(--muted-foreground); text-decoration: none;" style-hover="color: var(--foreground);">Contact</a>
+      </nav>
+    </div>
+  </footer>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;headline&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Agents that keep working. Control you keep.&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Hero&quot;}, &quot;subhead&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Broomva orchestrates loops of agent work under your gate. You see what changed, what it decided, and what it asks. Approve, and it earns a longer run.&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Hero&quot;}, &quot;ctaPrimary&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Start a mission&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Hero&quot;}, &quot;statHours&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;6h 12m&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Scoreboard&quot;}, &quot;statLooks&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;3&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Scoreboard&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      headline: this.props.headline ?? "Agents that keep working. Control you keep.",
+      subhead: this.props.subhead ?? "Broomva orchestrates loops of agent work under your gate. You see what changed, what it decided, and what it asks. Approve, and it earns a longer run.",
+      ctaPrimary: this.props.ctaPrimary ?? "Start a mission",
+      ctaSecondary: "Open the work plane",
+      ctaNote: "No setup. Point it at a folder.",
+      ctaClick: () => {},
+      noop: () => {},
+      heroReceipts: [
+        { label: "branch", code: "run/7c2f" },
+        { label: "diff", code: "+214 −38 · 6 files" },
+        { label: "judge", code: "pass · 9/9 checks" },
+      ],
+      principles: [
+        { title: "Work is the noun", body: "A folder is work at any scale. Sessions do the work; chat is one view of it, never the owner." },
+        { title: "The gate is yours", body: "No loop can close work on its own. Clean runs wait at Needs you, and approving is the one human verb." },
+        { title: "Receipts, not claims", body: "Every run shows its branch, its diff, and a judge's verdict. Evidence stands in for progress bars." },
+      ],
+      statHours: this.props.statHours ?? "6h 12m",
+      statLooks: this.props.statLooks ?? "3",
+    };
+  }
+}
+
+</script>
+</body>
+</html>

@@ -1,0 +1,195 @@
+name: test-data-provider
+
+# The deterministic core of the data provider layer
+# (skills/simulation/data-provider/).
+#
+# The provider's SEARCHING is the agent's job and is not tested here -- there is
+# no corpus, no credential and no network in CI, and a test that mocked all three
+# would be testing the mock. What is tested is everything that must be identical
+# every time and checkable afterwards: that a field cannot come into existence
+# unclassified, that a column with one guess in it is a simulated column, that
+# progress cannot go backwards, that a run which found nothing still terminates,
+# and that a missing run is an error rather than a reassuring 0%.
+#
+# That split is the design, not a limitation. A model that both gathers evidence
+# and decides whether the evidence is good is grading its own homework; a model
+# that gathers, and a function that grades against a stated rule, is not. The
+# function is the half a test can hold.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/simulation/data-provider/**'
+      - '.github/workflows/test-data-provider.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/simulation/data-provider/**'
+      - '.github/workflows/test-data-provider.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-data-provider-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (the provider core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: skills/simulation/data-provider
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: python3 -m pip install --upgrade pytest
+
+      - name: Test
+        # PYTHONDONTWRITEBYTECODE because a same-size edit inside one second
+        # reuses stale bytecode (CPython invalidates on mtime+size), which
+        # reports a mutant as SURVIVED without ever running it.
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m pytest tests/ -q
+
+      - name: The refusals are reachable from the command line
+        # The rules are worth nothing if only the library enforces them. This
+        # drives the CLI a caller actually runs and asserts the typed refusal and
+        # the exit code, because a rule that raises inside a function and prints
+        # a traceback outside it has not been shipped.
+        run: |
+          echo '[{"company": {"value": "Acme"}}]' > /tmp/unclassified.json
+          set +e
+          out=$(python3 scripts/provider.py emit --table leads --records /tmp/unclassified.json 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::an unclassified field should exit 2, got $code"; exit 1; }
+          echo "$out" | grep -q UNCLASSIFIED_FIELD || {
+            echo "::error::the refusal did not name its code"; exit 1; }
+
+      - name: A missing run is an error, not a run at 0%
+        run: |
+          set +e
+          out=$(python3 scripts/provider.py status --run nope --root /tmp 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::a missing run should exit 2, got $code"; exit 1; }
+          echo "$out" | grep -q RUN_NOT_FOUND || {
+            echo "::error::a missing run was not reported as missing"; exit 1; }
+
+  handoff:
+    name: what it emits, Parallax accepts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # THE SEAM, TESTED AS A SEAM.
+    #
+    # The provider's whole purpose is to hand a table to Parallax with the
+    # observed/simulated distinction intact. Testing the two halves separately
+    # would leave the join -- a CLI grammar string, parsed by a different
+    # language, in a different directory -- checked by nobody. That string is
+    # exactly the kind of thing that stays green on both sides while agreeing
+    # with neither.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Build the runtime the provider feeds
+        working-directory: skills/simulation/parallax/runtime
+        run: |
+          bun install
+          bun link
+          command -v parallax || { echo "::error::parallax is not on PATH"; exit 1; }
+
+      - name: The provider emits, Parallax accepts, and the origins survive
+        working-directory: skills/simulation/data-provider
+        run: |
+          # REAL artifacts, written through the provider's own snapshot store, so
+          # their digests are computed rather than typed. An earlier version of
+          # this job used `"sha256": "aaaa"` and passed -- proving only that the
+          # word `observed` survived the trip, while the invariant underneath it
+          # (that an observed value is backed by an artifact we hold) was not
+          # exercised at all. A seam test that cannot fail on the seam's own
+          # central claim is decoration.
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, "scripts")
+          import provider as p
+          from pathlib import Path
+          root = Path("/tmp/seam")
+          recs = []
+          for i, name in enumerate(["A", "B"], start=1):
+              e = p.save_snapshot(root, "r1", f"https://x.test/{i}", f"<html>{name}</html>".encode())
+              recs.append({
+                  "company": {"value": name, "evidence": e.as_dict()},
+                  "fit": {"value": 0.8 - i / 10, "inferred_from": "category match"},
+              })
+          Path("/tmp/records.json").write_text(json.dumps(recs), encoding="utf-8")
+          print("wrote 2 records with real snapshots")
+          PY
+
+          cmd=$(python3 scripts/provider.py emit --table leads \
+                  --records /tmp/records.json --run r1 --root /tmp/seam)
+          echo "emitted: $cmd"
+          # shlex-quoted, so let the shell parse it back into argv
+          eval "set -- $cmd"
+          arg="${@: -1}"
+
+          cd "$(mktemp -d)"
+          parallax propose --kind business-data --table "$arg" --json > out.json
+          cat out.json
+
+          python3 - <<'PY'
+          import json
+          d = json.load(open("out.json"))
+          assert d["ok"], d
+          fields = {f["key"]: f for f in d["value"]["stateFields"]}
+          # The row count was COUNTED by the provider, not declared by anyone.
+          assert fields["leads_rows"]["value"] == 2, fields["leads_rows"]
+          # And the distinction the provider established is still visible in the
+          # document a human is asked to accept. This is the whole claim.
+          assert "observed" in fields["leads.company"]["from"], fields["leads.company"]
+          assert "simulated" in fields["leads.fit"]["from"], fields["leads.fit"]
+          print("handoff ok: 2 rows, company observed, fit simulated")
+          PY
+
+      - name: And it REFUSES when the artifact no longer backs the citation
+        working-directory: skills/simulation/data-provider
+        # The negative half. Without it the job above proves only that a happy
+        # path is happy, and the check it depends on could be deleted without
+        # anything going red.
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          import provider as p
+          from pathlib import Path
+          d = Path("/tmp/seam") / p.STATE_DIR / "r1" / "evidence"
+          for snap in d.iterdir():
+              snap.write_bytes(b"tampered")
+          print(f"tampered {len(list(d.iterdir()))} snapshot(s)")
+          PY
+
+          set +e
+          out=$(python3 scripts/provider.py emit --table leads \
+                  --records /tmp/records.json --run r1 --root /tmp/seam 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::a tampered artifact should exit 2, got $code"; exit 1; }
+          echo "$out" | grep -q EVIDENCE_UNVERIFIED || {
+            echo "::error::a tampered artifact did not produce EVIDENCE_UNVERIFIED"; exit 1; }

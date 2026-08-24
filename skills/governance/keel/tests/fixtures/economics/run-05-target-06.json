@@ -1,0 +1,899 @@
+{
+  "target": "synthetic/target-06",
+  "revision": "synthetic-target-06-rev",
+  "generatedAt": "2026-07-24T14:00:00.000Z",
+  "nodes": [
+    {
+      "id": "target-06/surface-00#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 0",
+      "source": "target-06/surface-00:1",
+      "raw": "# synthetic ci_step 0 for synthetic/target-06\nrun: ./verify --ci-step 0"
+    },
+    {
+      "id": "target-06/surface-01#script",
+      "kind": "script",
+      "name": "script 1",
+      "source": "target-06/surface-01:1",
+      "raw": "# synthetic script 1 for synthetic/target-06\nrun: ./verify --script 1"
+    },
+    {
+      "id": "target-06/surface-02#test_target",
+      "kind": "test_target",
+      "name": "test_target 2",
+      "source": "target-06/surface-02:1",
+      "raw": "# synthetic test_target 2 for synthetic/target-06\nrun: ./verify --test-target 2"
+    },
+    {
+      "id": "target-06/surface-03#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 3",
+      "source": "target-06/surface-03:1",
+      "raw": "# synthetic review_gate 3 for synthetic/target-06\nrun: ./verify --review-gate 3"
+    },
+    {
+      "id": "target-06/surface-04#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 4",
+      "source": "target-06/surface-04:1",
+      "raw": "# synthetic deploy_gate 4 for synthetic/target-06\nrun: ./verify --deploy-gate 4"
+    },
+    {
+      "id": "target-06/surface-05#integration",
+      "kind": "integration",
+      "name": "integration 5",
+      "source": "target-06/surface-05:1",
+      "raw": "# synthetic integration 5 for synthetic/target-06\nrun: ./verify --integration 5"
+    },
+    {
+      "id": "target-06/surface-06#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 6",
+      "source": "target-06/surface-06:1",
+      "raw": "# synthetic doc_claim 6 for synthetic/target-06\nrun: ./verify --doc-claim 6"
+    },
+    {
+      "id": "target-06/surface-07#other",
+      "kind": "other",
+      "name": "other 7",
+      "source": "target-06/surface-07:1",
+      "raw": "# synthetic other 7 for synthetic/target-06\nrun: ./verify --other 7"
+    },
+    {
+      "id": "target-06/surface-08#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 8",
+      "source": "target-06/surface-08:1",
+      "raw": "# synthetic ci_step 8 for synthetic/target-06\nrun: ./verify --ci-step 8"
+    },
+    {
+      "id": "target-06/surface-09#script",
+      "kind": "script",
+      "name": "script 9",
+      "source": "target-06/surface-09:1",
+      "raw": "# synthetic script 9 for synthetic/target-06\nrun: ./verify --script 9"
+    },
+    {
+      "id": "target-06/surface-10#test_target",
+      "kind": "test_target",
+      "name": "test_target 10",
+      "source": "target-06/surface-10:1",
+      "raw": "# synthetic test_target 10 for synthetic/target-06\nrun: ./verify --test-target 10"
+    },
+    {
+      "id": "target-06/surface-11#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 11",
+      "source": "target-06/surface-11:1",
+      "raw": "# synthetic review_gate 11 for synthetic/target-06\nrun: ./verify --review-gate 11"
+    },
+    {
+      "id": "target-06/surface-12#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 12",
+      "source": "target-06/surface-12:1",
+      "raw": "# synthetic deploy_gate 12 for synthetic/target-06\nrun: ./verify --deploy-gate 12"
+    },
+    {
+      "id": "target-06/surface-13#integration",
+      "kind": "integration",
+      "name": "integration 13",
+      "source": "target-06/surface-13:1",
+      "raw": "# synthetic integration 13 for synthetic/target-06\nrun: ./verify --integration 13"
+    },
+    {
+      "id": "target-06/surface-14#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 14",
+      "source": "target-06/surface-14:1",
+      "raw": "# synthetic doc_claim 14 for synthetic/target-06\nrun: ./verify --doc-claim 14"
+    },
+    {
+      "id": "target-06/surface-15#other",
+      "kind": "other",
+      "name": "other 15",
+      "source": "target-06/surface-15:1",
+      "raw": "# synthetic other 15 for synthetic/target-06\nrun: ./verify --other 15"
+    },
+    {
+      "id": "target-06/surface-16#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 16",
+      "source": "target-06/surface-16:1",
+      "raw": "# synthetic ci_step 16 for synthetic/target-06\nrun: ./verify --ci-step 16"
+    },
+    {
+      "id": "target-06/surface-17#script",
+      "kind": "script",
+      "name": "script 17",
+      "source": "target-06/surface-17:1",
+      "raw": "# synthetic script 17 for synthetic/target-06\nrun: ./verify --script 17"
+    },
+    {
+      "id": "target-06/surface-18#test_target",
+      "kind": "test_target",
+      "name": "test_target 18",
+      "source": "target-06/surface-18:1",
+      "raw": "# synthetic test_target 18 for synthetic/target-06\nrun: ./verify --test-target 18"
+    },
+    {
+      "id": "target-06/surface-19#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 19",
+      "source": "target-06/surface-19:1",
+      "raw": "# synthetic review_gate 19 for synthetic/target-06\nrun: ./verify --review-gate 19"
+    },
+    {
+      "id": "target-06/surface-20#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 20",
+      "source": "target-06/surface-20:1",
+      "raw": "# synthetic deploy_gate 20 for synthetic/target-06\nrun: ./verify --deploy-gate 20"
+    },
+    {
+      "id": "target-06/surface-21#integration",
+      "kind": "integration",
+      "name": "integration 21",
+      "source": "target-06/surface-21:1",
+      "raw": "# synthetic integration 21 for synthetic/target-06\nrun: ./verify --integration 21"
+    },
+    {
+      "id": "target-06/surface-22#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 22",
+      "source": "target-06/surface-22:1",
+      "raw": "# synthetic doc_claim 22 for synthetic/target-06\nrun: ./verify --doc-claim 22"
+    },
+    {
+      "id": "target-06/surface-23#other",
+      "kind": "other",
+      "name": "other 23",
+      "source": "target-06/surface-23:1",
+      "raw": "# synthetic other 23 for synthetic/target-06\nrun: ./verify --other 23"
+    },
+    {
+      "id": "target-06/surface-24#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 24",
+      "source": "target-06/surface-24:1",
+      "raw": "# synthetic ci_step 24 for synthetic/target-06\nrun: ./verify --ci-step 24"
+    },
+    {
+      "id": "target-06/surface-25#script",
+      "kind": "script",
+      "name": "script 25",
+      "source": "target-06/surface-25:1",
+      "raw": "# synthetic script 25 for synthetic/target-06\nrun: ./verify --script 25"
+    },
+    {
+      "id": "target-06/surface-26#test_target",
+      "kind": "test_target",
+      "name": "test_target 26",
+      "source": "target-06/surface-26:1",
+      "raw": "# synthetic test_target 26 for synthetic/target-06\nrun: ./verify --test-target 26"
+    },
+    {
+      "id": "target-06/surface-27#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 27",
+      "source": "target-06/surface-27:1",
+      "raw": "# synthetic review_gate 27 for synthetic/target-06\nrun: ./verify --review-gate 27"
+    },
+    {
+      "id": "target-06/surface-28#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 28",
+      "source": "target-06/surface-28:1",
+      "raw": "# synthetic deploy_gate 28 for synthetic/target-06\nrun: ./verify --deploy-gate 28"
+    },
+    {
+      "id": "target-06/surface-29#integration",
+      "kind": "integration",
+      "name": "integration 29",
+      "source": "target-06/surface-29:1",
+      "raw": "# synthetic integration 29 for synthetic/target-06\nrun: ./verify --integration 29"
+    },
+    {
+      "id": "target-06/surface-30#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 30",
+      "source": "target-06/surface-30:1",
+      "raw": "# synthetic doc_claim 30 for synthetic/target-06\nrun: ./verify --doc-claim 30"
+    },
+    {
+      "id": "target-06/surface-31#other",
+      "kind": "other",
+      "name": "other 31",
+      "source": "target-06/surface-31:1",
+      "raw": "# synthetic other 31 for synthetic/target-06\nrun: ./verify --other 31"
+    },
+    {
+      "id": "target-06/surface-32#ci_step",
+      "kind": "ci_step",
+      "name": "ci_step 32",
+      "source": "target-06/surface-32:1",
+      "raw": "# synthetic ci_step 32 for synthetic/target-06\nrun: ./verify --ci-step 32"
+    },
+    {
+      "id": "target-06/surface-33#script",
+      "kind": "script",
+      "name": "script 33",
+      "source": "target-06/surface-33:1",
+      "raw": "# synthetic script 33 for synthetic/target-06\nrun: ./verify --script 33"
+    },
+    {
+      "id": "target-06/surface-34#test_target",
+      "kind": "test_target",
+      "name": "test_target 34",
+      "source": "target-06/surface-34:1",
+      "raw": "# synthetic test_target 34 for synthetic/target-06\nrun: ./verify --test-target 34"
+    },
+    {
+      "id": "target-06/surface-35#review_gate",
+      "kind": "review_gate",
+      "name": "review_gate 35",
+      "source": "target-06/surface-35:1",
+      "raw": "# synthetic review_gate 35 for synthetic/target-06\nrun: ./verify --review-gate 35"
+    },
+    {
+      "id": "target-06/surface-36#deploy_gate",
+      "kind": "deploy_gate",
+      "name": "deploy_gate 36",
+      "source": "target-06/surface-36:1",
+      "raw": "# synthetic deploy_gate 36 for synthetic/target-06\nrun: ./verify --deploy-gate 36"
+    },
+    {
+      "id": "target-06/surface-37#integration",
+      "kind": "integration",
+      "name": "integration 37",
+      "source": "target-06/surface-37:1",
+      "raw": "# synthetic integration 37 for synthetic/target-06\nrun: ./verify --integration 37"
+    },
+    {
+      "id": "target-06/surface-38#doc_claim",
+      "kind": "doc_claim",
+      "name": "doc_claim 38",
+      "source": "target-06/surface-38:1",
+      "raw": "# synthetic doc_claim 38 for synthetic/target-06\nrun: ./verify --doc-claim 38"
+    },
+    {
+      "id": "target-06/surface-39#other",
+      "kind": "other",
+      "name": "other 39",
+      "source": "target-06/surface-39:1",
+      "raw": "# synthetic other 39 for synthetic/target-06\nrun: ./verify --other 39"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "target-06/surface-00#ci_step",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-00#ci_step",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-00:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-01#script",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-01#script",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-01:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "target-06/surface-02#test_target",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-02#test_target",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-02:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "target-06/surface-03#review_gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-03#review_gate",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-03:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "target-06/surface-04#deploy_gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-04#deploy_gate",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-04:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "target-06/surface-05#integration",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-05#integration",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-05:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-06#doc_claim",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-06#doc_claim",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-06:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "target-06/surface-07#other",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-07#other",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-07:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "target-06/surface-08#ci_step",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-08#ci_step",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-08:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "target-06/surface-09#script",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-09#script",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-09:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "target-06/surface-10#test_target",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-10#test_target",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-10:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-11#review_gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-11#review_gate",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-11:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "target-06/surface-12#deploy_gate",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-12#deploy_gate",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-12:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "target-06/surface-13#integration",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-13#integration",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-13:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "target-06/surface-14#doc_claim",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-14#doc_claim",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-14:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "target-06/surface-15#other",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-15#other",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-15:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-16#ci_step",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-16#ci_step",
+        "actorCanWrite": false,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-16:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "target-06/surface-17#script",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-17#script",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-17:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "target-06/surface-18#test_target",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-18#test_target",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-18:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "target-06/surface-19#review_gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-19#review_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-19:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "target-06/surface-20#deploy_gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-20#deploy_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-20:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-21#integration",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-21#integration",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-21:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "target-06/surface-22#doc_claim",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-22#doc_claim",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-22:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "target-06/surface-23#other",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-23#other",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-23:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "target-06/surface-24#ci_step",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-24#ci_step",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-24:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "target-06/surface-25#script",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-25#script",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-25:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-26#test_target",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-26#test_target",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-26:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-1"
+    },
+    {
+      "nodeId": "target-06/surface-27#review_gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-27#review_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-27:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-2"
+    },
+    {
+      "nodeId": "target-06/surface-28#deploy_gate",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-28#deploy_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-28:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-3"
+    },
+    {
+      "nodeId": "target-06/surface-29#integration",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-29#integration",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-29:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-4"
+    },
+    {
+      "nodeId": "target-06/surface-30#doc_claim",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-30#doc_claim",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-30:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "probe",
+      "probeId": "synthetic-probe-0"
+    },
+    {
+      "nodeId": "target-06/surface-31#other",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-31#other",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-31:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-32#ci_step",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-32#ci_step",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-32:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-33#script",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-33#script",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-33:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-34#test_target",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-34#test_target",
+        "actorCanWrite": null,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-34:1 — synthetic evidence line"
+      ],
+      "confidence": 0.4,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-35#review_gate",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-35#review_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-35:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-36#deploy_gate",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-36#deploy_gate",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-36:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-37#integration",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-37#integration",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-37:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-38#doc_claim",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-38#doc_claim",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-38:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "target-06/surface-39#other",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "synthetic producer for target-06/surface-39#other",
+        "actorCanWrite": true,
+        "argument": "SYNTHETIC FIXTURE. This argument is placeholder text for exercising curve.ts arithmetic and rendering; it is not a judgment about any real system."
+      },
+      "evidence": [
+        "target-06/surface-39:1 — synthetic evidence line"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 17,
+    "selfReferential": 13,
+    "unknown": 5,
+    "notACheck": 5,
+    "ratio": 0.4857142857142857
+  },
+  "economics": {
+    "nodesTotal": 40,
+    "nodesSampled": 40,
+    "decidedByProbe": 31,
+    "decidedByAgent": 9,
+    "probesMinted": 0,
+    "probeLibrarySize": 9,
+    "tokensIn": 36000,
+    "tokensOut": 9000,
+    "tokensEstimated": true,
+    "wallClockMs": 205000
+  }
+}

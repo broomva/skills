@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Live signals" subtitle="The Undertow is THE running signal · tidepool dot at dot scale · the border comet is retired" viewport="760x380" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 22px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; display: flex; gap: 22px; align-items: flex-start; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .note { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.55; max-width: 30ch; }
+  .note b { color: var(--foreground); font-weight: 500; }
+
+  .card { background: var(--card); border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-xl); box-shadow: var(--bv-shadow-edge); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; width: 240px; }
+  .card-title { font-size: 14px; font-weight: 500; }
+  .card-sub { font-size: 13px; color: var(--muted-foreground); }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--foreground); }
+  .receipt { font-family: var(--bv-font-mono); font-size: 10.5px; color: var(--muted-foreground); background: var(--bv-canvas-soft); border-radius: 5px; padding: 2px 7px; align-self: flex-start; }
+
+  .chip { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 9px; border: 1px solid var(--bv-border-15); border-radius: var(--bv-radius-full); background: var(--bv-canvas-soft); font-size: 12.5px; font-weight: 600; }
+  .chip span.meta { font-size: 11.5px; color: var(--muted-foreground); font-weight: 400; }
+
+  .rules { font-size: 12.5px; line-height: 1.6; color: var(--muted-foreground); max-width: 34ch; }
+  .rules b { color: var(--foreground); font-weight: 500; }
+  .rules li { margin-bottom: 6px; }
+</style></head><body>
+
+<div class="col">
+  <div class="bv-undertow">
+    <span class="bv-undertow-orbit"></span>
+    <div class="card">
+      <span class="card-title">Resumable agent sessions</span>
+      <span class="card-sub">claude · local worktree</span>
+      <span class="status"><span class="bv-dot-comet"><span class="bv-dot-comet-core"></span></span>Running</span>
+      <span class="receipt">run/4fd028</span>
+    </div>
+  </div>
+  <span class="mono">.bv-undertow + .bv-undertow-orbit · running card</span>
+  <div class="chip" style="margin-top:10px;">
+    <span class="bv-dot-comet" style="width:13px;height:13px;"><span class="bv-dot-comet-core" style="inset:4px;"></span></span>
+    maestro
+    <span class="meta">woke 2m · next 13m</span>
+  </div>
+  <span class="mono">.bv-dot-live · the tidepool dot, same weather at dot scale</span>
+</div>
+
+<ul class="rules">
+  <li><b>Three layers, three rhythms.</b> Pools breathe (4.2s), the tide runs counter-phase (3.4s), a faint orbit passes under (9s). The pattern never quite repeats — alive, not looping.</li>
+  <li><b>Contained.</b> The halo lives in a 4px frame that clips it; it hugs the card at any size and stacked running cards never collide.</li>
+  <li><b>Blue → ice only.</b> Never orange or yellow; never on hover; never on more than the running state.</li>
+  <li><b>Presence, not progress.</b> No percentages. The receipts (branch, diffstat, judge) say what happened; the Undertow only says "alive".</li>
+  <li><b>Reduced motion:</b> every layer stops dead; the glow holds as a static halo.</li>
+</ul>
+
+</body></html>

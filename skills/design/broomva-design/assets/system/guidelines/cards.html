@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Cards" subtitle="Matte, rounded-12, whisper border · running state wears the Undertow" viewport="700x250" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font: inherit; font-size: 14px; font-weight: 500; height: 36px; padding: 0 14px; border: 1px solid transparent; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--primary:hover { background: var(--bv-ink-hover); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--secondary:hover { background: var(--bv-frost-4); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .pill--soft:hover { background: var(--bv-frost-8); }
+  .pill--ghost { background: transparent; color: var(--foreground); }
+  .pill--ghost:hover { background: var(--bv-frost-8); }
+  svg.ic { width: 16px; height: 16px; }
+</style>
+<style>
+body { background: var(--bv-canvas-soft); display: flex; gap: 16px; padding: 26px 24px; }
+.card { background: var(--card); border: 1px solid var(--bv-border-5); border-radius: 12px; box-shadow: var(--bv-shadow-edge); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; width: 200px; }
+.card-title { font-size: 14px; font-weight: 500; }
+.card-sub { font-size: 13px; color: var(--muted-foreground); }
+.status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+.dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
+</style></head><body>
+<div class="col" style="gap:8px;">
+  <div class="card"><span class="card-title">Reconcile May invoices</span><span class="card-sub">Bookkeeper</span><span class="status"><span class="dot" style="background:var(--bv-gray-400);"></span>Queued</span></div>
+  <span class="mono">resting · edge shadow</span>
+</div>
+<div class="col" style="gap:8px;">
+  <div class="card" style="box-shadow:var(--bv-shadow-card-hover);"><span class="card-title">Draft outreach batch</span><span class="card-sub">Outreach</span><span class="status"><span class="dot" style="background:var(--bv-blue-accent);"></span>Needs you</span></div>
+  <span class="mono">hover · blue-tinted lift</span>
+</div>
+<div class="col" style="gap:8px;">
+  <div class="bv-undertow"><span class="bv-undertow-orbit"></span><div class="card"><span class="card-title">Weekly planning</span><span class="card-sub">Broomva</span><span class="status"><span class="bv-dot-comet" style="width:13px;height:13px;"><span class="bv-dot-comet-core" style="inset:4px;"></span></span>Running</span></div></div>
+  <span class="mono">running · the Undertow</span>
+</div>
+</body></html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- @dsCard group="Brand" name="Logo" subtitle="Broomva blackhole glyph — keep on dark or frosted surfaces, don't recolor" viewport="700x210" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { padding: 0; display: grid; grid-template-columns: 1fr 1fr; }
+.pane { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 28px; }
+img { width: 96px; height: 96px; object-fit: contain; }
+</style></head><body>
+<div class="pane" data-theme="dark" style="background:var(--background);">
+  <img src="../assets/broomva-blackhole-logo.png" alt="Broomva blackhole logo">
+</div>
+<div class="pane" style="background:var(--bv-canvas-soft);">
+  <img src="../assets/broomva-blackhole-logo.png" alt="Broomva blackhole logo" style="width:64px;height:64px;">
+  <div class="col" style="gap:4px;">
+    <span style="font-size:16px;font-weight:500;">Broomva</span>
+    <span class="mono">assets/broomva-blackhole-logo.png</span>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Buttons" subtitle="Pill shape · ink fill (not black) · hover = one-step lighten or frost, never scale" viewport="700x190" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font: inherit; font-size: 14px; font-weight: 500; height: 36px; padding: 0 14px; border: 1px solid transparent; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--primary:hover { background: var(--bv-ink-hover); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--secondary:hover { background: var(--bv-frost-4); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .pill--soft:hover { background: var(--bv-frost-8); }
+  .pill--ghost { background: transparent; color: var(--foreground); }
+  .pill--ghost:hover { background: var(--bv-frost-8); }
+  svg.ic { width: 16px; height: 16px; }
+</style>
+<style>
+body { display: flex; flex-direction: column; gap: 14px; }
+</style></head><body>
+<div class="row">
+  <button class="pill pill--primary"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>New mission</button>
+  <button class="pill pill--primary">Approve</button>
+  <button class="pill pill--primary" style="height:44px;padding:0 18px;">Continue</button>
+  <button class="pill pill--primary" style="background:var(--bv-gray-300);cursor:not-allowed;">Disabled</button>
+</div>
+<div class="row">
+  <button class="pill pill--secondary">Connect</button>
+  <button class="pill pill--soft">Skip for now</button>
+  <button class="pill pill--ghost">Cancel</button>
+  <button class="pill pill--soft" style="height:28px;padding:0 10px;font-size:12px;">Small</button>
+  <span class="mono">primary · secondary · soft · ghost</span>
+</div>
+</body></html>

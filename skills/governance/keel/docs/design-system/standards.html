@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Keel — design standards</title>
+<meta name="description" content="The Keel design language: voice, visual foundations, components, and the constraints that produced them." />
+<link rel="stylesheet" href="../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../skills/keel/design/keel.css" />
+<style>
+  .doc { max-width: var(--k-measure-read); margin: 0 auto; padding: var(--k-space-16) var(--k-space-6) var(--k-space-24); }
+  h2 { margin: var(--k-space-16) 0 var(--k-space-5); font-size: var(--k-fs-h1); letter-spacing: var(--k-track-display); }
+  h3 { margin: var(--k-space-10) 0 var(--k-space-3); font-size: var(--k-fs-h3); color: var(--k-ink-1); }
+  ul { margin: 0 0 var(--k-space-4); padding-left: var(--k-space-5); max-width: var(--k-measure-prose); }
+  li { margin-bottom: var(--k-space-2); }
+  .rule-num { display: block; margin-bottom: var(--k-space-1); font-family: var(--k-font-mono); font-size: var(--k-fs-micro); color: var(--k-accent); letter-spacing: var(--k-track-eyebrow); }
+  .principle { margin: 0 0 var(--k-space-6); padding-left: var(--k-space-4); border-left: 1px solid var(--k-line-strong); }
+  .principle p { margin: 0; color: var(--k-ink-1); font-size: var(--k-fs-sm); }
+  .principle h4 { margin: 0 0 var(--k-space-2); font-size: var(--k-fs-body); font-weight: var(--k-fw-medium); }
+  .no { color: var(--k-self-referential); }
+  .yes { color: var(--k-anchored); }
+  nav.toc { margin: var(--k-space-10) 0 0; padding: var(--k-space-4) var(--k-space-5); border: 1px solid var(--k-line); border-radius: var(--k-r-lg); font-size: var(--k-fs-sm); }
+  nav.toc a { display: inline-block; margin-right: var(--k-space-5); }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <p class="k-wordmark">Keel · design standards</p>
+
+  <h1 class="k-display" style="margin-top: var(--k-space-6)">An instrument, not a&nbsp;dashboard. <em>The form follows the thesis.</em></h1>
+
+  <p class="k-lede" style="margin-top: var(--k-space-6)">
+    Keel argues that a check is only a check if its signal comes from outside the
+    write boundary. A design language for that argument has one job: never let the
+    artifact make a claim it cannot show the evidence for.
+  </p>
+
+  <nav class="toc">
+    <a href="#lineage">Lineage</a>
+    <a href="#principles">Principles</a>
+    <a href="#voice">Voice</a>
+    <a href="#color">Color</a>
+    <a href="#type">Type</a>
+    <a href="#surface">Surface</a>
+    <a href="#motion">Motion</a>
+    <a href="#brand">Brand</a>
+    <a href="#components">Components</a>
+    <a href="#enforcement">Enforcement</a>
+    <a href="#constraints">Constraints</a>
+  </nav>
+
+  <h2 id="lineage">Lineage</h2>
+
+  <p>
+    The <em>structure</em> of this system is adapted from the Oasis Design System:
+    layered tokens behind a single entry point, self-contained HTML specimen cards
+    per foundation, a per-component usage brief written for an agent rather than a
+    human, a machine-checkable adherence config, and a readme that spends its first
+    third on voice before it names a single color.
+  </p>
+  <p>
+    The <em>look</em> is deliberately inverted. Oasis is a warm, light, photoreal
+    desert — cream paper, soft shadows, generous radii, a blue orb, a slow calm
+    wobble. It is selling a feeling of work moving forward without friction. Keel is
+    a forensic instrument that tells you your pipeline is green and nothing has been
+    verified. Borrowing that warmth would flatter the reader at exactly the moment
+    the artifact needs to not flatter them.
+  </p>
+  <p>
+    So: Oasis's rigor, Keel's register. Where a rule below reverses one of theirs —
+    hairlines instead of soft shadows, small radii instead of generous ones, 90ms
+    instead of a living shimmer — the reversal is the point, not an oversight.
+  </p>
+
+  <h2 id="principles">Seven principles</h2>
+
+  <div class="principle">
+    <span class="rule-num">01</span>
+    <h4>The instrument reads. It does not reassure.</h4>
+    <p>No status theater. Nothing on a Keel surface congratulates anyone. The
+    palette's green is a classification, never a decoration — see rule 03.</p>
+  </div>
+
+  <div class="principle">
+    <span class="rule-num">02</span>
+    <h4>Evidence sits adjacent to verdict.</h4>
+    <p>Every class carries its <span class="k-mono">writeBoundary.argument</span> in
+    the same block. A verdict without its causal path is precisely the unaccountable
+    green check this tool exists to name, and shipping one would be the artifact
+    committing the error it reports.</p>
+  </div>
+
+  <div class="principle">
+    <span class="rule-num">03</span>
+    <h4>The accent is the narrator; the verdict hues are the data.</h4>
+    <p>One accent — <span class="k-mono">--k-accent</span> — for links, the emphasized
+    clause, Keel's own annotations. Four verdict hues for the four classes in the
+    frozen schema. The sets never cross. A green button on a Keel surface is a bug,
+    because it teaches the reader that green means good, and then a green node reads
+    as approval rather than as a classification.</p>
+  </div>
+
+  <div class="principle">
+    <span class="rule-num">04</span>
+    <h4>The denominator stays on screen.</h4>
+    <p>A ratio never renders without its counts, and
+    <span class="k-mono">not_a_check</span> prints beside the fraction rather than
+    inside it. It is the one shoppable class: misfiling a real check there shrinks
+    the denominator and inflates the score. Its chip is dashed and its swatch is the
+    least attractive in the file, so it never looks like somewhere you want nodes to
+    land.</p>
+  </div>
+
+  <div class="principle">
+    <span class="rule-num">05</span>
+    <h4>Uncertainty is loud, not gray.</h4>
+    <p><span class="k-mono">unknown</span> is amber and fails closed. It is not
+    "pending", not "needs review", not muted chrome. It is a traced failure to find
+    the fork point, and it counts against the score exactly like
+    <span class="k-mono">self_referential</span>.</p>
+  </div>
+
+  <div class="principle">
+    <span class="rule-num">06</span>
+    <h4>Mono is quoted from the world. Sans is Keel talking.</h4>
+    <p>The single most useful rule in the system. Node names, paths, commands, class
+    names, exit codes, hashes — mono, because Keel did not write them. Prose,
+    headings, arguments — sans, because Keel did. Provenance becomes legible before
+    a word is read, which is the same distinction the product is about.</p>
+  </div>
+
+  <div class="principle">
+    <span class="rule-num">07</span>
+    <h4>Motion is measurement, not delight.</h4>
+    <p>Under 200ms, decelerating, no overshoot. Motion preserves object continuity
+    across a state change; it never draws attention to one. Instruments settle.</p>
+  </div>
+
+  <h2 id="voice">Voice</h2>
+
+  <p>
+    Flat, indicative, unhedged. Keel reports what produced a signal and whether the
+    actor can write to it. It does not editorialize, and it never congratulates.
+  </p>
+
+  <h3>Casing and naming</h3>
+  <ul>
+    <li>Sentence case everywhere. Uppercase is reserved for
+      <span class="k-mono">.k-eyebrow</span> section labels and the wordmark.</li>
+    <li>Class names are always the schema spelling, in mono:
+      <span class="yes k-mono">self_referential</span>, never
+      <span class="no k-mono">Self-Referential</span>. It is an identifier from the
+      data model, not a label to prettify — re-spelling it breaks the reader's
+      ability to grep the JSON they were just shown.</li>
+  </ul>
+
+  <h3>Words that are not available</h3>
+  <ul>
+    <li><span class="no">passing / failing / good / healthy</span> applied to a
+      grounding ratio. Keel classifies; it does not grade.</li>
+    <li><span class="no">well tested.</span> A high ratio says the signals come from
+      outside. It says nothing about whether they are sufficient.</li>
+    <li><span class="no">looks anchored / probably / seems.</span> If the fork point
+      was not traced, the answer is <span class="k-mono">unknown</span>, and there is
+      a class for that.</li>
+    <li>Any check-mark or cross emoji. The green check is the subject of the
+      critique; the artifact does not get to use one. Gated in CI.</li>
+  </ul>
+
+  <h3>Numbers</h3>
+  <p>
+    Always with a denominator. <span class="yes">"30 of 70 edges anchored"</span>,
+    not <span class="no">"30 anchored"</span>. Tabular figures
+    (<span class="k-mono">--k-table--num</span>, <span class="k-mono">.k-ratio__value</span>)
+    so columns of counts align and a changing digit does not shift the row.
+  </p>
+
+  <h2 id="color">Color</h2>
+
+  <p>
+    Two families that never mix: a narrator accent and four data hues. Plus canvas
+    and ink. That is the whole palette — see the
+    <a href="./guidelines/color-verdicts.html">verdict swatches</a> and
+    <a href="./guidelines/color-canvas.html">canvas &amp; ink</a> cards for values
+    and contrast.
+  </p>
+  <p>
+    <span class="k-mono">not_a_check</span> is inert slate and gets a dashed border
+    rather than a solid one, because it is the only class that changes what the ratio
+    is computed over. <span class="k-mono">--k-smell</span> is aliased to
+    <span class="k-mono">--k-unknown</span> rather than given its own hue: an
+    <span class="k-mono">anchored</span> verdict below 0.5 confidence is claiming to
+    be closer to unknown than its color suggests, and a fifth hue would imply a fifth
+    class. There is no fifth class.
+  </p>
+
+  <h2 id="type">Type</h2>
+
+  <p>
+    Two system stacks, three weights, no webfont. The provenance rule (principle 06)
+    is what the two families are for. Weight stops at 600 — on a
+    <span class="k-mono">#07090c</span> canvas, heavier strokes bloom, and the
+    halation costs more legibility than the emphasis buys.
+  </p>
+  <p>
+    One display size is reserved: <span class="k-mono">--k-fs-ratio</span> is for the
+    grounding ratio and nothing else. Using it elsewhere puts a second number at the
+    same visual weight as the only number the artifact is about.
+  </p>
+
+  <h2 id="surface">Surface</h2>
+
+  <p>
+    Elevation is a background step plus a hairline. There are no shadow tokens: on a
+    near-black canvas a shadow is a smudge that costs paint and reads as nothing.
+    Radii are small — 3 to 12px. Keel's surfaces are cells, rows, and records, the
+    vocabulary of a ledger, and generous rounding reads as consumer-soft.
+  </p>
+  <p>
+    Graph marks are <strong>squares</strong>. A circle in a verification UI reads as a
+    status dot, and the status dot is the thing being audited.
+  </p>
+
+  <h2 id="motion">Motion</h2>
+  <p>
+    <span class="k-mono">--k-dur-fast</span> 90ms for state feedback,
+    <span class="k-mono">--k-dur-base</span> 160ms for anything that moves,
+    <span class="k-mono">--k-ease</span> decelerating with no overshoot. Nothing
+    animates on load. <span class="k-mono">prefers-reduced-motion</span> removes all
+    of it, which costs nothing because none of it is load-bearing.
+  </p>
+
+  <h2 id="components">Components</h2>
+  <p>
+    The component contract is a class name plus a documented markup shape — there is
+    no runtime and no framework to hang an API on. The per-component brief lives in
+    <a href="../../skills/keel/design/README.md">skills/keel/design/README.md</a>,
+    written for the agent that will emit the markup. Specimen cards for the two
+    load-bearing components are on the
+    <a href="./index.html">system home</a>.
+  </p>
+
+  <h2 id="brand">The mark, and the exception it carries</h2>
+  <p>
+    The mark is a faceted keel blade cutting down through a lit waterline — the pale
+    part above the surface, the luminous part below doing the structural work where
+    you cannot see it. It is a <em>rendered emblem</em>: glow, gradient, faceted
+    shading. Every one of those is forbidden by the surface rules above.
+  </p>
+  <p>
+    That exception is deliberate and it is bounded to the emblem. The interface is
+    not a rendered object, and nothing in the product chrome may borrow the
+    treatment. The moment a card or a button grows a glow, the exception has leaked
+    and the austerity the rest of the system depends on is gone. Usage rules live on
+    the <a href="./index.html">system home</a>; the asset contract is in
+    <a href="../../skills/keel/design/README.md">skills/keel/design/README.md</a>.
+  </p>
+  <p>
+    It also costs coverage. While the marks were SVG the gate compared their inks to
+    <span class="k-mono">tokens.css</span> byte for byte. A raster emblem cannot be
+    checked that way, so brand-colour agreement is now enforced by review. Stated
+    here because a gate that quietly stops covering something is worse than one that
+    never covered it.
+  </p>
+
+  <h2 id="enforcement">Enforcement</h2>
+  <p>
+    <span class="k-mono">make design-audit</span> is a gate, not a linter you may
+    ignore. It fails on a raw hex or a raw px outside the token file, on a
+    <span class="k-mono">site/</span> copy that has drifted from canonical, on a
+    <span class="k-mono">data-class</span> the frozen schema does not define, on a
+    ratio rendered without its denominator or its scope note, and on a check-mark
+    emoji.
+  </p>
+  <p>
+    It is deliberately an <em>executed</em> comparison — a byte diff and a parse of
+    <span class="k-mono">schemas/keel.ts</span> — rather than an assertion about
+    values this repo also writes. A gate of the second kind would be
+    <span class="k-mono">self_referential</span> under Keel's own definition, and
+    shipping one in the repository that defines the term would be indefensible.
+  </p>
+  <p>
+    Checks 1 and 2 have an escape hatch: put <span class="k-mono">audit-ok:</span> on
+    the line with a reason. Checks 3 through 7 have none. They encode product
+    invariants, not style preferences.
+  </p>
+
+  <h2 id="constraints">Constraints, stated honestly</h2>
+  <ul>
+    <li><strong>No webfonts, ever.</strong> The report artifact must open from
+      <span class="k-mono">file://</span> with zero external requests, which rules out
+      every hosted face; a base64 face would add ~80KB to an artifact whose whole
+      argument is that it depends on nothing. Both stacks are system stacks and
+      render slightly differently per platform. Accepted. This is where Keel and
+      Oasis had to part ways on method as well as look — Oasis ships Figtree from a
+      CDN, and Keel cannot.</li>
+    <li><strong><span class="k-mono">--k-ink-3</span> is below 4.5:1 on the page
+      canvas.</strong> Borders, disabled glyphs, and rules only. Never text.</li>
+    <li><strong>The <span class="k-mono">site/</span> stylesheets are copies.</strong>
+      GitHub Pages deploys that directory standalone, so it cannot reach into
+      <span class="k-mono">skills/</span>. The duplication is real; the byte-diff gate
+      is what makes it safe rather than a convention that decays.</li>
+    <li><strong>Dark-first, with a print inversion.</strong> The canvas and ink invert
+      for print while the four verdict hues are darkened rather than swapped, so a
+      printed report and a screen report never disagree about what they show.</li>
+  </ul>
+
+  <p class="k-scope" style="margin-top: var(--k-space-16)">
+    <strong>Scope.</strong> Keel measures the <em>shape</em> of verification, not its
+    quality. A repo can be 100% anchored with terrible tests. Anchoring says the
+    signal comes from outside; it does not say the signal is sufficient. Every
+    artifact that prints a grounding ratio carries this note verbatim.
+  </p>
+
+</div>
+</body>
+</html>

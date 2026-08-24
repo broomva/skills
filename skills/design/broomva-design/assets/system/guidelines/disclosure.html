@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- @dsCard group="Brand" name="The disclosure ladder" subtitle="The substrate is for agents · the user gets signals, verbs, and receipts" viewport="780x660" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 22px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; display: flex; flex-direction: column; gap: 16px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .rungs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .rung { border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-xl); background: var(--card); box-shadow: var(--bv-shadow-edge); padding: 11px 13px; display: flex; flex-direction: column; gap: 4px; }
+  .rung b { font-size: 13px; font-weight: 500; }
+  .rung span { font-size: 11.5px; color: var(--muted-foreground); line-height: 1.5; }
+  .rung em { font-style: normal; font-size: 11px; color: var(--bv-blue); }
+
+  .map { display: flex; flex-direction: column; }
+  .map-head, .map-row { display: grid; grid-template-columns: 1fr 16px 1.15fr; gap: 0 10px; padding: 6px 6px; align-items: baseline; }
+  .map-head { font-size: 10.5px; font-weight: 500; color: var(--muted-foreground); padding-bottom: 2px; }
+  .map-row { border-top: 1px solid var(--bv-border-5); font-size: 12px; line-height: 1.45; }
+  .map-row .sub { font-family: var(--bv-font-mono); font-size: 10.5px; color: var(--muted-foreground); }
+  .map-row .arr { color: var(--bv-gray-400); }
+  .credo { font-size: 12.5px; color: var(--muted-foreground); line-height: 1.55; max-width: 68ch; margin: 0; }
+  .credo b { color: var(--foreground); font-weight: 500; }
+</style></head><body>
+
+<div>
+  <div class="label" style="margin-bottom:8px;">Three rungs. The product must be fully operable from the first two; the third exists to prove they were telling the truth.</div>
+  <div class="rungs">
+    <div class="rung"><b>1 · Ambient — always on</b><span>Plain-language feed, attention chip, bench, Undertow. Answers "what needs me, what's moving." No substrate words on this layer.</span><em>the feed · the chrome</em></div>
+    <div class="rung"><b>2 · The gate — on demand</b><span>The look: what changed · what it decided · what it asks. Control is verbs, not configuration — approve, send back, grant, point.</span><em>the look · the asks</em></div>
+    <div class="rung"><b>3 · The receipts — opt-in</b><span>Inspector tabs: frontmatter chips, scope badges, run history, branches. For verifying trust, never required for operating.</span><em>inspector · activity · wake log</em></div>
+  </div>
+</div>
+
+<div>
+  <div class="label" style="margin-bottom:4px;">The translation table. Every substrate concept maps to exactly one surface primitive — if a feature needs the user to learn a substrate word, the translation has failed.</div>
+  <div class="map">
+    <div class="map-head"><span>The substrate (agents operate this)</span><span></span><span>The surface (the user sees this)</span></div>
+    <div class="map-row"><span class="sub">frontmatter contract — kind · owner · budget · gate</span><span class="arr">→</span><span>chips on the inspector; edited by talking, not forms</span></div>
+    <div class="map-row"><span class="sub">governance cascade — .control/policy.yaml</span><span class="arr">→</span><span>invisible until exceeded — then an ask at your gate, in a sentence</span></div>
+    <div class="map-row"><span class="sub">git — branches, diffs, three histories</span><span class="arr">→</span><span>evidence lines in the look: run/4fd028 · +182 −41 · 9 tests</span></div>
+    <div class="map-row"><span class="sub">session scopes — worktree → meta</span><span class="arr">→</span><span>plain access asks: "wants to read all of back-office"</span></div>
+    <div class="map-row"><span class="sub">the event store — NDJSON timelines</span><span class="arr">→</span><span>the Chat and Activity tabs</span></div>
+    <div class="map-row"><span class="sub">the tick loop and wakes</span><span class="arr">→</span><span>the timer chip · the wake log, every wake with its cause</span></div>
+    <div class="map-row"><span class="sub">unsupervised hours</span><span class="arr">→</span><span>the autonomy scoreboard — hours today, a notch per look</span></div>
+    <div class="map-row"><span class="sub">worktrees · index.db · the engine room</span><span class="arr">→</span><span><b style="font-weight:500;color:var(--foreground)">never shown — the engine room has no doorknob</b></span></div>
+  </div>
+</div>
+
+<p class="credo"><b>The gate is the control surface.</b> Grants, budgets, and scope expansions arrive as sentences with Approve / Send back — never as settings to study. Trust converts into longer unsupervised runs at the gate, and the receipts are always one click deeper.</p>
+
+</body></html>

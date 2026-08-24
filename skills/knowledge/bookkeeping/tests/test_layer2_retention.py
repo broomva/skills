@@ -48,7 +48,10 @@ class TestAgeDerivation:
 
     def test_undated_falls_back_to_mtime(self, notes_dir):
         p = _note(notes_dir, "notes-raw.md")
-        age = raw_extract_age_days(p, today=TODAY)
+        # This branch intentionally derives age from the file's real mtime.
+        # Comparing that mtime to the historical fixture date makes the test
+        # go negative as soon as wall-clock time advances past TODAY.
+        age = raw_extract_age_days(p, today=date.today())
         assert age is not None and age >= 0
 
     def test_impossible_date_returns_none(self, notes_dir):

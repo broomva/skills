@@ -1,0 +1,112 @@
+# Parallax hub - Render Blueprint
+#
+# One web service that serves BOTH the landing page (GET /) and the hub API
+# (POST /api/*, GET /r/:id). The frozen hub contract binds Bun.serve to
+# process.env.PORT on host 0.0.0.0, which is exactly what Render requires.
+#
+# WHY runtime: node AND NOT runtime: bun
+#   There is no `bun` runtime on Render. `render blueprints validate` rejects it
+#   outright: {"error":"invalid runtime bun","path":"services[0].runtime"}.
+#   Bun ships as a preloaded tool INSIDE the JS/TS native runtime (`node`), and
+#   is only present in the build+runtime image if the service root carries a
+#   bun.lock / bun.lockb, a .bun-version file, or a BUN_VERSION env var.
+#   The service root is skills/simulation/parallax/runtime (`rootDir` below) and
+#   bun.lock is tracked there, so the gate is satisfied. That is no longer the
+#   repository root: this runtime moved into broomva/skills, and everything
+#   Render reads is relative to rootDir. BUN_VERSION below is a second, explicit
+#   belt: if anyone ever gitignores bun.lock, the env var alone keeps Bun in the
+#   image. A Dockerfile is therefore NOT needed and deliberately not present.
+#
+# WHY plan: free IS WRITTEN OUT
+#   Omitting `plan` silently defaults to `starter`, and this workspace has no
+#   payment method on file, so the Blueprint then fails validation with
+#   need_payment_info. `free` must be explicit. Consequences of free, which are
+#   real and are not worked around here:
+#     - No persistent disk. The filesystem is ephemeral, so anything the hub
+#       writes (a bun:sqlite EventLog, a rendered receipt) is lost on every
+#       redeploy, restart and idle spin-down. GET /r/:id must therefore render
+#       from the runId+seed deterministically, or be documented as in-memory.
+#     - 15 minutes without inbound traffic spins the service down; the next
+#       request takes about a minute to answer. Warm it before a live demo.
+#     - 750 free instance-hours per workspace per calendar month.
+#   To move to a paid instance later: add a card, then change `plan` to
+#   `starter` here. Region cannot be changed after creation; plan can.
+#
+# WHY name: parallax-hub
+#   The hostname is https://<name-slugified>.onrender.com. `parallax.onrender.com`
+#   and `simulacro.onrender.com` are both already taken by unrelated apps.
+#   `parallax-hub.onrender.com` was verified unclaimed (HTTP 404 with
+#   `x-render-routing: no-server`, which is Render's tell for a free hostname).
+#
+# Validate any edit to this file BEFORE committing it:
+#   render blueprints validate ./render.yaml
+
+services:
+  - type: web
+    name: parallax-hub
+    runtime: node
+    repo: https://github.com/broomva/skills
+    branch: main
+
+    # The service root is this directory, not the repository root. Every path
+    # below (bun.lock, src/hub/serve.ts) is relative to it.
+    rootDir: skills/simulation/parallax/runtime
+
+    # Explicit. Omitting this means `starter`, which this workspace cannot bill.
+    plan: free
+
+    # Closest Render region to where this is operated, in LatAm. Immutable after
+    # the service is created - changing it later requires a new service.
+    region: virginia
+
+    buildCommand: bun install --frozen-lockfile
+    startCommand: bun run src/hub/serve.ts
+
+    # GET /health returns 200 {ok:true, version, uptimeSeconds}. Render requires
+    # a 2xx/3xx within five seconds. With this set, a deploy only goes live once
+    # the new instance answers, so a broken build fails visibly instead of
+    # replacing a working service with a dead one.
+    healthCheckPath: /health
+
+    # Deploy on every push to main. `autoDeployTrigger` replaces the deprecated
+    # `autoDeploy` key; setting both is a validation error. Switch the value to
+    # `checksPass` to gate deploys on the test-parallax.yml workflow going green,
+    # or `off` to make every deploy manual.
+    autoDeployTrigger: commit
+
+    # A SECOND guard, not the only one. `rootDir` above already scopes the
+    # trigger: "If you set a root directory for your service, Render only
+    # triggers an autodeploy if your changes affect files anywhere under that
+    # directory" (render.com/docs/monorepo-support). So commits to unrelated
+    # skills do not rebuild the hub even without this block.
+    #
+    # An earlier version of this comment claimed rootDir scoped the BUILD but not
+    # the TRIGGER, and that the filter was therefore necessary. That was invented
+    # and is contradicted by the docs above; the filter is kept as an explicit
+    # belt, so that narrowing or removing rootDir cannot silently widen what
+    # deploys, but it is redundant today and should be read that way.
+    #
+    # These paths ARE relative to the REPOSITORY root, not to rootDir -- that
+    # part is real: "Build filter paths ... are always relative to the repo's
+    # root directory".
+    buildFilter:
+      paths:
+        - skills/simulation/parallax/runtime/**
+
+    # Pull-request preview environments are off: each one is a second instance
+    # burning from the same 750 free instance-hours per month.
+    previews:
+      generation: "off"
+
+    envVars:
+      # Pins the toolchain to the version this runtime is developed and
+      # CI-tested against (.github/workflows/test-parallax.yml uses
+      # oven-sh/setup-bun @ 1.3.14), so the deployed image cannot drift with
+      # Render's rolling default.
+      - key: BUN_VERSION
+        value: "1.3.14"
+      - key: NODE_ENV
+        value: production
+    # PORT is intentionally NOT set here. Render injects it (10000 in
+    # production) and the hub reads process.env.PORT with a local default of
+    # 3000. Setting PORT in this file would override Render's own value.

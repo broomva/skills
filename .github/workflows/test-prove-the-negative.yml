@@ -1,0 +1,108 @@
+name: test-prove-the-negative
+
+# Python test gate for the `prove-the-negative` skill
+# (skills/tooling/prove-the-negative/). Path-filtered so it runs ONLY when that
+# skill changes — the monorepo's tests-optional default (lint-skill-md.yml)
+# stands everywhere else.
+#
+# This workflow exists because the skill shipped without one. Its tests were
+# green on the PR only because an unrelated skill's workflow happened to
+# trigger, which is this skill's own thesis in workflow form: a suite that
+# never ran and a suite that passed are the same green tick until something
+# forces one of them to succeed.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/prove-the-negative/**'
+      - '.github/workflows/test-prove-the-negative.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/prove-the-negative/**'
+      - '.github/workflows/test-prove-the-negative.yml'
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the checkout. It never pushes, never
+# comments, never publishes — so it has no need of the default write token.
+permissions:
+  contents: read
+
+concurrency:
+  group: test-prove-the-negative-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/tooling/prove-the-negative
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install pytest
+      - name: Unit tests (the verdict function)
+        run: python -m pytest tests/ -v
+
+      # The exit code IS the contract, so CI asserts it directly rather than
+      # trusting the suite that asserts it. Each of the three must be observed;
+      # a run that only ever sees non-zero cannot tell a working gate from a
+      # script that crashes on startup.
+      - name: Exit code 0 — controls fired, assertions held
+        run: |
+          echo '[{"name":"ctl","kind":"control","outcome":"pass"},
+                {"name":"a","kind":"assertion","outcome":"pass"}]' \
+            | python scripts/verdict.py -
+      - name: Exit code 1 — a real finding
+        run: |
+          set +e
+          echo '[{"name":"ctl","kind":"control","outcome":"pass"},
+                {"name":"a","kind":"assertion","outcome":"fail"}]' \
+            | python scripts/verdict.py -
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "::error::a broken assertion must exit 1, got $code"; exit 1; }
+      - name: Exit code 2 — a suite of denials with no control learns nothing
+        run: |
+          set +e
+          echo '[{"name":"a","kind":"assertion","outcome":"pass"}]' | python scripts/verdict.py -
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "::error::a control-less suite must exit 2, got $code"; exit 1; }
+      - name: Exit code 2 — controls green and nothing asserted learns nothing either
+        # The mirror of the step above. A control-only matrix used to exit 0:
+        # the apparatus proven live, the subject never probed, reported PASS.
+        run: |
+          set +e
+          echo '[{"name":"ctl","kind":"control","outcome":"pass"}]' | python scripts/verdict.py -
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "::error::an assertion-less suite must exit 2, got $code"; exit 1; }
+
+      - name: An unreadable case set is INVALID, not FAIL
+        # Regression guard for BRO-2261: `open()` sat outside the try, so a
+        # missing file escaped as an uncaught OSError and Python exited 1 —
+        # this script reporting "we could not measure" as "we found a problem".
+        run: |
+          for arg in /nonexistent/cases.json /tmp; do
+            set +e
+            python scripts/verdict.py "$arg" 2>/tmp/err.txt
+            code=$?
+            set -e
+            test "$code" -eq 2 || { echo "::error::$arg must exit 2 (INVALID), got $code"; cat /tmp/err.txt; exit 1; }
+            if grep -q Traceback /tmp/err.txt; then
+              echo "::error::$arg crashed instead of grading"; cat /tmp/err.txt; exit 1
+            fi
+          done
+          echo "unreadable inputs grade INVALID without crashing"

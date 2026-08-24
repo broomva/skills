@@ -1,5 +1,6 @@
 ---
 name: p9
+tier: D
 primitive: P9
 category: orchestration
 description: |

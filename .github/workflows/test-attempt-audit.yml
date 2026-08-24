@@ -1,0 +1,55 @@
+name: test-attempt-audit
+
+# Test gate for the `attempt-audit` skill (skills/tooling/attempt-audit/).
+# Path-filtered so it runs ONLY when that skill changes.
+#
+# This skill exists to find checks that never ran, so its own tests must not be
+# opt-in: a suite that fires only when someone remembers to run it is itself an
+# unattempted check. Both the pytest suite AND the mutation proof run here --
+# the mutation proof is what makes a green suite mean something.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/attempt-audit/**'
+      - '.github/workflows/test-attempt-audit.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/attempt-audit/**'
+      - '.github/workflows/test-attempt-audit.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-attempt-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/tooling/attempt-audit
+
+jobs:
+  test:
+    name: pytest + mutation proof (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install pytest
+        run: pip install pytest
+      - name: Unit tests
+        run: python3 -m pytest tests/test_attempt_audit.py -q
+      - name: Mutation proof (the suite must be able to fail)
+        run: ./tests/mutation_proof.sh
+      # Exit 1 = findings, exit 2 = scanned nothing; bash -e fails the step on
+      # either. No `echo $?` after it -- that would print 0 unconditionally and
+      # read as a pass signal, which is the defect this skill detects.
+      - name: Self-audit (the tool must run clean on its own source)
+        run: python3 scripts/attempt_audit.py scripts/

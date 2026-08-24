@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- @dsCard group="Colors" name="Status" subtitle="OKLCH status hues, harmonized to the cool axis" viewport="700x120" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { display: flex; gap: 12px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 12px; border-radius: 9999px; font-size: 12px; font-weight: 500; background: var(--bv-canvas-soft); }
+.dot { width: 8px; height: 8px; border-radius: 99px; }
+</style></head><body>
+<span class="pill"><span class="dot" style="background:var(--bv-success);"></span>Done</span>
+<span class="pill"><span class="dot" style="background:var(--bv-info);"></span>Running</span>
+<span class="pill"><span class="dot" style="background:var(--bv-warning);"></span>Needs you</span>
+<span class="pill"><span class="dot" style="background:var(--bv-danger);"></span>Failed</span>
+<span class="mono" style="margin-left:8px;">success · info · warning · danger</span>
+</body></html>

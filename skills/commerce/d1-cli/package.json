@@ -1,0 +1,22 @@
+{
+  "name": "d1-cli",
+  "version": "0.9.0",
+  "description": "Command-line access to Tiendas D1 (Colombia) \u2014 search the catalogue, price a basket against your nearest store, quote delivery. Builds carts; never pays.",
+  "type": "module",
+  "module": "src/cli.ts",
+  "bin": {
+    "d1": "src/cli.ts"
+  },
+  "scripts": {
+    "d1": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src test",
+    "format": "biome format --write src test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.6.3"
+  }
+}

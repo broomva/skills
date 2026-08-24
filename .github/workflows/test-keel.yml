@@ -1,0 +1,72 @@
+name: test-keel
+
+# Test gate for the `keel` skill (skills/governance/keel/). Path-filtered so it
+# runs ONLY when that directory changes.
+#
+# The suite is network-free: every target it gathers is a tree the test builds
+# on disk, and the corpus stepper — the one component that clones real
+# repositories — is exercised only through fixtures with KEEL_REPO_ROOT pinned
+# at a temp dir. No test reaches github.com.
+#
+# TWO LEGS, DELIBERATELY. The probe sandbox is enforced by `sandbox-exec`, which
+# exists on macOS and nowhere else; on Linux a probe gets a stripped environment
+# and a kill-timer and nothing more. Running ubuntu alone would leave the
+# confinement claim in SECURITY.md unexecuted, which is the failure mode this
+# skill exists to name. macOS is where that claim is actually tested.
+#
+# `portability` is a real gate, not a formality: it greps the committed bytes
+# for machine-local paths and exits non-zero. Keel shipped an absolute home path
+# inside a rendered SVG once because the equivalent check exempted the reports
+# directory wholesale.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/governance/keel/**'
+      - '.github/workflows/test-keel.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/governance/keel/**'
+      - '.github/workflows/test-keel.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-keel-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/governance/keel
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: bun test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        # bun.lock is committed, so CI installs exactly what was tested locally.
+        run: bun install --frozen-lockfile
+      - name: Test
+        run: bun test
+      - name: Typecheck
+        run: bun run typecheck
+
+  gates:
+    name: portability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No machine-specific path may be committed
+        run: bash scripts/portability-check.sh

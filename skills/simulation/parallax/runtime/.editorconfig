@@ -1,0 +1,28 @@
+# https://editorconfig.org
+# Indentation and line width match biome.json. Biome is the authority; this file
+# only stops editors from fighting it before Biome runs.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 100
+
+[*.md]
+# two trailing spaces are a hard line break in Markdown
+trim_trailing_whitespace = false
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[LICENSE]
+insert_final_newline = false
+trim_trailing_whitespace = false
+max_line_length = off

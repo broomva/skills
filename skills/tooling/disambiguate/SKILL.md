@@ -1,5 +1,6 @@
 ---
 name: disambiguate
+tier: D
 category: tooling
 description: >-
   Rewrite a requirement so it can only be read one way. Distilled from

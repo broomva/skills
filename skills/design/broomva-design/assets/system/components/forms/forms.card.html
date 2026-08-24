@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- @dsCard group="Components" viewport="700x330" name="Forms" subtitle="Select · Checkbox · Radio · Switch · Textarea · Field — light and dark" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--bv-font-sans); }
+  .pane { background: var(--background); color: var(--foreground); padding: 16px 18px; }
+</style></head><body>
+<div class="pane" id="pane-light"></div>
+<div class="pane" id="pane-dark" data-theme="dark"></div>
+<script type="text/babel">
+const { Select, Checkbox, Radio, Switch, Textarea, Field, Input } = window.BroomvaDesignSystem_5727d9;
+function FormsSpec() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Field label="Agent">
+        <Select options={["claude", "bookkeeper", "researcher"]} style={{ width: 180 }} />
+      </Field>
+      <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+        <Checkbox defaultChecked>Wake me</Checkbox>
+        <Checkbox>Quiet runs</Checkbox>
+        <Switch defaultChecked />
+        <Switch />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <Radio defaultChecked>Gate every run</Radio>
+        <Radio>Gate: none</Radio>
+      </div>
+      <Field label="Instructions" hint="What good looks like">
+        <Textarea rows={2} defaultValue="Keep event ids stable. Flag schema changes." style={{ maxWidth: 300 }} />
+      </Field>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("pane-light")).render(<FormsSpec />);
+ReactDOM.createRoot(document.getElementById("pane-dark")).render(<FormsSpec />);
+</script>
+</body></html>

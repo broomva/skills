@@ -1,0 +1,615 @@
+{
+  "target": "openai-python",
+  "revision": "d4c151d92ba713e56518a4483d3b7918dd1be838",
+  "generatedAt": "2026-07-25T01:42:13.604Z",
+  "nodes": [
+    {
+      "id": "pyproject.toml#tool-pytest-ini-options",
+      "kind": "test_target",
+      "name": "pytest config ([tool.pytest.ini_options])",
+      "source": "pyproject.toml:155",
+      "raw": "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\naddopts = \"--tb=short -n auto\"\nxfail_strict = true\nasyncio_mode = \"auto\"\nasyncio_default_fixture_loop_scope = \"session\"\nfilterwarnings = [\n  \"error\"\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-pyright",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.pyright])",
+      "source": "pyproject.toml:168",
+      "raw": "[tool.pyright]\n# this enables practically every flag given by pyright.\n# there are a couple of flags that are still disabled by\n# default in strict mode as they are experimental and niche.\ntypeCheckingMode = \"strict\"\npythonVersion = \"3.10\"\n\nexclude = [\n    \"_dev\",\n    \".venv\",\n    \".nox\",\n    \".git\",\n\n    # uses inline `uv` script dependencies\n    # which means it can't be type checked\n    \"examples/realtime/audio_util.py\",\n    \"examples/realtime/push_to_talk_app.py\"\n]\n\nreportImplicitOverride = true\nreportOverlappingOverload = false\n\nreportImportCycles = false\nreportPrivateUsage = false"
+    },
+    {
+      "id": "pyproject.toml#tool-mypy",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.mypy])",
+      "source": "pyproject.toml:193",
+      "raw": "[tool.mypy]\npretty = true\nshow_error_codes = true\n\n# Exclude _files.py because mypy isn't smart enough to apply\n# the correct type narrowing and as this is an internal module\n# it's fine to just use Pyright.\n#\n# We also exclude our `tests` as mypy doesn't always infer\n# types correctly and Pyright will still catch any type errors.\n#\n# realtime examples use inline `uv` script dependencies\n# which means it can't be type checked\nexclude = [\n  'src/openai/_files.py',\n  '_dev/.*.py',\n  'tests/.*',\n  'src/openai/_utils/_logs.py',\n  'examples/realtime/audio_util.py',\n  'examples/realtime/push_to_talk_app.py',\n]\n\nstrict_equality = true\nimplicit_reexport = true\ncheck_untyped_defs = true\nno_implicit_optional = true\n\nwarn_return_any = true\nwarn_unreachable = true\nwarn_unused_configs = true\n\n# Turn these options off as it could cause conflicts\n# with the Pyright options.\nwarn_unused_ignores = false\nwarn_redundant_casts = false\n\ndisallow_any_generics = true\ndisallow_untyped_defs = true\ndisallow_untyped_calls = true\ndisallow_subclassing_any = true\ndisallow_incomplete_defs = true\ndisallow_untyped_decorators = true\ncache_fine_grained = true\n\n# By default, mypy reports an error if you assign a value to the result\n# of a function call that doesn't return anything. We do this in our test\n# cases:\n# ```\n# result = ...\n# assert result is None\n# ```\n# Changing this codegen to make mypy happy would increase complexity\n# and would not be worth it.\ndisable_error_code = \"func-returns-value,overload-cannot-match\"\n\n# https://github.com/python/mypy/issues/12162"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff])",
+      "source": "pyproject.toml:254",
+      "raw": "[tool.ruff]\nline-length = 120\noutput-format = \"grouped\"\ntarget-version = \"py310\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-format",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.format])",
+      "source": "pyproject.toml:259",
+      "raw": "[tool.ruff.format]\ndocstring-code-format = true"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:262",
+      "raw": "[tool.ruff.lint]\nselect = [\n  # isort\n  \"I\",\n  # bugbear rules\n  \"B\",\n  # remove unused imports\n  \"F401\",\n  # check for missing future annotations\n  \"FA102\",\n  # bare except statements\n  \"E722\",\n  # unused arguments\n  \"ARG\",\n  # print statements\n  \"T201\",\n  \"T203\",\n  # misuse of typing.TYPE_CHECKING\n  \"TC004\",\n  # import rules\n  \"TID251\",\n]\nignore = [\n  # mutable defaults\n  \"B006\",\n]\nunfixable = [\n  # disable auto fix for print statements\n  \"T201\",\n  \"T203\",\n]\n\nextend-safe-fixes = [\"FA102\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-flake8-tidy-imports-banned-api",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.flake8-tidy-imports.banned-api])",
+      "source": "pyproject.toml:296",
+      "raw": "[tool.ruff.lint.flake8-tidy-imports.banned-api]\n\"functools.lru_cache\".msg = \"This function does not retain type information for the wrapped function's arguments; The `lru_cache` function from `_utils` should be used instead\""
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-isort",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.isort])",
+      "source": "pyproject.toml:299",
+      "raw": "[tool.ruff.lint.isort]\nlength-sort = true\nlength-sort-straight = true\ncombine-as-imports = true\nextra-standard-library = [\"typing_extensions\"]\nknown-first-party = [\"openai\", \"tests\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.per-file-ignores])",
+      "source": "pyproject.toml:306",
+      "raw": "[tool.ruff.lint.per-file-ignores]\n\"bin/**.py\" = [\"T201\", \"T203\"]\n\"scripts/**.py\" = [\"T201\", \"T203\"]\n\"tests/**.py\" = [\"T201\", \"T203\"]\n\"examples/**.py\" = [\"T201\", \"T203\"]"
+    },
+    {
+      "id": "tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/conftest.py",
+      "raw": "# File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.\n\nfrom __future__ import annotations\n\nimport os\nimport sys\nimport logging\nfrom typing import TYPE_CHECKING, Iterator, AsyncIterator\n\nimport httpx\nimport pytest\nfrom pytest_asyncio import is_async_test\n\nfrom openai import OpenAI, AsyncOpenAI, DefaultHttpx2Client, DefaultAioHttpClient, DefaultAsyncHttpx2Client\nfrom openai._utils import is_dict\n\nfrom ._httpx2_respx import enable_httpx2_respx\n\nif TYPE_CHECKING:\n    from _pytest.fixtures import FixtureRequest  # pyright: ignore[reportPrivateImportUsage]\n\npytest.register_assert_rewrite(\"tests.utils\")\n\nlogging.getLogger(\"openai\").setLevel(logging.DEBUG)\n\n\n# automatically add `pytest.mark.asyncio()` to all of our async tests\n# so we don't have to add that boilerplate everywhere\ndef pytest_collection_modifyitems(items: list[pytest.Function]) -> None:\n    pytest_asyncio_tests = (item for item in items if is_async_test(item))\n    session_scope_marker = pytest.mark.asyncio(loop_scope=\"session\")\n    for async_test in pytest_asyncio_tests:\n        async_test.add_marker(session_scope_marker, append=False)\n\n    # RESPX cannot mock requests made by the aiohttp adapter.\n    for item in items:\n        if \"respx_mock\" not in item.fixturenames:\n            continue\n\n        if \"async_client\" not in item.fixturenames:\n            continue\n\n        if not hasattr(item, \"callspec\"):\n            continue\n\n        async_client_param = item.callspec.params.get(\"async_client\")\n        if is_dict(async_client_param) and async_client_param.get(\"http_client\") == \"aiohttp\":\n            item.add_marker(pytest.mark.skip(reason=\"aiohttp client is not compatible with respx_mock\"))\n\n\nbase_url = os.environ.get(\"TEST_API_BASE_URL\", \"http://127.0.0.1:4010\")\ntest_http_client = os.environ.get(\"OPENAI_TEST_HTTP_CLIENT\", \"httpx\")\n\napi_key = \"My API Key\"\nadmin_api_key = \"My Admin API Key\"\n\n\n@pytest.fixture(autouse=True)\ndef patch_httpx2_respx(request: FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:\n    if test_http_client != \"httpx2\" or \"respx_mock\" not in request.fixturenames:\n        return\n\n    router = request.getfixturevalue(\"respx_mock\")\n    enable_httpx2_respx(router, monkeypatch, replace_sdk_defaults=request.path.name != \"test_httpx2_base.py\")\n\n\n@pytest.fixture(scope=\"session\")\ndef client(request: FixtureRequest) -> Iterator[OpenAI]:\n    strict = getattr(request, \"param\", True)\n    if not isinstance(strict, bool):\n        raise TypeError(f\"Unexpected fixture parameter type {type(strict)}, expected {bool}\")\n\n    http_client = DefaultHttpx2Client() if test_http_client == \"httpx2\" else None\n\n    with OpenAI(\n        base_url=base_url,\n        api_key=api_key,\n        admin_api_key=admin_api_key,\n        _strict_response_validation=strict,\n        http_client=http_client,\n    ) as client:\n        yield client\n\n\n@pytest.fixture(scope=\"session\")\nasync def async_client(request: FixtureRequest) -> AsyncIterator[AsyncOpenAI]:\n    param = getattr(request, \"param\", True)\n\n    # defaults\n    strict = True\n    http_client: None | httpx.AsyncClient = None\n\n    if isinstance(param, bool):\n        strict = param\n    elif is_dict(param):\n        strict = param.get(\"strict\", True)\n        assert isinstance(strict, bool)\n\n        http_client_type = param.get(\"http_client\", \"httpx\")\n        if http_client_type == \"aiohttp\":\n            if sys.version_info < (3, 10):\n                pytest.skip(\"the aiohttp client requires Python 3.10 or later\")\n\n            http_client = DefaultAioHttpClient()\n    else:\n        raise TypeError(f\"Unexpected fixture parameter type {type(param)}, expected bool or dict\")\n\n    if http_client is None and test_http_client == \"httpx2\":\n        http_client = DefaultAsyncHttpx2Client()\n\n    async with AsyncOpenAI(\n        base_url=base_url,\n        api_key=api_key,\n        admin_api_key=admin_api_key,\n        _strict_response_validation=strict,\n        http_client=http_client,\n    ) as client:\n        yield client\n"
+    },
+    {
+      "id": ".github/CODEOWNERS#codeowners",
+      "kind": "review_gate",
+      "name": "code owners (CODEOWNERS)",
+      "source": ".github/CODEOWNERS",
+      "raw": "# This file is used to automatically assign reviewers to PRs\n# For more information see: https://help.github.com/en/github/creating-cloning-and-archiving-repositories/about-code-owners\n\n* @openai/sdks-team\n"
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#32-create-an-unprivileged-codex-user",
+      "kind": "ci_step",
+      "name": "Create an unprivileged Codex user",
+      "source": ".github/workflows/python-version-review.yml:32",
+      "raw": "      - name: Create an unprivileged Codex user\n        # This runs before the key is passed to any process. Separating the\n        # agent from the runner user prevents a lingering process from\n        # inspecting credentials used by later runner-owned steps.\n        run: |\n          sudo adduser \\\n            --system \\\n            --home /home/codex \\\n            --shell /bin/bash \\\n            --group codex\n          sudo usermod --append --groups codex runner"
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#44-check-out-the-trusted-default-branch",
+      "kind": "ci_step",
+      "name": "Check out the trusted default branch",
+      "source": ".github/workflows/python-version-review.yml:44",
+      "raw": "      - name: Check out the trusted default branch\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6\n        with:\n          fetch-depth: 0\n          persist-credentials: false",
+      "hints": {
+        "action": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#50-prepare-the-isolated-codex-workspace",
+      "kind": "ci_step",
+      "name": "Prepare the isolated Codex workspace",
+      "source": ".github/workflows/python-version-review.yml:50",
+      "raw": "      - name: Prepare the isolated Codex workspace\n        run: |\n          mkdir --parents \"$CODEX_AUTOMATION_HOME\"\n          cp \\\n            .github/codex/python-version-review-config.toml \\\n            \"$CODEX_AUTOMATION_HOME/config.toml\"\n          echo '/.codex-automation/' >> .git/info/exclude"
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#58-snapshot-official-lifecycle-and-public-usage-data",
+      "kind": "ci_step",
+      "name": "Snapshot official lifecycle and public usage data",
+      "source": ".github/workflows/python-version-review.yml:58",
+      "raw": "      - name: Snapshot official lifecycle and public usage data\n        run: |\n          curl \\\n            --fail \\\n            --location \\\n            --max-time 30 \\\n            --proto '=https' \\\n            --retry 3 \\\n            --retry-all-errors \\\n            --silent \\\n            --show-error \\\n            --tlsv1.2 \\\n            'https://peps.python.org/api/release-cycle.json' \\\n            --output \"$PYTHON_RELEASE_CYCLE\"\n          jq --exit-status \\\n            'type == \"object\" and length > 5 and all(.[]; has(\"status\") and has(\"end_of_life\"))' \\\n            \"$PYTHON_RELEASE_CYCLE\" >/dev/null\n\n          curl \\\n            --fail \\\n            --location \\\n            --max-time 30 \\\n            --proto '=https' \\\n            --retry 3 \\\n            --retry-all-errors \\\n            --silent \\\n            --show-error \\\n            --tlsv1.2 \\\n            'https://pypistats.org/api/packages/openai/python_minor' \\\n            --output \"$PYPI_PYTHON_MINOR_STATS\"\n          jq --exit-status \\\n            'type == \"object\" and has(\"data\")' \\\n            \"$PYPI_PYTHON_MINOR_STATS\" >/dev/null\n\n          date --utc +%F > \"$REVIEW_DATE_FILE\""
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#94-grant-the-codex-user-controlled-workspace-access",
+      "kind": "ci_step",
+      "name": "Grant the Codex user controlled workspace access",
+      "source": ".github/workflows/python-version-review.yml:94",
+      "raw": "      - name: Grant the Codex user controlled workspace access\n        run: |\n          sudo chown --recursive runner:codex \"$GITHUB_WORKSPACE\"\n          sudo chmod --recursive g+rX \"$GITHUB_WORKSPACE\"\n          sudo chmod --recursive g+rwX \"$CODEX_AUTOMATION_DIR\"\n\n          # Git metadata remains runner-owned and non-writable to the agent.\n          sudo chown --recursive runner:runner \"$GITHUB_WORKSPACE/.git\"\n          sudo chmod --recursive go-w \"$GITHUB_WORKSPACE/.git\""
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#104-ask-codex-to-assess-the-policy",
+      "kind": "ci_step",
+      "name": "Ask Codex to assess the policy",
+      "source": ".github/workflows/python-version-review.yml:104",
+      "raw": "      - name: Ask Codex to assess the policy\n        id: codex\n        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1\n        with:\n          openai-api-key: ${{ secrets.OPENAI_API_KEY }}\n          prompt-file: .github/codex/prompts/python-version-review.md\n          output-file: ${{ env.CODEX_OUTPUT_FILE }}\n          codex-home: ${{ env.CODEX_AUTOMATION_HOME }}\n          codex-version: '0.144.6'\n          codex-args: '[\"--ephemeral\"]'\n          permission-profile: python-version-review\n          safety-strategy: unprivileged-user\n          codex-user: codex",
+      "hints": {
+        "action": "openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1"
+      }
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#118-terminate-codex-owned-processes",
+      "kind": "ci_step",
+      "name": "Terminate Codex-owned processes",
+      "source": ".github/workflows/python-version-review.yml:118",
+      "raw": "      - name: Terminate Codex-owned processes\n        if: always()\n        run: |\n          sudo pkill -KILL -u codex 2>/dev/null || true\n          pkill -KILL -f '[c]odex-responses-api-proxy' 2>/dev/null || true\n          sudo chown runner:runner \"$CODEX_OUTPUT_FILE\" 2>/dev/null || true"
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#125-validate-and-package-the-assessment",
+      "kind": "ci_step",
+      "name": "Validate and package the assessment",
+      "source": ".github/workflows/python-version-review.yml:125",
+      "raw": "      - name: Validate and package the assessment\n        id: report\n        if: steps.codex.outcome == 'success'\n        env:\n          CODEX_ARTIFACT_DIR: ${{ runner.temp }}/monthly-python-version-review\n        run: |\n          if ! git diff --quiet HEAD || [[ -n \"$(git ls-files --others --exclude-standard)\" ]]; then\n            echo '::error::The read-only Python review modified the repository'\n            exit 1\n          fi\n          if [[ ! -s \"$CODEX_OUTPUT_FILE\" ]]; then\n            echo '::error::Codex produced no assessment'\n            exit 1\n          fi\n          if [[ \"$(wc -c < \"$CODEX_OUTPUT_FILE\")\" -gt 60000 ]]; then\n            echo '::error::Codex assessment exceeds the GitHub issue size budget'\n            exit 1\n          fi\n\n          first_line=\"$(head -n 1 \"$CODEX_OUTPUT_FILE\")\"\n          case \"$first_line\" in\n            '<!-- python-version-review: action-required -->')\n              echo 'action_required=true' >> \"$GITHUB_OUTPUT\"\n              mkdir --parents \"$CODEX_ARTIFACT_DIR\"\n              cp \"$CODEX_OUTPUT_FILE\" \"$CODEX_ARTIFACT_DIR/issue-body.md\"\n              ;;\n            '<!-- python-version-review: no-action -->')\n              echo 'action_required=false' >> \"$GITHUB_OUTPUT\"\n              ;;\n            *)\n              echo '::error::Codex assessment has an invalid action marker'\n              exit 1\n              ;;\n          esac\n\n          cat \"$CODEX_OUTPUT_FILE\" >> \"$GITHUB_STEP_SUMMARY\""
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#162-upload-the-action-required-assessment",
+      "kind": "ci_step",
+      "name": "Upload the action-required assessment",
+      "source": ".github/workflows/python-version-review.yml:162",
+      "raw": "      - name: Upload the action-required assessment\n        if: steps.report.outputs.action_required == 'true'\n        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0\n        with:\n          name: monthly-python-version-review\n          path: ${{ runner.temp }}/monthly-python-version-review\n          if-no-files-found: error\n          retention-days: 7",
+      "hints": {
+        "action": "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0"
+      }
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#181-download-the-codex-assessment",
+      "kind": "ci_step",
+      "name": "Download the Codex assessment",
+      "source": ".github/workflows/python-version-review.yml:181",
+      "raw": "      - name: Download the Codex assessment\n        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0\n        with:\n          name: monthly-python-version-review\n          path: ${{ runner.temp }}/monthly-python-version-review",
+      "hints": {
+        "action": "actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0"
+      }
+    },
+    {
+      "id": ".github/workflows/python-version-review.yml#187-publish-the-review-issue",
+      "kind": "ci_step",
+      "name": "Publish the review issue",
+      "source": ".github/workflows/python-version-review.yml:187",
+      "raw": "      - name: Publish the review issue\n        env:\n          GH_REPO: ${{ github.repository }}\n          GH_TOKEN: ${{ github.token }}\n          REPORT_PATH: ${{ runner.temp }}/monthly-python-version-review/issue-body.md\n          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n        run: |\n          marker='<!-- monthly-python-version-review -->'\n          review_label='python-version-review'\n          gh label create \"$review_label\" \\\n            --repo \"$GH_REPO\" \\\n            --color '1D76DB' \\\n            --description 'Generated by the monthly Python version support review' \\\n            --force\n          existing_issue=\"$(\n            gh issue list \\\n              --repo \"$GH_REPO\" \\\n              --state open \\\n              --label \"$review_label\" \\\n              --limit 1 \\\n              --json number \\\n              --jq '.[0].number // empty'\n          )\"\n\n          {\n            echo \"$marker\"\n            cat \"$REPORT_PATH\"\n            echo\n            echo '---'\n            echo\n            echo \"Generated by the [monthly Python version review]($RUN_URL).\"\n            echo 'This issue is advisory; changing the Python floor requires a separate reviewed pull request.'\n          } > \"$RUNNER_TEMP/issue-body.md\"\n\n          if [[ -n \"$existing_issue\" ]]; then\n            gh issue edit \"$existing_issue\" \\\n              --repo \"$GH_REPO\" \\\n              --title 'Monthly Python version support review' \\\n              --add-label \"$review_label\" \\\n              --body-file \"$RUNNER_TEMP/issue-body.md\"\n          else\n            gh issue create \\\n              --repo \"$GH_REPO\" \\\n              --title 'Monthly Python version support review' \\\n              --label \"$review_label\" \\\n              --body-file \"$RUNNER_TEMP/issue-body.md\"\n          fi"
+    },
+    {
+      "id": ".github/workflows/detect-breaking-changes.yml#14-calculate-fetch-depth",
+      "kind": "ci_step",
+      "name": "Calculate fetch-depth",
+      "source": ".github/workflows/detect-breaking-changes.yml:14",
+      "raw": "      - name: Calculate fetch-depth\n        run: |\n          echo \"FETCH_DEPTH=$(expr ${{ github.event.pull_request.commits }} + 1)\" >> $GITHUB_ENV"
+    },
+    {
+      "id": ".github/workflows/detect-breaking-changes.yml#18-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6",
+      "source": ".github/workflows/detect-breaking-changes.yml:18",
+      "raw": "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6\n        with:\n          # Ensure we can check out the pull request base in the script below.\n          fetch-depth: ${{ env.FETCH_DEPTH }}",
+      "hints": {
+        "action": "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6"
+      }
+    },
+    {
+      "id": ".github/workflows/detect-breaking-changes.yml#23-set-up-rye",
+      "kind": "ci_step",
+      "name": "Set up Rye",
+      "source": ".github/workflows/detect-breaking-changes.yml:23",
+      "raw": "      - name: Set up Rye\n        uses: eifinger/setup-rye@c694239a43768373e87d0103d7f547027a23f3c8\n        with:\n          version: '0.44.0'\n          enable-cache: true",
+      "hints": {
+        "action": "eifinger/setup-rye@c694239a43768373e87d0103d7f547027a23f3c8"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#44-check-out-the-trusted-default-branch",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#104-ask-codex-to-assess-the-policy",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "a large language model invoked by a CI step",
+        "actorCanWrite": true,
+        "argument": "The step hands the repository to a language model and takes back prose, a review, or commits. Whatever verdict it renders is produced by the same class of system that produces the code being judged, so the two share correlated blind spots and agreement between them is not evidence. In the common configuration the model is also granted repository write tools, which means the reviewer can edit the very state it is reporting on."
+      },
+      "evidence": [
+        "the step's `uses:` reference resolves to an LLM coding/review agent action"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "probe",
+      "probeId": "llm-agent-ci-step"
+    },
+    {
+      "nodeId": ".github/workflows/detect-breaking-changes.yml#18-actions-checkout-de0fac2e4500dabe0009e67214ff5f5447ce83dd-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/detect-breaking-changes.yml#23-set-up-rye",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pytest-ini-options",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code, executed as `rye run pytest` by ./scripts/test in the ci.yml `test` and `test-httpx2` jobs",
+        "actorCanWrite": false,
+        "argument": "ci.yml:144/175/180 runs ./scripts/test, which ends in `rye run pytest` (scripts/test:62) under `set -e`, so a failing assertion or an unraised-warning (filterwarnings=[\"error\"]) or a passing xfail (xfail_strict=true) makes the interpreter exit non-zero and the job red — an author cannot make a failing test report green without changing the committed source or this pinned config. Documented limit on the ORACLE axis: the assertions in tests/ are Stainless-codegenned from the same OpenAPI spec that generates src/openai, and scripts/test:33 boots a local mock server built from that spec, so the expected behaviour was authored inside the write boundary; only the execution is independent."
+      },
+      "evidence": [
+        "pyproject.toml:155",
+        ".github/workflows/ci.yml:143-144",
+        "scripts/test:62",
+        "scripts/test:28-34"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-pyright",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyright process exit code, reached via ci.yml `Run lints` -> ./scripts/lint -> `rye run lint` -> `typecheck:pyright` -> scripts/run-pyright -> `pyright -p pyproject.toml`",
+        "actorCanWrite": false,
+        "argument": "This table is the pinned configuration pyright reads when it statically analyses the committed sources in the lint job; typeCheckingMode=\"strict\" makes an unannotated or ill-typed symbol produce a non-zero exit that fails the job under `set -e` (scripts/lint:2). The verdict is computed by the type checker over the source tree, not asserted by anyone. Limit worth naming: the `exclude` list and the `report*=false` flags narrow what is analysed, and both are author-editable in-repo — so the scope of the check is inside the boundary even though the analysis is not."
+      },
+      "evidence": [
+        "pyproject.toml:168",
+        ".github/workflows/ci.yml:40-41",
+        "scripts/lint:12",
+        "scripts/run-pyright:8",
+        "pyproject.toml:110-114"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-mypy",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the mypy process exit code from `mypy .` (rye script `typecheck:mypy`), run in the ci.yml lint job",
+        "actorCanWrite": false,
+        "argument": "ci.yml:41 runs ./scripts/lint, whose `rye run lint` chain includes `typecheck` -> `typecheck:mypy` = `mypy .` (pyproject.toml:115); mypy's static analysis of the committed tree decides the exit code and `set -e` propagates it to the job. disallow_untyped_defs/warn_return_any etc. are enforced by the checker, not by a declaration. Same scope limit as pyright: `exclude` drops src/openai/_files.py and all of tests/ from the analysis, so what is inside the check is author-selected while the analysis itself is not."
+      },
+      "evidence": [
+        "pyproject.toml:193",
+        "pyproject.toml:110-115",
+        ".github/workflows/ci.yml:40-41",
+        "scripts/lint:12"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code from `ruff check .` (rye script `check:ruff`) in the ci.yml lint job — but only via one of this table's three keys",
+        "actorCanWrite": false,
+        "argument": "Of the keys here, only target-version=\"py310\" reaches the gating signal: it determines which Python version ruff assumes when deciding rules such as FA102 (missing future annotations), which IS selected, so it changes whether `ruff check .` exits non-zero. line-length=120 does not gate anything because E501 is not in the select list (pyproject.toml:262-292) and therefore only feeds the rewrite-only formatter, and output-format=\"grouped\" is presentation. Low confidence is deliberate: this is a thin slice of an anchored edge, not an edge of its own."
+      },
+      "evidence": [
+        "pyproject.toml:254",
+        "pyproject.toml:104",
+        "pyproject.toml:262-292",
+        ".github/workflows/ci.yml:40-41"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-format",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`ruff format`, which rewrites files in place and is never invoked by any workflow in .github/workflows/",
+        "actorCanWrite": null,
+        "argument": "docstring-code-format only changes how `ruff format` REWRITES docstring code blocks; it produces no pass/fail signal. Its only caller is the rye `format` chain via scripts/format, and `grep -rn 'format\\|ruff' .github/workflows/` returns nothing — no CI job runs the formatter or a `--check`/`--diff` variant of it, so there is no exit code anywhere in the merge path that this table can influence."
+      },
+      "evidence": [
+        "pyproject.toml:259",
+        "pyproject.toml:89-97",
+        "scripts/format:8",
+        ".github/workflows/ (no ruff format invocation)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code from `ruff check .` (rye script `check:ruff`), run by ./scripts/lint in the ci.yml lint job",
+        "actorCanWrite": false,
+        "argument": "This select list is what `ruff check .` enforces: a bare `except:` (E722), an unused import (F401), a stray `print` (T201, additionally listed as unfixable so it cannot be auto-silenced), or an unsorted import (I) makes ruff exit non-zero, `set -e` in scripts/lint aborts, and the lint job fails. The signal is produced by the linter binary reading the committed source; an author cannot make a violating file report clean without editing the file or this pinned rule set in a reviewed commit."
+      },
+      "evidence": [
+        "pyproject.toml:262",
+        "pyproject.toml:99-104",
+        "scripts/lint:2",
+        "scripts/lint:12",
+        ".github/workflows/ci.yml:40-41"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-flake8-tidy-imports-banned-api",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — rule TID251 evaluated by `ruff check .` in the ci.yml lint job",
+        "actorCanWrite": false,
+        "argument": "TID251 is in the select list (pyproject.toml:262-292), so this entry makes any `functools.lru_cache` import in the tree a hard ruff diagnostic and a non-zero exit that fails the lint job. The ban is decided by the linter scanning imports in committed source, not by anyone asserting the rule is respected."
+      },
+      "evidence": [
+        "pyproject.toml:296",
+        "pyproject.toml:262-292",
+        ".github/workflows/ci.yml:40-41",
+        "scripts/lint:12"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-isort",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code — rule family `I` evaluated by `ruff check .` in the ci.yml lint job",
+        "actorCanWrite": false,
+        "argument": "`I` (isort) is selected at pyproject.toml:264-265, so these ordering settings define a machine-decidable property of every source file that `ruff check .` verifies; a wrongly-ordered import block exits non-zero and reddens the lint job. Note the limit on what is being asserted: this constrains import layout only — it is a style property produced by executing a checker, not a correctness property."
+      },
+      "evidence": [
+        "pyproject.toml:299",
+        "pyproject.toml:263-265",
+        ".github/workflows/ci.yml:40-41"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff process exit code from `ruff check .`; this table only narrows the file set the rules apply to",
+        "actorCanWrite": false,
+        "argument": "The producer is still the linter binary executing over the tree in the ci.yml lint job, and this table participates in that exit code by exempting bin/, scripts/, tests/ and examples/ from T201/T203. Confidence is deliberately low and the direction of the effect is worth stating plainly: an exemption table can only WEAKEN the gate, never make it fail, so it inherits anchoring from the check it configures while contributing no assertion of its own — a smell, surfaced rather than smoothed away."
+      },
+      "evidence": [
+        "pyproject.toml:306",
+        "pyproject.toml:270-275",
+        ".github/workflows/ci.yml:40-41"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code — conftest.py is the fixture harness for the suite ./scripts/test runs in the ci.yml `test` / `test-httpx2` jobs",
+        "actorCanWrite": false,
+        "argument": "The fixtures here construct real OpenAI/AsyncOpenAI clients and hand them to tests whose pass/fail the interpreter decides during the CI pytest run, so the execution axis is outside the author's write path. Two limits belong on the record. First, base_url defaults to http://127.0.0.1:4010 — a mock Steady server that scripts/test:33 boots from the repo's own OpenAPI spec, the same spec the Stainless codegen used to write src/openai, so the responses the tests observe are a replica authored inside the boundary. Second, pytest_collection_modifyitems adds skip markers for aiohttp+respx combinations, i.e. the harness removes cases from the denominator; a skipped test produces no signal at all."
+      },
+      "evidence": [
+        "tests/conftest.py:1",
+        "tests/conftest.py:27-47",
+        "tests/conftest.py:53-54",
+        "scripts/test:28-34",
+        ".github/workflows/ci.yml:143-144"
+      ],
+      "confidence": 0.55,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/CODEOWNERS#codeowners",
+      "class": "unknown",
+      "writeBoundary": {
+        "producer": "GitHub's pull-request review machinery — but whether an approving review is REQUIRED is decided by branch-protection / ruleset configuration that lives in GitHub's settings, not in this repository",
+        "actorCanWrite": null,
+        "argument": "The file's own header says it is 'used to automatically assign reviewers to PRs'. Assignment is routing, not a gate; the gate would be a 'Require review from Code Owners' branch-protection rule, and no such configuration is present anywhere in the clone (no rulesets, no settings-as-code) and it is not pinned to a revision I can read. I therefore cannot establish whether this edge blocks a merge at all, nor — since @openai/sdks-team both authors and reviews the codegenned changes — where the reviewer sits relative to the author's write boundary. Fails closed."
+      },
+      "evidence": [
+        ".github/CODEOWNERS:1-4",
+        "no branch-protection or ruleset config in the clone"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#32-create-an-unprivileged-codex-user",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "adduser/usermod exit codes — machine provisioning on the runner",
+        "actorCanWrite": null,
+        "argument": "The step creates a system user and group so the Codex agent runs unprivileged. It asserts nothing about openai-python's correctness; its only failure mode is the runner being unable to create an account. Real safety value (credential isolation), zero verification content — it is setup for a later step, not a check of the artifact."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:32-42"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#50-prepare-the-isolated-codex-workspace",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "mkdir/cp/echo exit codes",
+        "actorCanWrite": null,
+        "argument": "Pure provisioning: creates the agent home directory, copies a config file into it, and appends a path to .git/info/exclude. No property of the repository is evaluated and no comparison is made, so there is no signal here that could come out either way on a correct-vs-incorrect codebase."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:50-56"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#58-snapshot-official-lifecycle-and-public-usage-data",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "HTTP responses from peps.python.org and pypistats.org, surfaced as exit codes by `curl --fail` and then `jq --exit-status`",
+        "actorCanWrite": false,
+        "argument": "curl --fail turns any non-2xx from the two third-party endpoints into a non-zero exit, and jq --exit-status then evaluates the fetched payload's shape ('length > 5 and all(.[]; has(\"status\") and has(\"end_of_life\"))', and 'has(\"data\")' for the download stats) — failing the step when the remote data is missing or malformed. Both signals originate at services outside the repository: the openai-python maintainers cannot write the Python release-cycle API or PyPI download statistics, so this step's outcome is decided by external reality. Limit: it validates the SHAPE of the fetched data, not that the numbers are right."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:58-92",
+        ".github/workflows/python-version-review.yml:72-74",
+        ".github/workflows/python-version-review.yml:88-90"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#94-grant-the-codex-user-controlled-workspace-access",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "chown/chmod exit codes",
+        "actorCanWrite": null,
+        "argument": "Filesystem permission provisioning that sets up the agent sandbox (workspace group-readable, .git non-writable). It creates the conditions under which a LATER step's git-cleanliness assertion is meaningful, but on its own it evaluates no property of the code and cannot report a defect."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:94-102"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#118-terminate-codex-owned-processes",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "pkill/chown exit codes, every one of them swallowed",
+        "actorCanWrite": null,
+        "argument": "All three commands end in `|| true` and the step carries `if: always()`, so its exit status is 0 unconditionally. A signal that cannot vary carries no information — this is teardown, and structurally incapable of being a check regardless of the state of the repository."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:118-123"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#125-validate-and-package-the-assessment",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "a markdown file written by the Codex LLM in the immediately preceding step (openai/codex-action, line 104); this step reads its first line and its byte count",
+        "actorCanWrite": true,
+        "argument": "The consequential output of this step — action_required, which is the sole condition gating the open_issue job at line 174 — is `head -n 1 $CODEX_OUTPUT_FILE` matched against two marker strings, i.e. the LLM decides whether its own finding is actionable by emitting the marker that says so; the envelope checks (non-empty, <60000 bytes, valid marker) constrain the shape of that artifact, not its truth. One genuinely independent sub-assertion is present and should be credited: `git diff --quiet HEAD` plus the untracked-file check is computed by git over a .git directory the codex user was explicitly denied write access to (line 101-102), so the agent cannot conceal a modification it made. That anchored fragment does not change the character of the step, whose product is an LLM's self-labelled verdict."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:125-160",
+        ".github/workflows/python-version-review.yml:144-158",
+        ".github/workflows/python-version-review.yml:104-116",
+        ".github/workflows/python-version-review.yml:171-174",
+        ".github/workflows/python-version-review.yml:100-102"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#162-upload-the-action-required-assessment",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-artifact's own exit code",
+        "actorCanWrite": null,
+        "argument": "Artifact transport between the assess and open_issue jobs. `if-no-files-found: error` gives it a failure mode, but the only thing that failure would report is that the preceding step in the same job did not leave the file it had just declared present — an operational guard on the pipeline's own plumbing, asserting nothing about openai-python's behaviour or types. Filed here rather than in the ratio because the class of thing it could ever detect is 'the upload path is broken', not 'the code is wrong'."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:162-169",
+        ".github/workflows/python-version-review.yml:146-149"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#181-download-the-codex-assessment",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/download-artifact's own exit code",
+        "actorCanWrite": null,
+        "argument": "Provisioning for the publish step: it fetches the artifact the previous job uploaded into runner.temp. No property of the repository or of the assessment is evaluated — it is the inbound half of the same transport."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:181-185"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/python-version-review.yml#187-publish-the-review-issue",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the GitHub Issues API via `gh issue create/edit`",
+        "actorCanWrite": null,
+        "argument": "A side-effecting publication step: it creates a label and opens or refreshes an issue whose body is the LLM assessment verbatim. Nothing is compared and nothing can be found wanting — the step's own text calls the result 'advisory', and changing the Python floor is explicitly deferred to a separate reviewed pull request. Its failure modes are GitHub API errors, not findings."
+      },
+      "evidence": [
+        ".github/workflows/python-version-review.yml:187-233",
+        ".github/workflows/python-version-review.yml:218"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/detect-breaking-changes.yml#14-calculate-fetch-depth",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`expr` arithmetic written into $GITHUB_ENV",
+        "actorCanWrite": null,
+        "argument": "Computes a clone depth from the PR's commit count so the later checkout can reach the base SHA. It sets a variable; it evaluates no property of the diff and has no failing branch that would correspond to a defect in the code."
+      },
+      "evidence": [
+        ".github/workflows/detect-breaking-changes.yml:14-21"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 10,
+    "selfReferential": 2,
+    "unknown": 1,
+    "notACheck": 12,
+    "ratio": 0.7692307692307693
+  },
+  "economics": {
+    "nodesTotal": 95,
+    "nodesSampled": 25,
+    "decidedByProbe": 4,
+    "decidedByAgent": 21,
+    "probesMinted": 2,
+    "probeLibrarySize": 5,
+    "tokensIn": 5036,
+    "tokensOut": 4913,
+    "tokensEstimated": true,
+    "wallClockMs": 385324
+  }
+}

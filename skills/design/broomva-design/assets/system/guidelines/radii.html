@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- @dsCard group="Spacing" name="Radii ladder" subtitle="A deliberate ladder · pills for buttons + avatars, never cards" viewport="700x170" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { display: flex; gap: 14px; align-items: flex-end; }
+.r { background: var(--bv-canvas-soft); border: 1px solid var(--bv-border-15); width: 76px; height: 56px; }
+</style></head><body>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-chip);"></div><span class="mono">chip 4</span></div>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-md);"></div><span class="mono">input 6</span></div>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-lg);"></div><span class="mono">row 8</span></div>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-xl);"></div><span class="mono">card 12</span></div>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-2xl);"></div><span class="mono">dialog 16</span></div>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-composer);height:56px;"></div><span class="mono">composer 28</span></div>
+<div class="col" style="gap:6px;align-items:center;"><div class="r" style="border-radius:var(--bv-radius-full);height:36px;"></div><span class="mono">pill full</span></div>
+</body></html>

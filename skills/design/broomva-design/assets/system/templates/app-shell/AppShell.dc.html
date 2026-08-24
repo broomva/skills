@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<!-- @template name="App shell" description="The Mission Control scaffold: sidebar, header, work plane, docked composer — light or dark." -->
+<helmet><script src="./ds-base.js"></script></helmet>
+<div data-theme="{{ theme }}" style="width: 100vw; height: 100vh; display: flex; background: var(--background); color: var(--foreground); font-family: var(--bv-font-sans); font-size: 14px; overflow: hidden;">
+
+  <!-- Sidebar -->
+  <aside style="width: 200px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); display: flex; flex-direction: column; padding: 12px 8px;">
+    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 8px 14px;">
+      <img src="../../assets/broomva-blackhole-logo.png" alt="Broomva" style="width: 22px; height: 22px; border-radius: 6px;"></img>
+      <span style="font-size: 14px; font-weight: 500;">Broomva</span>
+    </div>
+    <nav style="display: flex; flex-direction: column; gap: 1px;">
+      <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="4">
+        <sc-if value="{{ nav.active }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ nav.pick }}" style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: none; border-radius: var(--bv-radius-lg); background: var(--bv-frost-12); color: var(--foreground); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; width: 100%;">
+            {{ nav.label }}
+          </button>
+        </sc-if>
+        <sc-if value="{{ nav.inactive }}" hint-placeholder-val="{{ true }}">
+          <button onClick="{{ nav.pick }}" style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: none; border-radius: var(--bv-radius-lg); background: transparent; color: var(--muted-foreground); font: inherit; font-size: 13px; cursor: pointer; text-align: left; width: 100%;" style-hover="background: var(--bv-frost-8);">
+            {{ nav.label }}
+          </button>
+        </sc-if>
+      </sc-for>
+    </nav>
+    <div style="font-size: 11px; font-weight: 500; color: var(--muted-foreground); padding: 16px 8px 6px;">Initiatives</div>
+    <div style="display: flex; flex-direction: column; gap: 1px;">
+      <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--bv-radius-lg); font-size: 12.5px; color: var(--foreground); cursor: pointer;" style-hover="background: var(--bv-frost-8);">
+        <span style="width: 7px; height: 7px; border-radius: 99px; flex-shrink: 0; background: var(--bv-blue);"></span>
+        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">hawthorne-core</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--bv-radius-lg); font-size: 12.5px; color: var(--foreground); cursor: pointer;" style-hover="background: var(--bv-frost-8);">
+        <span style="width: 7px; height: 7px; border-radius: 99px; flex-shrink: 0; background: var(--bv-blue-accent);"></span>
+        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">billing cleanup</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--bv-radius-lg); font-size: 12.5px; color: var(--foreground); cursor: pointer;" style-hover="background: var(--bv-frost-8);">
+        <span style="width: 7px; height: 7px; border-radius: 99px; flex-shrink: 0; background: var(--bv-gray-400);"></span>
+        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">weekly digest</span>
+      </div>
+    </div>
+    <div style="margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: var(--bv-radius-lg); font-size: 12px; color: var(--muted-foreground);">
+      <span class="bv-dot--pulse" style="width: 8px; height: 8px; border-radius: 99px; background: var(--bv-blue); flex-shrink: 0;"></span>
+      maestro · listening
+    </div>
+  </aside>
+
+  <!-- Main column -->
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+
+    <!-- Header -->
+    <header style="height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--bv-border-5);">
+      <span style="font-size: 13px; color: var(--muted-foreground);">hawthorne / <span style="color: var(--foreground); font-weight: 500;">mission control</span></span>
+      <span style="margin-left: auto; font-size: 12px; color: var(--muted-foreground);">{{ hoursToday }} unsupervised today</span>
+      <span style="width: 26px; height: 26px; border-radius: 13px; background: var(--bv-blue); color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600;">AD</span>
+    </header>
+
+    <!-- The plane -->
+    <main style="flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 120px; display: flex; justify-content: center;">
+      <div style="width: 100%; max-width: 768px; display: flex; flex-direction: column; gap: 12px;">
+
+        <div style="display: flex; align-items: center; gap: 3px; padding-bottom: 6px;">
+          <x-import component-from-global-scope="BroomvaDesignSystem_5727d9.Tabs" tabs="{{ planeTabs }}" default-active="{{ 0 }}" hint-size="220px,28px"></x-import>
+        </div>
+
+        <sc-if value="{{ showGate }}" hint-placeholder-val="{{ true }}">
+          <x-import component-from-global-scope="BroomvaDesignSystem_5727d9.Undertow" hint-size="100%,190px">
+            <x-import component-from-global-scope="BroomvaDesignSystem_5727d9.RunCard" state="needs-you" agent="claude" duration="3h 40m" title="Ported the billing reducer to event sourcing" asks="approve the schema migration before it touches prod data" receipts="{{ gateReceipts }}" on-approve="{{ approve }}" on-send-back="{{ sendBack }}" hint-size="100%,180px"></x-import>
+          </x-import>
+        </sc-if>
+
+        <sc-for list="{{ workItems }}" as="item" hint-placeholder-count="3">
+          <div style="border: 1px solid var(--bv-border-5); border-radius: var(--bv-radius-xl); background: var(--card); box-shadow: var(--bv-shadow-edge); padding: 13px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer;" style-hover="box-shadow: var(--bv-shadow-card-hover);">
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+              <span style="font-size: 14px; font-weight: 500;">{{ item.title }}</span>
+              <span style="font-size: 12.5px; color: var(--muted-foreground);">{{ item.meta }}</span>
+            </div>
+            <x-import component-from-global-scope="BroomvaDesignSystem_5727d9.WorkState" state="{{ item.state }}" hint-size="80px,20px"></x-import>
+          </div>
+        </sc-for>
+
+      </div>
+    </main>
+
+    <!-- Docked composer -->
+    <div style="position: relative; flex-shrink: 0; display: flex; justify-content: center; padding: 0 24px 18px; margin-top: -90px; pointer-events: none;">
+      <div class="bv-glass-composer" style="pointer-events: auto; width: 100%; max-width: 680px; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 18px; color: var(--bv-gray-500); font-size: 15px;">
+        {{ composerHint }}
+        <button aria-label="Send" style="margin-left: auto; width: 32px; height: 32px; border-radius: 16px; background: var(--primary); color: var(--primary-foreground); border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">↑</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 800}, &quot;theme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;, &quot;section&quot;: &quot;Appearance&quot;}, &quot;showGate&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Content&quot;}, &quot;hoursToday&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;6h 12m&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Content&quot;}, &quot;composerHint&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Message Broomva&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Content&quot;}}">
+class Component extends DCLogic {
+  state = { active: "Mission control", gated: true };
+
+  renderVals() {
+    const theme = this.props.theme ?? "light";
+    const active = this.state.active;
+    const navItems = ["Mission control", "Knowledge", "Sessions", "Settings"].map((label) => ({
+      label,
+      active: label === active,
+      inactive: label !== active,
+      pick: () => this.setState({ active: label }),
+    }));
+    return {
+      theme,
+      navItems,
+      planeTabs: ["Feed", "Board", "List"],
+      hoursToday: this.props.hoursToday ?? "6h 12m",
+      showGate: (this.props.showGate ?? true) && this.state.gated,
+      gateReceipts: [
+        { label: "branch", code: "run/7c2f" },
+        { label: "diff", code: "+214 −38 · 6 files" },
+        { label: "judge", code: "pass · 9/9 checks" },
+      ],
+      approve: () => this.setState({ gated: false }),
+      sendBack: () => this.setState({ gated: false }),
+      workItems: [
+        { title: "Weekly planning", meta: "claude · 41m", state: "running" },
+        { title: "Reconcile Q2 invoices", meta: "bookkeeper · queued behind billing cleanup", state: "queued" },
+        { title: "Digest of research threads", meta: "routine · last run yesterday 18:00", state: "standing" },
+        { title: "Migrate CI to runners v2", meta: "claude · finished 08:52", state: "done" },
+      ],
+      composerHint: this.props.composerHint ?? "Message Broomva",
+    };
+  }
+}
+
+</script>
+</body>
+</html>

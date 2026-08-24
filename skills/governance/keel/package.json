@@ -1,0 +1,16 @@
+{
+  "name": "keel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Measure whether a codebase's verification actually touches the world, or whether it is checking itself. Ships as an agent skill; nothing here is published to a registry.",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "portability": "bash scripts/portability-check.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

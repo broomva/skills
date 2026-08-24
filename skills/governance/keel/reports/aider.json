@@ -1,0 +1,624 @@
+{
+  "target": "aider",
+  "revision": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+  "generatedAt": "2026-07-25T02:36:32.279Z",
+  "nodes": [
+    {
+      "id": "pytest.ini#pytest-ini",
+      "kind": "test_target",
+      "name": "pytest config (pytest.ini)",
+      "source": "pytest.ini",
+      "raw": "[pytest]\nnorecursedirs = tmp.* build benchmark _site OLD\naddopts = -p no:warnings\ntestpaths =\n    tests/basic\n    tests/help\n    tests/browser\n    tests/scrape\n\nenv =\n    AIDER_ANALYTICS=false\n\n"
+    },
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "repos:\n  - repo: https://github.com/PyCQA/isort\n    rev: 5.12.0\n    hooks:\n      - id: isort\n        args: [\"--profile\", \"black\"]\n  - repo: https://github.com/psf/black\n    rev: 23.3.0\n    hooks:\n      - id: black\n        args: [\"--line-length\", \"100\", \"--preview\"]\n  - repo: https://github.com/pycqa/flake8\n    rev: 7.1.0\n    hooks:\n      - id: flake8\n        args: [\"--show-source\"]\n  - repo: https://github.com/codespell-project/codespell\n    rev: v2.2.6\n    hooks:\n      - id: codespell\n        args: [\"--skip\", \"aider/website/docs/languages.md\"]\n        additional_dependencies:\n          - tomli\n"
+    },
+    {
+      "id": ".github/workflows/release.yml#13-checkout-code",
+      "kind": "ci_step",
+      "name": "Checkout code",
+      "source": ".github/workflows/release.yml:13",
+      "raw": "    - name: Checkout code\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/release.yml#18-set-up-python",
+      "kind": "ci_step",
+      "name": "Set up Python",
+      "source": ".github/workflows/release.yml:18",
+      "raw": "    - name: Set up Python\n      uses: actions/setup-python@v5\n      with:\n        python-version: 3.x",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/release.yml#23-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/release.yml:23",
+      "raw": "    - name: Install dependencies\n      run: |\n        python -m pip install --upgrade pip\n        pip install build setuptools wheel twine importlib-metadata==7.2.1"
+    },
+    {
+      "id": ".github/workflows/release.yml#28-build-and-publish",
+      "kind": "ci_step",
+      "name": "Build and publish",
+      "source": ".github/workflows/release.yml:28",
+      "raw": "    - name: Build and publish\n      env:\n        TWINE_USERNAME: __token__\n        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}\n      run: |\n        python -m build\n        twine upload dist/*"
+    },
+    {
+      "id": ".github/workflows/ubuntu-tests.yml#31-check-out-repository",
+      "kind": "ci_step",
+      "name": "Check out repository",
+      "source": ".github/workflows/ubuntu-tests.yml:31",
+      "raw": "    - name: Check out repository\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/ubuntu-tests.yml#36-set-up-python-matrix-python-version",
+      "kind": "ci_step",
+      "name": "Set up Python ${{ matrix.python-version }}",
+      "source": ".github/workflows/ubuntu-tests.yml:36",
+      "raw": "    - name: Set up Python ${{ matrix.python-version }}\n      uses: actions/setup-python@v5\n      with:\n        python-version: ${{ matrix.python-version }}",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/ubuntu-tests.yml#41-install-system-dependencies",
+      "kind": "ci_step",
+      "name": "Install system dependencies",
+      "source": ".github/workflows/ubuntu-tests.yml:41",
+      "raw": "    - name: Install system dependencies\n      run: |\n        sudo apt-get update\n        sudo apt-get install -y libportaudio2"
+    },
+    {
+      "id": ".github/workflows/ubuntu-tests.yml#46-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/ubuntu-tests.yml:46",
+      "raw": "    - name: Install dependencies\n      run: |\n        python -m pip install --upgrade pip\n        pip install pytest\n        pip install ."
+    },
+    {
+      "id": ".github/workflows/ubuntu-tests.yml#52-run-tests",
+      "kind": "ci_step",
+      "name": "Run tests",
+      "source": ".github/workflows/ubuntu-tests.yml:52",
+      "raw": "    - name: Run tests\n      env:\n        AIDER_ANALYTICS: false\n      run: |\n        pytest"
+    },
+    {
+      "id": ".github/workflows/windows-tests.yml#31-check-out-repository",
+      "kind": "ci_step",
+      "name": "Check out repository",
+      "source": ".github/workflows/windows-tests.yml:31",
+      "raw": "    - name: Check out repository\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/windows-tests.yml#36-set-up-python-matrix-python-version",
+      "kind": "ci_step",
+      "name": "Set up Python ${{ matrix.python-version }}",
+      "source": ".github/workflows/windows-tests.yml:36",
+      "raw": "    - name: Set up Python ${{ matrix.python-version }}\n      uses: actions/setup-python@v5\n      with:\n        python-version: ${{ matrix.python-version }}",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/windows-tests.yml#41-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/windows-tests.yml:41",
+      "raw": "    - name: Install dependencies\n      run: |\n        python -m pip install --upgrade pip\n        pip install pytest\n        pip install ."
+    },
+    {
+      "id": ".github/workflows/windows-tests.yml#47-run-tests",
+      "kind": "ci_step",
+      "name": "Run tests",
+      "source": ".github/workflows/windows-tests.yml:47",
+      "raw": "    - name: Run tests\n      env:\n        AIDER_ANALYTICS: false\n      run: |\n        pytest"
+    },
+    {
+      "id": ".github/workflows/pages.yml#39-checkout",
+      "kind": "ci_step",
+      "name": "Checkout",
+      "source": ".github/workflows/pages.yml:39",
+      "raw": "      - name: Checkout\n        uses: actions/checkout@v4\n        with:\n          fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#43-setup-ruby",
+      "kind": "ci_step",
+      "name": "Setup Ruby",
+      "source": ".github/workflows/pages.yml:43",
+      "raw": "      - name: Setup Ruby\n        uses: ruby/setup-ruby@v1\n        with:\n          ruby-version: '3.3' # Not needed with a .ruby-version file\n          bundler-cache: true # runs 'bundle install' and caches installed gems automatically\n          cache-version: 0 # Increment this number if you need to re-download cached gems\n          working-directory: '${{ github.workspace }}/aider/website'",
+      "hints": {
+        "action": "ruby/setup-ruby@v1"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#50-setup-pages",
+      "kind": "ci_step",
+      "name": "Setup Pages",
+      "source": ".github/workflows/pages.yml:50",
+      "raw": "      - name: Setup Pages\n        id: pages\n        uses: actions/configure-pages@v3",
+      "hints": {
+        "action": "actions/configure-pages@v3"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#53-build-with-jekyll",
+      "kind": "ci_step",
+      "name": "Build with Jekyll",
+      "source": ".github/workflows/pages.yml:53",
+      "raw": "      - name: Build with Jekyll\n        # Outputs to the './_site' directory by default\n        run: bundle exec jekyll build --baseurl \"${{ steps.pages.outputs.base_path }}\"\n        env:\n          JEKYLL_ENV: production"
+    },
+    {
+      "id": ".github/workflows/pages.yml#58-upload-artifact",
+      "kind": "ci_step",
+      "name": "Upload artifact",
+      "source": ".github/workflows/pages.yml:58",
+      "raw": "      - name: Upload artifact\n        uses: actions/upload-pages-artifact@v3\n        with:\n          path: \"aider/website/_site\"",
+      "hints": {
+        "action": "actions/upload-pages-artifact@v3"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#71-deploy-to-github-pages",
+      "kind": "ci_step",
+      "name": "Deploy to GitHub Pages",
+      "source": ".github/workflows/pages.yml:71",
+      "raw": "      - name: Deploy to GitHub Pages\n        id: deployment\n        uses: actions/deploy-pages@v4",
+      "hints": {
+        "action": "actions/deploy-pages@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#75-set-up-python-3-12",
+      "kind": "ci_step",
+      "name": "Set up Python 3.12",
+      "source": ".github/workflows/pages.yml:75",
+      "raw": "      - name: Set up Python 3.12\n        uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'",
+      "hints": {
+        "action": "actions/setup-python@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/pages.yml#80-install-linkchecker",
+      "kind": "ci_step",
+      "name": "Install linkchecker",
+      "source": ".github/workflows/pages.yml:80",
+      "raw": "      - name: Install linkchecker\n        run: |\n          python -m pip install --upgrade pip\n          python -m pip install linkchecker"
+    },
+    {
+      "id": ".github/workflows/pages.yml#85-run-linkchecker",
+      "kind": "ci_step",
+      "name": "Run linkchecker",
+      "source": ".github/workflows/pages.yml:85",
+      "raw": "      - name: Run linkchecker\n        run: |\n          linkchecker --ignore-url='.+\\.(mp4|mov|avi)' https://aider.chat"
+    },
+    {
+      "id": ".github/workflows/docker-release.yml#13-checkout-code",
+      "kind": "ci_step",
+      "name": "Checkout code",
+      "source": ".github/workflows/docker-release.yml:13",
+      "raw": "    - name: Checkout code\n      uses: actions/checkout@v4\n      with:\n        fetch-depth: 0",
+      "hints": {
+        "action": "actions/checkout@v4"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/release.yml#13-checkout-code",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/release.yml#18-set-up-python",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/release.yml#23-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/ubuntu-tests.yml#31-check-out-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/ubuntu-tests.yml#36-set-up-python-matrix-python-version",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/ubuntu-tests.yml#46-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/windows-tests.yml#31-check-out-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/windows-tests.yml#36-set-up-python-matrix-python-version",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/windows-tests.yml#41-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#39-checkout",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#43-setup-ruby",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#75-set-up-python-3-12",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#80-install-linkchecker",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/docker-release.yml#13-checkout-code",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": "pytest.ini#pytest-ini",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the CPython/pytest process exit code, for the suite this file's `testpaths` selects when CI runs a bare `pytest`",
+        "actorCanWrite": false,
+        "argument": "Both gating test workflows run a bare `pytest`, so this config is what actually decides which suite the merge-blocking job executes (tests/basic, tests/help, tests/browser, tests/scrape). Pass/fail is the interpreter's verdict on executing those modules against the installed package: an author cannot make a failing assertion, an exception or a collection error report green without changing the code or the tests, and `addopts = -p no:warnings` only silences warnings rather than swallowing failures. Documented limit: the EXECUTION is anchored, the ORACLE is not — implementation and assertions live in the same repo and are co-authored, so the suite proves the code does what these tests say, not that the tests say the right thing. Second limit: `testpaths`/`norecursedirs` mean anything outside those four directories (e.g. benchmark/) never runs at all."
+      },
+      "evidence": [
+        "pytest.ini:4-9",
+        "pytest.ini:3",
+        ".github/workflows/ubuntu-tests.yml:52-56",
+        ".github/workflows/windows-tests.yml:47-51"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the exit statuses of isort, black, flake8 and codespell, each pinned to a rev and executed by pre-commit inside a CI job that runs on every pull request",
+        "actorCanWrite": false,
+        "argument": "This config is not local-only advice: .github/workflows/pre-commit.yml runs `pre-commit run --show-diff-on-failure --color=always --all-files` under `set -o pipefail` on `pull_request`, so the hooks sit on the merge path. Each verdict is the exit status of a third-party tool at a pinned rev (isort 5.12.0, black 23.3.0, flake8 7.1.0, codespell v2.2.6) reading the committed bytes — black and isort fail the run when they had to rewrite a file, flake8 exits non-zero on a violation — and a contributor cannot make a violating file report clean without changing the file or the pinned config. Limit worth naming: what is asserted is import order, formatting, lint rules and spelling, never behaviour; and `SKIP: no-commit-to-branch` shows the hook set is selectively disabled in CI, so the config alone does not tell you every hook runs."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml:1-24",
+        ".github/workflows/pre-commit.yml:22-28",
+        ".github/workflows/pre-commit.yml:3-6"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/release.yml#28-build-and-publish",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the setuptools/build backend exit code, and PyPI's index server accepting or rejecting the upload",
+        "actorCanWrite": false,
+        "argument": "`python -m build` executes the packaging backend against the committed pyproject/setup metadata in an isolated env — a broken packaging config, an unresolvable dependency spec or a missing module makes the process exit non-zero, and asserting otherwise changes nothing. `twine upload dist/*` then hands the artifact to PyPI, a third party nobody in this repo can write to, which rejects a duplicate version or malformed metadata on its own authority. Limits: this workflow fires only on a `v[0-9]+.[0-9]+.[0-9]+` tag push, so it gates the release and never a merge, and the property asserted is packageability and uploadability, not that the code behaves."
+      },
+      "evidence": [
+        ".github/workflows/release.yml:28-34",
+        ".github/workflows/release.yml:3-7"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ubuntu-tests.yml#41-install-system-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "apt-get fetching an OS package from the Ubuntu mirrors onto the runner",
+        "actorCanWrite": null,
+        "argument": "`sudo apt-get update && sudo apt-get install -y libportaudio2` puts a shared library on the runner so the later `pip install .` and `pytest` steps have something to link against. Nothing in the repository is read or evaluated: a non-zero exit here means the mirror was unreachable or the package moved upstream, never that the code is wrong. The assertion in this job is the `pytest` step that runs afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        ".github/workflows/ubuntu-tests.yml:41-44"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ubuntu-tests.yml#52-run-tests",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code on ubuntu-latest, across a five-way Python version matrix",
+        "actorCanWrite": false,
+        "argument": "`run: pytest` executes the suite pytest.ini selects against the package the previous step installed, and the step's exit status IS the interpreter's verdict on those modules; the workflow triggers on `pull_request` to main, so that exit code is on the merge path. A failing assertion, an import error or a segfault cannot be talked into reporting green without changing the code or the tests, and the matrix runs it on Python 3.10-3.14 so a version-specific break surfaces too. Documented limit: execution is anchored, the oracle is not — the same authors write the implementation and the assertions, so the suite proves the code matches these tests rather than that the tests are the right specification. Second limit: `paths-ignore` skips the job entirely for changes confined to aider/website, README.md or HISTORY.md."
+      },
+      "evidence": [
+        ".github/workflows/ubuntu-tests.yml:52-56",
+        ".github/workflows/ubuntu-tests.yml:13-21",
+        ".github/workflows/ubuntu-tests.yml:26-28",
+        "pytest.ini:4-9"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/windows-tests.yml#47-run-tests",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process exit code on windows-latest, across a five-way Python version matrix",
+        "actorCanWrite": false,
+        "argument": "Same causal path as the Ubuntu job on a different OS: `run: pytest` executes the suite pytest.ini selects against the freshly `pip install .`-ed package, and the runner's exit status decides the job. It triggers on `pull_request` to main, so it blocks the merge, and running on windows-latest means path-separator and encoding breakage is caught by the platform actually executing the code rather than by anyone's claim about portability. Documented limit: the assertions are co-authored with the implementation, so this anchors execution, not the specification; and `paths-ignore` skips the job for website/README/HISTORY-only changes."
+      },
+      "evidence": [
+        ".github/workflows/windows-tests.yml:47-51",
+        ".github/workflows/windows-tests.yml:13-21",
+        ".github/workflows/windows-tests.yml:25-28"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#50-setup-pages",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/configure-pages resolving the Pages site URL and exporting `steps.pages.outputs.base_path`",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to ask the Pages API for the site's base path and export it as an output the next step interpolates into `jekyll build --baseurl`. It evaluates nothing about the repository — a failure means the Pages API was unreachable or the repo has Pages disabled, which is a fact about the hosting configuration, not about the artefact. The assertion in this job is the jekyll build that consumes its output."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:50-52",
+        ".github/workflows/pages.yml:55"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#53-build-with-jekyll",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the Jekyll/Ruby process exit code from building the committed site sources",
+        "actorCanWrite": false,
+        "argument": "`bundle exec jekyll build` runs the bundled Ruby toolchain over the committed markdown, layouts and Liquid templates under aider/website; a Liquid syntax error, malformed YAML front matter or a missing include makes jekyll exit non-zero and reddens the job, and no claim in the repo can override that. The deploy job carries `needs: build`, so a failed render blocks publication. Limit: it asserts only that the site renders — nothing about whether the documented content is true, and nothing about the Python package this repo actually ships."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:53-57",
+        ".github/workflows/pages.yml:64-69",
+        ".github/workflows/pages.yml:43-49"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#58-upload-artifact",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-pages-artifact tarring the _site tree the immediately preceding step wrote",
+        "actorCanWrite": null,
+        "argument": "The step packages the directory the jekyll build in the same job just produced and hands it to the Pages artifact store so the deploy job can fetch it. Nothing about the repository is evaluated — the worst it can report is that a path the pipeline itself was responsible for creating is absent, a fact about the plumbing. The assertion in this job is the build step before it, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:58-61",
+        ".github/workflows/pages.yml:53-55"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#71-deploy-to-github-pages",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/deploy-pages publishing the artifact an earlier job in the same run uploaded",
+        "actorCanWrite": null,
+        "argument": "The step fetches the tarball the build job uploaded and asks the Pages service to serve it. Success means GitHub accepted and published a bundle the same actor authored — a statement about the delivery channel, not a verdict on the artefact — and there is no condition between build and deploy other than the build's own exit code, so nothing is gated here. Naming the shoppability risk explicitly: I am not filing this here because it is hard, but because a successful publish is compatible with every possible content defect, so it asserts nothing about correctness in either direction. The post-deploy linkchecker step in the same job is where an assertion about the deployed site is actually made."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:71-73",
+        ".github/workflows/pages.yml:63-69"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/pages.yml#85-run-linkchecker",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "linkchecker's HTTP client, and the status codes returned by the Pages CDN and by the third-party hosts it crawls out to",
+        "actorCanWrite": false,
+        "argument": "The step crawls the live https://aider.chat over the network, and its exit status is decided by responses that come back from servers: an internal page that does not exist answers 404 from the Pages CDN whatever the source tree claims, and an external target that has rotted answers 404/410 from a host nobody in this repo can write to. The signal is produced by executing requests against a deployed system rather than by reading an assertion in the tree. Two limits: it runs AFTER actions/deploy-pages in the same job, so it detects a broken site rather than preventing one; and it points at the live domain instead of the artefact just built, so if the deploy has not propagated it grades the previous deployment. The `--ignore-url` filter also removes media URLs from the crawl."
+      },
+      "evidence": [
+        ".github/workflows/pages.yml:85-87",
+        ".github/workflows/pages.yml:71-73",
+        ".github/workflows/pages.yml:80-83"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 7,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 18,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 62,
+    "nodesSampled": 25,
+    "decidedByProbe": 14,
+    "decidedByAgent": 11,
+    "probesMinted": 2,
+    "probeLibrarySize": 10,
+    "tokensIn": 1459,
+    "tokensOut": 3641,
+    "tokensEstimated": true,
+    "wallClockMs": 531836
+  }
+}

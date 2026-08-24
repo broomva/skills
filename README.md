@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 79 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 97 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -32,15 +32,15 @@ npx skills add broomva/skills --skill '*'
 
 | Path | Purpose |
 |---|---|
-| [`skills/`](skills/) | **The monorepo.** Skills bucketed by single-noun category at `skills/<category>/<name>/` (depth-2), each with `SKILL.md` + optional `references/`/`scripts/`/`assets/` per the [agentskills.io spec](https://agentskills.io/specification). Includes the catalog skill at [`skills/tooling/skills-catalog/`](skills/tooling/skills-catalog/). |
-| [`skills-catalog/references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md) | Full categorized inventory across all 22 buckets (companion to the catalog skill) |
+| [`skills/`](skills/) | **The monorepo.** Skills bucketed by single-noun category at `skills/<category>/<name>/` (depth-2), each with `SKILL.md` + optional `references/`/`scripts/`/`assets/` per the [agentskills.io spec](https://agentskills.io/specification). Includes the catalog skill at [`skills/tooling/skills-catalog/`](skills/tooling/skills-catalog/), and one skill that also vendors the runtime it drives at [`skills/simulation/parallax/runtime/`](skills/simulation/parallax/runtime/). |
+| [`skills-catalog/references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md) | Full categorized inventory across all 23 buckets (companion to the catalog skill) |
 | [`skills-showcase/`](skills-showcase/) | Remotion video + X thread renderer for the inventory |
 | [`.github/workflows/`](.github/workflows/) | CI: SKILL.md frontmatter lint (validates `name` matches parent dir + required fields present per agentskills.io spec) |
 | `_shared/` | (reserved) shared utilities used by multiple Tier-2 skills |
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**79 skills** organized into **22 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**97 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -52,7 +52,9 @@ npx skills add broomva/skills --skill '*'
 | [`cross-review`](skills/governance/cross-review/) | bstack P20 — Cross-Model Adversarial Review Gate |
 | [`dogfood`](skills/governance/dogfood/) | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | [`harness-engineering-playbook`](skills/governance/harness-engineering-playbook/) | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture… |
+| [`keel`](skills/governance/keel/) | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | [`unhobble`](skills/governance/unhobble/) | Audit and rightsize a context surface (CLAUDE.md, AGENTS.md, SKILL.md, prompts) against the Claude-5 context-engineering reversals — measures token budget, hard-rule ratio, duplicate sections and contradiction candidates, then adjudicates keep / relocate / delete by whether an independent mechanism already enforces the prose |
+| [`legal-readiness`](skills/governance/legal-readiness/) | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
 ### Orchestration & autonomy — `skills/orchestration/`
 
@@ -61,21 +63,26 @@ npx skills add broomva/skills --skill '*'
 | [`autonomous`](skills/orchestration/autonomous/) | Use when the user has agreed on a plan or selected from suggested options and wants the agent to execute the work autonomously without further instruction |
 | [`eve-forge`](skills/orchestration/eve-forge/) | Forge a personalized eve agent for a business end-to-end — absorb the business's artifacts, author the `agent/` dir, validate, and deploy |
 | [`governed-autonomy-loop`](skills/orchestration/governed-autonomy-loop/) | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
+| [`handback`](skills/orchestration/handback/) | Terminal-message contract for an autonomous arc that has run out of agent-executable work and genuinely needs a human — a work order of imperative asks, each carrying a default so silence is never fatal |
 | [`handoff`](skills/orchestration/handoff/) | Fresh-session handoff doc drafting |
 | [`p9`](skills/orchestration/p9/) | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | [`persist`](skills/orchestration/persist/) | bstack P12 — Persistent Loop Discipline |
+| [`resume`](skills/orchestration/resume/) | Restore an arc killed mid-flight by an API error, a dropped connection or an expired login — reconstruct what died from the transcript, recover dead subagents' work off disk, and continue rather than conclude |
 | [`role-x`](skills/orchestration/role-x/) | bstack P17 — Lens-Routed Request Articulation |
 
 ### Skill & prompt tooling — `skills/tooling/`
 
 | Skill | What it does |
 |---|---|
+| [`audit-harness-usage`](skills/tooling/audit-harness-usage/) | Audit Codex, Claude, Gemini, and Cursor token/cost traces plus Antigravity quotas; emit JSON/CSV/text or a self-contained HTML insights dashboard—no CodexBar runtime dependency |
 | [`broomva-cli`](skills/tooling/broomva-cli/) | CLI for broomva.tech — manage prompts, skills, and context from the terminal |
 | [`disambiguate`](skills/tooling/disambiguate/) | Rewrite a requirement so it can only be read one way — distilled from ASD-STE100 Simplified Technical English, with a stdlib checker for the mechanical ambiguity |
 | [`make-spec`](skills/tooling/make-spec/) | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | [`prompt-library`](skills/tooling/prompt-library/) | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
+| [`prove-the-negative`](skills/tooling/prove-the-negative/) | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
+| [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 79 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 97 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -86,7 +93,9 @@ npx skills add broomva/skills --skill '*'
 | [`ccr`](skills/knowledge/ccr/) | Reversible payload compression — shrink any blob (tool output, log, RAG chunk, file) **before** it enters context, while caching the original locally for byte-exact `retrieve(handle)` on demand. The payload-axis counterpart to `kg`'s retrieval axis. Content-routed deterministic compactors (JSON skeleton / code outline / text head-tail), stdlib-only, no ML |
 | [`colombia-conflict`](skills/knowledge/colombia-conflict/) | Knowledge engine over the Colombian Truth Commission report *Hay Futuro Si Hay Verdad* (2022) — findings, statistics, actor responsibilities, differential harms, lexicon, and the 67-recommendation non-repetición roadmap, with a kg/LLM-wiki retrieval engine and an `align` policy-vs-roadmap scorer |
 | [`comprehend`](skills/knowledge/comprehend/) | Agent→human teach-to-mastery loop — stage-gated, active-recall driven, goal-bounded; the session does not end until your understanding is verified |
+| [`goodies`](skills/knowledge/goodies/) | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
+| [`what`](skills/knowledge/what/) | Explain the *concepts* a session used, at the operator's register — ranked by what blocks understanding, anchored to where each term appeared, grounded in the knowledge graph; degrades to a re-pitch when the slice is short |
 
 ### Research — `skills/research/`
 
@@ -119,6 +128,8 @@ npx skills add broomva/skills --skill '*'
 | Skill | What it does |
 |---|---|
 | [`blog-post`](skills/publishing/blog-post/) | Full-stack blog post production — turns a topic, idea, or brief into a complete publishing package across written, social, and multimedia surfaces |
+| [`citable`](skills/publishing/citable/) | Make authored content survive both selection surfaces — human engagement and LLM retrieval for citation — with a linter encoding measured effect sizes |
+| [`format-first`](skills/publishing/format-first/) | Decide what SHAPE of content to make; refuses platform folklore with a linter encoding six claims traced to primary sources |
 | [`content-creation`](skills/publishing/content-creation/) | Full-stack content creation pipeline: idea or reference to published blog post, audio narration, video, and social media distribution |
 | [`revenuecast`](skills/publishing/revenuecast/) | revenuecast — turn a real-world capability into a self-demonstrating, high-throughput generative-AI revenue engine (the "Kleos" method) |
 | [`seo-llmeo`](skills/publishing/seo-llmeo/) | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
@@ -141,6 +152,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`livecoding`](skills/audio/livecoding/) | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a… |
 | [`omnivoice`](skills/audio/omnivoice/) | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on… |
+| [`talkback`](skills/audio/talkback/) | Speak an explanation out loud while working in any project — tiered text-to-speech with a pluggable backend (ElevenLabs by default and quota-guarded, macOS `say` via `--fast` for free instant local… |
 
 ### Design & brand — `skills/design/`
 
@@ -148,9 +160,11 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`arcan-glass`](skills/design/arcan-glass/) | BroomVA trademark web styling system — Arcan Glass design language for Next.js + Tailwind v4 + shadcn/ui projects |
 | [`brand-icons`](skills/design/brand-icons/) | Brand icon and visual identity management for BroomVA projects |
+| [`broomva-design`](skills/design/broomva-design/) | Applies Broomva's platform-neutral blue-axis foundation across digital products, with general web primitives and an optional agentic-work extension |
 | [`design-distill`](skills/design/design-distill/) | Distill a visual style from reference sites/products into a validated dual-mode design system and a ready-to-run Claude Design handoff — a composition skill that fires existing tools in sequence rather than reimplementing them |
 | [`design-engineering`](skills/design/design-engineering/) | Premium design engineering skill for agentic workflows — produces high-end, distinctive UI designs using DESIGN.md as the portable contract across Pencil MCP (in-IDE… |
 | [`tekton`](skills/design/tekton/) | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
+| [`unslop`](skills/design/unslop/) | Remove the vibecoded / AI-slop look from any frontend codebase at the root, autonomously — full-repo survey with root-cause attribution, substance tells (legal, loading states, placeholders, real product evidence), and a deterministic crafted-floor gate; composes the impeccable detector |
 
 ### Finance & payments — `skills/finance/`
 
@@ -218,10 +232,18 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`ocean-genomics`](skills/science/ocean-genomics/) | Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics, protein structure prediction, and marine biodiversity analysis |
 
+### Simulation — `skills/simulation/`
+
+| Skill | What it does |
+|---|---|
+| [`data-provider`](skills/simulation/data-provider/) | Turn a question about the world into a table Parallax can accept, with every field typed observed or simulated at the moment it is written. You search; it records findings against the artifact they were read from, hashes it, judges each column by rule, and emits the exact `parallax propose` invocation |
+| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 52 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+
 ### Commerce & procurement — `skills/commerce/`
 
 | Skill | What it does |
 |---|---|
+| [`d1-cli`](skills/commerce/d1-cli/) | Shop Tiendas D1 (Colombia) from the command line — search, resolve your nearest store, price a basket against its real stock, quote delivery; builds carts but never pays |
 | [`procurer`](skills/commerce/procurer/) | Grounded procurement research for any real-world need |
 | [`swapit`](skills/commerce/swapit/) | Stateful, local-first household toxics inventory + swap engine |
 
@@ -234,21 +256,21 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 79 skills bucket into 22 single-noun categories — one row per `skills/<category>/` directory:
+The 97 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
-| Governance & control | `skills/governance/` | 7 |
-| Orchestration & autonomy | `skills/orchestration/` | 7 |
-| Skill & prompt tooling | `skills/tooling/` | 5 |
-| Knowledge & memory | `skills/knowledge/` | 4 |
+| Governance & control | `skills/governance/` | 9 |
+| Orchestration & autonomy | `skills/orchestration/` | 9 |
+| Skill & prompt tooling | `skills/tooling/` | 9 |
+| Knowledge & memory | `skills/knowledge/` | 8 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 5 |
 | Operating cadence | `skills/cadence/` | 4 |
-| Publishing & growth | `skills/publishing/` | 5 |
+| Publishing & growth | `skills/publishing/` | 7 |
 | Video & multimedia | `skills/video/` | 6 |
-| Audio & music | `skills/audio/` | 2 |
-| Design & brand | `skills/design/` | 4 |
+| Audio & music | `skills/audio/` | 3 |
+| Design & brand | `skills/design/` | 7 |
 | Finance & payments | `skills/finance/` | 4 |
 | Compute infrastructure | `skills/compute/` | 3 |
 | Model runtimes | `skills/models/` | 2 |
@@ -258,9 +280,9 @@ The 79 skills bucket into 22 single-noun categories — one row per `skills/<cat
 | Neuroscience & BCI | `skills/neuroscience/` | 3 |
 | Healthcare | `skills/healthcare/` | 2 |
 | Science | `skills/science/` | 1 |
-| Commerce & procurement | `skills/commerce/` | 2 |
+| Simulation | `skills/simulation/` | 2 |
+| Commerce & procurement | `skills/commerce/` | 3 |
 | Everyday utilities | `skills/utilities/` | 2 |
-
 Full details with descriptions in [`references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md).
 
 ## Skills showcase
@@ -287,7 +309,7 @@ Browse the full ecosystem at [skills.sh](https://skills.sh/).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for both flows: the **root-level catalog** flow (adding inventory entries, updating the showcase) and the **Tier-2 monorepo graduation** flow (adding a skill at `skills/<name>/`).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for both flows: the **root-level catalog** flow (adding inventory entries, updating the showcase) and the **Tier-2 monorepo graduation** flow (adding a skill at `skills/<category>/<name>/`).
 
 ## License
 

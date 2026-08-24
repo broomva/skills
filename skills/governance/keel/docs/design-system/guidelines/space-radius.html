@@ -1,0 +1,44 @@
+<!-- @keelCard group="Foundations" name="Space, radius, marks" subtitle="4px grid · small radii · square marks" height="300" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-5); }
+  .bars { display: flex; align-items: flex-end; gap: var(--k-space-2); margin-bottom: var(--k-space-6); }
+  .bar { background: var(--k-accent); border-radius: var(--k-r-xs); }
+  .bar span { display: block; margin-top: var(--k-space-1); font-family: var(--k-font-mono); font-size: var(--k-fs-micro); color: var(--k-ink-2); }
+  .radii { display: flex; gap: var(--k-space-3); margin-bottom: var(--k-space-6); }
+  .rad { width: var(--k-space-12); height: var(--k-space-12); background: var(--k-bg-2); border: 1px solid var(--k-line-strong); display: flex; align-items: flex-end; justify-content: center; }
+  .rad b { font-family: var(--k-font-mono); font-size: var(--k-fs-micro); font-weight: var(--k-fw-regular); color: var(--k-ink-2); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+  <p class="k-eyebrow">Space — 4px grid</p>
+  <div class="bars">
+    <div><div class="bar" style="width: var(--k-space-1); height: var(--k-space-8)"></div><span>1</span></div>
+    <div><div class="bar" style="width: var(--k-space-2); height: var(--k-space-8)"></div><span>2</span></div>
+    <div><div class="bar" style="width: var(--k-space-3); height: var(--k-space-8)"></div><span>3</span></div>
+    <div><div class="bar" style="width: var(--k-space-4); height: var(--k-space-8)"></div><span>4</span></div>
+    <div><div class="bar" style="width: var(--k-space-6); height: var(--k-space-8)"></div><span>6</span></div>
+    <div><div class="bar" style="width: var(--k-space-8); height: var(--k-space-8)"></div><span>8</span></div>
+    <div><div class="bar" style="width: var(--k-space-12); height: var(--k-space-8)"></div><span>12</span></div>
+    <div><div class="bar" style="width: var(--k-space-16); height: var(--k-space-8)"></div><span>16</span></div>
+  </div>
+
+  <p class="k-eyebrow">Radius — small, because these are ledger cells</p>
+  <div class="radii">
+    <div class="rad" style="border-radius: var(--k-r-xs)"><b>xs 3</b></div>
+    <div class="rad" style="border-radius: var(--k-r-sm)"><b>sm 4</b></div>
+    <div class="rad" style="border-radius: var(--k-r-md)"><b>md 6</b></div>
+    <div class="rad" style="border-radius: var(--k-r-lg)"><b>lg 8</b></div>
+    <div class="rad" style="border-radius: var(--k-r-xl)"><b>xl 12</b></div>
+  </div>
+
+  <p class="note">
+    No shadow tokens exist. Elevation is a background step plus a hairline — on a
+    <span class="k-mono">#07090c</span> canvas a shadow is a smudge that costs paint and
+    reads as nothing. <span class="k-mono">--k-r-pill</span> is reserved for
+    <span class="k-mono">.k-tag</span> and the composition meter.
+  </p>
+</body></html>

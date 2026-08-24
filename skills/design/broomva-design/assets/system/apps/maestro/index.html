@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- @dsCard group="Maestro app" name="Maestro" subtitle="The Broomva app — the maestro loop: chat is the surface, the gate queues over the prompt, the plane grows/collapses by selection; feed/board/list views, resizable columns. Built on the standard components." viewport="1440x860" -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Broomva — Maestro</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16151f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Broomva">
+<link rel="apple-touch-icon" href="pwa/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="pwa/icon-192.png">
+
+<link rel="stylesheet" href="concepts.css?v=20">
+<link rel="stylesheet" href="settings.css?v=5">
+<link rel="stylesheet" href="feedback.css?v=5">
+<link rel="stylesheet" href="command.css?v=2">
+<link rel="stylesheet" href="mobile.css?v=14">
+<style>html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+html { -webkit-text-size-adjust: 100%; }
+body { overscroll-behavior: none; }</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+</head>
+<body style="font-family: ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif">
+<div id="root"></div>
+<script type="text/babel" src="ds-adapter.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="WorkData.jsx"></script>
+<script type="text/babel" src="WorkShell.jsx"></script>
+<script type="text/babel" src="KgGraph.jsx?v=995"></script>
+<script type="text/babel" src="ConceptNavIA.jsx?v=1000"></script>
+<script type="text/babel" src="ConceptHistory.jsx?v=996"></script>
+<script type="text/babel" src="ConceptKnowledge.jsx?v=995"></script>
+<script type="text/babel" src="ConceptSettings.jsx?v=2"></script>
+<script type="text/babel" src="ConceptUser.jsx?v=2"></script>
+<script type="text/babel" src="ConceptFeedback.jsx?v=3"></script>
+<script type="text/babel" src="LiveCommand.jsx?v=3"></script>
+<script type="text/babel" src="KnowledgeApp.jsx?v=998"></script>
+<script type="text/babel" src="PromptPlate.jsx"></script>
+<script type="text/babel" src="AiProtocol.jsx?v=6"></script>
+<script type="text/babel" src="WorkFeed.jsx"></script>
+<script type="text/babel" src="WorkDetail.jsx"></script>
+<script type="text/babel" src="WorkPanel.jsx?v=3"></script>
+<script type="text/babel" src="WorkPlanes.jsx?v=3"></script>
+<script type="text/babel" src="ConceptTreeClick.jsx?v=12"></script>
+<script type="text/babel" src="ConceptAttention.jsx"></script>
+<script type="text/babel" src="ConceptFsTabs.jsx"></script>
+<script type="text/babel" src="ConceptMcDock.jsx"></script>
+<script type="text/babel" src="ConceptMaestroLoop.jsx?v=16"></script>
+<script type="text/babel" src="MobileShell.jsx?v=9"></script>
+<script type="text/babel" src="MaestroApp.jsx?v=17"></script>
+<script>
+  // SERVICE-WORKER KILL SWITCH.
+  // A previously-installed offline-shell worker can wedge the preview during
+  // iteration (stale shell fallback / reload loop), showing a blank page. Until
+  // the app is stable we do NOT register a worker — instead we actively tear
+  // down any worker + its app-shell caches so every load is a clean network
+  // fetch. This only clears the SW cache buckets (bv-mc-*); localStorage and
+  // your work are untouched.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations()
+      .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+      .catch(() => {});
+  }
+  if (window.caches && caches.keys) {
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => /^bv-mc-/.test(k)).map((k) => caches.delete(k))))
+      .catch(() => {});
+  }
+</script>
+</body>
+</html>

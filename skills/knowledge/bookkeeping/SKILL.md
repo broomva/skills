@@ -1,7 +1,8 @@
 ---
 name: bookkeeping
+tier: D
 category: knowledge
-version: 1.0.0
+version: 1.3.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -151,6 +152,25 @@ Warnings (non-breaking nudges, surfaced as `warning`):
 - **`contradicts:` carries a resolution** — a non-empty `contradicts:` list must have a body `## Contradiction`/`## Resolution` section
 - `## Timeline` entries (when present) carry a leading ISO date
 
+Opt-in temporal audit (`lint --all --temporal`; warning-only):
+
+- **`updated` is not older than dated evidence** — warns when valid ISO dates
+  in `sources` or the body are later than frontmatter `updated`; invalid dates
+  and dates after the audit date are ignored
+- **Mutable state is dated where it is detached from context** — warns on
+  catalog-visible current-state claims, mutable headings, and explicit state
+  labels without an inline `YYYY-MM-DD` as-of marker
+- **The typed revision envelope is well-formed** — `recorded_at` parses and is
+  not in the future; `valid_from` parses (a *future* `valid_from` is fine — a
+  scheduled change is not a defect); `supersedes` entries are `[[wikilink]]`s
+  that resolve, are not self-references, and are not newer than the record that
+  supersedes them; `supersedes` carries a `revision_link` and vice versa. All
+  four fields stay **optional** — a page without them produces no finding
+- **Semantic reconciliation remains outside lint** — the audit does not decide
+  whether claims contradict or supersede one another, nor whether a
+  supersession is correct; it only checks what the write path is supposed to
+  guarantee
+
 > Enum values defer to `references/entity-schema.md` (the schema is authoritative for `type`/`status` membership); SKILL.md remains authoritative for thresholds, stages, and layers.
 
 Lint report is written to stdout and to `~/.config/bookkeeping/status.json` under `lint_errors`. A non-zero lint error count does NOT block the pipeline — it surfaces warnings only. `lint --fix` mechanically repairs the auto-fixable classes (`related:` format, unquoted dates).
@@ -200,12 +220,17 @@ python3 scripts/bookkeeping.py synthesize --gaps      # + ranked ## Gaps report 
 python3 scripts/bookkeeping.py synthesize --gaps --backlog  # JSON Backlog ticket candidates → file via Linear MCP
 python3 scripts/bookkeeping.py lint --all             # Validate all entity pages
 python3 scripts/bookkeeping.py lint --all --health    # + 0-100 health score + remediation plan
+python3 scripts/bookkeeping.py lint --all --temporal  # + warning-only temporal-drift audit
 python3 scripts/bookkeeping.py bench                  # Retrieval benchmark (P@5/R@5/MRR)
 python3 scripts/bookkeeping.py status                 # Show knowledge graph stats
 python3 scripts/bookkeeping.py query "concept-slug"   # Find and display entity page
+python3 scripts/bookkeeping.py merge dupe canonical   # Fold a dup into a canonical (tombstone)
+python3 scripts/bookkeeping.py revise --entity new --supersedes old \
+        --revision-link REF                           # Record an explicit correction
+python3 scripts/bookkeeping.py backfill-revisions     # Replay recorded merges into the envelope
 ```
 
-The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, and `lint --health` are *subcommands/flags*, not new pipeline stages.
+The pipeline remains **7 stages** (Ingest → Score → Scatter → Resolve → Promote → Synthesize → Lint). `bench`, `synthesize --gaps`, `lint --health`, `lint --temporal`, `merge`, `revise`, and `backfill-revisions` are *subcommands/flags*, not new pipeline stages.
 
 All commands accept `--dry-run` to preview changes without writing. All commands write structured output to `~/.config/bookkeeping/run-log.jsonl`.
 
@@ -233,6 +258,77 @@ A **gap** is where the graph is incomplete in a way that blocks retrieval or sig
 ### `lint --health` — health score + remediation plan
 
 Computes a `0-100` health score — `100 * (1 - weighted_issues / total_entities)`, errors weighted `1.0`, warnings `0.3`, capped at `[0,100]` — and prints a **dependency-ordered remediation plan**: broken-wikilink TARGETS first (creating one missing page unblocks every referrer), then missing/over-long `core_claim`, then enum non-conformance. Implied by `lint --all`.
+
+### `lint --temporal` — calibrated temporal-drift warnings
+
+Adds an explicit, non-blocking audit for temporal bookkeeping defects that can
+be detected mechanically without pretending to understand claim semantics:
+
+```bash
+python3 scripts/bookkeeping.py lint --all --temporal
+python3 scripts/bookkeeping.py lint --file path/to/entity.md --temporal
+```
+
+The audit checks two conditions: frontmatter `updated` predates newer dated
+source/body evidence, and mutable state appears in a catalog-visible
+`core_claim`, state-labelled heading, or explicit label line without an inline
+ISO as-of date. It deliberately excludes arbitrary present-tense prose and
+generic `Open Questions` sections. Findings are `warning` severity, so they do
+not fail the command when no ordinary lint errors exist. Default `lint` output
+is unchanged unless `--temporal` is passed.
+
+This is an emitter-first maintenance signal, not a revision-graph validator.
+Semantic contradiction and temporal authority remain Dream (P13) review work.
+Calibration and known limitations are recorded in
+`references/temporal-drift-audit.md`.
+
+### `revise` — record an explicit correction
+
+The write side of the typed temporal revision envelope. Four frontmatter fields
+carry different clocks and different provenance rules; the governing constraint
+is that **none of them may be produced by reading prose**.
+
+| Field | Meaning | Who writes it |
+|---|---|---|
+| `recorded_at` | System time — when the graph recorded this state | `promote`, mechanically |
+| `valid_from` | Claim-effective time — when the claim became true | Only a source or revision that *supplies* it |
+| `supersedes` | Records this page replaces | `revise` / `merge` only |
+| `revision_link` | The record that authorized the supersession | `revise` / `merge` only |
+
+```bash
+python3 scripts/bookkeeping.py revise \
+  --entity new-belief --supersedes old-belief \
+  --revision-link "https://linear.app/broomva/issue/BRO-1234" \
+  [--valid-from 2026-04-15] [--dry-run]
+```
+
+`promote` stamps `recorded_at` from system time and writes `valid_from` only
+when the raw item carries an explicit `metadata.valid_from`; it never emits
+`supersedes` or `revision_link`, whatever the content asserts. `merge` records
+the canonical as superseding the dup, with the tombstone as its authorizing
+record. `revise` refuses (non-zero exit) on a missing entity, an unresolvable
+superseded slug, a self-supersession, or a non-ISO `--valid-from`, and is
+byte-identical on replay — repeated revisions union rather than overwrite.
+
+`backfill-revisions` replays supersessions the graph already recorded — a
+`status: merged` tombstone names the canonical, dates the merge, and is itself
+the authorizing record — stamping `recorded_at` with the HISTORICAL merge date.
+It is the sanctioned way a pre-envelope page acquires the fields, and it built
+the corpus the audit was calibrated on. It never derives supersessions from
+`aliases:` (those are `aka` search synonyms) or from prose.
+
+Envelope findings are warning-only and appear only under `--temporal`.
+Calibrated 2026-08-10 against that corpus: **zero envelope findings on every
+migrated page, 13/13 audit branches reachable** (no false-positive rate is
+quoted — the corpus has no coherent sampling unit for one). There is still **no hard gate**, for a measured reason — 10
+of the 13 checks are DEFINITIONAL (the predicate *is* the property, so its
+false-positive rate asks whether `x == x`) and only 3 are proxies with a gap a
+rate could measure; none of those 3 is measured by this corpus; the 1 genuine
+heuristic is unmeasurable on real data because tombstones carry no
+`recorded_at`; and 5 of 943 pages carrying the envelope is not enough
+operational history to gate on. Receipts:
+`references/supersession-calibration-2026-08-10.json`. Full contract:
+`references/temporal-revision-envelope.md`.
 
 ### `replay` — closes the shadow-dream corruption mode
 
@@ -531,5 +627,7 @@ Output format:
 | `references/scoring-rubric.md` | Full Nous gate rubric with examples for each score level |
 | `references/entity-schema.md` | Complete entity page schema with all valid field values |
 | `references/promotion-workflow.md` | Layer definitions, promotion decision tree, status transitions |
+| `references/temporal-drift-audit.md` | `lint --temporal` drift detector: contract, precision boundary, calibration |
+| `references/temporal-revision-envelope.md` | Typed revision envelope: producer contract, provenance rules, `revise`, `backfill-revisions`, calibration + the no-hard-gate decision |
 | `templates/entity-page.md` | Canonical template for new entity pages |
 | `scripts/bookkeeping.py` | Main CLI implementation |

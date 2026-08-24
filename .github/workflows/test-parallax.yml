@@ -1,0 +1,286 @@
+name: test-parallax
+
+# The gate for the ontology simulation layer, at skills/simulation/parallax/.
+#
+# THIS DIRECTORY IS CANONICAL. It used to be a vendored copy of
+# github.com/broomva/parallax, guarded by a `parallax-sync` job that asserted the
+# two trees were byte-identical. That repo stops being a development home with
+# this change and is archived read-only, so there is no second copy to keep in
+# step and the drift gate was DELETED rather than repointed: a diff against a
+# frozen tree passes forever and reports nothing, which is worse than no check --
+# it is a green tick that means "the archive still exists".
+#
+# TWO STACKS IN ONE SKILL, SO TWO JOBS.
+#
+#   skill    -- Python. The skill's deterministic core is a lookup table over
+#               Parallax's 46 error codes and its state machine. Nothing about
+#               that wants a bundler.
+#   runtime  -- Bun/TypeScript. The layer the skill drives, now shipped INSIDE
+#               the skill at runtime/, so installing the skill installs the layer.
+#               That is the whole reason this job exists here: before the move,
+#               `npx skills add` delivered instructions for software you then had
+#               to go and clone. A test that only covers the instructions cannot
+#               notice that the software they describe is broken.
+#
+# ONE SUITE DELIBERATELY DOES NOT RUN.
+#
+# tests/test_integration_live_cli.py drives the REAL `parallax` binary and SKIPS
+# when it is not on PATH. The `runtime` job below builds that binary, but the two
+# jobs are separate runners and the skip is asserted rather than removed: the
+# binding between the skill's remedy table and live CLI output is established by
+# hand (`cd runtime && bun link`, then pytest). Saying so matters, because a green
+# tick beside "test-parallax" would otherwise read as "the remedy table was
+# verified against Parallax", and it is not.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/simulation/parallax/**'
+      - '.github/workflows/test-parallax.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/simulation/parallax/**'
+      - '.github/workflows/test-parallax.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-parallax-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  skill:
+    name: pytest (the skill)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: skills/simulation/parallax
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: python3 -m pip install --upgrade pytest pyyaml
+
+      - name: Test
+        # PYTHONDONTWRITEBYTECODE because a same-size edit inside one second reuses
+        # stale bytecode (CPython invalidates on mtime+size), which reports a
+        # mutant as SURVIVED without ever running it.
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m pytest tests/ -q
+
+      - name: The live-CLI suite must SKIP here, not silently vanish
+        # If someone deletes the integration file or its skip marker, this
+        # notices. A suite that disappears and a suite that passes look identical
+        # in a summary line.
+        run: |
+          out=$(python3 -m pytest tests/test_integration_live_cli.py -q -rs 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "skipped" || {
+            echo "::error::the live-CLI suite did not report as skipped"; exit 1; }
+
+      - name: Remedy table covers every captured error code
+        # The load-bearing assertion, called out as its own step so its failure is
+        # its own line rather than one dot in a pytest summary.
+        run: |
+          python3 -m pytest tests/test_parallax_next.py \
+            -q -k "remedy_table_covers or fixture_is_not_empty"
+
+      - name: SKILL.md's claims about itself must hold
+        # The defect this project already shipped once: a documented command that
+        # fails when copied. Its own line rather than one dot in a summary.
+        run: python3 -m pytest tests/test_skill_md_claims.py -q
+
+  runtime:
+    name: bun (the layer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: skills/simulation/parallax/runtime
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install
+        run: bun install
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        # bun test does NOT typecheck. This suite went 175-green with a real TS
+        # error present, and a top-level-await module marker slipped through the
+        # same way. tsc runs as its own step so the failure is its own line.
+        run: bunx tsc --noEmit
+
+      - name: Test
+        run: bun test
+
+      - name: Demo smoke test
+        run: bun run demo
+
+      - name: The layer works from the checkout
+        # Necessary but NOT sufficient -- see the `installed` job, which is the
+        # one that actually tests the claim this change is built on.
+        run: |
+          bun link
+          command -v parallax || { echo "::error::bun link did not put parallax on PATH"; exit 1; }
+          parallax help | grep -q "propose" || {
+            echo "::error::the linked CLI did not list its own commands"; exit 1; }
+          parallax status
+
+  installed:
+    name: installing the skill installs the layer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # THE CENTRAL CLAIM OF THIS SKILL'S LAYOUT, TESTED AS A USER MEETS IT.
+    #
+    # Linking the runtime out of a repository checkout proves the code works. It
+    # does NOT prove the sentence in SKILL.md, which is "installing the skill
+    # installs the layer" -- because the installer sits between the two and is
+    # free to filter what it copies. If skills.sh ever skipped `runtime/` (it
+    # already filters by extension elsewhere), every checkout-based gate here
+    # would stay green while the published skill shipped instructions for
+    # software that was not in the box.
+    #
+    # So this job installs the skill the way a reader does, into a scratch
+    # directory, and then follows SKILL.md's own three commands from the
+    # INSTALLED copy -- asserting that the `parallax` it puts on PATH resolves
+    # inside the install, not back into this checkout.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the skill from this checkout
+        # `npx --yes` only answers npx's own "install this package?" prompt. The
+        # skills CLI has a SECOND prompt -- installation scope, Project vs Global
+        # -- and on a runner with no TTY it aborts there rather than defaulting.
+        # `-y` answers that one, taking Project scope, which is what puts the
+        # skill at ./.claude/skills/parallax below.
+        run: |
+          mkdir -p /tmp/installtest && cd /tmp/installtest
+          npx --yes skills@latest add "$GITHUB_WORKSPACE" --skill parallax -a claude-code -y
+          test -d .claude/skills/parallax || {
+            echo "::error::the installer produced no skill directory"; exit 1; }
+
+      - name: The runtime survived the installer
+        run: |
+          D=/tmp/installtest/.claude/skills/parallax
+          test -d "$D/runtime" || {
+            echo "::error::the installer STRIPPED runtime/ — 'installing the skill installs the layer' is false"; exit 1; }
+          for f in package.json bin/parallax.ts src/cli.ts src/tools/index.ts; do
+            test -f "$D/runtime/$f" || { echo "::error::installed runtime is missing $f"; exit 1; }
+          done
+          echo "installed runtime: $(find "$D/runtime/src" -name '*.ts' | wc -l | tr -d ' ') source files"
+
+      - name: SKILL.md's own commands, run from the install
+        run: |
+          D=/tmp/installtest/.claude/skills/parallax
+          cd "$D/runtime"
+          bun install
+          bun link
+          command -v parallax || { echo "::error::bun link did not put parallax on PATH"; exit 1; }
+          # The link must resolve INTO the install. If it resolves back into the
+          # repository checkout, this job is testing the checkout again and the
+          # installer is untested -- which is the exact hole it exists to close.
+          target=$(readlink -f "$(command -v parallax)")
+          echo "parallax resolves to: $target"
+          case "$target" in
+            "$D"/*) ;;
+            *) echo "::error::parallax resolved to $target, outside the install"; exit 1 ;;
+          esac
+          parallax help | grep -q "propose" || {
+            echo "::error::the installed CLI did not list its own commands"; exit 1; }
+          parallax status
+
+  integration:
+    name: the remedy table, against the real CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # THIS JOB IS THE POINT OF THE MOVE.
+    #
+    # tests/test_integration_live_cli.py drives the REAL `parallax` binary and has
+    # always SKIPPED in CI, because before the move Parallax lived in a different
+    # repository and was not a dependency here. The skill's remedy table -- what an
+    # agent should DO about each of the 46 typed refusals -- was therefore bound to
+    # live CLI output only by hand, on someone's laptop, whenever they remembered.
+    #
+    # The runtime now ships inside the skill, so the binary is one `bun link` away
+    # and the binding is machine-checked on every change. If this job is ever
+    # deleted, the remedy table goes back to being a document nobody verifies.
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Put the real parallax on PATH
+        working-directory: skills/simulation/parallax/runtime
+        run: |
+          bun install
+          bun link
+          command -v parallax || { echo "::error::parallax is not on PATH"; exit 1; }
+
+      - name: Install pytest
+        run: python3 -m pip install --upgrade pytest pyyaml
+
+      - name: The remedy table is bound to the RUNTIME, not to a snapshot of it
+        # references/error-codes.txt is a captured list, and the pytest suite
+        # asserts REMEDIES covers exactly it. That pair is closed: both sides are
+        # hand-maintained here, so adding an error code to the runtime and
+        # forgetting the fixture leaves the whole thing green while the remedy
+        # table silently stops covering the vocabulary.
+        #
+        # Before the move that was unavoidable -- the runtime was another
+        # repository and there was nothing to derive from. It ships in this
+        # directory now, so the fixture is checked against its actual source.
+        # This is the fixture-is-also-a-test-subject case: mutation-testing the
+        # code while trusting the fixture measures half the pair.
+        working-directory: skills/simulation/parallax
+        run: |
+          grep -oE '"[A-Z][A-Z_]{4,}"' runtime/src/tools/errors.ts \
+            | tr -d '"' | sort -u > /tmp/from-runtime.txt
+          grep -v '^#' references/error-codes.txt | grep -v '^$' | sort -u > /tmp/from-fixture.txt
+          n=$(wc -l < /tmp/from-runtime.txt | tr -d ' ')
+          [ "$n" -gt 0 ] || { echo "::error::extracted 0 codes from errors.ts — the pattern stopped matching"; exit 1; }
+          if ! diff -u /tmp/from-fixture.txt /tmp/from-runtime.txt; then
+            echo "::error::references/error-codes.txt has drifted from runtime/src/tools/errors.ts (- fixture, + runtime). Regenerate it; do not hand-edit."
+            exit 1
+          fi
+          echo "$n error codes: fixture matches the runtime exactly"
+
+      - name: The live suite must RUN here, not skip
+        # The inverse assertion of the one in the `skill` job, and it is the
+        # load-bearing half: a suite that skips and a suite that passes are
+        # indistinguishable in a summary line, so "did not skip" is checked
+        # explicitly rather than inferred from a green tick.
+        working-directory: skills/simulation/parallax
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          out=$(python3 -m pytest tests/test_integration_live_cli.py -q -rs 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "skipped" && {
+            echo "::error::the live-CLI suite SKIPPED — parallax was not reachable, so nothing was verified"; exit 1; }
+          echo "$out" | grep -qE "[0-9]+ passed" || {
+            echo "::error::the live-CLI suite reported no passing tests"; exit 1; }

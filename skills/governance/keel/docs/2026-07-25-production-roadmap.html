@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plan · Keel — to production</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --line:#242c37; --ink:#d8dee6; --dim:#8b95a3;
+    --accent:#5ec2a8; --warn:#e0a458; --bad:#d97b7b;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  main{max-width:880px;margin:0 auto;padding:56px 24px 96px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:44px 0 12px;letter-spacing:-.01em;
+     padding-bottom:7px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:26px 0 8px;color:var(--accent)}
+  p{margin:0 0 14px}
+  .meta{color:var(--dim);font-size:13.5px;margin-bottom:30px;font-family:var(--mono)}
+  .badge{display:inline-block;padding:2px 9px;border-radius:3px;font-size:11.5px;
+    font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;vertical-align:2px;
+    background:rgba(224,164,88,.14);color:var(--warn);border:1px solid rgba(224,164,88,.32)}
+  .badge.p0{background:rgba(217,123,123,.14);color:var(--bad);border-color:rgba(217,123,123,.32)}
+  .badge.ok{background:rgba(94,194,168,.14);color:var(--accent);border-color:rgba(94,194,168,.32)}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:2px solid var(--accent);
+    background:var(--panel);border-radius:0 4px 4px 0}
+  blockquote p:last-child{margin:0}
+  table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  code{font-family:var(--mono);font-size:13px;background:var(--panel);
+    padding:1.5px 5px;border-radius:3px;color:var(--accent)}
+  .cite{color:var(--dim);font-family:var(--mono);font-size:12.5px}
+  ul,ol{margin:0 0 14px;padding-left:22px} li{margin-bottom:6px}
+  .callout{background:var(--panel);border:1px solid var(--line);border-radius:5px;
+    padding:15px 18px;margin:18px 0}
+  .callout.warn{border-color:rgba(224,164,88,.35)}
+  .callout.bad{border-color:rgba(217,123,123,.35)}
+  .lede{font-size:17.5px;color:#e8edf3;margin-bottom:20px}
+  .anch{color:var(--accent);font-family:var(--mono);font-size:12.5px}
+  .self{color:var(--warn);font-family:var(--mono);font-size:12.5px}
+  hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+  .unit{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+</style>
+</head>
+<body>
+<main>
+
+<h1>Keel — to production</h1>
+<p class="meta">Plan · 2026-07-25 · <span class="badge">Pre-migration record · roadmap still live</span></p>
+
+<p class="lede">The engine works. Fifteen repositories measured, 293 tests passing, a clean
+typecheck, CI on two platforms, a published corpus. What stands between this and a skill
+strangers can install is almost entirely at the <em>edges</em> — the security boundary, the
+claims, and the artifacts that were never committed.</p>
+
+<p><strong>Predecessor:</strong> <a href="../handoffs/2026-07-25-keel-corpus-complete.md">handoff
+2026-07-25 (corpus complete)</a> — §6b records what was deliberately cut, §7 the known gaps,
+§7b the product finding. <strong>Existing roadmap:</strong>
+<a href="constructive-grounding-layer.md">constructive-grounding-layer.md</a> — Phase 1 shipped
+as <code>keel route</code>; this plan re-ranks Phases 2–4 <em>below</em> the handoff's own
+alternatives, and says why.</p>
+
+<h2>State at the time of writing</h2>
+
+<table>
+<tr><th>Thing</th><th>State</th></tr>
+<tr><td><code>main</code></td><td>a049c4e · clean tree · 7 PRs merged, zero open</td></tr>
+<tr><td><code>bun test</code></td><td>293 pass · 1 skip · 0 fail</td></tr>
+<tr><td><code>bunx tsc --noEmit</code></td><td>clean</td></tr>
+<tr><td>CI</td><td>green on ubuntu + macOS, on both remotes</td></tr>
+<tr><td>Branch protection</td><td><strong>none</strong> — no protection, no rulesets, on either remote</td></tr>
+<tr><td>Tags / releases</td><td><strong>zero</strong> of each</td></tr>
+<tr><td>Canonical repo</td><td>ambiguous at the time — resolved, see U4</td></tr>
+<tr><td>Published self-score</td><td>0.357, measured at <code>44f7e8d6</code>, <strong>21 commits stale</strong></td></tr>
+</table>
+
+<h2>How this plan was produced</h2>
+
+<p>Six parallel audits over the real tree — install UX, engine coverage, security,
+self-grounding, product coherence, repo hygiene — each required to ground every finding in a
+file:line it opened or a command it ran. The security dimension additionally proved its
+headline finding end-to-end against the real entrypoint.</p>
+
+<p>The four highest-stakes claims were then re-verified by hand rather than taken on trust:
+the <code>.env</code> mechanism (benign payload, no exfiltration), branch-protection state
+(<code>gh api</code>, 404 + empty rulesets), the deployed named participant pages
+(<code>git ls-files</code>), and the probe verdict census (<code>grep</code> over all 30
+minted files). Each is cited at its unit below.</p>
+
+<div class="callout warn">
+<p><strong>Method caveat, stated because this repo is about honest measurement.</strong> A
+first fan-out lost six of seven agents to connection drops and stalls; only the security
+dimension survived. The five re-run dimensions completed. Findings that were <em>not</em>
+independently re-verified by hand are marked <span class="cite">[unverified]</span> below and
+should be treated as leads, not facts.</p>
+</div>
+
+<h2>P0 — blocks any public push</h2>
+
+<h3>U1 · Stop reading security-critical config from the ambient environment <span class="badge p0">blocker</span></h3>
+
+<p>A <code>.env</code> file in the repository being measured takes control of Keel's two most
+security-critical settings. Bun auto-loads <code>.env</code> from the process cwd, and during a
+normal run the cwd <em>is the target repo</em> — that is what README.md and SKILL.md tell users
+to do.</p>
+
+<ul>
+<li><code>probe-sandbox.ts:186</code> — <code>if (process.env.KEEL_SANDBOX === '0')</code> returns unconfined.</li>
+<li><code>probe-sandbox.ts:339</code> — <code>process.env.KEEL_PROBE_DIR ?? ~/.config/keel/probes</code>.</li>
+<li><code>probe-sandbox.ts:172</code> — <code>sanitizedEnv</code> forwards <em>every</em> <code>KEEL_*</code> var except the two internal ones, so both travel into the child.</li>
+<li><code>classify.ts:350</code> — child spawned with <code>env: process.env</code>; the parent's environment is already poisoned.</li>
+</ul>
+
+<p>Loading a probe executes it, so this is code execution as the invoking user — including on
+macOS, the one platform where the seatbelt would otherwise apply. <code>${PWD}</code> expansion
+makes the payload self-contained: no absolute paths, no user opt-in.</p>
+
+<p><strong>Verified by hand.</strong> A directory containing only a <code>.env</code> with
+<code>KEEL_SANDBOX=0</code> and <code>KEEL_PROBE_DIR=${PWD}/.keel-probes</code> yields
+<code>sandboxed: false | reason: KEEL_SANDBOX=0</code> and a probe search path including the
+attacker-controlled directory.</p>
+
+<div class="callout">
+<p><strong>The mitigation pattern already exists in-tree.</strong> <code>corpus.ts:529</code>
+runs classify with <code>run(args, REPO_ROOT)</code> — cwd pinned away from the target — and
+passes <code>--probe-dir</code> explicitly, which wins in <code>resolveProbeDirs</code>
+(<code>flagDirs.length ? flagDirs : [...]</code>). The corpus run over 15 third-party repos was
+never exposed. Generalize that.</p>
+</div>
+
+<p><strong>Note the asymmetry:</strong> <code>--probe-dir</code> overrides its env var;
+<strong>nothing overrides <code>KEEL_SANDBOX</code></strong> — it is read unconditionally
+before any flag is consulted.</p>
+
+<p><strong>Do:</strong> delete <code>KEEL_SANDBOX</code> as an input entirely
+(<code>--no-sandbox</code> already exists at <code>probe-sandbox.ts:541</code> and is the honest
+spelling); honour <code>KEEL_PROBE_DIR</code> only as a flag; pin every user-invocable
+entrypoint's own cwd to <code>SKILL_ROOT</code> so Bun never auto-loads target dotfiles.</p>
+
+<p><strong>Acceptance:</strong> a fixture target carrying a hostile <code>.env</code> plus a
+marker-writing probe, run through <code>classify.ts</code> from inside that directory, leaves no
+marker file. The filesystem decides the exit code — <span class="anch">anchored</span> under
+Keel's own rubric.</p>
+
+<h3>U2 · Platform-qualify the confinement claim <span class="badge p0">blocker</span></h3>
+
+<p><code>SKILL.md:90</code> states without qualification that probes run "only inside a
+sandboxed child process." <code>probe-sandbox.ts:189</code> returns unconfined on any
+non-darwin platform. On Linux and Windows the child is a child process and nothing more.</p>
+
+<p>The engineering is honest everywhere it isn't shipped: <code>probe-sandbox.ts:46-72</code>
+documents the degradation precisely, <code>tests/probe-sandbox.test.ts:227</code> writes down
+the platform gap, and <code>test.yml</code> runs a macOS leg specifically so the confinement
+proof executes somewhere. The gap is between what the code knows and what the docs say.</p>
+
+<p><strong>Do:</strong> qualify SKILL.md's sentence; add a platform table to SECURITY.md
+§"What Keel does on your machine"; scope README's "Nothing is transmitted anywhere" to Keel
+itself and note that probes are executed code. All three are orchestrator-owned, so these land
+as a proposed diff.</p>
+
+<h3>U3 · Make <code>test.yml</code> a gate <span class="badge p0">blocker</span></h3>
+
+<p>Its own header states the requirement — "a non-zero exit must block the merge." Verified:
+<code>gh api repos/broomva/keel/branches/main/protection</code> → 404 "Branch not protected";
+<code>rulesets</code> → <code>[]</code>. The fix Keel prescribed for itself landed as a
+workflow <em>file</em>, not as a <em>gate</em>. That is exactly
+<code>grounding-classes.md:37</code>'s "looks anchored and is not."</p>
+
+<p><strong>Do:</strong> a ruleset on <code>main</code> requiring <code>test (ubuntu-latest)</code>
+<em>and</em> <code>test (macos-latest)</code>, plus require-a-pull-request. Both legs — the macOS
+leg is what makes the confinement claim an executed one, and requiring only ubuntu lets it go
+red unnoticed.</p>
+
+<h3>U4 · Consolidate repo identity <span class="badge">resolved 2026-08-03</span></h3>
+
+<p>At the time of writing, Keel lived in two repositories at once and neither was
+unambiguously canonical: PR history accumulated in one, while the repo that
+<code>npx skills add</code> actually installed was a push mirror with none of it.
+The plan below was to pick one and freeze the other.</p>
+
+<p><strong>What happened instead:</strong> both were retired. Keel now lives at
+<code>skills/governance/keel/</code> in <code>broomva/skills</code>, installs via
+<code>npx skills add broomva/skills --skill keel</code>, and has exactly one
+origin, one PR flow, and one CI lane. The ambiguity this item tracked cannot
+recur, so nothing here is scheduled.</p>
+
+<h3>U5 · Correct the claims that are not true today <span class="badge p0">blocker</span></h3>
+
+<table>
+<tr><th>Claim</th><th>Reality</th></tr>
+<tr><td><code>keel audit</code> listed as a shipped mode <span class="cite">(README:96, SKILL.md:178, site)</span></td><td>No script exists; zero of 420 published verdicts carry an <code>audit</code> block</td></tr>
+<tr><td>README:61-67 describes the ε-audit as machinery that "retires probes that disagree"</td><td>No code performs it and nothing retires anything. SKILL.md is honest here; README is not</td></tr>
+<tr><td>SKILL.md frontmatter: "gathers <em>every</em> verification edge"</td><td>Reads eight file shapes. Absent: Jenkins, Azure Pipelines, Buildkite, Drone, Cirrus, Bazel, Gradle, Maven, Cargo, Go, .NET, Nix, Taskfile, GitLab <code>include:</code>, composite actions</td></tr>
+<tr><td>site/index.html: "Fifteen repositories measured"</td><td>Fifteen declared, fourteen measured — one gathered nothing. The honest sentence is the stronger one</td></tr>
+</table>
+
+<h3>U6 · Make the skill runnable by a stranger's agent <span class="badge p0">blocker</span></h3>
+
+<p><code>grep -n "scripts/" skills/keel/SKILL.md</code> returns <strong>nothing</strong>. The
+235-line contract the installed agent reads names none of the nine scripts it ships. An agent
+that reads it does the most likely thing: performs gather and classify by hand with Read/Grep,
+never invoking the probe library, never spawning the sandbox, reasoning over summaries rather
+than literal <code>raw</code> — which SKILL.md:78 explicitly forbids. The tool degrades into a
+prompt and the failure is invisible, because the output still looks like a Keel report.</p>
+
+<p>There is also a real gap in the pipeline: <code>classify.ts</code> emits
+<code>{decided, pending, warnings}</code>; <code>render.ts</code> and <code>route.ts</code>
+consume a <code>Report</code>. Nothing shipped bridges them. The agent must hand-author JSON
+against a 260-line frozen schema with no template, no example, and no validator.</p>
+
+<p><strong>Do:</strong> add a <code>## Run it</code> section to SKILL.md with the literal command
+sequence and file handoffs; ship <code>scripts/assemble.ts</code> that merges nodes + verdicts,
+refuses on any node without a verdict (naming ids), and computes <code>groundingRatio</code>
+from the schema. That is plumbing — it classifies nothing — so it respects the invariant.
+Also state Bun as a hard runtime requirement (README:109 currently calls it a dev-time
+concern) and add a preflight that says so instead of emitting a Node module-loader stack trace.</p>
+
+<h3>U7 · Cut <code>v0.1.0</code> <span class="badge p0">blocker</span></h3>
+
+<p>There is no version string anywhere in the shipped artifact. <code>npx skills add
+broomva/keel</code> resolves to whatever the default branch is at that instant. Nobody can audit
+a version, pin a version, or say "I reviewed the probe library at X" — which is precisely the
+review the compounding story depends on.</p>
+
+<h2>P1 — the numbers must describe the repository</h2>
+
+<h3>U8 · Re-measure Keel at HEAD, uncapped</h3>
+
+<p>The most-quoted number about Keel measures a repository state that stopped existing 21
+commits ago, and the prose beside it asserts a present-tense fact the tree contradicts.
+<code>reports/keel.json</code> is at <code>44f7e8d6</code>; at that revision
+<code>.github/workflows/test.yml</code> did not exist — which is exactly what the 0.357
+diagnosed. The fix landed in <code>8bb1614</code>.</p>
+
+<p>Two compounding distortions: the 0.357 was computed over a <strong>capped 25 of 32</strong>
+nodes, and gather at HEAD now produces <strong>43</strong>. <span class="cite">[unverified]</span>
+The audit projects roughly 0.625 uncapped.</p>
+
+<p><strong>Do:</strong> re-run uncapped, commit, republish, and write the two-state sentence the
+repo actually earned — "measured 0.357 at <code>44f7e8d6</code>; its test suite ran in no CI, so
+it gated nothing. It scores N at <code>&lt;rev&gt;</code>; the gap is the fix." That is a better
+story than a frozen 0.357, and it is true.</p>
+
+<h3>U9 · A drift check, not a scored run, in CI</h3>
+
+<p>Keel <strong>cannot</strong> honestly score itself in CI, and should not pretend to.
+Classification is agentic; CI has no agent. A probe-only run would decide ~0 of 43 nodes and
+publishing a ratio over the remainder is the shoppable move under a different name. An agent
+job <em>can</em> produce the ratio but must never be a required check — an agent of the same
+class as the authors deciding whether the authors' repo is grounded is
+<code>grounding-classes.md:26</code>'s own example of self-referential verification.</p>
+
+<p><strong>Do:</strong> (a) a deterministic gather-set drift check — re-gather at HEAD, fail if
+the node-id set differs from the committed report, with a message saying re-measure or update
+the baseline deliberately. It proves coverage is current, not that any verdict is, and must say
+so. It would fail today at 25 vs 43, which is the correct signal. (b) a scheduled agent job that
+opens a PR with a refreshed report, labelled "agent-judged, same-class reviewer," never a gate.
+(c) a revision + date stamp beside every published ratio, so staleness is visible with no check
+at all.</p>
+
+<h3>U10 · Declared vs effective node cap</h3>
+
+<p><code>corpus.ts:968</code> computes the effective cap (<code>opts.cap ?? nodeCap</code>) but
+<code>:1358</code> and <code>:1530</code> write the <em>declared</em> value into the summary.
+<code>reports/corpus-summary.json</code> says <code>nodeCap: 40</code>; every entry sampled 25.
+In a file whose header reads "NO SILENT ANYTHING," the machine-readable provenance contradicts
+the prose. Fix, plus a regression test.</p>
+
+<h3>U11 · Disclose gatherer blindness <span class="cite">[unverified]</span></h3>
+
+<p>When Keel cannot see a repo's CI system, the result is byte-identical to a repo with no CI:
+it reports a ratio over whatever residue it could read — typically <code>package.json</code>
+scripts and Makefile targets, which skew ungrounded. A Jenkins shop would publish a near-zero
+ratio for a repo whose real verification is an anchored runner exit code.</p>
+
+<p><code>schemas/keel.ts:233-248</code> already names this as Keel's own shoppable class:
+"surfaces the gatherer cannot read are silently absent rather than <code>unknown</code>." The
+schema's warning is not honoured in code.</p>
+
+<p><strong>Do:</strong> emit a list of <em>unread candidate surfaces</em> beside nodes — a
+recognise-but-cannot-parse list (<code>Jenkinsfile</code>, <code>azure-pipelines.yml</code>,
+<code>.buildkite/</code>, <code>.drone.yml</code>, …). Purely mechanical, no judgment, so the
+plumbing invariant holds. Then publish a <code>## Coverage</code> section enumerating what is
+supported.</p>
+
+<h3>U12 · Publish the anonymized cohort <span class="badge">dropped 2026-08-03</span></h3>
+
+<p>This item covered a set of named third-party repositories that had been
+scored and published as a deployed page, and the privacy problem that creates:
+the two lowest scores were dominated by <code>unknown</code>, which under Keel's
+own fail-closed rule means "could not trace," not "does not test." A reader
+seeing a handle beside a 0.0 will not make that distinction.</p>
+
+<p><strong>What happened instead:</strong> the published site was not carried
+into the monorepo, and neither were the per-participant reports or the raw
+cohort JSON. There is nothing left to anonymize. The reasoning is kept because
+the hazard it names — a fail-closed <code>unknown</code> reading as an
+indictment when attached to someone's name — applies to any future published
+measurement of a repository Keel does not own.</p>
+
+<h2>P2 — the probe library</h2>
+
+<div class="callout bad">
+<p><strong>The library as it stands is biased toward the shoppable class, 18:1.</strong> Census
+over all 30 minted files: <strong>18 <code>not_a_check</code></strong>, 11
+<code>anchored</code>, <strong>1 <code>self_referential</code></strong>. Every
+<code>not_a_check</code> removes a node from the denominator, so library growth mechanically
+pushes measured ratios <em>up</em> — Keel's own named failure mode, produced by its own
+crystallization machinery, invisible because probe verdicts are cheap.</p>
+<p>The audit demonstrated it: four hand-written CI nodes, including
+<code>pip install -e . &amp;&amp; python -m pytest tests/</code>, all came back
+<code>not_a_check</code> by probe. <code>tests/probe-loader.test.ts:209</code> already states the
+intended invariant — the one shipped probe is <code>self_referential</code> and can only lower a
+ratio. The minted library inverts that property.</p>
+</div>
+
+<p><strong>Decision taken: ship all 30, after narrowing.</strong> That raises the review bar
+rather than lowering it — every one of the 18 must earn its class before it ships.</p>
+
+<div class="callout bad">
+<p><strong>ATTEMPTED 2026-07-25, AND REVERTED. The premise did not survive contact.</strong>
+All 30 were promoted with a structural whole-body guard, fixtures and a bias test; adversarial
+review then found three defects, each reproduced by hand before this was written. The library
+is <strong>not shippable</strong> in its current state, and the guard as written made things
+worse. The archive at <code>docs/probes-as-minted/</code> is what
+landed instead.</p>
+</div>
+
+<h3>What the attempt established — start the next pass here</h3>
+
+<p><strong>B1 · Ten probes ship other repositories' file:line as <code>evidence</code>.</strong>
+<code>chat-webhook-notification</code> emits vercel-ai's
+<code>.github/workflows/slack-workflow-failure-notification.yml:20-29</code>; the conftest probe
+emits anthropic-quickstarts' path. <code>evidence</code> is rendered into the report
+(<code>render.ts:753</code>), so a user auditing their own repo gets citations to files they do
+not have. This is the same sin the probe headers sermonize about — kept out of the
+<em>tokens</em> by <code>rejectRepoLiterals()</code>, smuggled back in through the payload.
+<strong>Disqualifying on its own, and it is a defect in the minted library, not in the
+promotion.</strong></p>
+
+<p><strong>B2 · <code>curl</code> is a whole-body token.</strong>
+<code>chat-webhook-notification</code>'s <code>ASSERT_ANY</code> is
+<code>["curl","uses:","webhook"]</code>. A <code>curl --fail</code> healthcheck — the canonical
+<span class="anch">anchored</span> signal — therefore reads as "all provisioning" and can be
+filed <code>not_a_check</code>. Two steps with byte-identical <code>run:</code> bodies got
+different verdicts based on the step's <em>name</em>.</p>
+
+<p><strong>B3 · The guard is a category error on <code>uses:</code> steps.</strong> It splits a
+body on <code>&amp;&amp;</code>/<code>;</code>/<code>||</code> and requires every part to match
+the probe's tokens — but <code>gather.ts</code> emits YAML <code>with:</code> keys, TOML table
+rows and Rakefile bodies inside <code>raw</code>. Measured:
+<code>actions/setup-python@v5</code> carrying two <code>with:</code> keys went from
+<code>not_a_check</code> (correct) to abstaining. <code>ci-provisioning-action</code> alone lost
+14 decisions.</p>
+
+<p><strong>The corpus A/B, over 327 nodes:</strong> decisions <strong>145 → 121</strong>;
+<code>not_a_check</code> <strong>120 → 93</strong>. Twenty-seven fewer shoppable-class
+decisions, bought by breaking provisioning detection. Abstention is the safe direction and the
+trade might still be worth making — but not with B3 as the mechanism.</p>
+
+<p><strong>B4 · The bias test measured the wrong thing.</strong> It counted probe <em>files</em>
+(18/10/2). Decision-weighted over the corpus, the shipped set is
+<strong>108 <code>not_a_check</code> / 29 <code>anchored</code> / 3
+<code>self_referential</code> — 77% of all probe decisions leave the denominator</strong>, and
+<code>ci-provisioning-action</code> is 56 of them on its own. A file count cannot see that, and
+it is the number that actually describes the bias.</p>
+
+<p><strong>B5 · Dispatch is first-match-wins in load order</strong>
+(<code>probe-sandbox.ts:551</code>) with no specificity tie-break, so a broad
+<code>not_a_check</code> probe gets first refusal on nodes an <code>anchored</code> probe would
+have claimed. Ordering, not judgment, decides.</p>
+
+<h3>Revised sequence</h3>
+
+<ol>
+<li><strong>Strip the payload literals first</strong> (B1) — mechanical, and it blocks
+everything else.</li>
+<li><strong>Re-derive the guard from <code>run:</code> bodies only</strong> (B3): apply it when
+the step has a shell chain, never to a <code>uses:</code> step or a config-file node. Then re-run
+the 327-node A/B and require decisions not to fall.</li>
+<li><strong>Audit the token sets for assertion-surface commands</strong> (B2) — <code>curl</code>,
+<code>make</code>, <code>bash</code>, any bare script invocation may not serve as a whole-body
+provisioning token.</li>
+<li><strong>Make the bias test decision-weighted</strong> (B4) over a committed corpus node set,
+and add per-probe fire counts.</li>
+<li><strong>Then</strong> promote, in a reviewed subset, smallest-blast-radius first.</li>
+<li><strong>One shared guard helper, not 17 copies.</strong> Fixing a copy-pasted guard means 17
+new versioned files.</li>
+</ol>
+
+<p><strong>And the ε-audit (U19) should land before the library grows, not after.</strong>
+Promoting 18 probes into the shoppable class while the counter-metric that would detect their
+drift exists only as prose is the wrong order — the corpus run already demonstrated that a
+cheap wrong verdict is invisible precisely because it is cheap.</p>
+
+<h3>U13 · Fixture harness first</h3>
+
+<p>No mechanism currently tests a probe. CONTRIBUTING calls a probe "the highest-value
+contribution" and says probes are "diffable, testable, and rejectable," but a PR adding one
+would be gated by nothing — and would fail <code>tsc</code> unless the contributor hand-applies
+the type annotations the mint header describes.</p>
+
+<p><strong>Do:</strong> <code>tests/probes/&lt;id&gt;.fixtures.json</code> — an array of
+<code>{node, expect: 'anchored'|'self_referential'|'not_a_check'|null}</code> — plus one
+<code>tests/probe-library.test.ts</code> that enumerates <code>skills/keel/probes/*.ts</code>,
+loads them <em>through the real sandbox</em>, and runs every fixture. Executed assertion over
+real files: <span class="anch">anchored</span> by Keel's own definition.</p>
+
+<h3>U14 · The compound-command abstention rule</h3>
+
+<p>A step is provisioning only if provisioning is all it does. Every <code>not_a_check</code>
+probe must abstain when <code>node.raw</code> carries a command separator
+(<code>&amp;&amp;</code>, <code>;</code>, <code>|</code>) or a second non-blank command line.
+Abstention falls through to the agent, which is the safe direction.</p>
+
+<div class="callout warn">
+<p><strong><code>failure-suppressed-edge</code> needs a class change, not narrowing.</strong> A
+suppressed test step is a check that <em>cannot fail</em>. Filing it <code>not_a_check</code>
+deletes it from the denominator instead of counting against the score — it is the single
+clearest instance of the shoppable-class failure in the library. The honest verdict is
+<code>self_referential</code>, or abstention. Narrowing its match would leave the defect intact
+on every node it still matches.</p>
+</div>
+
+<h3>U15 · The still-live drift</h3>
+
+<p>The one documented instance of probe drift was fixed on the wrong axis.
+<code>unfrozen-dependency-install</code> over-matched because an install token appeared inside a
+multi-line block that <em>also ran a real check</em>; the narrowing addressed lockfile-freeze
+flags instead. A step that literally invokes <code>pytest</code> is still classified
+<code>not_a_check</code> by it today. <span class="cite">[unverified — audit finding]</span></p>
+
+<p>It was also edited in place at v1 rather than minted as v2, defeating the loader's
+version-shadowing audit trail. Mint <code>v2</code>, re-run the tiktoken repeat, and confirm the
+two swallowed nodes come back as <code>pending for you: 2</code>. Make in-place editing of a
+minted probe a rejected practice in CONTRIBUTING.</p>
+
+<h3>U16 · Promote, with a bias test</h3>
+
+<p>Add the type import and <code>: Probe</code> annotation to each (they resolve inside the
+repo), fixtures for each, then ship. Add a library-level test asserting the shipped set's verdict
+distribution is not overwhelmingly denominator-shrinking, in the spirit of
+<code>probe-loader.test.ts:209</code> — the guard that makes the 18:1 problem impossible to
+reintroduce silently.</p>
+
+<p>Also: the 30 currently live only in <code>.keel-probes-corpus/</code>, matched by
+<code>.gitignore</code>'s <code>.keel-probes-*/</code> — a fan-out worktree-isolation rule from
+<code>00-orchestration.md:104</code> that swept up the corpus library too. They are one
+<code>rm -rf</code> from gone. Archive all 30 under <code>docs/</code> as the corpus-run record
+regardless of which ship.</p>
+
+<h2>P3 — product</h2>
+
+<h3>U17 · <code>corpus-agentic</code> — the next unit <span class="badge ok">decided</span></h3>
+
+<p><strong>The corpus never contained the market.</strong> 13 of 14 measured targets are
+human-maintained OSS, measured under a banner reading "your agents are grading their own
+homework." The saturation is a <em>denominator</em> problem, and the only entry with a populated
+denominator is the only agent-built one: Keel's own 0.357 carries 9 <code>self_referential</code>;
+the other 13 targets carry 5 between them.</p>
+
+<p><strong>Deliverable:</strong> <code>reports/corpus-agentic-summary.json</code> plus five
+per-target reports, via <code>corpus.ts</code> against a new pinned corpus file. Engine and probe
+library unchanged.</p>
+
+<p><strong>Selection predicate, committed before any repo is measured</strong> so it cannot be
+shopped after the fact: a target qualifies if &gt;50% of its last 200 commits carry an agent
+trailer (<code>Co-Authored-By: Claude|Devin|Codex|Cursor</code>). Mechanically checkable from
+<code>git log</code> — the selection criterion is itself <span class="anch">anchored</span>.</p>
+
+<p><strong>Acceptance:</strong> ≥5 targets at status <code>ok</code>, each with its denominator
+and distinct-source-file count printed beside its ratio, and one stated sentence answering how
+many scored exactly 1.000 and whether the pooled agentic ratio differs from 0.853 by more
+than 0.10.</p>
+
+<p><strong>Why first:</strong> it costs one corpus run and <strong>no schema risk</strong>. If
+agent-maintained repos land near 0.357, the pitch gets its evidence and oracle-axis scoring
+becomes a refinement rather than a rescue. If they saturate too, the case for the re-freeze is
+proven from data instead of asserted from 41 arguments.</p>
+
+<h3>U18 · Independence as a vector, not a second boolean <span class="badge">schema re-freeze</span></h3>
+
+<p>The handoff's 41/122 oracle claim <strong>verifies</strong> — an independent recount over all
+122 anchored verdicts returned 40 strict / 41 inclusive (32.8–33.6%), reproducing
+<code>corpus-summary.json</code> exactly.</p>
+
+<p>But the corpus wrote down a <strong>second admission axis the proposal missed</strong>: 31
+further verdicts admit the check's <em>scope</em> — select lists, exclude lists, thresholds,
+exemptions — is authored inside the write boundary. <em>mcp-python-sdk</em>: "the threshold was
+raised from the default 10 to 24, so the enforced bar is set inside the write boundary even
+though the measurement is not." <em>Keel on itself</em>: "moving a file under
+<code>docs/handoffs/</code> suppresses the signal without touching the scanner."</p>
+
+<p><strong>Union: 68 of 122 (56%) carry a written admission that something load-bearing sits
+inside the boundary.</strong> Oracle-axis alone captures 60% of what the corpus already said.</p>
+
+<p><strong>So if a re-freeze is spent, spend it once:</strong>
+<code>writeBoundary.independence?: { execution, oracle, scope }</code>, each
+<code>boolean|null</code>, each failing closed on null, with a per-axis ratio beside the existing
+one. Additive, so existing consumers stay valid. <strong>Gated on U17 reporting.</strong></p>
+
+<h3>U19 · The ε-audit script (W2·F)</h3>
+
+<p>First on the degradation ladder, and the mechanism was exercised by hand — it
+caught real drift. What is missing is the loop: a sampled, scheduled, agent-blind re-decision
+across all deciders. The schema already carries <code>Verdict.audit</code>, so <strong>no
+re-freeze is needed</strong>.</p>
+
+<p>It has two dependents. It is what makes "and it audits itself" true rather than aspirational
+(U5), and <code>constructive-grounding-layer.md:141</code> makes it a hard prerequisite for
+Phase 3 while asserting it "was built" — that line needs correcting to "specified but not
+built."</p>
+
+<h2>Explicitly not next</h2>
+
+<ul>
+<li><strong>Constructive Phases 2–4.</strong> The handoff's own verdict: 2 routable / 18
+unroutable says routing is bounded — most fixes need a human decision, not a wire. Phase 2's
+justification cites a SKILL.md claim that has since been deleted; Phase 3 is blocked on U19;
+Phase 4's answer key is real but costs a gatherer rewrite ("extraction over prose, not YAML").</li>
+<li><strong>A gatherer rewrite for granularity.</strong> Granularity inflates the numerator
+(122 anchored collapse to 59 under file-dedup) but explains none of the saturation, which is
+caused by an empty non-anchored column. Ship the disclosure — "anchored 15 across 4 files" —
+not the rewrite.</li>
+</ul>
+
+<h2>Carried forward, not scheduled</h2>
+
+<ul>
+<li><strong>Test coverage.</strong> <code>corpus.ts</code> (1,701 lines) and
+<code>curve.ts</code> (1,665) have no direct test — the two files that produced the published
+corpus table and the crystallization curve. <span class="cite">[unverified: ~48.6% of shipped
+script LOC untested]</span></li>
+<li><strong><code>corpus.ts</code> ships but cannot run outside this repo</strong> — it needs a
+<code>corpus.json</code> workspace. Move it to root <code>scripts/</code> (already outside the
+packaging boundary) or guard its entry.</li>
+<li><strong>Windows path handling</strong> — workflow path regexes cannot match, so every CI
+step silently disappears. WSL is unaffected, which is likely why it has not surfaced.</li>
+<li><strong>Sampling is kind-diverse round-robin</strong>, which is right for probe minting and
+wrong for estimating a ratio. Either sample proportionally or state plainly that a capped number
+is a kind-balanced sample, not a population estimate.</li>
+<li><strong>Supply chain in Keel's own gates</strong> — <code>l3-stability.yml:44</code> clones
+and executes a script from a mutable third-party HEAD inside a job holding
+<code>pull-requests: write</code>, and every Action floats on a mutable major tag.</li>
+<li><strong>The seatbelt's credential denylist</strong> misses <code>~/.npmrc</code>,
+<code>~/.git-credentials</code>, <code>~/.docker</code>, <code>~/.kube</code>, and probe evidence
+strings are an unbounded egress channel into published HTML.</li>
+<li><strong><code>Report</code> has no <code>warnings</code> field</strong>, so a degraded
+(unconfined) run is byte-indistinguishable from a confined one in the published artifact.</li>
+</ul>
+
+<hr>
+
+<p class="cite">Keel measures the shape of verification, not its quality. A repo can be 100%
+anchored with terrible tests. Anchoring says the signal comes from outside; it does not say the
+signal is enough.</p>
+
+</main>
+</body>
+</html>

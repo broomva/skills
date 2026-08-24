@@ -1,0 +1,6 @@
+{
+  "label": "synthetic declining corpus (6 runs)",
+  "synthetic": true,
+  "note": "Hand-authored economics for exercising curve.ts. Cost per node falls as the probe library accumulates. Run 3 judges 35 of 60 gathered nodes, so the no-silent-caps disclosure path is exercised. No number here was measured from a real target.",
+  "shuffledRerun": "shuffled"
+}

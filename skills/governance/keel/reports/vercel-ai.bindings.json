@@ -1,0 +1,31 @@
+{
+  "target": "vercel-ai",
+  "revision": "e29788dd545f8bf2300db0885658e639b4fd91bd",
+  "generatedAt": "2026-07-25T05:19:41.017Z",
+  "sourceReport": "reports/vercel-ai.json",
+  "bindings": [
+    {
+      "loop": "package.json#build",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "This edge asserts 'every one of the ~70 workspace packages produces its artifact from the committed source'. No candidate asserts that. The closest-looking one, packages/ai/vitest.config.js, does put a compiler in the path — its `typecheck: { enabled: true }` runs a real tsc pass whose verdict the authors cannot argue with — but it is scoped to the test surface of one package, packages/ai, while this node's claim ranges over the whole workspace including the tsup/esbuild children that never see a type checker. apps/docs/vercel.json is the same mismatch one level up: Vercel's builder genuinely decides whether apps/docs compiles, and says nothing about packages/*. update-model-settings.yml:64 asserts manifest/lock agreement, which is upstream of building and not a statement about build output at all. Pointing this node at any of them would let 'the monorepo builds' be scored on evidence that one package's tests type-check.",
+      "status": "proposed",
+      "noRouteReason": "Two decisions are required first, and both are human. (1) What is this edge for: today its only pipeline caller is release.yml:122 on the snapshot-publish path, so it gates a publish rather than a merge — whether it should be a merge gate at all is a branch-protection decision. (2) What would have to be true for a green build to mean the tree is sound: the repository already runs a compiler over 69 project references at ci.yml:129 (`type-check:full` = tsc --build tsconfig.with-examples.json), but that edge is not a measured node in this report, so treating it as the producer behind this claim is an extraction-and-policy decision rather than a route between two nodes present here."
+    },
+    {
+      "loop": "tools/konsistent-provider/package.json#build",
+      "from": "unknown",
+      "anchoredOn": null,
+      "argument": "The proposition this edge is trying to assert is 'the provider conventions declared in tools/konsistent-provider/src/index.ts hold' — that is what a red 'Code Consistency' job (ci.yml:62 -> turbo konsistent:validate/check -> dependsOn konsistent-provider#build) would be telling a reader. No candidate producer emits that proposition. The eight anchored producers in this report emit exactly three signals: pnpm's resolver reporting that pnpm-lock.yaml and the package.json manifests agree (update-model-settings.yml:64), Vercel's builder reporting that apps/docs compiles under next build, and six vitest/playwright runners reporting that the committed tests of packages/ai, react, vue, angular, codemod and rsc execute green. Each of those is genuinely outside the authors' write path, and each is about a different artifact than tools/konsistent-provider/src/index.ts — none of them executes the konsistent conventions, and none of them would change colour if the conventions were wrong. Wiring this node to read any of them would move the class without moving the claim.",
+      "status": "proposed",
+      "noRouteReason": "This needs a policy decision about an opaque dependency, not a rewiring. The exit code is produced by `konsistent-convention emit` from @konsistent/convention ^1.0.0-beta, a caret-ranged pre-1.0 binary that is not vendored in the tree, so what the exit code MEANS is unreadable from this clone: it may validate the declared conventions or merely serialise them to dist/conventions.json. A human has to (a) pin and vendor or otherwise read that package to establish which, and then (b) decide, if it turns out to be pure generation, whether the required 'Code Consistency' gate should keep a step behind it that cannot fail on a real convention violation. Neither is a wire an agent can move."
+    }
+  ],
+  "summary": {
+    "currentRatio": 0.8,
+    "projectedRatio": 0.8,
+    "routable": 0,
+    "unroutable": 2
+  },
+  "warnings": []
+}

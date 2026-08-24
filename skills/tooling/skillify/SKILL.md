@@ -1,5 +1,6 @@
 ---
 name: skillify
+tier: D
 category: tooling
 description: >-
   Skillify-as-a-verb — distill a working session (or a pointed-at chat history)
@@ -9,7 +10,11 @@ description: >-
   resolver-eval (role-x.py eval) → script-test gate (bstack skills audit
   --require-tests) → P20 cross-review → bookkeeping file. Composes existing
   primitives; reimplements nothing. The deterministic core (scripts/skillify_check.py)
-  makes "a feature that doesn't pass all ten is not a skill" machine-checkable.
+  makes "a feature that doesn't pass all ten is not a skill" machine-checkable, per
+  TIER: D (deterministic — tests + mutation), J (judgment — admission test, rubric,
+  held-out cases, cross-model judge, measured agreement floor), or L (lens — a
+  both-polarity routing eval). A skill with no pure function is not exempt from
+  gating; it is gated on a different axis.
   USE WHEN: "skillify it", "skillify this", "package this as a skill", "distill
   this into a skill", "make this a skill", "turn this into a skill", or at the
   end of an ad-hoc workflow that worked and should become permanent. NOT FOR:
@@ -35,20 +40,210 @@ the *gate*, not a reimplementation of the pieces.
 > **A feature that doesn't pass all ten is not a skill. It's just code that
 > happens to work today.**
 >
+> *All ten, for its tier.* What "passing" means differs for a lint, a critique,
+> and a lens — but "there is no gate for this kind of thing" is never one of the
+> three answers. See **Tiers** below.
+>
 > Every failure or hard-won ad-hoc workflow becomes a *tested* skill, so the
 > bug becomes structurally unreachable and the procedure becomes permanent
 > infrastructure. The latent space *builds* the deterministic tool; the
 > deterministic tool then *constrains* the latent space.
+
+## Tiers — what kind of thing this skill is
+
+The gate used to ask one question: *is there a deterministic core?* Yes → test it.
+No → set `latent_only: true` and nothing is checked at all. That is a **testability
+question standing in for an expressibility question**, and the roster falsifies it.
+Run the sweep:
+
+```
+python3 scripts/skillify_check.py --survey skills/
+```
+
+At the commit that introduced this section it reported **96 skills, 44 of them
+unclassified** — every one ships no `scripts/` code, and the old gate called every one
+"not a skill yet, just code that works today". It was wrong about all 44. Re-run it;
+the number is whatever the roster now says, which is the point of shipping a command
+rather than a sentence — the roster grew by two while this branch was in review, and
+the count moved with it.
+
+Worse, the **2** skills that took the `latent_only: true` exemption bought their way
+out of steps 2 **and** 3, and were then gated on nothing at all. The binary did not
+merely misclassify judgment skills; on the side it was built to accommodate, it was an
+amnesty.
+
+> **Reproducibility note.** The *absolute* pass count moves by one depending on whether
+> `node` is installed, because step 2's `.ts` syntax check is skipped when it is not
+> (`keel` passes without node, fails with it), and it moves again whenever a skill is
+> added. The **delta** is what this change claims and it is invariant: old gate → new
+> gate is **−2 passing**, measured over an identical tree, with node present and
+> absent, at 94 skills and again at 96. Both losses are the two `latent_only` skills —
+> `brand-icons` and `bstack`. Quote the delta, not the absolute.
+
+Three tiers replace the binary. **Declare one in frontmatter** (`tier: D`). Only **D**
+is inferred, from shipped code; **J and L must be declared** (see below for why).
+
+| Tier | What it is | What the gate requires |
+|---|---|---|
+| **D** — deterministic | there is a pure function in here (`unslop_gate.py`; a lint) | `scripts/` + real unit tests (a mutation proof is required discipline, but is **not** machine-checked — the gate cannot see one) |
+| **J** — judgment | a well-posed question whose valid answers vary (`critique`, `impeccable`, `devils-advocate` — all installed globally, none in this monorepo) | the admission record, a rubric, a held-out case set, a **cross-model** judge config, and a floor carrying its own measurement |
+| **L** — lens | it changes what you attend to, not what you do | a routing eval in **both polarities** — fires on the right requests, stays silent on near-misses |
+
+A skill is often more than one thing. Declare the tier whose gate is **hardest** for
+it: `skillify` is **D** because it ships `skillify_check.py`, even though most of its
+body is procedure.
+
+`latent_only: true` is **deprecated**. It still parses, and it still means "not tier
+D" — but it no longer buys an exemption from everything else. A `latent_only` skill
+must now satisfy J or L.
+
+### Why the cheap option won, and why it is still the wrong one
+
+Tier J's gate is expensive in exactly two ways the deterministic gate is not, and
+both are the reason the binary existed:
+
+1. **The judge is probabilistic too.** A judge sharing the generator's substrate
+   inflates confidence rather than testing it, so **cross-model judging is structural
+   for J, not an upgrade**. The harness already encodes this: the LLM-judge seam in
+   `skill_evals/checks.py` (repo root) requires "a grader model distinct from the model
+   under eval" and *raises* rather than returning a permissive stub.
+2. **It rots silently and it costs tokens.** A Tier-J skill degrades with nothing
+   going red, and per-run spend rules out firing on every commit. J belongs on a
+   **cadence** (P7 freshness), not in **per-commit CI** (P4).
+
+Those two costs are the whole reason the gate defaulted to deterministic-or-nothing.
+That default was the *cheap* option, not the *right* one — say so out loud. The tier
+model does not make J cheap. It makes J expressible and its debt visible.
+
+### The admission test — the hard gate for J
+
+**Non-deterministic ≠ underspecified**, and only the first is admissible.
+
+> **Admission test.** Given this skill and the *same* input, can two independent
+> agents produce outputs that a competent third party judges **both valid**?
+> If the outputs contradict and nothing adjudicates, the skill is **underspecified**.
+> Reject it — that is not a judgment skill, it is a question that was never pinned down.
+
+- *Well-posed probabilistic* — "Critique this design." Two critiques differ; both are
+  defensible; a reader can grade each on the rubric.
+- *Underspecified* — a classifier whose branch depends on a parameter the skill never
+  names, so both answers are "correct" only because the question moved underneath
+  them. This is the concrete case that produced these tiers; the four-round record is
+  in `research/notes/2026-08-19-recall-dressed-as-a-sweep-postmortem.md`.
+
+A Tier-J skill records the admission test in `evals/admission.md`, and **declares its
+outcome in frontmatter**:
+
+```markdown
+---
+outcome: admitted   # or: rejected
+---
+
+Two agents were given <the input>. A third reader judged <what>, and found both
+answers <valid / contradictory>.
+```
+
+The gate reads the **declared field**, never the prose. Earlier versions scanned the
+body for the verdict and were rebuilt four times; each rebuild rejected honest records
+— a verdict followed by its justification, a results table, a quoted rejection from
+another skill, a backticked verdict, a body opening *"The planned protocol was
+completed"*. Natural language has no reliable surface for this, and a gate that guesses
+at it teaches people to write for the regex instead of for the reader. A declared field
+is decidable and states the contract plainly.
+
+### The agreement floor is deliberately unset
+
+Tier J requires an inter-judge agreement floor. **This skill does not tell you what
+the floor is**, because nobody has measured it — and asserting a threshold that no
+committed process regenerates is exactly the failure documented in the post-mortem
+that produced this tier model.
+
+So the gate enforces the *shape* instead of a number: a Tier-J skill must declare
+`judge.agreement_floor` **and** carry `judge.agreement_measured` recording the value,
+the method, and the date that produced it. A floor declared with no measurement is a
+**FAIL**, not a warning. Pick your own floor; show your work.
+
+### Tier J requires PyYAML; the other tiers do not
+
+The admission record is a YAML contract — one declared `outcome:`, unambiguously —
+so tier J **fails closed** without a YAML parser rather than gating what it cannot
+read. Without `pyyaml`, a J skill reports `FAIL … pip install pyyaml`.
+
+This was learned as a false ACCEPT, not designed: the duplicate-key check returned
+"unknown" with no parser while the stdlib fallback resolved duplicates last-wins, so
+`outcome: rejected` followed by `outcome: admitted` **passed** on any stdlib-only box.
+A *declared rejection*, admitted. "Skip rather than guess" was right not to guess and
+wrong about the direction.
+
+Tiers D and L still run on the stdlib alone. The residue is stated rather than
+papered over: **a duplicate `tier:` cannot be detected without a parser either**, and
+that check degrades to unperformed rather than guessing — because answering it with a
+pattern means rebuilding the line-based YAML key walker this gate deleted twice.
+
+### What this gate cannot check, and does not pretend to
+
+Two adversarial review rounds spent most of their findings on one question: *can the
+gate tell a real artifact from a convincing fake?* The answer is **no, and no static
+gate can.** Whether a rubric was thought about, whether forty cases were really
+dual-labelled, whether the admission test actually ran — none of that is recoverable
+from the bytes on disk. A gate that claims otherwise invites an arms race it loses
+every round, one plausible-looking placeholder at a time.
+
+So the boundary is stated rather than blurred:
+
+| The gate checks | The gate cannot check |
+|---|---|
+| the artifacts exist, parse, and are structurally complete | that they describe something that happened |
+| the judge model differs from every declared model under eval | that the judge was ever run |
+| the floor is a finite number carrying a `value` + `method` | that the measurement produced *that* floor |
+| the case has an input | that the case is a good case |
+| a script has a non-comment line | that the code does anything useful |
+
+There were once placeholder checks — `TBD`, `vibes`, `n/a` — sold as a "typo-catcher".
+**They are gone.** They were rebuilt five times and every rebuild produced a fresh crop
+of false rejects on ordinary prose: *"excluded 3 cases with unknown labels"*,
+*"Write me a concise incident report from these logs."*, *"Unknown cause."*,
+*"TBD is not an acceptable answer; explain why."*
+
+The reason is the same one in the table above. *Is this text evasive or descriptive?*
+is not a different question from *is this measurement real?* — it is that question in
+different clothes, and it is equally undecidable. A field that is present and non-empty
+now passes, `TBD` included. Whether it means anything is the **P20 review layer's** job,
+where a human or a second model reads the artifact.
+
+Deleting the heuristic removed eight false-reject classes at once and about eighty
+lines of regex. **A gate that refuses honest work is worse than one that accepts a fake
+nobody claimed it could catch** — the false accept was always out of scope; the false
+reject blocks real people.
+
+### Neither J nor L has a real user yet
+
+`--survey skills/` reports **zero** tier-J and **zero** tier-L skills. Both gates ship
+exercised only by their own test fixtures. That is worth stating rather than
+discovering later: the measured behavioural change of introducing tiers is exactly two
+skills moving from pass to fail, and everything else here is a contract waiting for its
+first artifact. The residue ticket (BRO-2192) is the reason — the roster's uncarved 44
+are procedures, not judgments or lenses.
+
+### What Tier J does *not* yet have
+
+The judge itself is **unbuilt**. `make_judge_check` in `skill_evals/checks.py` (repo root)
+is a declared seam that raises, on the stated grounds that a permissive stub is worse
+than an honest gap. The tier gate therefore checks that a J skill's **artifacts** are
+present, well-formed, and cross-model by construction — and reports the judge *run*
+as a SKIP naming that seam. It never reports it as a PASS. A tier that certified
+itself through an unimplemented judge would be the vacuity this whole gate exists to
+prevent.
 
 ## The 10 steps (bstack-native)
 
 | # | Skillify step | bstack mechanism (composed, not reimplemented) |
 |---|---|---|
 | 1 | SKILL.md contract | **CreateSkill** scaffold → name + description + triggers |
-| 2 | Deterministic code | latent-vs-deterministic split — move precision work into `scripts/` (`latent_only: true` exempts pure composition skills like this one) |
+| 2 | Tier + its core | declare `tier: D\|J\|L`; ship that tier's core — `scripts/` for D, the admission record + rubric + held-out cases + cross-model judge config for J, a both-polarity routing eval for L |
 | 3 | Unit tests | `tests/test_*.py` (vitest/pytest) on the deterministic core |
 | 4 | Integration tests | live-endpoint / real-data tests where applicable |
-| 5 | LLM evals | judgment-output skills only — LLM-as-judge, compose **P20** |
+| 5 | LLM evals | trigger-surface grading (all tiers, recommended); tier J's rubric + held-out cases + cross-model judge are gated in **step 2** |
 | 6 | Resolver trigger | a `roles/<name>.md` lens (**P17**) and/or registry entry |
 | 7 | Resolver eval | **`role-x.py eval`** + `roles/<name>.eval.yaml` (BRO-1411 slice 1) — *assert the trigger actually routes* |
 | 8 | Check-resolvable + DRY | **`bstack skills audit`** (reachability + duplicate + budget) |
@@ -70,8 +265,11 @@ audit.
    line before scaffolding.
 2. **Scaffold** (compose **CreateSkill**) — `SKILL.md` contract: `name`,
    `description` with explicit USE WHEN / NOT FOR triggers, the procedure.
-3. **Build the deterministic core** — write `scripts/*` for the precision work.
-   Pure composition skills set `latent_only: true` and skip this.
+3. **Build the tier's core** — **D**: write `scripts/*` for the precision work.
+   **J**: write `evals/admission.md` (the admission test and its outcome), the
+   rubric, the held-out case set, and a judge config whose model differs from the
+   model under eval. **L**: write the both-polarity routing eval. Declaring a tier
+   whose core you did not ship is the one thing the gate will not let you do.
 4. **Test** — `tests/test_*` on the scripts; run them green before anything else.
 5. **Resolver** (compose **P17** + slice 1) — add a `roles/<name>.md` lens and a
    `roles/<name>.eval.yaml` fixture; `role-x.py eval --lens <name>` must pass.
@@ -143,9 +341,75 @@ prose, `skill.json`, and `templates/*.yaml`. It does **not** flag bare filenames
 references inside ` ``` ` fenced blocks, or links in `references/*.md` — those trade
 recall for zero false positives.
 
+**Step 2 dispatches on tier.** It is required for every skill, but what satisfies it
+depends on what the skill is:
+
+| `tier` | Step 2 passes when | Also required |
+|---|---|---|
+| `D` | `scripts/` present and syntax-valid | step 3 (real unit tests) |
+| `J` | `evals/admission.md` + a rubric + held-out cases + a judge config naming a model distinct from the model under eval + `judge.agreement_floor` **with** `judge.agreement_measured` | — (all of it is step 2) |
+| `L` | a routing eval asserting **both** polarities | step 7 (resolver eval), when `--roles-dir` is supplied |
+
+Tier J's eval artifacts are gated **in step 2, not step 5**. Step 5 grades the
+*trigger* surface; re-requiring it for J would be a second gate over the same
+evidence and a weaker one, since step 2 is what verifies the judge is cross-model
+and the floor is measured. Step 3 is required whenever a skill ships a **core** in `scripts/` or at the skill
+root, whatever its tier — that is where the old `latent_only` amnesty is closed. A
+test file, pytest configuration and an empty package marker are code but not cores,
+and requiring a lens to write tests for its own `__init__.py` was a false reject. Code under `src/`, `lib/` or `bin/` is *not* yet
+discovered (BRO-2192); the claim is stated at the scope the code actually enforces
+rather than at the scope one would want.
+
+The script **syntax** check runs for every tier, not just D. It sits outside the tier
+branches deliberately: an earlier draft ran it only in the D arm, so declaring
+`tier: L` bought a skill out of a check the previous gate applied unconditionally.
+Declaring a tier must never reduce coverage.
+
+Absent `tier:`, the gate **infers D from shipped code** and WARNs, so the roster does
+not break on the day this ships. It infers nothing else: **J and L must be declared.**
+The tempting second rule — *no code but has a trigger eval → L* — is wrong, and the
+backfill proved it, labelling `autonomous`, `handoff` and `checkit` as lenses when all
+three run pipelines. A routing eval is tier L's **core**, not its **signature**; every
+tier can carry one. A confidently wrong tier is worse than an absent one.
+
+An inferred tier is held to exactly the same gate as a declared one — inference decides
+*which* gate, never *whether* one applies. A skill the gate cannot classify still FAILs,
+now saying so accurately instead of the old and wrong `no scripts/ code`.
+
+`--survey <root>` runs the whole checklist over every `SKILL.md` under `<root>` and
+prints the tier distribution plus the pass/fail tally. It is the same gate over a
+population, not a second gate — every count about the roster in this document is
+regenerated by it.
+
+**Stated cost of the stricter excusing path.** A test-named **non-Python** file
+under `scripts/` that shows no construct the strict detector recognises — no
+`assert`, no bats `@test`, no pass/fail counters — is treated as a deterministic
+script, so it trips the `latent_only` contradiction and requires tests. This is the
+fail-closed direction and the remedy is to write an assertion the detector can see.
+Measured: **zero** such files exist across the 96-skill roster today, which is why it
+is a stated limit rather than a live regression — regenerate that count before
+assuming it still holds.
+
+**Known gap, at the skill ROOT.** `_is_code_file` drops root-level files named
+like packaging or like a test, so `<skill>/setup.py` or `<skill>/test_helpers.py`
+holding real untested logic passes clean at `tier: L`. The same is true of any
+subdirectory other than `scripts/`: `_iter_files` walks `scripts/` recursively plus
+the root's top level, so `<skill>/lib/engine.py` and `<skill>/src/main.py` are
+invisible whatever they are named. Measured on both this gate
+and its predecessor — it is pre-existing, not introduced by the tier model, and it
+lives in a function the tier work does not touch. Under `scripts/` the same files
+are caught: location decides there, and the deterministic predicate excludes a file
+only when its name AND its structure agree that it is a test.
+
+**The root matters, and it is `skills`, not `.`.** From the repo root `--survey .`
+reports 98, because it sweeps in `skills-showcase/` and a test fixture under
+`tests/skill_evals/fixtures/`. Both fail, so the *passing* count is 28 either way and
+the two figures reconcile — but a roster count quoted from `--survey .` is counting a
+fixture as a skill.
+
 Reports PASS / WARN / SKIP / FAIL for each step. **Required** steps (1 SKILL.md,
-1c reference integrity, 2 code unless `latent_only`, 3 unit tests when code present)
-gate the exit code. `--strict` promotes the recommended steps to required. Step 3
+1c reference integrity, 2 the tier's core, 3 unit tests whenever code ships, 7
+resolver eval for tier L when `--roles-dir` is given) gate the exit code. `--strict` promotes the recommended steps to required. Step 3
 recognizes Python (AST), JS/TS, **and bash** test suites (`*.test.sh` with
 `ok()`/`fail()` helpers or `PASS`/`FAIL` accounting), so a real shell test battery
 isn't read as "no tests".
@@ -172,6 +436,9 @@ isn't read as "no tests".
 | "I'll register it later." | Step 6/7 unregistered = a dark skill nobody can reach. Do it now or it's invisible. |
 | "Should I file a KG entry?" | Never ask (P6). File proactively, report after. |
 | "Just write the SKILL.md, skip the script." | If the work is deterministic, latent space doing it is the bug. Move precision into `scripts/`. |
+| "It's a judgment skill, so it can't be tested." | Tier J exists precisely to refuse this. Untestable and unspecified are different claims; the admission test tells them apart. If two agents contradict with no tiebreak, the problem is not that judgment is hard — it is that the question is not yet a question. |
+| "Tier J is expensive, I'll call it L and ship a trigger eval." | L gates *routing*, J gates *output*. A skill whose value is the quality of what it produces, gated only on whether it fired, is ungated on the thing it is for. The tier whose gate is hardest is the one that applies. |
+| "I'll declare an agreement floor of 0.7, that's standard." | 0.7 from where? A floor with no `judge.agreement_measured` is a FAIL, not a warning — an unmeasured number that moves under argument was authored, not measured. |
 
 ## Scope
 

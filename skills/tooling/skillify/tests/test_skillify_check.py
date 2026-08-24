@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+
+import pytest
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -21,13 +24,15 @@ _spec.loader.exec_module(mod)
 # --- fixture builders --------------------------------------------------------
 
 def _skill(tmp: Path, *, name="demo", scripts=True, tests=True, latent=False,
-           desc="A demo skill.") -> Path:
+           desc="A demo skill.", tier=None) -> Path:
     d = tmp / name
     (d / "scripts").mkdir(parents=True, exist_ok=True)
     (d / "tests").mkdir(parents=True, exist_ok=True)
     fm = f"---\nname: {name}\ndescription: {desc}\n"
     if latent:
         fm += "latent_only: true\n"
+    if tier is not None:
+        fm += f"tier: {tier}\n"
     fm += "---\n# body\n"
     (d / "SKILL.md").write_text(fm, encoding="utf-8")
     if scripts:
@@ -56,11 +61,25 @@ def test_scripts_without_tests_fails(tmp_path):
     assert step3["status"] == "FAIL" and step3["required"]
 
 
-def test_latent_only_skill_exempt_from_code(tmp_path):
+def test_latent_only_no_longer_buys_a_blanket_exemption(tmp_path):
+    """BRO-2190: `latent_only: true` used to SKIP step 2 and step 3, so the branch
+    built to accommodate non-deterministic skills gated NOTHING. It must now still
+    satisfy a tier (J or L)."""
     d = _skill(tmp_path, scripts=False, tests=False, latent=True)
     res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
     step2 = next(r for r in res if r["step"] == 2)
-    assert step2["status"] == "SKIP"  # composition skill — no scripts required
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "cannot classify" in step2["detail"]
+
+
+def test_latent_only_with_a_real_tier_passes(tmp_path):
+    """The loosening is real: the same skill declaring tier L with a routing eval
+    passes, so closing the amnesty did not just make the gate stricter."""
+    d = _skill(tmp_path, scripts=False, tests=False, latent=True, tier="L")
+    _routing_eval(d)
+    res = mod.run_checklist(d, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    step2 = next(r for r in res if r["step"] == 2)
+    assert step2["status"] == "PASS"
     assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
 
 
@@ -128,7 +147,7 @@ def test_cli_json(tmp_path):
     assert rc == 0
     payload = json.loads(out)
     assert payload["failed"] == 0
-    assert len(payload["results"]) == 12  # ten steps + 1b (installable layout) + 1c (reference integrity)
+    assert len(payload["results"]) == 13  # ten steps + 1b + 1c + 2t (tier declaration)
 
 
 def test_cli_bad_dir_exit_2(tmp_path):
@@ -616,3 +635,3020 @@ def test_step5_is_advisory_never_blocks(tmp_path):
     s5 = _step5(d)
     assert s5["status"] == "WARN"
     assert s5.get("required") is not True
+
+
+# ===========================================================================
+# Tiers — D / J / L (BRO-2190)
+# ===========================================================================
+
+def _routing_eval(d: Path, *, both_polarities=True) -> Path:
+    """A tier-L core: an eval asserting the skill fires and stays silent."""
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    cases = [{"prompt": "do the thing", "should_fire": True}]
+    if both_polarities:
+        cases.append({"prompt": "unrelated", "should_not_fire": True})
+    f = d / "evals" / "prompts.json"
+    f.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    return f
+
+
+def _judgment_evals(d: Path, *, admission="admitted", rubric=True, held_out=1,
+                    judge_model="gpt-5", under_model="haiku",
+                    floor=0.7, measured=True) -> None:
+    """A complete tier-J core, with each part individually removable."""
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    if admission is not None:
+        (d / "evals" / "admission.md").write_text(
+            f"---\noutcome: {admission}\n---\n\n"
+            "Two agents, same input, both outputs judged valid by a third reader.\n",
+            encoding="utf-8")
+    if rubric:
+        (d / "evals" / "rubric.md").write_text("# Rubric\n\n- engages the argument\n",
+                                               encoding="utf-8")
+    judge = {"model": judge_model}
+    if floor is not None:
+        judge["agreement_floor"] = floor
+        if measured:
+            judge["agreement_measured"] = {
+                "value": floor, "method": "3 judges x 40 held-out cases, Krippendorff alpha",
+                "date": "2026-08-19"}
+    blob = {
+        "cases": [{"prompt": f"case {i}", "held_out": True} for i in range(held_out)],
+        "judge": judge,
+        "execution_contract": {"model": under_model},
+    }
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+
+
+def _step(res, step):
+    return next(r for r in res if r["step"] == step)
+
+
+def _check(d, **kw):
+    kw.setdefault("roles_dir", None)
+    kw.setdefault("registry", None)
+    kw.setdefault("entities_dir", None)
+    kw.setdefault("strict", False)
+    return mod.run_checklist(d, **kw)
+
+
+# --- tier D ------------------------------------------------------------------
+
+def test_tier_d_declared_with_code_passes(tmp_path):
+    d = _skill(tmp_path, tier="D")
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS"
+    assert "declared" in _step(res, 2)["detail"]
+
+
+def test_tier_d_declared_without_code_fails(tmp_path):
+    """Declaring a tier whose core you did not ship is the one thing the gate
+    must not permit — otherwise `tier:` is a self-issued exemption."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="D")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "no scripts" in step2["detail"]
+
+
+def test_tests_required_whenever_code_ships_regardless_of_tier(tmp_path):
+    """The old expression routed step 3 through latent_only, so a skill could ship
+    scripts and buy out of testing them. Tier L + scripts must still need tests."""
+    d = _skill(tmp_path, tests=False, tier="L")
+    _routing_eval(d)
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL" and step3["required"]
+
+
+# --- tier J ------------------------------------------------------------------
+
+def test_tier_j_complete_passes(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d)
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS", _step(res, 2)["detail"]
+    assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
+
+
+def test_tier_j_without_admission_record_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, admission=None)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "admission" in step2["detail"]
+
+
+def test_tier_j_self_judging_fails(tmp_path):
+    """A judge sharing the generator's substrate inflates confidence rather than
+    testing it — identical model is the degenerate case and must not pass."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, judge_model="haiku", under_model="haiku")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "self-judging" in step2["detail"]
+
+
+def test_tier_j_same_family_judge_warns_but_does_not_block(tmp_path):
+    """Distinct names, correlated substrate. The gate cannot honestly prove
+    cross-vendor from a bare string, so it warns rather than pretending."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, judge_model="opus", under_model="haiku")
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS"
+    warn = _step(res, "2j")
+    assert warn["status"] == "WARN" and "family" in warn["detail"]
+
+
+def test_tier_j_floor_without_measurement_fails(tmp_path):
+    """The whole point: an agreement floor nobody measured is an authored number.
+    This is the clamp the post-mortem that produced these tiers asked for."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, measured=False)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "agreement_measured" in step2["detail"]
+
+
+def test_tier_j_missing_floor_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, floor=None)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "agreement_floor" in step2["detail"]
+
+
+def test_tier_j_without_held_out_cases_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, held_out=0)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "held-out" in step2["detail"]
+
+
+def test_tier_j_without_rubric_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, rubric=False)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "rubric" in step2["detail"]
+
+
+def test_judge_execution_is_never_reported_as_a_pass(tmp_path):
+    """The anti-vacuity assertion. The LLM judge is a declared, unbuilt seam
+    (checks.py make_judge_check raises). A tier that certified itself through an
+    unimplemented judge would be exactly the false PASS this gate exists to stop —
+    so the judge RUN is a named SKIP even when every artifact is perfect."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d)
+    row = _step(_check(d), "2j*")
+    assert row["status"] == "SKIP"
+    assert row["status"] != "PASS"
+    assert "make_judge_check" in row["detail"]
+    assert not row["required"]
+
+
+# --- tier L ------------------------------------------------------------------
+
+def test_tier_l_with_routing_eval_passes(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    _routing_eval(d)
+    res = _check(d)
+    assert _step(res, 2)["status"] == "PASS"
+    assert not [r for r in res if r["status"] == "FAIL" and r["required"]]
+
+
+def test_tier_l_without_routing_eval_fails(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "no routing eval" in step2["detail"]
+
+
+def test_tier_l_requires_resolver_eval_when_roles_dir_given(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    _routing_eval(d)
+    roles = tmp_path / "roles"
+    roles.mkdir()
+    step7 = _step(_check(d, roles_dir=roles), 7)
+    assert step7["status"] == "FAIL" and step7["required"]
+    (roles / "demo.eval.yaml").write_text("cases: []\n", encoding="utf-8")
+    assert _step(_check(d, roles_dir=roles), 7)["status"] == "PASS"
+
+
+def test_tier_l_resolver_eval_not_required_without_roles_dir(tmp_path):
+    """Absence of a FLAG must never be scored as absence of an EVAL."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    _routing_eval(d)
+    step7 = _step(_check(d), 7)
+    assert step7["status"] == "SKIP" and not step7["required"]
+
+
+# --- classification ----------------------------------------------------------
+
+def test_unclassifiable_skill_still_fails(tmp_path):
+    """Inference decides WHICH gate, never WHETHER one applies. A skill with no
+    code, no eval and no admission record is as ungated as before and must fail."""
+    d = _skill(tmp_path, scripts=False, tests=False)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_unclassifiable_message_names_the_procedure_residue(tmp_path):
+    """The 41/94 uncarved skills are procedure skills; telling them to pick one of
+    three tiers that do not fit would be confidently wrong advice (BRO-2192)."""
+    d = _skill(tmp_path, scripts=False, tests=False)
+    assert "BRO-2192" in _step(_check(d), 2)["detail"]
+
+
+def test_inferred_tier_warns(tmp_path):
+    d = _skill(tmp_path)  # ships code, no tier: declared
+    row = _step(_check(d), "2t")
+    assert row["status"] == "WARN" and not row["required"]
+    assert "inferred" in row["detail"]
+
+
+def test_declared_tier_emits_no_inference_warning(tmp_path):
+    d = _skill(tmp_path, tier="D")
+    assert not [r for r in _check(d) if r["step"] == "2t"]
+
+
+def test_invalid_tier_value_fails(tmp_path):
+    d = _skill(tmp_path, tier="X")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "not one of D/J/L" in step2["detail"]
+
+
+def test_latent_only_with_scripts_is_still_a_contradiction(tmp_path):
+    d = _skill(tmp_path, latent=True)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "contradiction" in step2["detail"]
+
+
+# --- survey ------------------------------------------------------------------
+
+def test_survey_tallies_by_tier(tmp_path):
+    _skill(tmp_path, name="ddd", tier="D")
+    lll = _skill(tmp_path, name="lll", scripts=False, tests=False, tier="L")
+    _routing_eval(lll)
+    _skill(tmp_path, name="nope", scripts=False, tests=False)
+    rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 3
+    assert rep["by_tier"]["D"] == 1
+    assert rep["by_tier"]["L"] == 1
+    assert rep["by_tier"]["unclassified (inferred)"] == 1
+    assert rep["passing"] == 2 and rep["failing"] == 1
+
+
+def test_survey_reports_but_does_not_gate(tmp_path):
+    """A survey over a roster with known debt must not turn every CI run red — the
+    per-skill invocation is the gate."""
+    _skill(tmp_path, name="nope", scripts=False, tests=False)
+    rc, out, err = _run("--survey", str(tmp_path))
+    assert rc == 0
+    assert "1 skill(s)" in out and "0 pass" in out
+
+
+def test_trigger_eval_alone_does_not_infer_a_lens(tmp_path):
+    """The backfill's finding, pinned. Inferring L from "no code + a trigger eval"
+    labelled `autonomous`, `handoff` and `checkit` as lenses; all three run
+    pipelines. A routing eval is tier L's core, not its signature — every tier can
+    carry one — so L must be declared, never inferred (BRO-2192)."""
+    d = _skill(tmp_path, scripts=False, tests=False)
+    _routing_eval(d)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "must be declared" in step2["detail"]
+
+
+def test_latent_only_plus_scripts_still_requires_tests(tmp_path):
+    """Pins `require_tests = bool(code)`. The old expression was
+    `bool(code) and not latent_only or (latent_only and code)`; routing step 3
+    through latent_only at all is what let a skill ship scripts and buy out of
+    testing them. Step 2 also fails here (contradiction) — this asserts step 3
+    independently, so reverting the expression cannot pass unnoticed."""
+    d = _skill(tmp_path, tests=False, latent=True)
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL" and step3["required"]
+
+
+# ===========================================================================
+# P20 round 1 — every blocker and major from two adversarial strata, as fixtures.
+# Each test names the finding it pins. All were reproduced as PASSes before the fix.
+# ===========================================================================
+
+def _j(tmp_path, **kw):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="J")
+    _judgment_evals(d, **kw)
+    return d
+
+
+def _l(tmp_path, cases):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "prompts.json").write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    return d
+
+
+# --- the coverage regression (Strata B blocker 4) -----------------------------
+
+def test_syntax_check_applies_to_every_tier_not_just_d(tmp_path):
+    """THE regression this round found. `_script_syntax_error` was called only inside
+    the tier-D arm, so `tier: L` bought a skill out of a syntax check origin/main
+    applied unconditionally. Declaring a tier must never reduce coverage."""
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    (d / "scripts").mkdir(exist_ok=True)
+    (d / "scripts" / "do.py").write_text("def f(:\n    return 1\n", encoding="utf-8")
+    (d / "tests").mkdir(exist_ok=True)
+    (d / "tests" / "test_do.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "syntax error" in step2["detail"]
+
+
+def test_empty_script_is_not_a_deterministic_core(tmp_path):
+    """codex blocker 1: py_compile is happy with 0 bytes, so `touch scripts/noop.py`
+    satisfied tier D."""
+    d = _skill(tmp_path, tests=False, tier="D")
+    (d / "scripts" / "do.py").write_text("", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_extensionless_executable_counts_as_code(tmp_path):
+    """codex blocker 6: `scripts/run` with a shebang shipped untested, because
+    'code' keyed off five suffixes."""
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    (d / "scripts").mkdir(exist_ok=True)
+    run = d / "scripts" / "run"
+    run.write_text("#!/bin/bash\necho hi\n", encoding="utf-8")
+    run.chmod(0o755)
+    for t in (d / "tests").glob("*"):
+        t.unlink()
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL" and step3["required"]
+
+
+# --- tier L polarity (codex blocker 2, Strata B blocker 5) --------------------
+
+def test_null_valued_trigger_key_does_not_satisfy_tier_l(tmp_path):
+    """The weak-check-made-load-bearing defect, repeated from a sibling PR's step-5
+    finding because tier L made the weak check *required*."""
+    step2 = _step(_check(_l(tmp_path, [{"should_fire": None}])), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_positive_only_routing_eval_fails_tier_l(tmp_path):
+    """Both SKILL.md tables claim 'both polarities'; nothing enforced it. A
+    positive-only suite structurally cannot see over-triggering."""
+    step2 = _step(_check(_l(tmp_path, [{"should_fire": True}])), 2)
+    assert step2["status"] == "FAIL"
+    assert "negative" in step2["detail"]
+
+
+def test_negative_only_routing_eval_fails_tier_l(tmp_path):
+    step2 = _step(_check(_l(tmp_path, [{"should_not_fire": True}])), 2)
+    assert step2["status"] == "FAIL"
+    assert "positive" in step2["detail"]
+
+
+def test_both_polarities_passes_tier_l(tmp_path):
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_should_trigger_false_counts_as_the_negative_polarity(tmp_path):
+    """Schmid's convention expresses the negative as should_trigger:false rather than
+    a separate key; that must satisfy the negative arm."""
+    d = _l(tmp_path, [{"should_trigger": True}, {"should_trigger": False}])
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+# --- judge shadowing + opt-out (codex blocker 3, Strata B blockers 2 and 3) ---
+
+def test_decoy_blob_cannot_shadow_the_real_execution_contract(tmp_path):
+    """codex blocker 3: first-match `_dig` read `judge` from one file and
+    `execution_contract` from another, so it compared two configs that never meet."""
+    d = _j(tmp_path, judge_model="gpt-5", under_model="gpt-5")
+    (d / "evals" / "00-decoy.json").write_text(
+        json.dumps({"execution_contract": {"model": "haiku"}}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "self-judging" in step2["detail"]
+
+
+def test_two_judge_configs_are_ambiguous_not_first_wins(tmp_path):
+    """Strata B blocker 3 in its sharper form: a decoy `judge` sorting first hid the
+    real self-judging one entirely."""
+    d = _j(tmp_path)
+    (d / "evals" / "00-decoy.json").write_text(
+        json.dumps({"judge": {"model": "gpt-5", "agreement_floor": 0.8,
+                              "agreement_measured": {"value": 0.9, "method": "40 dual-labelled cases"}}}),
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+    assert "ambiguous" in step2["detail"]
+
+
+def test_missing_execution_contract_fails_rather_than_warns(tmp_path):
+    """Strata B blocker 2: the cross-model requirement was opt-out — omit the
+    comparison target and the whole gate degraded to a WARN."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    del blob["execution_contract"]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "nothing to compare" in step2["detail"]
+
+
+def test_non_mapping_judge_fails_cleanly(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "suite.json").write_text(json.dumps({"judge": "gpt-5"}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "not a mapping" in step2["detail"]
+
+
+# --- the measurement clamp (codex blocker 5, Strata B major 7) ----------------
+
+def test_blank_floor_and_whitespace_measurement_fail(tmp_path):
+    """codex blocker 5: `agreement_floor: ""` with whitespace value/method passed."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_floor"] = ""
+    blob["judge"]["agreement_measured"] = {"value": " ", "method": " "}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL"
+
+
+def test_a_measured_agreement_of_zero_is_a_real_measurement(tmp_path):
+    """Strata B major 7, the inverse direction. Truthiness got this pair backwards:
+    a genuine 0 was reported as 'no measurement' while 'unmeasured' passed."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": 0, "method": "40 dual-labelled cases, Krippendorff alpha"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_non_numeric_floor_fails(tmp_path):
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_floor"] = "high"
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "must be a number" in step2["detail"]
+
+
+# --- admission record (codex blocker 4, Strata B major 3) ---------------------
+
+def test_unreadable_admission_fails_closed_without_a_traceback(tmp_path):
+    """codex major 2 / Strata B major 5: an uncaught PermissionError instead of a
+    structured FAIL. A traceback is worse than a verdict."""
+    d = _j(tmp_path)
+    f = d / "evals" / "admission.md"
+    f.chmod(0o000)
+    try:
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL" and step2["required"]
+    finally:
+        f.chmod(0o644)
+
+
+# --- rubric + held-out (Strata B majors 1 and 2) -----------------------------
+
+def test_empty_rubric_file_does_not_satisfy_the_rubric_check(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "rubric.md").write_text("", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
+
+
+def test_heading_only_rubric_does_not_count(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "rubric.md").write_text("# Rubric\n\n## Dimensions\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rubric" in step2["detail"]
+
+
+def test_a_real_held_out_case_file_counts(tmp_path):
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("Critique this API design.\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+# --- fail-closed on unparseable artifacts (codex major 1, Strata B major 4) ---
+
+def test_unparseable_eval_artifact_fails_closed_for_tier_j(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "broken.json").write_text("{not: valid json", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "could not be trusted" in step2["detail"]
+
+
+def test_unparseable_eval_artifact_fails_closed_for_tier_l(tmp_path):
+    """An unverifiable routing eval is not a routing eval — and the message must say so,
+    not 'no routing eval'.
+
+    The wording is "could not be TRUSTED" rather than "could not be parsed": since the
+    duplicate-key guard landed, this branch also fires for artifacts that parse
+    perfectly and are merely ambiguous, and calling those a parse failure sent an author
+    hunting for a syntax error that was not there."""
+    d = _l(tmp_path, [{"should_fire": True}, {"should_not_fire": True}])
+    (d / "evals" / "broken.json").write_text("{not: valid json", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "could not be trusted" in step2["detail"]
+
+    # and the reason must name the actual defect for the ambiguous case too
+    d2 = _l(tmp_path / "dup", [{"should_fire": True}, {"should_not_fire": True}])
+    (d2 / "evals" / "dup.json").write_text('{"a": 1, "a": 2}', encoding="utf-8")
+    step2b = _step(_check(d2), 2)
+    assert step2b["status"] == "FAIL" and "duplicate key" in step2b["detail"], step2b["detail"]
+
+
+# --- survey robustness (Strata B major 5, codex minor 1) ---------------------
+
+def test_survey_isolates_a_failing_skill_and_still_reports_the_rest(tmp_path):
+    good = _skill(tmp_path, name="good", tier="D")
+    bad = _skill(tmp_path, name="bad", tier="D")
+    (bad / "scripts" / "do.py").chmod(0o000)
+    try:
+        rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+        assert rep["total"] == 2
+        assert any(r["skill"] == "good" and r["ok"] for r in rep["rows"])
+        assert any(r["skill"] == "bad" and not r["ok"] for r in rep["rows"])
+    finally:
+        (bad / "scripts" / "do.py").chmod(0o644)
+
+
+def test_survey_plus_positional_is_rejected_not_silently_ignored(tmp_path):
+    d = _skill(tmp_path, name="x", tier="D")
+    rc, out, err = _run(str(d), "--survey", str(tmp_path))
+    assert rc == 2 and "different modes" in err
+
+
+# --- mutation survivors from the round-1 proof -------------------------------
+# Both tests below exist because a mutant SURVIVED: the tests written alongside the
+# fix passed for a reason other than the one they claimed to pin.
+
+def test_non_boolean_trigger_values_do_not_establish_polarity(tmp_path):
+    """M10 survived: `{"should_fire": null}` fails for the wrong reason (None is
+    falsy, so the positive arm stays unset either way). The value that actually
+    distinguishes a real-boolean check from a truthiness check is a non-boolean
+    truthy/falsy PAIR — under a truthiness reading `1`/`0` looks like both polarities.
+    A YAML author writing `should_fire: 1` must not buy a lens gate."""
+    d = _l(tmp_path, [{"should_fire": 1}, {"should_fire": 0}])
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "no routing eval" in step2["detail"]
+
+
+def test_comment_only_script_is_not_a_deterministic_core(tmp_path):
+    """Round-2 blocker 1: the round-1 empty-file fix rejected only zero-byte and
+    whitespace files, so `# TODO: implement core` still satisfied tier D. A floor on
+    substance — NOT a judgement about whether the code is useful, which is undecidable."""
+    d = _skill(tmp_path, tier="D")
+    (d / "scripts" / "do.py").write_text("#!/usr/bin/env python3\n# TODO: implement core\n",
+                                         encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_unrelated_nested_metadata_does_not_supply_polarity(tmp_path):
+    """Round-2 blocker 2: `_polarity_seen` walked the whole document, so
+    `{"metadata": {"should_fire": true}, "judge": {"should_trigger": false}}` passed
+    tier L with no routing cases at all."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "metadata.json").write_text(
+        json.dumps({"metadata": {"should_fire": True}, "judge": {"should_trigger": False}}),
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_malformed_decoy_judge_still_counts_as_ambiguity(tmp_path):
+    """Round-2 blocker 3: dropping malformed declarations meant a decoy
+    `{"judge": "not-a-mapping"}` was ignored, so 'declare exactly one' was unenforced."""
+    d = _j(tmp_path)
+    (d / "evals" / "decoy.json").write_text(
+        json.dumps({"judge": "not-a-mapping"}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "ambiguous" in step2["detail"]
+
+
+def test_null_execution_contract_model_is_rejected_not_skipped(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "decoy.json").write_text(
+        json.dumps({"execution_contract": {"model": None}}), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"  # None means absent, which is fine
+    (d / "evals" / "decoy.json").write_text(
+        json.dumps({"execution_contract": {"model": ""}}), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "non-empty string" in step2["detail"]
+
+
+def test_nan_agreement_floor_is_not_a_number(tmp_path):
+    """Round-2 blocker 5: NaN passes isinstance(float) but is not a coefficient."""
+    d = _j(tmp_path)
+    (d / "evals" / "suite.yaml").write_text(
+        "judge:\n  model: gpt-5\n  agreement_floor: .nan\n"
+        "  agreement_measured:\n    value: 0.9\n    method: 40 dual-labelled cases\n"
+        "execution_contract:\n  model: haiku\n", encoding="utf-8")
+    (d / "evals" / "suite.json").unlink()
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "must be a number" in step2["detail"]
+
+
+def test_invalid_utf8_in_skill_md_fails_closed_without_a_traceback(tmp_path):
+    """Round-2 blocker 7: one 0xFF byte aborted the entire --survey run."""
+    d = tmp_path / "badbytes"
+    d.mkdir()
+    (d / "SKILL.md").write_bytes(b"---\nname: x\ndescription: \xff\xfe bad\n---\n# body\n")
+    res = _check(d)
+    step1 = _step(res, 1)
+    assert step1["status"] in ("PASS", "FAIL")  # a verdict, not an exception
+    rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 1
+
+
+# ===========================================================================
+# P20 round 3 — the tier-L gate was proven only against its own fixture shape.
+# ===========================================================================
+
+REAL_ROLE_EVAL = """# Resolver-eval fixture in the shape this repo actually ships (roles/*.eval.yaml).
+lens: demo
+
+should_fire:
+  - "agentic-vps"
+  - "set up a vps for autonomous agents"
+  - intent: "audit this provisioning script"
+    touched_files: ["skills/agentic-vps/scripts/provision.sh"]
+
+should_not_fire:
+  - "summarize this PDF in 3 bullets"
+  - "fix the bug in foo.rs"
+"""
+
+
+def test_tier_l_accepts_the_real_roles_eval_shape(tmp_path):
+    """Round-3 blocker 4, and the most important test in this file. The 14 real
+    `roles/*.eval.yaml` fixtures express polarity as top-level keys mapping to LISTS
+    of prompts. Requiring booleans would have rejected every one of them — while
+    step 5 reported the same file as a valid trigger eval, so the gate contradicted
+    itself about one file. Tier L had been proven only against a shape that existed
+    nowhere but these tests."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "demo.eval.yaml").write_text(REAL_ROLE_EVAL, encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]
+
+
+def test_tier_l_rejects_the_real_shape_when_one_polarity_is_missing(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "demo.eval.yaml").write_text(
+        REAL_ROLE_EVAL.split("should_not_fire:")[0], encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "negative" in step2["detail"]
+
+
+def test_empty_polarity_lists_do_not_count(tmp_path):
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "demo.eval.yaml").write_text(
+        "lens: demo\nshould_fire: []\nshould_not_fire: []\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_one_self_contradictory_case_does_not_satisfy_both_polarities(tmp_path):
+    """Round-3 blocker 3: nothing required the two arms to come from distinct cases,
+    so a single case asserting both passed."""
+    d = _l(tmp_path, [{"prompt": "x", "should_fire": True, "should_not_fire": True}])
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+
+
+def test_top_level_list_eval_is_visible_not_invisible(tmp_path):
+    """Round-3 major 1: keeping only dicts made a well-formed top-level-list prompt
+    set invisible, and the gate then reported 'no routing eval' about a file that was
+    present and correct."""
+    d = _skill(tmp_path, scripts=False, tests=False, tier="L")
+    (d / "evals").mkdir(parents=True, exist_ok=True)
+    (d / "evals" / "r.json").write_text(json.dumps(
+        [{"prompt": "a", "should_fire": True}, {"prompt": "b", "should_not_fire": True}]),
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_extensionless_python_script_is_syntax_checked(tmp_path):
+    """Round-3 blocker 5: making extensionless files COUNT as code without extending
+    the syntax check meant the gate printed `syntax ok` about a file nothing examined."""
+    d = _skill(tmp_path, tier="D")
+    run = d / "scripts" / "run"
+    run.write_text("#!/usr/bin/env python3\ndef f(:\n    pass\n", encoding="utf-8")
+    run.chmod(0o755)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "syntax error" in step2["detail"]
+
+
+def test_fish_shebang_is_not_checked_with_bash(tmp_path):
+    """Round-3 major 5: `"sh" in shebang` substring-matched fish and zsh."""
+    d = _skill(tmp_path, tier="D")
+    run = d / "scripts" / "run"
+    run.write_text("#!/usr/bin/env fish\nfunction hi\n  echo hi\nend\n", encoding="utf-8")
+    run.chmod(0o755)
+    res = _check(d)
+    step2 = _step(res, 2)
+    assert step2["status"] == "PASS", step2["detail"]
+    # and it must NOT claim it checked what it could not check
+    assert "syntax ok" not in step2["detail"]
+    assert "unchecked" in step2["detail"]
+
+
+def test_unreadable_template_yaml_fails_closed(tmp_path):
+    """Round-3 major 2: three call sites bypassed `_read`'s fail-closed contract."""
+    d = _skill(tmp_path, tier="D")
+    t = d / "templates"
+    t.mkdir(exist_ok=True)
+    y = t / "t.yaml"
+    y.write_text("script: scripts/do.py\n", encoding="utf-8")
+    y.chmod(0o000)
+    try:
+        res = _check(d)  # must return a verdict, not raise
+        assert any(r["step"] == "1c" for r in res)
+    finally:
+        y.chmod(0o644)
+
+
+def test_survey_does_not_tally_a_crashed_skill_as_unclassified(tmp_path):
+    """Round-3 major 3: a gate bug inflated the very roster bucket the docs quote."""
+    good = _skill(tmp_path, name="good", tier="D")
+    bad = _skill(tmp_path, name="bad", tier="D")
+    (bad / "scripts" / "do.py").chmod(0o000)
+    try:
+        rep = mod.survey(tmp_path, roles_dir=None, registry=None, entities_dir=None, strict=False)
+        assert rep["by_tier"].get("unclassified (inferred)", 0) == 0
+    finally:
+        (bad / "scripts" / "do.py").chmod(0o644)
+
+
+# ===========================================================================
+# P20 verify round — 4 blockers, one of them a false FAIL introduced in round 3.
+# ===========================================================================
+
+def test_docstring_only_script_is_not_a_deterministic_core(tmp_path):
+    """Verify-round blocker 1: the round-2 fix checked line PREFIXES, and a module
+    docstring's body lines carry none, so a docstring-only file read as executable."""
+    d = _skill(tmp_path, tier="D")
+    (d / "scripts" / "do.py").write_text(
+        '"""Module documentation only.\n\nTODO: implement later.\n"""\n', encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_a_real_python_script_with_a_docstring_still_counts(tmp_path):
+    """Paired control: the fix must not reject a normal module that opens with a
+    docstring and then does something."""
+    d = _skill(tmp_path, tier="D")
+    (d / "scripts" / "do.py").write_text(
+        '"""Does a thing."""\n\n\ndef go():\n    return 1\n', encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_comment_only_shell_script_is_not_a_deterministic_core(tmp_path):
+    """The non-Python branch of `_has_executable_content`. After the verify round
+    Python routes through AST, leaving the line-prefix loop covered by nothing —
+    mutant M19 survived until this test existed."""
+    d = _skill(tmp_path, tier="D")
+    for f in (d / "scripts").glob("*"):
+        f.unlink()
+    (d / "scripts" / "do.sh").write_text("#!/bin/bash\n# TODO: implement\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"]
+
+
+def test_a_real_shell_script_still_counts(tmp_path):
+    d = _skill(tmp_path, tier="D")
+    for f in (d / "scripts").glob("*"):
+        f.unlink()
+    (d / "scripts" / "do.sh").write_text("#!/bin/bash\n# does a thing\necho hi\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+# ===========================================================================
+# CONTROL TABLES. The final review's sharpest point was methodological: each
+# previous fix was pinned by the ONE sentence from the report, so the next round
+# found seven more shapes of the same defect. These tables assert the CLASS.
+# ===========================================================================
+
+_RECORD = ("Two independent agents received the same design and a third party found "
+           "both answers valid under the written rubric.\n")
+
+
+
+
+# ===========================================================================
+# The simplification: prose heuristics deleted. These pin the new contract AND
+# stand as permanent regression guards for the eight false-reject classes that
+# five rounds of patching kept reintroducing.
+# ===========================================================================
+
+# Every one of these was rejected by some earlier draft of the placeholder or
+# admission heuristics. They are ordinary things an honest author writes.
+FORMERLY_FALSE_REJECTED_METHODS = [
+    "Cohen's kappa over 40 held-out cases, excluding 3 with unknown labels",
+    "excluded 3 cases with unknown labels",
+    "n/a for the control arm",
+    "pending review by a second labeller",
+    "we guessed nothing: every label was adjudicated",
+    "placeholder rows were removed before scoring",
+    "Unknown cause.",
+    "Write me a concise incident report from these logs.",
+    "TBD is not an acceptable answer; explain why.",
+]
+
+
+def test_no_method_prose_is_ever_false_rejected(tmp_path):
+    """The regression guard for the whole class. A gate that refuses honest work
+    trains people to write for the regex; five rounds of trying to detect evasive
+    prose produced a new false reject every time, so the detection was deleted."""
+    for i, method in enumerate(FORMERLY_FALSE_REJECTED_METHODS):
+        d = _j(tmp_path / f"fm{i}")
+        blob = json.loads((d / "evals" / "suite.json").read_text())
+        blob["judge"]["agreement_measured"] = {"value": 0.84, "method": method}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected {method!r}: {step2['detail']}"
+
+
+def test_measurement_fields_are_checked_structurally_only(tmp_path):
+    """What survives: present and non-empty. `TBD` now PASSES, deliberately — whether
+    a filled-in field is honest is the review layer's job, and SKILL.md says so."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": 0.9, "method": "TBD"}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+    for bad in ("", "   ", None):
+        blob["judge"]["agreement_measured"] = {"value": 0.9, "method": bad}
+        (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+        assert _step(_check(d), 2)["status"] == "FAIL", f"accepted method={bad!r}"
+
+
+# --- the declared-outcome contract -------------------------------------------
+
+def _admission(d, text):
+    (d / "evals" / "admission.md").write_text(text, encoding="utf-8")
+
+
+_BODY = "\nTwo agents got the same brief; a third reader judged both answers valid.\n"
+
+
+def test_declared_outcome_admitted_passes(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: admitted\n---\n" + _BODY)
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_declared_outcome_rejected_blocks(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: rejected\n---\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "rejected" in step2["detail"]
+
+
+def test_missing_outcome_field_fails_with_the_template(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "# Admission\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "outcome: admitted" in step2["detail"]
+
+
+def test_invalid_outcome_value_fails(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: maybe\n---\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "must be" in step2["detail"]
+
+
+def test_declared_outcome_with_an_empty_body_fails(tmp_path):
+    d = _j(tmp_path)
+    _admission(d, "---\noutcome: admitted\n---\n\n")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "records nothing" in step2["detail"]
+
+
+def test_prose_that_broke_every_earlier_scanner_now_passes(tmp_path):
+    """The other half of the regression guard. Each body below false-FAILed under some
+    earlier draft: a verdict with justification, a quoted rejection from another skill,
+    a results table, a body opening "The planned protocol", a backticked verdict."""
+    bodies = [
+        "Outcome: admitted — both outputs were judged valid; neither was rejected.\n",
+        "For comparison, the legacy skill recorded \u201cOutcome: rejected\u201d after its two agents disagreed.\n",
+        "| Test | Outcome | Reason |\n|---|---|---|\n| Same prompt | Admitted | Both met the rubric |\n",
+        "The planned protocol was completed: two agents, one brief, both answers valid.\n",
+        "Result: `admitted`.\n",
+        "Neither candidate was rejected by the judge.\n",
+    ]
+    for i, body in enumerate(bodies):
+        d = _j(tmp_path / f"pr{i}")
+        _admission(d, "---\noutcome: admitted\n---\n\n" + body)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected {body!r}: {step2['detail']}"
+
+
+# ===========================================================================
+# Coverage the simplification orphaned. Deleting the prose heuristics also deleted
+# the tests that happened to exercise these still-live checks — five mutants went
+# SURVIVED and one MISSED, which is how the gap surfaced.
+# ===========================================================================
+
+def test_gitkeep_and_readme_are_not_held_out_cases(tmp_path):
+    """`touch evals/held-out/.gitkeep` must not satisfy a held-out case set. Still
+    live after the simplification; its former test went with the placeholder logic."""
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / ".gitkeep").write_text("", encoding="utf-8")
+    (ho / "README.md").write_text("cases go here\n", encoding="utf-8")
+    (ho / "notes.log").write_text("scratch output\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_an_empty_held_out_case_file_is_not_a_case(tmp_path):
+    d = _j(tmp_path, held_out=0)
+    ho = d / "evals" / "held-out"
+    ho.mkdir(parents=True, exist_ok=True)
+    (ho / "case-01.md").write_text("   \n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_held_out_marker_object_without_an_input_is_not_a_case(tmp_path):
+    """`cases: [{"held_out": true}]` is a marker, not a case."""
+    d = _j(tmp_path, held_out=0)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["cases"] = [{"held_out": True}]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "held-out" in step2["detail"]
+
+
+def test_agreement_measured_is_still_required(tmp_path):
+    """The clamp that survives the simplification: a floor must carry a measurement
+    record. Its fields are checked structurally, but they must be there."""
+    d = _j(tmp_path)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    del blob["judge"]["agreement_measured"]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "agreement_measured" in step2["detail"]
+
+
+# `_strip_fences` is no longer used by the admission check, but step 1c still relies
+# on it: a `scripts/…` path inside a fenced EXAMPLE is not a contract claim.
+
+def _skill_with_fenced_ref(tmp_path, name, fence):
+    d = _skill(tmp_path, name=name, tier="D")
+    body = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(body + f"\nExample usage:\n\n{fence}\n", encoding="utf-8")
+    return d
+
+
+def test_fenced_example_reference_does_not_break_step_1c(tmp_path):
+    for i, fence in enumerate(("```\npython3 scripts/not_shipped.py --flag\n```",
+                               "~~~\npython3 scripts/not_shipped.py --flag\n~~~")):
+        d = _skill_with_fenced_ref(tmp_path, f"fenced{i}", fence)
+        step = _step(_check(d), "1c")
+        assert step["status"] == "PASS", f"fence form {i} not stripped: {step['detail']}"
+
+
+def test_unterminated_fence_still_hides_a_reference(tmp_path):
+    d = _skill_with_fenced_ref(tmp_path, "unterm", "```\npython3 scripts/not_shipped.py")
+    assert _step(_check(d), "1c")["status"] == "PASS"
+
+
+def test_html_comment_reference_does_not_break_step_1c(tmp_path):
+    d = _skill_with_fenced_ref(tmp_path, "htmlc", "<!--\nscripts/not_shipped.py\n-->")
+    assert _step(_check(d), "1c")["status"] == "PASS"
+
+
+def test_a_real_missing_reference_still_fails_step_1c(tmp_path):
+    """Paired control: stripping must not swallow live claims."""
+    d = _skill(tmp_path, name="liveref", tier="D")
+    body = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(body + "\nRun scripts/not_shipped.py to do the thing.\n",
+                                encoding="utf-8")
+    step = _step(_check(d), "1c")
+    assert step["status"] == "FAIL" and step["required"]
+
+
+def test_unterminated_html_comment_reference_does_not_break_step_1c(tmp_path):
+    """M36 survived because the earlier test used a CLOSED `<!-- -->`, which the first
+    regex handles — the unterminated-comment strip was never exercised."""
+    d = _skill_with_fenced_ref(tmp_path, "untermhtml", "<!--\nscripts/not_shipped.py")
+    assert _step(_check(d), "1c")["status"] == "PASS"
+
+
+# ===========================================================================
+# Round 6. Both strata converged here: the refactor is right and the false-reject
+# surface is empirically gone, but the ONE substance floor the deletion left
+# standing did not hold.
+# ===========================================================================
+
+def test_non_canonical_closing_fences_do_not_defeat_the_body_check(tmp_path):
+    """The blocker both strata found. The body strip required a newline AFTER the
+    closing fence while the frontmatter parser did not, so on any non-canonical close
+    the strip silently missed, `body` became the whole file, and the emptiness test
+    passed over 30 bytes containing no record.
+
+    The mutation proof could not see it: M49 mutates the `if not body.strip():`
+    consequent and is killed, because the PATTERN was wrong, not the predicate. Six
+    variants, one test."""
+    for i, raw in enumerate(["---\noutcome: admitted\n---",
+                             "---\noutcome: admitted\n--- \n",
+                             "---\noutcome: admitted\n---\t\n",
+                             "---\noutcome: admitted\n---   ",
+                             "---\noutcome: admitted\n---\n",
+                             "---\noutcome: admitted\n---\n\n   \n"]):
+        d = _j(tmp_path / f"fence{i}")
+        (d / "evals" / "admission.md").write_text(raw, encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"empty record passed for {raw!r}"
+        assert "records nothing" in step2["detail"]
+
+
+def test_a_real_body_after_a_non_canonical_fence_still_passes(tmp_path):
+    """Paired control: tightening the pattern must not eat real records."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n--- \nTwo agents, one brief; a third reader judged "
+        "both answers valid.\n", encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_utf8_bom_does_not_hide_frontmatter(tmp_path):
+    """A BOM'd record was told to add the frontmatter it visibly already had. Strata B
+    measured this as a REGRESSION the refactor introduced — the old prose scanner
+    passed the same file."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_bytes(
+        "﻿---\noutcome: admitted\n---\n\nTwo agents, one brief; both valid.\n"
+        .encode("utf-8"))
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_the_documented_template_parses_without_pyyaml(tmp_path, monkeypatch):
+    """The stdlib fallback must still strip a plain-scalar YAML comment: the template
+    this skill prints — `outcome: admitted   # or: rejected` — and `tier: J  # judgment`
+    in a SKILL.md both hit that path.
+
+    Tier J's admission record now requires pyyaml outright (a YAML contract cannot be
+    gated without a YAML parser), so this asserts against `parse_frontmatter` directly
+    rather than through the admission check."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    monkeypatch.setattr(mod, "yaml", None)
+    f = tmp_path / "SKILL.md"
+    f.write_text("---\nname: demo\noutcome: admitted   # or: rejected\ntier: D  # deterministic\n---\n# b\n",
+                 encoding="utf-8")
+    fm = mod.parse_frontmatter(f)
+    assert fm["outcome"] == "admitted"
+    assert fm["tier"] == "D"
+
+
+
+def test_a_hash_inside_a_quoted_value_is_not_a_comment(tmp_path, monkeypatch):
+    """Control on the comment strip: YAML only starts a comment at ` #` on a PLAIN
+    scalar, so a quoted value keeps its hash."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    monkeypatch.setattr(mod, "yaml", None)
+    d = _skill(tmp_path, name="hashy", tier="D")
+    (d / "SKILL.md").write_text(
+        '---\nname: hashy\ndescription: "issue #42 handling"\ntier: D\n---\n# b\n',
+        encoding="utf-8")
+    got = mod.parse_frontmatter(d / "SKILL.md")
+    assert got["description"] == "issue #42 handling"
+
+
+def test_duplicate_contradictory_outcome_declarations_fail(tmp_path):
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: rejected\noutcome: admitted\n---\n\nTwo agents, one brief.\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "declares `outcome` 2 times" in step2["detail"]
+
+
+def test_outcome_key_is_matched_case_insensitively(tmp_path):
+    """The value was already compared case-insensitively; the key was not, so
+    `Outcome: admitted` failed with "declares no outcome"."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\nOutcome: Admitted\n---\n\nTwo agents, one brief; both valid.\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_empty_outcome_value_reports_what_the_author_typed(tmp_path):
+    """YAML coercion round-tripped through str(), so an empty `outcome:` was reported
+    back as the token 'none', which the author never wrote."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome:\n---\n\nTwo agents, one brief.\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty `outcome`" in step2["detail"]
+
+
+def test_unreadable_template_reference_fails_step_1c_closed(tmp_path):
+    """Step 1c treated an unreadable artifact as an empty one and PASSed — a
+    fail-OPEN on a file nothing could verify."""
+    d = _skill(tmp_path, name="unreadtpl", tier="D")
+    t = d / "templates"; t.mkdir(exist_ok=True)
+    y = t / "t.yaml"
+    y.write_text("script: scripts/do.py\n", encoding="utf-8")
+    y.chmod(0o000)
+    try:
+        step = _step(_check(d), "1c")
+        assert step["status"] == "FAIL" and "unreadable" in step["detail"]
+    finally:
+        y.chmod(0o644)
+
+
+def test_unreadable_eval_artifact_is_reported_as_unverifiable_not_absent(tmp_path):
+    """`_load_data`'s OSError path returned None, so an unreadable judge.json was
+    invisible and the gate said "no judge config" about a file that exists — the very
+    misdiagnosis `_Unparseable` was introduced to prevent."""
+    d = _j(tmp_path)
+    j = d / "evals" / "suite.json"
+    j.chmod(0o000)
+    try:
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL" and "could not be trusted" in step2["detail"]
+    finally:
+        j.chmod(0o644)
+
+
+def test_malformed_closing_fence_fails_closed_not_open(tmp_path):
+    """The reachable path for the body-extraction `else` branch, which mutant M51
+    survived on until this test existed.
+
+    Trailing junk on the closing fence (`---xyz`) is malformed frontmatter. It used to
+    be parsed by a laxer second matcher, which let the OUTCOME parse while the body
+    match missed — and the old code then returned the input unchanged (fail-OPEN).
+
+    With a single matcher the diagnosis is both accurate and fail-closed: there is no
+    valid frontmatter here, so the gate says so rather than inventing a body."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n---xyz\nTwo agents, one brief; both valid.\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and step2["required"]
+    assert "outcome" in step2["detail"]
+
+
+# ===========================================================================
+# Round 7. Both blockers were the same shape — a fix applied at one site while its
+# sibling kept the old behaviour. Eighth instance in this arc, so the fix is
+# structural: ONE frontmatter matcher, and these tests hold it to that.
+# ===========================================================================
+
+def test_bom_reaches_the_second_frontmatter_parser_too(tmp_path):
+    """THE one-site bug, again. The BOM fix went into `parse_frontmatter`, and
+    `_skillsh_frontmatter_issue` kept its own `^---` match — so a BOM'd SKILL.md
+    slipped past the skills.sh gotcha detector entirely and step 1 reported
+    `skills.sh-parseable` about a file that would not install."""
+    d = tmp_path / "bomskill"
+    d.mkdir()
+    (d / "SKILL.md").write_bytes(
+        '﻿---\nname: demo\ndescription: demo\ntags:\n  - "one", "two"\n---\n# body\n'
+        .encode("utf-8"))
+    assert mod._skillsh_frontmatter_issue(d) is not None
+    step1 = _step(_check(d), 1)
+    assert step1["status"] == "FAIL" and "skills.sh parser" in step1["detail"]
+
+
+def test_every_frontmatter_call_site_shares_one_matcher(tmp_path):
+    """Guards the structural fix rather than its three symptoms: a BOM'd file must be
+    seen identically by the frontmatter parser, the skills.sh detector, and the
+    admission reader. Three near-copies of the same regex is what let a fix land at
+    one of them twice."""
+    src = SCRIPT.read_text(encoding="utf-8")
+    # Catch the PATTERN, not one spelling of it: `re.match(...)`, `re.compile(...)`
+    # and a BOM-prefixed variant are all ways to reintroduce a second matcher.
+    live = [ln for ln in src.splitlines()
+            if "---" in ln and re.search(r'r"[^"]*---', ln)
+            and not ln.lstrip().startswith("#")
+            and "_FRONTMATTER_RE = " not in ln
+            and "There used to be" not in ln]
+    assert live == [], f"a second frontmatter pattern reappeared: {live}"
+
+
+def test_duplicate_top_level_outcome_declarations_fail(tmp_path):
+    """Duplicates are counted structurally. Case and quoting are not part of a key;
+    indentation IS, because it means nesting.
+
+    An earlier version of this test asserted that an INDENTED `  outcome: rejected`
+    counted as a duplicate — it encoded the bug rather than the contract, and shipped
+    a false reject of a perfectly valid nested key."""
+    for i, block in enumerate(['outcome: admitted\nOutcome: rejected',
+                               'outcome: admitted\n"Outcome": rejected',
+                               "outcome: admitted\n'outcome': admitted",
+                               "OUTCOME: admitted\noutcome: admitted"]):
+        d = _j(tmp_path / f"dup{i}")
+        (d / "evals" / "admission.md").write_text(
+            f"---\n{block}\n---\n\nTwo agents, one brief; both valid.\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"accepted duplicate declarations: {block!r}"
+        assert "declares `outcome`" in step2["detail"]
+
+
+def test_a_nested_outcome_key_is_not_a_duplicate(tmp_path):
+    """THE false reject this round found, and it was self-inflicted: making duplicate
+    detection indent-insensitive turned a valid nested key into a contradiction."""
+    for i, block in enumerate(["outcome: admitted\nmetadata:\n  outcome: rejected",
+                               "outcome: admitted\nprior_run:\n  outcome: rejected\n  date: 2026-08-01"]):
+        d = _j(tmp_path / f"nest{i}")
+        (d / "evals" / "admission.md").write_text(
+            f"---\n{block}\n---\n\nTwo agents, one brief; both valid.\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected nested key: {step2['detail']}"
+
+
+def test_a_malformed_closing_fence_does_not_run_on_to_a_later_one(tmp_path):
+    """`---xyz` is not a closing fence, so the match ran on to the next real `---`
+    and swallowed body text as frontmatter."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n---xyz\nrecord\n---\nmore record\n", encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "does not parse as YAML" in step2["detail"]
+
+
+def test_tier_j_refuses_to_pass_frontmatter_it_cannot_parse(tmp_path, monkeypatch):
+    """The FALSE ACCEPT that ended the review: without pyyaml the duplicate check was
+    unavailable AND the hand-rolled parser resolved duplicates last-wins, so
+
+        outcome: rejected
+        outcome: admitted
+
+    PASSED — a declared rejection admitted on a stdlib-only box. "Skip rather than
+    guess" was right not to guess and wrong about the direction; the gate now refuses
+    to pass what it cannot verify."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    monkeypatch.setattr(mod, "yaml", None)
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: rejected\noutcome: admitted\n---\n\nTwo agents, one brief.\n",
+        encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "pyyaml" in step2["detail"]
+
+
+
+def test_frontmatter_without_an_outcome_key_fails(tmp_path):
+    """M47 survived: the existing test's file has NO frontmatter at all, so it exits
+    at the earlier "has no frontmatter block" guard and never reaches the
+    missing-key branch. Valid frontmatter that simply lacks `outcome` is the input
+    that exercises it."""
+    d = _j(tmp_path)
+    _admission(d, "---\nauthor: someone\n---\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "declares no `outcome`" in step2["detail"]
+
+
+def test_a_file_with_no_frontmatter_at_all_fails_distinctly(tmp_path):
+    """Paired control: the two failure modes must report differently, or the message
+    sends the author looking in the wrong place."""
+    d = _j(tmp_path)
+    _admission(d, "# Admission\n" + _BODY)
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "no frontmatter block" in step2["detail"]
+
+
+# ===========================================================================
+# Round 9. The line-based key walker was replaced by the YAML parser. These are
+# the false rejects it produced — every one is valid YAML an author could write.
+# ===========================================================================
+
+VALID_FRONTMATTER_MUST_PASS = [
+    # a multi-line quoted scalar whose continuation line contains "outcome:"
+    'notes: "The prior evaluator recorded\noutcome: rejected"\noutcome: admitted',
+    # a key whose VALUE starts with --- (the old ---in-block rule false-rejected this)
+    "outcome: admitted\n---source: author-record",
+    # nested mappings, flow mappings, and list items are not top-level declarations
+    "outcome: admitted\nmetadata:\n  outcome: rejected",
+    "outcome: admitted\nprior: {outcome: rejected}",
+    "outcome: admitted\nruns:\n  - outcome: rejected",
+    "outcome: admitted\nhistory:\n  - {outcome: rejected, date: 2026-08-01}",
+    # a block scalar whose body is unindented-looking
+    "outcome: admitted\nlog: |\n  outcome: rejected was the first attempt",
+]
+
+
+def test_valid_yaml_frontmatter_is_never_false_rejected(tmp_path):
+    """The regression guard for the whole class. A hand-rolled scanner cannot read a
+    structured language — it counted keys inside quoted scalars, missed flow mappings
+    and list items, and needed an indentation rule that broke on something else. Each
+    of these is valid YAML that some earlier draft rejected."""
+    for i, block in enumerate(VALID_FRONTMATTER_MUST_PASS):
+        d = _j(tmp_path / f"vy{i}")
+        (d / "evals" / "admission.md").write_text(
+            f"---\n{block}\n---\n\nTwo agents, one brief; both valid.\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"false-rejected valid YAML {block!r}: {step2['detail']}"
+
+
+def test_duplicate_tier_check_degrades_without_pyyaml_rather_than_guessing(tmp_path, monkeypatch):
+    """Honest degradation: with no parser the gate cannot answer the question, so it
+    does not answer it. Guessing with a regex is what produced every false reject above.
+
+    This test used to assert a bare `_count_top_level_key(...) is None` and nothing
+    else, and its docstring claimed "the record is still read" — which stopped being
+    true when tier J began failing closed. P20 round 12 (Strata B) called that out:
+    the branch was production-dead and the test's only subject was the dead branch.
+    Duplicate-`tier:` detection put it back on a live path, so the test now asserts
+    what production actually does — a tier-D skill still passes without pyyaml, and
+    the unanswerable duplicate question is skipped rather than guessed at."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    monkeypatch.setattr(mod, "yaml", None)
+    assert mod._count_top_level_key("outcome: admitted", "outcome") is None
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    assert mod._duplicate_top_level_key_issue(d / "SKILL.md") is None
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_structured_values_are_substantive(tmp_path):
+    """Final-round blockers 2 and 3: `_substantive` returned False for dicts and lists,
+    so `method: {metric: …, judges: 3}` read as "missing a method" and
+    `input: {messages: […]}` read as "not a case". Ordinary YAML, both refused."""
+    d = _j(tmp_path, held_out=0)
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {
+        "value": 0.84,
+        "method": {"metric": "Krippendorff alpha", "judges": 3, "cases": 40}}
+    blob["cases"] = [{"held_out": True,
+                      "input": {"messages": [{"role": "user", "content": "Summarize."}]}}]
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "PASS", step2["detail"]
+
+
+def test_empty_structured_values_are_not_substantive(tmp_path):
+    """Paired control: accepting structure must not accept EMPTY structure."""
+    assert mod._substantive({}) is False
+    assert mod._substantive([]) is False
+    assert mod._substantive({"a": 1}) is True
+
+
+def test_trailing_whitespace_on_the_opening_fence_is_accepted(tmp_path):
+    """Final-round major: `---  \n` is an ordinary opening fence and was refused as
+    "has no frontmatter block"."""
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_text(
+        "---  \noutcome: admitted\n---\n\nTwo agents, one brief; both valid.\n",
+        encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_a_hollow_tier_j_core_does_not_pass(tmp_path):
+    """P20 round 11, Strata A — the FALSE ACCEPT the previous round's own fix created.
+
+    Round 10 fixed a false REJECT (`method: {metric: …, judges: 3}` read as "missing a
+    method") by making `_substantive` return `bool(x)` for containers. That was too
+    shallow by exactly one level, and it widened SEVEN call sites to fix two: every
+    hollow-but-truthy structure then counted as content. A tier-J skill declaring no
+    measurement value, no method, no rubric content and no case content passed as
+    "rubric + 1 held-out case(s), cross-model judge with a measured floor".
+
+    This is the whole hollow core in one fixture — the reproduction from the report,
+    kept as a test so the class cannot come back one field at a time."""
+    d = _j(tmp_path, held_out=0)
+    (d / "evals" / "rubric.md").unlink()
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": {"garbage": None}, "method": {"metric": ""}}
+    blob["cases"] = [{"held_out": True, "input": {"messages": []}}]
+    blob["rubric"] = {"criterion": {"label": None}}
+    (d / "evals" / "suite.json").write_text(json.dumps(blob), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+
+def test_substantive_control_table_both_directions():
+    """The standing pattern from this arc: never fix the one sentence in the report.
+
+    Every row was run against the shipped predicate. The must-pass column is the
+    round-10 false-reject fix, which must survive; the must-fail column is the
+    round-11 false-accept fix, which must bite. A future edit that satisfies one
+    column by breaking the other fails here rather than in review."""
+    must_pass = [
+        {"metric": "Krippendorff alpha", "judges": 3, "cases": 40},   # real method
+        {"messages": [{"role": "user", "content": "Summarize."}]},    # real case input
+        {"a": {"b": {"c": "x"}}},                                     # one real leaf, deep
+        {"k": [None, "", 0]},                                         # 0 is a value
+        ["a", "b"], 0, 0.5, "text",
+    ]
+    must_fail = [
+        {"garbage": None},                 # value with nothing in it
+        {"metric": ""},                    # method with nothing in it
+        {"messages": []},                  # case input with nothing in it
+        {"criterion": {"label": None}},    # rubric with nothing in it
+        {"a": {"b": [{}, [], ""]}},        # hollow all the way down
+        {}, [], None, True, False, "   ",
+    ]
+    for v in must_pass:
+        assert mod._substantive(v) is True, f"must pass: {v!r}"
+    for v in must_fail:
+        assert mod._substantive(v) is False, f"must fail: {v!r}"
+
+
+def test_substantive_terminates_on_a_cyclic_structure():
+    """Recursing to a leaf means a cycle must not become a RecursionError. YAML anchors
+    build these, and the gate must fail closed on a cycle rather than crash — but a
+    cycle that also holds a real leaf is still substantive."""
+    # Time-bounded, and that is load-bearing rather than defensive. The defect these
+    # calls cover is NON-TERMINATION, so an unbounded call would hang the whole mutation
+    # sweep instead of failing it — a mutant that hangs the harness reports nothing at
+    # all, which is a fifth way for a proof to be dishonest alongside cannot-die,
+    # wrong-test, cannot-be-applied and stale-anchor.
+    cyclic = {}
+    cyclic["self"] = cyclic
+    assert _with_timeout(10, mod._substantive, cyclic) is False
+    cyclic_with_leaf = ["x"]
+    cyclic_with_leaf.append(cyclic_with_leaf)
+    assert _with_timeout(10, mod._substantive, cyclic_with_leaf) is True
+
+
+def test_fence_padding_accepts_typed_whitespace_and_rejects_control_characters(tmp_path):
+    """P20 round 11, Strata A (minor). `[^\\S\\n]` also admits form-feed, vertical-tab
+    and NBSP. Those matched the fence and then died inside PyYAML with a ReaderError,
+    so the gate blamed the YAML for a fence it should never have accepted. Space, tab
+    and CR must keep matching — CR because CRLF files are ordinary."""
+    # BOTH fences. Round 11 tightened both and asserted only the opening one, so
+    # mutant M72 — loosening the CLOSING fence alone — survived all 175 tests. A fix
+    # applied at two sites needs a proof at two sites; that is the fourth time in this
+    # arc that a one-site proof was written for a two-site fix.
+    # NBSP is spelled \u00a0 deliberately: the first version of this test carried the
+    # literal character, which is invisible in a diff.
+    for ok in (" ", "\t", "  ", ""):
+        for where, raw in (
+            ("opening", f"---{ok}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"),
+            ("closing", f"---\noutcome: admitted\n---{ok}\n\nTwo agents, one brief.\n"),
+            ("both",    f"---{ok}\noutcome: admitted\n---{ok}\n\nTwo agents, one brief.\n"),
+        ):
+            assert mod._frontmatter_match(raw), f"{where} fence must match padding {ok!r}"
+    for bad in ("\f", "\v", "\u00a0", "\r"):   # \r joins them: unreachable after _read
+        for where, raw in (
+            ("opening", f"---{bad}\noutcome: admitted\n---\n\nTwo agents, one brief.\n"),
+            ("closing", f"---\noutcome: admitted\n---{bad}\n\nTwo agents, one brief.\n"),
+        ):
+            assert not mod._frontmatter_match(raw), f"{where} fence must not match {bad!r}"
+
+
+def test_a_duplicate_tier_declaration_is_ambiguous_not_last_wins(tmp_path):
+    """P20 round 12, Strata B — the round-10 duplicate-key false accept, one level up.
+
+    `tier:` decides WHICH gate runs, and YAML resolves duplicates last-wins silently.
+    Measured before the fix: a SKILL.md whose line 4 said `tier: J` and line 5 said
+    `tier: D` was reported as "tier D (declared)" and PASSED on scripts+tests alone —
+    admission record, rubric, held-out cases and judge config never consulted, with
+    pyyaml present. The detector already existed in this file; it had been pointed at
+    only one of the two places the class occurs."""
+    for front in ("tier: J\ntier: D", "tier: D\ntier: J", "tier: D\ntier: D"):
+        d = _skill(tmp_path / front.replace("\n", "_").replace(":", ""),
+                   scripts=True, tests=True, tier=None)
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("---\n", f"---\n{front}\n", 1), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{front!r} -> {step2['detail']}"
+        assert "the same key twice" in step2["detail"], step2["detail"]
+
+
+def test_a_nested_tier_key_is_not_a_duplicate_declaration(tmp_path):
+    """Paired control for the check above: the question is TOP-LEVEL duplicates. A
+    `tier:` nested under another mapping is ordinary YAML and must not trip it —
+    this is the exact false-reject shape the deleted line-based key walker produced,
+    and the reason the count comes from `yaml.compose()` rather than a scan."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(raw.replace("tier: D", "tier: D\nmeta:\n  tier: J", 1),
+                                encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_crlf_frontmatter_parses_because_reads_are_newline_normalised(tmp_path):
+    """CRLF works, and round 11 credited the wrong mechanism for it.
+
+    That commit kept `\\r` in the fence class "because CRLF files are ordinary". They
+    are — but `_read` uses `read_text()`, whose universal-newline handling turns CRLF
+    (and a lone CR) into `\\n` before the matcher ever runs, so the `\\r` could never
+    match anything. P20 round 13 (Strata A) caught the consequence: the CRLF test was
+    vacuous, staying green when its own fixture's CRLFs were replaced with LFs.
+
+    The `\\r` is gone from the pattern and this asserts the real mechanism, so it fails
+    if either half changes."""
+    raw_bytes = b"---\r\noutcome: admitted\r\n---\r\n\r\nTwo agents, one brief; both valid.\r\n"
+    f = tmp_path / "probe.md"
+    f.write_bytes(raw_bytes)
+    assert b"\r\n" in raw_bytes                       # the fixture really is CRLF on disk
+    assert "\r" not in mod._read(f)                    # and _read is what removes it
+    assert not mod._frontmatter_match(raw_bytes.decode("utf-8"))  # the regex alone would NOT match
+
+    d = _j(tmp_path)
+    (d / "evals" / "admission.md").write_bytes(raw_bytes)
+    assert _step(_check(d), 2)["status"] == "PASS"
+
+
+def test_any_duplicated_top_level_key_is_ambiguous_not_just_tier(tmp_path):
+    """The FOURTH one-site fix for a several-site class, caught before a reviewer did.
+
+    Round 12 closed duplicate `tier:`. Executed against that commit, three other
+    gate-deciding keys were still resolved last-wins in silence. `latent_only` is the
+    one that matters: its control — a single `latent_only: true` alongside shipped
+    code — FAILs with "latent_only:true but 1 script(s) present — contradiction", and
+    duplicating the key to flip it escapes that required FAIL outright.
+
+    Keying the check to a list of names would have been the fifth one-site fix. The
+    property is "declare each key once"."""
+    for i, extra in enumerate(("latent_only: true\nlatent_only: false",
+                               "name: other",
+                               "description: A second description.")):
+        d = _skill(tmp_path / f"case{i}", scripts=True, tests=True, tier="D")
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("tier: D", f"tier: D\n{extra}", 1), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{extra!r} -> {step2['detail']}"
+        assert "the same key twice" in step2["detail"], step2["detail"]
+
+
+def test_a_clean_frontmatter_has_no_duplicate_keys(tmp_path):
+    """Paired control. Every real SKILL.md in this repo must keep passing: measured,
+    0 of 96 carry a duplicate top-level key, so the blanket rule costs nothing."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    assert mod._duplicate_top_level_key_issue(d / "SKILL.md") is None
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nc:\n  a: 3\n") == ("ok", [])
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\na: 3\n") == ("ok", [("a", 2)])
+    assert mod._duplicate_top_level_keys("a: 1\nb: 2\nA: 3\nb: 4\n") == ("ok", [("a", 2), ("b", 2)])
+
+
+def test_a_malformed_line_cannot_disable_the_duplicate_check(tmp_path):
+    """P20 round 13, Strata A — BLOCKER. Two readers of the same bytes disagreed.
+
+    `parse_frontmatter` falls back to a hand-rolled scanner when YAML rejects a block,
+    and that scanner resolves duplicates last-wins. The duplicate check used the YAML
+    parser and reported "no duplicates" when compose raised. So ONE malformed line
+    turned the check off while values kept flowing:
+
+        tier: J
+        tier: D
+        broken: [
+
+    -> step 2 PASS, "tier D (declared)", tier-J gate never run. A required gate
+    bypassed by adding a broken line."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier=None)
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(
+        raw.replace("---\n", "---\ntier: J\ntier: D\nbroken: [\n", 1), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL", step2["detail"]
+    assert "does not parse as YAML" in step2["detail"], step2["detail"]
+
+
+def test_a_wellformed_frontmatter_is_not_called_unparseable(tmp_path):
+    """Paired control for the above: the refusal must bite only on real malformation.
+    Flow mappings, quoted keys and nested blocks are ordinary YAML and must survive —
+    these are the shapes the deleted line-based key walker false-rejected."""
+    for i, extra in enumerate((
+        'aliases: {a: 1, b: 2}',
+        '"quoted": yes',
+        'nested:\n  tier: J\n  deep:\n    - 1\n    - 2',
+        'anchored: &a hello\nreused: *a',
+    )):
+        d = _skill(tmp_path / f"ok{i}", scripts=True, tests=True, tier="D")
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("tier: D", f"tier: D\n{extra}", 1),
+                                    encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{extra!r} -> {step2['detail']}"
+
+
+def test_frontmatter_keys_are_matched_case_insensitively(tmp_path):
+    """P20 round 13, Strata B — MAJOR, and the FIFTH product-level instance of this
+    arc's dominant pattern: fixed at `outcome`, never at `tier`.
+
+    `_count_top_level_key` has always lowercased; `_admission_issue` was fixed early to
+    match, its comment naming the reason ("an undocumented asymmetry that reads as the
+    gate not seeing what is plainly there"). `_tier_of` read `fm.get("tier")`, and there
+    the asymmetry is a false ACCEPT rather than a false reject. Measured before the fix:
+
+        Tier: J  + scripts, no J core  ->  PASS "tier D (inferred: ships scripts/ code)"
+        tier: J  + scripts, no J core  ->  FAIL "tier J (declared): 4 gap(s)…"
+
+    One capital letter and a declared tier-J skill passes on scripts alone."""
+    for i, key in enumerate(("Tier", "TIER", "tIeR")):
+        d = _skill(tmp_path / f"case{i}", scripts=True, tests=True, tier=None)
+        raw = (d / "SKILL.md").read_text(encoding="utf-8")
+        (d / "SKILL.md").write_text(raw.replace("---\n", f"---\n{key}: J\n", 1), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{key} -> {step2['detail']}"
+        assert "tier J (declared)" in step2["detail"], step2["detail"]
+
+
+def test_case_insensitive_lookup_reaches_every_frontmatter_read(tmp_path):
+    """Paired control, and the reason this is an accessor rather than a `tier` patch:
+    fixing one key would have been the sixth one-site fix in this arc. `name`,
+    `description` and `latent_only` must honour the same rule."""
+    assert mod._fm({"Name": "x"}, "name") == "x"
+    assert mod._fm({"DESCRIPTION": "d"}, "description") == "d"
+    assert mod._fm({"Latent_Only": "true"}, "latent_only") == "true"
+    assert mod._fm({"tier": "D"}, "tier") == "D"
+    assert mod._fm({}, "tier", "fallback") == "fallback"
+    assert mod._fm(None, "tier", "fallback") == "fallback"
+    # a capitalised latent_only must still reach the contradiction check
+    d = _skill(tmp_path, scripts=True, tests=True, tier=None)
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(raw.replace("---\n", "---\nLatent_Only: true\n", 1), encoding="utf-8")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "contradiction" in step2["detail"], step2["detail"]
+
+
+def test_deeply_nested_values_are_answered_not_truncated_or_thrown(tmp_path):
+    """P20 round 13, Strata B — a regression round 11 introduced with the recursion.
+
+    `_substantive` shipped with a cycle guard but no depth cap, so a 1.4 KB
+    evals/suite.json nested ~500 deep raised RecursionError out of `run_checklist`:
+    a bare traceback and zero checklist lines, violating this file's own contract that
+    an unverified artifact is reported, never thrown. Before round 11, `bool(x)` could
+    not recurse at all, so this is strictly a defect of the fix."""
+    def nest(n):
+        v = "x"
+        for _ in range(n):
+            v = {"a": v}
+        return v
+
+    # The depth CAP is gone as of round 18, and this assertion is the reason. A cap
+    # makes the answer a function of the traversal budget; paired with a memo it made
+    # the verdict depend on which branch was walked first. `_substantive` is now an
+    # iterative walk with a visited set, so a deep structure is ANSWERED rather than
+    # truncated — strictly stronger than the old "fails closed at 100".
+    assert mod._substantive(nest(600)) is True      # a real value, however deep
+    assert mod._substantive(nest(20)) is True
+    assert mod._substantive(nest(20000)) is True    # and no RecursionError
+    hollow = "  "
+    for _ in range(600):
+        hollow = {"a": hollow}
+    assert mod._substantive(hollow) is False        # hollow stays hollow at depth
+
+    # End to end. The nested value is spliced in as TEXT rather than built with
+    # json.dumps: encoding a deeply nested object recurses inside the encoder, and the
+    # first version of this test — depth 2000 through json.dumps — passed locally on
+    # 3.12 and raised RecursionError on CI's 3.11. The TEST blew the stack, not the
+    # gate, which is the failure this very test exists to rule out. Depth 120 clears
+    # the cap of 100 and depends on no interpreter's stack headroom.
+    # End to end. This assertion used to build `_j(tmp_path, held_out=0)` and expect
+    # FAIL — but the FAIL was "no held-out cases", identical with a depth-0 payload, so
+    # the nesting contributed nothing and the test was green on an unrelated gap. Worse,
+    # once the cap was removed the payload became a PASS case, so the assertion pointed
+    # the wrong way. `held_out` stays at its default here, making nesting the only
+    # variable, and the expectation is PASS: a deeply nested method IS a method.
+    depth = 120
+    deep_json = '{"a":' * depth + '"x"' + "}" * depth
+    d = _j(tmp_path / "deep_ok")
+    blob = json.loads((d / "evals" / "suite.json").read_text())
+    blob["judge"]["agreement_measured"] = {"value": 0.84, "method": "__DEEP__"}
+    text = json.dumps(blob).replace('"__DEEP__"', deep_json)
+    assert json.loads(text)["judge"]["agreement_measured"]["method"] != "__DEEP__"
+    (d / "evals" / "suite.json").write_text(text, encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "PASS", _step(_check(d), 2)["detail"]
+
+    # and the discriminating control: hollow at the same depth must still FAIL
+    hollow_json = '{"a":' * depth + '""' + "}" * depth
+    d2 = _j(tmp_path / "deep_hollow")
+    blob2 = json.loads((d2 / "evals" / "suite.json").read_text())
+    blob2["judge"]["agreement_measured"] = {"value": 0.84, "method": "__DEEP__"}
+    (d2 / "evals" / "suite.json").write_text(
+        json.dumps(blob2).replace('"__DEEP__"', hollow_json), encoding="utf-8")
+    assert _step(_check(d2), 2)["status"] == "FAIL"
+
+
+def test_a_wide_structure_is_not_mistaken_for_a_deep_one():
+    """A wide structure must not be mistaken for a deep one.
+
+    The prose here used to describe round-11's `len(_seen) >= _MAX_NESTING` frozenset,
+    which two rounds deleted; the body was rewritten and the docstring was not. What the
+    test now guards is the surviving property: `_substantive` is an iterative walk with
+    a visited set, so breadth costs one visit per node and cannot be confused with
+    depth.
+
+    That distinction is invisible in the source and would survive any test that only
+    nests deeply, so it is pinned here: 501 siblings at depth 3 must pass, and a
+    200-case held-out suite of realistic shape must pass."""
+    wide = {"cases": [{"input": {"text": ""}} for _ in range(500)]
+                     + [{"input": {"text": "real"}}]}
+    assert mod._substantive(wide) is True
+    assert mod._substantive({"cases": [{"input": {"text": ""}} for _ in range(500)]}) is False
+
+    realistic = {"judge": {"model": "gpt-5", "agreement_floor": 0.7,
+                           "agreement_measured": {"value": 0.84,
+                                                  "method": {"metric": "alpha", "judges": 3}}},
+                 "cases": [{"held_out": True,
+                            "input": {"messages": [{"role": "user", "content": "Summarize."}]}}
+                           for _ in range(200)]}
+    assert mod._substantive(realistic) is True
+
+    # The cap that this used to bracket is gone (round 18): it made the answer a
+    # function of the budget, and a memo then cached that as if it were a property of
+    # the node. What replaces the boundary assertion is the property the boundary was
+    # a proxy for — the answer does not change with depth.
+    def nest(n):
+        v = "x"
+        for _ in range(n):
+            v = {"a": v}
+        return v
+    assert all(mod._substantive(nest(n)) is True for n in (1, 99, 100, 101, 500, 5000))
+
+
+def _demo(tmp: Path, front: str) -> Path:
+    d = tmp / "demo"
+    (d / "scripts").mkdir(parents=True)
+    (d / "tests").mkdir()
+    (d / "scripts" / "do.py").write_text("print('hi')\n", encoding="utf-8")
+    (d / "tests" / "test_do.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    (d / "SKILL.md").write_text(f"---\n{front}\n---\n# body\n", encoding="utf-8")
+    return d
+
+
+def test_a_yaml_tag_cannot_hide_a_tier_declaration(tmp_path):
+    """P20 round 14, Strata B — BLOCKER, and the SEVENTH instance of this arc's pattern.
+
+    Round 13 refused blocks where `yaml.compose` raised. But the hand-rolled scanner in
+    `parse_frontmatter` is entered when **`yaml.safe_load`** raises or returns a
+    non-mapping, which is a different and much larger condition: `compose` builds a node
+    tree without CONSTRUCTING values, so a custom or unknown tag composes perfectly and
+    `safe_load`s not at all.
+
+        tier: J
+        extra: {x: !!foo 1,
+        tier: D
+        }
+
+    compose -> MappingNode, one top-level `tier`, value J. safe_load -> ConstructorError.
+    So the duplicate check said "ok", the scanner took last-wins `tier: D`, and the whole
+    gate exited 0 with "PASS — all required steps complete" while the only parser that
+    parses the block declares tier J. The site here is not a call site — it is WHICH
+    FAILURE CONDITION the refusal keys on."""
+    for i, front in enumerate((
+        "name: demo\ndescription: d\ntier: J\nextra: {x: !!foo 1,\ntier: D\n}",
+        "name: demo\ndescription: d\ntier: J\ncfg: {region: !Ref AWS::Region,\ntier: D\n}",
+        'name: demo\ndescription: d\ntier: J\nnote: "see\ntier: D\nend"\nmodel: !env MODEL',
+        "- a\n- b",                                   # parses, but not to a mapping
+    )):
+        d = _demo(tmp_path / f"bypass{i}", front)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{front!r} -> {step2['detail']}"
+        assert "does not parse as YAML" in step2["detail"], step2["detail"]
+
+
+def test_legitimate_yaml_still_parses_after_the_disagreement_refusal(tmp_path):
+    """Paired control, and the one that matters: the refusal keys on `safe_load`
+    failing, which is a BROAD condition. Every ordinary YAML shape must survive it —
+    these are exactly the shapes the deleted line-based walker used to false-reject."""
+    for i, front in enumerate((
+        "name: demo\ndescription: d\ntier: D",
+        "name: demo\ndescription: d\ntier: D\naliases: {a: 1, b: 2}",
+        "name: demo\ndescription: d\ntier: D\nanchored: &a hi\nreused: *a",
+        "name: demo\ndescription: d\ntier: D\nbase: &b {x: 1}\nm:\n  <<: *b",
+        "name: demo\ndescription: d\ntier: D\nlong: >-\n  folded prose here",
+        "name: demo\ndescription: d\ntier: D\nmeta:\n  tier: J",
+        'name: demo\ndescription: d\ntier: D\n"quoted": yes',
+    )):
+        d = _demo(tmp_path / f"ok{i}", front)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{front!r} -> {step2['detail']}"
+
+
+def test_a_yaml_tag_cannot_hide_a_rejected_admission(tmp_path):
+    """The SECOND site of the same class, also from round 14. `outcome:` is read through
+    `parse_frontmatter`, so a block `safe_load` rejects lets the scanner's last-wins
+    value stand — a declared `outcome: rejected` was reported as admitted, which is the
+    single most load-bearing declaration in tier J."""
+    d = _j(tmp_path / "hidden")
+    (d / "evals" / "admission.md").write_text(
+        "---\noutcome: rejected\nmeta: {ref: !Ref x,\noutcome: admitted\n}\n---\n\n"
+        "Two agents; the brief was ambiguous.\n", encoding="utf-8")
+    assert mod.parse_frontmatter(d / "evals" / "admission.md")["outcome"] == "admitted"
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "does not parse as YAML" in step2["detail"], step2["detail"]
+
+    ok = _j(tmp_path / "ok")          # control: an ordinary admitted record still passes
+    assert _step(_check(ok), 2)["status"] == "PASS"
+
+
+def test_parse_frontmatter_status_names_which_reader_answered(tmp_path):
+    """The status is the whole fix, so it is asserted directly rather than only through
+    the gates. `FM_FALLBACK` must mean exactly "a parser exists and the scanner ran"."""
+    def st(text):
+        f = tmp_path / "probe.md"
+        f.write_text(text, encoding="utf-8")
+        return mod.parse_frontmatter_status(f)[0]
+    assert st("---\na: 1\n---\nbody\n") == mod.FM_YAML
+    # An EMPTY block is well-formed YAML that happens to be empty, and must not be
+    # called a parse failure. Note the shape: `---\n---\n` does not match the fence
+    # regex at all (it needs a line between the fences), so the reachable empty block
+    # is `---\n\n---\n` — which is what the code's `data is None and not block.strip()`
+    # branch actually sees.
+    assert st("---\n---\nbody\n") == mod.FM_ABSENT
+    assert st("---\n\n---\nbody\n") == mod.FM_YAML
+    assert st("no frontmatter here\n") == mod.FM_ABSENT
+    assert st("---\na: !!foo 1\n---\nbody\n") == mod.FM_FALLBACK
+    assert st("---\nbroken: [\n---\nbody\n") == mod.FM_FALLBACK
+    assert st("---\n- a\n- b\n---\nbody\n") == mod.FM_FALLBACK
+
+
+def _jsuite(root: Path, suite_text: str, suffix: str = "yaml") -> Path:
+    (root / "evals" / "held-out").mkdir(parents=True)
+    (root / "SKILL.md").write_text(
+        "---\nname: jdup\ndescription: A judgment skill.\ntier: J\n---\n# jdup\n", encoding="utf-8")
+    (root / "evals" / "admission.md").write_text(
+        "---\noutcome: admitted\n---\nTwo agents, one brief; a third judged both valid.\n",
+        encoding="utf-8")
+    (root / "evals" / "rubric.md").write_text("# Rubric\n- specificity\n", encoding="utf-8")
+    (root / "evals" / "held-out" / "case1.md").write_text("A held-out case prompt.\n", encoding="utf-8")
+    (root / "evals" / f"suite.{suffix}").write_text(suite_text, encoding="utf-8")
+    return root
+
+
+_DUP_YAML = """judge:
+  model: gpt-5
+  agreement_floor: 0.8
+  agreement_measured: {value: 0.84, method: 40 hand-labelled cases, two raters}
+execution_contract:
+  model: gpt-5
+execution_contract:
+  model: claude-opus-4
+"""
+_CLEAN_YAML = _DUP_YAML.replace("execution_contract:\n  model: gpt-5\n", "", 1)
+_JUDGE = ('{"judge": {"model":"gpt-5","agreement_floor":0.8,'
+          '"agreement_measured":{"value":0.84,"method":"40 cases"}}, ')
+_DUP_JSON = _JUDGE + '"execution_contract": {"model":"gpt-5"}, "execution_contract": {"model":"claude-opus-4"}}'
+_CLEAN_JSON = _JUDGE + '"execution_contract": {"model":"claude-opus-4"}}'
+
+
+def test_a_duplicate_key_in_an_eval_artifact_cannot_hide_a_self_judging_declaration(tmp_path):
+    """The SEVENTH instance of this arc's pattern, and the one that reaches furthest.
+
+    The duplicate-key class was fixed three times, each time in `SKILL.md`: `outcome:`,
+    then `tier:`, then key-agnostically. The commit that made it key-agnostic said "a
+    future gate-deciding key should be covered the day it is added rather than the day
+    someone remembers to enumerate it" — and `evals/*`, the documents carrying tier J's
+    ENTIRE contract, were still read with plain `safe_load`/`json.loads`, both last-wins
+    and silent.
+
+    Measured: a duplicated `execution_contract:` hid a self-judging declaration and the
+    gate printed "cross-model judge with a measured floor". Its control — the same file
+    with the discarded line removed — FAILs with "judge.model == a model under eval". So
+    the bypass is a pass the gate would refuse if the hidden line were the only one."""
+    for i, (text, suffix) in enumerate(((_DUP_YAML, "yaml"), (_DUP_JSON, "json"))):
+        d = _jsuite(tmp_path / f"dup{i}", text, suffix)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{suffix} -> {step2['detail']}"
+        assert "duplicate key" in step2["detail"], step2["detail"]
+
+
+def test_a_clean_eval_artifact_still_passes(tmp_path):
+    """Paired control in both formats: the refusal must bite only on real duplicates."""
+    for i, (text, suffix) in enumerate(((_CLEAN_YAML, "yaml"), (_CLEAN_JSON, "json"))):
+        d = _jsuite(tmp_path / f"ok{i}", text, suffix)
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{suffix} -> {step2['detail']}"
+
+
+def test_a_capitalised_name_key_reports_instead_of_raising(tmp_path):
+    """A regression I shipped, seven lines from the fix that was meant to prevent it.
+
+    `f6b1bfc` converted the frontmatter GUARD to `_fm(fm, "name")` and left the REPORT
+    three lines below reading `fm['name']`. A capitalised `Name:` then passed the guard
+    and raised an uncaught KeyError — exit 1, zero bytes of stdout, a bare traceback
+    where the parent commit printed a clean diagnosis. The commit message for that very
+    edit claimed "every gate-affecting read goes here … there are no per-key
+    exceptions"; there was one, in the same hunk."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    raw = (d / "SKILL.md").read_text(encoding="utf-8")
+    (d / "SKILL.md").write_text(raw.replace("name: demo", "Name: demo", 1), encoding="utf-8")
+    res = _check(d)                                    # must not raise
+    assert _step(res, 1)["status"] == "PASS"
+    assert "name=demo" in _step(res, 1)["detail"]
+
+
+def test_deeply_nested_artifacts_report_rather_than_throw(tmp_path):
+    """Round 13 capped `_substantive` and left three siblings uncovered — `_load_data`'s
+    json arm (`except ValueError` does not catch RecursionError, while the yaml arm's
+    `except Exception` does), `_internal_ref_issues`' `skill.json` read, and its `_walk`,
+    which had no cap at all. The file's own contract is that an unverified artifact is
+    reported, never thrown."""
+    # Two DIFFERENT guards, needing different depths to be reached — which the first
+    # version of this test got wrong: it used 5000 for skill.json, `json.loads` parses
+    # 5000 happily (it only raises around 10000+), so `_walk`'s cap fired and the
+    # `except RecursionError` on the json read was never exercised. Mutant M90 SURVIVED
+    # against it. Measured rather than assumed: json.loads depth 5000 -> parses;
+    # 10000 / 20000 / 40000 -> RecursionError.
+    for name, rel, depth in (
+        ("suite_parse", "evals/suite.json", 20000),   # json.loads raises -> _load_data guard
+        ("sj_parse",    "skill.json",       20000),   # json.loads raises -> skill.json guard
+        ("sj_walk",     "skill.json",        5000),   # json.loads parses -> _walk depth cap
+    ):
+        d = _skill(tmp_path / name, scripts=True, tests=True, tier="D")
+        (d / "evals").mkdir(exist_ok=True)
+        (d / rel).write_text("[" * depth + "1" + "]" * depth, encoding="utf-8")
+        res = _check(d)                                # must not raise
+        assert isinstance(res, list) and res, f"{rel}@{depth}"
+
+
+def test_camelcase_negative_polarity_is_recognised(tmp_path):
+    """`shouldTrigger` was in `_POSITIVE_KEYS` and `TRIGGER_ASSERTION_KEYS`;
+    `shouldNotTrigger` was in neither. So a legitimate camelCase routing eval was
+    false-rejected for "asserts only one polarity" while step 5 called the same file a
+    valid trigger eval — the self-contradiction `_blob_polarity`'s docstring warns
+    about. One accommodation added at one of its two sites."""
+    for keys in (("shouldTrigger", "shouldNotTrigger"),
+                 ("should_trigger", "should_not_trigger")):
+        d = _l(tmp_path / keys[0], cases=[])
+        (d / "evals" / "prompts.json").write_text(
+            json.dumps({keys[0]: ["review this diff for slop"],
+                        keys[1]: ["what is the weather"]}), encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "PASS", f"{keys} -> {step2['detail']}"
+
+
+def test_no_reader_bypasses_the_shared_guards():
+    """The answer to sixteen rounds of one-site fixes, made machine-checkable.
+
+    Seven confirmed instances of "a fix landed at ONE site of a class with several",
+    and a full reader inventory in round 16 found four MORE sites of two classes that
+    had been declared closed one commit earlier. Patching each new site as it surfaces
+    is what produced that sequence. So the guards now live in three helpers, and this
+    test fails if any reader is added that does not go through them:
+
+      * `_ext(path)`      — casefolded suffix. A `scripts/core.PY` used to skip the
+                            tier-D syntax check AND the unit-test step; an
+                            `evals/broken.YAML` made an unparseable eval invisible.
+      * `_json_loads(txt)`— duplicate-key hook. A duplicated `entrypoint` in skill.json
+                            hid a broken reference from the REQUIRED step 1c.
+      * `_ast_parse(txt)` — folds RecursionError/MemoryError into SyntaxError, so a
+                            generated script reports instead of printing a traceback.
+
+    This is a source scan, and its coverage is MEASURED rather than asserted. Against
+    a ten-form bypass battery it catches **7/10**; the first version caught 3 of 13 and
+    was falsified by the file it scans (`_is_test_file` held a raw `rsplit(".", 1)` the
+    scan could not see, and a nested `def` opened an unbounded exemption because
+    `current_def` never reset on dedent).
+
+    The three that still slip are `js = json.loads` (alias), `getattr(json, "loads")`
+    and `getattr(path, "suffix")` — indirection a text scan structurally cannot follow.
+    An AST pass would catch them; that is more machinery than this earns, and this arc
+    is a long argument against adding machinery speculatively. What the scan does buy
+    is the ordinary-idiom cases (`json.load`, `os.path.splitext`, `rsplit(".", 1)`,
+    `compile(..., PyCF_ONLY_AST)`), which is how a reader gets written by accident.
+
+    It is here for the property no behavioural test can express: that a reader *not yet
+    written* inherits the guard. The behavioural tests above cover the sites that exist
+    today."""
+    src = (Path(mod.__file__).read_text(encoding="utf-8")).splitlines()
+
+    def offenders(needles: tuple[str, ...], allowed_in: str) -> list[str]:
+        """Only a TOP-LEVEL `def` opens an allowed region. The first version tracked
+        any `def` at any indent and never reset on dedent, so a nested
+        `def _ext`/`def _json_loads`/`def _ast_parse` — or module-level code following
+        the real helper — opened an unbounded exemption. Round 17 slipped 10 of 13
+        probes past it, two of them ordinary idioms rather than adversarial ones."""
+        out, current_def = [], ""
+        for i, line in enumerate(src, 1):
+            if line.startswith("def "):                      # column 0 only
+                current_def = line[4:].split("(")[0]
+            elif line and not line[0].isspace():             # any other top-level stmt
+                current_def = ""
+            stripped = line.lstrip()
+            code = stripped.split("#", 1)[0]                 # ignore trailing comments
+            if any(n in code for n in needles) and current_def != allowed_in:
+                out.append(f"{i}: {stripped[:90]}")
+        return out
+
+    assert not offenders((".suffix", "os.path.splitext", 'rsplit("."', "rsplit('.'"), "_ext"), (
+        "raw .suffix outside _ext — case-sensitive extension matching is how "
+        "scripts/core.PY skipped two required steps:\n"
+        + "\n".join(offenders((".suffix", "os.path.splitext", 'rsplit("."', "rsplit('.'"), "_ext")))
+    assert not offenders(("json.loads(", "json.load(", "JSONDecoder"), "_json_loads"), (
+        "raw json.loads outside _json_loads — no duplicate-key hook:\n"
+        + "\n".join(offenders(("json.loads(", "json.load(", "JSONDecoder"), "_json_loads")))
+    assert not offenders(("ast.parse(", "PyCF_ONLY_AST"), "_ast_parse"), (
+        "raw ast.parse outside _ast_parse — RecursionError/MemoryError escape as "
+        "tracebacks:\n" + "\n".join(offenders(("ast.parse(", "PyCF_ONLY_AST"), "_ast_parse")))
+
+
+def test_the_shared_guards_actually_guard():
+    """Paired control for the scan above: a source scan proves routing, not behaviour.
+    These three assertions prove the helpers do the thing the scan assumes."""
+    assert mod._ext(Path("a/core.PY")) == ".py"
+    assert mod._ext(Path("a/broken.YAML")) == ".yaml"
+    assert mod._ext(Path("a/noext")) == ""
+
+    assert mod._json_loads('{"a": 1}') == {"a": 1}
+    try:
+        mod._json_loads('{"a": 1, "a": 2}')
+        raise AssertionError("duplicate key must refuse")
+    except ValueError as e:
+        assert getattr(e, "key", None) == "a"
+
+    assert mod._ast_parse("x = 1").body
+    try:
+        mod._ast_parse("x = " + "1+" * 100000 + "1")
+        # some interpreters parse this fine; that is acceptable, the guard is for the
+        # ones that do not
+    except SyntaxError:
+        pass
+    except (RecursionError, MemoryError) as e:
+        raise AssertionError(f"{type(e).__name__} escaped _ast_parse") from e
+
+
+def _with_timeout(seconds, fn, *a, **kw):
+    """Run `fn` under a hard wall-clock limit, raising TimeoutError if it does not
+    return. Needed because the defect these tests cover is NON-TERMINATION: without a
+    limit the mutant that removes the cycle guard would hang the suite instead of
+    failing it, and a hung sweep reports nothing at all."""
+    import signal
+    if not hasattr(signal, "SIGALRM"):            # pragma: no cover - platform guard
+        return fn(*a, **kw)
+
+    def _boom(signum, frame):
+        raise TimeoutError("did not terminate")
+
+    old = signal.signal(signal.SIGALRM, _boom)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        return fn(*a, **kw)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def test_a_recursive_yaml_anchor_terminates(tmp_path):
+    """P20 round 16 — the worst defect of the arc, and mine.
+
+    `_duplicate_key_in_node` walks the compose node graph. `yaml.compose` registers an
+    anchor BEFORE composing its children, so
+
+        cases: &x
+          nested: *x
+
+    yields a CYCLIC node graph. `safe_load` accepts the document; the walk popped the
+    same MappingNode and pushed it back forever. No output, no exit code, no traceback
+    — and `--survey` hung with it, because `survey()`'s per-skill `except Exception`
+    cannot catch a loop that never raises. A fail-closed gate turned into a silent one,
+    which is strictly worse than the last-wins bypass the function was added to close.
+
+    `_substantive` twelve lines up has carried this exact guard since round 11, with a
+    comment naming YAML anchors. It was not carried over — the eighth instance of this
+    arc's dominant class, committed in the fix for the seventh."""
+    cyclic = "cases: &x\n  nested: *x\n"
+    assert _with_timeout(10, mod._duplicate_key_in_node, cyclic) is None
+
+    d = _j(tmp_path)
+    (d / "evals" / "cyc.yaml").write_text(cyclic, encoding="utf-8")
+    res = _with_timeout(20, _check, d)
+    assert isinstance(res, list) and res
+
+    # control: a NON-recursive anchor is ordinary YAML and must still be walked
+    assert _with_timeout(10, mod._duplicate_key_in_node, "a: &x {p: 1}\nb: *x\n") is None
+    assert _with_timeout(10, mod._duplicate_key_in_node, "a: &x {p: 1}\nb: *x\na: 2\n") == "a"
+
+
+def test_repeated_merge_keys_are_duplicates_because_they_are_last_wins():
+    """The round-16 carve-out was justified by a claim that is empirically INVERTED,
+    and this test was written so it could not notice.
+
+    The comment asserted PyYAML merges repeated `<<` "left to right, first wins per
+    key, so it is NOT last-wins". Measured on PyYAML 6.0.3 it is the opposite. The old
+    fixture could not see that, because its two anchors carried DISJOINT keys (`a` from
+    one, `b` from the other) — no input could observe which merge won, and it asserted
+    `{"a":1,"b":2,"c":3}`, true under either semantics. The anchors here OVERLAP, which
+    is what makes the property observable at all."""
+    import yaml as _y
+    doc = ("a: &A {k: FROM_A}\nb: &B {k: FROM_B}\n"
+           "m:\n  <<: *A\n  <<: *B\n"
+           "n:\n  <<: *B\n  <<: *A\n")
+    loaded = _y.safe_load(doc)
+    assert loaded["m"]["k"] == "FROM_B"      # order decides
+    assert loaded["n"]["k"] == "FROM_A"      # the other order decides differently
+
+    # so a repeated `<<` is exactly the ambiguity this function exists to refuse
+    assert mod._duplicate_key_in_node(doc) == "<<"
+
+    # and the consequence it had: swapping two adjacent lines flipped a REQUIRED gate
+    single = "a: &A {k: FROM_A}\nm:\n  <<: *A\n  c: 3\n"
+    assert mod._duplicate_key_in_node(single) is None    # control: one `<<` is fine
+
+
+def test_a_duplicate_entrypoint_in_skill_json_is_reported_not_swallowed(tmp_path):
+    """The eighth-site fix, and its own first attempt was wrong in an instructive way.
+
+    Adding `object_pairs_hook` made the duplicate RAISE — into an `except ValueError`
+    that set `data = None`, which skips the entrypoint check entirely and PASSES. The
+    defect was detected and then discarded. Detecting and dropping is worse than not
+    detecting: the gate then holds evidence it is ignoring."""
+    d = _skill(tmp_path / "dup", scripts=True, tests=True, tier="D")
+    (d / "skill.json").write_text(
+        '{"name": "d", "entrypoint": "scripts/nope.py", "entrypoint": "scripts/do.py"}',
+        encoding="utf-8")
+    step = _step(_check(d), "1c")
+    assert step["status"] == "FAIL" and "twice" in step["detail"], step["detail"]
+
+    ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
+    (ok / "skill.json").write_text('{"name": "ok", "entrypoint": "scripts/do.py"}', encoding="utf-8")
+    assert _step(_check(ok), "1c")["status"] == "PASS"
+
+
+def test_uppercase_extensions_are_the_same_kind_of_file(tmp_path):
+    """`scripts/core.PY` was not code, so tier D never syntax-checked it and step 3 said
+    "no code to test" — two REQUIRED steps bypassed by byte-identical content under a
+    different filename. Note the fixtures need distinct DIRECTORIES: macOS is
+    case-insensitive, so `ext-PY/` and `ext-py/` are one directory and an earlier
+    version of this check silently compared a tree with itself."""
+    verdicts = {}
+    for label, ext in (("upper", "PY"), ("lower", "py")):
+        d = _skill(tmp_path / label, scripts=False, tests=False, tier="L")
+        (d / "scripts").mkdir(exist_ok=True)
+        (d / "evals").mkdir(exist_ok=True)
+        (d / "scripts" / f"core.{ext}").write_text("def broken(:\n", encoding="utf-8")
+        (d / "evals" / "routing.json").write_text(
+            json.dumps({"should_fire": ["a"], "should_not_fire": ["b"]}), encoding="utf-8")
+        res = _check(d)
+        verdicts[label] = (_step(res, 2)["status"], _step(res, 3)["status"])
+    assert verdicts["upper"] == verdicts["lower"] == ("FAIL", "FAIL"), verdicts
+
+
+def test_step5_detects_a_camelcase_negative_only_trigger_eval(tmp_path):
+    """The UNTESTED half of the two-site camelCase fix, which mutant M99 SURVIVED.
+
+    `shouldNotTrigger` was added to `_NEGATIVE_KEYS` (tier L's polarity check, covered
+    by M92) and to `TRIGGER_ASSERTION_KEYS` (step 5's "is this a trigger eval at all"
+    detection, covered by nothing). The round-16 audit called it out and my own mutant
+    then proved it: removing the key from the second set left all 201 tests green.
+
+    Step 5 is advisory, so this is a WARN/PASS distinction rather than a gate — but an
+    unproven half of a two-site fix is precisely the thing this arc keeps being bitten
+    by, and a file asserting only the negative polarity is a real shape."""
+    d = _skill(tmp_path, scripts=True, tests=True, tier="D")
+    (d / "evals").mkdir(exist_ok=True)
+    (d / "evals" / "routing.json").write_text(
+        json.dumps({"shouldNotTrigger": ["what is the weather"]}), encoding="utf-8")
+    assert mod._is_trigger_eval(d / "evals" / "routing.json") is True
+    assert _step(_check(d), 5)["status"] == "PASS"
+
+    # both the parser path and the regex fallback read the same key set
+    assert mod._walk_for_trigger_keys({"shouldNotTrigger": ["x"]}) is True
+    assert bool(mod._TRIGGER_ASSERTION_RE.search('"shouldNotTrigger": ["x"]'))
+
+    # control: a file with no trigger assertion at all is still not a trigger eval
+    (d / "evals" / "other.json").write_text(json.dumps({"notes": ["x"]}), encoding="utf-8")
+    assert mod._is_trigger_eval(d / "evals" / "other.json") is False
+
+
+def _alias_dag(levels: int, leaf):
+    """An ACYCLIC graph where every level references the previous one TWICE: 2^levels
+    paths through `levels` distinct nodes. Trivial for a walk with a visited set,
+    infeasible for one without.
+
+    `levels` must be large enough that the undeduplicated walk cannot finish inside the
+    test's timeout, or the mutant that removes the visited set SURVIVES. Measured: at
+    24 (~1.7e7 paths) the undeduplicated walk completes in under 10s and M101 survived;
+    at 30 (~1.1e9) it cannot. The fixture's size is load-bearing, not decorative."""
+    node = leaf
+    for _ in range(levels):
+        node = {"a": node, "b": node}
+    return node
+
+
+def test_every_recursive_walk_memoises_not_just_guards_cycles(tmp_path):
+    """P20 round 17 — instance NINE and TEN of the arc's dominant class, and the round
+    that showed the round-16 fix was aimed at the wrong invariant.
+
+    Round 16 gave `_duplicate_key_in_node` a cycle guard after a recursive anchor hung
+    the gate, and cited `_substantive` as the model that already had one. Measured, the
+    model was the wrong one: `_substantive`'s guard was a PATH-based frozenset, so each
+    sibling got its own copy and a node reachable by many paths was walked once per
+    path. An ACYCLIC alias DAG — no cycle anywhere — hung it. `_walk_for_trigger_keys`,
+    reached from step 5 for EVERY skill at every tier, had no guard at all: a 20-byte
+    `a: &a\\n b: *a\\n c: *a\\n` was ~2^40 visits, no output, no exit, no traceback,
+    and `--survey` died with it.
+
+    The invariant is MEMOISATION, not cycle detection — a memo subsumes both. Only
+    `_duplicate_key_in_node` had one, and it returned in 0.002s on the same input that
+    hung the other two.
+
+    Note the branching factor: the round-16 regression fixture is branching-1
+    (`cases: &x` / `nested: *x`), and measured against `_walk_for_trigger_keys` it
+    returns False in 0.000s — it would have passed while the function was fatal. A
+    cycle fixture cannot detect this class; the DAG is the discriminating input."""
+    hollow, real = _alias_dag(30, {"v": ""}), _alias_dag(30, {"v": "x"})
+    assert _with_timeout(10, mod._substantive, hollow) is False
+    assert _with_timeout(10, mod._substantive, real) is True
+
+    assert _with_timeout(10, mod._walk_for_trigger_keys, _alias_dag(30, {"v": 1})) is False
+    assert _with_timeout(10, mod._walk_for_trigger_keys,
+                         _alias_dag(30, {"should_fire": [1]})) is True
+
+    yaml_dag = "\n".join(["l0: &l0 {v: 1}"]
+                         + [f"l{i}: &l{i} {{a: *l{i-1}, b: *l{i-1}}}" for i in range(1, 32)])
+    assert _with_timeout(10, mod._duplicate_key_in_node, yaml_dag + "\n") is None
+
+    # end to end: step 5 runs for every skill, so the bomb needs no evals/ dir
+    d = _skill(tmp_path / "bomb", scripts=True, tests=True, tier="D")
+    (d / "evals").mkdir(exist_ok=True)
+    (d / "evals" / "suite.yaml").write_text("a: &a\n b: *a\n c: *a\n", encoding="utf-8")
+    assert isinstance(_with_timeout(25, _check, d), list)
+
+
+def test_the_fourth_walk_is_exempt_because_json_cannot_alias(tmp_path):
+    """`_internal_ref_issues._walk` keeps only a depth cap, and that is not an
+    oversight — it is the one walk whose input cannot be a DAG. `json.loads` has no
+    anchor syntax, so structurally identical containers are always distinct objects.
+    Asserted rather than claimed, because "this one doesn't need the guard" is exactly
+    the sentence that produced instances nine and ten."""
+    d = json.loads('{"a": {"x": 1}, "b": {"x": 1}, "c": [[1], [1]]}')
+    ids = [id(d["a"]), id(d["b"]), id(d["c"][0]), id(d["c"][1])]
+    assert len(set(ids)) == 4, "json.loads produced a shared container — _walk needs a memo"
+
+
+def test_a_routing_eval_of_empty_prompts_is_not_a_routing_eval(tmp_path):
+    """P20 round 17 — `_blob_polarity` was the one tier-artifact check with no
+    substance floor, while all three siblings carry one (`_rubric_issue`,
+    `_held_out_count` — which rejects "a marker object, not a held-out case" — and
+    `_judge_issues`). So a lens passed on a suite containing no prompts."""
+    d = _l(tmp_path / "hollow", cases=[])
+    (d / "evals" / "prompts.json").write_text(
+        json.dumps({"should_fire": [None], "should_not_fire": [None]}), encoding="utf-8")
+    assert _step(_check(d), 2)["status"] == "FAIL"
+
+    ok = _l(tmp_path / "real", cases=[])
+    (ok / "evals" / "prompts.json").write_text(
+        json.dumps({"should_fire": ["run the lens"], "should_not_fire": ["unrelated"]}),
+        encoding="utf-8")
+    assert _step(_check(ok), 2)["status"] == "PASS"
+
+
+def test_a_test_file_is_recognised_whatever_the_extension_case(tmp_path):
+    """The unit-test half of the casefolding claim. `_is_test_file` carried THREE
+    hand-rolled extension idioms, none routed through `_ext`, and the source scan
+    greps for the literal `.suffix` so it could not see them. The gate told an author
+    "no tests/ — the 'works today' trap" about `tests/test_core.PY`, which contains a
+    test."""
+    for name in ("test_core.py", "test_core.PY", "core_test.JS", "core.TEST.ts"):
+        assert mod._is_test_file(name) is True, name
+    for name in ("fixtures.test.json", "notes.md", "core.py"):
+        assert mod._is_test_file(name) is False, name
+
+    verdicts = {}
+    for label, fname in (("upper", "test_core.PY"), ("lower", "test_core.py")):
+        d = _skill(tmp_path / label, scripts=True, tests=False, tier="D")
+        (d / "tests").mkdir(exist_ok=True)
+        (d / "tests" / fname).write_text("def test_x():\n    assert True\n", encoding="utf-8")
+        verdicts[label] = _step(_check(d), 3)["status"]
+    assert verdicts["upper"] == verdicts["lower"] == "PASS", verdicts
+
+
+def test_the_memo_does_not_change_any_answer():
+    """A memo that fixes a hang but shifts a verdict is worse than the hang.
+
+    The risk is specific: `_substantive` marks a node `False` *while in progress* so a
+    cycle contributes nothing, and it keys on `id()`. If a shared subtree is first
+    reached from a position that resolves to False, a naive memo would poison every
+    later visit and the answer would depend on dict iteration order. These cases can
+    catch that; generic ones cannot.
+
+    Also run once, out of band, against the pre-memo implementation at `ead649d`: 3000
+    randomly generated nested structures over the leaf alphabet
+    `["", "  ", "x", 0, 1, 0.5, True, False, None, nan, inf]` with dict/list/tuple/set
+    containers to depth 4 — **0 disagreements**. Trees only, because the pre-memo
+    version hangs on exactly the shared nodes that motivated the change. That sweep is
+    deliberately NOT shipped: it would need a copy of the old implementation living in
+    the suite, and a reference implementation beside the real one drifts until its
+    rules stop meaning anything."""
+    hollow, real = {"h": ""}, {"r": "x"}
+    assert mod._substantive({"a": hollow, "b": hollow}) is False
+    assert mod._substantive({"a": real, "b": real}) is True
+    # the discriminating pair: same shared objects, both orders, one answer
+    assert mod._substantive({"a": hollow, "b": real}) is True
+    assert mod._substantive({"a": real, "b": hollow}) is True
+    # reached as both sibling and grandchild
+    assert mod._substantive({"a": real, "b": {"c": real}}) is True
+    assert mod._substantive({"a": {"h": ""}, "b": {"r": "x"}}) is True
+    assert mod._substantive({"b": {"r": "x"}, "a": {"h": ""}}) is True
+
+    # `_walk_for_trigger_keys` short-circuits on True; memo + any() must stay
+    # order-independent there too
+    keyed, plain = {"should_fire": [1]}, {"v": 1}
+    assert mod._walk_for_trigger_keys({"a": plain, "b": keyed}) is True
+    assert mod._walk_for_trigger_keys({"a": keyed, "b": plain}) is True
+    assert mod._walk_for_trigger_keys({"a": plain, "b": plain}) is False
+
+
+def test_the_skill_json_walk_cap_is_neither_absent_nor_crippling(tmp_path):
+    """`_internal_ref_issues._walk` keeps a depth cap (its input is JSON, which cannot
+    alias, so a memo would be machinery for an unreachable case — asserted in
+    `test_the_fourth_walk_is_exempt_because_json_cannot_alias`). A cap needs proving in
+    BOTH directions: absent, a deep artifact throws; crippled, a legitimately nested
+    reference stops being seen."""
+    d = _skill(tmp_path / "nested", scripts=True, tests=True, tier="D")
+    payload = {"a": {"b": {"c": {"d": {"e": {"ref": "scripts/does-not-exist.py"}}}}}}
+    (d / "skill.json").write_text(json.dumps(payload), encoding="utf-8")
+    step = _step(_check(d), "1c")
+    assert step["status"] == "FAIL", step["detail"]
+    assert "does-not-exist" in step["detail"], step["detail"]
+
+    ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
+    (ok / "skill.json").write_text(
+        json.dumps({"a": {"b": {"c": {"d": {"e": {"ref": "scripts/do.py"}}}}}}), encoding="utf-8")
+    assert _step(_check(ok), "1c")["status"] == "PASS"
+
+
+def test_a_test_cannot_be_the_core_it_tests(tmp_path):
+    """P20 round 19 — BLOCKER, and the hunk that caused it shipped with no coverage at
+    all: four mutants reverting or inverting it all survived 208 green tests.
+
+    Round 18 put the NAME checks ahead of the location check in `_is_code_file`. Because
+    `_test_files` also scans `scripts/`, a lone `scripts/test_only.py` became the
+    deterministic core AND the unit test proving it: step 2 inferred tier D from it,
+    step 3 reported "1 real test file" about the same bytes, and a skill shipping no
+    core passed both required steps (rc 1 -> rc 0). That is what
+    `test_tier_d_declared_without_code_fails` calls the one thing the gate must not
+    permit. A file cannot be both the artifact and its own proof."""
+    d = tmp_path / "lone"
+    (d / "scripts").mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: A demo skill.\n---\n# body\n", encoding="utf-8")
+    (d / "scripts" / "test_only.py").write_text("def test_x():\n    assert True\n",
+                                                encoding="utf-8")
+    res = _check(d)
+    # The split that makes this decidable: the file IS shipped code (so it is
+    # syntax-checked) and IS a test (so it is not refused for its location) — but it is
+    # not a CORE, because the core is code that is not itself a test. Step 2 fails for
+    # want of something to test; step 3 passes, because a test does exist.
+    assert mod._code_files(d) == ["scripts/test_only.py"], mod._code_files(d)
+    assert mod._core_files(d) == [], mod._core_files(d)
+    assert mod._test_files(d) == ["scripts/test_only.py"], mod._test_files(d)
+    assert _step(res, 2)["status"] == "FAIL", _step(res, 2)["detail"]
+    assert _step(res, 3)["status"] == "PASS", _step(res, 3)["detail"]
+    assert [r["step"] for r in res if r["required"] and r["status"] == "FAIL"] == [2]
+
+    # THE CONTROL THAT COST A ROSTER REGRESSION. A first attempt excluded scripts/ from
+    # `_test_files` outright, which false-rejected three real skills that keep their
+    # only tests beside the code they test — `kg`, `what`, `finance-substrate` — and
+    # dropped the roster 28 -> 26. A test beside its subject is ordinary; a test that IS
+    # its subject is not.
+    beside = tmp_path / "beside"
+    (beside / "scripts").mkdir(parents=True)
+    (beside / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: A demo skill.\n---\n# body\n", encoding="utf-8")
+    (beside / "scripts" / "core.py").write_text("def go():\n    return 1\n", encoding="utf-8")
+    (beside / "scripts" / "test_core.py").write_text("def test_x():\n    assert True\n",
+                                                     encoding="utf-8")
+    assert mod._core_files(beside) == ["scripts/core.py"], mod._core_files(beside)
+    res2 = _check(beside)
+    assert _step(res2, 2)["status"] == "PASS", _step(res2, 2)["detail"]
+    assert _step(res2, 3)["status"] == "PASS", _step(res2, 3)["detail"]
+
+    # control: the same test file under tests/, with a real core, passes both steps
+    ok = _skill(tmp_path / "ok", scripts=True, tests=True, tier="D")
+    assert _step(_check(ok), 2)["status"] == "PASS"
+    assert _step(_check(ok), 3)["status"] == "PASS"
+
+
+def test_package_plumbing_under_scripts_is_still_a_script(tmp_path):
+    """The second half of the same BLOCKER. `_PACKAGE_PLUMBING` was checked before the
+    location rule, so a broken `scripts/Setup.py` or `scripts/CONFTEST.PY` was never
+    syntax-checked — the identical rc 1 -> rc 0 fail-open the commit claimed to close,
+    surviving at the plumbing names. Location decides, and it decides FIRST."""
+    for i, name in enumerate(("Setup.py", "CONFTEST.PY", "__INIT__.py", "test_helper.py")):
+        d = _skill(tmp_path / f"broken{i}", scripts=True, tests=True, tier="D")
+        (d / "scripts" / name).write_text("def broken( (( syntax error\n", encoding="utf-8")
+        step2 = _step(_check(d), 2)
+        assert step2["status"] == "FAIL", f"{name} -> {step2['detail']}"
+        assert "syntax error" in step2["detail"], f"{name} -> {step2['detail']}"
+
+    # controls: the same names OUTSIDE scripts/ stay exempt, and a valid one passes
+    ok = _skill(tmp_path / "outside", scripts=True, tests=True, tier="D")
+    (ok / "conftest.py").write_text("def broken( (( syntax error\n", encoding="utf-8")
+    assert _step(_check(ok), 2)["status"] == "PASS"
+    fine = _skill(tmp_path / "fine", scripts=True, tests=True, tier="D")
+    (fine / "scripts" / "Setup.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    assert _step(_check(fine), 2)["status"] == "PASS"
+
+
+# --- rounds 20-22: what is CODE and what is a CORE are different questions -------
+#
+# Round 19 split `_code_files` into code and core and moved ONE of five consumers.
+# Round 20 (both strata) found the plumbing arm missing and the suite blind to it.
+# Round 21, verifying that fix, found it had traded one fail-open for another and
+# that a fifth consumer existed. The case matrix below is the whole disagreement,
+# written down: eleven skills, each of which some round got wrong.
+
+def _mk(root, name, files, extra=""):
+    d = root / name
+    (d / "scripts").mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: A skill for the case matrix.\n{extra}---\n# body\n",
+        encoding="utf-8")
+    for rel, content in files.items():
+        p = d / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    return d
+
+
+_LOGIC = "def configure(x):\n    return x * 2\n"
+_TEST = "def test_x():\n    assert True\n"
+_FIXTURE = "import pytest\n\n@pytest.fixture\ndef thing():\n    return 1\n"
+
+
+def _evals():
+    return json.dumps({"cases": [{"should_fire": True, "input": {"text": "go"}},
+                                 {"should_not_fire": True, "input": {"text": "no"}}]})
+
+
+CORE_MATRIX = [
+    ("conftest_and_test_only_is_not_tier_d",
+     {"scripts/conftest.py": _FIXTURE, "scripts/test_only.py": _TEST}, "",
+     "cannot classify", False),
+    ("setup_py_holding_real_logic_is_a_core",
+     {"scripts/setup.py": _LOGIC, "tests/test_a.py": _TEST}, "", "tier D", True),
+    ("init_py_holding_real_logic_is_a_core",
+     {"scripts/__init__.py": "def run(x):\n    return x * 3\n", "tests/test_a.py": _TEST},
+     "tier: D\n", "tier D", True),
+    ("latent_only_still_contradicts_a_real_core_named_setup",
+     {"scripts/setup.py": _LOGIC, "tests/test_a.py": _TEST, "evals/routing.json": None},
+     "tier: L\nlatent_only: true\n", "contradiction", False),
+    ("an_empty_package_marker_does_not_sink_a_real_core",
+     {"scripts/core.py": _LOGIC, "scripts/__init__.py": "", "tests/test_a.py": _TEST},
+     "tier: D\n", "syntax ok", True),
+    ("a_lens_shipping_only_an_empty_marker_passes",
+     {"scripts/__init__.py": "", "evals/routing.json": None},
+     "tier: L\nlatent_only: true\n", "both polarities", True),
+    ("a_lens_whose_only_script_is_a_test_passes",
+     {"scripts/test_lens.py": _TEST, "evals/routing.json": None},
+     "tier: L\nlatent_only: true\n", "both polarities", True),
+    ("a_lone_test_file_is_not_a_core",
+     {"scripts/test_only.py": _TEST}, "", "cannot classify", False),
+    ("an_empty_script_is_not_a_core",
+     {"scripts/do.py": "", "tests/test_a.py": _TEST}, "tier: D\n", "empty script", False),
+    ("conftest_is_matched_whatever_its_case",
+     {"scripts/Conftest.py": _FIXTURE, "tests/test_a.py": _TEST}, "",
+     "cannot classify", False),
+    ("a_broken_script_names_the_syntax_error_not_the_tier",
+     {"scripts/setup.py": "def f(:\n", "tests/test_a.py": _TEST}, "", "syntax error", False),
+]
+
+
+@pytest.mark.parametrize("label,files,extra,expect,should_pass",
+                         CORE_MATRIX, ids=[c[0] for c in CORE_MATRIX])
+def test_the_core_matrix(tmp_path, label, files, extra, expect, should_pass):
+    """Each row is a skill some round of this arc classified wrongly.
+
+    The rows are not decoration: run this matrix against the pre-fix gate and five
+    of the eleven fail. That is the control — a matrix that cannot fail proves
+    nothing, and this arc has shipped three fixtures that could not.
+    """
+    files = {k: (_evals() if v is None else v) for k, v in files.items()}
+    d = _mk(tmp_path, "m", files, extra)
+    res = _check(d)
+    step2 = _step(res, 2)
+    assert expect in step2["detail"], f"{label}: {step2['detail']}"
+
+    # The WHOLE gate, not just step 2. An earlier version asserted only on step 2 and
+    # the mutation sweep said so: a mutant that widened `require_tests` back to all
+    # code broke step THREE for a lens shipping an empty package marker, and this
+    # matrix — which contains exactly that skill — reported MISSED because it never
+    # looked past the tier check.
+    failed = [f"{r['step']} {r['label']}" for r in res
+              if r["required"] and r["status"] == "FAIL"]
+    if should_pass:
+        assert step2["status"] == "PASS", f"{label}: {step2['detail']}"
+        assert not failed, f"{label}: required step(s) failed: {failed}"
+    else:
+        assert step2["status"] == "FAIL", f"{label}: {step2['detail']}"
+
+
+def test_pytest_configuration_is_test_infrastructure_not_a_core(tmp_path):
+    """The narrowed rule, stated on its own because round 21 showed the wide version
+    (all of `_PACKAGE_PLUMBING`) was wrong in BOTH directions.
+
+    `conftest.py` is excluded by NAME because the name really does determine the role
+    — it is pytest's own configuration and nothing else imports it. `setup.py` and
+    `__init__.py` are not excluded by name, because they routinely hold real logic;
+    the empty-marker case that put them on the list is handled by SUBSTANCE.
+    """
+    d = _mk(tmp_path, "infra", {"scripts/conftest.py": _FIXTURE,
+                                "scripts/setup.py": _LOGIC,
+                                "tests/test_a.py": _TEST})
+    core = mod._core_files(d)
+    assert "scripts/conftest.py" not in core, "pytest config is not a core"
+    assert "scripts/setup.py" in core, "a packaging NAME does not make it plumbing"
+    # ...and both are still code, so both are still syntax-checked.
+    code = mod._code_files(d)
+    assert "scripts/conftest.py" in code and "scripts/setup.py" in code
+
+
+def test_the_conftest_exclusion_is_case_insensitive(tmp_path):
+    """`Conftest.py` re-opened the round-20 BLOCKER and no test or mutant saw it.
+    The file's own comment already records the identical prior regression on
+    `CONFTEST.PY`, which is how a casefold gets written and then not pinned.
+    """
+    for name in ("Conftest.py", "CONFTEST.PY", "conftest.PY"):
+        d = _mk(tmp_path, "c" + name.replace(".", ""),
+                {f"scripts/{name}": _FIXTURE, "tests/test_a.py": _TEST})
+        assert mod._core_files(d) == [], f"{name} was treated as a core"
+
+
+def test_the_known_core_consumers_have_not_drifted(tmp_path):
+    """A CHANGE-DETECTOR for the known consumers, and deliberately named as one.
+
+    An earlier version of this called itself `test_every_consumer_of_the_core_reads_core`
+    and its docstring claimed the property its name implies. It does not hold it.
+    Proven both directions by the round-22 reviewer: inserting a genuine seventh
+    consumer (`ships_deterministic_logic = bool(code)`) left it GREEN, and a
+    behaviour-preserving respelling of a pinned line (`len(core) > 0`) turned it RED.
+    It detects edits to known lines and nothing else, which is worth having and is
+    not worth mis-naming — a test that overclaims is how a surface stops being
+    reviewed.
+
+    The real net for "is there another consumer" is the behavioural matrix above,
+    plus the fact that the two refutation questions now read a NAME-BLIND predicate,
+    so a mistake in `_TEST_INFRA` can only ever cause a conservative false reject.
+
+    Asserted POSITIVELY. The negative form — scanning for the old `code` spelling —
+    is the vacuity this arc keeps producing: a pattern absent today is absent whether
+    or not the property holds. An earlier version of this test asserted that the
+    ASSIGNMENT `core = _core_files(...)` existed, which stayed true when the call
+    site was mutated to pass `code`; it now pins the CALL.
+    """
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def run_checklist("):]
+    required = {
+        "run_checklist infers from core":
+            "_tier_of(skill_dir, fm or {}, core, code)",
+        "survey infers from core":
+            "_tier_of(d, fm, _core_files(d), _code_files(d))",
+        "the empty report is drawn from candidates":
+            "empty_core = [c for c in _core_candidates(skill_dir)",
+        "latent_only refutes on the conjunction predicate":
+            "elif latent_only and (_det := _deterministic_scripts(skill_dir)):",
+        "require_tests reads the conjunction predicate":
+            "require_tests = bool(_deterministic_scripts(skill_dir))",
+        "the step-3 skip message matches its predicate":
+            '"nothing deterministic to test" if not real_tests',
+    }
+    missing = [why for why, pat in required.items() if pat not in body]
+    assert not missing, f"a core consumer is no longer reading core: {missing}"
+
+
+def test_the_pass_line_discloses_the_core_count(tmp_path):
+    """The step is labelled "Tier + core" and reported only the script count, so a
+    skill with one core beside its test printed "2 script(s)". Shipped untested in
+    the fix for round 20's finding that fixes ship untested.
+    """
+    d = _mk(tmp_path, "disclose", {"scripts/core.py": _LOGIC,
+                                   "scripts/test_beside.py": _TEST,
+                                   "tests/test_a.py": _TEST}, "tier: D\n")
+    detail = _step(_check(d), 2)["detail"]
+    assert "2 script(s)" in detail and "1 core" in detail, detail
+
+
+def test_latent_only_sees_logic_hidden_behind_a_conftest_name(tmp_path):
+    """`latent_only` and tier D ask different questions, and answering both with
+    `core` reopened a narrower version of the fail-open round 21 closed.
+
+    The core excludes `conftest.py` by name — right for INFERRING a tier, wrong for
+    REFUTING a denial. A lens could therefore ship a working, imported module called
+    `conftest.py` and its `latent_only: true` claim went unchallenged.
+    """
+    d = _mk(tmp_path, "hidden",
+            {"scripts/pkg/conftest.py": "def transform(x):\n    return x * 7\n",
+             "tests/test_a.py": _TEST,
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL", step2["detail"]
+    assert "contradiction" in step2["detail"], step2["detail"]
+    assert "conftest" in step2["detail"], "the message must name the file it means"
+
+    # ...and the narrower predicate is unchanged: conftest is still not a CORE, so a
+    # skill shipping only that cannot be INFERRED as tier D.
+    assert mod._core_files(d) == []
+
+
+def test_the_two_predicates_are_not_the_same_predicate(tmp_path):
+    """The property that keeps them from collapsing back into one.
+
+    An empty package marker is in neither. A test is in neither. A real module named
+    `conftest.py` is in the WIDER set only. Anything else substantive is in both.
+    """
+    d = _mk(tmp_path, "two",
+            {"scripts/conftest.py": "def helper(x):\n    return x\n",
+             "scripts/__init__.py": "",
+             "scripts/test_a.py": _TEST})
+    assert mod._core_files(d) == [], "conftest is not a core"
+    assert mod._deterministic_scripts(d) == ["scripts/conftest.py"], \
+        "but it IS something deterministic that a latent_only claim must answer for"
+
+
+def test_a_pytest_shaped_filename_does_not_buy_out_of_testing(tmp_path):
+    """The round-22 BLOCKER: renaming one file was the entire exploit.
+
+    `core` excludes `conftest.py` BY NAME, which is right for inferring a tier and
+    wrong for refuting a denial. When `require_tests` read `core`, a lens could ship
+    a working, untested module called `scripts/conftest.py` and the whole gate went
+    green — rc 0, "SKIP no code to test", about a file containing real logic.
+
+    Both refutation questions read a predicate that excuses a file only when its
+    NAME and its STRUCTURE agree — it is not name-blind, and four earlier copies of
+    this sentence said it was, including the two key labels in this very test. The
+    name list
+    governs INFERENCE only, where being wrong yields a conservative false reject.
+    """
+    d = _mk(tmp_path, "sneaky",
+            {"scripts/conftest.py": "ROTATION_DAYS = 30\n\ndef rotate(c):\n    return c\n",
+             "evals/routing.json": _evals()},
+            "tier: L\n")
+    res = _check(d)
+    step3 = _step(res, 3)
+    assert step3["status"] == "FAIL", f"a real module shipped untested: {step3['detail']}"
+    assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
+        "the gate must not report a clean pass"
+
+    # ...and the same file still does not INFER tier D, which is the other half.
+    assert mod._core_files(d) == []
+
+
+def test_an_empty_stub_beside_a_real_core_is_still_a_failure(tmp_path):
+    """Relocating the empty check into the tier-D arm made it unreachable whenever a
+    core existed, so `touch scripts/noop.py` beside working code started passing.
+
+    The false reject that motivated the move — an empty `scripts/__init__.py` — is
+    handled by not counting legitimately-empty packaging, so the check goes back to
+    the top level where it covers every tier.
+    """
+    d = _mk(tmp_path, "stub", {"scripts/core.py": _LOGIC,
+                               "scripts/todo_stub.py": "",
+                               "tests/test_a.py": _TEST}, "tier: D\n")
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "empty script" in step2["detail"], step2["detail"]
+
+    # ...while the package marker it was confused with is still spared.
+    d2 = _mk(tmp_path, "marker", {"scripts/core.py": _LOGIC,
+                                  "scripts/__init__.py": "",
+                                  "tests/test_a.py": _TEST}, "tier: D\n")
+    assert _step(_check(d2), 2)["status"] == "PASS"
+
+
+def test_the_pass_line_names_the_cores_it_counted(tmp_path):
+    """"1 core:" followed by a list of non-cores. The count came from `core` and the
+    names from `code`, so the one real core could be absent from its own disclosure.
+    """
+    d = _mk(tmp_path, "named", {"scripts/core.py": _LOGIC,
+                                "scripts/test_beside.py": _TEST,
+                                "tests/test_a.py": _TEST}, "tier: D\n")
+    detail = _step(_check(d), 2)["detail"]
+    assert "1 core" in detail, detail
+    assert "scripts/core.py" in detail, detail
+    assert "test_beside" not in detail.split("core:")[-1], \
+        f"a non-core was listed as the core: {detail}"
+
+
+def test_no_name_can_ever_open_the_gate(tmp_path):
+    """The invariant that ends the round-per-name sequence.
+
+    Round 20 added three names to the exclusion list, round 21 removed two, round 22
+    found a third. The round-22 reviewer's diagnosis was that a rule spelled as a
+    NAME LIST forgets its invariant once per name and will not converge by
+    enumeration — and that is right, so this stops enumerating and states the
+    property instead.
+
+    `_TEST_INFRA` governs tier-D inference and — through `_core_candidates` — which
+    files the empty-core report considers. That second consumer IS a refutation, so
+    the stronger claim I first wrote here ("governs inference only; being wrong can
+    only produce a conservative false reject") is FALSE, and round 24 measured it:
+    perturbing the list opens fail-opens in both directions. What holds is narrower
+    and worth stating exactly — every row that escapes that way is CONTENT-FREE, not
+    necessarily zero-byte — a 1.3 KB comments-only file escapes the same way. What
+    holds is the operative half: no logic escapes through the name list. The two refutations that could let
+    real logic through, the `latent_only` contradiction and `require_tests`, read a
+    predicate that excludes a file only when its name AND its structure agree.
+
+    The test is therefore not "are these three names right". It is: **for ANY
+    filename, including one nobody has thought of yet, shipping real untested logic
+    under it cannot produce a clean pass.** A future maintainer adding a name to
+    `_TEST_INFRA` cannot break this without the test saying so.
+
+    Scope, stated because measuring it changed what I would have claimed: this is a
+    WHOLE-GATE property and TWO independent mechanisms enforce it — the `latent_only`
+    contradiction and `require_tests`. Mutating either one alone leaves this test
+    green, because the other still fails the skill. That redundancy is a feature of
+    the gate and a limit of this test, so the mechanisms are pinned individually by
+    `test_a_pytest_shaped_filename_does_not_buy_out_of_testing` (M117) and
+    `test_latent_only_sees_logic_hidden_behind_a_conftest_name` (M116). What this one
+    adds that neither of those can: it generalises past the names anyone has listed.
+
+    Controls, corrected after round 24 measured them: this test does NOT
+    meaningfully fail against the pre-fix gate — that "failure" is an
+    `AttributeError` because 6e688f6 has no `_TEST_INFRA`, and with the attribute
+    shimmed on, the pre-fix gate PASSES it. A crash is not a discriminating control
+    and claiming it as one was wrong. The real controls are the two mutants: M122
+    (exclude on the NAME alone) and the `require_tests` narrowing to `_core_files`,
+    both verified to turn this red.
+
+    Scope it does NOT cover, measured and stated rather than left implicit: it
+    samples `scripts/` only. `_is_code_file` drops root-level files named like
+    packaging or like a test, so `<skill>/setup.py` holding real untested logic
+    passes clean at `tier: L` — on this gate AND on the pre-fix gate. That is
+    pre-existing, lives in a function this change does not touch, and is recorded in
+    SKILL.md's limits rather than fixed here.
+    """
+    names = sorted(mod._TEST_INFRA) + [
+        "conftest.py", "Conftest.py", "CONFTEST.PY",       # every casing
+        "setup.py", "__init__.py",                          # the two that were removed
+        "some_future_infra_name.py", "pytest_plugin.py",    # names not in any list
+        "test_helpers.py", "helpers_test.py", "test_util.py",  # TEST-SHAPED names
+        "thing.test.py", "TEST_UTIL.PY",                       # holding no test
+    ]
+    declarations = [
+        ("", "undeclared"),
+        ("tier: D\n", "tier D"),
+        ("tier: L\n", "tier L"),
+        ("tier: L\nlatent_only: true\n", "tier L + latent_only"),
+    ]
+    # The payload is production logic and contains NO test construct, so a file is
+    # test-side here only if something decides that from its NAME — which is the
+    # loophole this asserts is closed. Round 24 found it open for `test_*.py`.
+    escaped = []
+    for name in names:
+        for extra, label in declarations:
+            d = _mk(tmp_path, f"n{abs(hash(name + label)) % 10 ** 9}",
+                    {f"scripts/{name}": "TOKEN = 7\n\ndef work(x):\n    return x * TOKEN\n",
+                     "evals/routing.json": _evals()},
+                    extra)
+            res = _check(d)
+            failed = [r for r in res if r["required"] and r["status"] == "FAIL"]
+            if not failed:
+                escaped.append(f"{name} @ {label}")
+    assert not escaped, (
+        "a filename bought a clean pass for real untested logic — the exclusion list "
+        f"is load-bearing for a refutation again: {escaped}")
+
+
+def test_a_shell_script_is_not_a_test_for_defining_ok_and_fail(tmp_path):
+    """Round 25's own regression, caught by the roster rather than by a test.
+
+    Excluding test-side files BY ROLE alone looked like the principled fix — until
+    it moved the roster. `_is_real_test` is an AST walk for Python but a REGEX for
+    every other language, and its bash pattern counts `ok()` / `fail()` HELPER
+    DEFINITIONS, so it called the real `blog-post/scripts/publish.sh` a test.
+    (An earlier version of this docstring blamed the `test` shell builtin. That was
+    wrong — `if test -f` does not match the pattern — and the first fixture written
+    from that wrong explanation could not fail.) That is a fail-open for every shell
+    script in the repo: ship one, and nothing requires you to test it.
+
+    Both predicates must agree. This pins the arm that ROLE-only would break.
+    """
+    # The fixture must reproduce the ACTUAL trigger, not a plausible one. My first
+    # attempt used `if test -f`, which the regex does not match (it wants `test(`),
+    # so the mutant SURVIVED and the test proved nothing. The real `publish.sh`
+    # trips `\\b(?:ok|pass|fail|expect|check)\\s*\\(\\s*\\)` by defining shell LOGGING
+    # helpers called `ok()` and `fail()`.
+    d = _mk(tmp_path, "sh", {"scripts/publish.sh":
+        '#!/bin/bash\n'
+        'set -euo pipefail\n'
+        'log()  { echo "[log] $*"; }\n'
+        'ok()   { echo "[ok] $*"; }\n'
+        'fail() { echo "[fail] $*" >&2; exit 1; }\n'
+        'publish() { curl -fsS -X POST "$1" || fail "upload failed"; ok "published"; }\n'
+        'publish "$@"\n'},
+        "tier: D\n")
+    assert mod._is_real_test(d / "scripts" / "publish.sh"), \
+        "fixture does not reproduce the false positive it exists to pin"
+    assert mod._deterministic_scripts(d) == ["scripts/publish.sh"], \
+        "a shell script using `test` is not thereby a test"
+
+    # ...and it therefore still has to be tested.
+    step3 = _step(_check(d), 3)
+    assert step3["status"] == "FAIL", step3["detail"]
+
+
+def test_a_test_shaped_shell_name_cannot_excuse_a_publisher(tmp_path):
+    """Round 26's BLOCKER: the conjunction needs BOTH predicates wrong at once, and
+    one file makes both wrong.
+
+    `scripts/test_publish.sh` — test-shaped NAME, so `_is_test_file` says yes; shell
+    LOGGING helpers `ok()`/`fail()`, so the bash regex says yes — while containing
+    nothing but a working publisher. It escaped both refutations and the whole gate
+    returned rc 0, where 6e688f6 failed it.
+
+    The fix is not a stronger conjunction, it is a stronger BURDEN. Reporting that a
+    skill has tests may accept weak evidence; excusing a file from a refutation may
+    not, because there a wrong answer is fail-open.
+    """
+    d = _mk(tmp_path, "pub",
+            {"scripts/test_publish.sh":
+                 '#!/bin/bash\nset -euo pipefail\n'
+                 'log()  { echo "[log] $*"; }\n'
+                 'ok()   { echo "[ok] $*"; }\n'
+                 'fail() { echo "[fail] $*" >&2; exit 1; }\n'
+                 'publish() { curl -fsS -X POST "$1" || fail "no"; ok "done"; }\n'
+                 'publish "$@"\n',
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+
+    # The fixture must reproduce BOTH halves or it proves nothing.
+    p = d / "scripts" / "test_publish.sh"
+    assert mod._is_test_file(p.name), "fixture must have a test-shaped name"
+    assert mod._is_real_test(p), "fixture must trip the weak role regex"
+    assert not mod._is_definitely_a_test(p), "...and must NOT clear the stricter bar"
+
+    res = _check(d)
+    assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
+        "a publisher shipped past the gate by being named like a test"
+
+
+def test_a_genuine_shell_suite_still_counts_as_tests(tmp_path):
+    """The other side of the same change, and the reason the weak alternation was
+    not simply deleted: one real suite in this roster
+    (`governed-autonomy-loop/tests/smoke.sh`) is recognised only by it.
+
+    Step 3 still uses `_is_real_test`, so that suite still counts. Only the
+    refutation path demands the stronger construct.
+    """
+    weak = tmp_path / "weak" / "tests" / "smoke.sh"
+    weak.parent.mkdir(parents=True)
+    weak.write_text('#!/bin/bash\nok()   { echo ok; }\nfail() { echo no; exit 1; }\n'
+                    '[ -f x ] && ok "found" || fail "missing"\n', encoding="utf-8")
+    assert mod._is_real_test(weak), "step 3 must still see this as a test"
+    assert not mod._is_definitely_a_test(weak), "but it is not strong enough to excuse"
+
+    strong = tmp_path / "strong" / "tests" / "real.test.sh"
+    strong.parent.mkdir(parents=True)
+    strong.write_text('#!/bin/bash\nassert_eq() { [ "$1" = "$2" ]; }\nassert_eq a a\n',
+                      encoding="utf-8")
+    assert mod._is_definitely_a_test(strong), "an assert IS strong enough"
+
+
+def test_a_health_check_named_like_production_is_not_excused(tmp_path):
+    """Why the NAME half of the conjunction still earns its place.
+
+    Once the role detector was made strict, dropping the name half stopped mattering
+    for the shell case — the mutation survived, which is the sweep telling me the
+    arm was no longer pinned. It still matters here: a module named
+    `scripts/checks.py` that defines `def test_connection(): assert ping()` is a
+    health checker, not a test suite. The AST cannot tell those apart, and the name
+    can.
+
+    Under the conjunction it stays deterministic (correct). Under role alone it is
+    excused, and a lens could ship it untested.
+    """
+    d = _mk(tmp_path, "health",
+            {"scripts/checks.py":
+                 "def ping(host):\n"
+                 "    return host.startswith('http')\n\n"
+                 "def test_connection():\n"
+                 "    assert ping('http://x')\n",
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+
+    p = d / "scripts" / "checks.py"
+    assert mod._is_real_test(p), "the AST does see a test function here"
+    assert mod._is_definitely_a_test(p), "and for Python the strict bar is the same"
+    assert not mod._is_test_file(p.name), "but the NAME says production"
+
+    assert "scripts/checks.py" in mod._deterministic_scripts(d), \
+        "the name half is what keeps a health checker deterministic"
+    res = _check(d)
+    assert [r for r in res if r["required"] and r["status"] == "FAIL"], \
+        "a health checker was excused by containing an assert"
+
+
+def test_a_non_python_test_the_regex_misses_is_treated_as_deterministic(tmp_path):
+    """The stated cost of holding the excusing path to a stronger burden.
+
+    A test-named NON-Python file that shows no construct the strict detector
+    recognises is treated as a deterministic script. A genuine bash test written as
+    `[[ "$out" != "bar" ]] && exit 1` — no assert, no bats `@test`, no pass/fail
+    counters — therefore trips the `latent_only` contradiction, and the message it
+    gets is about shipping deterministic code rather than about an unrecognised test.
+
+    This is deliberate and it is the fail-CLOSED direction: the remedy is to write an
+    assertion the detector can see. It is pinned here so the arm is not rediscovered
+    as a surprise, and because no other test and not the roster can see it.
+
+    Reachability, measured rather than asserted: across all 96 skills there are ZERO
+    non-Python test-named files under `scripts/` or the skill root, so this arm is
+    currently unreachable in the live roster. That is why it is a documented limit
+    and not a blocking regression — and it is the number to re-check if that changes.
+    """
+    d = _mk(tmp_path, "bashtest",
+            {"scripts/test_run.sh":
+                 '#!/bin/bash\nout=$(echo bar)\nif [[ "$out" != "bar" ]]; then exit 1; fi\n',
+             "evals/routing.json": _evals()},
+            "tier: L\nlatent_only: true\n")
+    p = d / "scripts" / "test_run.sh"
+    assert mod._is_test_file(p.name), "test-shaped name"
+    assert not mod._is_definitely_a_test(p), "but no construct the strict bar accepts"
+    assert "scripts/test_run.sh" in mod._deterministic_scripts(d)
+
+    step2 = _step(_check(d), 2)
+    assert step2["status"] == "FAIL" and "contradiction" in step2["detail"]
+
+    # ...and the remedy works: an assertion the detector can see clears it.
+    p.write_text('#!/bin/bash\nassert_eq() { [ "$1" = "$2" ]; }\nassert_eq bar bar\n',
+                 encoding="utf-8")
+    assert mod._is_definitely_a_test(p), "an assert is recognised"
+    assert mod._deterministic_scripts(d) == []
+
+
+def test_strict_refuses_a_syntax_claim_it_could_not_verify(tmp_path, monkeypatch):
+    """CodeRabbit, thread 3. The PASS line already discloses unchecked files, so the
+    gate does not lie — but `--strict` exists so a run cannot pass while skipping the
+    things strict is for, and a `.ts` core nothing examined is exactly that: it passes
+    on a box without `node` and fails on one with it.
+    """
+    d = _mk(tmp_path, "ts", {"scripts/core.ts": "export const f = (x: number) => x * 2;\n",
+                             "tests/test_core.py": _TEST}, "tier: D\n")
+    monkeypatch.setattr(mod.shutil, "which", lambda n: None)   # no node in this env
+
+    lenient = _step(_check(d), 2)
+    assert lenient["status"] == "PASS", lenient["detail"]
+    assert "unchecked" in lenient["detail"], "the lenient run must still disclose it"
+
+    strict = _step(_check(d, strict=True), 2)
+    assert strict["status"] == "FAIL", strict["detail"]
+    assert "could not be syntax-checked" in strict["detail"], strict["detail"]
+
+    # ...and with a checker available, --strict passes.
+    monkeypatch.setattr(mod.shutil, "which", lambda n: "/usr/bin/" + n)
+    assert _step(_check(d, strict=True), 2)["status"] in ("PASS", "FAIL")
+
+
+def test_the_survey_does_not_count_vendored_skills_from_virtualenvs(tmp_path):
+    """Found by dogfooding the MERGED artifact, not by any test.
+
+    `--survey` walked into `.venv` and counted the SKILL.md files that `logfire`,
+    `typer` and `fastapi` ship inside their own packages. On a clean checkout the
+    roster read 96; on a developer machine with dependencies installed it read 99,
+    while SKILL.md documents 96. The passing count was unaffected — all three fail —
+    but a denominator that depends on whether someone ran `pip install` is not a
+    denominator.
+    """
+    root = tmp_path / "root"
+    real = root / "real-skill"
+    real.mkdir(parents=True)
+    (real / "SKILL.md").write_text(
+        "---\nname: real-skill\ndescription: A genuine skill in this repo.\n---\n# body\n",
+        encoding="utf-8")
+
+    for buried in (".venv/lib/python3.12/site-packages/logfire/.agents/skills/x",
+                   "venv/lib/site-packages/typer/.agents/skills/y",
+                   ".tox/py311/lib/site-packages/z/.agents/skills/z"):
+        d = root / buried
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            "---\nname: vendored\ndescription: Ships inside a dependency.\n---\n# body\n",
+            encoding="utf-8")
+
+    rep = mod.survey(root, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 1, f"vendored SKILL.md counted as a skill: {rep['total']}"
+    assert rep["rows"][0]["skill"] == "real-skill"
+
+
+def test_an_excluded_name_above_the_root_excludes_nothing(tmp_path):
+    """The mirror of the fix above, and the bug the fix itself introduced.
+
+    The exclusion matched `d.parts`, which includes every ancestor ABOVE the
+    surveyed root. A checkout living under any directory named `venv` — and people
+    do keep repos in `~/venv/...` — therefore excluded EVERY skill and reported a
+    roster of zero. Latent while the list held only `.git` and `node_modules`, which
+    are rare as ancestor names; adding `venv` made it likely.
+
+    The exclusion is about where a file sits INSIDE the surveyed tree, so it matches
+    relative to root.
+    """
+    root = tmp_path / "venv" / "site-packages" / "repo" / "skills"
+    d = root / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: A real skill under an excluded ancestor name.\n---\n# body\n",
+        encoding="utf-8")
+
+    rep = mod.survey(root, roles_dir=None, registry=None, entities_dir=None, strict=False)
+    assert rep["total"] == 1, (
+        "an excluded name ABOVE the root hid every skill in the tree: "
+        f"{rep['total']} found")
+    assert rep["rows"][0]["skill"] == "demo"

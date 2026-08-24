@@ -1,0 +1,255 @@
+<svg class="keel-curve" xmlns="http://www.w3.org/2000/svg" width="1080" height="1510" viewBox="0 0 1080 1510" role="img" aria-labelledby="keel-curve-title keel-curve-desc" style="max-width:100%;height:auto">
+<title id="keel-curve-title">Keel crystallization curve</title>
+<desc id="keel-curve-desc">Crystallization curve over 15 runs from reports. falls — total fitted change -66.5% of the mean across 15 runs (R^2 0.28, so the line explains less than half the variance — read the raw squares)</desc>
+<style>.keel-curve { font-family: var(--k-font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif); }
+.keel-curve text { fill: var(--k-ink-1, #b6c0cb); font-size: 12.5px; }
+.keel-curve .kc-bg { fill: var(--k-bg-0, #07090c); }
+.keel-curve .kc-panel { fill: var(--k-bg-1, #0c1015); stroke: var(--k-line, #1b2027); stroke-width: 1; }
+.keel-curve .kc-eyebrow { fill: var(--k-ink-2, #8b97a5); font-size: 11px; letter-spacing: 0.18em; }
+.keel-curve .kc-h1 { fill: var(--k-ink-0, #e8edf2); font-size: 19px; letter-spacing: -0.01em; }
+.keel-curve .kc-h2 { fill: var(--k-ink-0, #e8edf2); font-size: 15px; letter-spacing: -0.01em; }
+.keel-curve .kc-panel-title { fill: var(--k-ink-0, #e8edf2); font-size: 14px; }
+.keel-curve .kc-axis { fill: var(--k-ink-2, #8b97a5); font-size: 11px; }
+.keel-curve .kc-note { fill: var(--k-ink-1, #b6c0cb); font-size: 12.5px; }
+.keel-curve .kc-scope { fill: var(--k-ink-2, #8b97a5); font-size: 12.5px; }
+/* Keel's own caveats are CHROME, not verdicts. tokens.css reserves the accent
+   for the narrator and forbids a verdict hue on chrome — amber here would put
+   "a node could not be traced" and "do not trust this chart" in one colour, in
+   one document. Weight carries the emphasis instead. */
+.keel-curve .kc-warn { fill: var(--k-ink-0, #e8edf2); font-size: 12.5px; font-weight: 600; }
+.keel-curve .kc-fitnote { fill: var(--k-ink-2, #8b97a5); font-size: 10.5px; text-anchor: end; }
+.keel-curve .kc-mono { fill: var(--k-ink-1, #b6c0cb); font-size: 12.5px; font-family: var(--k-font-mono, ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace); }
+.keel-curve .kc-tick { fill: var(--k-ink-2, #8b97a5); font-size: 11px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.keel-curve .kc-tick--y { text-anchor: end; }
+.keel-curve .kc-gap { fill: var(--k-ink-2, #8b97a5); font-size: 11px; text-anchor: middle; }
+.keel-curve .kc-gapline { stroke: var(--k-ink-3, #5b6774); stroke-width: 1; stroke-dasharray: 2 4; }
+.keel-curve .kc-grid { stroke: var(--k-line, #1b2027); stroke-width: 1; }
+.keel-curve .kc-rule { stroke: var(--k-line, #1b2027); stroke-width: 1; }
+.keel-curve .kc-line { fill: none; stroke-width: 1.5; }
+.keel-curve .kc-fit { stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.7; }
+.keel-curve .kc-pt { stroke: none; }
+.keel-curve .kc-accent { stroke: var(--k-accent, #7dd3fc); fill: var(--k-accent, #7dd3fc); }
+.keel-curve .kc-accent.kc-line, .keel-curve .kc-accent.kc-fit { fill: none; }
+.keel-curve .kc-series { stroke: var(--k-ink-1, #b6c0cb); fill: var(--k-ink-1, #b6c0cb); }
+.keel-curve .kc-series.kc-line, .keel-curve .kc-series.kc-fit { fill: none; }</style>
+<rect class="kc-bg" x="0" y="0" width="1080" height="1510"/>
+<text class="kc-eyebrow" x="32" y="44">CRYSTALLIZATION CURVE</text>
+<text class="kc-h1" x="32" y="66">15 sequential runs · 345 nodes judged of 1838 gathered · 124 anchored</text>
+<text class="kc-warn" x="32" y="88">Keel corpus — 15 repositories, 2026-07-24 — measured corpus (declared on the command line)</text>
+<rect class="kc-panel" x="32" y="114" width="492" height="208" rx="6"/>
+<text class="kc-panel-title" x="46" y="136">estimated tokens per node</text>
+<text class="kc-axis" x="46" y="151">estimated tokens / judged node</text>
+<line class="kc-grid" x1="96" y1="292.0" x2="508" y2="292.0"/>
+<text class="kc-tick kc-tick--y" x="88" y="295.5">0</text>
+<line class="kc-grid" x1="96" y1="226.0" x2="508" y2="226.0"/>
+<text class="kc-tick kc-tick--y" x="88" y="229.5">300</text>
+<line class="kc-grid" x1="96" y1="160.0" x2="508" y2="160.0"/>
+<text class="kc-tick kc-tick--y" x="88" y="163.5">600</text>
+<line class="kc-fit kc-accent" x1="96.0" y1="195.8" x2="508.0" y2="243.8"/>
+<polyline class="kc-line kc-accent" points="96.0,182.5 125.4,210.8 154.9,204.4 184.3,201.9 213.7,247.1 243.1,208.9 272.6,161.7 302.0,250.4 331.4,239.2 360.9,228.2 390.3,202.1 419.7,233.6 449.1,222.5 478.6,223.7 508.0,280.3"/>
+<rect class="kc-pt kc-accent" x="92.5" y="179.0" width="7" height="7" rx="2"><title>run 0 · keel · estimated tokens per node = 498 · judged 25 of 32 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="121.9" y="207.3" width="7" height="7" rx="2"><title>run 1 · anthropic-sdk-python · estimated tokens per node = 369 · judged 25 of 41 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="151.4" y="200.9" width="7" height="7" rx="2"><title>run 2 · openai-python · estimated tokens per node = 398 · judged 25 of 95 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="180.8" y="198.4" width="7" height="7" rx="2"><title>run 3 · vercel-ai · estimated tokens per node = 410 · judged 25 of 1014 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="210.2" y="243.6" width="7" height="7" rx="2"><title>run 4 · aider · estimated tokens per node = 204 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="239.6" y="205.4" width="7" height="7" rx="2"><title>run 5 · browser-use · estimated tokens per node = 378 · judged 25 of 104 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="269.1" y="158.2" width="7" height="7" rx="2"><title>run 6 · mcp-python-sdk · estimated tokens per node = 592 · judged 25 of 121 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="298.5" y="246.9" width="7" height="7" rx="2"><title>run 7 · simonw-llm · estimated tokens per node = 189 · judged 25 of 38 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="327.9" y="235.7" width="7" height="7" rx="2"><title>run 8 · tiktoken · estimated tokens per node = 240</title></rect>
+<rect class="kc-pt kc-accent" x="357.4" y="224.7" width="7" height="7" rx="2"><title>run 9 · requests · estimated tokens per node = 290 · judged 25 of 106 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="386.8" y="198.6" width="7" height="7" rx="2"><title>run 10 · flask · estimated tokens per node = 408 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="416.2" y="230.1" width="7" height="7" rx="2"><title>run 11 · sinatra · estimated tokens per node = 265 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="445.6" y="219.0" width="7" height="7" rx="2"><title>run 12 · commander-js · estimated tokens per node = 316</title></rect>
+<rect class="kc-pt kc-accent" x="475.1" y="220.2" width="7" height="7" rx="2"><title>run 13 · anthropic-quickstarts · estimated tokens per node = 310 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-accent" x="504.5" y="276.8" width="7" height="7" rx="2"><title>run 14 · tiktoken · estimated tokens per node = 53</title></rect>
+<text class="kc-tick" x="96.0" y="308">0*</text>
+<text class="kc-tick" x="125.4" y="308">1*</text>
+<text class="kc-tick" x="154.9" y="308">2*</text>
+<text class="kc-tick" x="184.3" y="308">3*</text>
+<text class="kc-tick" x="213.7" y="308">4*</text>
+<text class="kc-tick" x="243.1" y="308">5*</text>
+<text class="kc-tick" x="272.6" y="308">6*</text>
+<text class="kc-tick" x="302.0" y="308">7*</text>
+<text class="kc-tick" x="331.4" y="308">8</text>
+<text class="kc-tick" x="360.9" y="308">9*</text>
+<text class="kc-tick" x="390.3" y="308">10*</text>
+<text class="kc-tick" x="419.7" y="308">11*</text>
+<text class="kc-tick" x="449.1" y="308">12</text>
+<text class="kc-tick" x="478.6" y="308">13*</text>
+<text class="kc-tick" x="508.0" y="308">14</text>
+<rect class="kc-panel" x="556" y="114" width="492" height="208" rx="6"/>
+<text class="kc-panel-title" x="570" y="136">seconds per node</text>
+<text class="kc-axis" x="570" y="151">measured s / judged node</text>
+<line class="kc-grid" x1="620" y1="292.0" x2="1032" y2="292.0"/>
+<text class="kc-tick kc-tick--y" x="612" y="295.5">0.0</text>
+<line class="kc-grid" x1="620" y1="226.0" x2="1032" y2="226.0"/>
+<text class="kc-tick kc-tick--y" x="612" y="229.5">60.0</text>
+<line class="kc-grid" x1="620" y1="160.0" x2="1032" y2="160.0"/>
+<text class="kc-tick kc-tick--y" x="612" y="163.5">120.0</text>
+<line class="kc-fit kc-series" x1="620.0" y1="259.1" x2="1032.0" y2="276.7"/>
+<polyline class="kc-line kc-series" points="620.0,291.9 649.4,274.6 678.9,275.0 708.3,175.6 737.7,268.6 767.1,268.1 796.6,269.8 826.0,279.1 855.4,265.9 884.9,273.6 914.3,269.4 943.7,273.4 973.1,271.4 1002.6,269.5 1032.0,291.9"/>
+<rect class="kc-pt kc-series" x="616.5" y="288.4" width="7" height="7" rx="2"><title>run 0 · keel · seconds per node = 0.1 · judged 25 of 32 gathered</title></rect>
+<rect class="kc-pt kc-series" x="645.9" y="271.1" width="7" height="7" rx="2"><title>run 1 · anthropic-sdk-python · seconds per node = 15.8 · judged 25 of 41 gathered</title></rect>
+<rect class="kc-pt kc-series" x="675.4" y="271.5" width="7" height="7" rx="2"><title>run 2 · openai-python · seconds per node = 15.4 · judged 25 of 95 gathered</title></rect>
+<rect class="kc-pt kc-series" x="704.8" y="172.1" width="7" height="7" rx="2"><title>run 3 · vercel-ai · seconds per node = 105.9 · judged 25 of 1014 gathered</title></rect>
+<rect class="kc-pt kc-series" x="734.2" y="265.1" width="7" height="7" rx="2"><title>run 4 · aider · seconds per node = 21.3 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-series" x="763.6" y="264.6" width="7" height="7" rx="2"><title>run 5 · browser-use · seconds per node = 21.7 · judged 25 of 104 gathered</title></rect>
+<rect class="kc-pt kc-series" x="793.1" y="266.3" width="7" height="7" rx="2"><title>run 6 · mcp-python-sdk · seconds per node = 20.1 · judged 25 of 121 gathered</title></rect>
+<rect class="kc-pt kc-series" x="822.5" y="275.6" width="7" height="7" rx="2"><title>run 7 · simonw-llm · seconds per node = 11.8 · judged 25 of 38 gathered</title></rect>
+<rect class="kc-pt kc-series" x="851.9" y="262.4" width="7" height="7" rx="2"><title>run 8 · tiktoken · seconds per node = 23.7</title></rect>
+<rect class="kc-pt kc-series" x="881.4" y="270.1" width="7" height="7" rx="2"><title>run 9 · requests · seconds per node = 16.8 · judged 25 of 106 gathered</title></rect>
+<rect class="kc-pt kc-series" x="910.8" y="265.9" width="7" height="7" rx="2"><title>run 10 · flask · seconds per node = 20.5 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-series" x="940.2" y="269.9" width="7" height="7" rx="2"><title>run 11 · sinatra · seconds per node = 16.9 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-series" x="969.6" y="267.9" width="7" height="7" rx="2"><title>run 12 · commander-js · seconds per node = 18.7</title></rect>
+<rect class="kc-pt kc-series" x="999.1" y="266.0" width="7" height="7" rx="2"><title>run 13 · anthropic-quickstarts · seconds per node = 20.4 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-series" x="1028.5" y="288.4" width="7" height="7" rx="2"><title>run 14 · tiktoken · seconds per node = 0.1</title></rect>
+<text class="kc-tick" x="620.0" y="308">0*</text>
+<text class="kc-tick" x="649.4" y="308">1*</text>
+<text class="kc-tick" x="678.9" y="308">2*</text>
+<text class="kc-tick" x="708.3" y="308">3*</text>
+<text class="kc-tick" x="737.7" y="308">4*</text>
+<text class="kc-tick" x="767.1" y="308">5*</text>
+<text class="kc-tick" x="796.6" y="308">6*</text>
+<text class="kc-tick" x="826.0" y="308">7*</text>
+<text class="kc-tick" x="855.4" y="308">8</text>
+<text class="kc-tick" x="884.9" y="308">9*</text>
+<text class="kc-tick" x="914.3" y="308">10*</text>
+<text class="kc-tick" x="943.7" y="308">11*</text>
+<text class="kc-tick" x="973.1" y="308">12</text>
+<text class="kc-tick" x="1002.6" y="308">13*</text>
+<text class="kc-tick" x="1032.0" y="308">14</text>
+<rect class="kc-panel" x="32" y="342" width="492" height="208" rx="6"/>
+<text class="kc-panel-title" x="46" y="364">probe-decided share</text>
+<text class="kc-axis" x="46" y="379">measured share of decided nodes</text>
+<line class="kc-grid" x1="96" y1="520.0" x2="508" y2="520.0"/>
+<text class="kc-tick kc-tick--y" x="88" y="523.5">0.00</text>
+<line class="kc-grid" x1="96" y1="454.0" x2="508" y2="454.0"/>
+<text class="kc-tick kc-tick--y" x="88" y="457.5">0.50</text>
+<line class="kc-grid" x1="96" y1="388.0" x2="508" y2="388.0"/>
+<text class="kc-tick kc-tick--y" x="88" y="391.5">1.00</text>
+<line class="kc-fit kc-series" x1="96.0" y1="509.7" x2="508.0" y2="455.5"/>
+<polyline class="kc-line kc-series" points="96.0,520.0 125.4,520.0 154.9,498.9 184.3,509.4 213.7,446.1 243.1,477.8 272.6,520.0 302.0,446.1 331.4,443.0 360.9,483.0 390.3,520.0 419.7,483.0 449.1,494.9 478.6,488.3 508.0,388.0"/>
+<rect class="kc-pt kc-series" x="92.5" y="516.5" width="7" height="7" rx="2"><title>run 0 · keel · probe-decided share = 0.00 · judged 25 of 32 gathered</title></rect>
+<rect class="kc-pt kc-series" x="121.9" y="516.5" width="7" height="7" rx="2"><title>run 1 · anthropic-sdk-python · probe-decided share = 0.00 · judged 25 of 41 gathered</title></rect>
+<rect class="kc-pt kc-series" x="151.4" y="495.4" width="7" height="7" rx="2"><title>run 2 · openai-python · probe-decided share = 0.16 · judged 25 of 95 gathered</title></rect>
+<rect class="kc-pt kc-series" x="180.8" y="505.9" width="7" height="7" rx="2"><title>run 3 · vercel-ai · probe-decided share = 0.08 · judged 25 of 1014 gathered</title></rect>
+<rect class="kc-pt kc-series" x="210.2" y="442.6" width="7" height="7" rx="2"><title>run 4 · aider · probe-decided share = 0.56 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-series" x="239.6" y="474.3" width="7" height="7" rx="2"><title>run 5 · browser-use · probe-decided share = 0.32 · judged 25 of 104 gathered</title></rect>
+<rect class="kc-pt kc-series" x="269.1" y="516.5" width="7" height="7" rx="2"><title>run 6 · mcp-python-sdk · probe-decided share = 0.00 · judged 25 of 121 gathered</title></rect>
+<rect class="kc-pt kc-series" x="298.5" y="442.6" width="7" height="7" rx="2"><title>run 7 · simonw-llm · probe-decided share = 0.56 · judged 25 of 38 gathered</title></rect>
+<rect class="kc-pt kc-series" x="327.9" y="439.5" width="7" height="7" rx="2"><title>run 8 · tiktoken · probe-decided share = 0.58</title></rect>
+<rect class="kc-pt kc-series" x="357.4" y="479.5" width="7" height="7" rx="2"><title>run 9 · requests · probe-decided share = 0.28 · judged 25 of 106 gathered</title></rect>
+<rect class="kc-pt kc-series" x="386.8" y="516.5" width="7" height="7" rx="2"><title>run 10 · flask · probe-decided share = 0.00 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-series" x="416.2" y="479.5" width="7" height="7" rx="2"><title>run 11 · sinatra · probe-decided share = 0.28 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-series" x="445.6" y="491.4" width="7" height="7" rx="2"><title>run 12 · commander-js · probe-decided share = 0.19</title></rect>
+<rect class="kc-pt kc-series" x="475.1" y="484.8" width="7" height="7" rx="2"><title>run 13 · anthropic-quickstarts · probe-decided share = 0.24 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-series" x="504.5" y="384.5" width="7" height="7" rx="2"><title>run 14 · tiktoken · probe-decided share = 1.00</title></rect>
+<text class="kc-tick" x="96.0" y="536">0*</text>
+<text class="kc-tick" x="125.4" y="536">1*</text>
+<text class="kc-tick" x="154.9" y="536">2*</text>
+<text class="kc-tick" x="184.3" y="536">3*</text>
+<text class="kc-tick" x="213.7" y="536">4*</text>
+<text class="kc-tick" x="243.1" y="536">5*</text>
+<text class="kc-tick" x="272.6" y="536">6*</text>
+<text class="kc-tick" x="302.0" y="536">7*</text>
+<text class="kc-tick" x="331.4" y="536">8</text>
+<text class="kc-tick" x="360.9" y="536">9*</text>
+<text class="kc-tick" x="390.3" y="536">10*</text>
+<text class="kc-tick" x="419.7" y="536">11*</text>
+<text class="kc-tick" x="449.1" y="536">12</text>
+<text class="kc-tick" x="478.6" y="536">13*</text>
+<text class="kc-tick" x="508.0" y="536">14</text>
+<rect class="kc-panel" x="556" y="342" width="492" height="208" rx="6"/>
+<text class="kc-panel-title" x="570" y="364">probe library size</text>
+<text class="kc-axis" x="570" y="379">measured probes in library</text>
+<line class="kc-grid" x1="620" y1="520.0" x2="1032" y2="520.0"/>
+<text class="kc-tick kc-tick--y" x="612" y="523.5">0</text>
+<line class="kc-grid" x1="620" y1="454.0" x2="1032" y2="454.0"/>
+<text class="kc-tick kc-tick--y" x="612" y="457.5">15</text>
+<line class="kc-grid" x1="620" y1="388.0" x2="1032" y2="388.0"/>
+<text class="kc-tick kc-tick--y" x="612" y="391.5">30</text>
+<line class="kc-fit kc-series" x1="620.0" y1="515.8" x2="1032.0" y2="388.7"/>
+<polyline class="kc-line kc-series" points="620.0,520.0 649.4,506.8 678.9,498.0 708.3,484.8 737.7,476.0 767.1,467.2 796.6,462.8 826.0,454.0 855.4,445.2 884.9,436.4 914.3,423.2 943.7,418.8 973.1,405.6 1002.6,392.4 1032.0,392.4"/>
+<rect class="kc-pt kc-series" x="616.5" y="516.5" width="7" height="7" rx="2"><title>run 0 · keel · probe library size = 0 · judged 25 of 32 gathered</title></rect>
+<rect class="kc-pt kc-series" x="645.9" y="503.3" width="7" height="7" rx="2"><title>run 1 · anthropic-sdk-python · probe library size = 3 · judged 25 of 41 gathered</title></rect>
+<rect class="kc-pt kc-series" x="675.4" y="494.5" width="7" height="7" rx="2"><title>run 2 · openai-python · probe library size = 5 · judged 25 of 95 gathered</title></rect>
+<rect class="kc-pt kc-series" x="704.8" y="481.3" width="7" height="7" rx="2"><title>run 3 · vercel-ai · probe library size = 8 · judged 25 of 1014 gathered</title></rect>
+<rect class="kc-pt kc-series" x="734.2" y="472.5" width="7" height="7" rx="2"><title>run 4 · aider · probe library size = 10 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-series" x="763.6" y="463.7" width="7" height="7" rx="2"><title>run 5 · browser-use · probe library size = 12 · judged 25 of 104 gathered</title></rect>
+<rect class="kc-pt kc-series" x="793.1" y="459.3" width="7" height="7" rx="2"><title>run 6 · mcp-python-sdk · probe library size = 13 · judged 25 of 121 gathered</title></rect>
+<rect class="kc-pt kc-series" x="822.5" y="450.5" width="7" height="7" rx="2"><title>run 7 · simonw-llm · probe library size = 15 · judged 25 of 38 gathered</title></rect>
+<rect class="kc-pt kc-series" x="851.9" y="441.7" width="7" height="7" rx="2"><title>run 8 · tiktoken · probe library size = 17</title></rect>
+<rect class="kc-pt kc-series" x="881.4" y="432.9" width="7" height="7" rx="2"><title>run 9 · requests · probe library size = 19 · judged 25 of 106 gathered</title></rect>
+<rect class="kc-pt kc-series" x="910.8" y="419.7" width="7" height="7" rx="2"><title>run 10 · flask · probe library size = 22 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-series" x="940.2" y="415.3" width="7" height="7" rx="2"><title>run 11 · sinatra · probe library size = 23 · judged 25 of 59 gathered</title></rect>
+<rect class="kc-pt kc-series" x="969.6" y="402.1" width="7" height="7" rx="2"><title>run 12 · commander-js · probe library size = 26</title></rect>
+<rect class="kc-pt kc-series" x="999.1" y="388.9" width="7" height="7" rx="2"><title>run 13 · anthropic-quickstarts · probe library size = 29 · judged 25 of 62 gathered</title></rect>
+<rect class="kc-pt kc-series" x="1028.5" y="388.9" width="7" height="7" rx="2"><title>run 14 · tiktoken · probe library size = 29</title></rect>
+<text class="kc-tick" x="620.0" y="536">0*</text>
+<text class="kc-tick" x="649.4" y="536">1*</text>
+<text class="kc-tick" x="678.9" y="536">2*</text>
+<text class="kc-tick" x="708.3" y="536">3*</text>
+<text class="kc-tick" x="737.7" y="536">4*</text>
+<text class="kc-tick" x="767.1" y="536">5*</text>
+<text class="kc-tick" x="796.6" y="536">6*</text>
+<text class="kc-tick" x="826.0" y="536">7*</text>
+<text class="kc-tick" x="855.4" y="536">8</text>
+<text class="kc-tick" x="884.9" y="536">9*</text>
+<text class="kc-tick" x="914.3" y="536">10*</text>
+<text class="kc-tick" x="943.7" y="536">11*</text>
+<text class="kc-tick" x="973.1" y="536">12</text>
+<text class="kc-tick" x="1002.6" y="536">13*</text>
+<text class="kc-tick" x="1032.0" y="536">14</text>
+<text class="kc-axis" x="32" y="576">x axis: run index in the recorded corpus order (listed below). Squares are the raw per-run values; the dashed line is an</text>
+<text class="kc-axis" x="32" y="591">ordinary-least-squares fit and is never shown without them. The fit is clipped to the panel, and withheld entirely (with the</text>
+<text class="kc-axis" x="32" y="606">panel saying so) where a straight line would predict values the points cannot take — R^2 for every fit is in the trend notes</text>
+<text class="kc-axis" x="32" y="621">below. * on run 0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13 = judged fewer nodes than gathered; per-node values are per JUDGED node.</text>
+<text class="kc-h2" x="32" y="648">Coverage (judged)</text>
+<text class="kc-mono" x="32" y="668">ci_step 224 · script 64 · test_target 46 · review_gate 10 · deploy_gate 1</text>
+<text class="kc-h2" x="32" y="696">Trend</text>
+<text class="kc-note" x="32" y="716">estimated tokens per node: falls — total fitted change -66.5% of the mean across 15 runs (R^2 0.28, so the line explains less</text>
+<text class="kc-note" x="32" y="732">than half the variance — read the raw squares). raw first 498 -&gt; last 53.</text>
+<text class="kc-note" x="32" y="748">seconds per node: falls — total fitted change -72.9% of the mean across 15 runs (R^2 0.04, so the line explains less than half</text>
+<text class="kc-note" x="32" y="764">the variance — read the raw squares). raw first 0.1 -&gt; last 0.1.</text>
+<text class="kc-note" x="32" y="780">probe-decided share: rises — total fitted change 144.9% of the mean across 15 runs (R^2 0.21, so the line explains less than</text>
+<text class="kc-note" x="32" y="796">half the variance — read the raw squares). raw first 0.00 -&gt; last 1.00.</text>
+<text class="kc-note" x="32" y="812">probe library size: rises — total fitted change 187.7% of the mean across 15 runs (R^2 0.99). raw first 0 -&gt; last 29.</text>
+<text class="kc-h2" x="32" y="840">Run order</text>
+<text class="kc-note" x="32" y="860">run order derived from Report.generatedAt (ascending, filename as tiebreak) — no order.json manifest present</text>
+<text class="kc-mono" x="32" y="876">0 keel -&gt; 1 anthropic-sdk-python -&gt; 2 openai-python -&gt; 3 vercel-ai -&gt; 4 aider -&gt; 5 browser-use -&gt; 6</text>
+<text class="kc-mono" x="32" y="892">mcp-python-sdk -&gt; 7 simonw-llm -&gt; 8 tiktoken -&gt; 9 requests -&gt; 10 flask -&gt; 11 sinatra -&gt; 12 commander-js -&gt; 13</text>
+<text class="kc-mono" x="32" y="908">anthropic-quickstarts -&gt; 14 tiktoken</text>
+<text class="kc-h2" x="32" y="936">Shuffle check</text>
+<text class="kc-note" x="32" y="956">shuffle check INCOMPLETE — the curve direction ran, the ratio direction did not</text>
+<text class="kc-note" x="32" y="972">Permutation (400 draws, seed 20260724): median |delta normalized slope| 0.633, 92% of draws move it by &gt;= 0.15. A permutation</text>
+<text class="kc-note" x="32" y="988">reorders ALREADY-RECORDED runs; it cannot reproduce what a genuine re-run in a different order would have cost, because the</text>
+<text class="kc-note" x="32" y="1004">probe library would have accumulated differently. It is a sanity signal on order-dependence, never a substitute for the</text>
+<text class="kc-note" x="32" y="1020">empirical re-run.</text>
+<text class="kc-warn" x="32" y="1036">Ratio stability under shuffle was NOT checked: no re-run supplied (--shuffled) and none declared in corpus.meta.json. Permuting</text>
+<text class="kc-warn" x="32" y="1052">recorded runs cannot move a per-target ratio, so the permutation result below says nothing about it. Supply a re-run with</text>
+<text class="kc-warn" x="32" y="1068">--shuffled &lt;dir&gt;.</text>
+<text class="kc-h2" x="32" y="1096">Disclosures</text>
+<text class="kc-note" x="32" y="1116">- Skipped 3 file(s) that are not usable run reports: corpus-summary.json (no string &quot;target&quot;); curve.json (no string &quot;target&quot;);</text>
+<text class="kc-note" x="32" y="1132">keel.bindings.json (no &quot;nodes&quot; array).</text>
+<text class="kc-note" x="32" y="1148">- Run 0 (keel) judged 25 of 32 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1164">- Run 1 (anthropic-sdk-python) judged 25 of 41 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1180">- Run 2 (openai-python) judged 25 of 95 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1196">- Run 3 (vercel-ai) judged 25 of 1014 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1212">- Run 4 (aider) judged 25 of 62 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1228">- Run 5 (browser-use) judged 25 of 104 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1244">- Run 6 (mcp-python-sdk) judged 25 of 121 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1260">- Run 7 (simonw-llm) judged 25 of 38 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1276">- Run 9 (requests) judged 25 of 106 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1292">- Run 10 (flask) judged 25 of 59 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1308">- Run 11 (sinatra) judged 25 of 59 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1324">- Run 13 (anthropic-quickstarts) judged 25 of 62 gathered nodes — a cap. Per-node cost below is per JUDGED node.</text>
+<text class="kc-note" x="32" y="1340">- Run 14 (tiktoken): decidedByProbe + decidedByAgent = 10 but nodesSampled = 12. Probe-decided share uses the decided total</text>
+<text class="kc-note" x="32" y="1356">(10).</text>
+<text class="kc-note" x="32" y="1372">- Provenance &quot;measured&quot; was declared on the COMMAND LINE (--provenance), not in reports/corpus.meta.json.</text>
+<text class="kc-note" x="32" y="1388">The declaration therefore lives in the invocation and is only as trustworthy as the run sheet that records it.</text>
+<text class="kc-note" x="32" y="1404">- Token counts are ESTIMATES in 15 of 15 run(s) (RunEconomics.tokensEstimated). No API exposes session token usage to a skill,</text>
+<text class="kc-note" x="32" y="1420">so the token axis reads &quot;estimated tokens&quot; and nothing here claims a measured token count.</text>
+<line class="kc-rule" x1="32" y1="1448" x2="1048" y2="1448"/>
+<text class="kc-scope" x="32" y="1466">Scope. Keel measures the shape of verification, not its quality. A repo can be 100% anchored with terrible tests. Anchoring says</text>
+<text class="kc-scope" x="32" y="1482">the signal comes from outside; it does not say the signal is sufficient.</text>
+</svg>

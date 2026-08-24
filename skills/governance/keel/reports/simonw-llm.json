@@ -1,0 +1,606 @@
+{
+  "target": "simonw-llm",
+  "revision": "0392226e6630746ef51ffd309c2bee6a5f72b58e",
+  "generatedAt": "2026-07-25T03:00:47.827Z",
+  "nodes": [
+    {
+      "id": "pytest.ini#pytest-ini",
+      "kind": "test_target",
+      "name": "pytest config (pytest.ini)",
+      "source": "pytest.ini",
+      "raw": "[pytest]\nasyncio_default_fixture_loop_scope = function"
+    },
+    {
+      "id": "tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "tests/conftest.py",
+      "raw": "import importlib.metadata\nimport pytest\nimport sqlite_utils\nimport json\nimport sqlite3\nimport llm\nimport llm_echo\nfrom llm.plugins import pm\nfrom pydantic import Field\nfrom pytest_httpx import IteratorStream\nfrom typing import Optional\n\n\ndef pytest_configure(config):\n    import sys\n\n    sys._called_from_test = True\n\n\ndef pytest_report_header(config):\n    conn = sqlite3.connect(\":memory:\")\n    version = conn.execute(\"select sqlite_version()\").fetchone()[0]\n    conn.close()\n    sqlite_utils_version = importlib.metadata.version(\"sqlite-utils\")\n    return [\n        \"SQLite: {}\".format(version),\n        \"sqlite-utils: {}\".format(sqlite_utils_version),\n    ]\n\n\n@pytest.fixture\ndef user_path(tmpdir):\n    dir = tmpdir / \"llm.datasette.io\"\n    dir.mkdir()\n    return dir\n\n\n@pytest.fixture\ndef logs_db(user_path):\n    return sqlite_utils.Database(str(user_path / \"logs.db\"))\n\n\n@pytest.fixture\ndef user_path_with_embeddings(user_path):\n    path = str(user_path / \"embeddings.db\")\n    db = sqlite_utils.Database(path)\n    collection = llm.Collection(\"demo\", db, model_id=\"embed-demo\")\n    collection.embed(\"1\", \"hello world\", store=True)\n    collection.embed(\"2\", \"goodbye world\", store=True)\n\n\n@pytest.fixture\ndef templates_path(user_path):\n    dir = user_path / \"templates\"\n    dir.mkdir()\n    return dir\n\n\n@pytest.fixture(autouse=True)\ndef env_setup(monkeypatch, user_path):\n    monkeypatch.setenv(\"LLM_USER_PATH\", str(user_path))\n\n\nclass MockModel(llm.Model):\n    model_id = \"mock\"\n    attachment_types = {\"image/png\", \"audio/wav\"}\n    can_stream = True\n    supports_schema = True\n    supports_tools = True\n\n    class Options(llm.Options):\n        max_tokens: Optional[int] = Field(\n            description=\"Maximum number of tokens to generate.\", default=None\n        )\n\n    def __init__(self):\n        self.history = []\n        self._queue = []\n        self.resolved_model_name = None\n\n    def enqueue(self, messages):\n        assert isinstance(messages, list)\n        self._queue.append(messages)\n\n    def execute(self, prompt, stream, response, conversation):\n        self.history.append((prompt, stream, response, conversation))\n        gathered = []\n        while True:\n            try:\n                messages = self._queue.pop(0)\n                for message in messages:\n                    gathered.append(message)\n                    yield message\n                break\n            except IndexError:\n                break\n        response.set_usage(\n            input=len((prompt.prompt or \"\").split()), output=len(gathered)\n        )\n        if self.resolved_model_name is not None:\n            response.set_resolved_model(self.resolved_model_name)\n\n\nclass MockKeyModel(llm.KeyModel):\n    model_id = \"mock_key\"\n    needs_key = \"mock\"\n\n    def execute(self, prompt, stream, response, conversation, key):\n        return [f\"key: {key}\"]\n\n\nclass MockAsyncKeyModel(llm.AsyncKeyModel):\n    model_id = \"mock_key\"\n    needs_key = \"mock\"\n\n    async def execute(self, prompt, stream, response, conversation, key):\n        yield f\"async, key: {key}\"\n\n\nclass AsyncMockModel(llm.AsyncModel):\n    model_id = \"mock\"\n    can_stream = True\n    supports_schema = True\n\n    def __init__(self):\n        self.history = []\n        self._queue = []\n        self.resolved_model_name = None\n\n    def enqueue(self, messages):\n        assert isinstance(messages, list)\n        self._queue.append(messages)\n\n    async def execute(self, prompt, stream, response, conversation):\n        self.history.append((prompt, stream, response, conversation))\n        gathered = []\n        while True:\n            try:\n                messages = self._queue.pop(0)\n                for message in messages:\n                    gathered.append(message)\n                    yield message\n                break\n            except IndexError:\n                break\n        response.set_usage(\n            input=len((prompt.prompt or \"\").split()), output=len(gathered)\n        )\n        if self.resolved_model_name is not None:\n     "
+    },
+    {
+      "id": "docs/Makefile#help",
+      "kind": "script",
+      "name": "help",
+      "source": "docs/Makefile:12",
+      "raw": "help:\n\t@$(SPHINXBUILD) -M help \"$(SOURCEDIR)\" \"$(BUILDDIR)\" $(SPHINXOPTS) $(O)"
+    },
+    {
+      "id": "docs/Makefile#livehtml",
+      "kind": "script",
+      "name": "livehtml",
+      "source": "docs/Makefile:22",
+      "raw": "livehtml:\n\tsphinx-autobuild -b html \"$(SOURCEDIR)\" \"$(BUILDDIR)\" $(SPHINXOPTS) $(0)"
+    },
+    {
+      "id": "ruff.toml#ruff-toml",
+      "kind": "ci_step",
+      "name": "linter config (ruff.toml)",
+      "source": "ruff.toml",
+      "raw": "line-length = 160\n"
+    },
+    {
+      "id": ".github/workflows/publish.yml#17-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/publish.yml:17",
+      "raw": "    - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#18-set-up-python-matrix-python-version",
+      "kind": "ci_step",
+      "name": "Set up Python ${{ matrix.python-version }}",
+      "source": ".github/workflows/publish.yml:18",
+      "raw": "    - name: Set up Python ${{ matrix.python-version }}\n      uses: actions/setup-python@v6\n      with:\n        python-version: ${{ matrix.python-version }}\n        cache: pip\n        cache-dependency-path: pyproject.toml",
+      "hints": {
+        "action": "actions/setup-python@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#24-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/publish.yml:24",
+      "raw": "    - name: Install dependencies\n      run: |\n        pip install . --group dev"
+    },
+    {
+      "id": ".github/workflows/publish.yml#27-run-tests",
+      "kind": "ci_step",
+      "name": "Run tests",
+      "source": ".github/workflows/publish.yml:27",
+      "raw": "    - name: Run tests\n      run: |\n        pytest"
+    },
+    {
+      "id": ".github/workflows/publish.yml#37-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/publish.yml:37",
+      "raw": "    - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#38-set-up-python",
+      "kind": "ci_step",
+      "name": "Set up Python",
+      "source": ".github/workflows/publish.yml:38",
+      "raw": "    - name: Set up Python\n      uses: actions/setup-python@v6\n      with:\n        python-version: '3.13'\n        cache: pip\n        cache-dependency-path: pyproject.toml",
+      "hints": {
+        "action": "actions/setup-python@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/publish.yml#44-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/publish.yml:44",
+      "raw": "    - name: Install dependencies\n      run: |\n        pip install setuptools wheel build"
+    },
+    {
+      "id": ".github/workflows/publish.yml#47-build",
+      "kind": "ci_step",
+      "name": "Build",
+      "source": ".github/workflows/publish.yml:47",
+      "raw": "    - name: Build\n      run: |\n        python -m build"
+    },
+    {
+      "id": ".github/workflows/publish.yml#50-publish",
+      "kind": "ci_step",
+      "name": "Publish",
+      "source": ".github/workflows/publish.yml:50",
+      "raw": "    - name: Publish\n      uses: pypa/gh-action-pypi-publish@release/v1",
+      "hints": {
+        "action": "pypa/gh-action-pypi-publish@release/v1"
+      }
+    },
+    {
+      "id": ".github/workflows/stable-docs.yml#17-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout repository",
+      "source": ".github/workflows/stable-docs.yml:17",
+      "raw": "    - name: Checkout repository\n      uses: actions/checkout@v6\n      with:\n        fetch-depth: 0  # We need all commits to find docs/ changes",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/stable-docs.yml#21-set-up-git-user",
+      "kind": "ci_step",
+      "name": "Set up Git user",
+      "source": ".github/workflows/stable-docs.yml:21",
+      "raw": "    - name: Set up Git user\n      run: |\n        git config user.name \"Automated\"\n        git config user.email \"actions@users.noreply.github.com\""
+    },
+    {
+      "id": ".github/workflows/stable-docs.yml#25-create-stable-branch-if-it-does-not-yet-exist",
+      "kind": "ci_step",
+      "name": "Create stable branch if it does not yet exist",
+      "source": ".github/workflows/stable-docs.yml:25",
+      "raw": "    - name: Create stable branch if it does not yet exist\n      run: |\n        if ! git ls-remote --heads origin stable | grep stable; then\n          git checkout -b stable\n          # If there are any releases, copy docs/ in from most recent\n          LATEST_RELEASE=$(git tag | sort -Vr | head -n1)\n          if [ -n \"$LATEST_RELEASE\" ]; then\n            rm -rf docs/\n            git checkout $LATEST_RELEASE -- docs/\n          fi\n          git commit -m \"Populate docs/ from $LATEST_RELEASE\" || echo \"No changes\"\n          git push -u origin stable\n        fi"
+    },
+    {
+      "id": ".github/workflows/stable-docs.yml#38-handle-release",
+      "kind": "ci_step",
+      "name": "Handle Release",
+      "source": ".github/workflows/stable-docs.yml:38",
+      "raw": "    - name: Handle Release\n      if: github.event_name == 'release' && !github.event.release.prerelease\n      run: |\n        git fetch --all\n        git checkout stable\n        git reset --hard ${GITHUB_REF#refs/tags/}\n        git push origin stable --force"
+    },
+    {
+      "id": ".github/workflows/stable-docs.yml#45-handle-commit-to-main",
+      "kind": "ci_step",
+      "name": "Handle Commit to Main",
+      "source": ".github/workflows/stable-docs.yml:45",
+      "raw": "    - name: Handle Commit to Main\n      if: contains(github.event.head_commit.message, '!stable-docs')\n      run: |\n        git fetch origin\n        git checkout -b stable origin/stable\n        # Get the list of modified files in docs/ from the current commit\n        FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} -- docs/)\n        # Check if the list of files is non-empty\n        if [[ -n \"$FILES\" ]]; then\n          # Checkout those files to the stable branch to over-write with their contents\n          for FILE in $FILES; do\n            git checkout ${{ github.sha }} -- $FILE\n          done\n          git add docs/\n          git commit -m \"Doc changes from ${{ github.sha }}\"\n          git push origin stable\n        else\n          echo \"No changes to docs/ in this commit.\"\n          exit 0\n        fi"
+    },
+    {
+      "id": ".github/workflows/test.yml#21-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/test.yml:21",
+      "raw": "    - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/test.yml#22-set-up-python-matrix-python-version",
+      "kind": "ci_step",
+      "name": "Set up Python ${{ matrix.python-version }}",
+      "source": ".github/workflows/test.yml:22",
+      "raw": "    - name: Set up Python ${{ matrix.python-version }}\n      uses: actions/setup-python@v6\n      with:\n        python-version: ${{ matrix.python-version }}\n        cache: pip\n        cache-dependency-path: pyproject.toml",
+      "hints": {
+        "action": "actions/setup-python@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/test.yml#28-install-dependencies",
+      "kind": "ci_step",
+      "name": "Install dependencies",
+      "source": ".github/workflows/test.yml:28",
+      "raw": "    - name: Install dependencies\n      run: |\n        pip install . --group dev"
+    },
+    {
+      "id": ".github/workflows/test.yml#31-install-sqlite-utils-pre-release",
+      "kind": "ci_step",
+      "name": "Install sqlite-utils pre-release",
+      "source": ".github/workflows/test.yml:31",
+      "raw": "    - name: Install sqlite-utils pre-release\n      if: matrix.sqlite-utils-version != ''\n      run: |\n        pip install sqlite-utils==${{ matrix.sqlite-utils-version }}"
+    },
+    {
+      "id": ".github/workflows/test.yml#35-run-tests",
+      "kind": "ci_step",
+      "name": "Run tests",
+      "source": ".github/workflows/test.yml:35",
+      "raw": "    - name: Run tests\n      run: |\n        python -m pytest -vv"
+    },
+    {
+      "id": ".github/workflows/test.yml#38-check-if-cog-needs-to-be-run",
+      "kind": "ci_step",
+      "name": "Check if cog needs to be run",
+      "source": ".github/workflows/test.yml:38",
+      "raw": "    - name: Check if cog needs to be run\n      if: matrix.sqlite-utils-version == '4.0rc4'\n      run: |\n        cog --check \\\n          -p \"import sys, os; sys._called_from_test=True; os.environ['LLM_USER_PATH'] = '/tmp'\" \\\n          docs/**/*.md docs/*.md"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/publish.yml#17-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#18-set-up-python-matrix-python-version",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#24-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#27-run-tests",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the test runner process's exit code, produced by the language runtime executing the suite in the pipeline",
+        "actorCanWrite": false,
+        "argument": "The step invokes a language test runner directly, so the step's exit status IS the runtime's verdict on executing the committed test modules against the built artefact. A failing assertion, an uncaught exception, an import error or a crash cannot be persuaded to report green without changing the code or the tests. Documented limit, and it matters: the EXECUTION is anchored, the ORACLE is not — implementation and assertions are typically authored by the same people in the same repo, so a green run proves the code does what these tests say, not that the tests say the right thing. Whether the step blocks a merge additionally depends on the workflow's triggers, which this shape does not read."
+      },
+      "evidence": [
+        "the step's run command is a direct invocation of a language test runner, with no install/provisioning command and no failure-suppressing flag"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "probe",
+      "probeId": "direct-test-runner-invocation"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#37-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#38-set-up-python",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#44-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/stable-docs.yml#17-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/stable-docs.yml#21-set-up-git-user",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git writing two keys into the runner's global config file",
+        "actorCanWrite": null,
+        "argument": "`git config --global user.email/user.name` sets the identity later commits in this job will carry. It reads nothing from the repository and evaluates nothing about it; the only way it exits non-zero is if the runner's HOME is unwritable. The assertions in this workflow, such as they are, live in the generate and diff steps that follow."
+      },
+      "evidence": [
+        ".github/workflows/update-model-settings.yml:44-48 (git config --global user.email / user.name)",
+        ".github/workflows/update-model-settings.yml:114-125 ('Create branch and push as signed commit' — the consumer of that identity)"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "probe",
+      "probeId": "runner-git-identity-config"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#21-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#22-set-up-python-matrix-python-version",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a GitHub Actions provisioning action (repository checkout, toolchain setup, or dependency cache restore)",
+        "actorCanWrite": null,
+        "argument": "The step's whole effect is to put files or a toolchain on the runner so later steps have something to act on. It reads nothing about the repository's correctness and emits no pass/fail verdict about the artefact — a failure here means the runner could not fetch or install, not that the code is wrong. The check in such a job is whatever executes afterwards, so this edge must not enter the ratio in either direction."
+      },
+      "evidence": [
+        "the step body is a bare `uses:` of a checkout/setup/cache action with no command of its own"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "probe",
+      "probeId": "ci-provisioning-action"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#28-install-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#31-install-sqlite-utils-pre-release",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a package manager's dependency resolver populating an environment",
+        "actorCanWrite": null,
+        "argument": "The command installs declared dependencies so that later steps can run. Without a lockfile-freezing flag the resolver will refresh a stale lock rather than error, so the step cannot report a discrepancy between the manifest and the lock; its non-zero exits mean the network or the index failed, not that the repository is wrong. The assertion in such a job lives in whatever executes against the installed environment afterwards."
+      },
+      "evidence": [
+        "the run command is a bare dependency install with no --locked/--frozen equivalent"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "probe",
+      "probeId": "unfrozen-dependency-install"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#35-run-tests",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the test runner process's exit code, produced by the language runtime executing the suite in the pipeline",
+        "actorCanWrite": false,
+        "argument": "The step invokes a language test runner directly, so the step's exit status IS the runtime's verdict on executing the committed test modules against the built artefact. A failing assertion, an uncaught exception, an import error or a crash cannot be persuaded to report green without changing the code or the tests. Documented limit, and it matters: the EXECUTION is anchored, the ORACLE is not — implementation and assertions are typically authored by the same people in the same repo, so a green run proves the code does what these tests say, not that the tests say the right thing. Whether the step blocks a merge additionally depends on the workflow's triggers, which this shape does not read."
+      },
+      "evidence": [
+        "the step's run command is a direct invocation of a language test runner, with no install/provisioning command and no failure-suppressing flag"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "probe",
+      "probeId": "direct-test-runner-invocation"
+    },
+    {
+      "nodeId": "pytest.ini#pytest-ini",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "an ini file read by pytest at startup to set one asyncio fixture default",
+        "actorCanWrite": null,
+        "argument": "The whole file is `asyncio_default_fixture_loop_scope = function` — it selects an event-loop scope for async fixtures and declares no suite, no strictness flag, no failure threshold and no addopts. Nothing here can exit non-zero or block a merge; the edge that actually gates is `python -m pytest -vv` at .github/workflows/test.yml:35-37, gathered separately and judged on its own. Counting this file as a check as well would double-count that one edge."
+      },
+      "evidence": [
+        "pytest.ini:1-2",
+        ".github/workflows/test.yml:35-37 (the pytest invocation that actually gates)"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "tests/conftest.py#conftest-py",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "pytest fixture and plugin definitions loaded before any test runs",
+        "actorCanWrite": null,
+        "argument": "conftest.py contains only fixtures (`user_path`, `logs_db`, `collection`), mock model classes registered through pluggy, and canned httpx responses; the two `assert isinstance(messages, list)` lines are argument guards inside a test double's `enqueue`, not assertions about the product. It is loaded by, and cannot fail independently of, the `python -m pytest -vv` step at .github/workflows/test.yml:35-37 which is the edge that blocks the merge. Documented limit on THAT edge, recorded here because this file is what imposes it: every provider HTTP call in the suite is answered by hardcoded JSON written in this file (tests/conftest.py, `httpx_mock.add_response(... json={...})`), so the suite's oracle for third-party API behaviour is authored entirely inside the write boundary — execution is still honestly decided by the interpreter, the specification is not."
+      },
+      "evidence": [
+        "tests/conftest.py:1-502",
+        "tests/conftest.py:82 (assert inside MockModel.enqueue, a test double)",
+        ".github/workflows/test.yml:35-37"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "docs/Makefile#help",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "sphinx-build printing its own usage text to stdout",
+        "actorCanWrite": null,
+        "argument": "The target body is `sphinx-build -M help` — it prints the list of available Sphinx builders. It reads no repository content for validity and produces no pass/fail claim; the only way it exits non-zero is if sphinx-build is not installed."
+      },
+      "evidence": [
+        "docs/Makefile:12-13"
+      ],
+      "confidence": 0.95,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "docs/Makefile#livehtml",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "sphinx-autobuild, a long-running local preview server",
+        "actorCanWrite": null,
+        "argument": "`sphinx-autobuild -b html` starts a watching dev server for a human to preview docs in a browser; it never terminates on its own, so it has no terminal exit code any gate could read, and no CI job invokes it (nothing under .github/workflows/ references docs/Makefile)."
+      },
+      "evidence": [
+        "docs/Makefile:22-23",
+        ".github/workflows/ (no reference to docs/Makefile or livehtml)"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "ruff.toml#ruff-toml",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "a TOML table read by ruff to set one formatting parameter",
+        "actorCanWrite": null,
+        "argument": "The file is a single line, `line-length = 160`. Configuration is consumed by a checker; it is not itself a producer of any signal and can never exit non-zero. The edge that produces a verdict is `ruff check .` at .github/workflows/test.yml:52-55 (outside this run's 25-node sample). Recorded limit on that edge: this file is inside the authors' write boundary, so the *scope* of what ruff enforces is author-controlled even though ruff's exit code is not."
+      },
+      "evidence": [
+        "ruff.toml:1",
+        ".github/workflows/test.yml:52-55 (`ruff check .` — the edge that emits a verdict)"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#47-build",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the PEP 517 build backend (setuptools, invoked by `python -m build`) executing against the checked-out tree, and its process exit code",
+        "actorCanWrite": false,
+        "argument": "`python -m build` asks the backend named in pyproject.toml to produce an sdist and a wheel from the committed source; it exits non-zero if the metadata is malformed, a declared dependency specifier is invalid, the package layout does not resolve, or the source does not import at build time. The verdict is computed by that program from the tree, so an author cannot make an unbuildable package report success without changing the tree — and this step runs in a `deploy` job whose `needs: [test]` means it only executes after the pytest matrix passed. Documented limit: a successful build proves the artefact is packageable and installable, not that it behaves correctly; it says nothing about runtime semantics."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:47-49",
+        ".github/workflows/publish.yml:35 (`needs: [test]`)",
+        ".github/workflows/test.yml:56-58 (the same command run as an explicit 'Check it builds' gate on every push)"
+      ],
+      "confidence": 0.82,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/publish.yml#50-publish",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "pypa/gh-action-pypi-publish uploading the built distributions to PyPI over trusted publishing",
+        "actorCanWrite": null,
+        "argument": "The step's entire effect is promotion: it takes the dist/ files the previous step produced and uploads them to the index. It evaluates nothing about the artefact — a failure here means the upload was rejected (duplicate version, bad token, registry outage), not that the code is wrong. The verification condition on this promotion is the job's `needs: [test]` at publish.yml:35, which is a different edge; this one asserts nothing, so it must not enter the ratio in either direction. Noted separately: the action is referenced by the mutable branch ref `@release/v1` rather than a pinned SHA, which would matter if this were being counted as a check."
+      },
+      "evidence": [
+        ".github/workflows/publish.yml:50-51",
+        ".github/workflows/publish.yml:35 (`needs: [test]` — the actual promotion condition)",
+        ".github/workflows/publish.yml:47-49 (produces the artefact this step ships)"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/stable-docs.yml#25-create-stable-branch-if-it-does-not-yet-exist",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git creating a branch on the runner and pushing it to origin",
+        "actorCanWrite": null,
+        "argument": "The body probes whether an origin branch exists and, if not, creates it and seeds docs/ from the newest tag, then commits and pushes. Every operation mutates state; nothing compares the repository against an expectation, and the one operation that could fail on a no-op is neutralised with `|| echo \"No changes\"`. There is no assertion here to be grounded or ungrounded."
+      },
+      "evidence": [
+        ".github/workflows/stable-docs.yml:25-37",
+        ".github/workflows/stable-docs.yml:35 (`git commit ... || echo \"No changes\"` — failure suppressed)"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/stable-docs.yml#38-handle-release",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git resetting the `stable` branch to a release tag and force-pushing it",
+        "actorCanWrite": null,
+        "argument": "`git checkout stable && git reset --hard $TAG && git push --force` moves a documentation branch to point at the released commit. It reads nothing about correctness and cannot report anything about the code — it is a publish operation for the docs site, and its failure mode is a git or network error, not a defect signal."
+      },
+      "evidence": [
+        ".github/workflows/stable-docs.yml:38-44"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/stable-docs.yml#45-handle-commit-to-main",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "git copying changed docs/ files onto the `stable` branch and pushing them",
+        "actorCanWrite": null,
+        "argument": "`git diff-tree --name-only` is used here to ENUMERATE which docs/ files changed so they can be checked out onto the stable branch and committed — the diff is an input to a copy, not an assertion, and the branch where nothing changed ends in an explicit `exit 0`. The step gates nothing: it runs only when the commit message contains `!stable-docs`, and its whole output is a push to a docs branch."
+      },
+      "evidence": [
+        ".github/workflows/stable-docs.yml:45-64",
+        ".github/workflows/stable-docs.yml:63 (`exit 0` on the no-change path)"
+      ],
+      "confidence": 0.88,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/test.yml#38-check-if-cog-needs-to-be-run",
+      "class": "self_referential",
+      "writeBoundary": {
+        "producer": "cog re-executing the Python snippets embedded in docs/*.md and diffing its own regenerated output against the committed markdown",
+        "actorCanWrite": true,
+        "argument": "`cog --check` recomputes the doc blocks by running the embedded generators and fails if the committed text differs — so the expected value is authored by the very code the docs describe, never by an independent specification. The write path is closed explicitly: .github/workflows/cog.yml runs `cog -r` on every `opened`/`synchronize` pull_request event and, if the regeneration changed anything, commits and pushes the result back to the PR branch (cog.yml:29-49). By the time this step reads the branch, the pipeline has already written the value it is about to compare against, so the comparison can only ever catch a regeneration that the bot did not get to run — the same shape as running `--update-snapshots` and then asserting the snapshot. The cog process's exit code is honestly produced by the interpreter; the oracle it compares to is not."
+      },
+      "evidence": [
+        ".github/workflows/test.yml:38-43 (`cog --check ... docs/**/*.md docs/*.md`)",
+        ".github/workflows/cog.yml:29-31 (`cog -r` regenerates in-place)",
+        ".github/workflows/cog.yml:33-49 ('Check for changes' + 'Commit and push if changed' — the pipeline writes the expected value back to the branch)",
+        ".github/workflows/cog.yml:7-9 (`permissions: contents: write`)"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 3,
+    "selfReferential": 1,
+    "unknown": 0,
+    "notACheck": 21,
+    "ratio": 0.75
+  },
+  "economics": {
+    "nodesTotal": 38,
+    "nodesSampled": 25,
+    "decidedByProbe": 14,
+    "decidedByAgent": 11,
+    "probesMinted": 2,
+    "probeLibrarySize": 15,
+    "tokensIn": 2088,
+    "tokensOut": 2644,
+    "tokensEstimated": true,
+    "wallClockMs": 293889
+  }
+}

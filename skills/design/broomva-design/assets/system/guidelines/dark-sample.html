@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- @dsCard group="Components" name="Dark mode sample" subtitle="Same components on the dark canvas — primary inverts to cool white" viewport="700x230" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; font: inherit; font-size: 14px; font-weight: 500; height: 36px; padding: 0 14px; border: 1px solid transparent; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+  .pill--primary { background: var(--primary); color: var(--primary-foreground); }
+  .pill--primary:hover { background: var(--bv-ink-hover); }
+  .pill--secondary { background: var(--card); color: var(--foreground); border-color: var(--bv-border-15); }
+  .pill--secondary:hover { background: var(--bv-frost-4); }
+  .pill--soft { background: var(--bv-canvas-soft); color: var(--foreground); }
+  .pill--soft:hover { background: var(--bv-frost-8); }
+  .pill--ghost { background: transparent; color: var(--foreground); }
+  .pill--ghost:hover { background: var(--bv-frost-8); }
+  svg.ic { width: 16px; height: 16px; }
+</style>
+<style>
+body { padding: 0; }
+.stage { padding: 24px; background: var(--background); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; color: var(--foreground); }
+.card { background: var(--card); border: 1px solid var(--bv-border-5); border-radius: 12px; box-shadow: var(--bv-shadow-edge); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; width: 190px; }
+.composer { border-radius: 28px; padding: 8px 8px 8px 18px; display: flex; align-items: center; gap: 8px; width: 280px; color: var(--bv-gray-500); font-size: 15px; }
+.send { width: 32px; height: 32px; border-radius: 16px; background: var(--primary); color: var(--primary-foreground); border: none; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; }
+</style></head><body>
+<div class="stage" data-theme="dark">
+  <div class="col" style="gap:10px;">
+    <button class="pill pill--primary">New mission</button>
+    <button class="pill pill--secondary" style="background:transparent;">Connect</button>
+  </div>
+  <div class="card"><span style="font-size:14px;font-weight:500;">Weekly planning</span><span style="font-size:13px;color:var(--muted-foreground);">Broomva</span><span style="font-size:12px;color:var(--muted-foreground);display:flex;align-items:center;gap:8px;"><span style="width:8px;height:8px;border-radius:99px;background:var(--bv-info);"></span>Running</span></div>
+  <div class="composer bv-glass-composer">Message Broomva<button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button></div>
+</div>
+</body></html>

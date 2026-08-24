@@ -1,0 +1,29 @@
+{
+  "name": "parallax",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "parallax": "./bin/parallax.ts"
+  },
+  "scripts": {
+    "demo": "bun run src/demo.ts",
+    "test": "bun test",
+    "lint": "biome check .",
+    "demo:whatsapp": "bun run src/whatsapp-demo.ts",
+    "demo:live": "bun run src/demo-live.ts",
+    "typecheck": "tsc --noEmit",
+    "mutants": "bun run scripts/mutants.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/bun": "latest"
+  },
+  "description": "Simulation results you accept before they are active. Point it at a context, it proposes an ontology from what is there, you accept, then it rolls forward under candidate decisions with every answer typed observed or simulated.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/broomva/skills.git",
+    "directory": "skills/simulation/parallax/runtime"
+  }
+}

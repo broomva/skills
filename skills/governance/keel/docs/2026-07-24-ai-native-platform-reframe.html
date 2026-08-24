@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ADR · AI-native platform — from rejection to constructive grounding layer</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --line:#242c37; --ink:#d8dee6; --dim:#8b95a3;
+    --accent:#5ec2a8; --warn:#e0a458; --bad:#d97b7b; --good:#5ec2a8;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  main{max-width:860px;margin:0 auto;padding:56px 24px 96px}
+  h1{font-size:29px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:44px 0 12px;letter-spacing:-.01em;
+     padding-bottom:7px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:26px 0 8px;color:var(--accent);letter-spacing:.01em}
+  p{margin:0 0 14px}
+  .meta{color:var(--dim);font-size:13.5px;margin-bottom:30px;font-family:var(--mono)}
+  .badge{display:inline-block;padding:2px 9px;border-radius:3px;font-size:11.5px;
+    font-family:var(--mono);letter-spacing:.04em;text-transform:uppercase;vertical-align:2px}
+  .b-ok{background:rgba(94,194,168,.14);color:var(--good);border:1px solid rgba(94,194,168,.32)}
+  blockquote{margin:16px 0;padding:12px 18px;border-left:2px solid var(--accent);
+    background:var(--panel);color:var(--ink);border-radius:0 4px 4px 0}
+  blockquote p:last-child{margin:0}
+  table{border-collapse:collapse;width:100%;margin:18px 0;font-size:14.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  code{font-family:var(--mono);font-size:13px;background:var(--panel);
+    padding:1.5px 5px;border-radius:3px;color:var(--accent)}
+  .cite{color:var(--dim);font-family:var(--mono);font-size:12.5px}
+  ul,ol{margin:0 0 14px;padding-left:22px} li{margin-bottom:6px}
+  .callout{background:var(--panel);border:1px solid var(--line);border-radius:5px;
+    padding:15px 18px;margin:18px 0}
+  .callout.warn{border-color:rgba(224,164,88,.35)}
+  .lede{font-size:17.5px;color:#e8edf3;margin-bottom:20px}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0}
+  .split>div{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:14px 16px}
+  .split h4{margin:0 0 9px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;font-family:var(--mono)}
+  .yes h4{color:var(--good)} .no h4{color:var(--warn)}
+  .split ul{padding-left:18px;margin:0;font-size:14px}
+  hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+  @media(max-width:640px){.split{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+
+<h1>AI-native platform: from rejection to constructive grounding layer</h1>
+<p class="meta">ADR · 2026-07-24 · <span class="badge b-ok">Accepted</span> ·
+supersedes the originating design session&rsquo;s §2.5</p>
+
+<p class="lede">The originating design session rejected the "AI-native platform" framing outright.
+That rejection was correct about the failure mode and <strong>too broad about the
+remedy</strong>. This ADR narrows it: Keel may construct loop topology; it may not
+author anchors. The tonight build plan is unchanged.</p>
+
+<h2>Context</h2>
+
+<p>Handoff §2.5 rejected the originally-proposed platform — agentic workspaces reading a
+company's operations, source, docs and integrations (Composio et al.) to synthesize a
+workflow graph — as <em>"the construction of a maximally ungrounded graph: agents verifying
+against artifacts that agents increasingly write."</em></p>
+
+<p>The rejection rested on <span class="cite">concept/grounded-vs-ungrounded-improvement.md</span>
+and the conservation law in <span class="cite">concept/evidentiary-independence-conservation.md</span>.
+Both hold. But re-reading the first against the proposal exposes a misread.</p>
+
+<h2>The misread</h2>
+
+<p><span class="cite">grounded-vs-ungrounded-improvement.md:58-69</span> does not say
+"do not build the graph." It enumerates <strong>exactly three</strong> things the topology
+cannot supply:</p>
+
+<ol>
+  <li><strong>Anchors</strong> — "revenue that landed in the bank, tests that actually executed, customers who actually stayed"</li>
+  <li><strong>Frozen nodes</strong> — "rules the optimizing loops are never allowed to tune"</li>
+  <li><strong>The root definition of "better"</strong> — "supplied by people, through contact with real failures"</li>
+</ol>
+
+<p>Everything else is presented as constructible. <span class="cite">:51-56</span> lists the
+topological answers explicitly — <strong>pairing</strong> (every optimizing loop gets a
+counter-metric), <strong>hierarchy</strong> (a slower loop owns the faster loop's reference),
+<strong>arbitration</strong> (a loop above that owns the trade-off), and <strong>audit
+loops</strong> (whose only function is checking the other loops' numbers still touch the world).</p>
+
+<p>§2.5 conflated <em>build the graph</em> with <em>build the graph <strong>and</strong> let it
+author its own anchors</em>. Only the second is fatal.</p>
+
+<h2>The enabling distinction</h2>
+
+<blockquote><p>Independence cannot be <strong>manufactured</strong>, but it can be
+<strong>routed</strong>.</p></blockquote>
+
+<p>In any real company the exogenous signals already exist and are simply not wired to
+anything: invoices settle, shipments arrive, customers renew or churn. An agent that
+discovers those producers and rewires a check to read them is not creating independence —
+it is connecting independence that already existed. The conservation law is not violated,
+because conserved quantities can still be routed.</p>
+
+<p>This is also the form the research demands. <span class="cite">evidentiary-independence-conservation.md:363-368</span>
+moves the predicate from an <em>audit-time proof obligation</em> to a <strong>write-time
+admission predicate</strong> — reject the node whose evidence fork-point sits above the
+actor's write boundary. Build-time, not bolted on afterwards.</p>
+
+<h2>Decision</h2>
+
+<div class="split">
+  <div class="yes">
+    <h4>✓ Keel constructs</h4>
+    <ul>
+      <li>Counter-metric <strong>pairings</strong> for each optimizing loop</li>
+      <li>The <strong>hierarchy</strong> — which loop owns which reference</li>
+      <li><strong>Arbitration</strong> loops where loops conflict</li>
+      <li><strong>Audit</strong> loops re-checking that numbers touch the world</li>
+      <li>The <strong>routing</strong> of existing anchors into unanchored checks</li>
+    </ul>
+  </div>
+  <div class="no">
+    <h4>✗ Keel imports, never authors</h4>
+    <ul>
+      <li><strong>Anchors</strong> — discovered in existing operations, never invented</li>
+      <li><strong>Frozen nodes</strong> — pre-committed; the agent may never tune the anchor registry</li>
+      <li><strong>The root "better"</strong> — human, once, per company</li>
+    </ul>
+  </div>
+</div>
+
+<p><strong>Composio's role is corrected.</strong> Not a competitor and not the graph builder —
+the <strong>anchor-discovery layer</strong>. It answers one bounded question: <em>which
+exogenous producers does this company already own?</em> That is the one input a repo scan can
+never provide. Verified reachable today: <code>composio search "payment settled webhook"</code>
+returns <code>STRIPE_GET_EVENTS</code> (CLI v0.2.31 installed; <code>stripe</code> connection
+present but EXPIRED).</p>
+
+<h2>The binding constraint on construction</h2>
+
+<div class="callout warn">
+<p><strong>The constructing loop may not be the scoring loop.</strong>
+<span class="cite">verifier-independence-depletes-under-optimization.md:44-50</span> — the moment
+the score becomes a selection signal, "you hill-climb the generator straight into the region
+where the two agree, <em>including where they are jointly wrong</em>." Freezing does not save
+it (<span class="cite">:97-108</span>): <em>"freeze stops the gradient; only a query budget
+stops the selection."</em></p>
+<p style="margin-top:10px">This is not hypothetical for our case.
+<span class="cite">self-improvement-verifier-ceiling.md:59-64</span> cites <em>Self-Harness</em>
+(arXiv:2606.09498): agents that autonomously edit their own scaffolding converge in
+<strong>3–5 iterations</strong> and fix only behavioural errors. "The skill builds its own loop
+graph and grades it" <em>is</em> harness-axis self-improvement, and it plateaus — with the
+ratio still rising, which is worse than plateauing visibly.</p>
+</div>
+
+<table>
+  <tr><th></th><th>Constructing loop</th><th>Scoring loop</th></tr>
+  <tr><td>Does</td><td>proposes + applies rewirings</td><td>classifies, ε-audits</td></tr>
+  <tr><td>Cadence</td><td>fast</td><td><strong>~an order of magnitude slower</strong></td></tr>
+  <tr><td>May tune anchor registry?</td><td>never</td><td>never</td></tr>
+</table>
+
+<p>The cadence separation has numbers rather than a vibe — the RCS λ margins (handoff §2.3):
+L1 <code>0.411</code> → L2 <code>0.069</code> → L3 <code>0.006</code>, roughly 6× then 11×.
+The <strong>ε-audit agreement rate is the depletion detector</strong>: it was designed as a
+counter-metric on the probe library and turns out to be exactly the instrument this
+architecture requires.</p>
+
+<h2>Why this is strong rather than merely permitted</h2>
+
+<p>The two structures Keel would construct — <strong>pairing</strong> and
+<strong>arbitration</strong> — are precisely the two gaps this workspace's own research found
+in bstack. Handoff §2.4, verified by grep: <strong>zero hits</strong> for
+<code>counter-metric</code>/<code>metric pairing</code>, <strong>zero hits</strong> for
+<code>arbitration</code>/<code>conflicting loops</code>. Filed as Gap 1 and Gap 2, unresolved.</p>
+
+<p>So the product emits the structures its own governance was measured to lack: the
+counter-metric for P20's unpaired 7/10 and P6's unpaired Nous ≥ 5/9, and the arbitration cell
+for the m6-vs-P16 conflict that §2.4 records being settled by "ad-hoc agent judgment."
+Dogfood, generality proof, and the answer to "does this work outside a toy" in one move.</p>
+
+<h2>Consequences</h2>
+
+<h3>Tonight — unchanged</h3>
+<p>None of this is buildable in the remaining window and the demo must not chase it.
+<code>docs/plans/00-orchestration.md</code> stands as written: corpus report + crystallization
+curve, degradation ladder intact, nothing after 21:00 load-bearing. The <em>pitch</em> absorbs
+this reframe at zero build cost.</p>
+
+<p>One cheap bridge, only if A/B/D/G land by ~21:00: the renderer prints a
+<strong>proposed anchor</strong> beside each <code>self_referential</code> verdict. The data
+already exists — every verdict carries <code>writeBoundary.argument</code>, which already
+records why the check is ungrounded. That single column is the visible seam between "here's
+your number" and "here's the path."</p>
+
+<h3>Known gap this ADR does not close</h3>
+<p><code>skills/keel/SKILL.md:13-14</code> already claims Keel assesses "how <strong>AI-native a
+company</strong> or repo actually is." The gatherer cannot do this: of 8 declared
+<code>NodeKind</code>s, only 4 are reachable — <code>integration</code>,
+<code>deploy_gate</code> and <code>doc_claim</code> are declared and never emitted
+(<code>gather.ts:191-200, 229-234</code>). Measured: 11 edges on Keel itself (100%
+<code>ci_step</code>), 69 on <code>~/broomva/apps/maestro</code> (40 script / 28 ci_step /
+1 test_target), zero integrations ever.</p>
+<p>By Keel's own predicate that claim is a <code>self_referential</code>
+<code>doc_claim</code> inside Keel. Resolve before pitching by either implementing one
+<code>integration</code> node or narrowing the sentence. <strong>Left open deliberately —
+it is a product decision, not a documentation one.</strong></p>
+
+<h3>Post-event</h3>
+<p>The constructive path is specified in
+<code>docs/plans/constructive-grounding-layer.md</code>.</p>
+
+<hr>
+
+<h2>Provenance and honesty note</h2>
+<p>Sourced and multiply-anchored: the ceiling theorem, the depletion mechanism, the 3–5
+iteration plateau, frozen nodes, and the write-time admission predicate.</p>
+<p><strong>Not sourced — synthesis from this session:</strong> the
+<em>route-don't-manufacture</em> claim and the constructible/imported partition table. Each
+component is supported; neither proposition is stated directly in any entity. Filed as
+<span class="cite">research/entities/concept/anchor-routing-not-manufacture.md</span> with
+<code>status: candidate</code> — rule-of-three is <em>not</em> met (single-session origin).
+Do not cite it as settled.</p>
+
+</main>
+</body>
+</html>

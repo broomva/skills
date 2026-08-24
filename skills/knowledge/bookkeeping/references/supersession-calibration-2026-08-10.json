@@ -1,0 +1,150 @@
+{
+  "phase": "calibration \u2014 supersession audit on real recorded revisions",
+  "issue": "https://github.com/broomva/skills/issues/160",
+  "closes": "the third pickup item of docs/handoffs/2026-08-10-filesystem-memory-temporal-semantics.md",
+  "date": "2026-08-10",
+  "corpus": {
+    "source": "merge tombstones (status: merged) \u2014 supersessions the graph already recorded",
+    "pinned_worktree_commit": "bae9508e87f8fd88015c4cd881a4bc22011a95c4",
+    "entity_pages": 943,
+    "tombstones": 7,
+    "distinct_superseded_slugs": 6,
+    "canonicals_migrated": 5,
+    "excluded": {
+      "aliases": "88 present; these are 'aka' search synonyms (BRO-1423), not merged-away entities. Deriving supersessions from them would be prose inference.",
+      "contradicts": "30 keys present, 1 non-empty; none carries a recorded resolution naming a superseding record."
+    },
+    "writes_to_live_graph": "none \u2014 all runs against a pinned detached worktree"
+  },
+  "check_taxonomy": {
+    "axis": "DEFINITIONAL vs PROXY \u2014 not deterministic vs heuristic. A threshold heuristic is equally deterministic given the same input, and a labeled sample estimates a rate for both. Two earlier framings of this receipt got this wrong and were corrected under review.",
+    "definitional": {
+      "count": 10,
+      "note": "The predicate IS the property. 'Is this entry [[wikilink]] form' does not stand in for a further question \u2014 asking its false-positive rate asks whether x == x. Such a check can still be wrong about what MATTERS, which is a specification question settled by reading it, not by sampling.",
+      "checks": [
+        "temporal_recorded_at \u2014 parses",
+        "temporal_valid_from \u2014 parses",
+        "temporal_supersedes \u2014 is a list",
+        "temporal_supersedes \u2014 entry is a string",
+        "temporal_supersedes \u2014 entry is [[wikilink]] form",
+        "temporal_supersedes \u2014 not a self-reference",
+        "temporal_revision_link \u2014 present when supersedes is",
+        "temporal_revision_link \u2014 entry is a string",
+        "temporal_revision_link \u2014 entry is non-blank",
+        "temporal_revision_link \u2014 not an orphan"
+      ]
+    },
+    "proxy": {
+      "count": 3,
+      "note": "Only these have a gap a false-positive rate could measure. None is measured by this corpus.",
+      "checks": [
+        {
+          "check": "timeline inversion",
+          "proxy_for": "this supersession is backwards",
+          "how_it_can_be_wrong": "stamps backfilled at different times",
+          "measured": "0 heuristic-eligible comparisons in the corpus"
+        },
+        {
+          "check": "supersedes target resolves",
+          "proxy_for": "the provenance is traceable",
+          "how_it_can_be_wrong": "the tombstone was cleaned up",
+          "measured": "0 findings"
+        },
+        {
+          "check": "recorded_at is in the future",
+          "proxy_for": "the stamp is wrong",
+          "how_it_can_be_wrong": "reads the AUDIT HOST's clock",
+          "measured": "0 findings"
+        }
+      ]
+    },
+    "what_positive_controls_establish": "REACHABILITY \u2014 each branch fires, on its own message. That is what makes a zero-finding corpus meaningful. It does NOT establish that firing was the right call.",
+    "branch_count": {
+      "total": 13,
+      "note": "Derived from the implementation, not counted by hand: two earlier drafts of this receipt said 12, omitting the self-reference branch. A test now asserts the probe count equals the branch count so the fraction cannot drift again."
+    }
+  },
+  "measurements": {
+    "negative_control": {
+      "what": "the 5 real migrated canonicals, untouched",
+      "envelope_findings": 0,
+      "per_page": {
+        "concept/cryptographic-problem": [],
+        "discovery/jason-spielman": [],
+        "pattern/huxe-sunset": [],
+        "tool/kronos": [],
+        "tool/lago-event-journal": []
+      }
+    },
+    "positive_control": {
+      "what": "one injected defect per class, on a REAL migrated page; asserts the SPECIFIC field",
+      "detected": "13/13",
+      "detail": {
+        "supersedes_not_wikilink": true,
+        "supersedes_unresolvable": true,
+        "supersedes_not_a_list": true,
+        "supersedes_non_string_entry": true,
+        "supersedes_missing_link": true,
+        "revision_link_blank_entry": true,
+        "revision_link_non_string": true,
+        "revision_link_orphan": true,
+        "recorded_at_unparseable": true,
+        "recorded_at_in_future": true,
+        "valid_from_unparseable": true,
+        "timeline_inversion": true,
+        "supersedes_self": true
+      },
+      "note": "One probe per branch, each matched on its own MESSAGE \u2014 several branches share a field, so asserting the field alone would let one branch's finding satisfy another's probe."
+    },
+    "lint_after_migration": {
+      "default": {
+        "issues": 820,
+        "errors": 62,
+        "warnings": 758,
+        "temporal_updated": 0,
+        "temporal_as_of": 0,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      },
+      "temporal": {
+        "issues": 916,
+        "errors": 62,
+        "warnings": 854,
+        "temporal_updated": 67,
+        "temporal_as_of": 29,
+        "temporal_recorded_at": 0,
+        "temporal_valid_from": 0,
+        "temporal_supersedes": 0,
+        "temporal_revision_link": 0
+      }
+    },
+    "migration": {
+      "dry_run_files_written": 0,
+      "apply_files_written": 5,
+      "second_apply_files_written": 0,
+      "oracle": "git -c core.fsmonitor=false status --porcelain"
+    }
+  },
+  "power_limit": {
+    "no_false_positive_rate_quoted": "An earlier draft reported '0/7, 95% upper bound ~43%'. That has no coherent sampling unit: the corpus is 5 pages, 7 edges, and 0 heuristic-eligible comparisons at once, and a binomial bound requires one of those to be the trial. Removed rather than qualified.",
+    "observed": "zero envelope findings across every migrated canonical",
+    "heuristic_eligible_comparisons": 0,
+    "timeline_inversion_unexercised": "timeline_inversion is NOT exercised by the real corpus: the check compares the superseded target's recorded_at, and merge tombstones do not carry one. Its probe above had to synthesise a stamp onto a tombstone. Calibrating it on real data would require the envelope on tombstones too \u2014 a design decision, not a measurement."
+  },
+  "decision": {
+    "promote_to_hard_gate": "NO \u2014 none.",
+    "rationale": [
+      "The 10 definitional checks are reachable (13/13 positive controls, each matched on its own message), silent on real data, and 22/22 mutations were killed across three rounds. The 3 proxy checks are unmeasured: the corpus yields zero heuristic-eligible comparisons and zero findings. Neither result is a reason to gate NOW \u2014 only 5 of 943 pages can currently exhibit these fields, so a gate would have almost nothing to protect.",
+      "The 1 heuristic check (timeline inversion) is unmeasured on real data and cannot be measured on this corpus at all, because tombstones carry no recorded_at.",
+      "Everything stays warning-only and opt-in behind --temporal. Default lint is unchanged."
+    ],
+    "revisit_when": [
+      "the envelope is present on a substantial share of the graph through ordinary merge/revise use (not a migration), giving the decidable checks something to protect;",
+      "tombstones carry recorded_at, which is what would make timeline inversion measurable on real data;",
+      "an independent reviewer has judged a set of real supersession findings."
+    ]
+  },
+  "method_caveat": "Every clean-tree assertion in this receipt was re-taken with `git -c core.fsmonitor=false`. The workspace repo sets core.fsmonitor=true and its daemon was dead during the run, so plain `git status --porcelain` reported 0 modified files while 5 were modified. The migration results below come from the forced comparison, not the cached one."
+}

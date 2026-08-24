@@ -1,0 +1,48 @@
+name: test-unslop
+
+# Python test gate for the `unslop` skill (skills/design/unslop/). Path-filtered so
+# it runs ONLY when skills/design/unslop/** changes — the monorepo's tests-optional
+# default (lint-skill-md.yml) stands everywhere else. BRO-2184.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/design/unslop/**'
+      - '.github/workflows/test-unslop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/design/unslop/**'
+      - '.github/workflows/test-unslop.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-unslop-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/design/unslop
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Dogfood — the crafted fixture clears the gate, the sloppy one does not
+        run: |
+          python3 scripts/unslop_survey.py . --quiet --json /tmp/self.json
+          python3 ../../tooling/skillify/scripts/skillify_check.py . --run-tests

@@ -1,0 +1,601 @@
+{
+  "target": "aspect-cli",
+  "revision": "2cb4fec13701722e027ee49c32f6b3873a4ff74d",
+  "generatedAt": "2026-07-26T20:23:17.744Z",
+  "nodes": [
+    {
+      "id": ".github/workflows/build_release_artifacts.yaml#33-checkout-repository",
+      "kind": "ci_step",
+      "name": "Checkout repository",
+      "source": ".github/workflows/build_release_artifacts.yaml:33",
+      "raw": "      - name: Checkout repository\n        uses: actions/checkout@v6\n        with:\n          ref: ${{ inputs.ref || '' }}\n          fetch-depth: 0 # need to see tags (https://github.com/actions/checkout?tab=readme-ov-file#fetch-all-history-for-all-tags-and-branches)",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/build_release_artifacts.yaml#38-aspect-build-setup-aspect-2306377a61c45954ab2df7c7311698b109364352-v2026-26-9",
+      "kind": "ci_step",
+      "name": "aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9",
+      "source": ".github/workflows/build_release_artifacts.yaml:38",
+      "raw": "      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9\n        with:\n          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}\n          disk-cache: ${{ github.workflow }}\n          repository-cache: ${{ github.workflow }}",
+      "hints": {
+        "action": "aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9"
+      }
+    },
+    {
+      "id": ".github/workflows/build_release_artifacts.yaml#43-build-release-artifacts",
+      "kind": "ci_step",
+      "name": "Build release artifacts",
+      "source": ".github/workflows/build_release_artifacts.yaml:43",
+      "raw": "      - name: Build release artifacts\n        # `release.sh` (genrule output of //bazel/release:release.bzl) cps\n        # bazel-out paths directly without declaring the binaries / .sha256\n        # files as runfiles. The :ci default `--remote_download_outputs=minimal`\n        # leaves cache-hit outputs (notably the unstamped axl-docgen `hashes`\n        # actions) remote-only, so the cp step then fails with \"cannot stat\".\n        #\n        # Pre-build the release targets' outputs (the binaries + sha256\n        # files, plus the launcher's Homebrew `brew.rb` formula and bottles)\n        # with `toplevel` so they land on local disk first; the subsequent\n        # `bazel run :release` cps from those already-materialized paths and\n        # doesn't need a broader download policy. `:brew` is part of the\n        # launcher `:release` graph but is NOT under `:bins`, so it must be\n        # listed explicitly — otherwise a remote cache hit leaves `brew.rb`\n        # remote-only and the cp fails with \"cannot stat\".\n        run: |\n          mkdir -p upload_root/assets\n          bazel build --config=release --config=ci --remote_download_outputs=toplevel \\\n            //crates/aspect-launcher:bins \\\n            //crates/aspect-launcher:brew \\\n            //crates/aspect-cli:bins \\\n            //crates/axl-docgen:bins\n          bazel run --config=release --config=ci //crates/aspect-launcher:release -- \"${PWD}/upload_root/assets\"\n          bazel run --config=release --config=ci //crates/aspect-cli:release -- \"${PWD}/upload_root/assets\"\n          bazel run --config=release --config=ci //crates/axl-docgen:release -- \"${PWD}/upload_root/assets\""
+    },
+    {
+      "id": ".github/workflows/build_release_artifacts.yaml#68-attest-build-provenance",
+      "kind": "ci_step",
+      "name": "Attest build provenance",
+      "source": ".github/workflows/build_release_artifacts.yaml:68",
+      "raw": "      - name: Attest build provenance\n        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0\n        with:\n          subject-path: \"upload_root/assets/*\"",
+      "hints": {
+        "action": "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0"
+      }
+    },
+    {
+      "id": ".github/workflows/build_release_artifacts.yaml#72-upload-release-artifacts",
+      "kind": "ci_step",
+      "name": "Upload release artifacts",
+      "source": ".github/workflows/build_release_artifacts.yaml:72",
+      "raw": "      - name: Upload release artifacts\n        uses: actions/upload-artifact@v7\n        with:\n          path: upload_root/\n          retention-days: 1",
+      "hints": {
+        "action": "actions/upload-artifact@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#33-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/launcher-integration-tests.yaml:33",
+      "raw": "      - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#35-cache-cargo-registry-and-build-artifacts",
+      "kind": "ci_step",
+      "name": "Cache cargo registry and build artifacts",
+      "source": ".github/workflows/launcher-integration-tests.yaml:35",
+      "raw": "      - name: Cache cargo registry and build artifacts\n        uses: actions/cache@v5\n        with:\n          path: |\n            ~/.cargo/registry\n            ~/.cargo/git\n            target/\n          key: ${{ runner.os }}-cargo-launcher-${{ hashFiles('Cargo.lock') }}\n          restore-keys: |\n            ${{ runner.os }}-cargo-launcher-",
+      "hints": {
+        "action": "actions/cache@v5"
+      }
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#53-install-musl-toolchain-linux-only",
+      "kind": "ci_step",
+      "name": "Install musl toolchain (Linux only)",
+      "source": ".github/workflows/launcher-integration-tests.yaml:53",
+      "raw": "      - name: Install musl toolchain (Linux only)\n        if: runner.os == 'Linux'\n        run: |\n          sudo apt-get install -y musl-tools\n          rustup target add x86_64-unknown-linux-musl\n          echo \"CARGO_TARGET_ARGS=--target x86_64-unknown-linux-musl\" >> \"$GITHUB_ENV\""
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#60-build-launcher",
+      "kind": "ci_step",
+      "name": "Build launcher",
+      "source": ".github/workflows/launcher-integration-tests.yaml:60",
+      "raw": "      - name: Build launcher\n        run: cargo build -p aspect-launcher $CARGO_TARGET_ARGS"
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#67-test-1-unpinned-first-run-queries-releases-api",
+      "kind": "ci_step",
+      "name": "Test 1: Unpinned first run queries releases API",
+      "source": ".github/workflows/launcher-integration-tests.yaml:67",
+      "raw": "      - name: \"Test 1: Unpinned first run queries releases API\"\n        run: |\n          mkdir -p /tmp/axl-test\n          output=$(cd /tmp/axl-test && ASPECT_DEBUG=1 \\\n            cargo run --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\" -p aspect-launcher $CARGO_TARGET_ARGS -- version 2>&1) || true\n          echo \"$output\"\n          echo \"$output\" | grep -q \"querying releases API (no hint cached)\" \\\n            || { echo \"FAIL: expected 'no hint cached' API query\"; exit 1; }\n          # Must resolve to a stable vYYYY.WW.P tag, not a prerelease\n          echo \"$output\" | grep -q 'downloading aspect cli version v[0-9]' \\\n            || { echo \"FAIL: expected stable version download\"; exit 1; }"
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#82-test-2-warm-cache-skips-api",
+      "kind": "ci_step",
+      "name": "Test 2: Warm cache skips API",
+      "source": ".github/workflows/launcher-integration-tests.yaml:82",
+      "raw": "      - name: \"Test 2: Warm cache skips API\"\n        run: |\n          output=$(cd /tmp/axl-test && ASPECT_DEBUG=1 \\\n            cargo run --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\" -p aspect-launcher $CARGO_TARGET_ARGS -- version 2>&1) || true\n          echo \"$output\"\n          echo \"$output\" | grep -q \"found in cache\" \\\n            || { echo \"FAIL: expected cache hit\"; exit 1; }\n          if echo \"$output\" | grep -q \"querying releases\"; then\n            echo \"FAIL: should not query API on warm cache\"; exit 1\n          fi"
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#96-test-3-stale-hint-triggers-api-re-query",
+      "kind": "ci_step",
+      "name": "Test 3: Stale hint triggers API re-query",
+      "source": ".github/workflows/launcher-integration-tests.yaml:96",
+      "raw": "      - name: \"Test 3: Stale hint triggers API re-query\"\n        run: |\n          python3 -c \"\n          import os, time\n          hint_dir = '$ASPECT_LAUNCHER_CACHE/downloader/latest'\n          for f in os.listdir(hint_dir):\n              p = os.path.join(hint_dir, f)\n              os.utime(p, (0, 0))  # epoch = definitely stale\n          \"\n          output=$(cd /tmp/axl-test && ASPECT_DEBUG=1 \\\n            cargo run --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\" -p aspect-launcher $CARGO_TARGET_ARGS -- version 2>&1) || true\n          echo \"$output\"\n          echo \"$output\" | grep -q \"querying releases API (hint is stale)\" \\\n            || { echo \"FAIL: expected stale hint message\"; exit 1; }\n          # Binary was already cached — should not re-download\n          if echo \"$output\" | grep -q \"^downloading \"; then\n            echo \"FAIL: should not re-download when binary is cached\"; exit 1\n          fi"
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#118-test-4-api-failure-falls-back-to-stale-cached-binary",
+      "kind": "ci_step",
+      "name": "Test 4: API failure falls back to stale cached binary",
+      "source": ".github/workflows/launcher-integration-tests.yaml:118",
+      "raw": "      - name: \"Test 4: API failure falls back to stale cached binary\"\n        run: |\n          python3 -c \"\n          import os\n          hint_dir = '$ASPECT_LAUNCHER_CACHE/downloader/latest'\n          for f in os.listdir(hint_dir):\n              os.utime(os.path.join(hint_dir, f), (0, 0))\n          \"\n          output=$(cd /tmp/axl-test && ASPECT_DEBUG=1 GITHUB_TOKEN=invalid \\\n            cargo run --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\" -p aspect-launcher $CARGO_TARGET_ARGS -- version 2>&1) || true\n          echo \"$output\"\n          echo \"$output\" | grep -q \"API error, falling back to stale cached tag\" \\\n            || { echo \"FAIL: expected stale fallback message\"; exit 1; }"
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#135-test-5-pinned-version-downloads-directly-without-api-call",
+      "kind": "ci_step",
+      "name": "Test 5: Pinned version downloads directly without API call",
+      "source": ".github/workflows/launcher-integration-tests.yaml:135",
+      "raw": "      - name: \"Test 5: Pinned version downloads directly without API call\"\n        run: |\n          mkdir -p /tmp/axl-test-pinned/.aspect\n          printf 'version(\"2026.15.2\")\\n' > /tmp/axl-test-pinned/.aspect/version.axl\n          touch /tmp/axl-test-pinned/MODULE.bazel\n          output=$(cd /tmp/axl-test-pinned && ASPECT_DEBUG=1 \\\n            cargo run --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\" -p aspect-launcher $CARGO_TARGET_ARGS -- version 2>&1) || true\n          echo \"$output\"\n          echo \"$output\" | grep -q 'pinned to tag \"v2026.15.2\", skipping API' \\\n            || { echo \"FAIL: expected pinned tag message\"; exit 1; }\n          if echo \"$output\" | grep -q \"querying releases\"; then\n            echo \"FAIL: pinned version should not query API\"; exit 1\n          fi"
+    },
+    {
+      "id": ".github/workflows/launcher-integration-tests.yaml#152-test-6-pinned-version-cache-hit",
+      "kind": "ci_step",
+      "name": "Test 6: Pinned version cache hit",
+      "source": ".github/workflows/launcher-integration-tests.yaml:152",
+      "raw": "      - name: \"Test 6: Pinned version cache hit\"\n        run: |\n          output=$(cd /tmp/axl-test-pinned && ASPECT_DEBUG=1 \\\n            cargo run --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\" -p aspect-launcher $CARGO_TARGET_ARGS -- version 2>&1) || true\n          echo \"$output\"\n          echo \"$output\" | grep -q \"found in cache\" \\\n            || { echo \"FAIL: expected cache hit\"; exit 1; }\n          if echo \"$output\" | grep -q \"^downloading \"; then\n            echo \"FAIL: should not re-download on cache hit\"; exit 1\n          fi"
+    },
+    {
+      "id": ".github/workflows/prerelease_build.yaml#34-download-artifacts",
+      "kind": "ci_step",
+      "name": "Download artifacts",
+      "source": ".github/workflows/prerelease_build.yaml:34",
+      "raw": "      - name: Download artifacts\n        uses: actions/download-artifact@v4\n        with:\n          path: artifacts/",
+      "hints": {
+        "action": "actions/download-artifact@v4"
+      }
+    },
+    {
+      "id": ".github/workflows/prerelease_build.yaml#39-calculate-checksums",
+      "kind": "ci_step",
+      "name": "Calculate checksums",
+      "source": ".github/workflows/prerelease_build.yaml:39",
+      "raw": "      - name: Calculate checksums\n        run: |\n          cd artifacts/artifact/assets\n          shasum -a 256 * > SHASUM256.txt"
+    },
+    {
+      "id": ".github/workflows/prerelease_build.yaml#44-create-pre-release",
+      "kind": "ci_step",
+      "name": "Create pre-release",
+      "source": ".github/workflows/prerelease_build.yaml:44",
+      "raw": "      - name: Create pre-release\n        env:\n          GH_TOKEN: ${{ github.token }}\n          GH_REPO: ${{ github.repository }}\n          BRANCH: ${{ inputs.branch || github.ref_name }}\n          HEAD_SHA: ${{ github.sha }}\n        run: |\n          # Sanitize branch name: only allow safe characters, collapse repeated hyphens\n          SANITIZED=\"$(printf '%s' \"$BRANCH\" | tr -cs 'a-zA-Z0-9._/-' '-' | sed 's/--*/-/g; s/^-//; s/-$//')\"\n          if [ -z \"$SANITIZED\" ]; then\n            echo \"::error::Branch name sanitized to empty string\"\n            exit 1\n          fi\n          TAG=\"prerelease/${SANITIZED}\"\n\n          # For dispatch builds, resolve the actual HEAD of the branch\n          if [ -n \"${{ inputs.branch }}\" ]; then\n            HEAD_SHA=\"$(gh api \"repos/${GH_REPO}/git/ref/heads/${BRANCH}\" --jq '.object.sha')\"\n          fi\n\n          # Delete existing release+tag if present\n          gh release delete \"$TAG\" --yes --cleanup-tag 2>/dev/null || true\n\n          # Build release body\n          BODY=\"$(cat <<BODYEOF\n          > [!WARNING]\n          > This is an unstable pre-release build. Do not use in production.\n\n          **Branch:** \\`${BRANCH}\\`\n          **Commit:** \\`${HEAD_SHA}\\`\n          **Built:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')\n\n          ### Usage\n\n          Add to \\`.aspect/version.axl\\`:\n          \\`\\`\\`starlark\n          version(\n              \"0.0.0\",\n              sources = [\n                  github(org = \"aspect-build\", repo = \"aspect-cli\", tag = \"${TAG}\"),\n              ],\n          )\n          \\`\\`\\`\n          BODYEOF\n          )\"\n\n          # Create pre-release with all assets\n          gh release create \"$TAG\" \\\n            --target \"$HEAD_SHA\" \\\n            --prerelease \\\n            --title \"Pre-release: ${BRANCH}\" \\\n            --notes \"$BODY\" \\\n            artifacts/artifact/assets/*"
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#55-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:55",
+      "raw": "      - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#59-github-actions-install-prebuilt-aspect-cli",
+      "kind": "ci_step",
+      "name": "./.github/actions/install-prebuilt-aspect-cli",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:59",
+      "raw": "      - uses: ./.github/actions/install-prebuilt-aspect-cli\n        if: inputs.prebuild_run_id != ''\n        with:\n          run-id: ${{ inputs.prebuild_run_id }}\n          github-token: ${{ secrets.GITHUB_TOKEN }}",
+      "hints": {
+        "action": "./.github/actions/install-prebuilt-aspect-cli"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#64-bootstrap",
+      "kind": "ci_step",
+      "name": "Bootstrap",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:64",
+      "raw": "      - name: Bootstrap\n        if: inputs.prebuild_run_id == ''\n        run: .aspect/bootstrap.sh"
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#67-aspect-build-setup-aspect-2306377a61c45954ab2df7c7311698b109364352-v2026-26-9",
+      "kind": "ci_step",
+      "name": "aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:67",
+      "raw": "      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9\n        with:\n          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}",
+      "hints": {
+        "action": "aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#70-delivery-task",
+      "kind": "ci_step",
+      "name": "Delivery Task",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:70",
+      "raw": "      - name: Delivery Task\n        # --force-target re-delivers every run so the manifest always\n        # carries at least one `ok` outcome to exercise the per-target\n        # enrichment hook in //.aspect/config.axl. Additional force\n        # targets (via the workflow_dispatch input or the\n        # ASPECT_WORKFLOWS_DELIVERY_FORCE_TARGETS env var) merge in.\n        # --warn-unresolved-digest: this deliverable set includes py_deliverable,\n        # a stamped py_binary whose PyWriteBuildData action is uncacheable and so\n        # never resolves a digest — a known, tolerated missing digest here, so\n        # keep it a warning rather than the (new) default hard failure.\n        run: aspect delivery --task:name delivery-gha --warn-not-runnable --warn-unresolved-digest --force-target=//examples/deliverable:deliverable_with_digest"
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#87-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:87",
+      "raw": "      - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-workflows-delivery.yaml#88-github-actions-install-prebuilt-aspect-cli",
+      "kind": "ci_step",
+      "name": "./.github/actions/install-prebuilt-aspect-cli",
+      "source": ".github/workflows/ci-workflows-delivery.yaml:88",
+      "raw": "      - uses: ./.github/actions/install-prebuilt-aspect-cli\n        if: inputs.prebuild_run_id != ''\n        with:\n          run-id: ${{ inputs.prebuild_run_id }}\n          github-token: ${{ secrets.GITHUB_TOKEN }}",
+      "hints": {
+        "action": "./.github/actions/install-prebuilt-aspect-cli"
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": ".github/workflows/build_release_artifacts.yaml#33-checkout-repository",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6 running on the GitHub runner (git fetch against github.com)",
+        "actorCanWrite": null,
+        "argument": "Source acquisition, not verification: it materializes the tree at `inputs.ref` with full tag history so later steps can stamp a version. Nothing about the artifact's correctness can be false here — the only failure modes are git/network infrastructure, so the edge asserts nothing and is excluded from the ratio."
+      },
+      "evidence": [
+        ".github/workflows/build_release_artifacts.yaml:33-37"
+      ],
+      "confidence": 0.92,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_release_artifacts.yaml#38-aspect-build-setup-aspect-2306377a61c45954ab2df7c7311698b109364352-v2026-26-9",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "aspect-build/setup-aspect composite action (pinned to commit 2306377a) installing the Aspect launcher and running `aspect auth login`",
+        "actorCanWrite": null,
+        "argument": "Toolchain provisioning and remote-cache/disk-cache configuration; it makes later steps possible rather than asserting anything about them. The action is third-party and SHA-pinned, so the repo cannot rewrite what it does, but there is no falsifiable claim about aspect-cli's correctness on this edge."
+      },
+      "evidence": [
+        ".github/workflows/build_release_artifacts.yaml:38-42"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_release_artifacts.yaml#43-build-release-artifacts",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Bazel + rustc cross-compiling four target triples, with `bazel run :release` executing the generated copier script; exit code decided by the compiler and the filesystem",
+        "actorCanWrite": false,
+        "argument": "The signal is rustc's and Bazel's exit status over `//crates/aspect-launcher:bins`, `:brew`, `//crates/aspect-cli:bins` and `//crates/axl-docgen:bins`, which fan out to x86_64/aarch64 linux-musl and macOS builds at -c opt with LTO; no assertion in the repo can talk a linker out of an error. LIMIT: this is a compilability and packaging signal only — no test executes here, so a binary that builds and copies cleanly but misbehaves passes. Note also that `--config=ci` adds `--keep_going`, and a remote-cache hit substitutes a previously-computed action result (digest-keyed, so equivalent by construction)."
+      },
+      "evidence": [
+        ".github/workflows/build_release_artifacts.yaml:58-67",
+        "bazel/rust/multi_platform_rust_binaries.bzl:12-17",
+        ".bazelrc:22-25"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_release_artifacts.yaml#68-attest-build-provenance",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/attest-build-provenance calling GitHub's attestation API, which signs a provenance predicate via Sigstore/Fulcio using the workflow's OIDC identity",
+        "actorCanWrite": false,
+        "argument": "This edge EMITS a signal rather than reading one: it binds the artifact digests to the builder identity and stores a signed statement. Nothing in this repository ever verifies an attestation (`grep attestation` finds only the three `attestations: write` permission grants), so inside the measured graph the edge makes no falsifiable claim about correctness — its only failure modes are OIDC/signing infrastructure and an empty subject glob. Recorded for the report: the signing material sits with Sigstore/GitHub, outside the org's write boundary, so a downstream `gh attestation verify` WOULD be an anchored consumer — there just isn't one here."
+      },
+      "evidence": [
+        ".github/workflows/build_release_artifacts.yaml:68-71",
+        "grep -rn attestation .github/ -> only `attestations: write` permission lines"
+      ],
+      "confidence": 0.62,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/build_release_artifacts.yaml#72-upload-release-artifacts",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/upload-artifact@v7 writing `upload_root/` to GitHub's artifact store",
+        "actorCanWrite": null,
+        "argument": "Pure transport between jobs. `if-no-files-found` is left at its default (`warn`), so an empty upload does not even fail — the step cannot produce a red signal about the artifacts it carries."
+      },
+      "evidence": [
+        ".github/workflows/build_release_artifacts.yaml:72-76"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#33-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6 on the GitHub-hosted runner",
+        "actorCanWrite": null,
+        "argument": "Source acquisition for the launcher integration-test job. It asserts nothing about the launcher; it only puts the tree on disk for the cargo build and the six behavioral steps that follow."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:33"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#35-cache-cargo-registry-and-build-artifacts",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/cache@v5 restoring `~/.cargo` and `target/` from GitHub's cache service",
+        "actorCanWrite": null,
+        "argument": "A build-time optimization: restore-keys deliberately permit a stale `target/` from a different Cargo.lock, and cargo's own fingerprinting decides what to recompile. No correctness claim is made or capable of failing on this edge."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:35-44"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#53-install-musl-toolchain-linux-only",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "apt-get and rustup on the Linux runner, plus a write to $GITHUB_ENV",
+        "actorCanWrite": null,
+        "argument": "Environment setup: installs musl-tools and the musl target so the launcher's baked-in LLVM_TRIPLE matches the production (Bazel-cross-compiled) value, then exports CARGO_TARGET_ARGS. It configures the later checks rather than asserting anything itself."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:53-58"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#60-build-launcher",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "cargo + rustc compiling the aspect-launcher crate; the compiler decides the exit code",
+        "actorCanWrite": false,
+        "argument": "`cargo build -p aspect-launcher --target x86_64-unknown-linux-musl` (macOS runs native) puts the compiler outside the write boundary — a type error or a broken build.rs fails regardless of what the repo asserts about itself. LIMIT: compilability only; behavior is exercised by the six steps that follow, not by this one."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:60-61"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#67-test-1-unpinned-first-run-queries-releases-api",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real aspect-launcher process making a live call to api.github.com's releases endpoint and downloading a published release, with bash+grep deciding the step's exit code against expectations written in the workflow file",
+        "actorCanWrite": false,
+        "argument": "The causal path runs through GitHub's releases API and a real artifact download on a cold cache: if no stable vYYYY.WW.P release resolves, or the download fails, the `downloading aspect cli version v[0-9]` grep misses and the step exits 1. The expectations are fixed in the YAML before the run, and grep — not the launcher — decides pass/fail. LIMIT: the launcher's own exit status is discarded by `|| true`, so the oracle is entirely a match against ASPECT_DEBUG log lines the crate under test emits; a log line that lies about what the code did would pass. The API response content is also published by this same org, so only the transport and the service are truly third-party."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:67-77",
+        ".github/workflows/launcher-integration-tests.yaml:26-30"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#82-test-2-warm-cache-skips-api",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real aspect-launcher process run against the cache directory Test 1 populated, with bash+grep evaluating hardcoded positive and negative expectations",
+        "actorCanWrite": false,
+        "argument": "Execution is genuine — the binary runs against filesystem state produced by a prior step and the shell decides the exit code against strings frozen in the workflow file. LIMIT, and it is a sharp one here: no external system participates, the process exit status is thrown away by `|| true`, and both the positive claim (`found in cache`) and the negative claim (`should not query API`) are read from the launcher's own ASPECT_DEBUG channel. Nothing independently observes that no network call occurred, so this verifies the log narrative, not the syscall."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:82-91"
+      ],
+      "confidence": 0.58,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#96-test-3-stale-hint-triggers-api-re-query",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a python3 harness step that backdates the hint files' mtime to epoch, then a real launcher process that re-queries api.github.com; grep decides the exit code",
+        "actorCanWrite": false,
+        "argument": "The stimulus is applied from outside the binary (the harness mutates cache mtimes) and the response involves a live releases-API call, so the fork point sits outside the crate. If the hint directory does not exist the python step raises and the step fails closed. LIMIT: `|| true` discards the launcher's exit status and both assertions (`querying releases API (hint is stale)` and the no-redownload negative) are matches against the launcher's self-emitted debug log."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:96-113"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#118-test-4-api-failure-falls-back-to-stale-cached-binary",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "GitHub's API returning an auth failure for the injected `GITHUB_TOKEN=invalid`, observed through a real launcher process; grep decides the exit code",
+        "actorCanWrite": false,
+        "argument": "The failure being tested is manufactured by a third party — GitHub rejects the bad credential — and the harness, not the binary, injects it. That is a genuine external fork point for the fallback path. LIMIT: the assertion is a grep for `API error, falling back to stale cached tag` on the launcher's own ASPECT_DEBUG output, and `|| true` discards the exit status, so the check confirms the message is printed rather than that a stale cached binary was actually executed."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:118-130"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#135-test-5-pinned-version-downloads-directly-without-api-call",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real launcher process reading a version.axl fixture the harness wrote, with bash+grep evaluating pre-authored positive and negative expectations",
+        "actorCanWrite": false,
+        "argument": "The pinned-version fixture is authored by the harness outside the binary, the binary genuinely parses it, and grep decides the step. LIMIT: apart from bash and grep there is no producer outside the crate — the entire oracle is the launcher's own debug lines, the exit status is discarded by `|| true`, and despite the step's name ('downloads directly') no assertion checks that a download occurred; only the `pinned to tag ... skipping API` message and the absence of `querying releases` are checked."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:135-147"
+      ],
+      "confidence": 0.58,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/launcher-integration-tests.yaml#152-test-6-pinned-version-cache-hit",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real launcher process run a second time against the pinned-version cache Test 5 created, with grep deciding the exit code",
+        "actorCanWrite": false,
+        "argument": "Execution is real and the expectations are frozen in the workflow file, so the runtime and grep decide the outcome. LIMIT: like Test 2 this is a purely local step whose entire evidence is the binary's own ASPECT_DEBUG output (`found in cache`, absence of `^downloading `), with the process exit status discarded by `|| true`. Cache reuse is inferred from a self-report, never observed independently."
+      },
+      "evidence": [
+        ".github/workflows/launcher-integration-tests.yaml:152-161"
+      ],
+      "confidence": 0.58,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/prerelease_build.yaml#34-download-artifacts",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/download-artifact@v4 pulling the build job's artifact from GitHub's artifact store",
+        "actorCanWrite": null,
+        "argument": "Transport between jobs in the pre-release pipeline. It moves bytes the build job produced; it makes no claim about them that could be false."
+      },
+      "evidence": [
+        ".github/workflows/prerelease_build.yaml:34-37"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/prerelease_build.yaml#39-calculate-checksums",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "`shasum -a 256` computing digests over the downloaded assets",
+        "actorCanWrite": null,
+        "argument": "This is the checksum trap: the step GENERATES SHASUM256.txt and never compares it to any reference, so there is no expectation it can contradict. Grep across the repo finds only generation sites (here and publish_release.yaml:37) and no verification site. The file is then published alongside the assets by the same run that built them, so a consumer checking against it gains integrity-in-transit but no independence from the builder."
+      },
+      "evidence": [
+        ".github/workflows/prerelease_build.yaml:39-42",
+        ".github/workflows/publish_release.yaml:36-37"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/prerelease_build.yaml#44-create-pre-release",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the `gh` CLI calling GitHub's releases API to delete and recreate a `prerelease/<branch>` tag and upload assets",
+        "actorCanWrite": null,
+        "argument": "A publish action, not a verification edge: it ships whatever the build produced. Its only falsifiable guard is the branch-name sanitization (`exit 1` on an empty sanitized name), and the preceding `gh release delete ... || true` deliberately swallows failure. Nothing here can go red because the artifact is wrong."
+      },
+      "evidence": [
+        ".github/workflows/prerelease_build.yaml:44-96"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#55-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6 on the self-hosted Aspect Workflows runner",
+        "actorCanWrite": null,
+        "argument": "Source acquisition for the delivery-task job. No assertion about the CLI is made or can fail on this edge."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:55"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#59-github-actions-install-prebuilt-aspect-cli",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the local composite action `install-prebuilt-aspect-cli`, which runs actions/download-artifact against the upstream run id and moves the binary to `target/ci/aspect-cli` (or $HOME/.local/bin)",
+        "actorCanWrite": null,
+        "argument": "Installation of the CLI that later steps exercise — the binary here was already built by the upstream `pre-build` job, so this edge transports rather than verifies. Its `set -euo pipefail` body fails only if the artifact is missing, which is infrastructure, not a claim about the code."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:59-63",
+        ".github/actions/install-prebuilt-aspect-cli/action.yaml:43-70"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#64-bootstrap",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "`.aspect/bootstrap.sh` invoking vanilla Bazel (the previous stable aspect release on the Workflows runner) to build `//:cli` from source; rustc decides the exit code, and `set -eu` propagates it",
+        "actorCanWrite": false,
+        "argument": "When it runs, the signal is a real compile of the PR's source with a deliberately non-circular builder: the script comments record that `bazel` here is the previous stable release specifically so a PR with a fatal startup bug cannot bootstrap itself green, and the copy of `bazel-out/k8-dbg/bin/.../aspect-cli` fails closed if the build produced nothing. LIMIT, and it is the important one: this step carries `if: inputs.prebuild_run_id == ''`, and the automated path always dispatches with a prebuild run id from ci-workflows.yaml — so on every CI-triggered run this edge is SKIPPED and only the mutually exclusive install-prebuilt step executes. It gates only manual dispatches. It is also a compile, not a test."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:64-66",
+        ".aspect/bootstrap.sh:367-389",
+        ".github/workflows/ci-workflows.yaml:88-99"
+      ],
+      "confidence": 0.6,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#67-aspect-build-setup-aspect-2306377a61c45954ab2df7c7311698b109364352-v2026-26-9",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "aspect-build/setup-aspect composite action (SHA-pinned) performing `aspect auth login` against the Aspect API with ASPECT_API_TOKEN",
+        "actorCanWrite": null,
+        "argument": "Authentication and remote-cache setup for the delivery job. It provisions credentials the next step needs; it asserts nothing about the CLI under test."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:67-69"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#70-delivery-task",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the PR's freshly built aspect-cli binary executing a real delivery — a Bazel build of every `attr(tags, deliverable, //...)` target under `--config=release` plus execution of the resulting deliverable binaries — on a self-hosted Workflows runner; process exit code decides the step",
+        "actorCanWrite": false,
+        "argument": "The causal path runs through Bazel and rustc building the deliverable set and through actually running those binaries, so a build failure or a panic in the delivery pipeline turns the step red no matter what the repo asserts about itself; `--force-target=//examples/deliverable:deliverable_with_digest` guarantees at least one target is delivered every run, so the edge is not vacuous. LIMITS to say out loud: (1) the oracle is the CLI's own determination that delivery succeeded — the artifact under test is also the judge, and the PR-visible check-run is posted by that same binary via GithubStatusChecks; (2) `--warn-not-runnable` and `--warn-unresolved-digest` convert two real failure classes into non-failing warnings; (3) this workflow is fire-and-forget dispatched by ci-workflows.yaml's `dispatch-delivery` job, which succeeds as soon as `gh workflow run` returns, so nothing in the triggering run blocks on this result and whether its check-run is required is branch protection this clone cannot show."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:70-80",
+        ".aspect/config.axl:197-199",
+        ".github/workflows/ci-workflows.yaml:79-99",
+        "examples/deliverable/BUILD.bazel:11-62"
+      ],
+      "confidence": 0.65,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#87-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6 on the self-hosted runner for the delivery-debug-task job",
+        "actorCanWrite": null,
+        "argument": "Source acquisition for the ASPECT_DEBUG=1 variant of the delivery job. Nothing about correctness is asserted on this edge."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:87"
+      ],
+      "confidence": 0.93,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-workflows-delivery.yaml#88-github-actions-install-prebuilt-aspect-cli",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "the local composite action `install-prebuilt-aspect-cli` downloading the upstream run's `aspect-cli` artifact and installing it for the debug delivery job",
+        "actorCanWrite": null,
+        "argument": "Same transport/setup shape as the delivery-task job's install step: it places an already-built binary where the runner's launcher resolves it. No falsifiable claim about the code lives on this edge."
+      },
+      "evidence": [
+        ".github/workflows/ci-workflows-delivery.yaml:88-92",
+        ".github/actions/install-prebuilt-aspect-cli/action.yaml:52-70"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 10,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 15,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 187,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 5039,
+    "tokensOut": 5709,
+    "tokensEstimated": true,
+    "wallClockMs": 848423
+  }
+}

@@ -1,0 +1,40 @@
+<!-- @keelCard group="Color" name="Canvas, ink, accent" subtitle="Elevation is a background step plus a hairline" height="330" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-5); }
+  .row { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--k-space-2); margin-bottom: var(--k-space-5); }
+  .sw { height: var(--k-space-10); border: 1px solid var(--k-line); border-radius: var(--k-r-sm); margin-bottom: var(--k-space-1); }
+  .lbl { font-family: var(--k-font-mono); font-size: var(--k-fs-micro); color: var(--k-ink-2); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+  <p class="k-eyebrow">Canvas</p>
+  <div class="row">
+    <div><div class="sw" style="background: var(--k-bg-0)"></div><div class="lbl">bg-0 · 07090c</div></div>
+    <div><div class="sw" style="background: var(--k-bg-1)"></div><div class="lbl">bg-1 · 0c1015</div></div>
+    <div><div class="sw" style="background: var(--k-bg-2)"></div><div class="lbl">bg-2 · 11161d</div></div>
+    <div><div class="sw" style="background: var(--k-bg-3)"></div><div class="lbl">bg-3 · 171d26</div></div>
+    <div><div class="sw" style="background: var(--k-line)"></div><div class="lbl">line · 1b2027</div></div>
+    <div><div class="sw" style="background: var(--k-line-strong)"></div><div class="lbl">strong · 2a323c</div></div>
+  </div>
+
+  <p class="k-eyebrow">Ink and accent</p>
+  <div class="row">
+    <div><div class="sw" style="background: var(--k-ink-0)"></div><div class="lbl">ink-0 · 16:1</div></div>
+    <div><div class="sw" style="background: var(--k-ink-1)"></div><div class="lbl">ink-1 · 10:1</div></div>
+    <div><div class="sw" style="background: var(--k-ink-2)"></div><div class="lbl">ink-2 · 6:1</div></div>
+    <div><div class="sw" style="background: var(--k-ink-3)"></div><div class="lbl">ink-3 · 2.6:1</div></div>
+    <div><div class="sw" style="background: var(--k-accent)"></div><div class="lbl">accent · 7dd3fc</div></div>
+    <div><div class="sw" style="background: var(--k-accent-wash)"></div><div class="lbl">accent wash</div></div>
+  </div>
+
+  <p class="note">
+    <span class="k-mono">ink-3</span> is below the 4.5:1 text threshold on
+    <span class="k-mono">bg-0</span> — borders, disabled glyphs, and rules only.
+    The accent is the narrator's hue: links, the one emphasized clause, Keel's own
+    annotations. It never encodes a verdict, and no verdict hue is ever used for chrome.
+  </p>
+</body></html>

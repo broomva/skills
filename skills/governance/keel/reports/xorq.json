@@ -1,0 +1,627 @@
+{
+  "target": "xorq",
+  "revision": "22f03a65e67805bd1521784384656a79a4148123",
+  "generatedAt": "2026-07-26T20:09:09.236Z",
+  "nodes": [
+    {
+      "id": "codecov.yml#codecov-yml",
+      "kind": "ci_step",
+      "name": "coverage gate (codecov.yml)",
+      "source": "codecov.yml",
+      "raw": "coverage:\n  notify:\n    wait_for_ci: true\n  status:\n    project:\n      default:\n        target: auto\n        threshold: 1%\n    patch:\n      default:\n        target: auto\n        threshold: 1%\n\nflag_management:\n  default_rules:\n    carryforward: true\n\nflags:\n  core:\n    paths:\n      - python/xorq/\n    carryforward: true\n  library:\n    paths:\n      - python/xorq/\n    carryforward: true\n  slow:\n    paths:\n      - python/xorq/\n    carryforward: true\n  databricks:\n    paths:\n      - python/xorq/\n    carryforward: true\n  snowflake:\n    paths:\n      - python/xorq/\n    carryforward: true\n  gcs:\n    paths:\n      - python/xorq/\n    carryforward: true\n  s3:\n    paths:\n      - python/xorq/\n    carryforward: true\n  examples:\n    paths:\n      - examples/\n    carryforward: true\n\ncomment:\n  layout: \"reach,diff,flags,tree\"\n  require_changes: false\n  require_base: false\n  require_head: true\n\n"
+    },
+    {
+      "id": "python/xorq/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/conftest.py",
+      "raw": "from pathlib import Path\n\nimport numpy as np\nimport pandas as pd\nimport pytest\n\nimport xorq.api as xo\nfrom xorq.expr.builders import _FROM_TAG_NODE_REGISTRY\n\n\n@pytest.fixture\ndef saved_registry():\n    \"\"\"Snapshot the builder ``TagHandler`` registry around a test.\n\n    Tests that call ``register_tag_handler`` mutate process-global state in\n    ``xorq.expr.builders``; this fixture restores that state afterward so\n    tests don't leak handlers into each other or into builtin lookups.\n    \"\"\"\n    import xorq.expr.builders as _builders_mod  # noqa: PLC0415\n\n    saved = dict(_FROM_TAG_NODE_REGISTRY)\n    saved_keys = _builders_mod._BUILTIN_KEYS\n    saved_init = _builders_mod._initialized\n    yield\n    _FROM_TAG_NODE_REGISTRY.clear()\n    _FROM_TAG_NODE_REGISTRY.update(saved)\n    _builders_mod._BUILTIN_KEYS = saved_keys\n    _builders_mod._initialized = saved_init\n\n\narray_types_df = pd.DataFrame(\n    [\n        (\n            [np.int64(1), 2, 3],\n            [\"a\", \"b\", \"c\"],\n            [1.0, 2.0, 3.0],\n            \"a\",\n            1.0,\n            [[], [np.int64(1), 2, 3], None],\n        ),\n        (\n            [4, 5],\n            [\"d\", \"e\"],\n            [4.0, 5.0],\n            \"a\",\n            2.0,\n            [],\n        ),\n        (\n            [6, None],\n            [\"f\", None],\n            [6.0, np.nan],\n            \"a\",\n            3.0,\n            [None, [], None],\n        ),\n        (\n            [None, 1, None],\n            [None, \"a\", None],\n            [],\n            \"b\",\n            4.0,\n            [[1], [2], [], [3, 4, 5]],\n        ),\n        (\n            [2, None, 3],\n            [\"b\", None, \"c\"],\n            np.nan,\n            \"b\",\n            5.0,\n            None,\n        ),\n        (\n            [4, None, None, 5],\n            [\"d\", None, None, \"e\"],\n            [4.0, np.nan, np.nan, 5.0],\n            \"c\",\n            6.0,\n            [[1, 2, 3]],\n        ),\n    ],\n    columns=[\n        \"x\",\n        \"y\",\n        \"z\",\n        \"grouper\",\n        \"scalar_column\",\n        \"multi_dim\",\n    ],\n)\n\nwin = pd.DataFrame(\n    {\n        \"g\": [\"a\", \"a\", \"a\", \"a\", \"a\"],\n        \"x\": [0, 1, 2, 3, 4],\n        \"y\": [3, 2, 0, 1, 1],\n    }\n)\n\nexpected_tables = (\n    \"array_types\",\n    \"astronauts\",\n    \"awards_players\",\n    \"awards_players_special_types\",\n    \"batting\",\n    \"diamonds\",\n    \"functional_alltypes\",\n    \"geo\",\n    \"geography_columns\",\n    \"geometry_columns\",\n    \"json_t\",\n    \"map\",\n    \"spatial_ref_sys\",\n    \"topk\",\n    \"tzone\",\n)\n\n\ndef remove_unexpected_tables(dirty):\n    # drop tables\n    for table in dirty.list_tables():\n        if table not in expected_tables:\n            dirty.drop_table(table, force=True)\n\n    # drop view\n    for table in dirty.list_tables():\n        if table not in expected_tables:\n            dirty.drop_view(table, force=True)\n\n    actual = sorted(dirty.list_tables())\n    expected = sorted(expected_tables)\n    if actual != expected:\n        missing = tuple(t for t in expected if t not in actual)\n        extra = tuple(t for t in actual if t not in expected)\n        raise ValueError(\n            {\n                \"missing\": missing,\n                \"extra\": extra,\n            }\n        )\n\n\n@pytest.fixture(scope=\"function\")\ndef pg():\n    conn = xo.postgres.connect_env()\n    remove_unexpected_tables(conn)\n    yield conn\n    remove_unexpected_tables(conn)\n\n\n@pytest.fixture(scope=\"session\")\ndef root_dir():\n    return Path(__file__).absolute().parents[2]\n\n\n@pytest.fixture(scope=\"session\")\ndef parquet_dir(root_dir):\n    data_dir = root_dir / \"ci\" / \"ibis-testing-data\" / \"parquet\"\n    return data_dir\n\n\n@pytest.fixture(scope=\"session\")\ndef fixture_dir(root_dir):\n    return root_dir.joinpath(\"python\", \"xorq\", \"tests\", \"fixtures\")\n\n\n@pytest.fixture(scope=\"session\")\ndef data_dir(root_dir):\n    data_dir = root_dir / \"ci\" / \"ibis-testing-data\"\n    return data_dir\n\n\n@pytest.fixture(scope=\"session\")\ndef csv_dir(data_dir):\n    csv_dir = data_dir / \"csv\"\n    return csv_dir\n\n\n@pytest.fixture(scope=\"session\")\ndef exa"
+    },
+    {
+      "id": "python/xorq/backends/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/conftest.py",
+      "raw": "from __future__ import annotations\n\nimport functools\nimport importlib.util\nimport itertools\n\nimport _pytest\nimport pytest\n\nimport xorq.api as xo\nfrom xorq.backends import _get_backend_names\nfrom xorq.caching import ParquetSnapshotCache, SourceSnapshotCache\nfrom xorq.vendor import ibis\n\n\n# PWD is optional: an unencrypted keypair has no passphrase, so gate only on\n# the genuinely-required creds\nrequired_snowflake_credentials_varnames = (\n    \"SNOWFLAKE_PRIVATE_KEY\",\n    \"SNOWFLAKE_USER\",\n)\nsnowflake_credentials_varnames = (\n    *required_snowflake_credentials_varnames,\n    \"SNOWFLAKE_PRIVATE_KEY_PWD\",\n)\n\n\n@functools.cache\ndef have_snowflake_credentials() -> bool:\n    # importorskip: snowflake_utils imports the backend + connector, which may\n    # not be installed; only consulted after connector is importorskip'd above\n    snowflake_utils = pytest.importorskip(\"xorq.common.utils.snowflake_utils\")\n    return all(\n        snowflake_utils.snowflake_config.get(varname)\n        for varname in required_snowflake_credentials_varnames\n    )\n\n\nKEY_PREFIX = xo.config.options.cache.key_prefix\n\n\ndef _get_backend_from_parts(parts: tuple[str, ...]) -> str | None:\n    \"\"\"Return the backend part of a test file's path parts.\n\n    Examples\n    --------\n    >>> _get_backend_from_parts((\"/\", \"ibis\", \"backends\", \"sqlite\", \"tests\"))\n    \"sqlite\"\n    \"\"\"\n    try:\n        index = parts.index(\"backends\")\n    except ValueError:\n        return None\n    else:\n        return parts[index + 1]\n\n\ndef pytest_ignore_collect(collection_path, config):\n    # get the backend path part\n    backend = _get_backend_from_parts(collection_path.parts)\n    if backend is None or backend not in _get_backend_names():\n        return False\n\n    # unlike other optional backends, the bigquery package __init__ eagerly\n    # imports google.cloud.bigquery (via vendored ibis), so its tests/conftest\n    # cannot even load to reach its own importorskip when the `bigquery` extra\n    # is absent; skip the collection outright in that case (find_spec does not\n    # import the module)\n    if backend == \"bigquery\":\n        try:\n            has_bigquery = importlib.util.find_spec(\"google.cloud.bigquery\") is not None\n        except ModuleNotFoundError:\n            # find_spec imports parent packages; a wholly-absent `google`\n            # namespace raises rather than returning None\n            has_bigquery = False\n        if not has_bigquery:\n            return True\n\n    # we evaluate the marker early so that we don't trigger\n    # an import of conftest files for the backend, which will\n    # import the backend and thus require dependencies that may not\n    # exist\n    #\n    # alternatives include littering library code with pytest.importorskips\n    # and moving all imports close to their use site\n    #\n    # the latter isn't tenable for backends that use multiple dispatch\n    # since the rules are executed at import time\n    mark_expr = config.getoption(\"-m\")\n    # we can't let the empty string pass through, since `'' in s` is `True` for\n    # any `s`; if no marker was passed don't ignore the collection of `path`\n    if not mark_expr:\n        return False\n    expr = _pytest.mark.expression.Expression.compile(mark_expr)\n    # we check the \"backend\" marker as well since if that's passed\n    # any file matching a backend should be skipped\n    keep = expr.evaluate(lambda s, **_kw: s in (backend, \"backend\"))\n    return not keep\n\n\ndef pytest_collection_modifyitems(session, config, items):\n    all_backends = _get_backend_names()\n    additional_markers = []\n\n    unrecognized_backends = set()\n    for item in items:\n        # add the backend marker to any tests are inside \"xorq/backends\"\n        parts = item.path.parts\n        backend = _get_backend_from_parts(parts)\n        if backend is not None and backend in all_backends:\n            item.add_marker(getattr(pytest.mark, backend))\n        elif \"backends\" not in parts and not tuple(\n            itertools.chain(\n                *(item.iter_markers(name="
+    },
+    {
+      "id": "python/xorq/backends/xorq_datafusion/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/xorq_datafusion/tests/conftest.py",
+      "raw": "from pathlib import Path\n\nimport pyarrow as pa\nimport pytest\n\nimport xorq.api as xo\nfrom xorq.conftest import array_types_df, win\n\n\nexpected_tables = (\n    \"array_types\",\n    \"astronauts\",\n    \"awards_players\",\n    \"awards_players_special_types\",\n    \"batting\",\n    \"diamonds\",\n    \"functional_alltypes\",\n    \"geo\",\n    \"geography_columns\",\n    \"geometry_columns\",\n    \"json_t\",\n    \"map\",\n    \"spatial_ref_sys\",\n    \"topk\",\n    \"tzone\",\n)\n\n\ndef remove_unexpected_tables(dirty):\n    # drop tables\n    for table in dirty.list_tables():\n        if table not in expected_tables:\n            dirty.drop_table(table, force=True)\n\n    # drop view\n    for table in dirty.list_tables():\n        if table not in expected_tables:\n            dirty.drop_view(table, force=True)\n\n    if sorted(dirty.list_tables()) != sorted(expected_tables):\n        raise ValueError(\n            f\"unexpected tables after cleanup: {set(dirty.list_tables()) - set(expected_tables)}\"\n        )\n\n\n@pytest.fixture(scope=\"session\")\ndef ddl_file(root_dir):\n    ddl_dir = root_dir / \"db\" / \"datafusion.sql\"\n    return ddl_dir\n\n\ndef statements(ddl_file: Path):\n    return (\n        statement\n        for statement in map(str.strip, ddl_file.read_text().split(\";\"))\n        if statement\n    )\n\n\n@pytest.fixture(scope=\"session\")\ndef con(data_dir, ddl_file):\n    conn = xo.connect()\n    parquet_dir = data_dir / \"parquet\"\n    conn.read_parquet(\n        parquet_dir / \"functional_alltypes.parquet\", \"functional_alltypes\"\n    )\n    conn.read_parquet(parquet_dir / \"batting.parquet\", \"batting\")\n    conn.read_parquet(parquet_dir / \"diamonds.parquet\", \"diamonds\")\n    conn.read_parquet(parquet_dir / \"astronauts.parquet\", \"astronauts\")\n    conn.read_parquet(parquet_dir / \"awards_players.parquet\", \"awards_players\")\n\n    conn.create_table(\"array_types\", array_types_df)\n    conn.create_table(\"win\", win)\n\n    if ddl_file.is_file() and ddl_file.name.endswith(\".sql\"):\n        for statement in statements(ddl_file):\n            with conn._safe_raw_sql(statement):  # noqa\n                pass\n\n    return conn\n\n\n@pytest.fixture(scope=\"session\")\ndef dirty_ls_con():\n    con = xo.connect()\n    return con\n\n\n@pytest.fixture(scope=\"function\")\ndef ls_con(dirty_ls_con):\n    # since we don't register, maybe just create a fresh con\n    yield dirty_ls_con\n    # drop tables\n    for table_name in dirty_ls_con.list_tables():\n        dirty_ls_con.drop_table(table_name, force=True)\n    # drop view\n    for table_name in dirty_ls_con.list_tables():\n        dirty_ls_con.drop_view(table_name, force=True)\n\n\n@pytest.fixture(scope=\"session\")\ndef alltypes(con):\n    return con.table(\"functional_alltypes\")\n\n\n@pytest.fixture(scope=\"session\")\ndef batting(con):\n    return con.table(\"batting\")\n\n\n@pytest.fixture(scope=\"session\")\ndef awards_players(con):\n    return con.table(\"awards_players\")\n\n\n@pytest.fixture(scope=\"session\")\ndef diamonds(con):\n    return con.table(\"diamonds\")\n\n\n@pytest.fixture(scope=\"session\")\ndef alltypes_df(alltypes):\n    return alltypes.execute()\n\n\n@pytest.fixture(scope=\"session\")\ndef batting_df(batting):\n    return batting.execute()\n\n\n@pytest.fixture(scope=\"session\")\ndef sorted_df(alltypes_df):\n    return alltypes_df.sort_values(\"id\").reset_index(drop=True)\n\n\n@pytest.fixture(scope=\"session\")\ndef array_types(con):\n    return con.table(\"array_types\")\n\n\n@pytest.fixture(scope=\"session\")\ndef struct(con):\n    return con.table(\"structs\")\n\n\n@pytest.fixture(scope=\"session\")\ndef struct_df(struct):\n    return struct.execute()\n\n\n@pytest.fixture\ndef df():\n    # create a RecordBatch and a new DataFrame from it\n    batch = pa.RecordBatch.from_arrays(\n        [\n            pa.array([0, 1, 2, 3, 4, 5, 6]),\n            pa.array([7, 4, 3, 8, 9, 1, 6]),\n            pa.array([\"A\", \"A\", \"A\", \"A\", \"B\", \"B\", \"B\"]),\n        ],\n        names=[\"a\", \"b\", \"c\"],\n    )\n\n    return batch.to_pandas()\n\n\n@pytest.fixture(scope=\"session\")\ndef win_table(con):\n    return con.table(\"win\")\n"
+    },
+    {
+      "id": "python/xorq/backends/gizmosql/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/gizmosql/tests/conftest.py",
+      "raw": "from __future__ import annotations\n\nimport contextlib\nimport datetime\nfrom pathlib import Path\n\nimport pytest\n\nimport xorq.api as xo\nfrom xorq.vendor.ibis import util\n\n\n# ── Constants ────────────────────────────────────────────────────────────────\nGIZMOSQL_USERNAME = \"ibis\"\nGIZMOSQL_PASSWORD = \"ibis_password\"\n\nROOT_DIR = Path(__file__).resolve().parents[5]  # xorq repo root\nDATA_DIR = ROOT_DIR / \"ci\" / \"ibis-testing-data\"\n\nPARQUET_TABLES = (\n    \"functional_alltypes\",\n    \"diamonds\",\n    \"batting\",\n    \"awards_players\",\n    \"astronauts\",\n)\n\n\ndef _generate_self_signed_cert(out_dir: Path) -> tuple[Path, Path]:\n    \"\"\"Mint a self-signed RSA cert + key for ``localhost`` and write both as\n    PEM into ``out_dir``. Used to enable TLS on the test server so the test\n    suite still exercises the encrypted Flight SQL path (the previous Docker\n    image baked this in; the bare server binary needs explicit cert files).\n    \"\"\"\n    from cryptography import x509  # noqa: PLC0415\n    from cryptography.hazmat.primitives import hashes, serialization  # noqa: PLC0415\n    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415\n    from cryptography.x509.oid import NameOID  # noqa: PLC0415\n\n    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)\n    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, \"localhost\")])\n    now = datetime.datetime.now(datetime.timezone.utc)\n    cert = (\n        x509.CertificateBuilder()\n        .subject_name(name)\n        .issuer_name(name)\n        .public_key(key.public_key())\n        .serial_number(x509.random_serial_number())\n        .not_valid_before(now - datetime.timedelta(minutes=1))\n        .not_valid_after(now + datetime.timedelta(days=1))\n        .add_extension(\n            x509.SubjectAlternativeName([x509.DNSName(\"localhost\")]),\n            critical=False,\n        )\n        .sign(key, hashes.SHA256())\n    )\n\n    cert_path = out_dir / \"gizmosql_test_cert.pem\"\n    key_path = out_dir / \"gizmosql_test_key.pem\"\n    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))\n    # The key is written unencrypted because the server has to read it back\n    # at startup with no passphrase prompt available, and the tmp dir is\n    # session-scoped + per-pytest-invocation. The cert is loopback-only and\n    # ~1 day valid, so the on-disk plaintext window is bounded and the\n    # blast radius is limited to the same shell user already running pytest.\n    key_path.write_bytes(\n        key.private_bytes(\n            encoding=serialization.Encoding.PEM,\n            format=serialization.PrivateFormat.PKCS8,\n            encryption_algorithm=serialization.NoEncryption(),\n        )\n    )\n    return cert_path, key_path\n\n\n@pytest.fixture(scope=\"session\")\ndef gizmosql_server(tmp_path_factory):\n    \"\"\"Start the GizmoSQL server as a managed subprocess via the\n    [gizmosql](https://pypi.org/project/gizmosql/) PyPI package.\n\n    The package downloads + caches the matching server binary on first use,\n    auto-picks a free port, and tears the server down on exit — no Docker\n    is needed for the test fixture. A short-lived self-signed cert is\n    generated at session start and passed via ``--tls`` so the encrypted\n    Flight SQL path is still exercised by the tests. The CLI flag contract\n    (``--tls <cert> <key>``) is covered by the ``gizmosql>=1.26.0,<2``\n    version pin in ``pyproject.toml``.\n\n    Note: unlike the previous Docker-based fixture, this version does not\n    reuse a pre-existing server listening on a fixed port — it always\n    starts its own subprocess on a freshly-picked free port. Developers\n    who used to run a local GizmoSQL alongside pytest no longer benefit\n    from that fallback.\n    \"\"\"\n    gizmosql = pytest.importorskip(\"gizmosql\")\n\n    cert_dir = tmp_path_factory.mktemp(\"gizmosql-tls\")\n    # Restrict directory access to the owner before writing the unencrypted\n    # key — important on shared CI runners where the system tmp dir would\n    # otherwise be world-r"
+    },
+    {
+      "id": "python/xorq/backends/databricks/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/databricks/tests/conftest.py",
+      "raw": "from __future__ import annotations\n\nimport concurrent.futures\nimport getpass\nimport sys\nfrom os import environ as env\n\nimport pytest\n\nimport xorq.api as xo\n\n\nDATABRICKS_CATALOG = env.get(\"IBIS_TESTING_DATABRICKS_CATALOG\") or \"workspace\"\n\n\ndef put_into(con, query):\n    with con.cursor() as cur:\n        cur.execute(query)\n\n\n@pytest.fixture(scope=\"session\")\ndef con(data_dir):\n    import databricks.sql  # noqa: PLC0415\n\n    files = list(data_dir.joinpath(\"parquet\").glob(\"*.parquet\"))\n\n    user = getpass.getuser()\n    python_version = \"\".join(map(str, sys.version_info[:3]))\n    volume = f\"{user}_{python_version}\"\n    volume_prefix = f\"/Volumes/{DATABRICKS_CATALOG}/default/{volume}\"\n\n    with databricks.sql.connect(\n        server_hostname=env[\"DATABRICKS_SERVER_HOSTNAME\"],\n        http_path=env[\"DATABRICKS_HTTP_PATH\"],\n        access_token=env[\"DATABRICKS_TOKEN\"],\n        staging_allowed_local_path=str(data_dir),\n    ) as raw_con:\n        with raw_con.cursor() as cur:\n            cur.execute(\n                f\"CREATE VOLUME IF NOT EXISTS {DATABRICKS_CATALOG}.default.{volume} COMMENT 'xorq test data storage'\"\n            )\n        with concurrent.futures.ThreadPoolExecutor() as exe:\n            for fut in concurrent.futures.as_completed(\n                exe.submit(\n                    put_into,\n                    raw_con,\n                    f\"PUT '{file}' INTO '{volume_prefix}/{file.name}' OVERWRITE\",\n                )\n                for file in files\n            ):\n                fut.result()\n\n    connection = xo.databricks.connect(\n        server_hostname=env[\"DATABRICKS_SERVER_HOSTNAME\"],\n        http_path=env[\"DATABRICKS_HTTP_PATH\"],\n        access_token=env[\"DATABRICKS_TOKEN\"],\n        catalog=DATABRICKS_CATALOG,\n        schema=\"default\",\n    )\n    connection._test_volume_prefix = volume_prefix\n    yield connection\n    connection.con.close()\n\n\n@pytest.fixture(scope=\"session\")\ndef functional_alltypes(con):\n    path = f\"{con._test_volume_prefix}/functional_alltypes.parquet\"\n    return con.sql(f\"SELECT * FROM read_files('{path}', format => 'parquet')\")\n\n\n@pytest.fixture(scope=\"session\")\ndef batting(con):\n    path = f\"{con._test_volume_prefix}/batting.parquet\"\n    return con.sql(f\"SELECT * FROM read_files('{path}', format => 'parquet')\")\n\n\n@pytest.fixture(scope=\"session\")\ndef diamonds(con):\n    path = f\"{con._test_volume_prefix}/diamonds.parquet\"\n    return con.sql(f\"SELECT * FROM read_files('{path}', format => 'parquet')\")\n"
+    },
+    {
+      "id": "python/xorq/backends/datafusion/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/datafusion/tests/conftest.py",
+      "raw": "import numpy as np\nimport pandas as pd\nimport pytest\n\nimport xorq.api as xo\n\n\n@pytest.fixture\ndef quotes_df():\n    # Quote data (more frequent updates)\n    quote_dates = pd.date_range(start=\"2024-01-01\", end=\"2024-01-31\", freq=\"30min\")\n    quotes = pd.DataFrame(\n        {\n            \"timestamp\": quote_dates,\n            \"symbol\": np.random.choice([\"AAPL\", \"GOOGL\", \"MSFT\"], len(quote_dates)),\n            \"bid\": np.random.uniform(99, 198, len(quote_dates)),\n            \"ask\": np.random.uniform(101, 202, len(quote_dates)),\n        }\n    )\n\n    return quotes\n\n\n@pytest.fixture\ndef trades_df():\n    # Create sample trading data\n    np.random.seed(42)\n    dates = pd.date_range(start=\"2024-01-01\", end=\"2024-01-31\", freq=\"h\")\n\n    # Trades data\n    trades = pd.DataFrame(\n        {\n            \"timestamp\": dates,\n            \"symbol\": np.random.choice([\"AAPL\", \"GOOGL\", \"MSFT\"], len(dates)),\n            \"price\": np.random.uniform(100, 200, len(dates)),\n            \"volume\": np.random.randint(100, 1000, len(dates)),\n        }\n    )\n\n    return trades\n\n\n@pytest.fixture\ndef ddb_con(quotes_df):\n    \"\"\"Create DuckDB connection with Ibis\"\"\"\n    duckdb_connection = xo.duckdb.connect()\n    duckdb_connection.create_table(\n        \"quotes\",\n        quotes_df,\n    )\n    return duckdb_connection\n\n\n@pytest.fixture\ndef con(trades_df):\n    \"\"\"Create DataFusion connection with xorq\"\"\"\n    con = xo.datafusion.connect()\n    con.create_table(\"trades\", trades_df, temp=False)\n    return con\n\n\n@pytest.fixture(scope=\"session\")\ndef ls_con(parquet_dir):\n    conn = xo.connect()\n\n    for name in (\"astronauts\", \"functional_alltypes\", \"awards_players\", \"batting\"):\n        conn.read_parquet(parquet_dir / f\"{name}.parquet\", name)\n\n    return conn\n\n\n@pytest.fixture(scope=\"session\")\ndef alltypes(ls_con):\n    return ls_con.table(\"functional_alltypes\")\n\n\n@pytest.fixture(scope=\"session\")\ndef alltypes_df(alltypes):\n    return alltypes.execute()\n\n\n@pytest.fixture(scope=\"session\")\ndef awards_players(ls_con):\n    return ls_con.table(\"awards_players\")\n\n\n@pytest.fixture(scope=\"session\")\ndef batting(ls_con):\n    return ls_con.table(\"batting\")\n"
+    },
+    {
+      "id": "python/xorq/backends/bigquery/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/bigquery/tests/conftest.py",
+      "raw": "from __future__ import annotations\n\nimport contextlib\nfrom typing import TYPE_CHECKING\n\nimport pandas as pd\nimport pytest\n\nfrom xorq.common.utils.env_utils import EnvConfigable\n\n\nif TYPE_CHECKING:\n    from collections.abc import Iterator\n    from pathlib import Path\n\n    from xorq.backends.bigquery import Backend\n    from xorq.vendor.ibis.expr import types as ir\n\n\n# the google client libraries are an optional (`--extra bigquery`) dependency\npytest.importorskip(\"google.cloud.bigquery\")\n\nimport google.api_core.exceptions as gexc  # noqa: E402\nimport google.auth  # noqa: E402\nimport google.auth.exceptions  # noqa: E402\n\nimport xorq.api as xo  # noqa: E402\nfrom xorq.vendor.ibis.backends.bigquery import EXTERNAL_DATA_SCOPES  # noqa: E402\nfrom xorq.vendor.ibis.util import gen_name  # noqa: E402\n\n\nPROJECT_ID_ENV_VAR = \"GOOGLE_BIGQUERY_PROJECT_ID\"\nbigquery_config = EnvConfigable.subclass_from_kwargs(PROJECT_ID_ENV_VAR).from_env()\n\n\n@pytest.fixture(scope=\"session\")\ndef default_credentials() -> tuple[object, str]:\n    try:\n        credentials, project_id = google.auth.default(scopes=EXTERNAL_DATA_SCOPES)\n    except google.auth.exceptions.DefaultCredentialsError as exc:\n        pytest.skip(f\"Could not get GCP credentials: {exc}\")\n    return credentials, project_id\n\n\n@pytest.fixture(scope=\"session\")\ndef project_id(default_credentials: tuple[object, str]) -> str:\n    _, default_project_id = default_credentials\n    project_id = bigquery_config[PROJECT_ID_ENV_VAR] or default_project_id\n    if not project_id:\n        pytest.skip(f\"no project id: set ${PROJECT_ID_ENV_VAR} or configure ADC\")\n    return project_id\n\n\n@pytest.fixture(scope=\"session\")\ndef credentials(default_credentials: tuple[object, str]) -> object:\n    credentials, _ = default_credentials\n    return credentials\n\n\n@pytest.fixture(scope=\"session\")\ndef dataset_id() -> str:\n    return gen_name(\"xorq_gbq_testing\")\n\n\n@pytest.fixture(scope=\"session\")\ndef con(credentials: object, project_id: str, dataset_id: str) -> Iterator[Backend]:\n    con = xo.bigquery.connect(\n        project_id=project_id, dataset_id=dataset_id, credentials=credentials\n    )\n    # disable the query cache so tests observe real behavior\n    con.client.default_query_job_config.use_query_cache = False\n    try:\n        # query_and_wait executes eagerly, so this smoke-tests access before\n        # the dataset is created; any client-side or auth error (Forbidden,\n        # NotFound, ServiceUnavailable, transport/credential failures) skips\n        # cleanly instead of surfacing as a hard error\n        con.raw_sql(\"SELECT 1\")\n        con.create_database(dataset_id, force=True)\n    except (gexc.GoogleAPICallError, google.auth.exceptions.GoogleAuthError) as exc:\n        pytest.skip(f\"Cannot access BigQuery project {project_id}: {exc}\")\n    try:\n        yield con\n    finally:\n        con.drop_database(dataset_id, force=True, cascade=True)\n\n\n@pytest.fixture\ndef temp_table(con: Backend) -> Iterator[str]:\n    # yields a unique table name and drops it on teardown, so tests need no\n    # per-test cleanup (mirrors the gizmosql backend's temp_table fixture)\n    name = gen_name(\"xorq_gbq_table\")\n    yield name\n    with contextlib.suppress(Exception):\n        con.drop_table(name, force=True)\n\n\ndef _persistent_table(con: Backend, parquet_dir: Path, name: str) -> Iterator[ir.Table]:\n    # create the fixture in the connection's dataset (not the anonymous session\n    # dataset that read_parquet lands in) so it resolves in `__TABLES__` and the\n    # dasher normalizer exercises its real last_modified_time keying\n    df = pd.read_parquet(parquet_dir.joinpath(f\"{name}.parquet\"))\n    con.create_table(name, obj=df, overwrite=True)\n    try:\n        yield con.table(name)\n    finally:\n        con.drop_table(name, force=True)\n\n\n@pytest.fixture(scope=\"session\")\ndef batting(con: Backend, parquet_dir: Path) -> Iterator[ir.Table]:\n    yield from _persistent_table(con, parquet_dir, \"batting\")\n\n\n@pytest.fixture(scope=\"session\")\ndef awards_players(con: Ba"
+    },
+    {
+      "id": "python/xorq/backends/snowflake/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/snowflake/tests/conftest.py",
+      "raw": "from contextlib import contextmanager\n\nimport pytest\nimport sqlglot as sg\nimport sqlglot.expressions as sge\n\nimport xorq.api as xo\nfrom xorq.vendor.ibis.util import gen_name\n\n\nSU = pytest.importorskip(\"xorq.common.utils.snowflake_utils\")\n\n\n@pytest.fixture(scope=\"session\")\ndef sf_con():\n    return xo.snowflake.connect_env_keypair(\n        # a database/schema we can trust exists\n        database=\"SNOWFLAKE_SAMPLE_DATA\",\n        schema=\"TPCH_SF1\",\n        create_object_udfs=False,\n    )\n\n\n@pytest.fixture\ndef temp_catalog(sf_con):\n    cat = gen_name(\"tmp_catalog\")\n\n    sf_con.create_catalog(cat)\n    assert cat in sf_con.list_catalogs()\n\n    yield cat\n\n    sf_con.drop_catalog(cat)\n    assert cat not in sf_con.list_catalogs()\n\n\n@pytest.fixture\ndef temp_db(sf_con, temp_catalog):\n    database = gen_name(\"tmp_database\")\n\n    sf_con.create_database(database, catalog=temp_catalog)\n    assert database in sf_con.list_databases(catalog=temp_catalog)\n\n    yield database\n\n    sf_con.drop_database(database, catalog=temp_catalog)\n    assert database not in sf_con.list_databases(catalog=temp_catalog)\n\n\n@pytest.fixture\ndef temp_catalog2(sf_con):\n    cat = gen_name(\"tmp_catalog\")\n\n    sf_con.create_catalog(cat)\n    assert cat in sf_con.list_catalogs()\n\n    yield cat\n\n    sf_con.drop_catalog(cat)\n    assert cat not in sf_con.list_catalogs()\n\n\n@pytest.fixture\ndef temp_db2(sf_con, temp_catalog2):\n    database = gen_name(\"tmp_database\")\n\n    sf_con.create_database(database, catalog=temp_catalog2)\n    assert database in sf_con.list_databases(catalog=temp_catalog2)\n\n    yield database\n\n    sf_con.drop_database(database, catalog=temp_catalog2)\n    assert database not in sf_con.list_databases(catalog=temp_catalog2)\n\n\n@contextmanager\ndef inside_temp_schema(con, temp_catalog, temp_db):\n    (prev_catalog, prev_db) = (con.current_catalog, con.current_database)\n    con.raw_sql(\n        sge.Use(\n            kind=\"SCHEMA\", this=sg.table(temp_db, db=temp_catalog, quoted=True)\n        ).sql(dialect=con.name),\n    )\n    try:\n        yield\n    finally:\n        con.raw_sql(\n            sge.Use(\n                kind=\"SCHEMA\", this=sg.table(prev_db, db=prev_catalog, quoted=True)\n            ).sql(dialect=con.name),\n        )\n\n\ndef generate_mock_get_conn(original_get_conn, temp_catalog, temp_db):\n    @contextmanager\n    def mock_get_conn(self, **kwargs):\n        kwargs[\"database\"] = \"SNOWFLAKE_SAMPLE_DATA\"\n        kwargs[\"schema\"] = \"TPCH_SF1\"\n        with original_get_conn(self, **kwargs) as conn:\n            yield MockSnowFlakeADBCCon(conn, temp_catalog, temp_db)\n\n    return mock_get_conn\n\n\nclass MockSnowFlakeADBCCon:\n    def __init__(self, snowflake_adbc_con, temp_catalog, temp_db):\n        self.snowflake_adbc_con = snowflake_adbc_con\n        self.temp_catalog = temp_catalog\n        self.temp_db = temp_db\n\n    @contextmanager\n    def cursor(self):\n        with self.snowflake_adbc_con.cursor() as cur:\n            cur.execute(f'USE SCHEMA \"{self.temp_catalog}\".\"{self.temp_db}\"')\n            yield cur\n\n    def commit(self):\n        self.snowflake_adbc_con.commit()\n"
+    },
+    {
+      "id": "python/xorq/backends/sqlite/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/sqlite/tests/conftest.py",
+      "raw": "import pandas as pd\nimport pytest\n\nimport xorq.api as xo\n\n\n@pytest.fixture(scope=\"session\")\ndef sqlite_con():\n    return xo.sqlite.connect()\n\n\n@pytest.fixture(scope=\"session\")\ndef astronauts_parquet_path(parquet_dir):\n    return parquet_dir / \"astronauts.parquet\"\n\n\n@pytest.fixture(scope=\"session\")\ndef astronauts_csv_path(csv_dir):\n    return csv_dir / \"astronauts.csv\"\n\n\n@pytest.fixture(scope=\"session\")\ndef persistent_sqlite_con(tmp_path_factory):\n    path = tmp_path_factory.mktemp(\"database\").joinpath(\"lite.db\").resolve()\n    return xo.sqlite.connect(str(path))\n\n\n@pytest.fixture(scope=\"session\")\ndef df():\n    return pd.DataFrame(\n        list(\n            zip(\n                *[\n                    [0, 1.5, 2.3, 3, 4, 5, 6],\n                    [7, 4, 3, 8, 9, 1, 6],\n                    [\"A\", \"A\", \"A\", \"A\", \"B\", \"B\", \"B\"],\n                ]\n            )\n        ),\n        columns=[\"a\", \"b\", \"c\"],\n    )\n"
+    },
+    {
+      "id": "python/xorq/backends/postgres/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/postgres/tests/conftest.py",
+      "raw": "import pandas as pd\nimport pytest\n\nimport xorq.api as xo\n\n\n@pytest.fixture(scope=\"function\")\ndef con():\n    return xo.connect()\n\n\n@pytest.fixture(scope=\"session\")\ndef iris_path() -> str:\n    path = xo.options.pins.get_path(\"iris\")\n    return path\n\n\n@pytest.fixture(scope=\"session\")\ndef astronauts_parquet_path(parquet_dir):\n    path = parquet_dir / \"astronauts.parquet\"\n    return path\n\n\n@pytest.fixture(scope=\"session\")\ndef astronauts_df(astronauts_parquet_path) -> pd.DataFrame:\n    return pd.read_parquet(astronauts_parquet_path)\n"
+    },
+    {
+      "id": "python/xorq/backends/pyiceberg/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/pyiceberg/tests/conftest.py",
+      "raw": "from __future__ import annotations\n\nfrom pathlib import Path\n\nimport numpy as np\nimport pandas as pd\nimport pytest\n\nimport xorq.api as xo\nfrom xorq.backends.pyiceberg import Backend\n\n\nQUOTES_TABLE_NAME = \"quotes\"\n\n\n@pytest.fixture(scope=\"session\")\ndef quotes_df():\n    # Quote data (more frequent updates)\n    quote_dates = pd.date_range(\n        start=\"2024-01-01\", end=\"2024-01-31\", freq=\"30min\"\n    ).astype(\"datetime64[us]\")\n\n    quotes = pd.DataFrame(\n        {\n            \"timestamp\": quote_dates,\n            \"symbol\": np.random.choice([\"AAPL\", \"GOOGL\", \"MSFT\"], len(quote_dates)),\n            \"bid\": np.random.uniform(99, 198, len(quote_dates)),\n            \"ask\": np.random.uniform(101, 202, len(quote_dates)),\n        }\n    )\n\n    return quotes\n\n\n@pytest.fixture\ndef trades_df():\n    # Create sample trading data\n    np.random.seed(42)\n    dates = pd.date_range(start=\"2024-01-01\", end=\"2024-01-31\", freq=\"h\").astype(\n        \"datetime64[us]\"\n    )\n\n    # Trades data\n    trades = pd.DataFrame(\n        {\n            \"timestamp\": dates,\n            \"symbol\": np.random.choice([\"AAPL\", \"GOOGL\", \"MSFT\"], len(dates)),\n            \"price\": np.random.uniform(100, 200, len(dates)),\n            \"volume\": np.random.randint(100, 1000, len(dates)),\n        }\n    )\n\n    return trades\n\n\n@pytest.fixture(scope=\"session\")\ndef iceberg_con(tmp_path_factory, quotes_df):\n    warehouse_path = str(tmp_path_factory.mktemp(\"warehouse\"))\n    con = xo.pyiceberg.connect(warehouse_path=warehouse_path)\n    con.create_table(QUOTES_TABLE_NAME, quotes_df, overwrite=True)\n    return con\n\n\n@pytest.fixture(scope=\"session\")\ndef quotes_table(iceberg_con):\n    return iceberg_con.table(QUOTES_TABLE_NAME)\n\n\n@pytest.fixture\ndef fresh_con(tmp_path: Path) -> Backend:\n    warehouse_path = str(tmp_path / \"warehouse\")\n    return xo.pyiceberg.connect(warehouse_path=warehouse_path)\n"
+    },
+    {
+      "id": "python/xorq/backends/duckdb/tests/conftest.py#conftest-py",
+      "kind": "test_target",
+      "name": "pytest config (conftest.py)",
+      "source": "python/xorq/backends/duckdb/tests/conftest.py",
+      "raw": "import pytest\nfrom duckdb import CatalogException\n\nimport xorq.api as xo\n\n\n@pytest.fixture(scope=\"session\")\ndef con(parquet_dir):\n    conn = xo.connect()\n\n    for name in (\"astronauts\", \"functional_alltypes\", \"awards_players\", \"batting\"):\n        conn.read_parquet(parquet_dir / f\"{name}.parquet\", name)\n\n    return conn\n\n\n@pytest.fixture(scope=\"session\")\ndef dirty_duckdb_con(csv_dir):\n    conn = xo.duckdb.connect()\n    conn.read_csv(csv_dir / \"awards_players.csv\", table_name=\"ddb_players\")\n    conn.read_csv(csv_dir / \"batting.csv\", table_name=\"batting\")\n    return conn\n\n\n@pytest.fixture(scope=\"function\")\ndef duckdb_con(dirty_duckdb_con):\n    expected_tables = (\"ddb_players\", \"batting\")\n    for table in dirty_duckdb_con.list_tables():\n        if table not in expected_tables:\n            try:\n                dirty_duckdb_con.drop_view(table, force=True)\n            except CatalogException:\n                dirty_duckdb_con.drop_table(table, force=True)\n    yield dirty_duckdb_con\n\n\n@pytest.fixture(scope=\"session\")\ndef alltypes(con):\n    return con.table(\"functional_alltypes\")\n\n\n@pytest.fixture(scope=\"session\")\ndef alltypes_df(alltypes):\n    return alltypes.execute()\n\n\n@pytest.fixture(scope=\"session\")\ndef awards_players(con):\n    return con.table(\"awards_players\")\n\n\n@pytest.fixture(scope=\"session\")\ndef batting(con):\n    return con.table(\"batting\")\n"
+    },
+    {
+      "id": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "kind": "review_gate",
+      "name": "pre-commit hooks (.pre-commit-config.yaml)",
+      "source": ".pre-commit-config.yaml",
+      "raw": "ci:\n  autofix_commit_msg: \"style: auto fixes from pre-commit.ci hooks\"\n  autofix_prs: false\n  autoupdate_commit_msg: \"chore(deps): pre-commit.ci autoupdate\"\n  skip:\n    - ruff\ndefault_stages:\n  - pre-commit\nrepos:\n  - repo: https://github.com/rhysd/actionlint\n    rev: v1.7.12\n    hooks:\n      - id: actionlint\n  - repo: https://github.com/codespell-project/codespell\n    rev: v2.4.2\n    hooks:\n      - id: codespell\n        additional_dependencies:\n          - tomli\n        args: [--ignore-words=.codespell.ignore-words]\n  - repo: https://github.com/astral-sh/ruff-pre-commit\n    # Ruff version.\n    rev: v0.15.12\n    hooks:\n      # Run the linter.\n      - id: ruff-check\n        args: [\"--output-format=full\", \"--fix\", \"python\", \"examples\", \"docs\"]\n      # Run the formatter.\n      - id: ruff-format\n  - repo: https://github.com/astral-sh/uv-pre-commit\n    # uv version.\n    rev: 0.11.8\n    hooks:\n      # Update the uv lockfile\n      - id: uv-lock\n"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint])",
+      "source": "pyproject.toml:249",
+      "raw": "[tool.ruff.lint]\nextend-select = [\n    \"I\",      # isort\n    \"ICN\",    # import conventions\n    \"B\",      # flake8-bugbear: mutable default args, exception chaining, etc.\n    \"C4\",     # flake8-comprehensions: unnecessary list/dict/set comprehensions\n    \"FURB\",   # refurb: modernize Python code\n    \"PLC0415\",  # import-outside-toplevel: imports must be at module level\n    \"DTZ\",      # flake8-datetimez: enforce timezone-aware datetime usage\n    # TODO: add PLW1514 (unspecified-encoding) when it graduates from ruff preview\n]\nignore = [\n    \"B018\",  # useless-expression: side-effect property access is intentional\n    \"B905\",  # zip-without-explicit-strict: not enforced project-wide\n    # TODO: fix existing DTZ violations and remove these ignores\n    \"DTZ001\",   # call-datetime-without-tzinfo (22 existing violations)\n    \"DTZ002\",   # call-datetime-today (1 existing violation)\n    \"DTZ005\",   # call-datetime-now-without-tzinfo (10 existing violations)\n    \"DTZ006\",   # call-datetime-fromtimestamp (3 existing violations)\n    \"DTZ011\",   # call-date-today (4 existing violations)\n]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.per-file-ignores])",
+      "source": "pyproject.toml:271",
+      "raw": "[tool.ruff.lint.per-file-ignores]\n\"python/xorq/__init__.py\" = [\"I001\"]\n\"python/xorq/api.py\" = [\"I001\"]\n\"python/xorq/vendor/**\" = [\"B\", \"PLC0415\"]\n# Tutorial snippets are extracted block-by-block from .qmd files, so\n# imports appear next to the block that introduces them.\n\"docs/tutorials/**/*.snippets.py\" = [\"E402\", \"I001\"]"
+    },
+    {
+      "id": "pyproject.toml#tool-ruff-lint-isort",
+      "kind": "ci_step",
+      "name": "linter/type-checker config ([tool.ruff.lint.isort])",
+      "source": "pyproject.toml:279",
+      "raw": "[tool.ruff.lint.isort]\nknown-first-party = [\"xorq\"]\nsection-order = [\"future\", \"standard-library\", \"third-party\", \"first-party\", \"local-folder\"]\nlines-after-imports = 2"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-run",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.run])",
+      "source": "pyproject.toml:332",
+      "raw": "[tool.coverage.run]\nsource = [\"python/xorq\"]\nomit = [\n    \"*/tests/*\",\n    \"*/vendor/*\",\n]\nparallel = true\nconcurrency = [\"multiprocessing\", \"thread\"]\nsigterm = true"
+    },
+    {
+      "id": "pyproject.toml#tool-coverage-report",
+      "kind": "ci_step",
+      "name": "coverage config ([tool.coverage.report])",
+      "source": "pyproject.toml:342",
+      "raw": "[tool.coverage.report]\nshow_missing = true\nskip_covered = false"
+    },
+    {
+      "id": ".github/renovate.json#renovate-json",
+      "kind": "ci_step",
+      "name": "dependency automation (renovate.json)",
+      "source": ".github/renovate.json",
+      "raw": "{\n  \"$schema\": \"https://docs.renovatebot.com/renovate-schema.json\",\n  \"rangeStrategy\": \"widen\",\n  \"extends\": [\n    \"config:recommended\", \":disableDependencyDashboard\"\n  ],\n  \"semanticCommits\": \"enabled\",\n  \"lockFileMaintenance\": { \"enabled\": true },\n  \"updateLockFiles\": true,\n  \"enabledManagers\": [\n    \"docker-compose\",\n    \"dockerfile\",\n    \"github-actions\",\n    \"pep621\",\n    \"pre-commit\"\n  ],\n  \"prBodyTemplate\": \"{{{table}}}{{{notes}}}{{{warnings}}}{{{controls}}}\",\n  \"packageRules\": [\n    {\n      \"matchManagers\": [\"pre-commit\", \"github-actions\"],\n      \"rangeStrategy\": \"pin\",\n      \"automerge\": false\n    },\n    {\n      \"matchManagers\": [\"pep621\"],\n      \"matchPackageNames\": \"dask\",\n      \"enabled\": false\n    },\n    {\n      \"matchManagers\": [\"github-actions\"],\n      \"matchPackageNames\": \"actions/setup-python\",\n      \"enabled\": false\n    }\n  ],\n  \"schedule\": [\n    \"* 0-9 1 * *\"\n  ],\n  \"pre-commit\": {\n    \"enabled\": true\n  },\n  \"prHourlyLimit\": 5,\n  \"automerge\": false,\n  \"printConfig\": true\n}"
+    },
+    {
+      "id": ".github/workflows/ci-docs-lint.yml#23-actions-checkout-v6",
+      "kind": "ci_step",
+      "name": "actions/checkout@v6",
+      "source": ".github/workflows/ci-docs-lint.yml:23",
+      "raw": "      - uses: actions/checkout@v6",
+      "hints": {
+        "action": "actions/checkout@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-docs-lint.yml#25-actions-setup-python-v6",
+      "kind": "ci_step",
+      "name": "actions/setup-python@v6",
+      "source": ".github/workflows/ci-docs-lint.yml:25",
+      "raw": "      - uses: actions/setup-python@v6\n        with:\n          python-version: \"3.12\"",
+      "hints": {
+        "action": "actions/setup-python@v6"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-docs-lint.yml#29-install-uv",
+      "kind": "ci_step",
+      "name": "Install uv",
+      "source": ".github/workflows/ci-docs-lint.yml:29",
+      "raw": "      - name: Install uv\n        uses: astral-sh/setup-uv@v7\n        with:\n          enable-cache: true",
+      "hints": {
+        "action": "astral-sh/setup-uv@v7"
+      }
+    },
+    {
+      "id": ".github/workflows/ci-docs-lint.yml#34-install-python-doc-dependencies",
+      "kind": "ci_step",
+      "name": "Install Python doc dependencies",
+      "source": ".github/workflows/ci-docs-lint.yml:34",
+      "raw": "      - name: Install Python doc dependencies\n        # Include the project itself (not --only-group) so quartodoc can import\n        # `xorq` to build the API reference; --no-default-groups skips dev. The\n        # test group provides pytest for the CLI-contract step below.\n        run: uv sync --no-default-groups --group docs --group test"
+    },
+    {
+      "id": ".github/workflows/ci-docs-lint.yml#40-cli-contract-docs-reference-real-commands",
+      "kind": "ci_step",
+      "name": "CLI contract (docs reference real commands)",
+      "source": ".github/workflows/ci-docs-lint.yml:40",
+      "raw": "      - name: CLI contract (docs reference real commands)\n        # Sybil parses every `xorq ...` invocation from the docs' bash fences\n        # and asserts each subcommand + flag resolves against the live click\n        # tree. Catches renamed/removed/typo'd CLI references. See docs/conftest.py.\n        run: uv run --no-sync pytest docs/ -q"
+    }
+  ],
+  "verdicts": [
+    {
+      "nodeId": "codecov.yml#codecov-yml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Codecov's server-side project/patch status, computed on Codecov's infrastructure from coverage.xml files that coverage.py/pytest-cov emitted while CPython actually executed the suite",
+        "actorCanWrite": false,
+        "argument": "The measurement is produced by execution — no author can make a line report as covered without the interpreter running it — and the pass/fail comparison happens on a third party's servers, so the deciding step is outside the write boundary. Three limits must travel with this verdict: (1) coverage measures REACH, not correctness, and must never be read as evidence that anything works; (2) `target: auto` sets the bar to the parent commit's own number with a 1% slack, so it is a drift alarm calibrated on the repo's own history, not an absolute floor; (3) `flag_management.default_rules.carryforward: true` plus per-flag `carryforward` means the `databricks`, `snowflake`, `gcs` and `s3` flags — whose jobs are workflow_dispatch- or label-gated and therefore essentially never run on a PR — reassert a stale measurement taken against an older tree, and the uploads are deliberately non-fatal (`fail_ci_if_error: false`, `continue-on-error: true`), so a missing upload degrades to carryforward instead of turning the check red."
+      },
+      "evidence": [
+        "codecov.yml:1-12",
+        "codecov.yml:14-16",
+        "codecov.yml:26-34",
+        ".github/workflows/ci-test.yml:160-165",
+        ".github/workflows/ci-test-snowflake.yml:53-58"
+      ],
+      "confidence": 0.72,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest/CPython process running the suite these fixtures feed — with the `pg` fixture handing tests a live PostgreSQL 15 + PostGIS server in a container, and the data fixtures pointing at parquet/csv cloned from ibis-project/testing-data",
+        "actorCanWrite": false,
+        "argument": "This is the package-level conftest for everything under python/xorq, and ci-test.yml runs it on every pull request across ten backend legs, so it is on the merge path rather than aspirational. Most of the file is provisioning, but it authors one falsifiable claim of its own: `remove_unexpected_tables` raises ValueError when the live database's table set diverges from `expected_tables`, and it reaches that verdict by calling xorq's own `list_tables`/`drop_table`/`drop_view` against a real PostgreSQL server the test process cannot fake. Counterparty classification: a real engine in a project-pinned container (postgis/postgis:15-3.3-alpine), not a cloud vendor and not an emulator. Two limits: the oracle for every test downstream of these fixtures is co-authored with the implementation, so a green run proves the code does what these tests say; and the fixture corpus is `git clone https://github.com/ibis-project/testing-data` at unpinned `master --depth 1`, which is outside the authors' write boundary but free to drift under them between runs."
+      },
+      "evidence": [
+        "python/xorq/conftest.py:119-148",
+        "python/xorq/conftest.py:156-176",
+        ".github/workflows/ci-test.yml:9",
+        ".github/workflows/ci-test.yml:141-159",
+        "justfile:21-33",
+        "docker/postgres/Dockerfile:1"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest runtime under the collection and setup policy this file installs — and, for the snowflake leg, the real key-decryption path whose failure this file converts into `pytest.fail`",
+        "actorCanWrite": false,
+        "argument": "This file decides which tests exist in which leg and, more importantly, what an absent credential MEANS. `pytest_collection_modifyitems` assigns the `core` marker that ci-test.yml's largest job selects, so it defines the membership of the merge-blocking suite; `pytest_ignore_collect` is what keeps optional-backend tests from erroring at import. The verification-relevant decision is `pytest_runtest_setup`: missing SNOWFLAKE_PRIVATE_KEY/SNOWFLAKE_USER SKIPS every snowflake test — the classic skip-is-not-a-pass hazard, since a revoked secret yields a green run containing zero snowflake tests — but a credential that is present and undecryptable is escalated to `pytest.fail`, which is the right side of that fork and is executed against the real decryption library, not asserted. The file itself makes no claim about xorq's query behaviour; those verdicts come from the test bodies against whichever engine the per-backend conftest wires up."
+      },
+      "evidence": [
+        "python/xorq/backends/conftest.py:144-150",
+        "python/xorq/backends/conftest.py:101-120",
+        "python/xorq/backends/conftest.py:58-98",
+        ".github/workflows/ci-test.yml:61-70",
+        ".github/workflows/ci-test.yml:141-148"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/xorq_datafusion/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process executing queries through `xo.connect()` — xorq's embedded DataFusion engine, a compiled Rust extension shipped as the pinned PyPI package `xorq-datafusion==0.2.10` and imported as `xorq.internal`",
+        "actorCanWrite": false,
+        "argument": "The suite runs on every PR in two legs (python 3.12 and 3.10) via `-m xorq_datafusion`, and the fixtures load real parquet from ci/ibis-testing-data and execute the DDL in db/datafusion.sql through `conn._safe_raw_sql`, so a malformed statement or a query-planner regression is decided by a Rust query engine, not by a claim. Counterparty classification: an IN-PROCESS engine that the project pins exactly — and one published by the same organisation, so it is nearer to 'the project's own engine' than to a third party; it is anchored because execution genuinely decides the answer, not because the counterparty is independent. Two limits: `remove_unexpected_tables` here raises on a dirty catalog (a harness-integrity guard, not a correctness claim), and the two `snapshot_check` tests in this directory compare against committed golden files under tests/snapshots/test_cache that the repo regenerates with `--snapshot-update` — the snapshot shape, where the oracle was authored by the thing under test — though both of those are additionally `@pytest.mark.xfail` and so cannot fail the run at all."
+      },
+      "evidence": [
+        "python/xorq/backends/xorq_datafusion/tests/conftest.py:60-80",
+        "python/xorq/backends/xorq_datafusion/tests/conftest.py:29-43",
+        ".github/workflows/ci-test.yml:40-45",
+        "pyproject.toml:44",
+        "python/xorq/backends/xorq_datafusion/tests/test_cache.py:392-393"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/gizmosql/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real GizmoSQL server subprocess (DuckDB behind Arrow Flight SQL) launched by the pinned `gizmosql` PyPI package, answering the suite's queries over a TLS Flight SQL connection",
+        "actorCanWrite": false,
+        "argument": "`gizmosql_server` starts an actual server binary on a free port with a freshly minted self-signed cert and `--tls`, and `con` connects xorq's gizmosql backend to it, so every assertion downstream is decided by a separate process speaking a real wire protocol — the test cannot talk a failed query into succeeding. The leg runs on every PR (`-m gizmosql`, matrix entry at ci-test.yml:76). Counterparty classification: a LOCAL server, not a vendor cloud; the binary is downloaded and cached by a package the project pins (`gizmosql>=1.26.0,<2`, resolved exactly through `uv sync --locked`), so the counterparty is software the project chose. Two limits worth naming: `pytest.importorskip(\"gizmosql\")` and the attribute probe at lines 117-122 both SKIP rather than fail, so a packaging or API drift makes the whole backend's coverage silently vanish from a green run; and cert-chain verification is disabled on the client side, so the TLS path is exercised but not validated."
+      },
+      "evidence": [
+        "python/xorq/backends/gizmosql/tests/conftest.py:95-123",
+        "python/xorq/backends/gizmosql/tests/conftest.py:126-148",
+        ".github/workflows/ci-test.yml:76-80",
+        ".github/workflows/ci-test.yml:119"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/databricks/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real Databricks SQL warehouse reached over the network via `databricks.sql.connect` with a workspace token — the vendor's engine executes the `CREATE VOLUME`, `PUT ... INTO` and `read_files(...)` statements and decides the results",
+        "actorCanWrite": false,
+        "argument": "When this suite runs it is one of the strongest anchors in the repository: parquet files are physically staged into a Databricks volume and every fixture table is a `SELECT ... FROM read_files(...)` answered by Databricks, which the xorq authors cannot write to. Credential handling is on the correct side of the skip/fail fork — `env[\"DATABRICKS_SERVER_HOSTNAME\"]` is a bare subscript, so absent secrets raise KeyError and the run errors rather than passing green. THE ENFORCEMENT LIMIT IS THE WHOLE STORY HERE: ci-test-databricks.yml is `on: workflow_dispatch` and nothing else — no pull_request trigger, no push trigger, no label — so this edge blocks no merge and fires only when a human clicks it. It is anchored on the execution axis and inert on the gating axis; the low confidence records exactly that."
+      },
+      "evidence": [
+        "python/xorq/backends/databricks/tests/conftest.py:32-62",
+        "python/xorq/backends/databricks/tests/conftest.py:66-68",
+        ".github/workflows/ci-test-databricks.yml:3-4",
+        ".github/workflows/ci-test-databricks.yml:41-52"
+      ],
+      "confidence": 0.45,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/datafusion/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process executing queries against upstream Apache DataFusion (the third-party `datafusion` wheel, constrained `>=47.0.0,<49`) and DuckDB, plus xorq's embedded engine via `xo.connect()`",
+        "actorCanWrite": false,
+        "argument": "The `-m datafusion` leg runs on every pull request and installs the upstream Apache DataFusion package, so `xo.datafusion.connect()` hands the assertions to a query engine maintained outside this repository; `ddb_con` does the same with DuckDB. Nothing in this file asserts anything itself — it is fixture provisioning — but it determines the counterparty, and that counterparty is a real engine rather than a mock or a recording. Counterparty classification: LOCAL/in-process third-party engines the project version-pins. Two limits: the oracle is co-authored (the assertions live in the same repo as the compiler under test), and `quotes_df` builds its data with `np.random.choice`/`np.random.uniform` with no seed established in that fixture — only `trades_df` calls `np.random.seed(42)` — so the input corpus for quote-side tests varies between runs, which trades reproducibility for a weak form of fuzzing."
+      },
+      "evidence": [
+        "python/xorq/backends/datafusion/tests/conftest.py:43-59",
+        "python/xorq/backends/datafusion/tests/conftest.py:8-21",
+        ".github/workflows/ci-test.yml:32-35",
+        "pyproject.toml:102-104"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/bigquery/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "Google BigQuery — `xo.bigquery.connect(...)` with service-account credentials, executing `SELECT 1`, `create_database`, `create_table` and every test query server-side, with the query cache explicitly disabled",
+        "actorCanWrite": false,
+        "argument": "This is a genuine third-party anchor when it fires: real datasets are created and dropped in a real GCP project and Google's engine decides every result, which no xorq author can write to. Two limits weigh it down heavily and both must be stated. (1) TRIGGER: ci-test-bigquery.yml runs only on `workflow_dispatch` or when a maintainer applies the `ci-test-bigquery` label to a PR, so on the ordinary merge path this edge does not exist. (2) A SKIP IS NOT A PASS, and this file skips on every credential fork: `DefaultCredentialsError` skips, a missing project id skips, and the `con` fixture wraps its access smoke-test so that ANY `GoogleAPICallError` or `GoogleAuthError` — expired secret, revoked SA, quota, outage — skips the entire suite. So even in the labeled run, an expired `GCP_SA_KEY` produces a green job containing zero executed BigQuery tests, and nothing in the workflow asserts that any test actually ran."
+      },
+      "evidence": [
+        "python/xorq/backends/bigquery/tests/conftest.py:36-51",
+        "python/xorq/backends/bigquery/tests/conftest.py:66-84",
+        ".github/workflows/ci-test-bigquery.yml:3-7",
+        ".github/workflows/ci-test-bigquery.yml:16",
+        ".github/workflows/ci-test-bigquery.yml:46-55"
+      ],
+      "confidence": 0.45,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/snowflake/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "a real Snowflake account — `xo.snowflake.connect_env_keypair` authenticates with a private key and Snowflake's engine executes the CREATE/DROP CATALOG and DATABASE statements whose effects the fixtures then assert against `list_catalogs()`/`list_databases()`",
+        "actorCanWrite": false,
+        "argument": "The oracle here is unusually good: `temp_catalog` and `temp_db` do not merely provision, they assert that the object appears in Snowflake's own catalog listing after creation and is gone after the drop, so the verdict is read back out of the vendor's metadata rather than from anything the repo wrote. The session connects to `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1`, a Snowflake-provided dataset the project cannot edit. Two limits: (1) TRIGGER — ci-test-snowflake.yml is `workflow_dispatch` or a `ci-test-snowflake` PR label only, so this gates no ordinary merge; (2) the parent conftest skips all snowflake-marked tests when the credential env vars are empty, so an unlabeled or unsecreted run reports green with the suite absent — though, to the repo's credit, a present-but-undecryptable key is escalated to `pytest.fail` instead of skipping."
+      },
+      "evidence": [
+        "python/xorq/backends/snowflake/tests/conftest.py:14-21",
+        "python/xorq/backends/snowflake/tests/conftest.py:24-47",
+        "python/xorq/backends/conftest.py:144-150",
+        ".github/workflows/ci-test-snowflake.yml:3-7",
+        ".github/workflows/ci-test-snowflake.yml:42-52"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/sqlite/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the SQLite C library executing the compiled SQL in-process — `xo.sqlite.connect()` for the session fixture and a real on-disk database file for `persistent_sqlite_con`",
+        "actorCanWrite": false,
+        "argument": "The `-m sqlite` leg runs on every pull request, and these fixtures hand the tests a genuine SQL engine: xorq's compiler output is parsed and executed by SQLite, so a malformed dialect emission surfaces as an error the test cannot argue with. Counterparty classification: a real third-party engine, in-process, vendored by CPython. The file itself contains no assertion — it provisions connections and a small DataFrame. The limit that matters is in a sibling module rather than here: `test_udf.py::test_hash_pinned_values` compares against the committed golden file `snapshots/test_udf/ibis_hash_32.json`, regenerated by the repo with `--snapshot-update`, so that particular oracle was authored by the thing under test — the snapshot shape. The surrounding hash tests (`test_hash_distinguishes_types`) do assert real invariants rather than recorded bytes."
+      },
+      "evidence": [
+        "python/xorq/backends/sqlite/tests/conftest.py:7-9",
+        "python/xorq/backends/sqlite/tests/conftest.py:22-25",
+        ".github/workflows/ci-test.yml:71-75",
+        "python/xorq/backends/sqlite/tests/test_udf.py:24-39"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/postgres/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest process running the `-m postgres` leg against a live PostgreSQL 15 + PostGIS container started by `just up-ci postgres`, with this file supplying xorq's embedded engine (`xo.connect()`) as the local counterparty and fixture paths",
+        "actorCanWrite": false,
+        "argument": "The postgres leg runs on every pull request and docker-compose brings up a real PostgreSQL server whose responses decide the tests; the `pg` connection itself comes from the package conftest, while this file provides the embedded-engine `con` and the data paths. It asserts nothing on its own — it is provisioning — and its class follows the engine the provisioned tests actually talk to. One limit deserves naming because it is the one fixture source inside the write boundary: `iris_path` calls `xo.options.pins.get_path(\"iris\")`, which anonymously downloads a pin from the project's own public GCS board `letsql-pins`, so unlike the ibis-project parquet corpus that particular input is authored and mutable by the same organisation being verified, and it is fetched at test time with no version or hash argument."
+      },
+      "evidence": [
+        "python/xorq/backends/postgres/tests/conftest.py:7-16",
+        "python/xorq/config.py:136-141",
+        "python/xorq/config.py:169",
+        ".github/workflows/ci-test.yml:51-57",
+        ".github/workflows/ci-test.yml:137-139"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/pyiceberg/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pyiceberg library writing and reading a real Iceberg warehouse on local disk — `xo.pyiceberg.connect(warehouse_path=...)` under a pytest tmp dir, with table creation and scans executed by pyiceberg, not simulated",
+        "actorCanWrite": false,
+        "argument": "The `-m pyiceberg` leg runs on every pull request, and these fixtures materialise genuine Iceberg metadata and data files through a third-party library the project pins; a broken schema or manifest surfaces as a real failure at write or scan time. Counterparty classification: LOCAL — an on-disk warehouse with a local catalog, no remote object store, no REST catalog, no vendor service, so this exercises the format and the library but nothing about cloud-catalog behaviour. The file authors no assertions itself, and `quotes_df` generates its rows with unseeded `np.random`, so the data under test varies run to run."
+      },
+      "evidence": [
+        "python/xorq/backends/pyiceberg/tests/conftest.py:56-72",
+        "python/xorq/backends/pyiceberg/tests/conftest.py:16-32",
+        ".github/workflows/ci-test.yml:47-50"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "python/xorq/backends/duckdb/tests/conftest.py#conftest-py",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the DuckDB engine executing in-process — `xo.duckdb.connect()` reading real CSV, plus xorq's embedded DataFusion engine reading real parquet through `xo.connect()`",
+        "actorCanWrite": false,
+        "argument": "The `-m duckdb` leg runs on every pull request, and both fixtures load actual files from ci/ibis-testing-data into actual engines, so the tests' results are computed by DuckDB's execution rather than asserted. The `duckdb_con` fixture even imports and catches DuckDB's own `CatalogException` to distinguish views from tables during cleanup, which only works because a real catalog is answering. Counterparty classification: LOCAL/in-process third-party engine the project pins (`duckdb>=1.5`), not a vendor service. The file makes no assertion of its own; the limit is the usual one — the assertions these fixtures feed were written by the same people who wrote the DuckDB compiler under test."
+      },
+      "evidence": [
+        "python/xorq/backends/duckdb/tests/conftest.py:7-22",
+        "python/xorq/backends/duckdb/tests/conftest.py:25-34",
+        ".github/workflows/ci-test.yml:36-39"
+      ],
+      "confidence": 0.78,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".pre-commit-config.yaml#pre-commit-config-yaml",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the exit codes of hook binaries fetched from third-party repositories at pinned tags — actionlint v1.7.12, codespell v2.4.2, ruff v0.15.12, uv 0.11.8 — plus pre-commit's own detection that a rewriting hook modified a tracked file",
+        "actorCanWrite": false,
+        "argument": "I descended into all four hooks rather than classifying the wrapper: each shells out to an external tool that computes its verdict from the committed tree, so an author cannot make an invalid workflow file, a misspelling, a lint violation or a stale uv.lock report clean without changing the file or the pin. The enforcement fork is the part I could not fully establish and it is stated rather than hidden: NO GitHub workflow in this repo runs pre-commit, CONTRIBUTING.md installs it as a local git hook (bypassable with `--no-verify`), and the `ci:` block at the top of the file is pre-commit.ci configuration for an off-repo service whose installation on this repository is not inspectable from the clone. What partly rescues the edge is redundancy: ci-lint.yml independently runs codespell and `ruff check` on every PR with the same pinned versions, so those two verdicts exist on the merge path regardless — while `actionlint` and `uv-lock` exist only here. Confidence is held at 0.5 for the unestablished enforcement, not for the producer."
+      },
+      "evidence": [
+        ".pre-commit-config.yaml:1-8",
+        ".pre-commit-config.yaml:9-35",
+        ".github/workflows/ci-lint.yml:33-36",
+        ".github/workflows/ci-lint.yml:53-56",
+        "CONTRIBUTING.md:25"
+      ],
+      "confidence": 0.5,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code — ruff 0.15.12, installed from the locked dev group, parsing the committed source under python/, examples/ and docs/",
+        "actorCanWrite": false,
+        "argument": "This table is the live rule set of a gate that runs on every pull request: ci-lint.yml executes `uv run --no-sync ruff check --output-format=github python examples docs` after `uv sync --locked --only-group dev`, which pins ruff to the exact version in uv.lock. `extend-select` is precisely the list of analyses that can turn that job red — an unsorted import (I001), a mutable default argument (B006), an import inside a function (PLC0415) — and each verdict is computed by the linter from the source text, so no author-written status can substitute for fixing the code. Documented limit: the enforced SURFACE is inside the write boundary even though each verdict is not. The `ignore` list suppresses six DTZ rules explicitly because existing violations remain (the comment counts them: 22, 1, 10, 3, 4), so timezone-naive datetime construction is currently outside what this gate can fail on."
+      },
+      "evidence": [
+        "pyproject.toml:249-269",
+        ".github/workflows/ci-lint.yml:53-56",
+        ".github/workflows/ci-lint.yml:50-51",
+        "pyproject.toml:177"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-per-file-ignores",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — the table only removes rule codes from consideration for four path globs",
+        "actorCanWrite": null,
+        "argument": "Every entry is a suppression: I001 for the two `__init__`-style import-ordering files, B and PLC0415 for the whole vendored ibis tree, E402 and I001 for the extracted tutorial snippets. There is no value of this table that can make `ruff check` exit non-zero on a tree that would otherwise pass, so it emits no pass/fail signal of any kind. I am filing it here on that specific checkable ground, not because it was hard: the enforced side of ruff is captured by `[tool.ruff.lint]`, judged separately, and counting a pure escape hatch as a check would put an exemption list in the numerator. It is worth recording what it exempts, since `python/xorq/vendor/**` is a large fraction of the shipped source and is exempt from the bugbear rules entirely."
+      },
+      "evidence": [
+        "pyproject.toml:271-277",
+        "pyproject.toml:249-256"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-ruff-lint-isort",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the ruff binary's exit code via rule I001, which is enabled in `[tool.ruff.lint].extend-select`",
+        "actorCanWrite": false,
+        "argument": "`I` is in the selected rule set, so these three settings — `known-first-party = [\"xorq\"]`, the five-section order, and `lines-after-imports = 2` — are the exact specification ruff compares each committed import block against, and a file that violates them fails the ci-lint job on every PR. The verdict is computed by the linter parsing the file, not declared by anyone: an author cannot assert their imports are ordered. Documented limit: this table emits nothing on its own, it parameterizes a check that executes elsewhere, and the parameters themselves are author-editable, so the shape being enforced sits inside the write boundary even though each individual verdict does not."
+      },
+      "evidence": [
+        "pyproject.toml:279-282",
+        "pyproject.toml:250",
+        ".github/workflows/ci-lint.yml:53-56"
+      ],
+      "confidence": 0.75,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-run",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing that can pass or fail — the table declares the SCOPE coverage.py traces (`source`, `omit`, `parallel`, `concurrency`, `sigterm`); the threshold that could go red lives in codecov.yml, judged separately",
+        "actorCanWrite": null,
+        "argument": "This configuration is genuinely live — every CI pytest step passes `--cov --cov-report=xml` and coverage.py reads these keys — but nothing in it is a falsifiable claim: I grepped the whole tree and there is no `fail_under` or `--cov-fail-under` anywhere in the repository, so no value of `source` or `omit` can turn a green run red. It changes a NUMBER, and the only edge that compares that number to anything is the Codecov status. Because not_a_check shrinks the denominator, the burden is met explicitly rather than assumed: this is filed here on the structural ground that the stanza cannot vary between a passing and a failing tree, not because it was hard to trace. What must not be laundered along with it is the direction of its influence: `omit = [\"*/tests/*\", \"*/vendor/*\"]` removes the entire vendored ibis tree — a large fraction of the shipped source — from the denominator of the number the Codecov gate reads, and that exclusion is authored by the same actor the number is measuring."
+      },
+      "evidence": [
+        "pyproject.toml:332-340",
+        ".github/workflows/ci-test.yml:141-148",
+        ".github/workflows/ci-test-slow.yml:66",
+        "codecov.yml:1-12"
+      ],
+      "confidence": 0.7,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": "pyproject.toml#tool-coverage-report",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing — two display switches for a terminal coverage report that CI does not even request",
+        "actorCanWrite": null,
+        "argument": "`show_missing = true` and `skip_covered = false` control how `coverage report` formats human-readable output. Every CI invocation asks for `--cov-report=xml`, so these keys do not shape the artifact Codecov consumes, and critically the table carries no `fail_under` — there is no value of either setting that makes a run exit non-zero on a tree that would otherwise pass. Recorded as not_a_check on that traceable ground rather than as unknown: the fork point is fully established and the honest statement is that no signal exists here at all."
+      },
+      "evidence": [
+        "pyproject.toml:342-344",
+        ".github/workflows/ci-test.yml:141-148"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/renovate.json#renovate-json",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "nothing that emits a pass/fail — the Renovate app opens pull requests on a monthly schedule for docker-compose, dockerfile, github-actions, pep621 and pre-commit manifests",
+        "actorCanWrite": null,
+        "argument": "Renovate's output here is a proposal, not a verdict: there is no exit code, no status check, and `automerge: false` (repeated for the github-actions/pre-commit rule) means nothing lands without a human and without the ordinary CI edges judging it. `rangeStrategy: pin` and `lockFileMaintenance` change what the bot writes, not what any gate accepts. Dependency freshness is a real property, but this file only schedules the suggestion of it; the checking happens downstream in ci-test.yml and ci-lint.yml. Excluding it from the ratio is correct because there is no assertion here that could ever be found wanting, not because the node was difficult."
+      },
+      "evidence": [
+        ".github/renovate.json:17-33",
+        ".github/renovate.json:35-40"
+      ],
+      "confidence": 0.85,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-docs-lint.yml#23-actions-checkout-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/checkout@v6 performing a git clone onto the GitHub-hosted runner",
+        "actorCanWrite": null,
+        "argument": "Provisioning: it materialises the tree the later steps evaluate and asserts nothing about what it fetched. Its only failure mode is infrastructure — network, token, or a missing ref — which is a statement about the runner rather than about the repository, so it carries no falsifiable claim about correctness. The verification in this job is the CLI-contract, llms.txt, Vale, quarto and lychee steps that follow."
+      },
+      "evidence": [
+        ".github/workflows/ci-docs-lint.yml:23"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-docs-lint.yml#25-actions-setup-python-v6",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "actions/setup-python@v6 installing CPython 3.12 on the runner",
+        "actorCanWrite": null,
+        "argument": "Interpreter provisioning so the uv-managed doc build and the pytest CLI-contract step have something to run on. It evaluates no property of the repository; a non-zero exit means the requested interpreter could not be fetched, which is a fact about tool availability rather than about the docs or the code."
+      },
+      "evidence": [
+        ".github/workflows/ci-docs-lint.yml:25-27"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-docs-lint.yml#29-install-uv",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "astral-sh/setup-uv@v7 installing the uv binary and restoring its cache on the runner",
+        "actorCanWrite": null,
+        "argument": "Toolchain provisioning. It puts uv on the PATH so the later `uv sync` and `uv run` steps work, and `enable-cache: true` only affects how fast that happens. Nothing about the repository's contents is read or judged here, and a failure reports on the action's CDN or the cache service."
+      },
+      "evidence": [
+        ".github/workflows/ci-docs-lint.yml:29-32"
+      ],
+      "confidence": 0.9,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-docs-lint.yml#34-install-python-doc-dependencies",
+      "class": "not_a_check",
+      "writeBoundary": {
+        "producer": "uv's dependency resolver populating a virtualenv from pyproject.toml's docs and test groups",
+        "actorCanWrite": null,
+        "argument": "`uv sync --no-default-groups --group docs --group test` carries neither `--locked` nor `--frozen`, so uv will silently re-resolve and refresh a stale uv.lock rather than erroring — the step therefore asserts nothing about lockfile consistency, and no later step in this workflow diffs the lockfile. Contrast ci-test.yml:119, which does use `--locked` and is a genuine falsifiable claim that pyproject.toml and uv.lock agree. What remains here is environment provisioning for the CLI-contract, quartodoc and Vale steps that follow; a failure means a package could not be resolved or built, not that the docs are wrong."
+      },
+      "evidence": [
+        ".github/workflows/ci-docs-lint.yml:34-38",
+        ".github/workflows/ci-test.yml:118-120"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    },
+    {
+      "nodeId": ".github/workflows/ci-docs-lint.yml#40-cli-contract-docs-reference-real-commands",
+      "class": "anchored",
+      "writeBoundary": {
+        "producer": "the pytest exit code — Sybil parses every bash fence in docs/**.qmd and `validate_invocation` walks the LIVE click command tree imported from `xorq.cli`, raising AssertionError on an unknown subcommand or option",
+        "actorCanWrite": false,
+        "argument": "This is not paperwork-against-paperwork: one side is prose, but the oracle is the real click objects introspected at runtime from the installed package, so a renamed or removed subcommand makes the assertion at cli_contract.py:142 fire and the interpreter — not a claim — decides the job's exit status. Three limits. (1) It checks NAME RESOLUTION only: a documented invocation that resolves but does the wrong thing passes, and no command is executed. (2) The placeholder guard silently stops validating any invocation whose command-position token does not match `^[a-z][a-z0-9-]+$`, so `$VAR`, `<command>` and `COMMAND` forms are unchecked rather than flagged. (3) GATING, and this is the sharpest one: ci-docs-lint.yml triggers on `pull_request` only under `paths: docs/**`, so a PR that renames a CLI subcommand WITHOUT touching docs/ never runs this step — the check fires on the doc side of a break whose usual cause is on the code side."
+      },
+      "evidence": [
+        ".github/workflows/ci-docs-lint.yml:40-44",
+        ".github/workflows/ci-docs-lint.yml:3-12",
+        "docs/conftest.py:22-29",
+        "docs/cli_contract.py:108-151",
+        "docs/cli_contract.py:24"
+      ],
+      "confidence": 0.8,
+      "decidedBy": "agent"
+    }
+  ],
+  "grounding": {
+    "anchored": 17,
+    "selfReferential": 0,
+    "unknown": 0,
+    "notACheck": 8,
+    "ratio": 1
+  },
+  "economics": {
+    "nodesTotal": 240,
+    "nodesSampled": 25,
+    "decidedByProbe": 0,
+    "decidedByAgent": 25,
+    "probesMinted": 0,
+    "probeLibrarySize": 2,
+    "tokensIn": 9394,
+    "tokensOut": 8780,
+    "tokensEstimated": true,
+    "wallClockMs": 1443298
+  }
+}

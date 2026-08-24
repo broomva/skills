@@ -1,0 +1,17 @@
+{
+  "skill": "legal-readiness",
+  "should_trigger": [
+    "Audit every legal and compliance claim in this SaaS before launch.",
+    "Make our Terms, Privacy, consent, billing, and vendor disclosures legally ready.",
+    "Run an adversarial legal shield audit and close the code-level gaps.",
+    "Check whether our pricing, SLA, security, and AI claims are actually substantiated.",
+    "Configure legal standing for this app and tell me what still requires counsel or filings."
+  ],
+  "should_not_trigger": [
+    "Explain what this React hook does.",
+    "Draft a private note to my lawyer about tomorrow's meeting.",
+    "Look up one statute and quote the relevant sentence.",
+    "Review this pull request only for TypeScript style.",
+    "File my company incorporation documents with the government."
+  ]
+}

@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- @dsCard group="Type" name="Casing" subtitle="Sentence case everywhere — no uppercase eyebrows" viewport="700x190" -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--background); }
+  body { padding: 20px 24px; font-family: var(--bv-font-sans); color: var(--foreground); font-size: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .label { font-size: 11px; color: var(--muted-foreground); }
+  .mono { font-family: var(--bv-font-mono); font-size: 11px; color: var(--muted-foreground); }
+</style>
+<style>
+body { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.good { color: var(--foreground); }
+.bad { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: var(--bv-danger); }
+.pane { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.tick { color: var(--bv-success); margin-right: 6px; }
+.cross { color: var(--bv-danger); margin-right: 6px; }
+</style></head><body>
+<div class="pane">
+  <span class="label">Do</span>
+  <div><span class="tick">✓</span><span class="good" style="font-weight:500;">New mission</span></div>
+  <div><span class="tick">✓</span><span class="good" style="font-weight:500;">Needs you</span></div>
+  <div><span class="tick">✓</span><span class="good">Connect both apps, then come back.</span></div>
+</div>
+<div class="pane">
+  <span class="label">Don't</span>
+  <div><span class="cross">✗</span><span class="bad" style="font-weight:500;">Create New Task</span></div>
+  <div><span class="cross">✗</span><span class="bad" style="letter-spacing:0.25em;font-size:11px;">IN REVIEW</span></div>
+  <div><span class="cross">✗</span><span class="bad">Welcome! Let's get started! 🎉</span></div>
+</div>
+</body></html>

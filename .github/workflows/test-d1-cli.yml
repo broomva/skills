@@ -1,0 +1,59 @@
+name: test-d1-cli
+
+# Bun test gate for the `d1-cli` skill (skills/commerce/d1-cli/). Path-filtered so it
+# runs ONLY when that directory changes.
+#
+# The suite is network-free: unit tests drive an injected fetch stub, and the
+# subprocess exit-code tests exercise only paths that fail before any request.
+# One of them MEASURES that property rather than asserting it, because an earlier
+# version of this comment was simply false — `d1 cart bogus` fetched the cart
+# before validating its arguments, so every run created real orderForms on D1's
+# production storefront and six assertions silently depended on egress.
+#
+# CI therefore does not verify the live endpoints still behave as documented; the
+# gotchas in README.md were established by hand and are pinned here as shape
+# assertions, not as live contract checks.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/commerce/d1-cli/**'
+      - '.github/workflows/test-d1-cli.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/commerce/d1-cli/**'
+      - '.github/workflows/test-d1-cli.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-d1-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/commerce/d1-cli
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: bun test + lint + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        # bun.lock (the text lockfile) is committed, so CI installs exactly what
+        # was tested locally. The gitignore only excludes the older binary
+        # bun.lockb, inherited from the other bun skills here.
+        run: bun install --frozen-lockfile
+      - name: Test
+        run: bun test
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck

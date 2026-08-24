@@ -1,0 +1,112 @@
+/* ============================================================
+   Broomva motion — live signals
+   The Undertow is THE running signal: a contained halo frame
+   4px proud of the card, holding three layers on three rhythms
+   (tide 3.4s · pools 4.2s · orbit 9s) so the pattern never
+   quite repeats. It replaced the border comet: the signal moved
+   off the border and became weather with a current under it.
+   Calm is load-bearing — presence, not progress.
+
+   Usage:
+     <div class="bv-undertow">
+       <span class="bv-undertow-orbit"></span>
+       <!-- the matte card -->
+     </div>
+     <span class="bv-dot-comet"><span class="bv-dot-comet-core"></span></span>
+
+   The frame borrows horizontal gutter (margin 0 -4px) so card
+   edges stay flush with siblings; vertical space is real, so
+   stacked running cards never collide.
+   ============================================================ */
+
+.bv-undertow {
+  position: relative; isolation: isolate;
+  padding: 4px; margin: 0 -4px;
+  border-radius: calc(var(--bv-radius-xl) + 4px);
+  overflow: hidden;
+}
+
+/* Nebula pools — two pools of light breathing, drifting down */
+.bv-undertow::before {
+  content: ""; position: absolute; inset: -25%; z-index: -1;
+  background:
+    radial-gradient(42% 55% at 22% 35%, var(--bv-glow-blue), transparent 70%),
+    radial-gradient(36% 48% at 78% 65%, var(--bv-glow-cyan), transparent 70%);
+  filter: blur(12px); opacity: 0.7;
+  animation: bv-undertow-pools 4.2s ease-in-out infinite alternate;
+}
+
+/* Tide band — rises in counter-phase to the pools */
+.bv-undertow::after {
+  content: ""; position: absolute; inset: -25%; z-index: -1;
+  background: linear-gradient(180deg,
+    transparent 30%,
+    oklch(0.62 0.18 258 / 0.28) 50%,
+    var(--bv-glow-ice) 58%,
+    transparent 72%);
+  filter: blur(12px); opacity: 0.55;
+  animation: bv-undertow-tide 3.4s ease-in-out infinite alternate;
+}
+
+/* Orbit undertow — the comet folded back in as a faint 9s current.
+   A real child element so it can stack with the pseudo-layers. */
+.bv-undertow-orbit {
+  position: absolute; inset: -50%; z-index: -1; pointer-events: none;
+  background: conic-gradient(from 0deg,
+    transparent 58%,
+    oklch(0.62 0.18 258 / 0.18) 70%,
+    var(--bv-glow-blue) 80%,
+    var(--bv-glow-ice) 86%,
+    transparent 92%);
+  filter: blur(13px); opacity: 0.4;
+  animation: bv-undertow-orbit 9s linear infinite;
+}
+
+@keyframes bv-undertow-pools {
+  from { transform: translateY(-14%) scale(1); opacity: 0.5; }
+  to   { transform: translateY(14%) scale(1.18); opacity: 0.95; }
+}
+@keyframes bv-undertow-tide {
+  from { transform: translateY(22%) translateX(-8%); }
+  to   { transform: translateY(-22%) translateX(8%); }
+}
+@keyframes bv-undertow-orbit { to { transform: rotate(360deg); } }
+
+/* ── Tidepool dot — the running signal at dot scale ───────
+   The Undertow folded inside the dot: blue → ice weather
+   drifting through the 15px circle. One motion language at
+   every scale. For list rows, chips, status lines, and the
+   bench. (.bv-dot-comet kept as a compatible alias — existing
+   markup with the -core child renders the tidepool.) */
+.bv-dot-live, .bv-dot-comet {
+  position: relative; display: inline-block;
+  width: 15px; height: 15px; flex-shrink: 0;
+  border-radius: 99px; overflow: hidden;
+}
+.bv-dot-live::before, .bv-dot-comet::before {
+  content: ""; position: absolute; inset: -60% -20%;
+  background: linear-gradient(160deg,
+    var(--bv-blue) 20%,
+    oklch(0.62 0.18 258 / 0.55) 42%,
+    oklch(0.82 0.09 230) 55%,
+    var(--bv-blue) 80%);
+  animation: bv-dot-tide 3.2s ease-in-out infinite alternate;
+}
+.bv-dot-comet::after { display: none; }
+.bv-dot-comet-core { display: none; }
+@keyframes bv-dot-tide {
+  from { transform: translateY(-16%); }
+  to   { transform: translateY(16%); }
+}
+
+/* ── Pulse — the standing/listening dot ─────────────────────
+   For states that are alive but asleep between beats: standing
+   routines, the orchestrator listening. Quieter than tidepool. */
+.bv-dot--pulse { animation: bv-dot-pulse 1s ease-in-out infinite alternate; }
+@keyframes bv-dot-pulse { from { opacity: 1; } to { opacity: 0.35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bv-undertow::before, .bv-undertow::after,
+  .bv-undertow-orbit, .bv-dot-live::before, .bv-dot-comet::before,
+  .bv-dot--pulse { animation: none; }
+}

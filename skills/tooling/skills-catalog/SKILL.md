@@ -2,16 +2,17 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 78 agent skills in the broomva/skills monorepo,
-  organized into 22 single-noun category buckets that mirror the skills/<category>/ directory
+  Canonical reference inventory of the 97 agent skills in the broomva/skills monorepo,
+  organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
   understanding what capabilities are available across governance, orchestration, tooling,
   knowledge, research, strategy, cadence, publishing, video, audio, design, finance, compute,
-  models, messaging, robotics, aerospace, neuroscience, healthcare, science, commerce, and
-  everyday utilities. Triggers on "skills inventory", "list all skills", "what skills are
-  available", "skills catalog", "skills showcase", "skills video", "showcase skills", "skills
-  reference", or any request to browse, search, or visualize the skills monorepo.
+  models, messaging, robotics, aerospace, neuroscience, healthcare, science, simulation,
+  commerce, and everyday utilities. Triggers on "skills inventory", "list all skills",
+  "what skills are available", "skills catalog", "skills showcase", "skills video",
+  "showcase skills", "skills reference", or any request to browse, search, or visualize
+  the skills monorepo.
 ---
 
 # Skills
@@ -22,21 +23,21 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-78 skills across 22 category buckets (mirroring the `skills/<category>/` directory layout):
+97 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
-| Governance & control (`governance`) | 6 | agentic-control-kernel, architecture-design-principles, bstack |
-| Orchestration & autonomy (`orchestration`) | 7 | autonomous, eve-forge, governed-autonomy-loop |
-| Skill & prompt tooling (`tooling`) | 5 | broomva-cli, make-spec, prompt-library |
-| Knowledge & memory (`knowledge`) | 4 | bookkeeping, braindump, colombia-conflict |
+| Governance & control (`governance`) | 9 | agentic-control-kernel, architecture-design-principles, bstack |
+| Orchestration & autonomy (`orchestration`) | 9 | autonomous, eve-forge, governed-autonomy-loop |
+| Skill & prompt tooling (`tooling`) | 9 | audit-harness-usage, broomva-cli, make-spec |
+| Knowledge & memory (`knowledge`) | 8 | bookkeeping, braindump, colombia-conflict |
 | Research (`research`) | 2 | checkit, deep-dive-research-orchestrator |
 | Strategy & decisions (`strategy`) | 5 | decision-log, phronesis, pre-mortem |
 | Operating cadence (`cadence`) | 4 | drift-check, morning-briefing, stakeholder-update |
-| Publishing & growth (`publishing`) | 5 | blog-post, content-creation, revenuecast |
+| Publishing & growth (`publishing`) | 7 | blog-post, content-creation, revenuecast |
 | Video & multimedia (`video`) | 6 | brainrot-for-good, content-engine, creative-review |
-| Audio & music (`audio`) | 2 | livecoding, omnivoice |
-| Design & brand (`design`) | 4 | arcan-glass, brand-icons, design-engineering |
+| Audio & music (`audio`) | 3 | livecoding, omnivoice |
+| Design & brand (`design`) | 7 | arcan-glass, broomva-design, design-engineering |
 | Finance & payments (`finance`) | 4 | finance-substrate, haima, investment-management |
 | Compute infrastructure (`compute`) | 3 | agentic-vps, colab-remote, remote-gpu |
 | Model runtimes (`models`) | 2 | bitnet, heretic-abliteration |
@@ -46,7 +47,8 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Neuroscience & BCI (`neuroscience`) | 3 | tribe-v2-agent-alignment, tribe-v2-bci-applied, tribe-v2-neuroscience |
 | Healthcare (`healthcare`) | 2 | founder-mode-oncology, health |
 | Science (`science`) | 1 | ocean-genomics |
-| Commerce & procurement (`commerce`) | 2 | procurer, swapit |
+| Simulation (`simulation`) | 2 | parallax |
+| Commerce & procurement (`commerce`) | 3 | d1-cli, procurer, swapit |
 | Everyday utilities (`utilities`) | 2 | gasgo, alkosto-wait-optimizer |
 
 Read the full inventory with descriptions: `Read references/skills-inventory.md`
@@ -60,7 +62,7 @@ tool, not part of this skill's install — `--skill skills-catalog` ships only `
 
 > **Note:** the video dataset (`skills-showcase/src/data/skills.ts`) still reflects the legacy
 > "broader-ecosystem" catalog (86 rows, 15 marketing domains). The canonical inventory above
-> has been converged to the 22 monorepo buckets (BRO-1932); re-syncing `skills.ts` + the
+> has been converged to the 23 monorepo buckets (BRO-1932); re-syncing `skills.ts` + the
 > Remotion scene grouping + re-rendering the video is tracked as a separate follow-up.
 
 ```bash

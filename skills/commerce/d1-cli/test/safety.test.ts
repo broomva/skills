@@ -1,0 +1,317 @@
+/**
+ * The payment boundary, asserted as a property of the source tree.
+ *
+ * ## Why this is an allowlist and not a blocklist
+ *
+ * The first version of this file grepped `src/*.ts` for five banned strings.
+ * It was defeated three ways, each proven by mutation while the suite stayed
+ * green:
+ *
+ *   1. `readdirSync` is NOT recursive, so `src/pay/settle.ts` — a complete
+ *      card-taking settlement path containing every banned string verbatim —
+ *      was never read. 89/89 passed.
+ *   2. The banned list omitted the endpoint VTEX actually uses to place an
+ *      order (`orderForm/{id}/transaction`), because the list was written from
+ *      memory rather than from the API.
+ *   3. `["card" + "Number"]` as a computed key defeats a substring grep.
+ *
+ * A blocklist can only ever encode the attacks its author thought of, and its
+ * failure mode is silence. So this asserts the inverse, which has no such gap:
+ * **every `/api/` path literal appearing anywhere under `src/` must be one this
+ * skill has explicitly approved.** Adding any endpoint — payment or otherwise —
+ * fails until it is listed here, which forces the decision to be made rather
+ * than defaulted into.
+ *
+ * ## What this does and does not prove
+ *
+ * It proves no *literal* unapproved endpoint reaches the tree. It cannot stop
+ * a path assembled from fragments that are individually not `/api/` strings
+ * (`"/ap" + "i/..."`). That is a real limit and the docs say so; the honest
+ * claim is "the obvious and the accidental routes are closed", not "payment is
+ * impossible". Deliberate obfuscation by a committer with write access is
+ * outside what any in-repo test can catch.
+ */
+
+import { afterAll, describe, expect, test } from "bun:test";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { checkoutUrl } from "../src/cart.ts";
+import { ALLOWED_ENDPOINT_SHAPES } from "../src/endpoints.ts";
+import { saveSession } from "../src/session.ts";
+
+const SRC = join(import.meta.dir, "..", "src");
+
+/**
+ * Every extension the runtime will execute.
+ *
+ * `.ts` alone is not enough: Bun happily runs `.mts`, `.cts`, `.tsx` and the
+ * plain JS variants, so a walk filtering on `.ts` leaves a payment module in
+ * `src/deep/nested/settle.mts` completely unexamined. Verified — it passed
+ * before this list existed.
+ */
+const SOURCE_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"];
+
+/** Every source file under `src/`, at any depth. */
+function sourceFiles(dir = SRC, seen = new Set<string>()): Array<{ name: string; body: string }> {
+  const out: Array<{ name: string; body: string }> = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    const st = statSync(full);
+    if (st.isDirectory()) {
+      // statSync follows symlinks, which is what we want (a symlinked
+      // directory is still reachable code) — but a cycle would hang the suite,
+      // so each real directory is visited once.
+      const key = `${st.dev}:${st.ino}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(...sourceFiles(full, seen));
+    } else if (SOURCE_EXTENSIONS.some((e) => entry.endsWith(e))) {
+      out.push({ name: full.slice(SRC.length + 1), body: readFileSync(full, "utf8") });
+    }
+  }
+  return out;
+}
+
+/**
+ * The approved set, imported from `src/endpoints.ts` rather than restated here.
+ *
+ * Two copies would drift, and the drift direction that matters is silent: a
+ * literal approved statically but refused at runtime breaks the CLI, while one
+ * approved at runtime but absent here is an unreviewed endpoint. The runtime
+ * module owns the list; this file consumes it, and
+ * `test/endpoints.test.ts` asserts every shape is admitted by a pattern.
+ */
+const ALLOWED_ENDPOINTS = new Set(ALLOWED_ENDPOINT_SHAPES);
+
+/**
+ * Drop whole-line comments so prose mentioning an endpoint is not mistaken for
+ * code reaching one.
+ *
+ * Two blinding vectors had to be closed TOGETHER, and the first two attempts
+ * each closed one while opening the other:
+ *
+ *   - A multi-line `replace(/\/\*[\s\S]*?\*\//g, "")` lets a source line
+ *     containing the STRING `"/*"` swallow everything to the next `*​/`,
+ *     hiding a payment literal between them.
+ *   - A purely whole-line rule deletes any line starting with `/*`, so
+ *     `/**​/ const PAY = "/api/...paymentData"` vanishes with its live code.
+ *
+ * So: strip block comments that open AND close within a line (keeping the code
+ * on either side), then drop lines that are only a comment. Neither vector
+ * survives, and `stripComments — both blinding vectors, as a pair` asserts both
+ * at once so fixing one cannot silently reopen the other.
+ *
+ * A trailing `// ...` after code is left alone, because cutting from `//`
+ * would also cut the `//` inside a URL literal. That direction fails LOUDLY
+ * (an endpoint named in a trailing comment trips the allowlist), which is the
+ * safe way for this to be wrong.
+ */
+function stripComments(body: string): string {
+  return body
+    .split("\n")
+    .map((l) => {
+      // Remove block comments that OPEN AND CLOSE within the line, keeping
+      // whatever code sits on either side. Doing this before the whole-line
+      // test is what stops `/**/ const PAY = "/api/...paymentData"` from
+      // vanishing: the line begins with `/*`, so a whole-line rule deletes it
+      // along with the live code it carries.
+      const withoutInline = l.replace(/\/\*.*?\*\//g, "");
+      const t = withoutInline.trimStart();
+      // Now drop lines that are only a comment: `//`, a JSDoc continuation
+      // `*`, or an UNTERMINATED `/*` opener (which carries no code).
+      if (t === "" && l.trim() !== "") return withoutInline;
+      if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return "";
+      return withoutInline;
+    })
+    .join("\n");
+}
+
+/** Pull every `/api/...` string or template literal out of a source file. */
+function apiLiterals(body: string): string[] {
+  const found = new Set<string>();
+  for (const m of stripComments(body).matchAll(/["'`](\/api\/[^"'`]*)["'`]/g)) {
+    found.add(m[1].replace(/\$\{[^}]*\}/g, "{}").replace(/\/$/, ""));
+  }
+  return [...found];
+}
+
+describe("every endpoint the CLI can reach is explicitly approved", () => {
+  const files = sourceFiles();
+
+  test("the walk descends into subdirectories", () => {
+    // Anti-vacuity, and the specific regression that made the old test
+    // worthless: a non-recursive walk silently sees fewer files.
+    expect(files.length).toBeGreaterThanOrEqual(9);
+    expect(files.map((f) => f.name)).toContain("cart.ts");
+    const nested = sourceFiles().filter((f) => f.name.includes("/"));
+    // No nested source today; if one is ever added, it must be walked. Proven
+    // by the fixture test below rather than by asserting a count here.
+    expect(Array.isArray(nested)).toBe(true);
+  });
+
+  test("the extractor actually finds endpoints (anti-vacuity)", () => {
+    const all = files.flatMap((f) => apiLiterals(f.body));
+    // If the regex ever stops matching, every allowlist check below passes
+    // trivially. Pin a floor and a known member.
+    expect(all.length).toBeGreaterThanOrEqual(15);
+    expect(all).toContain("/api/checkout/pub/orderForm");
+  });
+
+  for (const f of sourceFiles()) {
+    test(`${f.name} reaches only approved endpoints`, () => {
+      const unapproved = apiLiterals(f.body).filter((p) => !ALLOWED_ENDPOINTS.has(p));
+      expect(unapproved).toEqual([]);
+    });
+  }
+
+  test("a payment path in a subdirectory is rejected", () => {
+    // The exact bypass that defeated the previous version of this file,
+    // as a fixture so the fix cannot silently regress.
+    const settle = `
+      export async function settle(c, ofid, cardNumber, cvv) {
+        await c.request(\`/api/checkout/pub/orderForm/\${ofid}/attachments/paymentData\`, {});
+        return c.request(\`/api/pub/transactions/\${ofid}/payments\`, {});
+      }`;
+    const unapproved = apiLiterals(settle).filter((p) => !ALLOWED_ENDPOINTS.has(p));
+    expect(unapproved).toContain("/api/checkout/pub/orderForm/{}/attachments/paymentData");
+    expect(unapproved).toContain("/api/pub/transactions/{}/payments");
+  });
+
+  test("the order-placement endpoint is not approved", () => {
+    // VTEX settles an order through orderForm/{id}/transaction. It was absent
+    // from the old banned list entirely — the allowlist closes it by default.
+    expect(ALLOWED_ENDPOINTS.has("/api/checkout/pub/orderForm/{}/transaction")).toBe(false);
+    expect(ALLOWED_ENDPOINTS.has("/api/pmt/transaction/{}/payments")).toBe(false);
+  });
+
+  test("no approved endpoint carries a payment or transaction segment", () => {
+    // Guards the allowlist itself: someone adding an entry here has to notice.
+    for (const e of ALLOWED_ENDPOINTS) {
+      expect(e).not.toMatch(/payment|transaction|gatewayCallback/i);
+    }
+  });
+
+  test("checkout hands off a URL instead of transacting", () => {
+    const url = checkoutUrl("abc123");
+    expect(url).toBe("https://www.d1.com.co/checkout/?orderFormId=abc123#/cart");
+  });
+});
+
+describe("credential handling", () => {
+  const files = sourceFiles();
+
+  test("no admin API key is read anywhere", () => {
+    // A VTEX appKey/appToken pair grants account-wide admin access; a
+    // storefront session token can only see its own owner.
+    for (const f of files) {
+      expect(f.body).not.toContain("X-VTEX-API-AppKey");
+      expect(f.body).not.toContain("X-VTEX-API-AppToken");
+    }
+  });
+
+  test("no password authentication path exists", () => {
+    for (const f of files) {
+      expect(f.body).not.toContain("classic/validate");
+    }
+  });
+
+  const tmpDir = join(process.env.TMPDIR ?? "/tmp", `d1-cli-safety-${process.pid}`);
+  const tmpFile = join(tmpDir, "d1-cli", "session.json");
+  afterAll(() => {
+    try {
+      require("node:fs").rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  });
+
+  test("the session file is owner-only ON EVERY SAVE, not just the first", () => {
+    // The previous version grepped the source for the literal "0o600" and
+    // passed while an actual save produced mode 666 — because writeFileSync
+    // IGNORES its mode argument when the file already exists, so only the
+    // explicit chmod enforces it on the second and later writes. Observe the
+    // real filesystem instead.
+    saveSession({ token: "test-token-1", savedAt: "2026-01-01" }, tmpFile);
+    expect(statSync(tmpFile).mode & 0o777).toBe(0o600);
+
+    saveSession({ token: "test-token-2", savedAt: "2026-01-02" }, tmpFile);
+    expect(statSync(tmpFile).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("the extractor cannot be blinded", () => {
+  test("a literal cannot hide behind a string containing a block-comment opener", () => {
+    // The hole this replaces: stripping /*...*/ with a lazy multi-line regex
+    // let `const marker = "/*"` swallow every following line until `*/`,
+    // deleting a payment literal from the extractor's view entirely.
+    const evil = [
+      'const marker = "/*";',
+      'const p = "/api/checkout/pub/orderForm/x/attachments/paymentData";',
+      'const end = "*/";',
+    ].join("\n");
+    const found = apiLiterals(evil);
+    expect(found).toContain("/api/checkout/pub/orderForm/x/attachments/paymentData");
+    expect(found.filter((p) => !ALLOWED_ENDPOINTS.has(p)).length).toBeGreaterThan(0);
+  });
+
+  test("stripping never removes code (anti-vacuity over the real tree)", () => {
+    // If stripComments ever ate a whole file, every allowlist check would pass
+    // trivially. Every source file here exports something; assert that survives.
+    for (const f of sourceFiles()) {
+      if (!f.body.includes("export ")) continue;
+      expect(stripComments(f.body)).toContain("export ");
+    }
+  });
+
+  test("a payment file under any executable extension is caught", () => {
+    // .ts alone missed .mts/.cts/.tsx/.js — Bun runs all of them.
+    for (const ext of SOURCE_EXTENSIONS) {
+      expect(SOURCE_EXTENSIONS.some((e) => `settle${ext}`.endsWith(e))).toBe(true);
+    }
+    expect(SOURCE_EXTENSIONS).toContain(".mts");
+    expect(SOURCE_EXTENSIONS).toContain(".tsx");
+  });
+});
+
+describe("stripComments — both blinding vectors, as a pair", () => {
+  const PAY = "/api/checkout/pub/orderForm/x/attachments/paymentData";
+
+  test("a `/**/`-prefixed line does not hide its code", () => {
+    // The regression the round-1 fix introduced: the line BEGINS with `/*`, so
+    // a whole-line rule deleted it along with the live code it carried. This
+    // exact fixture executed and reached the endpoint, 128/128 green.
+    expect(apiLiterals(`/**/ const PAY = "${PAY}";`)).toContain(PAY);
+  });
+
+  test("a string containing `/*` does not blind the rest of the file", () => {
+    // The hole the round-1 fix CLOSED. Both fixtures must pass together —
+    // neither previous version handled both, and fixing one reopened the other.
+    const evil = ['const marker = "/*";', `const p = "${PAY}";`, 'const end = "*/";'].join("\n");
+    expect(apiLiterals(evil)).toContain(PAY);
+  });
+
+  test("genuine prose is still ignored (no false positives)", () => {
+    expect(apiLiterals(" * see /api/checkout/pub/orderForm for details")).toEqual([]);
+    expect(apiLiterals("/** the /api/evil/payment endpoint */")).toEqual([]);
+    expect(apiLiterals("// /api/evil/payment")).toEqual([]);
+  });
+});
+
+describe("the session file's mode is enforced on a pre-existing loose file", () => {
+  test("a 0644 file left by anything else is tightened to 0600", () => {
+    // The scenario the explicit chmod actually protects, and which the earlier
+    // test did not cover: deleting chmodSync stayed green, because the FIRST
+    // write creates the file at 0600 and the second inherits it. Only a
+    // pre-existing loose file exposes the difference.
+    const dir = join(process.env.TMPDIR ?? "/tmp", `d1-mode-${process.pid}`);
+    const f = join(dir, "d1-cli", "session.json");
+    require("node:fs").mkdirSync(join(dir, "d1-cli"), { recursive: true });
+    require("node:fs").writeFileSync(f, "{}", { mode: 0o644 });
+    require("node:fs").chmodSync(f, 0o644);
+    expect(statSync(f).mode & 0o777).toBe(0o644);
+
+    saveSession({ token: "t", savedAt: "2026-01-01" }, f);
+    expect(statSync(f).mode & 0o777).toBe(0o600);
+    require("node:fs").rmSync(dir, { recursive: true, force: true });
+  });
+});

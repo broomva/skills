@@ -1,0 +1,64 @@
+<!-- @keelCard group="Components" name="Verdict row" subtitle="A class without its causal path is not a verdict" height="960" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../../skills/keel/design/tokens.css" />
+<link rel="stylesheet" href="../../../skills/keel/design/keel.css" />
+<style>
+  body { padding: var(--k-space-6); }
+  .note { font-size: var(--k-fs-xs); color: var(--k-ink-2); max-width: none; }
+</style></head>
+<body>
+
+  <div class="k-verdict">
+    <div class="k-verdict__name k-mono">.github/workflows/test.yml :: bun test</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="anchored">anchored</span></span>
+    <div class="k-verdict__source k-mono">ci_step</div>
+    <p class="k-argument">The signal is the test runner's process exit code, produced by
+      a runtime the target's agents cannot write to during the run. Rewriting the
+      assertions changes what is tested; it cannot change what the exit code reports
+      about the run that happened.</p>
+  </div>
+
+  <div class="k-verdict">
+    <div class="k-verdict__name k-mono">.github/workflows/review.yml :: llm-review</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="self_referential">self_referential</span></span>
+    <div class="k-verdict__source k-mono">review_gate</div>
+    <p class="k-argument">A model judges output produced by a model under the same
+      prompt lineage. The producer of the verdict is inside the write boundary of the
+      actor being verified.</p>
+  </div>
+
+  <div class="k-verdict">
+    <div class="k-verdict__name k-mono">deploy.yml :: promote-if-healthy</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="anchored" data-smell>anchored</span></span>
+    <div class="k-verdict__source k-mono">deploy_condition</div>
+    <p class="k-argument">Reads a health endpoint on the deployed service. Anchored if
+      the endpoint reports measured state, self-referential if it echoes a field the
+      deploy sets. The distinction was not traced to source. <strong>Confidence
+      0.31</strong> — the ring marks a verdict closer to unknown than its color suggests.</p>
+  </div>
+
+  <div class="k-verdict">
+    <div class="k-verdict__name k-mono">Makefile :: docs-check</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="not_a_check">not_a_check</span></span>
+    <div class="k-verdict__source k-mono">task_script</div>
+    <p class="k-argument">Regenerates a table of contents and exits zero unconditionally.
+      It asserts nothing, so it is excluded from the denominator rather than counted as
+      grounded.</p>
+  </div>
+
+  <p class="k-eyebrow" style="margin-top: var(--k-space-8)">Defect state</p>
+  <div class="k-verdict" data-specimen-defect>
+    <div class="k-verdict__name k-mono">scripts/verify.sh :: check-state</div>
+    <span class="k-verdict__class"><span class="k-class" data-class="anchored">anchored</span></span>
+    <div class="k-verdict__source k-mono">task_script</div>
+  </div>
+
+  <p class="note" style="margin-top: var(--k-space-5)">
+    The row above is missing its <span class="k-mono">.k-argument</span>, so the
+    component renders the defect banner. <span class="k-mono">make design-audit</span>
+    fails the build on one. This is the artifact refusing to emit the unaccountable
+    green check the tool exists to name.
+  </p>
+
+</body></html>
