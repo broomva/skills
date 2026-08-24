@@ -10,6 +10,34 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-23
+
+**talkback is an on-demand tool.** You invoke it — by asking for something out
+loud, or by running the script. The turn-end hook is an optional extra that
+ships **off**, and enabling it now takes a deliberate second step.
+
+### Changed
+
+- The Stop hook gained a **mode**, stored as the body of the flag file
+  (`~/.talkback/hook-enabled`), with `--on [marker|always]` to set it:
+  - **`marker`** (new default) — speaks **only** on turns where the agent left a
+    `<!-- talkback: … -->` marker. Silent otherwise.
+  - **`always`** — the 0.1.0 behaviour, now floored at
+    `TALKBACK_HOOK_MIN_CHARS` (80) so acknowledgements stay silent.
+- `--status` reports the active mode and backend.
+
+  The `Stop` event fires on **every** turn, one-line answers included. As shipped
+  in 0.1.0, enabling the hook meant narrating all of them, which buries the
+  signal it was meant to carry. The marker is authored rather than extracted, so
+  gating on it means the hook speaks a real summary exactly when a turn earned
+  one — and stays quiet the rest of the time.
+
+### Compatibility
+
+- An empty flag file (the 0.1.0 format) reads as `marker`, so an existing
+  install becomes quieter, never louder.
+- `TALKBACK_HOOK_MODE` overrides the stored mode.
+
 ## [0.1.0] — 2026-08-23
 
 Initial release.

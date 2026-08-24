@@ -5,9 +5,14 @@ OFF by default. It speaks only while the flag file ~/.talkback/hook-enabled
 exists, so an unconfigured machine stays silent; and it always exits 0, so it
 can never block a turn from completing.
 
-What it says, in order of preference:
-  1. an explicit `<!-- talkback: ... -->` marker the agent left in its message
-  2. otherwise, the opening sentences of the final message, up to a char cap
+Two modes, stored as the content of the flag file:
+
+  marker  (default)  speak ONLY when the agent deliberately left a
+                     `<!-- talkback: ... -->` marker. Silent otherwise, so a
+                     one-line "done" never becomes audio.
+  always             speak on every turn, falling back to the opening sentences
+                     of the message when there is no marker. Short turns below
+                     MIN_CHARS stay silent even here.
 
 It defaults to the free backend even when a metered one is affordable. A
 readback fires on every turn, unattended, for audio nobody asked for — on a
@@ -28,8 +33,25 @@ STATE_DIR = Path(os.environ.get("TALKBACK_HOME", Path.home() / ".talkback"))
 FLAG = STATE_DIR / "hook-enabled"
 CAP = int(os.environ.get("TALKBACK_HOOK_CHARS", "320"))
 HOOK_BACKEND = os.environ.get("TALKBACK_HOOK_BACKEND", "say")
+MODES = ("marker", "always")
+DEFAULT_MODE = "marker"
+# In `always` mode, a turn shorter than this is an acknowledgement, not a
+# report. Narrating it costs more attention than it returns.
+MIN_CHARS = int(os.environ.get("TALKBACK_HOOK_MIN_CHARS", "80"))
 
 MARKER_RE = re.compile(r"<!--\s*talkback:\s*(.+?)\s*-->", re.S | re.I)
+
+
+def current_mode() -> str:
+    """Mode lives in the flag file's body; env wins; empty file = default."""
+    env = os.environ.get("TALKBACK_HOOK_MODE", "").strip().lower()
+    if env in MODES:
+        return env
+    try:
+        body = FLAG.read_text().strip().lower()
+    except OSError:
+        return DEFAULT_MODE
+    return body if body in MODES else DEFAULT_MODE
 
 
 def toggle(argv: list[str]) -> int | None:
@@ -37,16 +59,27 @@ def toggle(argv: list[str]) -> int | None:
         return None
     cmd = argv[0]
     if cmd == "--on":
+        mode = (argv[1].strip().lower() if len(argv) > 1 else DEFAULT_MODE)
+        if mode not in MODES:
+            print(f"unknown mode {mode!r} — expected one of {', '.join(MODES)}")
+            return 2
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        FLAG.touch()
-        print("talkback stop-hook: ON")
+        FLAG.write_text(mode + "\n")
+        print(f"talkback stop-hook: ON (mode={mode})")
+        if mode == "marker":
+            print("  speaks only on turns carrying a <!-- talkback: ... --> marker")
+        else:
+            print(f"  speaks on every turn over {MIN_CHARS} chars")
         return 0
     if cmd == "--off":
         FLAG.unlink(missing_ok=True)
         print("talkback stop-hook: OFF")
         return 0
     if cmd == "--status":
-        print(f"talkback stop-hook: {'ON' if FLAG.exists() else 'OFF'}")
+        if not FLAG.exists():
+            print("talkback stop-hook: OFF")
+        else:
+            print(f"talkback stop-hook: ON (mode={current_mode()}, backend={HOOK_BACKEND})")
         return 0
     return None
 
@@ -83,11 +116,16 @@ def last_assistant_text(transcript: Path) -> str:
     return text
 
 
-def condense(text: str) -> str:
+def condense(text: str, mode: str = DEFAULT_MODE) -> str | None:
+    """Return what to speak, or None when this turn should stay silent."""
     m = MARKER_RE.search(text)
     if m:
-        return m.group(1).strip()
+        return m.group(1).strip() or None
+    if mode == "marker":
+        return None  # no marker, no audio — the whole point of this mode
     body = MARKER_RE.sub("", text).strip()
+    if len(body) < MIN_CHARS:
+        return None
     if len(body) <= CAP:
         return body
     cut = body[:CAP]
@@ -118,8 +156,8 @@ def main() -> int:
     if not text.strip():
         return 0
 
-    spoken = condense(text)
-    if not spoken.strip():
+    spoken = condense(text, current_mode())
+    if not spoken or not spoken.strip():
         return 0
 
     # Detach so the turn is never held open for the length of the audio.
