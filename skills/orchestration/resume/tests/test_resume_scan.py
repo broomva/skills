@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -866,50 +867,234 @@ def test_every_limit_is_a_positive_int():
     assert rs.LIMITS and all(isinstance(v, int) and v > 0 for v in rs.LIMITS.values())
 
 
-def test_termination_tail_limit_is_enforced():
-    recs = [assistant({"type": "text", "text": "API Error: 529 Overloaded"})]
-    recs += [assistant({"type": "text", "text": "ok"})
-             for _ in range(rs.LIMITS["termination_tail"] + 20)]
-    assert rs.find_termination(recs)["kind"] == "clean_or_unknown"
+# Each bound below asserts a HARDCODED expected value. The previous versions
+# fed an input sized from the constant and asserted against the same constant,
+# so widening the constant widened the input too and the assertion could never
+# fail — seven entries survived a 10x widening with the whole suite green.
+# Duplicating the literal here is the point: the test is the second opinion.
+
+def test_termination_tail_bound_is_400():
+    err = assistant({"type": "text", "text": "API Error: 529 Overloaded"})
+    ok = assistant({"type": "text", "text": "ok"})
+    assert rs.LIMITS["termination_tail"] == 400
+    # exactly inside the window: error + 399 later records
+    assert rs.find_termination([err] + [ok] * 399)["kind"] == "api_overload"
+    # one past it: error + 400 later records
+    assert rs.find_termination([err] + [ok] * 400)["kind"] == "clean_or_unknown"
 
 
-def test_summary_limit_is_enforced(tmp_path):
+def test_summary_bound_is_300(tmp_path):
     recs = [assistant(spawn_block("t1", "d")), user(launch_result("t1", "aX")),
             user(notification("aX", status="failed", summary="S" * 5000))]
     f = rs.scan(write_session(tmp_path, recs))["reported_failed"][0]
-    assert len(f["summary"]) <= rs.LIMITS["summary_chars"]
+    assert rs.LIMITS["summary_chars"] == 300
+    assert len(f["summary"]) == 300
 
 
-def test_command_limit_is_enforced():
+def test_command_bound_is_400():
     recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
                        "input": {"command": "x" * 5000, "run_in_background": True}}),
             user({"type": "tool_result", "tool_use_id": "t1",
                   "content": "Command running in background with ID: bgQ."})]
-    assert len(rs.find_spawns(recs)[0]["command"]) <= rs.LIMITS["command_chars"]
+    assert rs.LIMITS["command_chars"] == 400
+    assert len(rs.find_spawns(recs)[0]["command"]) == 400
 
 
-def test_last_words_line_limit_is_enforced(tmp_path):
+def test_last_words_bound_is_12_lines(tmp_path):
     f = tmp_path / "many.output"
     f.write_text(json.dumps(assistant({"type": "text",
                  "text": "\n".join(f"row{i}" for i in range(400))})), encoding="utf-8")
     recs = [assistant(spawn_block("t1", "d")), user(launch_result("t1", "aX", str(f)))]
     out = rs.render(rs.scan(write_session(tmp_path, recs)))
-    assert out.count("    | row") <= rs.LIMITS["last_words_lines"]
+    assert rs.LIMITS["last_words_lines"] == 12
+    assert out.count("    | row") == 12
 
 
-def test_cwd_probe_limit_is_enforced(tmp_path):
-    """A transcript declaring its cwd beyond the probe window is not matched;
-    pins the constant so widening or narrowing it is visible."""
+def test_cwd_probe_bound_is_40(tmp_path):
     proj = tmp_path / "p" / rs.mangle("/w/x")
     proj.mkdir(parents=True)
-    f = proj / "s.jsonl"
-    pad = [json.dumps({"type": "user"}) for _ in range(rs.LIMITS["cwd_probe_lines"] + 5)]
+    pad = [json.dumps({"type": "user"}) for _ in range(45)]
     pad.append(json.dumps({"type": "user", "cwd": "/w/x"}))
-    f.write_text("\n".join(pad), encoding="utf-8")
+    (proj / "s.jsonl").write_text("\n".join(pad), encoding="utf-8")
+    assert rs.LIMITS["cwd_probe_lines"] == 40
     assert rs.find_session("/w/x", str(tmp_path / "p")) is None
 
 
-# ---------------------------------------------------- hostile value types
+def test_digest_bound_is_1200(tmp_path):
+    f = tmp_path / "b.output"
+    f.write_text("\n".join(json.dumps(assistant({"type": "text", "text": "Q" * 4000}))
+                           for _ in range(50)), encoding="utf-8")
+    assert rs.LIMITS["digest_chars"] == 1200
+    assert len(rs.digest_output(str(f))["final_text"]) == 1200
+
+
+def test_evidence_bound_is_160():
+    """Had no test at all."""
+    assert rs.LIMITS["evidence_chars"] == 160
+    long_tail = "API Error: 529 Overloaded " + ("z" * 5000)
+    t = rs.find_termination([assistant({"type": "text", "text": long_tail})])
+    assert len(t["evidence"]) <= 60 + 160
+
+
+def test_live_window_bound_is_90(tmp_path):
+    """Behavioural, not a placebo. The previous version asserted the constant
+    against itself, so widening the USE SITE to 900 kept the suite green —
+    on the bound that guards 'do not re-run a live deploy'."""
+    assert rs.LIMITS["live_window_s"] == 90
+    out = tmp_path / "bg.output"
+    out.write_text("x", encoding="utf-8")
+    os.utime(out, (time.time() - 300, time.time() - 300))
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": "deploy", "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  f"Command running in background with ID: bgW. "
+                  f"Output is being written to: {out}"})]
+    p = write_session(tmp_path, recs)
+    # 300s of silence, no session timestamp: outside a 90s window -> dead
+    assert rs.scan(p)["unreported"][0]["liveness"] == "dead"
+    # widen the window past the silence and it flips
+    assert rs.scan(p, live_window_s=600)["unreported"][0]["liveness"] == "possibly-live"
+
+
+# ------------------------------- redaction of every printed worker field
+
+def test_secrets_are_masked_in_command_and_prompt(tmp_path):
+    """SKILL.md guaranteed the scan masks secrets in EVERYTHING it prints. It
+    masked only the digest prose and the termination evidence, while the
+    command line and the original prompt went out raw in both the render and
+    --json. A guarantee covering two of five fields is a false guarantee."""
+    tok = "ghp_" + "A" * 36
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": f"curl -H 'Authorization: Bearer {tok}'",
+                                 "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1",
+                  "content": "Command running in background with ID: bgS."}),
+            assistant(spawn_block("t2", "probe", prompt=f"use {tok} to fetch")),
+            user(launch_result("t2", "aQ"))]
+    res = rs.scan(write_session(tmp_path, recs))
+    assert tok not in rs.render(res)
+    assert tok not in json.dumps(res)
+    assert any(w.get("redacted_kinds") for w in res["unreported"])
+
+
+# ------------------------------------------------------------- workflows
+
+def test_real_workflow_receipt_is_detected():
+    """The receipt string is copied byte-for-byte from a production transcript.
+
+    169 real workflow receipts existed in the corpus and 100% were dropped:
+    the text carries neither `agentId:` nor the background-shell wording, so
+    it fell through to "already reported". The test that was supposed to pin
+    this handed tool="Workflow" an AGENT receipt — a fixture written to fit
+    the regex rather than copied from the harness, which is the exact defect
+    it was meant to catch.
+    """
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Workflow",
+                       "input": {"name": "audit", "description": "audit keel"}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Workflow launched in background. Task ID: wi666ztu1\n"
+                  "Summary: Audit Keel across 6 dimensions\n"
+                  "Transcript dir: /tmp/wf_7fb5aef4-ebc"})]
+    spawns = rs.find_spawns(recs)
+    assert len(spawns) == 1
+    assert spawns[0]["worker_id"] == "wi666ztu1"
+    assert spawns[0]["kind"] == "workflow"
+
+
+def test_workflow_dir_prefers_a_transcript_over_the_ledger(tmp_path):
+    """`journal.jsonl` is the workflow's own lifecycle ledger and is newest in
+    32% of real workflow dirs. It digests to nothing, so the scan printed
+    'recovery: NONE' while the agent transcripts sat beside it."""
+    wf = tmp_path / "wf"
+    wf.mkdir()
+    old = wf / "agent-aOLD.jsonl"
+    new = wf / "agent-aNEW.jsonl"
+    old.write_text(json.dumps(assistant({"type": "text", "text": "STALE"})), encoding="utf-8")
+    new.write_text(json.dumps(assistant({"type": "text", "text": "LATEST"})), encoding="utf-8")
+    journal = wf / "journal.jsonl"
+    journal.write_text(json.dumps({"type": "started"}), encoding="utf-8")
+    os.utime(old, (1, 1))
+    os.utime(new, (10**8, 10**8))
+    os.utime(journal, (10**9, 10**9))                  # ledger is NEWEST of all
+    picked = rs._newest_in_dir(str(wf))
+    # ledger loses to a transcript...
+    assert os.path.basename(picked) != "journal.jsonl"
+    # ...and among transcripts the NEWEST wins. Every real workflow dir holds
+    # >=2 agent files (median 6, max 136), and a single-file fixture left
+    # min-vs-max untested while changing the recovered text in 160 of 161.
+    assert os.path.basename(picked) == "agent-aNEW.jsonl"
+
+
+def test_failed_workflow_recovers_from_its_directory(tmp_path):
+    """The reported-failed limb did not get the directory handling the
+    unreported limb had — 2 of 3 real failed workflows printed
+    'recovery: NONE' beside a directory holding 92 transcripts. Both limbs
+    now resolve their source through one function."""
+    wf = tmp_path / "wfdir"
+    wf.mkdir()
+    (wf / "agent-aZ.jsonl").write_text(
+        json.dumps(assistant({"type": "text", "text": "PARTIAL WORKFLOW RESULT"})),
+        encoding="utf-8")
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Workflow",
+                       "input": {"name": "audit"}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  f"Workflow launched in background. Task ID: wF1\n"
+                  f"Transcript dir: {wf}"}),
+            user(notification("wF1", status="failed", summary="died"))]
+    res = rs.scan(write_session(tmp_path, recs))
+    assert len(res["reported_failed"]) == 1
+    assert "PARTIAL WORKFLOW RESULT" in res["reported_failed"][0]["digest"]["final_text"]
+
+
+def test_background_flag_beats_a_workflow_receipt_echo():
+    """A run_in_background Bash whose stdout echoes a workflow receipt must
+    stay a background shell, or the possibly-live guard is silently disabled
+    for a genuine separate process."""
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Bash",
+                       "input": {"command": "cat log", "run_in_background": True}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Command running in background with ID: bgR.\n"
+                  "Workflow launched in background. Task ID: wFAKE"})]
+    sp = rs.find_spawns(recs)
+    assert sp[0]["kind"] == "background-shell"
+    assert sp[0]["worker_id"] == "bgR"
+
+
+def test_agent_result_carrying_a_bg_line_stays_an_agent():
+    """The negative half. Without it, deleting the `kind == background-shell`
+    guard leaves the suite green — the guard written for claim 7 was
+    unverified by the test written for claim 7."""
+    recs = [assistant(spawn_block("t1", "probe")),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Async agent launched successfully.\n"
+                  "agentId: aReal\noutput_file: /tmp/a.output\n"
+                  "Command running in background with ID: bgNOISE"})]
+    sp = rs.find_spawns(recs)
+    assert len(sp) == 1
+    assert sp[0]["kind"] == "agent"
+    assert sp[0]["worker_id"] == "aReal"
+
+
+def test_workflow_liveness_is_unknown_not_dead(tmp_path):
+    """The corpus does not settle whether workflows outlive the parent, so the
+    scan must not assert either. Calling a live workflow dead invites
+    re-running work that is still going."""
+    recs = [assistant({"type": "tool_use", "id": "t1", "name": "Workflow",
+                       "input": {"name": "deploy"}}),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Workflow launched in background. Task ID: wfX\n"
+                  "Transcript dir: /tmp/nonexistent-wf"})]
+    res = rs.scan(write_session(tmp_path, recs))
+    u = res["unreported"][0]
+    assert u["liveness"] == "unknown-workflow"
+    assert u["possibly_live"] is False
+    assert "UNKNOWN" in rs.render(res)
+
+
+
+
+
+
 
 @pytest.mark.parametrize("rec", [
     {"type": "assistant", "timestamp": 1723471200,
