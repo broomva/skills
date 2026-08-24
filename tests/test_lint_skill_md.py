@@ -563,6 +563,12 @@ class TestTheLoaderAgreesWithSafeLoad:
         "'1': a\n1: b\nname: x\n",       # str vs int, distinct by tag
         "&a\nself: *a\nname: x\n",       # recursive alias to the enclosing map
         "a: &m\n  k: *m\nname: x\n",     # recursion one level down
+        # TWO merge keys in one mapping. `safe_load` accepts this and merges
+        # both, so treating `<<` as an ordinary key would report a duplicate —
+        # a false red. Found by a surviving mutation, not by review: removing
+        # the merge-tag skip changed nothing until a document existed that
+        # actually had two of them.
+        "p: &p\n  x: 1\nq: &q\n  y: 2\n<<: *p\n<<: *q\nname: a\n",
     ])
     def test_valid_documents_parse_identically(self, lint, doc):
         import yaml
