@@ -58,6 +58,11 @@ class _NoDuplicateKeys(yaml.SafeLoader):
 
 
 def _construct_unique(loader, node, deep=False):
+    # `flatten_mapping` FIRST. `SafeLoader.construct_mapping` calls it to expand
+    # YAML merge keys (`<<: *anchor`); a replacement constructor that skips it
+    # turns a document the old gate accepted into an error, which would make
+    # this "duplicate keys" fix a behaviour regression rather than a fix.
+    loader.flatten_mapping(node)
     mapping = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
@@ -138,6 +143,24 @@ def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
     return data, None, True
 
 
+def _holds_a_manifest(link: Path) -> bool:
+    """Does this symlinked directory contain a SKILL.md at ANY depth?
+
+    Checking only `link/SKILL.md` missed `link/nested/SKILL.md`, so a linked-in
+    package whose skill sat one level down was still omitted in silence. The
+    walk does not follow further links, so a cycle inside the target cannot
+    spin here either.
+    """
+    try:
+        for _root, _subdirs, files in os.walk(link, followlinks=False):
+            if "SKILL.md" in files:
+                return True
+    except OSError:
+        # Cannot tell — say yes, so it is REPORTED rather than assumed empty.
+        return True
+    return False
+
+
 def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
     """`(skill_dirs_manifests, reasons_a_subtree_could_not_be_enumerated)`.
 
@@ -177,7 +200,7 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
         # changes today.
         for sub in subdirs:
             link = Path(root) / sub
-            if link.is_symlink() and (link / "SKILL.md").exists():
+            if link.is_symlink() and _holds_a_manifest(link):
                 unwalkable.append(
                     f"{rel / sub}: is a symlinked directory holding a SKILL.md and was "
                     "NOT entered; move the skill into the repository or remove the link")
@@ -271,7 +294,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {err}")
         print(f"\n{len(errors)} error(s) across {len(skill_mds)} skill(s)")
         return 1
-    print(f"OK — {len(skill_mds)} SKILL.md files conform to agentskills.io spec")
+    # NOT "conform to agentskills.io spec". The spec also caps `description` at
+    # 1024 characters and 33 of the 99 current manifests exceed it, so that
+    # claim was broader than anything this gate checked. A gate that overclaims
+    # is how an unchecked rule stays unchecked.
+    print(f"OK — {len(skill_mds)} SKILL.md files pass the frontmatter checks "
+          "(fences, name syntax, name/dir match, description present)")
     return 0
 
 

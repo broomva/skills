@@ -283,7 +283,11 @@ class TestTheEntryPoint:
         _skill(tmp_path, "good")
         r = _run(tmp_path)
         assert r.returncode == 0, r.stdout
-        assert "OK — 1 SKILL.md files conform" in r.stdout
+        assert "pass the frontmatter checks" in r.stdout
+        # NOT "conform to agentskills.io spec". The spec also caps `description`
+        # at 1024 characters and 33 of the 99 real manifests exceed it, so that
+        # claim was broader than anything this gate verifies.
+        assert "conform to agentskills.io spec" not in r.stdout
 
 
 class TestNameIsFullMatched:
@@ -377,3 +381,60 @@ class TestASymlinkCycleDoesNotHang:
         # Terminates, and the genuine skill is still found exactly once.
         assert [p for p in found if p.parent.name == "real"] == [
             tooling / "real" / "SKILL.md"]
+
+
+class TestTheNameLengthBoundary:
+    """A `MAX_NAME = 63` mutation survived: the suite covered 65 but never the
+    valid 64, and the longest real name is 31 — so nothing pinned the edge."""
+
+    @pytest.mark.parametrize("length,ok", [(63, True), (64, True), (65, False)])
+    def test_the_cap_is_inclusive_at_64(self, tmp_path, lint, length, ok):
+        name = "a" * length
+        md = _skill(tmp_path, name, f"---\nname: {name}\ndescription: d\n---\n",
+                    dirname=name)
+        problems = [p for p in lint.lint_skill_md(md) if "exceeds" in p]
+        assert (not problems) == ok, (length, problems)
+
+
+class TestYamlMergeKeysStillWork:
+    def test_a_merge_key_is_expanded_not_rejected(self, tmp_path, lint):
+        """`SafeLoader.construct_mapping` calls `flatten_mapping` to expand
+        `<<: *anchor`. The duplicate-key constructor replaced that method, and
+        skipping the flatten step turned a document the OLD gate accepted into
+        an error — making a fix a behaviour regression."""
+        md = _skill(tmp_path, "m", "---\nbase: &b\n  description: shared\n"
+                                   "<<: *b\nname: m\n---\n")
+        assert lint.lint_skill_md(md) == []
+
+    def test_duplicates_are_still_rejected(self, tmp_path, lint):
+        """CONTROL: restoring merge support must not restore duplicate keys."""
+        md = _skill(tmp_path, "m2", "---\nname: BAD\nname: m2\ndescription: d\n---\n")
+        assert any("duplicate key" in p for p in lint.lint_skill_md(md))
+
+
+class TestASymlinkedDirectoryIsSearchedAtDepth:
+    def test_a_nested_manifest_under_a_link_is_reported(self, tmp_path, lint):
+        """Checking only `link/SKILL.md` missed `link/nested/SKILL.md`, so a
+        linked-in package whose skill sat one level down was still omitted in
+        silence."""
+        outside = tmp_path / "outside" / "pkg" / "deep"
+        outside.mkdir(parents=True)
+        (outside / "SKILL.md").write_text("---\nname: X\ndescription: d\n---\n",
+                                          encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked").symlink_to(tmp_path / "outside" / "pkg")
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert any("symlinked directory holding a SKILL.md" in u for u in unwalkable), unwalkable
+
+    def test_a_symlinked_assets_directory_is_still_left_alone(self, tmp_path, lint):
+        """CONTROL: searching at depth must not start reporting ordinary linked
+        asset directories."""
+        outside = tmp_path / "assets" / "img"
+        outside.mkdir(parents=True)
+        (outside / "x.png").write_text("x", encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "assets").symlink_to(tmp_path / "assets")
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert unwalkable == [], unwalkable
