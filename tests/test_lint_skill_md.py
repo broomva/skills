@@ -819,3 +819,92 @@ class TestReportOrderIsDeterministic:
         found, _unwalkable = lint.discover(tmp_path / "skills")
         assert found == sorted(found)
         assert [p.parent.name for p in found] == ["alpha", "middle", "zebra"]
+
+
+class TestVendoredManifestsAreNotThisReposSkills:
+    """Found by reconciling the count the linter REPORTS against what git
+    TRACKS, minutes after this linter merged.
+
+    `.venv/lib/*/site-packages/` now contains third-party `SKILL.md` files —
+    logfire, typer and fastapi all ship agent skills inside the PyPI package —
+    and the walk descended into them. All three happened to conform, so the only
+    visible symptom was a count of 103 where git tracks 100. The next dependency
+    that ships a non-conforming manifest would have failed the lint locally on a
+    file nobody here owns.
+
+    CI never saw it: a fresh checkout has no `.venv`. That is why it survived
+    review and four cross-model rounds.
+    """
+
+    @pytest.mark.parametrize("vendor", [
+        ".venv/lib/python3.12/site-packages/pkg/.agents/skills/vendored",
+        "node_modules/some-pkg/skills/vendored",
+        "venv/lib/site-packages/pkg/skills/vendored",
+        ".tox/py311/lib/pkg/skills/vendored",
+    ])
+    def test_a_vendored_manifest_is_not_discovered(self, tmp_path, lint, vendor):
+        _skill(tmp_path, "real")
+        v = tmp_path / "skills" / "tooling" / "host" / vendor
+        v.mkdir(parents=True)
+        # deliberately NON-conforming: if it were linted, it would fail
+        (v / "SKILL.md").write_text("---\nname: TOTALLY-WRONG\n---\n", encoding="utf-8")
+        found, unwalkable = lint.discover(tmp_path / "skills")
+        assert unwalkable == [], unwalkable
+        assert [p.parent.name for p in found] == ["real"], found
+
+    def test_a_real_skill_beside_a_vendored_tree_is_still_found(self, tmp_path, lint):
+        """CONTROL: pruning must not hide a genuine skill."""
+        _skill(tmp_path, "real")
+        v = tmp_path / "skills" / "tooling" / "real" / ".venv" / "site-packages"
+        v.mkdir(parents=True)
+        (v / "SKILL.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        found, _ = lint.discover(tmp_path / "skills")
+        assert (tmp_path / "skills" / "tooling" / "real" / "SKILL.md") in found
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_an_unreadable_vendored_tree_raises_no_finding(self, tmp_path, lint):
+        """Pruned BEFORE descent, like `extensions/`: `os.walk` has to LIST a
+        directory to reach it, so an unreadable excluded tree would otherwise
+        fire `onerror` and report a subtree this linter opted out of."""
+        _skill(tmp_path, "real")
+        v = tmp_path / "skills" / "tooling" / "host" / ".venv"
+        (v / "inner").mkdir(parents=True)
+        v.chmod(0o000)
+        try:
+            _found, unwalkable = lint.discover(tmp_path / "skills")
+            assert unwalkable == [], unwalkable
+        finally:
+            v.chmod(0o755)
+
+    def test_the_symlink_probe_shares_the_exclusion(self, tmp_path, lint):
+        """A linked tree holding only a VENDORED manifest holds nothing this
+        linter checks, so reporting it as a skill it declined to enter would be
+        a false red — the same rule `extensions/` already gets."""
+        vend = tmp_path / "outside" / ".venv" / "site-packages" / "pkg" / "skills" / "v"
+        vend.mkdir(parents=True)
+        (vend / "SKILL.md").write_text("---\nname: v\n---\n", encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked").symlink_to(tmp_path / "outside")
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert unwalkable == [], unwalkable
+
+
+class TestTheReportedCountMatchesWhatGitTracks:
+    def test_the_linter_counts_exactly_the_repositorys_own_manifests(self):
+        """The reconciliation that found the vendored-manifest bug, kept as a
+        test. A count the linter reports that git cannot account for means it is
+        walking something this repository does not ship."""
+        repo = SCRIPT.parents[1]
+        tracked = subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "skills/*SKILL.md"],
+            capture_output=True, text=True, check=True).stdout.split()
+        expected = [p for p in tracked if "/extensions/" not in p]
+
+        r = subprocess.run([sys.executable, str(SCRIPT)], cwd=repo,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        reported = int(r.stdout.split("linting ")[1].split()[0])
+        assert reported == len(expected), (
+            f"linter counted {reported}, git tracks {len(expected)} "
+            "— it is walking files this repository does not ship")
