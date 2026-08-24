@@ -746,3 +746,76 @@ class TestAnUnwalkableOnlyTreeIsNotCalledEmpty:
         (tmp_path / "skills").mkdir()
         r = _run(tmp_path)
         assert r.returncode == 1 and "no SKILL.md found" in r.stdout
+
+
+class TestAnyConstructionFailureIsAFinding:
+    """Enumerating what a PyYAML constructor can raise did not converge:
+    `YAMLError`, then `ValueError` from a timestamp, then `RecursionError` from
+    deep nesting, then `KeyError` from `!!bool wat` and `AttributeError` from
+    `!!timestamp wat`. Each reached a user as a traceback and each took a round
+    to find. Caught by INTENT now — a value that will not construct is a finding
+    about the manifest — with the `try` covering one call so it cannot swallow a
+    defect elsewhere."""
+
+    @pytest.mark.parametrize("value", [
+        "!!bool wat",        # KeyError
+        "!!timestamp wat",   # AttributeError
+        "!!int wat",         # ValueError
+        "!!float wat",
+        "!!python/object:os.system x",   # ConstructorError
+        "2024-13-40",        # ValueError from the implicit timestamp resolver
+    ])
+    def test_it_is_reported_not_raised(self, tmp_path, lint, value):
+        md = _skill(tmp_path, "t", f"---\nname: t\ndescription: {value}\n---\n")
+        problems = lint.lint_skill_md(md)
+        assert problems, value
+        assert any("malformed YAML" in p for p in problems), (value, problems)
+
+    def test_a_valid_explicit_tag_still_reaches_the_type_check(self, tmp_path, lint):
+        """CONTROL: catching broadly must not turn every tagged value into
+        "malformed". A valid `!!bool` constructs fine and is reported as a
+        non-string description, which is a different and more accurate finding."""
+        md = _skill(tmp_path, "t2", "---\nname: t2\ndescription: !!bool true\n---\n")
+        assert any("must be a string" in p for p in lint.lint_skill_md(md))
+
+    def test_an_ordinary_manifest_is_untouched(self, tmp_path, lint):
+        """CONTROL."""
+        assert lint.lint_skill_md(_skill(tmp_path, "t3")) == []
+
+
+class TestTheSymlinkProbeSharesTheExclusion:
+    def test_a_linked_tree_holding_only_an_extension_is_left_alone(self, tmp_path, lint):
+        """`discover` excludes `extensions/`, so a linked tree containing ONLY an
+        extension manifest holds nothing this linter checks — reporting it as a
+        skill it declined to enter is a false red."""
+        ext = tmp_path / "assets" / "extensions" / "priv"
+        ext.mkdir(parents=True)
+        (ext / "SKILL.md").write_text("---\nname: priv\n---\n", encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "assets").symlink_to(tmp_path / "assets")
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert unwalkable == [], unwalkable
+
+    def test_a_linked_tree_holding_a_real_skill_is_still_reported(self, tmp_path, lint):
+        """CONTROL: sharing the exclusion must not silence the real case."""
+        pkg = tmp_path / "pkg" / "deep"
+        pkg.mkdir(parents=True)
+        (pkg / "SKILL.md").write_text("---\nname: r\n---\n", encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked").symlink_to(tmp_path / "pkg")
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert any("symlinked directory" in u for u in unwalkable), unwalkable
+
+
+class TestReportOrderIsDeterministic:
+    def test_discovery_is_sorted(self, tmp_path, lint):
+        """Dropping `sorted(found)` survived every assertion: nothing pinned the
+        order, so a report could reshuffle between runs on the same tree and read
+        as a change."""
+        for name in ["zebra", "alpha", "middle"]:
+            _skill(tmp_path, name)
+        found, _unwalkable = lint.discover(tmp_path / "skills")
+        assert found == sorted(found)
+        assert [p.parent.name for p in found] == ["alpha", "middle", "zebra"]

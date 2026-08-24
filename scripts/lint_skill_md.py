@@ -155,7 +155,16 @@ def read_frontmatter(skill_md: Path) -> tuple[dict, str | None, bool]:
         return {}, f"frontmatter is not valid UTF-8 ({exc.reason})", True
     try:
         data = yaml.load(body, Loader=_NoDuplicateKeys)
-    except (yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
+    except Exception as exc:  # noqa: BLE001 — see below
+        # Deliberately broad, and caught by INTENT rather than by type. A PyYAML
+        # constructor runs arbitrary code to build a value, and enumerating what
+        # it can raise did not converge: YAMLError, then ValueError from a
+        # timestamp, then RecursionError from deep nesting, then KeyError from
+        # `!!bool wat` and AttributeError from `!!timestamp wat`. Every one of
+        # those reached a user as a traceback. At a parser boundary in a LINTER
+        # the rule is simple — if the value could not be constructed, that is a
+        # finding about the manifest. The `try` covers one call, so this cannot
+        # swallow a defect elsewhere in this file.
         # Not just YAMLError. PyYAML's implicit resolvers construct values, and
         # `description: 2024-13-40` resolves as a timestamp whose constructor
         # raises ValueError straight through — a traceback instead of a report,
@@ -192,8 +201,13 @@ def _holds_a_manifest(link: Path) -> bool:
         nonlocal unreadable
         unreadable = True
 
-    for _root, _subdirs, files in os.walk(link, followlinks=False,
-                                          onerror=_cannot_tell):
+    for _root, subdirs, files in os.walk(link, followlinks=False,
+                                         onerror=_cannot_tell):
+        # Same exclusion as `discover`, or a linked tree holding ONLY an
+        # `extensions/` manifest — which this linter does not check — would be
+        # reported as a skill it declined to enter.
+        if "extensions" in subdirs:
+            subdirs.remove("extensions")
         if "SKILL.md" in files:
             return True
     # Fail CLOSED: if we could not read part of it, say yes so the link is
