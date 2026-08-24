@@ -212,6 +212,24 @@ def test_tool_result_mentioning_an_error_is_not_a_termination():
     assert rs.find_termination(recs)["kind"] == "clean_or_unknown"
 
 
+def test_termination_found_when_not_the_last_record():
+    """The scan looks back over a window, not just at the final record.
+
+    A session rarely dies on its very last line: hooks, snapshots and
+    queue-operations are appended afterwards. Pins the tail window.
+    """
+    recs = [assistant({"type": "text", "text": "API Error: 529 Overloaded"})]
+    recs += [assistant({"type": "text", "text": "ok"}) for _ in range(12)]
+    assert rs.find_termination(recs)["kind"] == "api_overload"
+
+
+def test_termination_window_is_bounded():
+    """An error far outside the window is NOT reported as how this ended."""
+    recs = [assistant({"type": "text", "text": "API Error: 529 Overloaded"})]
+    recs += [assistant({"type": "text", "text": "ok"}) for _ in range(12)]
+    assert rs.find_termination(recs, tail=3)["kind"] == "clean_or_unknown"
+
+
 def test_api_error_flag_is_trusted_anywhere_in_the_record():
     rec = assistant({"type": "text", "text": "x" * 500 + " ENOTFOUND"},
                     isApiErrorMessage=True)
