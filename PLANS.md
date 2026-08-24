@@ -1,5 +1,47 @@
 # PLANS.md
 
+## Legal-readiness skill
+
+Status: in progress
+
+Branch: `feat/legal-readiness-skill`
+
+Tracking: `broomva/skills#153`
+
+### Objective
+
+Generalize the 2026-08-09 SaaS legal/security adversarial audit into a reusable,
+tested skill that configures evidence and controls while preserving legal,
+entity, tax, filing, contract, and counsel boundaries.
+
+### Dependency chain
+
+- Upstream: corrected claim ledger, jurisdiction predicates, lifecycle receipts,
+  skillify packaging contract, official-source freshness requirement.
+- Implementation: `skills/governance/legal-readiness/` workflow, stdlib validator
+  and probe, template, references, tests, and evals.
+- Registration: README catalog, path-filtered CI, workspace role/eval and KG
+  provenance in a companion PR.
+- Verification: pytest, example rejection/acceptance, strict skillify, role-x
+  resolver eval, bstack test audit, skills.sh clean install, Cross-Review (P20).
+
+### Non-goals
+
+- No legal advice, compliance opinion, entity formation, tax/registry filing,
+  contract execution, or fabricated operator/vendor facts.
+- No universal jurisdiction checklist and no assertion that a passing schema
+  proves legal sufficiency.
+
+### Milestones
+
+- [x] Define latent/deterministic boundary and evidence contract.
+- [x] Implement skill, validator, probe, template, and tests.
+- [x] Register role/eval and KG provenance in the companion workspace change.
+- [x] Dogfood local discovery, validator/probe, strict skillify, role resolver,
+  and isolated bstack test audit.
+- [x] Pass Cross-Review (P20).
+- [ ] Pass CI, merge, install, and cleanup.
+
 Use this file for multi-step work where durable context matters.
 
 ## Objective
