@@ -341,6 +341,21 @@ mutate "dangling symlink reads as absent" "T53" \
     'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' \
     'while [ -e "$ARCHIVE" ]; do' 
 
+# A refusal that ARCHIVES and then returns 6 was green across the whole suite:
+# exit 6 is what a refusal returns, not what it does, and every later assertion
+# in T39/T52 was satisfied because the --force call then found nothing to reset
+# and exited 0. The tests now check the ledger BETWEEN the two calls.
+mutate "corrupt refusal archives before refusing" "T39" \
+    $'corrupted. Re-run with --force to archive it anyway." >&2\n            exit 6' \
+    $'corrupted. Re-run with --force to archive it anyway." >&2\n            archive_ledger corrupt\n            exit 6'
+
+# The fifth stop class. The per-class set covered regression, two-REFUTED,
+# two-no-defect and the ceiling; widening reset by `unusable_verdict` survived
+# the entire suite until T55 existed.
+mutate "reset treats an unusable verdict as finished" "T55" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "unusable_verdict" ]; then return 0; fi'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

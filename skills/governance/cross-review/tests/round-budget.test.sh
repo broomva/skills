@@ -479,11 +479,16 @@ echo "T39. a corrupt ledger is archivable, but only deliberately"
 LED=$(newledger t39)
 printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
 RC_PLAIN=$(rb reset --run-id=t39 --ledger="$LED")
+# Exit 6 is what a refusal RETURNS, not what it DOES. Checked between the two
+# calls, because a reset that archived and then exited 6 leaves the --force call
+# with nothing to reset -- "nothing to reset", exit 0 -- and every later
+# assertion here still passes.
+SURVIVED_PLAIN=$([ -f "$LED" ] && echo yes || echo no)
 RC_FORCE=$(rb reset --run-id=t39 --ledger="$LED" --force)
-if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ ! -f "$LED" ]; then
-    ok "T39: refused without --force, archived with it"
+if [ "$RC_PLAIN" = "6" ] && [ "$SURVIVED_PLAIN" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ ! -f "$LED" ]; then
+    ok "T39: refused without --force AND left in place, archived with it"
 else
-    fail "T39: corrupt reset gating" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), present=$([ -f "$LED" ] && echo yes || echo no)"
+    fail "T39: corrupt reset gating" "plain=$RC_PLAIN (want 6), survived plain=$SURVIVED_PLAIN (want yes), force=$RC_FORCE (want 0), present=$([ -f "$LED" ] && echo yes || echo no)"
 fi
 
 # ── T41: corrupting a LIVE ledger must not launder it ─────────────────────
@@ -491,7 +496,12 @@ echo "T41. junk appended to a live ledger does not buy a reset"
 LED=$(newledger t41)
 printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nJUNK\n' > "$LED"
 RC=$(rb reset --run-id=t41 --ledger="$LED")
-if [ "$RC" = "6" ]; then ok "T41: corrupt-then-reset refused"; else fail "T41: corrupt-then-reset" "exit $RC, want 6"; fi
+SURVIVED=$([ -f "$LED" ] && echo yes || echo no)
+if [ "$RC" = "6" ] && [ "$SURVIVED" = "yes" ]; then
+    ok "T41: corrupt-then-reset refused, and the ledger is still there"
+else
+    fail "T41: corrupt-then-reset" "exit $RC (want 6), survived=$SURVIVED (want yes)"
+fi
 
 # ── T42: a trailing pass cannot launder a NONTERMINAL absorbing stop ──────
 # The recorders refused only past a terminal VERDICT, so the ledger grew past a
@@ -722,15 +732,16 @@ if [ -r "$LED" ]; then
     ok "T52: skipped (ledger still readable after chmod 000)"
 else
     RC_PLAIN=$(rb reset --run-id=t52 --ledger="$LED")
+    SURVIVED_PLAIN=$([ -e "$LED" ] && echo yes || echo no)
     RC_FORCE=$(rb reset --run-id=t52 --ledger="$LED" --force)
     GONE=$([ -e "$LED" ] && echo no || echo yes)
     # "gone" alone is satisfied by DELETION -- the outcome this command exists
     # to replace. The archive must exist.
     ARCH=$(archives_of "$LED")
-    if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$GONE" = "yes" ] && [ "$ARCH" -ge 1 ]; then
+    if [ "$RC_PLAIN" = "6" ] && [ "$SURVIVED_PLAIN" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$GONE" = "yes" ] && [ "$ARCH" -ge 1 ]; then
         ok "T52: unreadable ledger refused plainly, archived under --force"
     else
-        fail "T52: unreadable ledger archive" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), gone=$GONE (want yes), archives=$ARCH (want >=1)"
+        fail "T52: unreadable ledger archive" "plain=$RC_PLAIN (want 6), survived plain=$SURVIVED_PLAIN (want yes), force=$RC_FORCE (want 0), gone=$GONE (want yes), archives=$ARCH (want >=1)"
     fi
 fi
 chmod 644 "$LED" 2>/dev/null || true
@@ -779,6 +790,26 @@ if [ "$DIR_EMPTY" = "yes" ] && [ "$NAMED_IS_FILE" = "yes" ]; then
     ok "T54: the directory is untouched and the reported path holds the archive"
 else
     fail "T54: directory at archive name" "dir left empty=$DIR_EMPTY (want yes), named path '$NAMED' is a file=$NAMED_IS_FILE (want yes), rc=$RC"
+fi
+
+# ── T55: an unusable verdict token is a stop class too ────────────────────
+# The per-class set covered regression, two-REFUTED, two-no-defect and the
+# ceiling, and omitted this one -- so widening reset to treat `unusable_verdict`
+# as finished survived the whole suite. It is a NONTERMINAL stop like the other
+# four: a VERDICT row carrying a token that is neither CONTINUE nor terminal
+# bought a round once, and nothing about it declares the arc over.
+echo "T55. an unusable verdict token is not a finished arc"
+LED=$(newledger t55)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\t\t\t\n' > "$LED"
+RC_BUDGET=$(rb budget --run-id=t55 --ledger="$LED")
+RC_PLAIN=$(rb reset --run-id=t55 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t55 --ledger="$LED" --force)
+ARCH=$(archives_of "$LED")
+if [ "$RC_BUDGET" = "6" ] && [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
+    ok "T55: unusable-verdict stop is not resettable, and --force still can"
+else
+    fail "T55: unusable-verdict stop" "budget=$RC_BUDGET (want 6), plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
 fi
 
 echo ""
