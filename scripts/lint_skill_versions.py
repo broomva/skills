@@ -141,10 +141,23 @@ def _package_json_version(path: Path) -> tuple[str | None, str | None]:
     return (str(v) if v is not None else None), None
 
 
-def _changelog_has_version(path: Path, version: str) -> bool:
+def _changelog_has_version(path: Path, version: str) -> tuple[bool, str | None]:
+    """`(declares_the_version, reason_it_could_not_be_read)`.
+
+    The FOURTH reader in this file, and the one that fails the other way: it
+    called `read_text()` with no error handling, so a CHANGELOG that is not
+    valid UTF-8 crashed the whole lint with a traceback instead of being
+    reported. Same root defect as the other three — absent, present-and-
+    readable, and unreadable collapsed into two states — with the opposite
+    symptom, which is why looking for silent passes alone did not find it.
+    """
     if not path.exists():
-        return False
-    return f"## [{version}]" in path.read_text(encoding="utf-8")
+        return False, None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return False, f"CHANGELOG.md could not be read ({type(exc).__name__})"
+    return f"## [{version}]" in text, None
 
 
 def lint_skill(skill_dir: Path) -> list[str]:
@@ -181,7 +194,10 @@ def lint_skill(skill_dir: Path) -> list[str]:
     if js is not None and js != version:
         errors.append(f"package.json version {js!r} != SKILL.md version {version!r}")
 
-    if not _changelog_has_version(skill_dir / "CHANGELOG.md", version):
+    declared, changelog_unreadable = _changelog_has_version(skill_dir / "CHANGELOG.md", version)
+    if changelog_unreadable:
+        errors.append(f"{changelog_unreadable} — cannot confirm it documents {version!r}")
+    elif not declared:
         errors.append(
             f"CHANGELOG.md missing a '## [{version}]' section "
             "(a versioned skill must document its release)"
@@ -218,7 +234,11 @@ def main() -> int:
     versioned = 0
     for skill_dir in _iter_skill_dirs():
         skill_md = skill_dir / "SKILL.md"
-        if _skill_version(_frontmatter(skill_md)) is not None:
+        # Read once, three-valued, so the tally and the findings cannot
+        # disagree: an unreadable manifest is neither "versioned" nor silently
+        # counted as a clean pre-release.
+        fm, unreadable = _read_frontmatter(skill_md)
+        if not unreadable and _skill_version(fm) is not None:
             versioned += 1
         all_errors.extend(lint_skill(skill_dir))
 

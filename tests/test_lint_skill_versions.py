@@ -217,3 +217,69 @@ class TestTheFenceMustBeExact:
         """CONTROL for the case above."""
         d = _versioned(tmp_path, "plain-fence")
         assert lint.lint_skill(d) == []
+
+
+class TestTheFourthReaderFailsTheOtherWay:
+    """`_changelog_has_version` called `read_text()` with no error handling, so
+    a CHANGELOG that is not valid UTF-8 CRASHED the whole lint with a traceback
+    rather than being reported.
+
+    Same root defect as the other three readers — absent, present-and-readable,
+    and unreadable collapsed into two states — with the opposite symptom. Found
+    by auditing every reader in the file after missing this class twice here,
+    rather than by waiting for a review round to name it: hunting only for
+    silent passes would not have surfaced a crash.
+    """
+
+    def _with_changelog(self, tmp_path, name, raw: bytes):
+        d = tmp_path / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: D.\nversion: 1.0.0\n---\n", encoding="utf-8")
+        (d / "CHANGELOG.md").write_bytes(raw)
+        return d
+
+    def test_a_changelog_missing_the_version_is_reported(self, tmp_path, lint):
+        """CONTROL: the rule still works."""
+        problems = lint.lint_skill(self._with_changelog(tmp_path, "missing", b"## [9.9.9]\n"))
+        assert any("CHANGELOG.md missing" in p for p in problems), problems
+
+    def test_a_correct_changelog_is_clean(self, tmp_path, lint):
+        """CONTROL: and does not report on every input."""
+        assert lint.lint_skill(self._with_changelog(tmp_path, "good", b"## [1.0.0]\n")) == []
+
+    def test_an_unreadable_changelog_is_reported_not_raised(self, tmp_path, lint):
+        d = self._with_changelog(tmp_path, "badbytes", b"## [1.0.0]\n- \xff\xfe not utf-8\n")
+        problems = lint.lint_skill(d)          # must not raise
+        assert any("CHANGELOG.md could not be read" in p for p in problems), problems
+
+    def test_an_unreadable_changelog_does_not_masquerade_as_a_missing_section(
+        self, tmp_path, lint
+    ):
+        """The two states must stay distinguishable in the REPORT, not just in
+        the exit code: "you forgot to document the release" and "I could not
+        read your changelog" send the author to different places."""
+        d = self._with_changelog(tmp_path, "distinct", b"## [1.0.0]\n- \xff\xfe\n")
+        problems = lint.lint_skill(d)
+        assert not any("missing a '## [" in p for p in problems), problems
+
+
+class TestTheVersionedTallyAgreesWithTheFindings:
+    def test_an_unreadable_manifest_is_not_counted_as_versioned(self, tmp_path, lint, capsys):
+        """`main` counted versioned skills through the two-state reader, so a
+        manifest `lint_skill` reported as unreadable was silently tallied as an
+        unversioned pre-release. The number a reader trusts and the findings
+        must come from the same read."""
+        good = tmp_path / "good"
+        good.mkdir()
+        (good / "SKILL.md").write_text(
+            "---\nname: good\ndescription: D.\nversion: 1.0.0\n---\n", encoding="utf-8")
+        (good / "CHANGELOG.md").write_text("## [1.0.0]\n", encoding="utf-8")
+        bom = tmp_path / "bom"
+        bom.mkdir()
+        (bom / "SKILL.md").write_bytes(
+            "﻿---\nname: bom\ndescription: D.\nversion: 2.0.0\n---\n".encode("utf-8"))
+        lint._SKILLS_DIR = tmp_path
+        assert lint.main() == 1                      # the unreadable one is a finding
+        err = capsys.readouterr().err
+        assert "bom" in err, err
