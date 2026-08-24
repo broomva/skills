@@ -56,6 +56,15 @@ class RobotsRefusal(FetchError):
     """The host's robots.txt disallows this path."""
 
 
+class ChainBroken(FetchError):
+    """The fetch log does not verify, so nothing in it may be attested.
+
+    Deliberately fatal rather than falsy. A broken chain does not mean "this
+    pair was not fetched"; it means the log is not evidence about any pair, and
+    a caller that reads a False here would draw the smaller conclusion.
+    """
+
+
 def sha256_of(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -249,6 +258,7 @@ class FetchDaemon:
         self.politeness = politeness or Politeness()
         self.transport = transport or self._http
         self.key = key or _chain_key()
+        self._chain_cache: Optional[tuple] = None
 
     # -- transport ---------------------------------------------------------
 
@@ -330,11 +340,76 @@ class FetchDaemon:
             return False, "zero bytes -- an empty payload hashes and verifies fine"
         return True, "ok"
 
+    def evidence_for(
+        self, res: FetchResult, span_start: int, span_end: int
+    ) -> dict:
+        """The ONLY supported way to turn a fetch into a citable evidence record.
+
+        Every precondition is checked here rather than left for the extractor to
+        remember, because "remember to call usable_as_evidence first" is exactly
+        the shape that already failed once in this module: a correct check with
+        no caller. Routing construction through one function removes the case
+        instead of documenting it.
+
+        Returns a plain dict rather than a store.Evidence so this module stays
+        below the store in the dependency order -- the daemon must not need to
+        know what a record is.
+        """
+        ok, why = self.usable_as_evidence(res)
+        if not ok:
+            raise FetchError(f"{res.url}: not citable as evidence -- {why}")
+        if not self.attests(res.url, res.sha256):
+            raise ChainBroken(
+                f"{res.url}: no chained log row pairs this url with {res.sha256[:12]}"
+            )
+        if span_start < 0 or span_end <= span_start:
+            raise FetchError(
+                f"span [{span_start},{span_end}) is empty or inverted -- a citation "
+                "must point at bytes that exist"
+            )
+        payload = (self.dir / res.snapshot).read_bytes()
+        if span_end > len(payload):
+            raise FetchError(
+                f"span [{span_start},{span_end}) runs past the artifact "
+                f"({len(payload)} bytes)"
+            )
+        quote = payload[span_start:span_end]
+        if not quote.strip():
+            raise FetchError(
+                f"span [{span_start},{span_end}) is whitespace -- a span that says "
+                "nothing supports nothing"
+            )
+        return {
+            "url": res.url,
+            "sha256": res.sha256,
+            "snapshot": res.snapshot,
+            "span_start": span_start,
+            "span_end": span_end,
+            "quote": quote.decode("utf-8", errors="replace"),
+        }
+
     def pairs(self) -> set[tuple[str, str]]:
-        """Every (url, digest) this run actually fetched."""
+        """Every (url, digest) this run actually fetched.
+
+        VERIFIES THE CHAIN FIRST, and refuses if it does not hold. The first
+        version of this method did not, and the omission voided the module's
+        whole claim: `verify_chain` existed, was correct, and was called by
+        nothing. A forged row appended without the key broke the chain AND was
+        still reported by `attests` as a genuine fetch -- two checks that were
+        each individually right and never composed.
+
+        The lesson generalises past this bug: a check nobody calls is not a
+        weaker check, it is an absent one, and the grep that finds zero callers
+        is cheaper than the reasoning that assumes one.
+        """
+        ok, reason = self.chain_ok()
+        if not ok:
+            raise ChainBroken(
+                f"refusing to attest anything from an unverifiable fetch log: "
+                f"{reason}. Every (url, digest) pair in it is unusable, because "
+                "a log that can be edited can be edited to contain any pair."
+            )
         out: set[tuple[str, str]] = set()
-        if not self.log.exists():
-            return out
         for line in self.log.read_text().splitlines():
             if not line.strip():
                 continue
@@ -343,11 +418,33 @@ class FetchDaemon:
                 out.add((row["url"], row["sha256"]))
         return out
 
+    def chain_ok(self) -> tuple[bool, str]:
+        """Verify the log's chain, memoised on the file's identity.
+
+        Memoised because `attests` is called per claim and the log grows to
+        thousands of rows; keyed on (size, mtime_ns) so that any write -- which
+        is the only thing that can invalidate the result -- misses the cache.
+        """
+        try:
+            st = self.log.stat()
+        except FileNotFoundError:
+            return False, "fetch log does not exist"
+        stamp = (st.st_size, st.st_mtime_ns)
+        if self._chain_cache is not None and self._chain_cache[0] == stamp:
+            return self._chain_cache[1]
+        result = verify_chain(self.log, self.key)
+        self._chain_cache = (stamp, result)
+        return result
+
     def attests(self, url: str, digest: str) -> bool:
         """Did THIS daemon fetch THESE bytes from THIS url?
 
         The question `verify_snapshot` cannot answer, and the reason this module
         exists. A snapshot whose digest matches its own content but whose pair is
         absent from the chained log was never fetched -- it was authored.
+
+        Raises `ChainBroken` rather than returning False when the log does not
+        verify. False would say "this was not fetched", which is a different and
+        much less alarming fact than "this log cannot be trusted about anything".
         """
         return (url, digest) in self.pairs()

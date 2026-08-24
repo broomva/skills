@@ -242,3 +242,152 @@ def test_url_swap_is_caught_by_the_pair(tmp_path):
     a = d.fetch("https://example.com/a")
     assert d.attests("https://example.com/a", a.sha256)
     assert not d.attests("https://linkedin.com/in/someone", a.sha256)
+
+
+# ------------------------------------- the check that had no caller (BLOCKER)
+
+
+def test_attests_refuses_when_the_chain_does_not_verify(tmp_path):
+    """The defect this pair of tests exists for.
+
+    verify_chain() was correct, tested, and called by NOTHING. attests() read the
+    log directly, so a row appended without the key broke the chain and was still
+    reported as a genuine fetch -- two individually-right checks that were never
+    composed. A check nobody calls is not a weaker check, it is an absent one.
+    """
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    real = d.fetch("https://example.com/a")
+    assert d.attests(real.url, real.sha256)
+
+    with d.log.open("a") as fh:
+        fh.write(json.dumps({"kind": "fetch", "url": "https://evil.example/fake",
+                             "sha256": "b" * 64, "mac": "deadbeef"}, sort_keys=True) + "\n")
+
+    with pytest.raises(F.ChainBroken):
+        d.attests("https://evil.example/fake", "b" * 64)
+
+
+def test_a_broken_chain_poisons_every_pair_not_just_the_forged_one(tmp_path):
+    """A log that can be edited can be edited to contain any pair."""
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    real = d.fetch("https://example.com/a")
+
+    lines = d.log.read_text().splitlines()
+    row = json.loads(lines[-1])
+    row["url"] = "https://example.com/elsewhere"
+    lines[-1] = json.dumps(row, sort_keys=True)
+    d.log.write_text("\n".join(lines) + "\n")
+
+    with pytest.raises(F.ChainBroken):
+        d.attests(real.url, real.sha256)
+
+
+def test_chain_broken_is_fatal_not_falsy(tmp_path):
+    """False would say 'not fetched'; the truth is 'this log proves nothing'."""
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    d.fetch("https://example.com/a")
+    with d.log.open("a") as fh:
+        fh.write('{"kind":"fetch","url":"u","sha256":"z","mac":"nope"}\n')
+    try:
+        result = d.attests("u", "z")
+    except F.ChainBroken:
+        return
+    pytest.fail(f"returned {result!r} instead of raising -- a caller would read "
+                "that as 'never fetched' rather than 'the log is untrustworthy'")
+
+
+def test_chain_cache_is_invalidated_by_a_write(tmp_path):
+    """Memoisation must not hold a stale pass across a tamper."""
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    real = d.fetch("https://example.com/a")
+    assert d.attests(real.url, real.sha256), "warms the cache"
+
+    with d.log.open("a") as fh:
+        fh.write('{"kind":"fetch","url":"u","sha256":"z","mac":"nope"}\n')
+    with pytest.raises(F.ChainBroken):
+        d.attests(real.url, real.sha256)
+
+
+def test_every_public_check_has_a_caller():
+    """Structural guard against the defect class, not just this instance.
+
+    The bug was an orphaned check. Assert that each verification helper is
+    referenced somewhere beyond its own definition, so the next one that loses
+    its caller fails here rather than in production.
+    """
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "fetchd.py").read_text()
+    for fn in ("verify_chain", "usable_as_evidence", "chain_ok"):
+        uses = src.count(fn)
+        assert uses >= 2, f"{fn} appears {uses}x -- defined and never called"
+
+
+# ------------------------------- evidence construction goes through the check
+
+
+def test_evidence_for_refuses_a_404_body(tmp_path):
+    """Binds usable_as_evidence to a caller: the extractor cannot skip it."""
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/missing")
+    with pytest.raises(F.FetchError, match="not a page"):
+        d.evidence_for(res, 0, 3)
+
+
+def test_evidence_for_refuses_an_empty_payload(tmp_path):
+    d = daemon(tmp_path, pages={"https://example.com/e": (200, b"")})
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/e")
+    with pytest.raises(F.FetchError, match="zero bytes"):
+        d.evidence_for(res, 0, 1)
+
+
+def test_evidence_for_refuses_a_span_past_the_artifact(tmp_path):
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/a")
+    with pytest.raises(F.FetchError, match="runs past the artifact"):
+        d.evidence_for(res, 0, 100_000)
+
+
+def test_evidence_for_refuses_an_inverted_or_empty_span(tmp_path):
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/a")
+    with pytest.raises(F.FetchError, match="empty or inverted"):
+        d.evidence_for(res, 5, 5)
+
+
+def test_evidence_for_refuses_a_whitespace_span(tmp_path):
+    d = daemon(tmp_path, pages={"https://example.com/w": (200, b"ACME    \n   CTO")})
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/w")
+    with pytest.raises(F.FetchError, match="whitespace"):
+        d.evidence_for(res, 4, 12)
+
+
+def test_evidence_for_quotes_the_actual_bytes_at_the_offsets(tmp_path):
+    """The quote is READ from the artifact, never supplied by the caller.
+
+    A caller-supplied quote is a needle picked after seeing the haystack; reading
+    it at the committed offsets means the extractor had to point at a location.
+    """
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/a")   # b"ACME S.A.S. hires a CTO"
+    ev = d.evidence_for(res, 0, 11)
+    assert ev["quote"] == "ACME S.A.S."
+    assert ev["sha256"] == res.sha256
+
+
+def test_evidence_for_refuses_when_the_chain_is_broken(tmp_path):
+    d = daemon(tmp_path)
+    d.seal_plan({"seeds": ["acme"]})
+    res = d.fetch("https://example.com/a")
+    with d.log.open("a") as fh:
+        fh.write('{"kind":"fetch","url":"u","sha256":"z","mac":"nope"}\n')
+    with pytest.raises(F.ChainBroken):
+        d.evidence_for(res, 0, 4)
