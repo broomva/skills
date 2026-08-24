@@ -73,7 +73,11 @@ shift
 
 case "$COMMAND" in
     --help|-h|help)
-        sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+        # `\?` is a GNU extension: BSD sed reads it as a literal '?', so the pattern
+        # never matched and --help printed every line with its leading '#' still on
+        # it -- on the one platform this is developed on. `\{0,1\}` is POSIX BRE and
+        # means the same thing to both.
+        sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     pre-push|plan|audit|version|reviewer-guard)

@@ -85,21 +85,43 @@ PY
         return 0
     fi
 
-    local out rc
+    local out rc failed_n passed_n
     out=$(bash "$SUITE" 2>&1); rc=$?
     cp "$PRISTINE" "$TARGET"
 
-    # The id is matched WITH ITS COLON. An unanchored substring match made an
-    # expectation of "T1" satisfiable by "[FAIL] T13" / "T15" / "T19" -- and it
-    # silently was: this sweep reported "free-round floor 3->99 -> T1 went red"
-    # when the tests that actually reddened were T4 and T13. The bias runs toward
-    # FALSE KILLED, which is the direction that hides survivors.
-    if echo "$out" | grep -q "\[FAIL\] ${expect}:"; then
-        echo "  [KILLED]   $label  ->  $expect went red"
-        KILLED=$((KILLED+1))
-    else
+    # ATTRIBUTION, not merely redness. A kill is credited on three signals, not
+    # one:
+    #
+    #   1. the named test is red -- matched WITH ITS COLON. An unanchored
+    #      substring made an expectation of "T1" satisfiable by "[FAIL] T13" /
+    #      "T15" / "T19", and it silently was: this sweep reported "free-round
+    #      floor 3->99 -> T1 went red" when the tests that actually reddened
+    #      were T4 and T13.
+    #   2. something is still GREEN. A mutant that breaks the script GLOBALLY
+    #      reddens the named test too, and "the suite went red" then says
+    #      nothing about the rule the mutation was aimed at. This arc shipped
+    #      exactly that: a BRANCH inversion credited with killing T19 was
+    #      reddening it through a crash path, and it SURVIVED the moment the
+    #      duplicated decision site it rode on was deleted.
+    #   3. the BREADTH is printed. A mutation aimed at one rule that reddens
+    #      half the suite is not wrong, but it is weaker evidence than one that
+    #      reddens its own test, and that difference belongs in the log rather
+    #      than in a reviewer's head.
+    #
+    # Both bad outcomes count as SURVIVED. An unattributed kill is an unproven
+    # gate, and the whole point of the sweep is that those fail the run.
+    failed_n=$(printf '%s\n' "$out" | grep -c '^  \[FAIL\]' || true)
+    passed_n=$(printf '%s\n' "$out" | grep -c '^  \[pass\]' || true)
+
+    if ! printf '%s\n' "$out" | grep -q "\[FAIL\] ${expect}:"; then
         echo "  [SURVIVED] $label  ->  $expect still passed (suite exit $rc)"
         SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label expected $expect")
+    elif [ "$passed_n" -eq 0 ]; then
+        echo "  [UNATTRIB] $label  ->  EVERY assertion red; $expect proves nothing here"
+        SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label UNATTRIBUTED (mutant broke the suite globally)")
+    else
+        echo "  [KILLED]   $label  ->  $expect went red ($failed_n of $((failed_n+passed_n)) red)"
+        KILLED=$((KILLED+1))
     fi
 }
 
@@ -163,21 +185,41 @@ mutate "ROUND arity unchecked" "T38" \
     'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 mutate "corrupt ledger cannot be reset" "T39" \
     'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
+# The entry test has exactly TWO arms, so it gets exactly two mutations -- one
+# each, rather than one kill cited for both. `-e` is what sees a regular file or
+# a DIRECTORY (`mv src dir` moves INTO it rather than failing, so this arm is the
+# only thing standing between the archive and a path the message does not name);
+# `-L` is what sees a symlink, including a dangling one that `-e` follows past.
+# T40 and T54 share the `-e` arm and therefore share its proof.
 mutate "archive clobbers a prior one" "T40" \
-    'while [ -e "$ARCHIVE" ]; do' 'while false; do' 
+    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' \
+    'while [ -L "$ARCHIVE" ]; do' 
 
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
+# The type test now has ONE definition, read by three rules. Making it always
+# true is the same claim as before: review_required stops firing, so the ledger
+# of a spent verdict no longer routes to "run the continuation review".
 mutate "stale verdict re-authorizes" "T13" \
-    '[ "$LG_LAST_TYPE" != "VERDICT" ] || return 1' \
-    '[ "$LG_LAST_TYPE" = "NEVERMATCHES" ] || return 1'
+    'last_row_is_verdict()   { [ "$LG_LAST_TYPE" = "VERDICT" ]; }' \
+    'last_row_is_verdict()   { [ "$LG_LAST_TYPE" != "NEVERMATCHES" ]; }'
 
 # ─── The absorbing stops and the fail-closed guards ───────────────────────
 # Each of these was escapable or silent in the first version, so each gets its
 # own proof that the test pinning it can actually fail.
 mutate "defect streak 2->99"        "T1"  '[ "$LG_MAXNOD" -ge 2 ] || return 1' '[ "$LG_MAXNOD" -ge 99 ] || return 1'
 mutate "refuted no longer absorbing" "T21" '[ "$LG_MAXREF" -ge 2 ] || return 1' '[ "$LG_MAXREF" -ge 99 ] || return 1'
-mutate "terminal verdict ignored"    "T19" '[ -n "$LG_TERMINAL" ] || return 1' '[ -z "$LG_TERMINAL" ] || return 1'
+# This was `[ -n "$LG_TERMINAL" ]` -> `[ -z ... ]` in rule_terminal: a BRANCH
+# inversion, which this file's own header rules out. It did not disable the
+# rule, it made the rule fire on EVERY ledger. That reddened T19 by accident:
+# record-round exited 6 before writing a row, and the hand-rolled LG_N==0 fast
+# path in `budget` then authorized the empty ledger it left behind. Delete that
+# duplicated decision site and the accident goes with it -- firing everywhere
+# returns 6, which is exactly what T19 asserts, so the mutant SURVIVED while
+# proving nothing. The value form below never captures the verdict at all.
+mutate "terminal verdict ignored"    "T19" \
+    'if (terminal=="") { terminal=$2; directive=$4 }' \
+    'if (terminal=="") { terminal=""; directive=$4 }'
 mutate "regression check disabled"   "T5"  '[ "$LG_REGRESSED" != "0" ] || return 1' '[ "$LG_REGRESSED" = "IMPOSSIBLE" ] || return 1'
 mutate "bad score fails open"        "T23" '[ "$badscore" != "0" ] || [ "$badrow" != "0" ] || [ -n "$badverdict" ]' '[ "$badscore" = "IMPOSSIBLE" ]'
 mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
@@ -220,14 +262,99 @@ mutate "rule4 not enforced at read" "T36" \
 # which is T34's first arm. The old "reset ungated" mutation is dropped: its
 # anchor was the hand-rolled gate this one replaced.
 mutate "reset decides live-ness itself" "T34" \
-    'if [ -z "$RESET_ENTRY" ] || ! arc_closed_code "$RESET_CODE"; then' \
+    'if [ -z "$RESET_ENTRY" ] || ! arc_declared_finished "$RESET_RULE"; then' \
     'if false; then'
 mutate "recorders ignore nonterminal stops" "T42" \
     'arc_closed_code "$code" || return 0' \
     '[ "$code" = "IMPOSSIBLE" ] || return 0'
+# The corrupt branch and the stopped branch both carry this test now, so the
+# anchor carries its indentation. A bare match would be refused as non-unique,
+# which is the guard working, but it is not the proof intended.
 mutate "corrupt reset needs no --force" "T39" \
-    'if [ "$RESET_FORCE" != "1" ]; then' \
-    'if false; then'
+    $'\n        if [ "$RESET_FORCE" != "1" ]; then' \
+    $'\n        if false; then'
+
+# ─── reset's own predicate: one proof per stop class ──────────────────────
+#
+# `arc_declared_finished` is ONE site, which is the fix -- so these do not mutate
+# it once and name four tests off a single kill. Each widens the predicate by
+# EXACTLY ONE stop class and names the test for that class, which is what makes
+# four proofs four proofs rather than one proof cited four times. The first
+# restores the shipped defect for a regression, precisely.
+mutate "reset treats a regression as finished" "T43" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "regressed" ]; then return 0; fi'
+mutate "reset treats two REFUTED as finished" "T44" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "refuted" ]; then return 0; fi'
+mutate "reset treats two no-defect rounds as finished" "T45" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "nodefect" ]; then return 0; fi'
+mutate "reset treats the ceiling as finished" "T46" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "ceiling" ]; then return 0; fi'
+
+# The pass arm reads the RULE NAME. Reading the SCORE instead is the older
+# defect -- a self-reported 9 appended after a regression reads as finished --
+# and it is invisible to all four above, every one of which leaves the arm alone.
+mutate "reset's pass arm reads the score not the rule" "T47" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then return 0; fi'
+
+# The terminal arm, from the other side: refusing what it should permit.
+mutate "reset ignores a recorded terminal verdict" "T34" \
+    'if [ -n "$LG_TERMINAL" ]; then return 0; fi' \
+    'if [ -z "$LG_TERMINAL" ]; then return 0; fi'
+
+# --force's scope, and its reach.
+mutate "--force accepted on any command" "T48" \
+    'if [ "$RESET_FORCE" = "1" ] && [ "$COMMAND" != "reset" ]; then' \
+    'if [ "$RESET_FORCE" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+# Route a LIVE arc into the stopped branch and --force reaches it -- which is
+# exactly what the hatch must not do, because a live arc can be ended in band.
+mutate "--force reaches a live arc" "T49" \
+    'if [ -n "$RESET_ENTRY" ] && arc_closed_code "$RESET_CODE"; then' \
+    'if [ -n "$RESET_ENTRY" ] && [ "$RESET_CODE" != "IMPOSSIBLE" ]; then'
+
+# DROPPED: "corrupt path names its own archive" (restoring the pid-based namer).
+# A reviewer showed it was killed for the WRONG reason. A pid namer collides
+# with nothing, so it destroys nothing; T50 was reddening because an expected
+# FILENAME was absent, not because any archive had been overwritten. The
+# invariant that matters -- never destroy an entry already at the chosen name --
+# lives in ONE loop shared by both callers and is mutation-proved once, at T40.
+# A mutation whose kill is about a naming convention rather than a defect is
+# weaker than no mutation, because it reads in the count as if it were one.
+
+# The help block is documentation only until the markers come off it.
+mutate "--help keeps its comment markers" "T51" \
+    "sed 's/^# \{0,1\}//'" \
+    "sed 's/^ZZZZ//'"
+
+# The archiver must not need to READ the file it is moving. `mv` needs write on
+# the directory; the line count is a nicety, and making it mandatory turned the
+# --force escape hatch into an abort on the one input it exists for.
+mutate "archive name read from an unreadable ledger" "T52" \
+    $'lines=$( { wc -l < "$LEDGER"; } 2>/dev/null | tr -d \' \' ) || lines=""' \
+    $'lines=$(wc -l < "$LEDGER" | tr -d \' \')'
+
+mutate "dangling symlink reads as absent" "T53" \
+    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' \
+    'while [ -e "$ARCHIVE" ]; do' 
+
+# A refusal that ARCHIVES and then returns 6 was green across the whole suite:
+# exit 6 is what a refusal returns, not what it does, and every later assertion
+# in T39/T52 was satisfied because the --force call then found nothing to reset
+# and exited 0. The tests now check the ledger BETWEEN the two calls.
+mutate "corrupt refusal archives before refusing" "T39" \
+    $'corrupted. Re-run with --force to archive it anyway." >&2\n            exit 6' \
+    $'corrupted. Re-run with --force to archive it anyway." >&2\n            archive_ledger corrupt\n            exit 6'
+
+# The fifth stop class. The per-class set covered regression, two-REFUTED,
+# two-no-defect and the ceiling; widening reset by `unusable_verdict` survived
+# the entire suite until T55 existed.
+mutate "reset treats an unusable verdict as finished" "T55" \
+    'if [ "$rule" = "passed" ]; then return 0; fi' \
+    'if [ "$rule" = "passed" ] || [ "$rule" = "unusable_verdict" ]; then return 0; fi'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
