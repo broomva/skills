@@ -185,18 +185,15 @@ mutate "ROUND arity unchecked" "T38" \
     'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 mutate "corrupt ledger cannot be reset" "T39" \
     'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
-# `ln` is both the test and the reservation, so "does something already sit at
-# this name?" has no separate site to mutate any more -- `ln -f` is the mutation,
-# because forcing is the only way to destroy what is there.
-#
-# The separate "dangling symlink reads as absent" mutation is DROPPED with the
-# `-e`/`-L` pair it targeted. link(2) fails with EEXIST on a symlink whether or
-# not it dangles, so that case is now UNREPRESENTABLE rather than guarded, and
-# there is no arm left to break. T53 stays as a regression test and is reddened
-# by the mutation below, along with T40.
+# The entry test has exactly TWO arms, so it gets exactly two mutations -- one
+# each, rather than one kill cited for both. `-e` is what sees a regular file or
+# a DIRECTORY (`mv src dir` moves INTO it rather than failing, so this arm is the
+# only thing standing between the archive and a path the message does not name);
+# `-L` is what sees a symlink, including a dangling one that `-e` follows past.
+# T40 and T54 share the `-e` arm and therefore share its proof.
 mutate "archive clobbers a prior one" "T40" \
-    'ln "$LEDGER" "$ARCHIVE" 2>/dev/null' \
-    'ln -f "$LEDGER" "$ARCHIVE" 2>/dev/null' 
+    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' \
+    'while [ -L "$ARCHIVE" ]; do' 
 
 
 # The stale-verdict rule: a spent verdict must not re-authorize.
@@ -339,6 +336,10 @@ mutate "--help keeps its comment markers" "T51" \
 mutate "archive name read from an unreadable ledger" "T52" \
     $'lines=$( { wc -l < "$LEDGER"; } 2>/dev/null | tr -d \' \' ) || lines=""' \
     $'lines=$(wc -l < "$LEDGER" | tr -d \' \')'
+
+mutate "dangling symlink reads as absent" "T53" \
+    'while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do' \
+    'while [ -e "$ARCHIVE" ]; do' 
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"

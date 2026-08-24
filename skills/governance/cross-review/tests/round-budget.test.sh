@@ -37,7 +37,11 @@ newledger() { echo "$TMP/ledger.$1.tsv"; }
 # arm that checks only the exit code -- or only that the original is gone --
 # passes a --force that reported success and did nothing, and passes one that
 # simply deleted the ledger. Count what actually landed.
-archives_of() { find "$(dirname "$1")" -maxdepth 1 -name "$(basename "$1").archived.*" 2>/dev/null | wc -l | tr -d ' '; }
+# `-type f` because a DIRECTORY or a symlink sitting at an archive name is
+# exactly what T53/T54 put there on purpose. Counting those as archives would
+# let "the archive landed" be satisfied by the obstacle it was supposed to step
+# around.
+archives_of() { find "$(dirname "$1")" -maxdepth 1 -type f -name "$(basename "$1").archived.*" 2>/dev/null | wc -l | tr -d ' '; }
 
 # Run round-budget, capture exit code without tripping the outer pipefail.
 rb() { local rc=0; bash "$RB" "$@" >/dev/null 2>&1 || rc=$?; echo "$rc"; }
@@ -543,8 +547,11 @@ LED=$(newledger t43)
 printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\n' > "$LED"
 RC_PLAIN=$(rb reset --run-id=t43 --ledger="$LED")
 STILL=$([ -f "$LED" ] && echo yes || echo no)
-OUT=$(rbout reset --run-id=t43 --ledger="$LED" --force)
-RC_FORCE=$(rb reset --run-id=t43 --ledger="$LED" --force)
+# Output and exit code from ONE invocation. Taking them from two calls meant
+# the first archived the ledger and the SECOND ran with no ledger at all --
+# "nothing to reset", exit 0 -- so the 0 being asserted came from the wrong
+# command and would have held even if the archival itself had failed.
+OUT=$(bash "$RB" reset --run-id=t43 --ledger="$LED" --force 2>&1); RC_FORCE=$?
 ARCH=$(archives_of "$LED")
 if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ] && echo "$OUT" | grep -q "FORCED past regressed"; then
     ok "T43: regression refused plainly, discarded only by --force"
@@ -748,6 +755,28 @@ if [ "$DANGLING" = "yes" ] && [ "$RC" = "0" ] && [ "$STILL_LINK" = "yes" ] && [ 
     ok "T53: the symlink survives and the archive steps aside"
 else
     fail "T53: dangling symlink clobbered" "fixture dangling=$DANGLING (want yes), exit $RC (want 0), symlink intact=$STILL_LINK (want yes), sidestep=$SIDESTEP (want yes)"
+fi
+
+# ── T54: `ln` does not fail on a DIRECTORY — it links into it ─────────────
+# `ln src dir` is not a collision to link(1): it places the link INSIDE dir and
+# exits 0. So an atomic reservation cannot be the only test. Before the entry
+# check was restored, a directory at the chosen name made reset report
+# "archived -> $ARCHIVE" while the ledger actually landed at $ARCHIVE/<basename>
+# -- the operator told where it went, and told wrong.
+echo "T54. a directory at the archive name is stepped over, not linked into"
+LED=$(newledger t54)
+printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
+mkdir "$LED.archived.1"
+OUT=$(rbout reset --run-id=t54 --ledger="$LED")
+RC=$(rb reset --run-id=t54 --ledger="$LED")
+DIR_EMPTY=$([ -d "$LED.archived.1" ] && [ -z "$(ls -A "$LED.archived.1")" ] && echo yes || echo no)
+# The path it NAMED must be the path that holds it.
+NAMED=$(printf '%s\n' "$OUT" | sed -n 's/^round-budget: archived -> //p' | head -1)
+NAMED_IS_FILE=$([ -f "$NAMED" ] && echo yes || echo no)
+if [ "$DIR_EMPTY" = "yes" ] && [ "$NAMED_IS_FILE" = "yes" ]; then
+    ok "T54: the directory is untouched and the reported path holds the archive"
+else
+    fail "T54: directory at archive name" "dir left empty=$DIR_EMPTY (want yes), named path '$NAMED' is a file=$NAMED_IS_FILE (want yes), rc=$RC"
 fi
 
 echo ""

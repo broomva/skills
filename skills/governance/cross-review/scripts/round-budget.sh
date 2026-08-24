@@ -186,33 +186,40 @@ archive_ledger() {
     [ -n "$lines" ] || lines="unknown"
     base="$LEDGER.archived${tag:+.$tag}.$lines"
     ARCHIVE="$base"
-    # Keyed on line count alone, two arcs of equal length silently overwrote, so
-    # the name steps aside until it is free. But `[ -e ]` then `mv` -- which is
-    # what this was -- is check-then-ACT: between the two, anything in this
-    # directory can take the name, and the move then destroys what appeared,
-    # which is the one thing this exists to prevent. The per-ledger lock closes
-    # that window against another round-budget and against nothing else.
+    # Choosing a free name is the whole job, and the destination can be in more
+    # states than "file or nothing". The whole space, enumerated, because fixing
+    # these one at a time produced three rounds of adjacent-edge regressions
+    # here:
     #
-    # `ln` IS the test. link(2) fails with EEXIST if the destination exists --
-    # including a DANGLING symlink, which `[ -e ]` could not see at all because
-    # it follows the link. Reservation and test are one operation, so there is
-    # no window. Same directory throughout, so never cross-device; and hard-
-    # linking needs write+search on the DIRECTORY, not read on the file, so an
-    # unreadable ledger still archives.
+    #   absent            -> take it
+    #   regular file      -> step aside
+    #   DIRECTORY         -> step aside. `mv src dir` does not fail; it moves
+    #                        INTO the directory. So does `ln`. The archive would
+    #                        land at $ARCHIVE/<basename> while the message named
+    #                        $ARCHIVE -- telling the operator where it went, and
+    #                        telling them wrong.
+    #   symlink, any kind -> step aside. `-e` FOLLOWS the link, so a dangling one
+    #                        reads as absent; `-L` sees the entry itself.
+    #   fifo/socket/dev   -> step aside (`-e`)
     #
-    # If this dies between the link and the unlink, the ledger SURVIVES beside a
-    # copy: the budget is preserved and a stray archive is left. That is the
-    # safe direction for a stop.
-    while ! ln "$LEDGER" "$ARCHIVE" 2>/dev/null; do
-        if [ ! -e "$ARCHIVE" ] && [ ! -L "$ARCHIVE" ]; then
-            echo "round-budget: cannot archive $LEDGER to $ARCHIVE." >&2
-            echo "  The name is free, so this is not a collision -- the ledger's" >&2
-            echo "  directory is unwritable, or the link crossed a device." >&2
-            exit 2
-        fi
-        n=$((n+1)); ARCHIVE="$base.$n"
-    done
-    rm -f "$LEDGER"
+    # This is a check-then-act, and it is not pretending otherwise: between the
+    # test and the `mv`, something could take the name and the rename would
+    # replace it. `reset` holds the per-ledger lock (`mkdir "$LEDGER.lock"`) for
+    # its whole run, so no other round-budget can be that something; a foreign
+    # writer in this directory can, and is the same class as "the ledger is a
+    # plain file this agent can delete" in THE BOUNDARY.
+    #
+    # An `ln`-then-`rm` reservation closes that window and was tried here. It
+    # cost more than it bought, and all three are reproduced in the tests or the
+    # review: `ln` links INTO a directory rather than failing, so it cannot be
+    # the only test; `rm -f "$LEDGER"` resolves the source name a SECOND time and
+    # would delete a ledger installed there after the link -- archiving the old
+    # budget while destroying the new one, exit 0; and it requires hard-link
+    # support, which `mv` within one directory does not. `rename(2)` resolves
+    # both names in one syscall, so it has no source race at all. The window it
+    # leaves is the one the lock already covers.
+    while [ -e "$ARCHIVE" ] || [ -L "$ARCHIVE" ]; do n=$((n+1)); ARCHIVE="$base.$n"; done
+    mv "$LEDGER" "$ARCHIVE"
 }
 
 # Tabs and newlines are the record separators, so they cannot survive in a field:
