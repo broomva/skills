@@ -500,6 +500,35 @@ class TestContainment:
             p.Evidence(url="https://x", sha256="d" * 64, retrieved_at="", snapshot="../../secrets")
         assert e.value.code == "EVIDENCE_ESCAPES_RUN"
 
+    def test_a_symlink_out_of_the_run_does_not_verify(self, tmp_path: Path):
+        """Lexical containment is not containment.
+
+        `evidence/x.snapshot` is relative and contains no `..`, so it passes
+        every spelling check -- and can still be a symlink to anywhere, because
+        `exists()` and `read_bytes()` follow it. Containment is checked on the
+        RESOLVED path.
+        """
+        import os
+
+        outside = tmp_path / "outside.html"
+        outside.write_bytes(b"<html>not ours</html>")
+        d = tmp_path / p.STATE_DIR / "r1" / "evidence"
+        d.mkdir(parents=True)
+        os.symlink(outside, d / "sneaky.snapshot")
+        e = p.Evidence(
+            url="https://x",
+            sha256=p.sha256_of(outside.read_bytes()),
+            retrieved_at="",
+            snapshot="evidence/sneaky.snapshot",
+        )
+        assert p.verify_snapshot(tmp_path, "r1", e) is False
+
+    def test_a_genuine_artifact_still_verifies(self, tmp_path: Path):
+        # The other polarity. A containment fix that rejects everything would
+        # pass the test above and be useless.
+        e = p.save_snapshot(tmp_path, "r1", "https://x", b"<html>ours</html>")
+        assert p.verify_snapshot(tmp_path, "r1", e) is True
+
     def test_verification_cannot_be_satisfied_by_a_file_outside_the_run(self, tmp_path: Path):
         # The end-to-end version of the above: an artifact that genuinely exists
         # and genuinely hashes, but is not inside the run, must not verify.

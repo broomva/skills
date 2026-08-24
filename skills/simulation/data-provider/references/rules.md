@@ -37,6 +37,15 @@ when we know nothing about it at all.
 column*. Averaging, or reporting the majority, is the overclaim the type exists
 to prevent.
 
+**Where R1 stops.** It binds the PROVIDER. Parallax's runtime cannot verify an
+artifact — it has no access to the run directory and may not be on the same
+machine — so an `origin` arriving there is a supplier's assertion, and a caller
+hand-typing one is making it with nothing behind it. The runtime prints
+"supplier reports its values observed" rather than "observed" for exactly that
+reason, and the human accept gate is where an uncheckable assertion is weighed.
+A review read the loose version of this rule as a claim that the runtime enforces
+it, which it never did and cannot; the rule is about what a provider may emit.
+
 ---
 
 ## R2 — A record cites its artifact, or it is not evidence

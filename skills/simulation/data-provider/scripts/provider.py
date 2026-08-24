@@ -611,11 +611,21 @@ def verify_snapshot(root: Path, run_id: str, ev: Evidence) -> bool:
     """Does the stored artifact still hash to what the citation claims?
 
     Cheap, and the only way a citation can be checked rather than trusted.
+
+    Containment is checked on the RESOLVED path, not the spelling. The rejection
+    of absolute paths and `..` in `Evidence` is lexical, and lexical containment
+    is not containment: `evidence/x.snapshot` can be a symlink pointing anywhere,
+    and `exists()` and `read_bytes()` follow it. So a citation that looked
+    perfectly well-formed verified against a file the run never fetched -- the
+    same escape the absolute-path check closed, wearing a relative path.
     """
-    p = root / STATE_DIR / run_id / ev.snapshot
-    if not p.exists():
+    run_dir = (root / STATE_DIR / run_id).resolve()
+    target = (root / STATE_DIR / run_id / ev.snapshot).resolve()
+    if not target.is_relative_to(run_dir):
         return False
-    return sha256_of(p.read_bytes()) == ev.sha256
+    if not target.is_file():
+        return False
+    return sha256_of(target.read_bytes()) == ev.sha256
 
 
 # ---------------------------------------------------------------------------

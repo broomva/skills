@@ -70,6 +70,26 @@ The row count is **counted**, never declared. The origins survive into the
 proposal a human accepts, which is what makes this handoff type-preserving
 rather than lossy.
 
+## Where the guarantee ends, precisely
+
+This is worth stating exactly, because the loose version of it is false.
+
+**What is enforced:** *this provider* will not emit `observed` for a field whose
+artifact it cannot open and re-hash. That is checked, in both the library and the
+CLI, and it is what R1 and R2 buy.
+
+**What is not, and cannot be:** Parallax's runtime cannot verify anything. It has
+no access to your run directory and may not even be on the same machine — a
+`ColumnSpec.origin` reaching it is a *supplier's assertion*, and any caller
+hand-typing `--table leads#40:company:string:observed` is making one with nothing
+behind it. The runtime says so rather than hiding it: the proposal reads
+"supplier reports its values observed", not "observed".
+
+So the chain is: this provider verifies, then asserts; the runtime records who
+asserted; the **human accept gate** is where an assertion nobody can check gets
+weighed. Claiming the runtime enforces it would be the same overclaim this whole
+layer exists to refuse.
+
 ## The one rule you cannot work around
 
 A field is `observed` **only** if you hold the artifact it was read from and can
@@ -132,7 +152,7 @@ the same shape Parallax uses, so one branch handles both.
 
 ```bash
 cd skills/simulation/data-provider
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 58 tests
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 60 tests
 ```
 
 `PYTHONDONTWRITEBYTECODE` because a same-size edit inside one second reuses stale
