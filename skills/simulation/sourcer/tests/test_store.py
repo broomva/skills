@@ -474,3 +474,89 @@ def test_the_attestor_is_asked_about_the_cited_pair(tmp_path):
     S.put_record(conn, node(id="n1"),
                  attestor=lambda ev: (seen.append((ev.url, ev.sha256, ev.quote)), True)[1])
     assert seen == [("https://example.com/a", "a" * 64, "ACME")]
+
+
+# --------------------------- round-2 leftovers, now closed
+
+
+def test_a_shorter_path_lowers_a_queued_depth(tmp_path):
+    """Depth was birth-only: seen at hop 4, later found at hop 1, stayed at 4.
+
+    It could then sit above max_depth and never be claimable, while
+    frontier_stats went on counting it as outstanding work.
+    """
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 4)
+    assert S.claim(conn, "w", max_depth=2) is None, "too deep to claim"
+    S.push_frontier(conn, "acme", 1)
+    row = S.claim(conn, "w", max_depth=2)
+    assert row is not None and row["depth"] == 1
+
+
+def test_a_longer_path_does_not_raise_a_queued_depth(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 1)
+    S.push_frontier(conn, "acme", 5)
+    assert S.claim(conn, "w", max_depth=2)["depth"] == 1
+
+
+def test_an_in_flight_item_is_not_re_depthed(tmp_path):
+    """Changing the depth a worker is already crawling against would be a lie."""
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 4)
+    S.claim(conn, "w1", max_depth=9, now=1000.0)
+    S.push_frontier(conn, "acme", 1)
+    assert conn.execute("SELECT depth FROM frontier WHERE key='acme'").fetchone()[0] == 4
+
+
+def test_concurrent_set_verdict_loses_nothing(tmp_path):
+    """Two verifiers racing used to interleave and drop one verdict entirely."""
+    db = tmp_path / "s.db"
+    conn = S.connect(db)
+    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
+
+    errors: list[BaseException] = []
+
+    def verify(v: str) -> None:
+        try:
+            c = S.connect(db)
+            S.set_verdict(c, "n1", v)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    ts = [threading.Thread(target=verify, args=(v,))
+          for v in ("entailed", "inconclusive", "entailed", "inconclusive")]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    assert errors == [], f"a verifier raised: {errors[:2]}"
+    hist = S.verdict_history(conn, "n1")
+    assert len(hist) == 5, f"birth + 4 verdicts, got {len(hist)}"
+    assert [h["seq"] for h in hist] == [0, 1, 2, 3, 4], "no sequence number reused"
+
+
+# ------------------------------- layer is finally read (round-2 leftover)
+
+
+def test_select_filters_the_map_without_recrawling(tmp_path):
+    """'Record everything, filter downstream' needs a downstream filter."""
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="a", depth=0, verdict="entailed"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="b", depth=3), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="c", depth=1, origin="simulated"))
+
+    assert [r["id"] for r in S.select(conn, max_depth=1)] == ["a", "c"]
+    assert [r["id"] for r in S.select(conn, origin="observed")] == ["a", "b"]
+    assert [r["id"] for r in S.select(conn, verdict="entailed")] == ["a"]
+    assert len(S.select(conn)) == 3, "no filter returns everything that was paid for"
+
+
+def test_layer_is_read_by_something(tmp_path):
+    """It was validated, stored and read by nothing -- which is a field that does not work."""
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="a"), attestor=ATTESTS_ALL)
+    assert S.inventory(conn)["by_layer"] == {"L2": 1}
+    assert [r["id"] for r in S.select(conn, layer="L2")] == ["a"]
+    assert S.select(conn, layer="L3") == []

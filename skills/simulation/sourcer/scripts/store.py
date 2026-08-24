@@ -433,6 +433,11 @@ def set_verdict(
             "and both stay on the record."
         )
 
+    # IMMEDIATE takes the write lock up front, so the read of MAX(seq) and the
+    # payload update below cannot interleave with another verifier's. Without it
+    # two concurrent set_verdict calls raced on both the sequence number and the
+    # payload, and one verdict was silently lost.
+    conn.execute("BEGIN IMMEDIATE")
     seq = conn.execute(
         "SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM verdicts WHERE record_id = ?",
         (record_id,),
@@ -509,6 +514,18 @@ def push_frontier(
         "INSERT OR IGNORE INTO frontier (key, depth, parent_id) VALUES (?,?,?)",
         (key, depth, parent_id),
     )
+    if cur.rowcount == 0:
+        # Already queued. If this sighting reached it by a SHORTER path, take the
+        # shorter depth -- depth was birth-only, so an entity first seen at hop 4
+        # and later found at hop 1 stayed at 4, could sit above max_depth, and was
+        # then never claimable while still counted as outstanding work.
+        # Only while unclaimed and unfinished: re-parenting something in flight
+        # would change the depth a worker is already crawling against.
+        conn.execute(
+            "UPDATE frontier SET depth = ?, parent_id = ?"
+            " WHERE key = ? AND depth > ? AND done_at IS NULL AND lease_until IS NULL",
+            (depth, parent_id, key, depth),
+        )
     conn.commit()
     return cur.rowcount == 1
 
@@ -632,9 +649,41 @@ def inventory(conn: sqlite3.Connection) -> dict:
         "by_origin": group("origin"),
         "by_verdict": group("verdict"),
         "by_kind": group("kind"),
+        "by_layer": group("layer"),
         "conflicts": len(conflicts(conn)),
         "frontier": frontier_stats(conn),
     }
+
+
+def select(
+    conn: sqlite3.Connection,
+    max_depth: Optional[int] = None,
+    origin: Optional[Origin] = None,
+    verdict: Optional[Verdict] = None,
+    layer: Optional[Layer] = None,
+) -> list[dict]:
+    """Filter the map without re-crawling it.
+
+    This is what "record everything, filter downstream" actually requires: the
+    run keeps every claim it paid for, and a consumer says which slice it wants.
+    Also the only reader of `layer`, which was until now validated, stored and
+    read by nothing -- a field whose stated purpose had no implementation, which
+    is indistinguishable from a field that does not work.
+    """
+    clauses, args = [], []
+    if max_depth is not None:
+        clauses.append("depth <= ?"); args.append(max_depth)
+    if origin is not None:
+        clauses.append("origin = ?"); args.append(origin)
+    if verdict is not None:
+        clauses.append("verdict = ?"); args.append(verdict)
+    if layer is not None:
+        clauses.append("layer = ?"); args.append(layer)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return [
+        json.loads(r["payload"])
+        for r in conn.execute(f"SELECT payload FROM records{where} ORDER BY id", args)
+    ]
 
 
 def expandable_ids(conn: sqlite3.Connection) -> list[str]:

@@ -195,6 +195,8 @@ def append_row(log_path: Path, row: dict, key: Optional[bytes] = None) -> dict:
             body["mac"] = _row_mac(prev_mac, {k: v for k, v in body.items() if k != "mac"}, key)
             with log_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(body, sort_keys=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
             head = {"mac": body["mac"], "rows": seq + 1}
             # MAC the head itself. Without this it is plain metadata: an adversary
             # who truncates the log copies {mac, rows} from the last surviving row
@@ -204,9 +206,11 @@ def append_row(log_path: Path, row: dict, key: Optional[bytes] = None) -> dict:
                 key, json.dumps(head, sort_keys=True, separators=(",", ":")).encode(),
                 hashlib.sha256,
             ).hexdigest()
-            _head_path(log_path).write_text(
-                json.dumps(head, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            head_path = _head_path(log_path)
+            with head_path.open("w", encoding="utf-8") as hf:
+                hf.write(json.dumps(head, sort_keys=True) + "\n")
+                hf.flush()
+                os.fsync(hf.fileno())
             return body
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
