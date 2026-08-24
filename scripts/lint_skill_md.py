@@ -58,21 +58,40 @@ class _NoDuplicateKeys(yaml.SafeLoader):
 
 
 def _construct_unique(loader, node, deep=False):
-    # `flatten_mapping` FIRST. `SafeLoader.construct_mapping` calls it to expand
-    # YAML merge keys (`<<: *anchor`); a replacement constructor that skips it
-    # turns a document the old gate accepted into an error, which would make
-    # this "duplicate keys" fix a behaviour regression rather than a fix.
-    loader.flatten_mapping(node)
-    mapping = {}
-    for key_node, value_node in node.value:
+    """Reject duplicate keys the author WROTE, without breaking YAML merges.
+
+    Two failure modes were traded against each other here before this settled:
+
+      - skipping `flatten_mapping` turned `<<: *anchor` — which the old gate
+        accepted — into a ConstructorError;
+      - calling it first made merged fields indistinguishable from written ones,
+        so an explicit key OVERRIDING a merged one read as a duplicate. That is
+        valid YAML and the override is the whole point of a merge.
+
+    So duplicates are checked among the EXPLICIT keys only, before flattening,
+    and the merge is expanded afterwards with later entries winning — which is
+    what puts an explicit override ahead of the merged value.
+    """
+    seen: set = set()
+    for key_node, _value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
         key = loader.construct_object(key_node, deep=deep)
         try:
-            duplicate = key in mapping
+            duplicate = key in seen
         except TypeError:
             raise yaml.YAMLError(f"unhashable key {key!r}") from None
         if duplicate:
             raise yaml.YAMLError(f"duplicate key {key!r}")
-        mapping[key] = loader.construct_object(value_node, deep=deep)
+        seen.add(key)
+
+    loader.flatten_mapping(node)
+    mapping = {}
+    for key_node, value_node in node.value:
+        # Later wins: `flatten_mapping` puts merged pairs first, so an explicit
+        # key written after the merge correctly overrides it.
+        mapping[loader.construct_object(key_node, deep=deep)] = (
+            loader.construct_object(value_node, deep=deep))
     return mapping
 
 
@@ -151,14 +170,24 @@ def _holds_a_manifest(link: Path) -> bool:
     walk does not follow further links, so a cycle inside the target cannot
     spin here either.
     """
-    try:
-        for _root, _subdirs, files in os.walk(link, followlinks=False):
-            if "SKILL.md" in files:
-                return True
-    except OSError:
-        # Cannot tell — say yes, so it is REPORTED rather than assumed empty.
-        return True
-    return False
+    # `os.walk` SWALLOWS a directory it cannot list and walks on, so the
+    # `except OSError` this replaces never fired: an unreadable subtree inside
+    # the link read as a subtree with nothing in it, and the link went
+    # unreported. That is the same defect `discover` already fixes one level up,
+    # reintroduced in the helper written to fix the symlink case.
+    unreadable = False
+
+    def _cannot_tell(_exc: OSError) -> None:
+        nonlocal unreadable
+        unreadable = True
+
+    for _root, _subdirs, files in os.walk(link, followlinks=False,
+                                          onerror=_cannot_tell):
+        if "SKILL.md" in files:
+            return True
+    # Fail CLOSED: if we could not read part of it, say yes so the link is
+    # REPORTED rather than assumed empty.
+    return unreadable
 
 
 def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:

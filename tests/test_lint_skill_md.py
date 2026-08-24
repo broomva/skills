@@ -438,3 +438,90 @@ class TestASymlinkedDirectoryIsSearchedAtDepth:
         (tooling / "assets").symlink_to(tmp_path / "assets")
         _found, unwalkable = lint.discover(tmp_path / "skills")
         assert unwalkable == [], unwalkable
+
+
+class TestSymlinkProbingFailsClosed:
+    """`os.walk` SWALLOWS a directory it cannot list and walks on, so the
+    `except OSError` around the probe never fired: an unreadable subtree inside
+    a linked package read as a subtree with nothing in it, and the link went
+    unreported. The same defect `discover` already fixes one level up,
+    reintroduced in the helper written to fix the symlink case — the third time
+    this shape appeared in this file's own code."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_an_unreadable_linked_subtree_is_still_reported(self, tmp_path, lint):
+        pkg = tmp_path / "outside" / "pkg"
+        deep = pkg / "deep"
+        deep.mkdir(parents=True)
+        (deep / "SKILL.md").write_text("---\nname: INVALID\ndescription: d\n---\n",
+                                       encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked").symlink_to(pkg)
+        deep.chmod(0o000)
+        try:
+            _found, unwalkable = lint.discover(tmp_path / "skills")
+            assert any("symlinked directory" in u for u in unwalkable), unwalkable
+        finally:
+            deep.chmod(0o755)
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can list a 0o000 directory")
+    def test_it_reaches_the_exit_code(self, tmp_path, lint, monkeypatch):
+        """Through `main()`: a finding that never leaves discovery is not a gate."""
+        pkg = tmp_path / "outside" / "pkg"
+        deep = pkg / "deep"
+        deep.mkdir(parents=True)
+        (deep / "SKILL.md").write_text("---\nname: INVALID\ndescription: d\n---\n",
+                                       encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked").symlink_to(pkg)
+        _skill(tmp_path, "ok")
+        deep.chmod(0o000)
+        try:
+            monkeypatch.chdir(tmp_path)
+            r = _run(tmp_path)
+            assert r.returncode == 1, r.stdout
+            assert "Traceback" not in r.stdout + r.stderr
+        finally:
+            deep.chmod(0o755)
+
+    def test_a_readable_empty_linked_directory_is_not_reported(self, tmp_path, lint):
+        """CONTROL: failing closed on "cannot tell" must not become reporting
+        every link. A readable linked directory with no SKILL.md is ordinary."""
+        outside = tmp_path / "outside" / "pkg"
+        (outside / "deep").mkdir(parents=True)
+        (outside / "deep" / "notes.md").write_text("x", encoding="utf-8")
+        tooling = tmp_path / "skills" / "tooling"
+        tooling.mkdir(parents=True)
+        (tooling / "linked").symlink_to(outside)
+        _found, unwalkable = lint.discover(tmp_path / "skills")
+        assert unwalkable == [], unwalkable
+
+
+class TestAnExplicitKeyMayOverrideAMergedOne:
+    """Two failure modes traded against each other before this settled: skipping
+    `flatten_mapping` broke `<<: *anchor` outright, and calling it first made
+    merged fields indistinguishable from written ones — so an explicit key
+    OVERRIDING a merged one read as a duplicate. That is valid YAML, and the
+    override is the whole point of a merge."""
+
+    def test_an_override_is_accepted_and_wins(self, tmp_path, lint):
+        md = _skill(tmp_path, "ov",
+                    "---\nbase: &b\n  description: shared\n  name: base\n"
+                    "<<: *b\nname: ov\ndescription: mine\n---\n")
+        assert lint.lint_skill_md(md) == []
+        fm, _u, _p = lint.read_frontmatter(md)
+        assert fm["description"] == "mine" and fm["name"] == "ov"
+
+    def test_it_matches_plain_safe_load(self, lint):
+        """The strongest form: agree with the loader this replaced."""
+        import yaml
+        doc = ("base: &b\n  description: shared\n  name: base\n"
+               "<<: *b\nname: ov\ndescription: mine\n")
+        assert yaml.load(doc, Loader=lint._NoDuplicateKeys) == yaml.safe_load(doc)
+
+    def test_a_genuine_duplicate_is_still_rejected(self, tmp_path, lint):
+        """CONTROL: restoring override support must not restore duplicates."""
+        md = _skill(tmp_path, "dup2", "---\nname: A\nname: dup2\ndescription: d\n---\n")
+        assert any("duplicate key" in p for p in lint.lint_skill_md(md))
