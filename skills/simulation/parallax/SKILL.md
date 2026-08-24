@@ -135,7 +135,7 @@ workspace is the case -- rather than naming the command that produced the result
 document parsed but names no state or code on file, **2** the input is not that
 document.
 
-[`scripts/parallax_next.py`](scripts/parallax_next.py) carries a remedy for **all 51**
+[`scripts/parallax_next.py`](scripts/parallax_next.py) carries a remedy for **all 52**
 error codes, and the set is pinned against
 [`references/error-codes.txt`](references/error-codes.txt) — captured from
 `runtime/src/tools/errors.ts` at a named commit. A code added in the runtime with

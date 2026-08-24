@@ -239,6 +239,26 @@ describe("business-data: identity and contradictions", () => {
     if (!r.ok) expect(r.error.code).toBe("DUPLICATE_COLUMN");
   });
 
+  test("two DIFFERENT columns that build the same slot are refused", () => {
+    // Neither name is a duplicate: table `a` column `b.c`, and table `a.b`
+    // column `c`. Both construct `a.b.c`. The duplicate-name checks cannot see
+    // this, and without a check on the CONSTRUCTED key one slot carried two
+    // evidence lines -- observed first, simulated second, and the renderer shows
+    // the first.
+    const r = proposeOntology({
+      kind: "business-data",
+      tables: [
+        { name: "a", rowCount: 1, columns: [{ name: "b.c", type: "string", origin: "observed" }] },
+        { name: "a.b", rowCount: 1, columns: [{ name: "c", type: "string", origin: "simulated" }] },
+      ],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe("SLOT_COLLISION");
+      expect(r.error.detail).toMatchObject({ slot: "a.b.c" });
+    }
+  });
+
   test("a duplicate table is refused", () => {
     const r = proposeOntology({
       kind: "business-data",

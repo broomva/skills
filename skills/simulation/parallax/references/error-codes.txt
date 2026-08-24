@@ -11,6 +11,7 @@
 # tests/test_parallax_next.py asserts the remedy table covers exactly this set.
 # A code added in the runtime with no remedy here goes red, rather than being
 # answered with an invented remedy that sends the caller somewhere.
+
 AMBIGUOUS_REF
 BAD_FLAG_VALUE
 BLOCKING_QUESTIONS_OPEN
@@ -44,6 +45,7 @@ PROPOSER_CHANGED
 QUESTION_OUT_OF_RANGE
 RECONCILIATION_UNACKNOWLEDGED
 ROOT_NOT_ALLOWED
+SLOT_COLLISION
 SOURCE_EMPTY
 SOURCE_UNREADABLE
 TABLES_REQUIRED

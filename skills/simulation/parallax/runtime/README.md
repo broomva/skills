@@ -103,7 +103,7 @@ reproducibility claim.
 
 The agent skill is the directory this runtime sits in —
 `skills/simulation/parallax/`. It teaches an agent when to reach for Parallax,
-the nine-command flow, and what each of the 51 error codes actually means —
+the nine-command flow, and what each of the 52 error codes actually means —
 several have remedies a plain reading of the `reason` will not produce.
 
 ```bash

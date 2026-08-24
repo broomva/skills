@@ -76,6 +76,12 @@ REMEDIES: dict[str, str] = {
         "the FIRST, so the contradiction is invisible and the flattering half wins by "
         "document order. Decide which it is."
     ),
+    "SLOT_COLLISION": (
+        "Two columns build the SAME state slot. Slot names are constructed as "
+        "`<table>.<column>`, so table `a` column `b.c` and table `a.b` column `c` collide "
+        "without either name being a duplicate. Rename one; a single slot cannot carry two "
+        "provenances."
+    ),
     "COLUMNS_REQUIRED": (
         "A table was supplied with an empty `columns` array. Name its columns. This used "
         "to be accepted -- the boundary said it needed columns and only counted tables -- "

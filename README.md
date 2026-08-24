@@ -235,7 +235,7 @@ npx skills add broomva/skills --skill '*'
 | Skill | What it does |
 |---|---|
 | [`data-provider`](skills/simulation/data-provider/) | Turn a question about the world into a table Parallax can accept, with every field typed observed or simulated at the moment it is written. You search; it records findings against the artifact they were read from, hashes it, judges each column by rule, and emits the exact `parallax propose` invocation |
-| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 51 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 52 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
 
 ### Commerce & procurement — `skills/commerce/`
 

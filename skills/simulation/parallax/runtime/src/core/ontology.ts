@@ -112,6 +112,7 @@ export type ProposeError = ParallaxError<
   | "ORIGIN_REQUIRED"
   | "DUPLICATE_TABLE"
   | "DUPLICATE_COLUMN"
+  | "SLOT_COLLISION"
 >;
 
 export type AcceptError = ParallaxError<
@@ -340,6 +341,33 @@ function proposeFromTables(
       }
     }
   }
+  // Slot names are CONSTRUCTED -- `${table}.${column}` and `${table}_rows` -- so
+  // uniqueness of the inputs does not give uniqueness of the outputs. Table `a`
+  // with column `b.c` and table `a.b` with column `c` both build `a.b.c`, and
+  // neither name is a duplicate of anything. One slot then carries two evidence
+  // lines, the renderer shows the first, and an `observed` claim silently masks
+  // a `simulated` one -- the same defect the duplicate-name checks above close,
+  // arriving through a door those checks cannot see.
+  //
+  // Checking the built keys covers both, and covers whatever a future delimiter
+  // change would open. It is the constructed name that has to be unique, because
+  // it is the constructed name that indexes the state.
+  const claimed = new Map<string, string>();
+  for (const t of source.tables) {
+    for (const key of [`${t.name}_rows`, ...t.columns.map((c) => `${t.name}.${c.name}`)]) {
+      const owner = key.endsWith("_rows") ? `table ${t.name}` : `table ${t.name}`;
+      const prior = claimed.get(key);
+      if (prior !== undefined) {
+        return fail(
+          "SLOT_COLLISION",
+          `state slot ${key} is claimed by ${prior} and again by ${owner}; one slot cannot hold two columns`,
+          { slot: key, first: prior, second: owner },
+        );
+      }
+      claimed.set(key, owner);
+    }
+  }
+
   const initial: State = {};
   const evidence: Array<{ slot: string; from: string }> = [];
   const actions: ActionSpec[] = [];
