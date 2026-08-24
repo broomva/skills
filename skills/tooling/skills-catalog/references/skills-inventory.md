@@ -2,7 +2,7 @@
 
 > 96 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
 
-## Governance & control — `skills/governance/` (9)
+## Governance & control — `skills/governance/` (8)
 
 | Skill | What it does |
 |---|---|
@@ -14,9 +14,8 @@
 | `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
 | `keel` | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
-| `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
-## Orchestration & autonomy — `skills/orchestration/` (8)
+## Orchestration & autonomy — `skills/orchestration/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -28,6 +27,7 @@
 | `p9` | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
+| `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
 
 ## Skill & prompt tooling — `skills/tooling/` (9)
 
@@ -219,6 +219,6 @@
 
 - **Total skills**: 96
 - **Total category buckets**: 23
-- **Largest bucket**: Governance & control, Skill & prompt tooling (9)
+- **Largest bucket**: Orchestration & autonomy, Skill & prompt tooling (9)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

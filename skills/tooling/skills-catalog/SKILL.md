@@ -27,8 +27,8 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 
 | Category | Count | Key skills |
 |---|---|---|
-| Governance & control (`governance`) | 9 | agentic-control-kernel, architecture-design-principles, bstack |
-| Orchestration & autonomy (`orchestration`) | 8 | autonomous, eve-forge, governed-autonomy-loop |
+| Governance & control (`governance`) | 8 | agentic-control-kernel, architecture-design-principles, bstack |
+| Orchestration & autonomy (`orchestration`) | 9 | autonomous, eve-forge, governed-autonomy-loop |
 | Skill & prompt tooling (`tooling`) | 9 | audit-harness-usage, broomva-cli, make-spec |
 | Knowledge & memory (`knowledge`) | 8 | bookkeeping, braindump, colombia-conflict |
 | Research (`research`) | 2 | checkit, deep-dive-research-orchestrator |

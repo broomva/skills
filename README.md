@@ -54,7 +54,6 @@ npx skills add broomva/skills --skill '*'
 | [`harness-engineering-playbook`](skills/governance/harness-engineering-playbook/) | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture… |
 | [`keel`](skills/governance/keel/) | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | [`unhobble`](skills/governance/unhobble/) | Audit and rightsize a context surface (CLAUDE.md, AGENTS.md, SKILL.md, prompts) against the Claude-5 context-engineering reversals — measures token budget, hard-rule ratio, duplicate sections and contradiction candidates, then adjudicates keep / relocate / delete by whether an independent mechanism already enforces the prose |
-| [`legal-readiness`](skills/governance/legal-readiness/) | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
 ### Orchestration & autonomy — `skills/orchestration/`
 
@@ -260,8 +259,8 @@ The 96 skills bucket into 23 single-noun categories — one row per `skills/<cat
 
 | Category | Bucket | Count |
 |---|---|---|
-| Governance & control | `skills/governance/` | 9 |
-| Orchestration & autonomy | `skills/orchestration/` | 8 |
+| Governance & control | `skills/governance/` | 8 |
+| Orchestration & autonomy | `skills/orchestration/` | 9 |
 | Skill & prompt tooling | `skills/tooling/` | 9 |
 | Knowledge & memory | `skills/knowledge/` | 8 |
 | Research | `skills/research/` | 2 |
