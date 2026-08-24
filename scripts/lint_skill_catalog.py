@@ -249,7 +249,11 @@ def _rebuild(text: str, sections: list[_Section], disk: dict, render) -> str:
                                                 # and normalising its form is the whole point
             and len(keep) == len(sec.rows)
             and all(sec.rows.get(n) == d for n, d in keep.items())
-            and list(keep) == [n for n in sec.rows if n in keep]   # same order, too
+            # No order clause: `keep` is built by iterating sec.rows, so its
+            # order IS the original order by construction, and the length test
+            # above already rules out appended rows. A mutation removing such a
+            # clause survives because it can never be false — that is redundant
+            # code reporting as an untested property.
         )
         if unchanged:
             body = original
