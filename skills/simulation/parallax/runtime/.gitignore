@@ -1,0 +1,14 @@
+# Credentials. The pre-move repository ignored these in-tree; the monorepo root
+# does not. Without these lines a secrets file dropped in this directory is
+# ignored only on a machine whose personal ~/.gitignore_global happens to cover
+# it -- which is not CI, and not anyone else's clone.
+.env
+.env.*
+
+# Demo artifacts. A receipt written here exists on exactly one laptop.
+out/
+
+# Per-workspace Parallax thread state, written by any command run in place.
+.parallax/
+
+node_modules/

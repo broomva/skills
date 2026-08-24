@@ -1,0 +1,366 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--ink); }
+    .root {
+      width: 1440px; height: 900px; display: flex; flex-direction: column;
+      background: var(--ground); color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+      font-size: 13px; overflow: hidden;
+    }
+    .hdr {
+      height: 56px; flex: none; display: flex; align-items: center; gap: 20px;
+      padding: 0 24px; border-bottom: 1px solid var(--rule-strong);
+      background: var(--surface);
+    }
+    .mark {
+      font-family: "Iowan Old Style", Palatino, Georgia, serif;
+      font-size: 20px; letter-spacing: -0.01em;
+    }
+    .mark span { color: var(--ink-faint); }
+    .chips { display: flex; gap: 6px; }
+    .chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+      padding: 5px 11px; border: 1px solid var(--rule-strong); background: var(--ground);
+      color: var(--ink-muted); cursor: pointer;
+    }
+    .chip.on { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+    .grow { flex: 1; }
+    .badge {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px; letter-spacing: 0.14em; padding: 5px 10px; font-weight: 700;
+    }
+    .meta {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px; color: var(--ink-faint);
+    }
+    .body { flex: 1; display: flex; min-height: 0; }
+    .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .pane + .pane { border-left: 1px solid var(--rule); }
+    .ptitle {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--ink-faint); padding: 14px 18px 10px; flex: none;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .scroll { flex: 1; overflow-y: auto; min-height: 0; }
+    .ev {
+      display: grid; grid-template-columns: 34px 8px 1fr; gap: 10px; align-items: baseline;
+      padding: 7px 18px; border-bottom: 1px solid var(--rule);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    }
+    .ev .seq { color: var(--ink-faint); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; align-self: center; }
+    .ev .act { color: var(--ink); }
+    .ev .who { color: var(--ink-faint); }
+    .ev.bad { background: var(--crit-soft); }
+    .ev.blocked .act { color: var(--ok); }
+    .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; padding: 4px 18px 16px; }
+    .kv .k {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+      color: var(--ink-muted); padding: 5px 0; border-bottom: 1px solid var(--rule);
+    }
+    .kv .v {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+      text-align: right; padding: 5px 0; border-bottom: 1px solid var(--rule);
+      font-variant-numeric: tabular-nums;
+    }
+    .kv .v.neg { color: var(--crit); font-weight: 700; }
+    .inv { padding: 4px 18px 0; display: flex; flex-direction: column; gap: 1px; }
+    .invrow { display: flex; gap: 10px; align-items: flex-start; padding: 11px 0; border-bottom: 1px solid var(--rule); }
+    .invname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; flex: 1; }
+    .invmsg { font-size: 11px; color: var(--crit); line-height: 1.45; margin-top: 3px; }
+    .kind { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+    .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--rule); flex: 1; min-height: 0; }
+    .col { background: var(--ground); display: flex; flex-direction: column; min-width: 0; }
+    .colhead {
+      padding: 12px 18px 10px; border-bottom: 1px solid var(--rule); flex: none;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .colname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .proof { padding: 16px 18px; border-top: 1px solid var(--rule-strong); background: var(--surface); flex: none; }
+    .hash {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+      display: flex; gap: 12px; align-items: center; padding: 3px 0; color: var(--ink-muted);
+    }
+    .hash b { color: var(--ink); font-weight: 400; letter-spacing: 0.02em; }
+    .verdict { font-weight: 700; letter-spacing: 0.08em; font-size: 10px; }
+    .foot {
+      height: 72px; flex: none; display: flex; align-items: center; gap: 10px;
+      padding: 0 24px; border-top: 1px solid var(--rule-strong); background: var(--surface);
+    }
+    .btn {
+      font-family: ui-sans-serif, -apple-system, sans-serif; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.02em; padding: 11px 20px; min-height: 44px; cursor: pointer;
+      border: 1px solid var(--ink); background: var(--ink); color: var(--ground);
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn.ghost { background: transparent; color: var(--ink); }
+    .btn[disabled] { opacity: 0.32; cursor: default; }
+    .note { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; max-width: 42ch; }
+  </style>
+</helmet>
+
+<div class="root" style="{{vars}}">
+
+  <div class="hdr">
+    <div class="mark">Parallax<span> / whatsapp-storefront</span></div>
+    <div class="chips">
+      <div class="chip {{branch.mainOn}}" onClick="{{ pickMain }}">main</div>
+      <div class="chip {{branch.govOn}}" onClick="{{ pickGov }}">governed</div>
+    </div>
+    <div class="badge" style="{{cls.style}}">{{cls.label}}</div>
+    <div class="grow"></div>
+    <div class="meta">seed 42 &middot; horizon 12</div>
+  </div>
+
+  <div class="body">
+
+    <div class="pane" style="width: 430px; flex: none;">
+      <div class="ptitle">Event log
+        <span class="meta">{{counts.events}} appended</span>
+      </div>
+      <div class="scroll">
+        <sc-for list="{{events}}" as="e" hint-placeholder-count="6">
+          <div class="ev {{e.rowClass}}">
+            <div class="seq">{{e.seq}}</div>
+            <div class="dot" style="{{e.dot}}"></div>
+            <div>
+              <span class="act">{{e.action}}</span>
+              <span class="who">{{e.detail}}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div class="pane" style="flex: 1;">
+      <sc-if value="{{forked}}" hint-placeholder-val="{{ false }}">
+        <div class="cmp">
+          <div class="col">
+            <div class="colhead">
+              <div class="colname">main</div>
+              <div class="badge" style="{{tag.crit}}">2 VIOLATIONS</div>
+            </div>
+            <div class="kv">
+              <div class="k">arepa_kit</div><div class="v">10</div>
+              <div class="k">cafe_500g</div><div class="v">3</div>
+              <div class="k">panela</div><div class="v neg">-1</div>
+              <div class="k">cash</div><div class="v">121000</div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="colhead">
+              <div class="colname">governed</div>
+              <div class="badge" style="{{tag.ok}}">0 VIOLATIONS</div>
+            </div>
+            <div class="kv">
+              <div class="k">arepa_kit</div><div class="v">10</div>
+              <div class="k">cafe_500g</div><div class="v">3</div>
+              <div class="k">panela</div><div class="v">0</div>
+              <div class="k">cash</div><div class="v">121000</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{notForked}}" hint-placeholder-val="{{ true }}">
+        <div class="ptitle">State <span class="meta">projected from the log</span></div>
+        <div class="kv">
+          <div class="k">inventory.arepa_kit</div><div class="v">{{state.arepa}}</div>
+          <div class="k">inventory.cafe_500g</div><div class="v">{{state.cafe}}</div>
+          <div class="k">inventory.panela</div><div class="v {{state.panelaCls}}">{{state.panela}}</div>
+          <div class="k">cash_cents</div><div class="v">{{state.cash}}</div>
+          <div class="k">payments_cents</div><div class="v">{{state.pay}}</div>
+          <div class="k">promised</div><div class="v">{{state.promised}}</div>
+          <div class="k">fulfilled</div><div class="v">{{state.fulfilled}}</div>
+        </div>
+      </sc-if>
+
+      <div class="proof">
+        <div class="ptitle" style="padding: 0 0 10px;">Replay proof</div>
+        <sc-if value="{{hasHashes}}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div class="hash"><span style="width: 78px">same seed</span><b>{{hashes.a}}</b></div>
+            <div class="hash"><span style="width: 78px"></span><b>{{hashes.b}}</b>
+              <span class="verdict" style="{{hashes.vStyle}}">{{hashes.verdict}}</span></div>
+            <div class="hash"><span style="width: 78px">seed + 1</span><b>{{hashes.c}}</b>
+              <span class="verdict" style="{{tag.okText}}">DIVERGED</span></div>
+          </div>
+        </sc-if>
+        <sc-if value="{{noHashes}}" hint-placeholder-val="{{ false }}">
+          <div class="note">Run the branch, then replay it. Identical seed must produce an identical trace hash, and a different seed must not.</div>
+        </sc-if>
+      </div>
+    </div>
+
+    <div class="pane" style="width: 340px; flex: none;">
+      <div class="ptitle">Invariants</div>
+      <div class="inv">
+        <sc-for list="{{invariants}}" as="iv" hint-placeholder-count="4">
+          <div class="invrow">
+            <div class="dot" style="{{iv.dot}}"></div>
+            <div style="flex: 1; min-width: 0;">
+              <div class="invname">{{iv.name}}</div>
+              <div class="kind">{{iv.kind}}</div>
+              <sc-if value="{{iv.broken}}" hint-placeholder-val="{{ false }}">
+                <div class="invmsg">{{iv.message}}</div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <div class="btn" onClick="{{ doRun }}">Run</div>
+    <div class="btn ghost" onClick="{{ doFork }}">Fork at seq 0</div>
+    <div class="btn ghost" onClick="{{ doReplay }}">Replay</div>
+    <div class="chip {{llm.on}}" style="min-height: 44px; display: inline-flex; align-items: center;" onClick="{{ toggleLlm }}">{{llm.label}}</div>
+    <div class="grow"></div>
+    <div class="note">{{footNote}}</div>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark","section":"Canvas"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { n: 0, forked: false, llm: false, replayed: false };
+  }
+
+  script() {
+    return [
+      { seq: 1,  actor: 'sales-agent', action: 'promise', detail: 'ORD-000 cafe_500g x1' },
+      { seq: 2,  actor: 'customer',    action: 'pay',     detail: 'ORD-000 48000' },
+      { seq: 3,  actor: 'ops',         action: 'fulfill', detail: 'ORD-000' },
+      { seq: 4,  actor: 'sales-agent', action: 'promise', detail: 'ORD-003 arepa_kit x1' },
+      { seq: 5,  actor: 'customer',    action: 'pay',     detail: 'ORD-003 32000' },
+      { seq: 6,  actor: 'ops',         action: 'fulfill', detail: 'ORD-003' },
+      { seq: 7,  actor: 'sales-agent', action: 'promise', detail: 'ORD-006 panela x1', bad: true },
+      { seq: 8,  actor: 'customer',    action: 'pay',     detail: 'ORD-006 9000' },
+      { seq: 9,  actor: 'ops',         action: 'fulfill', detail: 'ORD-006', bad: true },
+      { seq: 10, actor: 'sales-agent', action: 'promise', detail: 'ORD-009 arepa_kit x1' },
+      { seq: 11, actor: 'customer',    action: 'pay',     detail: 'ORD-009 32000' },
+      { seq: 12, actor: 'ops',         action: 'fulfill', detail: 'ORD-009' }
+    ];
+  }
+
+  palette() {
+    const dark = (this.props.theme ?? 'dark') === 'dark';
+    return dark
+      ? { ground:'#111413', surface:'#191D1B', surfaceAlt:'#222724', ink:'#E6EAE6',
+          inkMuted:'#97A09B', inkFaint:'#6E7873', rule:'#2C322F', ruleStrong:'#414945',
+          accent:'#6FBFB4', accentSoft:'#17302D', warn:'#D5A03F', warnSoft:'#2E2718',
+          crit:'#DE8272', critSoft:'#32201D', ok:'#86BA90', okSoft:'#1A2A1E' }
+      : { ground:'#EFF1EE', surface:'#FAFBF9', surfaceAlt:'#E7EAE6', ink:'#171B1A',
+          inkMuted:'#59615E', inkFaint:'#838B87', rule:'#D3D8D3', ruleStrong:'#B4BCB6',
+          accent:'#1F5F5B', accentSoft:'#E2ECEA', warn:'#8A6011', warnSoft:'#F2E9D5',
+          crit:'#9E3B2E', critSoft:'#F3E2DE', ok:'#356040', okSoft:'#E0EAE1' };
+  }
+
+  step() {
+    if (this.state.n >= 12) return;
+    this.setState({ n: this.state.n + 1 });
+    setTimeout(() => this.step(), 190);
+  }
+
+  renderVals() {
+    const p = this.palette();
+    const vars = `--ground:${p.ground};--surface:${p.surface};--surface-alt:${p.surfaceAlt};`
+      + `--ink:${p.ink};--ink-muted:${p.inkMuted};--ink-faint:${p.inkFaint};`
+      + `--rule:${p.rule};--rule-strong:${p.ruleStrong};--accent:${p.accent};`
+      + `--warn:${p.warn};--warn-soft:${p.warnSoft};--crit:${p.crit};--crit-soft:${p.critSoft};`
+      + `--ok:${p.ok};--ok-soft:${p.okSoft};`;
+
+    const n = this.state.n;
+    const llm = this.state.llm;
+    const shown = this.script().slice(0, n);
+    const evClass = llm ? p.warn : p.ok;
+
+    const events = shown.map((e) => ({
+      seq: String(e.seq).padStart(2, '0'),
+      action: e.action,
+      detail: '  ' + e.actor + '  ' + e.detail,
+      rowClass: e.bad && n >= 9 ? 'bad' : '',
+      dot: `background:${e.actor === 'governor' ? p.ok : evClass}`
+    }));
+
+    const done = n >= 9;
+    const inv = [
+      { name: 'inventory_nonneg', kind: 'conservation', broken: done, message: 'oversold panela:-1' },
+      { name: 'cash_conserved', kind: 'conservation', broken: false, message: '' },
+      { name: 'no_unpaid_fulfillment', kind: 'safety', broken: false, message: '' },
+      { name: 'no_phantom_promise', kind: 'policy', broken: n >= 7, message: 'promised stock that does not exist: ORD-006/panela' }
+    ].map((i) => ({ ...i, dot: `background:${i.broken ? p.crit : p.ok}` }));
+
+    const cls = llm
+      ? { label: 'STABLE', style: `background:${p.warnSoft};color:${p.warn}` }
+      : { label: 'PINNED', style: `background:${p.okSoft};color:${p.ok}` };
+
+    const replayed = this.state.replayed;
+    const identical = !llm;
+
+    return {
+      vars,
+      events,
+      invariants: inv,
+      cls,
+      forked: this.state.forked,
+      notForked: !this.state.forked,
+      counts: { events: n },
+      branch: { mainOn: this.state.forked ? '' : 'on', govOn: this.state.forked ? 'on' : '' },
+      state: {
+        arepa: n >= 6 ? 10 : n >= 3 ? 11 : 12,
+        cafe: n >= 3 ? 3 : 4,
+        panela: n >= 9 ? -1 : 0,
+        panelaCls: n >= 9 ? 'neg' : '',
+        cash: [0, 0, 48000, 48000, 48000, 80000, 80000, 80000, 89000, 89000, 89000, 121000, 121000][n] ?? 0,
+        pay: [0, 0, 48000, 48000, 48000, 80000, 80000, 80000, 89000, 89000, 89000, 121000, 121000][n] ?? 0,
+        promised: Math.ceil(n / 3),
+        fulfilled: Math.floor(n / 3)
+      },
+      tag: {
+        crit: `background:${p.critSoft};color:${p.crit}`,
+        ok: `background:${p.okSoft};color:${p.ok}`,
+        okText: `color:${p.ok}`
+      },
+      hasHashes: replayed,
+      noHashes: !replayed,
+      hashes: {
+        a: '435b1748860d979af9b4344a008301ec',
+        b: identical ? '435b1748860d979af9b4344a008301ec' : 'a91c033ef7d5e2b8104c7761d0b4e8fa',
+        c: '6d240f8451d14d60af3ac636631e0ffe',
+        verdict: identical ? 'IDENTICAL' : 'NOT CLAIMED',
+        vStyle: identical ? `color:${p.ok}` : `color:${p.warn}`
+      },
+      llm: {
+        on: llm ? 'on' : '',
+        label: llm ? 'actor: claude' : 'actor: seeded'
+      },
+      footNote: llm
+        ? 'A model entered the loop, so the branch is STABLE and byte-identical replay is no longer claimed.'
+        : 'Every actor is seeded and pure, so this branch replays byte-for-byte.',
+      doRun: () => { this.setState({ n: 0, replayed: false }); setTimeout(() => this.step(), 60); },
+      doFork: () => this.setState({ forked: !this.state.forked }),
+      doReplay: () => this.setState({ replayed: true }),
+      toggleLlm: () => this.setState({ llm: !this.state.llm }),
+      pickMain: () => this.setState({ forked: false }),
+      pickGov: () => this.setState({ forked: true })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "title": "Parallax — the branch that held",
+  "_note": "Ground layer only. The argument is carried by the reality map drawn over this footage, so every prompt asks for near-black, low-contrast atmosphere with nothing legible in it. Bright or busy footage would fight the graph, which is the thing a reader is actually meant to read.",
+  "model": "veo-3.1-fast-generate-preview",
+  "aspectRatio": "16:9",
+  "resolution": "720p",
+  "generateAudio": false,
+  "negativePrompt": "text, letters, numbers, watermark, logo, people, faces, hands, vehicles, buildings, roads, bright daylight, saturated colour, high key, lens flare, fast cuts, camera shake, clutter, warm tones, amber, orange, gold, firelight, sodium light, sunset",
+  "style": "abstract cinematic darkness, near-black field, cool blue-grey, volumetric haze, fine particulate, extremely slow camera, shallow depth, high dynamic range held in the shadows, no subject a viewer could name",
+  "scenes": [
+    {
+      "id": "01-recorded",
+      "beat": "Every operating decision is taken once.",
+      "prompt": "A single thin filament of pale blue-white light drifting through an almost entirely black volume of slow haze. The camera glides forward along it at walking pace. Fine dust catches the light. Nothing else is lit. Deep shadow fills nine tenths of the frame."
+    },
+    {
+      "id": "02-now",
+      "beat": "The alternative is never observed.",
+      "prompt": "The same filament of light approaching a faint vertical plane of colder light suspended in black haze, like a threshold seen edge-on. The filament slows as it nears. Very low contrast, almost entirely dark, slow drift of particulate across the frame."
+    },
+    {
+      "id": "03-proposal",
+      "beat": "Parallax proposes a model of your context.",
+      "prompt": "A sparse geometric lattice assembling itself out of darkness, thin unlit wireframe struts appearing one at a time in cold blue-grey, suspended in black haze. The structure is skeletal and dim, clearly unfinished, nothing glowing yet. Extremely slow orbit."
+    },
+    {
+      "id": "04-accept",
+      "beat": "You accept it. Only then does anything run.",
+      "prompt": "The dim lattice takes light for the first time: a slow pulse of pale blue travelling through the struts from one corner outward, illuminating them faintly as it passes, then settling. Black background, cool tone, no flare, no burst, restrained."
+    },
+    {
+      "id": "05-divergence",
+      "beat": "Same seed, same state. One decision different.",
+      "prompt": "Many thin filaments of light fanning outward through black volumetric haze from a single point behind the camera, spreading and separating, most of them dimming and dissolving into the dark as they travel. Slow turbulence in the haze. Cold blue-grey, very dark."
+    },
+    {
+      "id": "06-held",
+      "beat": "One branch held its invariant.",
+      "prompt": "A field of dissolving light filaments fading out one by one until a single steady filament of pale blue remains, holding its line straight through the black haze. The frame settles into stillness. Almost entirely black, calm, no movement but the drifting dust."
+    }
+  ],
+  "_audio": "Not requested: veo-3.1-fast rejects generateAudio with a 400. Stripped at encode time with ffmpeg -an."
+}

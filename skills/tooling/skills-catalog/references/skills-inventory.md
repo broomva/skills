@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 90 skills across 22 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-18.
+> 93 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
 
 ## Governance & control — `skills/governance/` (8)
 
@@ -15,19 +15,20 @@
 | `keel` | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 
-## Orchestration & autonomy — `skills/orchestration/` (7)
+## Orchestration & autonomy — `skills/orchestration/` (8)
 
 | Skill | What it does |
 |---|---|
 | `autonomous` | Use when the user has agreed on a plan or selected from suggested options and wants the agent to execute the work autonomously without further instruction |
 | `eve-forge` | Forge a personalized eve agent for a business end-to-end — absorb the business's artifacts, author the `agent/` dir, validate, and deploy |
 | `governed-autonomy-loop` | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
+| `handback` | Terminal-message contract for an autonomous arc that has run out of agent-executable work and genuinely needs a human — a work order of imperative asks, each carrying a default so silence is never fatal |
 | `handoff` | Fresh-session handoff doc drafting |
 | `p9` | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
 
-## Skill & prompt tooling — `skills/tooling/` (8)
+## Skill & prompt tooling — `skills/tooling/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -36,9 +37,10 @@
 | `disambiguate` | Rewrite a requirement so it can only be read one way, with a deterministic ambiguity checker for the mechanical layer |
 | `make-spec` | Scaffold a substantive human-readable design doc (spec / plan / ADR / report / PR explainer) as native HTML using the workspace's canonical Broomva dark theme |
 | `prompt-library` | Manage and retrieve reusable prompts from broomva.tech or any compatible prompt repository |
-- **`attempt-audit`** — find absence-assertions that carry no attempt-record: code returning the same empty value whether the work ran and found nothing or was skipped entirely
+| `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
+| `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 90 skills across 22 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 93 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -79,12 +81,14 @@
 | `stakeholder-update` | Takes one set of project facts and generates three versions: technical for engineering, business-impact for leadership, and customer-facing for success teams |
 | `weekly-review` | Scans the vault for updates from the past week, surfaces what changed, and flags what needs attention |
 
-## Publishing & growth — `skills/publishing/` (5)
+## Publishing & growth — `skills/publishing/` (7)
 
 | Skill | What it does |
 |---|---|
 | `blog-post` | Full-stack blog post production — turns a topic, idea, or brief into a complete publishing package across written, social, and multimedia surfaces |
+| `citable` | Make authored content survive both selection surfaces — human engagement and LLM retrieval for citation — with a linter encoding measured effect sizes |
 | `content-creation` | Full-stack content creation pipeline: idea or reference to published blog post, audio narration, video, and social media distribution |
+| `format-first` | Decide what SHAPE of content to make; refuses platform folklore with a linter encoding six claims traced to primary sources |
 | `revenuecast` | revenuecast — turn a real-world capability into a self-demonstrating, high-throughput generative-AI revenue engine (the "Kleos" method) |
 | `seo-llmeo` | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
 | `social-intelligence` | Autonomous social engagement + knowledge extraction loop for Moltbook and X/Twitter |
@@ -185,6 +189,12 @@
 |---|---|
 | `ocean-genomics` | Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics, protein structure prediction, and marine biodiversity analysis |
 
+## Simulation — `skills/simulation/` (1)
+
+| Skill | What it does |
+|---|---|
+| `parallax` | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+
 ## Commerce & procurement — `skills/commerce/` (3)
 
 | Skill | What it does |
@@ -204,8 +214,8 @@
 
 ## Aggregates
 
-- **Total skills**: 78
-- **Total category buckets**: 22
-- **Largest bucket**: Orchestration & autonomy (7)
-- **Smallest buckets** (1): Science
-- Taxonomy = the 22 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+- **Total skills**: 93
+- **Total category buckets**: 23
+- **Largest bucket**: Skill & prompt tooling (9)
+- **Smallest buckets** (1): Science, Simulation
+- Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

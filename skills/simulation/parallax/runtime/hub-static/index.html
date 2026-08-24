@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parallax hub — the API, and the commit it is running</title>
+<meta name="description" content="The Parallax hub. Four API routes, a receipt route, and a health route that reports the commit this instance is actually running.">
+<meta name="color-scheme" content="light">
+<style>
+  /* The hub's own front door. It is deliberately NOT the product page: that is
+     a static export served by Pages, and two hosts serving the same marketing
+     page from two sources is a page that drifts. This one has a job the Pages
+     artifact cannot do -- it reports what this instance is running. */
+  :root {
+    --fg-c: 0.175 0.022 265;
+    --bg: oklch(1 0 0); --bg-sub: oklch(0.966 0.003 265);
+    --fg-1: oklch(var(--fg-c) / 0.92);
+    --fg-3: oklch(var(--fg-c) / 0.72);
+    --fg-4: oklch(var(--fg-c) / 0.62);
+    --fg-5: oklch(var(--fg-c) / 0.20);
+    --accent-ink: oklch(0.48 0.14 260);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 64px max(6vw, 20px); background: var(--bg); color: var(--fg-1);
+    font-family: var(--sans); line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  .lab {
+    font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--fg-4); margin: 0 0 20px;
+  }
+  h1 { font-weight: 500; font-size: clamp(1.75rem, 4vw, 2.5rem); line-height: 1.1;
+       letter-spacing: -0.025em; margin: 0 0 20px; }
+  p { color: var(--fg-3); margin: 0 0 16px; text-wrap: pretty; }
+  a { color: var(--accent-ink); text-underline-offset: 3px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 32px;
+          font-family: var(--mono); font-size: 0.8125rem; }
+  th, td { text-align: left; padding: 10px 14px; border-top: 1px solid var(--fg-5);
+           vertical-align: top; }
+  th { font-weight: 400; white-space: nowrap; }
+  td { color: var(--fg-3); }
+  #live {
+    margin-top: 32px; padding: 16px 18px; border: 1px solid var(--fg-5);
+    border-radius: 0.75rem; background: var(--bg-sub);
+    font-family: var(--mono); font-size: 0.8125rem; color: var(--fg-3);
+  }
+  #live b { font-weight: 400; color: var(--fg-1); }
+  .cta {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 0 24px;
+    margin-top: 32px; border-radius: 9999px; background: oklch(0.48 0.14 260);
+    color: oklch(1 0 0); text-decoration: none; font-weight: 500; font-size: 0.9375rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="lab">Parallax · hub</p>
+  <h1>This is the API, not the product page.</h1>
+  <p>
+    The hub runs the same handler functions the CLI and the agent tool surface
+    call. The product page is a static export and lives at
+    <a href="https://broomva.github.io/parallax/">broomva.github.io/parallax</a>.
+  </p>
+  <p>
+    <code>/health</code> reports the commit this instance is running, which is
+    the only field on it that a stale image cannot fake — a <code>version</code>
+    string is a source constant, and a deploy dashboard reports intent.
+  </p>
+
+  <div id="live">reading <b>/health</b>…</div>
+
+  <table>
+    <caption class="lab" style="caption-side:top;text-align:left;padding:0 0 8px">Routes</caption>
+    <tbody>
+      <tr><th>POST /api/ontology/propose</th><td>read a context, propose an ontology</td></tr>
+      <tr><th>POST /api/ontology/accept</th><td>answer the blocking questions and activate</td></tr>
+      <tr><th>POST /api/run</th><td>roll it forward, return the receipt</td></tr>
+      <tr><th>POST /api/whatsapp/turn</th><td>the whole product as one thread</td></tr>
+      <tr><th>GET /r/:id</th><td>a run receipt, as a page</td></tr>
+      <tr><th>GET /health</th><td>ok, version, commit, uptime</td></tr>
+    </tbody>
+  </table>
+
+  <a class="cta" href="https://broomva.github.io/parallax/">Go to the product page</a>
+</main>
+<script type="module" src="assets/health.js"></script>
+</body>
+</html>

@@ -11,3 +11,26 @@ dist/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# parallax-web build outputs — Next.js static export (`output: "export"`), plus
+# the cinema captures that are rendered rather than authored.
+parallax-web/.next/
+parallax-web/out/
+parallax-web/next-env.d.ts
+parallax-web/tsconfig.tsbuildinfo
+parallax-web/cinema/assets/
+
+# Parallax runtime state. The CLI writes its sqlite event log and its `.parallax/`
+# thread state into whatever directory it is run from (STATE_DIR in
+# skills/simulation/parallax/runtime/src/tools/state.ts), so an agent running
+# `parallax status` anywhere in the repo drops them beside itself.
+#
+# `.parallax/` is a name only this runtime uses, so it is safe unscoped. `*.db`
+# is NOT: bare, it reaches every one of the 93 skills, and `git check-ignore`
+# confirms it swallows e.g. skills/commerce/d1-cli/references/*.db. Nothing is
+# tracked with that extension today, so this ignored nothing and would instead
+# have silently eaten a future fixture belonging to a skill with no connection to
+# Parallax. Scoped to where the writer actually is.
+.parallax/
+skills/simulation/parallax/runtime/*.db
+skills/simulation/parallax/runtime/*.db-*
