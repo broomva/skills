@@ -180,6 +180,31 @@ def test_prose_about_errors_is_not_a_termination():
         "clean_or_unknown"
 
 
+def test_prose_quoting_a_rendered_error_is_not_a_termination():
+    """REGRESSION: pins the START anchor, not merely the absence of keywords.
+
+    The previous prose fixture said "API 529/500", which never matches the
+    rendered prefix "API Error:" — so it passed even with the anchor loosened
+    from .match to .search. A mutation proved it vacuous. This fixture quotes
+    the rendered string verbatim mid-paragraph, exactly as this skill's own
+    documentation does, so only a start-anchored matcher passes.
+    """
+    prose = (
+        "The dominant cause is an interrupted request. A transcript line reading "
+        "`API Error: 529 Overloaded` immediately before a resume turn is the "
+        "signature we counted 44 times."
+    )
+    assert rs.find_termination([assistant({"type": "text", "text": prose})])["kind"] == \
+        "clean_or_unknown"
+
+
+def test_digest_bound_holds_for_one_oversized_block(tmp_path):
+    """The cap must survive a SINGLE block larger than the budget."""
+    f = tmp_path / "one.output"
+    f.write_text(json.dumps(assistant({"type": "text", "text": "Z" * 9000})), encoding="utf-8")
+    assert len(rs.digest_output(str(f), max_chars=250)["final_text"]) == 250
+
+
 def test_tool_result_mentioning_an_error_is_not_a_termination():
     """A tool result carrying error text is data, not this session dying."""
     recs = [user({"type": "tool_result", "tool_use_id": "t1",

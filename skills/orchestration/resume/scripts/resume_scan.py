@@ -345,11 +345,12 @@ def digest_output(path: str, max_chars: int = 1200, tail_records: int = 400) -> 
                 if fp:
                     files.add(str(fp))
 
+    # Accumulate newest-first, then enforce the cap in ONE place (the return).
+    # An earlier version also truncated here; that made the cap unfalsifiable —
+    # a mutation deleting the return slice survived the whole suite.
     final = ""
     for t in reversed(texts):
-        if len(final) + len(t) > max_chars:
-            if not final:
-                final = t[:max_chars]
+        if final and len(final) + len(t) + 2 > max_chars:
             break
         final = (t + "\n\n" + final) if final else t
 
