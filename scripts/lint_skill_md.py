@@ -101,6 +101,29 @@ _NoDuplicateKeys.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique)
 
 
+#: Directory names that never hold a skill THIS repository ships.
+#: `extensions/` is skill-private. The rest are vendored or tooling trees:
+#: `.venv/lib/*/site-packages/` now contains third-party `SKILL.md` files,
+#: because shipping agent skills inside a PyPI package is a real and growing
+#: convention — logfire, typer and fastapi all do it today.
+_PRUNED_DIRS = frozenset({"extensions", "node_modules", "site-packages", "venv"})
+
+
+def _prune(subdirs: list[str]) -> None:
+    """Drop excluded directories from an `os.walk` subdir list, IN PLACE.
+
+    Pruning rather than skipping-on-arrival matters: `os.walk` has to LIST a
+    directory to reach it, so an unreadable excluded tree would otherwise fire
+    `onerror` and produce a finding about a subtree this linter has opted out
+    of. Dot-directories go too — `.venv`, `.tox`, `.git` — and no tracked
+    SKILL.md in this repository lives under one, so nothing real is hidden.
+    """
+    subdirs[:] = [
+        d for d in subdirs
+        if not d.startswith(".") and d not in _PRUNED_DIRS
+    ]
+
+
 def _read_bytes(path: Path) -> tuple[bytes | None, str | None]:
     """`(raw, reason_it_could_not_be_read)`.
 
@@ -204,10 +227,9 @@ def _holds_a_manifest(link: Path) -> bool:
     for _root, subdirs, files in os.walk(link, followlinks=False,
                                          onerror=_cannot_tell):
         # Same exclusion as `discover`, or a linked tree holding ONLY an
-        # `extensions/` manifest — which this linter does not check — would be
+        # excluded manifest — which this linter does not check — would be
         # reported as a skill it declined to enter.
-        if "extensions" in subdirs:
-            subdirs.remove("extensions")
+        _prune(subdirs)
         if "SKILL.md" in files:
             return True
     # Fail CLOSED: if we could not read part of it, say yes so the link is
@@ -251,8 +273,7 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
         # never happens, which made that check unreachable — a mutation sweep
         # found it unkillable, which is what redundant code looks like from
         # outside, so it is gone rather than pinned.
-        if "extensions" in subdirs:
-            subdirs.remove("extensions")
+        _prune(subdirs)
         # A symlinked DIRECTORY is not entered — `followlinks=True` invites a
         # loop — but silently not entering one is the same omission this file
         # exists to remove. The old gate missed these too, so this is not a
