@@ -1659,6 +1659,38 @@ class TestEvidenceDigestsBindToAnArtifact:
         errors = lr.validate_manifest(data, repo_root=tmp_path)
         assert any(expect in e for e in errors), errors
 
+    def test_a_locator_escaping_the_root_is_a_finding(self, tmp_path, valid_manifest, lr):
+        """The escape guard needs a target that EXISTS outside the root. The
+        `../no-such-file` case never reaches it — `resolve(strict=True)` fails
+        first — so the guard, the security-relevant branch here, was covered by
+        a test that could not exercise it. A mutation sweep found that; the
+        suite could not."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        outside = tmp_path / "outside.tsx"
+        outside.write_bytes(b"secrets\n")
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("../outside.tsx",
+                           hashlib.sha256(b"secrets\n").hexdigest()))
+        errors = lr.validate_manifest(data, repo_root=root)
+        assert any("escapes the repository root" in e for e in errors), errors
+
+    def test_a_symlink_escaping_the_root_is_a_finding(self, tmp_path, valid_manifest, lr):
+        """The same escape by a different route: an in-repo path whose target is
+        outside. `resolve()` follows it, so only the containment check catches
+        this one."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        outside = tmp_path / "outside.tsx"
+        outside.write_bytes(b"secrets\n")
+        (root / "link.tsx").symlink_to(outside)
+        data = _with_repo_evidence(
+            valid_manifest,
+            _repo_evidence("link.tsx", hashlib.sha256(b"secrets\n").hexdigest()))
+        errors = lr.validate_manifest(data, repo_root=root)
+        assert any("escapes the repository root" in e for e in errors), errors
+
     def test_a_directory_locator_is_a_finding(self, tmp_path, valid_manifest, lr):
         (tmp_path / "src").mkdir()
         data = _with_repo_evidence(valid_manifest, _repo_evidence("src", "a" * 64))
