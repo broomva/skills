@@ -956,7 +956,7 @@ def test_live_window_bound_is_90(tmp_path):
     assert rs.scan(p, live_window_s=600)["unreported"][0]["liveness"] == "possibly-live"
 
 
-# ------------------------------------------------ printed-output redaction
+# ------------------------------- redaction of every printed worker field
 
 def test_secrets_are_masked_in_command_and_prompt(tmp_path):
     """SKILL.md guaranteed the scan masks secrets in EVERYTHING it prints. It
@@ -974,7 +974,7 @@ def test_secrets_are_masked_in_command_and_prompt(tmp_path):
     res = rs.scan(write_session(tmp_path, recs))
     assert tok not in rs.render(res)
     assert tok not in json.dumps(res)
-    assert any(w.get("redacted_fields") for w in res["unreported"])
+    assert any(w.get("redacted_kinds") for w in res["unreported"])
 
 
 # ------------------------------------------------------------- workflows
@@ -1007,13 +1007,22 @@ def test_workflow_dir_prefers_a_transcript_over_the_ledger(tmp_path):
     'recovery: NONE' while the agent transcripts sat beside it."""
     wf = tmp_path / "wf"
     wf.mkdir()
-    (wf / "agent-aOLD.jsonl").write_text(
-        json.dumps(assistant({"type": "text", "text": "REAL WORKER OUTPUT"})), encoding="utf-8")
+    old = wf / "agent-aOLD.jsonl"
+    new = wf / "agent-aNEW.jsonl"
+    old.write_text(json.dumps(assistant({"type": "text", "text": "STALE"})), encoding="utf-8")
+    new.write_text(json.dumps(assistant({"type": "text", "text": "LATEST"})), encoding="utf-8")
     journal = wf / "journal.jsonl"
     journal.write_text(json.dumps({"type": "started"}), encoding="utf-8")
-    os.utime(wf / "agent-aOLD.jsonl", (1, 1))          # transcript is OLDER
-    os.utime(journal, (10**9, 10**9))                  # ledger is NEWEST
-    assert os.path.basename(rs._newest_in_dir(str(wf))) == "agent-aOLD.jsonl"
+    os.utime(old, (1, 1))
+    os.utime(new, (10**8, 10**8))
+    os.utime(journal, (10**9, 10**9))                  # ledger is NEWEST of all
+    picked = rs._newest_in_dir(str(wf))
+    # ledger loses to a transcript...
+    assert os.path.basename(picked) != "journal.jsonl"
+    # ...and among transcripts the NEWEST wins. Every real workflow dir holds
+    # >=2 agent files (median 6, max 136), and a single-file fixture left
+    # min-vs-max untested while changing the recovered text in 160 of 161.
+    assert os.path.basename(picked) == "agent-aNEW.jsonl"
 
 
 def test_failed_workflow_recovers_from_its_directory(tmp_path):
@@ -1049,6 +1058,21 @@ def test_background_flag_beats_a_workflow_receipt_echo():
     sp = rs.find_spawns(recs)
     assert sp[0]["kind"] == "background-shell"
     assert sp[0]["worker_id"] == "bgR"
+
+
+def test_agent_result_carrying_a_bg_line_stays_an_agent():
+    """The negative half. Without it, deleting the `kind == background-shell`
+    guard leaves the suite green — the guard written for claim 7 was
+    unverified by the test written for claim 7."""
+    recs = [assistant(spawn_block("t1", "probe")),
+            user({"type": "tool_result", "tool_use_id": "t1", "content":
+                  "Async agent launched successfully.\n"
+                  "agentId: aReal\noutput_file: /tmp/a.output\n"
+                  "Command running in background with ID: bgNOISE"})]
+    sp = rs.find_spawns(recs)
+    assert len(sp) == 1
+    assert sp[0]["kind"] == "agent"
+    assert sp[0]["worker_id"] == "aReal"
 
 
 def test_workflow_liveness_is_unknown_not_dead(tmp_path):

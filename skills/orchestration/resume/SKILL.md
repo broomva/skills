@@ -148,7 +148,7 @@ before building on it.
 |---|---|
 | Digest shows the work **finished**, only the report was lost | Fold it into the arc. **Do not re-spawn.** |
 | Digest shows **partial** progress | Re-spawn scoped to *the remainder*, handing over what its predecessor established. |
-| No digest — died early, or nothing survived | Re-spawn from the original prompt. The text render shows the first 4,000 chars and says `TRUNCATED` when it cuts; **`--json` carries the prompt whole** — re-spawn from that, not from the render. |
+| No digest — died early, or nothing survived | Re-spawn from the original prompt. The text render shows the first 4,000 chars and says `TRUNCATED` when it cuts; **`--json` carries the prompt whole** — re-spawn from that, not from the render. If a secret shape was masked, `redacted_kinds` is set and the placeholder is what you get: restore the real value from your own environment before re-spawning. |
 | **REPORTED FAILURE** | It came back, and came back broken. Read its summary; a failed worker is not a finished one. |
 | `liveness: possibly-live` | **A separate process that wrote after the session died.** Check before re-running: re-running a live deploy or migration is worse than waiting. |
 | `liveness: unknown-no-output-file` | Liveness cannot be determined. Verify before re-running anything with side effects. |
@@ -208,10 +208,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
 python3 scripts/resume_corpus_stats.py          # regenerates the table above
 ```
 
-139 unit tests. Coverage is deliberately weighted toward the paths a green
+140 unit tests. Coverage is deliberately weighted toward the paths a green
 suite hid: notification records in all three shapes, background-shell
 detection, liveness in both polarities, failed/killed completions, non-dict
-JSON lines (raw stdout is valid JSON per line and crashed the digest), truncated
+JSON lines (a bare number in raw stdout happens to parse as JSON, and crashed
+the digest), truncated
 tails, zero-record files, directories and FIFOs, and secret redaction.
 
 Both false-positive classes in termination detection are pinned by regression

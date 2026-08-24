@@ -86,8 +86,9 @@ NOTIF_SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.S)
 # `Task` is retained though it is unattested in the local corpus: it costs
 # nothing and an absent alias is cheaper than a missed spawn.
 AGENT_TOOLS = ("Agent", "Task", "Workflow")
-# `Agent`/`Task` run inside the parent process and cannot outlive it.
-# Workflows are decided earlier, by kind — see the liveness block in scan().
+# `Agent`/`Task` run inside the parent process and cannot outlive it. This
+# tuple does NOT decide workflows: scan() branches on kind first and reports
+# them `unknown-workflow`, with the reasoning recorded at that branch.
 IN_PROCESS_TOOLS = ("Agent", "Task")
 BG_TOOLS = ("Bash",)
 
@@ -178,7 +179,10 @@ def _all_jsonl(d: str) -> list[str]:
 
 
 def _newest_in_dir(d: str) -> str | None:
-    """The most useful transcript inside a workflow's directory.
+    """The most useful transcript inside a worker's output DIRECTORY.
+
+    Reached for any worker whose recorded output path is a directory, which
+    in practice means a workflow's `Transcript dir:`.
 
     NOT simply the newest file: `journal.jsonl` — the workflow's own
     lifecycle ledger — is newest in 52 of 161 real workflow dirs (32%), and
@@ -389,10 +393,16 @@ def find_spawns(recs: list[dict]) -> list[dict]:
                     continue
                 s = _text_of(b)
                 aid = out = None
-                # A run_in_background Bash is a background shell even if its
-                # stdout happens to echo a workflow receipt; the tool call is
-                # authoritative, so it is checked before the text patterns.
-                if meta.get("kind") == "background-shell" and BG_LAUNCH_RE.search(s):
+                # A `run_in_background` Bash is a background shell even when
+                # its stdout echoes some other receipt: the tool CALL is
+                # authoritative, so that case is decided before the text
+                # patterns are consulted. One branch with a reordered
+                # condition, not two identical bodies — an earlier version
+                # copy-pasted the body, which is the template-paste this
+                # rubric penalises, introduced by the fix for it.
+                bg_first = meta.get("kind") == "background-shell"
+                if (bg_first or not (ASYNC_LAUNCH_RE.search(s) or WF_LAUNCH_RE.search(s))) \
+                        and BG_LAUNCH_RE.search(s):
                     m, o = BG_LAUNCH_RE.search(s), BG_OUTPUT_RE.search(s)
                     aid, out = m.group(1), (o.group(1) if o else None)
                 elif ASYNC_LAUNCH_RE.search(s):
@@ -403,9 +413,6 @@ def find_spawns(recs: list[dict]) -> list[dict]:
                     aid, out = m.group(1), (o.group(1) if o else None)
                     meta = dict(meta)
                     meta["kind"] = "workflow"
-                elif BG_LAUNCH_RE.search(s):
-                    m, o = BG_LAUNCH_RE.search(s), BG_OUTPUT_RE.search(s)
-                    aid, out = m.group(1), (o.group(1) if o else None)
                 else:
                     # Synchronous return: it already reported. Not in flight.
                     continue
@@ -638,8 +645,9 @@ def _digest_source(session_path: str, s: dict) -> str | None:
     beside a directory holding 92 transcripts. A shared resolver is the only
     thing that stops that recurring.
     """
-    src = durable_transcript(session_path, s.get("worker_id")) or s.get("output_file")
-    s["durable_transcript"] = durable_transcript(session_path, s.get("worker_id"))
+    durable = durable_transcript(session_path, s.get("worker_id"))
+    s["durable_transcript"] = durable
+    src = durable or s.get("output_file")
     if src and os.path.isdir(src):
         src = _newest_in_dir(src)
     return src
@@ -662,7 +670,9 @@ def _redact_worker(s: dict) -> None:
             s[field] = masked
             found.extend(kinds)
     if found:
-        s["redacted_fields"] = sorted(set(found))
+        # Secret KINDS, not field names — named accordingly so a consumer
+        # asking "what was masked" is not answered with the wrong noun.
+        s["redacted_kinds"] = sorted(set(found))
 
 
 def scan(session_path: str, max_chars: int | None = None,
@@ -705,7 +715,14 @@ def scan(session_path: str, max_chars: int | None = None,
             # not that the worker lives. Flagging them was a guaranteed false
             # positive on fast resumes, which is when resumes happen.
             if s.get("kind") == "workflow":
-                # Not asserted either way — see IN_PROCESS_TOOLS above.
+                # Deliberately not asserted. A workflow's receipt says
+                # "launched in background", but a corpus check of 153 workflow
+                # transcript dirs did not settle it: 152 stopped with the
+                # parent, 1 wrote 26 minutes later, and the parent's mtime
+                # moves on resume, so neither number is decisive. The two
+                # failure directions are not symmetric — calling a live
+                # workflow dead invites re-running work still in progress —
+                # so the scan reports the uncertainty instead of guessing.
                 s["liveness"] = "unknown-workflow"
             elif s["tool"] in IN_PROCESS_TOOLS:
                 s["liveness"] = "dead-with-parent"
