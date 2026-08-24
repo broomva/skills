@@ -29,142 +29,171 @@ description: |
 
 ## Why this skill exists
 
-Measured over **4,002 session transcripts**, 98 `resume`-class prompts (65 of
-them a bare `resume`):
+Regenerate every figure below with `scripts/resume_corpus_stats.py`. Nothing
+here is from recall, and the generator ships with the skill — a number stated
+in prose and a number produced by a sweep render identically, so the claim is
+worth exactly as much as the script that reproduces it.
 
-| | |
-|---|---|
-| Preceded by an explicit API error | 44 |
-| Preceded by a user interrupt | 7 |
-| Had a subagent or workflow **in flight** when the session died | 26 |
-| Re-spawned an agent/workflow after the resume | 18 |
-| Queried the tasks that were already running | **2** |
-| Produced **no tool calls at all** — text-only wrap-up | **38** |
-| Acknowledged an agent death **and did not restore it** | **14** (vs 8 restored) |
-| `resume` typed **again** within 40 records — the resume didn't take | **20 (20%)** |
+Over **3,869 transcripts**, **91** resume-class turns (**59** of them a bare
+`resume`, across 10 distinct surface forms):
+
+| | | |
+|---|---|---|
+| Preceded by an API error | 48 | 53% |
+| Preceded by a user interrupt | 7 | 8% |
+| Had a worker **in flight** when the session died | 22 | 24% |
+| Re-spawned a worker afterwards | 15 | 16% |
+| **Queried the workers that were already running** | **2** | **2%** |
+| **Produced no tool calls at all** — a text-only wrap-up | **37** | **41%** |
+| Acknowledged a death **and did not restore it** | 9 | vs 6 restored |
+| `resume` typed **again** — the first one didn't take | 16 | 18% |
 
 The dominant failure is not that the agent forgets what it was doing. It is
-that it treats `resume` as *"deliver what survived"*. Transcripts say it in
-the agent's own words — **"three follow-on sub-agents died on the session
-limit; I'll note the gap"** — while those agents' complete transcripts were
-sitting on disk, unread.
+that it treats `resume` as *"deliver what survived"*. Transcripts say it in the
+agent's own words — **"three follow-on sub-agents died on the session limit;
+I'll note the gap"** — while those agents' complete transcripts sat on disk,
+unread.
 
-Regenerate every number above with `scripts/resume_scan.py` over the corpus;
-none of them are from recall.
+## The mechanisms you will otherwise get wrong
 
-## The mechanism you will otherwise get wrong
+**1. A dead agent leaves no orphaned tool call.** The intuitive detector —
+a `tool_use` with no `tool_result` — finds nothing. Measured **zero** orphans
+in a session that demonstrably lost eight agents. Workers launch
+**asynchronously**: the spawn's result is *always* `Async agent launched
+successfully` (it attests to *launching*), and completion arrives later as a
+separate `<task-notification>`. **A spawn whose id never appears in a
+completion is what died.**
 
-The intuitive detector — *a dead agent leaves a `tool_use` with no
-`tool_result`* — is **false**. Measured **zero** orphans in a session that
-demonstrably lost eight agents. Subagents launch **asynchronously**:
+**2. Completion notices arrive in more than one record shape.** They appear on
+`queue-operation`, `attachment` and `user` records — in one production session
+23 / 7 / 7. Reading only the `user` shape missed **37%** of completions and
+reported finished agents as dead.
 
-1. The spawn's `tool_result` is *always* `Async agent launched successfully`.
-   It means **launched**, never **finished**. It carries `agentId:` and
-   `output_file: <session-dir>/tasks/<id>.output`.
-2. Completion arrives **later**, as a separate `<task-notification>` record
-   carrying `<task-id>` and `<status>`.
-3. **A spawn whose id never appears in a completion notification is the thing
-   that died.** That is the only correct detector.
-4. **The dead agent's full transcript survives on disk.** Its partial work is
-   *recoverable* — re-spawning blind throws away work that already exists.
-5. Those files reach **1.3 MB**. Never `cat`, `Read`, or `tail` one: the
-   harness warns it will overflow your context. `resume_scan.py` digests them
-   under a hard character budget instead.
+**3. The obvious output path is the one the crash deletes.** The launch
+receipt's `output_file:` points into `/private/tmp/...`, wiped by exactly the
+reboot this skill is about — **92%** of unreported spawns had no file there.
+The harness also writes a durable copy at
+`<project>/<session-id>/subagents/agent-<id>.jsonl`. The scan prefers it.
+
+**4. Only a background shell can outlive the parent.** `Agent`/`Task`/
+`Workflow` run in-process and die with it; a `run_in_background` shell is a
+separate OS process. Liveness is therefore a property of the **spawn kind**
+first and the file's mtime second.
+
+**5. Recovered transcripts reach ~1.5 MB** and contain credentials.
+See *Privacy* below. Never `cat`, `Read` or `tail` one.
 
 ## Procedure
 
 ### 1. Scan before you say anything
 
-The script lives beside this file, not in your working directory. Use the
-skill's base directory (the harness prints it when the skill loads):
+The script lives beside this file, not in your working directory:
 
 ```bash
 SKILL_DIR=~/.claude/skills/resume        # or the base directory printed above
 
 python3 "$SKILL_DIR/scripts/resume_scan.py"                    # newest session for cwd
-python3 "$SKILL_DIR/scripts/resume_scan.py" --json             # machine-readable
+python3 "$SKILL_DIR/scripts/resume_scan.py" --previous         # the session BEFORE it
+python3 "$SKILL_DIR/scripts/resume_scan.py" --list-sessions    # choose explicitly
 python3 "$SKILL_DIR/scripts/resume_scan.py" --session <path.jsonl>
 ```
 
-A bare `python3 scripts/resume_scan.py` resolves against your CWD and fails —
-measured on first use, which is why the path is spelled out here.
-
-It reports the termination cause, every async spawn, which ones never
-reported, and a bounded digest of what each dead agent had achieved —
-its last words, the files it touched, its tool tally, and the original
-prompt so it can be re-spawned verbatim.
+**If the crash dropped you into a FRESH session, the newest transcript is the
+one you are sitting in — not the one that died.** The scan says so when it
+sees no workers and other sessions exist; `--previous` is then the answer.
+This was a real defect: auto-selection returned the live, near-empty session
+and reported "nothing died mid-flight".
 
 ### 2. Check the surface that killed you is actually back
 
-The scan names the cause. Clear it *before* re-spawning, or you will re-die
-and the operator will type `resume` a second time — which happened in **20%**
-of the measured cases.
+Clear it *before* re-spawning, or you will re-die and the operator will type
+`resume` again — which happened in **18%** of measured cases.
 
 | Cause | Clear it with |
 |---|---|
 | `auth_expired` | `/login`; check `gh auth status`, `railway whoami` |
-| `network` | one cheap real call, not an assumption |
 | `usage_limit` | note the reset time; do not fan out into the ceiling |
+| `rate_limited` | back off; one call before many |
 | `api_overload` / `api_5xx` | retry one call before spawning ten |
+| `network` | one cheap real call, not an assumption |
+| `user_interrupt` | ask what the operator wanted changed before continuing |
+| `api_error_unclassified` | an error the scan does not recognise — **read the evidence line**; do not treat it as clean |
+| `clean_or_unknown` | no termination evidence in the window; the session may have ended normally, or the record may be gone |
 
 ### 3. Re-snapshot the tree (P15) — an edit may have died half-written
 
-A subagent that died *during* an edit leaves a partial file. `git status`,
-`git diff`, the branch, ahead/behind, open PRs, CI state. Confirm the tree is
-coherent before building on it.
+A worker that died *during* an edit leaves a partial file. `git status`,
+`git diff`, branch, ahead/behind, open PRs, CI. Confirm the tree is coherent
+before building on it.
 
-### 4. Triage each unreported agent — three outcomes, not one
+### 4. Triage each worker — three outcomes, not one
 
 | Finding | Action |
 |---|---|
-| Digest shows the work **finished**, only the report was lost | Fold its result into the arc. **Do not re-spawn.** |
-| Digest shows **partial** progress | Re-spawn scoped to *the remainder*, handing it what its predecessor established. |
-| No digest — died early or output gone | Re-spawn from the original prompt, which the scan prints. |
-| Marked `POSSIBLY STILL RUNNING` | **Check before acting.** In-process subagents die with the parent; a `run_in_background` shell is a separate process and may still be alive. Re-running a live deploy or migration is worse than waiting. |
+| Digest shows the work **finished**, only the report was lost | Fold it into the arc. **Do not re-spawn.** |
+| Digest shows **partial** progress | Re-spawn scoped to *the remainder*, handing over what its predecessor established. |
+| No digest — died early, or nothing survived | Re-spawn from the original prompt, which the scan prints complete. |
+| **REPORTED FAILURE** | It came back, and came back broken. Read its summary; a failed worker is not a finished one. |
+| `liveness: possibly-live` | **A separate process that wrote after the session died.** Check before re-running: re-running a live deploy or migration is worse than waiting. |
+| `liveness: unknown-no-output-file` | Liveness cannot be determined. Verify before re-running anything with side effects. |
 
 ### 5. Continue the arc
 
-Pick up the plan where it stopped. If a `/loop`, `/autonomous`, or workflow
-was driving, **restart the driver** — the arc is not over because its engine
-was killed.
+Pick up where the plan stopped. If a `/loop`, `/autonomous` or workflow was
+driving, **restart the driver** — the arc is not over because its engine died.
 
 ### 6. Report restoration, not conclusion
 
-State what died, what was recovered from disk, what was re-spawned, and what
-you are now doing. One short paragraph.
+What died, what was recovered from disk, what was re-spawned, what you are
+doing now. One short paragraph.
+
+## Privacy — read before pasting any of this anywhere
+
+Recovered text is other sessions' output. On the machine this was written on,
+**22 of 671** surviving worker files contained secret-shaped strings
+(`sk-ant-`, `ghp_`, `github_pat_`, `AKIA…`, `xoxb-`).
+
+The scan masks those patterns in everything it prints and names what it
+masked. **This is a blunt instrument and does not make the output safe to
+publish**: it matches shapes, not secrets, so an unusual credential format,
+customer data, or private source passes straight through. Treat scan output as
+sensitive, keep it in the session, and do not paste it into a PR, an issue, or
+a chat channel without reading it first.
 
 ## Anti-rationalization
 
 | Excuse | Reality |
 |---|---|
-| "I'll summarize where things stand." | That is the measured failure — 38/98 produced no tool calls at all. `resume` asks you to *act*, not to narrate. |
-| "The agents are gone, I'll note the gap." | Their transcripts are on disk. "Noting the gap" discards recoverable work; this is the single most common loss. |
-| "I'll just re-spawn everything to be safe." | Two of three outcomes are *not* re-spawn. Blind re-spawning wastes the finished work and can double-execute a live background process. |
-| "The user typed one word, so they want something small." | They typed one word because they expect the arc to be intact. Scope is the arc, not the word. |
-| "CI was green when it died, so it's done." | The session died; the last thing you *observed* is not the last thing that *happened*. Re-check. |
-| "It's cleaner to start the arc over." | Restoration preserves committed work, open PRs, and ticket state. Restarting silently discards them. |
+| "I'll summarize where things stand." | That is the measured failure — 41% produced no tool calls at all. `resume` asks you to *act*. |
+| "The workers are gone, I'll note the gap." | Their transcripts are on disk, and the durable copy survives the crash. "Noting the gap" discards recoverable work. |
+| "I'll re-spawn everything to be safe." | Two of three outcomes are *not* re-spawn, and a live background process can be re-run into a double deploy. |
+| "The scan says nothing died." | Check WHICH session it read. If you are in a fresh one, use `--previous`. |
+| "It reported, so it's fine." | A worker can report **failed** or **killed**. Reported ≠ succeeded. |
+| "The user typed one word, so they want something small." | They typed one word because they expect the arc intact. Scope is the arc. |
+| "CI was green when it died, so it's done." | The last thing you *observed* is not the last thing that *happened*. |
 
 ## Composition
 
-- **P15 Snapshot** — step 3 is the standard snapshot, not a lighter version.
+- **P15 Snapshot** — step 3 is the standard snapshot, not a lighter one.
 - **P9 Wait** — a watcher killed with the session is not watching; restart it.
-- **P5 Fanout** — re-spawned agents follow the same worktree isolation rules.
+- **P5 Fanout** — re-spawned workers follow the same worktree isolation rules.
 - **`handoff`** — if the arc genuinely cannot continue, *then* write a handoff.
-- **`handback`** — if the block needs a human decision, `resume` ends in a
-  handback ask, never in a silent stop.
+- **`handback`** — if the block needs a human, end in an ask, never a silent stop.
 
 ## Validation
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q
+python3 scripts/resume_corpus_stats.py          # regenerates the table above
 ```
 
-36 unit tests covering session location (including the worktree fallback where
-the mangled path does not exist), async-spawn parsing, spawn↔completion
-matching by both agent id and tool-use id, termination classification in both
-polarities, and the digest's hard bound.
+102 unit tests. Coverage is deliberately weighted toward the paths a green
+suite hid: notification records in all three shapes, background-shell
+detection, liveness in both polarities, failed/killed completions, non-dict
+JSON lines (raw stdout crashed the digest on 11% of real files), truncated
+tails, zero-record files, directories and FIFOs, and secret redaction.
 
-Two false-positive classes are pinned by regression tests, both measured
-rather than imagined: a tool result **echoing** error text, and prose
-**discussing** past failures. Detection is anchored on how the harness
-*renders* a failure, not on the presence of an error word.
+Both false-positive classes in termination detection are pinned by regression
+tests, and the signatures are copied from strings the harness actually emits —
+an earlier set was written to satisfy the regex and matched almost nothing in
+production.
