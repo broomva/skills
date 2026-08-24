@@ -229,16 +229,16 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
 
     for root, subdirs, files in os.walk(skills_dir, followlinks=False, onerror=_record):
         rel = Path(root).relative_to(skills_dir)
-        # Prune from the PARENT's subdirs, before descent. Pruning only once
-        # already inside `extensions/` was too late: `os.walk` had to LIST the
-        # directory to get here, so an unreadable `extensions/` fired `onerror`
-        # and produced a finding about a subtree this linter has deliberately
-        # opted out of — a false red on an exclusion.
+        # Prune from the PARENT's subdirs, before descent. Checking
+        # `"extensions" in rel.parts` once already INSIDE the directory was too
+        # late: `os.walk` had to LIST it to get there, so an unreadable
+        # `extensions/` fired `onerror` and produced a finding about a subtree
+        # this linter has deliberately opted out of. Pruning here means descent
+        # never happens, which made that check unreachable — a mutation sweep
+        # found it unkillable, which is what redundant code looks like from
+        # outside, so it is gone rather than pinned.
         if "extensions" in subdirs:
             subdirs.remove("extensions")
-        if "extensions" in rel.parts:
-            subdirs[:] = []
-            continue
         # A symlinked DIRECTORY is not entered — `followlinks=True` invites a
         # loop — but silently not entering one is the same omission this file
         # exists to remove. The old gate missed these too, so this is not a
