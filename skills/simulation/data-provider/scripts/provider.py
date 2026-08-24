@@ -49,6 +49,7 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -90,6 +91,14 @@ class ProviderError(Exception):
 # ---------------------------------------------------------------------------
 
 
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# The characters the Parallax `--table` grammar uses as delimiters. A name
+# containing one of them does not produce a bad column, it produces EXTRA
+# columns -- `name` = "a,b:number:observed" injects a whole second typed column
+# with a provenance nobody asserted. Refused at the boundary, not escaped.
+_RESERVED = (",", ":", "#")
+
+
 @dataclass(frozen=True)
 class Evidence:
     """The artifact a value was read from.
@@ -97,12 +106,31 @@ class Evidence:
     `sha256` is over the bytes actually read, not over the URL. A citation
     without it decays silently: the page changes, the reference still resolves,
     and nothing anywhere reports that the sentence it supported is gone.
+
+    The digest is shape-checked on construction, because the failure it prevents
+    is not a typo: a review found `sha256="aaaa"` sailing through as `observed`,
+    which is a citation that cannot be checked wearing the word that means it was.
     """
 
     url: str
     sha256: str
     retrieved_at: str
     snapshot: str  # path, relative to the run directory
+
+    def __post_init__(self) -> None:
+        if not self.url or not self.url.strip():
+            raise ProviderError("EVIDENCE_INCOMPLETE", "evidence needs the url it was read from")
+        if not _SHA256.match(self.sha256 or ""):
+            raise ProviderError(
+                "EVIDENCE_INCOMPLETE",
+                f"evidence sha256 must be 64 hex characters, got {self.sha256!r}",
+                sha256=self.sha256,
+            )
+        if not self.snapshot or not self.snapshot.strip():
+            raise ProviderError(
+                "EVIDENCE_INCOMPLETE",
+                "evidence needs the snapshot path of what was actually read",
+            )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -155,6 +183,15 @@ def make_field(
     """
     if not name or not name.strip():
         raise ProviderError("FIELD_NAME_REQUIRED", "a field needs a name")
+    bad = [c for c in _RESERVED if c in name]
+    if bad:
+        raise ProviderError(
+            "RESERVED_CHARACTER",
+            f"field {name!r} contains {bad!r}, which the --table grammar uses as a delimiter; "
+            "a name carrying one injects extra columns rather than producing a bad one",
+            field=name,
+            characters=bad,
+        )
     if evidence is not None and inferred_from is not None:
         raise ProviderError(
             "AMBIGUOUS_ORIGIN",
@@ -202,8 +239,14 @@ def judge_columns(records: Iterable[Record]) -> dict[str, Origin]:
 
     out: dict[str, Origin] = {}
     for n in names:
-        seen = [f for r in rows for f in r.fields if f.name == n]
-        complete = len(seen) == len(rows)
+        # EXACTLY ONE occurrence in every record, not `len(seen) == len(rows)`.
+        # The count was equal in a case it should not have been: two duplicate
+        # fields in one record and none in a second gives 2 == 2, so a column
+        # ABSENT from half the data reported as fully observed. Counting per
+        # record removes the coincidence.
+        per_record = [[f for f in r.fields if f.name == n] for r in rows]
+        complete = all(len(fs) == 1 for fs in per_record)
+        seen = [f for fs in per_record for f in fs]
         out[n] = "observed" if complete and all(f.origin == "observed" for f in seen) else "simulated"
     return out
 
@@ -239,6 +282,34 @@ def _looks_like_date(s: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def verify_records(root: Path, run_id: str, records: Iterable[Record]) -> None:
+    """Every `observed` field must have an artifact that is THERE and still hashes.
+
+    This is the check whose absence made R1 decorative. `make_field` asked for an
+    Evidence object and believed it; nothing opened the snapshot or compared the
+    digest, so a citation pointing at a file that was never written -- or at one
+    whose contents had since changed -- was indistinguishable from a citation
+    that held. The word `observed` was doing work no code backed.
+
+    Raises rather than downgrading to `simulated`. Silently reclassifying would
+    hide a broken pipeline behind a plausible-looking table, and the caller who
+    believes their evidence is intact deserves to be told it is not.
+    """
+    broken: list[str] = []
+    for r in records:
+        for f in r.fields:
+            if f.evidence is None:
+                continue
+            if not verify_snapshot(root, run_id, f.evidence):
+                broken.append(f"{f.name} ({f.evidence.url})")
+    if broken:
+        raise ProviderError(
+            "EVIDENCE_UNVERIFIED",
+            f"{len(broken)} observed field(s) cite an artifact that is missing or no longer hashes to its digest",
+            fields=broken,
+        )
+
+
 def emit_table_arg(table: str, records: list[Record]) -> str:
     """Build the `--table` value Parallax's CLI grammar expects.
 
@@ -249,6 +320,14 @@ def emit_table_arg(table: str, records: list[Record]) -> str:
     """
     if not table or not table.strip():
         raise ProviderError("TABLE_NAME_REQUIRED", "a table needs a name")
+    bad = [c for c in _RESERVED if c in table]
+    if bad:
+        raise ProviderError(
+            "RESERVED_CHARACTER",
+            f"table {table!r} contains {bad!r}, which the --table grammar uses as a delimiter",
+            table=table,
+            characters=bad,
+        )
     if not records:
         # Legal and meaningful: a schema with no rows. It is the caller's job to
         # decide whether zero results is worth proposing at all; it is not this
@@ -287,8 +366,19 @@ def emit_table_arg(table: str, records: list[Record]) -> str:
 
 
 def emit_command(table: str, records: list[Record]) -> list[str]:
-    """The argv a caller runs. Returned as a list so nothing has to be shell-quoted."""
+    """The argv a caller runs. A list, so nothing depends on shell quoting."""
     return ["parallax", "propose", "--kind", "business-data", "--table", emit_table_arg(table, records)]
+
+
+def emit_command_line(table: str, records: list[Record]) -> str:
+    """The same thing as a line a human can paste, quoted by shlex.
+
+    Printing `" ".join(argv)` was fine only while every name was
+    shell-innocuous. It is a list first and a string second on purpose: the
+    string is a convenience, and the convenience is the part that can be made to
+    execute something else.
+    """
+    return shlex.join(emit_command(table, records))
 
 
 # ---------------------------------------------------------------------------
@@ -481,26 +571,92 @@ def verify_snapshot(root: Path, run_id: str, ev: Evidence) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _emit(args: argparse.Namespace) -> int:
-    payload = json.loads(Path(args.records).read_text(encoding="utf-8"))
+def _load_records(path: str) -> list[Record]:
+    """Parse the records file into Records, or refuse with a typed error.
+
+    Everything here used to escape as a traceback -- a missing file, malformed
+    JSON, a record that is not an object, a field whose evidence is a string.
+    The module promises that every failure is `{code, reason}` on stderr with
+    exit 2, and a stack trace is not that. A caller cannot branch on a traceback.
+    """
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ProviderError("RECORDS_UNREADABLE", f"cannot read {path}: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ProviderError(
+            "RECORDS_MALFORMED", f"{path} is not valid JSON: {exc.msg} at line {exc.lineno}"
+        ) from exc
+    if not isinstance(payload, list):
+        raise ProviderError(
+            "RECORDS_MALFORMED", f"{path} must be a LIST of records, got {type(payload).__name__}"
+        )
+
     records: list[Record] = []
-    for raw in payload:
-        fields = []
-        for name, spec in raw.items():
-            ev = None
-            if isinstance(spec, dict) and "evidence" in spec and spec["evidence"]:
-                e = spec["evidence"]
-                ev = Evidence(
-                    url=e["url"],
-                    sha256=e["sha256"],
-                    retrieved_at=e.get("retrieved_at", ""),
-                    snapshot=e.get("snapshot", ""),
+    for i, raw_record in enumerate(payload):
+        if not isinstance(raw_record, dict):
+            raise ProviderError(
+                "RECORDS_MALFORMED", f"record {i} is not an object", index=i
+            )
+        fields: list[Field] = []
+        for name, spec in raw_record.items():
+            if not isinstance(spec, dict):
+                # A bare value cannot say where it came from, and guessing on the
+                # caller's behalf is the one thing this layer must not do.
+                raise ProviderError(
+                    "UNCLASSIFIED_FIELD",
+                    f"record {i} field {name!r} is a bare value; it needs `evidence` or `inferred_from`",
+                    index=i,
+                    field=name,
                 )
-            value = spec.get("value") if isinstance(spec, dict) else spec
-            inferred = spec.get("inferred_from") if isinstance(spec, dict) else None
-            fields.append(make_field(name, value, evidence=ev, inferred_from=inferred))
+            ev_raw = spec.get("evidence")
+            evidence = None
+            if ev_raw is not None:
+                if not isinstance(ev_raw, dict):
+                    raise ProviderError(
+                        "EVIDENCE_INCOMPLETE",
+                        f"record {i} field {name!r}: evidence must be an object",
+                        index=i,
+                        field=name,
+                    )
+                missing = [k for k in ("url", "sha256", "snapshot") if not ev_raw.get(k)]
+                if missing:
+                    raise ProviderError(
+                        "EVIDENCE_INCOMPLETE",
+                        f"record {i} field {name!r}: evidence is missing {missing}",
+                        index=i,
+                        field=name,
+                        missing=missing,
+                    )
+                evidence = Evidence(
+                    url=str(ev_raw["url"]),
+                    sha256=str(ev_raw["sha256"]),
+                    retrieved_at=str(ev_raw.get("retrieved_at", "")),
+                    snapshot=str(ev_raw["snapshot"]),
+                )
+            fields.append(
+                make_field(
+                    name,
+                    spec.get("value"),
+                    evidence=evidence,
+                    inferred_from=spec.get("inferred_from"),
+                )
+            )
         records.append(Record(fields=fields))
-    print(" ".join(emit_command(args.table, records)))
+    return records
+
+
+def _emit(args: argparse.Namespace) -> int:
+    records = _load_records(args.records)
+    observed = any(f.evidence is not None for r in records for f in r.fields)
+    if observed and not args.unverified:
+        # The default is to CHECK. `--unverified` exists so that a caller who
+        # genuinely has no run directory can still emit, and it is a flag rather
+        # than a fallback so that skipping the check is a decision someone typed.
+        verify_records(Path(args.root), args.run, records)
+    print(emit_command_line(args.table, records))
     return 0
 
 
@@ -519,6 +675,13 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("emit", help="Turn judged records into a parallax propose invocation.")
     e.add_argument("--table", required=True)
     e.add_argument("--records", required=True, help="JSON file: a list of {column: {value, evidence?, inferred_from?}}")
+    e.add_argument("--run", default="", help="Run id whose evidence/ directory holds the snapshots.")
+    e.add_argument("--root", default=".", help="Directory containing .parallax/provider/<run>/.")
+    e.add_argument(
+        "--unverified",
+        action="store_true",
+        help="Emit WITHOUT opening the cited artifacts. Off by default: an unchecked citation is not evidence.",
+    )
     e.set_defaults(fn=_emit)
 
     s = sub.add_parser("status", help="Report a run. A missing run is an error, not 0%%.")

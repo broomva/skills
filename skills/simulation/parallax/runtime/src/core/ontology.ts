@@ -110,6 +110,8 @@ export type ProposeError = ParallaxError<
   | "COLUMNS_REQUIRED"
   | "INVALID_ROW_COUNT"
   | "ORIGIN_REQUIRED"
+  | "DUPLICATE_TABLE"
+  | "DUPLICATE_COLUMN"
 >;
 
 export type AcceptError = ParallaxError<
@@ -262,7 +264,13 @@ function zeroFor(type: ColumnType | undefined): unknown {
     case "date":
       return "";
     default:
-      return undefined;
+      // `null`, not `undefined`. A pending proposal is persisted with
+      // JSON.stringify, which DELETES a key whose value is undefined -- so the
+      // slot this deliberately left untyped vanished entirely on the way to
+      // disk, and every surface downstream saw a proposal that had never
+      // mentioned the column. The blocking question survived and the thing it
+      // asked about did not.
+      return null;
   }
 }
 
@@ -277,7 +285,30 @@ function proposeFromTables(
   // reach the proposer through this function, so one check covers three
   // callers; a copy in each is three chances to drift. These are core codes and
   // propagate to every surface unchanged.
+  const tableNames = new Set<string>();
   for (const t of source.tables) {
+    // Duplicates are refused rather than merged. Two columns of the same name
+    // build ONE state slot and TWO evidence lines, and the renderer shows the
+    // first -- so `company` declared observed and then simulated displays as
+    // observed, and the contradicting line is invisible. The flattering half
+    // winning by document order is the worst available outcome.
+    if (tableNames.has(t.name)) {
+      return fail("DUPLICATE_TABLE", `table ${t.name} is supplied more than once`, {
+        table: t.name,
+      });
+    }
+    tableNames.add(t.name);
+    const columnNames = new Set<string>();
+    for (const c of t.columns) {
+      if (columnNames.has(c.name)) {
+        return fail(
+          "DUPLICATE_COLUMN",
+          `table ${t.name} declares column ${c.name} more than once; one slot cannot carry two provenances`,
+          { table: t.name, column: c.name },
+        );
+      }
+      columnNames.add(c.name);
+    }
     if (t.columns.length === 0) {
       // The boundary already SAID this -- "needs at least one table with its
       // columns" -- and then only counted tables. A message describing a check
@@ -335,11 +366,16 @@ function proposeFromTables(
     for (const c of t.columns) {
       const slot = `${t.name}.${c.name}`;
       initial[slot] = zeroFor(c.type);
+      // The origin describes the COLUMN'S VALUES in the supplier's data. It does
+      // NOT describe the value sitting in `initial`, which is a placeholder this
+      // runtime manufactured and nobody read. Writing "-- observed" beside a
+      // zero it invented would be the product asserting it had read something it
+      // had not, which is the one thing it exists not to do.
       evidence.push({
         slot: `state.${slot}`,
         from: `column ${c.name} of ${t.name}${c.type ? ` (${c.type})` : ""}${
-          c.origin ? ` -- ${c.origin}` : ""
-        }`,
+          c.origin ? `; supplier reports its values ${c.origin}` : ""
+        } -- the value here is an empty placeholder, not a reading`,
       });
       if (c.type === undefined) {
         openQuestions.push({
@@ -379,10 +415,37 @@ function proposeFromTables(
   return ok({ ...proposal, id: proposalId(proposal) });
 }
 
+/**
+ * The identity of a proposal is everything the human was shown.
+ *
+ * `evidence` and `openQuestions` are in the hash, and that is not tidiness. The
+ * id is what acceptance is keyed on -- `ActiveOntology.proposalId` is "the hash
+ * of the exact proposal that was accepted" -- so anything a reader saw and
+ * weighed has to be inside it, or two documents that differ in front of them are
+ * the same document to the gate.
+ *
+ * It used to hash `{slug, initial, actions}` only, and that was harmless for
+ * exactly as long as `evidence` was derived from the same names those three were
+ * derived from. Once a column could say whether its values were OBSERVED or
+ * SIMULATED, it stopped being harmless: two proposals identical but for that one
+ * word produced the same id, so a human accepting "we read this" also accepted
+ * "we guessed this". That is the failure this product exists to refuse, arriving
+ * through the door of its own identity function.
+ *
+ * The rule this encodes: widening what a proposal MEANS requires widening what
+ * identifies it, in the same change.
+ */
 function proposalId(p: Omit<OntologyProposal, "id">): string {
   // Imported lazily to keep this module readable; hash.ts owns canonicalisation.
   const { h } = require("./hash") as typeof import("./hash");
-  return h({ slug: p.slug, initial: p.initial, actions: p.actions });
+  return h({
+    slug: p.slug,
+    source: p.source,
+    initial: p.initial,
+    actions: p.actions,
+    evidence: p.evidence,
+    openQuestions: p.openQuestions,
+  });
 }
 
 /**

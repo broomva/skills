@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 93 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 94 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -235,7 +235,7 @@ npx skills add broomva/skills --skill '*'
 | Skill | What it does |
 |---|---|
 | [`data-provider`](skills/simulation/data-provider/) | Turn a question about the world into a table Parallax can accept, with every field typed observed or simulated at the moment it is written. You search; it records findings against the artifact they were read from, hashes it, judges each column by rule, and emits the exact `parallax propose` invocation |
-| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 49 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+| [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 51 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
 
 ### Commerce & procurement — `skills/commerce/`
 

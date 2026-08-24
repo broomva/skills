@@ -338,30 +338,153 @@ class TestEvidenceAndStatus:
 
 
 class TestCli:
-    def test_emit_prints_a_runnable_invocation(self, tmp_path: Path, capsys):
+    def _run_with_real_evidence(self, tmp_path: Path) -> tuple[Path, str]:
+        """A run directory with an artifact that genuinely exists and hashes."""
+        e = p.save_snapshot(tmp_path, "r1", "https://x.test/1", b"<html>Acme</html>")
         records = [
             {
-                "company": {"value": "Acme", "evidence": {"url": "https://x.test", "sha256": "a" * 64, "snapshot": "evidence/a.snapshot"}},
+                "company": {"value": "Acme", "evidence": e.as_dict()},
                 "score": {"value": 3, "inferred_from": "model"},
             }
         ]
         f = tmp_path / "records.json"
         f.write_text(json.dumps(records), encoding="utf-8")
-        code = p.main(["emit", "--table", "leads", "--records", str(f)])
+        return f, "r1"
+
+    def test_emit_prints_a_runnable_invocation(self, tmp_path: Path, capsys):
+        f, run = self._run_with_real_evidence(tmp_path)
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--run", run, "--root", str(tmp_path)])
         assert code == 0
         out = capsys.readouterr().out.strip()
-        assert out.startswith("parallax propose --kind business-data --table leads#1:")
+        # shlex quotes the table argument because it contains `#` and `:`. That is
+        # conservative rather than load-bearing -- neither is special mid-word in
+        # sh or zsh, checked rather than assumed -- but a field name with a space
+        # or a `$` would be, and the quoting costs nothing.
+        assert out.startswith("parallax propose --kind business-data --table ")
+        assert "leads#1:" in out
         assert "company:string:observed" in out
         assert "score:number:simulated" in out
+        # and it must survive a shell round-trip as ONE argument
+        import shlex as _shlex
+
+        assert len(_shlex.split(out)) == 6
+
+    def test_emit_REFUSES_when_the_cited_artifact_is_missing(self, tmp_path: Path, capsys):
+        """The check whose absence made R1 decorative.
+
+        `emit` used to believe any evidence object handed to it. A citation
+        pointing at a file that was never written was indistinguishable from one
+        that held, so the word `observed` was doing work no code backed.
+        """
+        f, run = self._run_with_real_evidence(tmp_path)
+        # delete the artifact, keep the citation
+        for snap in (tmp_path / p.STATE_DIR / run / "evidence").iterdir():
+            snap.unlink()
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--run", run, "--root", str(tmp_path)])
+        assert code == 2
+        assert "EVIDENCE_UNVERIFIED" in capsys.readouterr().err
+
+    def test_emit_REFUSES_when_the_artifact_changed_under_the_citation(self, tmp_path: Path, capsys):
+        f, run = self._run_with_real_evidence(tmp_path)
+        for snap in (tmp_path / p.STATE_DIR / run / "evidence").iterdir():
+            snap.write_bytes(b"something else entirely")
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--run", run, "--root", str(tmp_path)])
+        assert code == 2
+        assert "EVIDENCE_UNVERIFIED" in capsys.readouterr().err
+
+    def test_a_four_character_hash_is_refused_as_a_digest(self, tmp_path: Path, capsys):
+        """The literal case a review found sailing through as `observed`."""
+        f = tmp_path / "records.json"
+        f.write_text(
+            json.dumps([{"company": {"value": "A", "evidence": {"url": "https://x", "sha256": "aaaa", "snapshot": "e/a"}}}]),
+            encoding="utf-8",
+        )
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--root", str(tmp_path)])
+        assert code == 2
+        assert "EVIDENCE_INCOMPLETE" in capsys.readouterr().err
 
     def test_an_unclassified_record_is_a_typed_refusal_with_exit_2(self, tmp_path: Path, capsys):
         f = tmp_path / "records.json"
         f.write_text(json.dumps([{"company": {"value": "Acme"}}]), encoding="utf-8")
-        code = p.main(["emit", "--table", "leads", "--records", str(f)])
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--root", str(tmp_path)])
         assert code == 2
         assert "UNCLASSIFIED_FIELD" in capsys.readouterr().err
+
+    def test_a_bare_value_is_refused_rather_than_guessed(self, tmp_path: Path, capsys):
+        f = tmp_path / "records.json"
+        f.write_text(json.dumps([{"company": "Acme"}]), encoding="utf-8")
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--root", str(tmp_path)])
+        assert code == 2
+        assert "UNCLASSIFIED_FIELD" in capsys.readouterr().err
+
+    def test_malformed_json_is_a_typed_refusal_not_a_traceback(self, tmp_path: Path, capsys):
+        """The module promises {code, reason} and exit 2 for EVERY failure.
+
+        A stack trace is not that, and a caller cannot branch on one.
+        """
+        f = tmp_path / "records.json"
+        f.write_text("{not json at all", encoding="utf-8")
+        code = p.main(["emit", "--table", "leads", "--records", str(f), "--root", str(tmp_path)])
+        assert code == 2
+        assert "RECORDS_MALFORMED" in capsys.readouterr().err
+
+    def test_a_missing_records_file_is_a_typed_refusal(self, tmp_path: Path, capsys):
+        code = p.main(["emit", "--table", "leads", "--records", str(tmp_path / "nope.json"), "--root", str(tmp_path)])
+        assert code == 2
+        assert "RECORDS_UNREADABLE" in capsys.readouterr().err
 
     def test_status_on_a_missing_run_exits_2(self, tmp_path: Path, capsys):
         code = p.main(["status", "--run", "nope", "--root", str(tmp_path)])
         assert code == 2
         assert "RUN_NOT_FOUND" in capsys.readouterr().err
+
+
+class TestGrammarSafety:
+    def test_a_field_name_with_a_delimiter_is_refused(self):
+        """A name carrying `,` does not make a bad column, it INJECTS one.
+
+        `"a,b:number:observed"` as a name would append a whole second typed
+        column with a provenance nobody asserted.
+        """
+        for bad in ("a,b", "a:b", "a#b"):
+            with pytest.raises(p.ProviderError) as e:
+                p.make_field(bad, "x", evidence=ev())
+            assert e.value.code == "RESERVED_CHARACTER"
+
+    def test_a_table_name_with_a_delimiter_is_refused(self):
+        rows = [p.Record([p.make_field("company", "A", evidence=ev())])]
+        with pytest.raises(p.ProviderError) as e:
+            p.emit_table_arg("le,ads", rows)
+        assert e.value.code == "RESERVED_CHARACTER"
+
+    def test_the_pasteable_line_is_shell_quoted(self):
+        rows = [p.Record([p.make_field("company", "A", evidence=ev())])]
+        line = p.emit_command_line("leads", rows)
+        assert line.startswith("parallax propose --kind business-data --table ")
+
+
+class TestEvidenceShape:
+    def test_a_digest_that_is_not_a_digest_is_refused(self):
+        for bad in ("aaaa", "", "z" * 64, "A" * 64):
+            with pytest.raises(p.ProviderError) as e:
+                p.Evidence(url="https://x", sha256=bad, retrieved_at="", snapshot="e/a")
+            assert e.value.code == "EVIDENCE_INCOMPLETE", bad
+
+    def test_evidence_without_a_snapshot_is_refused(self):
+        with pytest.raises(p.ProviderError) as e:
+            p.Evidence(url="https://x", sha256="d" * 64, retrieved_at="", snapshot="")
+        assert e.value.code == "EVIDENCE_INCOMPLETE"
+
+
+class TestDuplicateFields:
+    def test_duplicates_cannot_make_an_absent_column_look_complete(self):
+        """Two duplicates in one record and none in another gave 2 == 2.
+
+        So a column absent from half the data reported as fully observed.
+        Completeness is now exactly one occurrence per record.
+        """
+        rows = [
+            p.Record([p.make_field("c", "1", evidence=ev()), p.make_field("c", "2", evidence=ev())]),
+            p.Record([p.make_field("other", "x", evidence=ev())]),
+        ]
+        assert p.judge_columns(rows)["c"] == "simulated"

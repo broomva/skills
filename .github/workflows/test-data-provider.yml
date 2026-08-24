@@ -118,24 +118,43 @@ jobs:
       - name: The provider emits, Parallax accepts, and the origins survive
         working-directory: skills/simulation/data-provider
         run: |
-          cat > /tmp/records.json <<'JSON'
-          [
-            {"company": {"value": "A", "evidence": {"url": "https://x.test/1", "sha256": "aaaa", "snapshot": "evidence/a.snapshot"}},
-             "fit":     {"value": 0.8, "inferred_from": "category match"}},
-            {"company": {"value": "B", "evidence": {"url": "https://x.test/2", "sha256": "bbbb", "snapshot": "evidence/b.snapshot"}},
-             "fit":     {"value": 0.6, "inferred_from": "category match"}}
-          ]
-          JSON
-          cmd=$(python3 scripts/provider.py emit --table leads --records /tmp/records.json)
+          # REAL artifacts, written through the provider's own snapshot store, so
+          # their digests are computed rather than typed. An earlier version of
+          # this job used `"sha256": "aaaa"` and passed -- proving only that the
+          # word `observed` survived the trip, while the invariant underneath it
+          # (that an observed value is backed by an artifact we hold) was not
+          # exercised at all. A seam test that cannot fail on the seam's own
+          # central claim is decoration.
+          python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, "scripts")
+          import provider as p
+          from pathlib import Path
+          root = Path("/tmp/seam")
+          recs = []
+          for i, name in enumerate(["A", "B"], start=1):
+              e = p.save_snapshot(root, "r1", f"https://x.test/{i}", f"<html>{name}</html>".encode())
+              recs.append({
+                  "company": {"value": name, "evidence": e.as_dict()},
+                  "fit": {"value": 0.8 - i / 10, "inferred_from": "category match"},
+              })
+          Path("/tmp/records.json").write_text(json.dumps(recs), encoding="utf-8")
+          print("wrote 2 records with real snapshots")
+          PY
+
+          cmd=$(python3 scripts/provider.py emit --table leads \
+                  --records /tmp/records.json --run r1 --root /tmp/seam)
           echo "emitted: $cmd"
-          arg=${cmd#*--table }
+          # shlex-quoted, so let the shell parse it back into argv
+          eval "set -- $cmd"
+          arg="${@: -1}"
 
           cd "$(mktemp -d)"
           parallax propose --kind business-data --table "$arg" --json > out.json
           cat out.json
 
           python3 - <<'PY'
-          import json, sys
+          import json
           d = json.load(open("out.json"))
           assert d["ok"], d
           fields = {f["key"]: f for f in d["value"]["stateFields"]}
@@ -147,3 +166,30 @@ jobs:
           assert "simulated" in fields["leads.fit"]["from"], fields["leads.fit"]
           print("handoff ok: 2 rows, company observed, fit simulated")
           PY
+
+      - name: And it REFUSES when the artifact no longer backs the citation
+        working-directory: skills/simulation/data-provider
+        # The negative half. Without it the job above proves only that a happy
+        # path is happy, and the check it depends on could be deleted without
+        # anything going red.
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          import provider as p
+          from pathlib import Path
+          d = Path("/tmp/seam") / p.STATE_DIR / "r1" / "evidence"
+          for snap in d.iterdir():
+              snap.write_bytes(b"tampered")
+          print(f"tampered {len(list(d.iterdir()))} snapshot(s)")
+          PY
+
+          set +e
+          out=$(python3 scripts/provider.py emit --table leads \
+                  --records /tmp/records.json --run r1 --root /tmp/seam 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::a tampered artifact should exit 2, got $code"; exit 1; }
+          echo "$out" | grep -q EVIDENCE_UNVERIFIED || {
+            echo "::error::a tampered artifact did not produce EVIDENCE_UNVERIFIED"; exit 1; }

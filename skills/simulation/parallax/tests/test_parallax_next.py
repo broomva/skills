@@ -74,7 +74,7 @@ def test_the_fixture_is_not_empty():
     # someone write the remedy -- which is exactly what it did when the
     # business-data ingress gained COLUMNS_REQUIRED, INVALID_ROW_COUNT and
     # ORIGIN_REQUIRED (46 -> 49).
-    assert len(_fixture_codes()) == 49
+    assert len(_fixture_codes()) == 51
 
 
 def test_unknown_code_is_reported_as_unknown_not_guessed():

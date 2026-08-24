@@ -66,6 +66,16 @@ REMEDIES: dict[str, str] = {
         "The directory is broken, not Parallax. Say so rather than reporting a defect."
     ),
     "TABLES_REQUIRED": "kind is `business-data`, so `tables` is required.",
+    "DUPLICATE_TABLE": (
+        "The same table name was supplied twice. Merge them into one table; two "
+        "declarations of one name cannot both be right."
+    ),
+    "DUPLICATE_COLUMN": (
+        "A table declared the same column twice. One state slot cannot carry two "
+        "provenances -- declared observed and then simulated, the renderer shows only "
+        "the FIRST, so the contradiction is invisible and the flattering half wins by "
+        "document order. Decide which it is."
+    ),
     "COLUMNS_REQUIRED": (
         "A table was supplied with an empty `columns` array. Name its columns. This used "
         "to be accepted -- the boundary said it needed columns and only counted tables -- "

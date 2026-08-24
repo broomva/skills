@@ -158,16 +158,20 @@ describe("business-data: the proposal reflects what was supplied", () => {
     expect(from("state.leads.score")).toContain("simulated");
   });
 
-  test("an undeclared column is left undefined and raises a blocking question", () => {
+  test("an undeclared column is left null and raises a blocking question", () => {
     // Not coerced to "". A slot that silently became empty-string would RUN,
     // and running on a guess is the thing this product refuses.
+    //
+    // `null` rather than `undefined` because the slot has to survive
+    // JSON.stringify, which deletes undefined-valued keys outright -- see the
+    // round-trip test in the identity block.
     const r = proposeOntology({
       kind: "business-data",
       tables: [{ name: "leads", columns: [{ name: "company" }] }],
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.initial["leads.company"]).toBeUndefined();
+    expect(r.value.initial["leads.company"]).toBeNull();
     const q = r.value.openQuestions.find((x) => x.slot === "state.leads.company");
     expect(q?.blocking).toBe(true);
   });
@@ -187,6 +191,94 @@ describe("business-data: the proposal reflects what was supplied", () => {
       r.ok ? r.value.openQuestions.filter((q) => q.slot === "action.insert_leads.n") : [];
     expect(unitQ(withRows)).toHaveLength(0);
     expect(unitQ(without)).toHaveLength(1);
+  });
+});
+
+describe("business-data: identity and contradictions", () => {
+  const withOrigin = (origin: "observed" | "simulated") =>
+    proposeOntology({
+      kind: "business-data",
+      tables: [
+        { name: "leads", rowCount: 2, columns: [{ name: "company", type: "string", origin }] },
+      ],
+    });
+
+  test("observed and simulated proposals do NOT share an id", () => {
+    // The id is what acceptance is keyed on. While it hashed only
+    // {slug, initial, actions}, two proposals differing in that one word were
+    // the same document to the gate -- so a human accepting "we read this" also
+    // accepted "we guessed this". Widening what a proposal MEANS requires
+    // widening what identifies it, in the same change.
+    const o = withOrigin("observed");
+    const s = withOrigin("simulated");
+    expect(o.ok && s.ok).toBe(true);
+    if (o.ok && s.ok) {
+      expect(o.value.evidence).not.toEqual(s.value.evidence);
+      expect(o.value.id).not.toBe(s.value.id);
+    }
+  });
+
+  test("a duplicate column is refused, not merged", () => {
+    // One slot cannot carry two provenances. Declared observed then simulated,
+    // the renderer showed only the FIRST, so the contradicting line was
+    // invisible and the flattering half won by document order.
+    const r = proposeOntology({
+      kind: "business-data",
+      tables: [
+        {
+          name: "leads",
+          rowCount: 1,
+          columns: [
+            { name: "company", type: "string", origin: "observed" },
+            { name: "company", type: "string", origin: "simulated" },
+          ],
+        },
+      ],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("DUPLICATE_COLUMN");
+  });
+
+  test("a duplicate table is refused", () => {
+    const r = proposeOntology({
+      kind: "business-data",
+      tables: [
+        { name: "leads", columns: [{ name: "a", type: "string" }] },
+        { name: "leads", columns: [{ name: "b", type: "string" }] },
+      ],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("DUPLICATE_TABLE");
+  });
+
+  test("an untyped slot survives being written to disk", () => {
+    // It was `undefined`, and JSON.stringify DELETES a key whose value is
+    // undefined -- so the slot deliberately left untyped vanished on the way to
+    // the pending file, and every later surface saw a proposal that had never
+    // mentioned the column. The blocking question survived; the thing it asked
+    // about did not.
+    const r = proposeOntology({
+      kind: "business-data",
+      tables: [{ name: "leads", columns: [{ name: "untyped" }] }],
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const roundTripped = JSON.parse(JSON.stringify(r.value)) as {
+      initial: Record<string, unknown>;
+    };
+    expect(Object.hasOwn(roundTripped.initial, "leads.untyped")).toBe(true);
+    expect(roundTripped.initial["leads.untyped"]).toBeNull();
+  });
+
+  test("the evidence line does not call a manufactured placeholder a reading", () => {
+    // `leads.company = ""` is a placeholder this runtime invented. Writing
+    // "-- observed" beside it asserted we had read an empty string we had not.
+    const r = withOrigin("observed");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const from = r.value.evidence.find((e) => e.slot === "state.leads.company")?.from ?? "";
+    expect(from).toContain("placeholder");
+    expect(from).toContain("supplier reports its values observed");
   });
 });
 

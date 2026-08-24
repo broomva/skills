@@ -57,8 +57,12 @@ cat > records.json <<'JSON'
 ]
 JSON
 
-# 3. Emit, and run what it prints.
-python3 scripts/provider.py emit --table leads --records records.json
+# 3. Emit. By default this OPENS every cited artifact and checks its digest
+#    before classifying anything observed -- an unchecked citation is not
+#    evidence, and `--unverified` exists only so that skipping the check is a
+#    decision someone typed rather than a silent fallback.
+python3 scripts/provider.py emit --table leads --records records.json \
+    --run <run-id> --root .
 #   parallax propose --kind business-data --table leads#1:company:string:observed,fit:number:simulated
 ```
 
@@ -113,6 +117,10 @@ the same shape Parallax uses, so one branch handles both.
 | Code | What to do |
 |---|---|
 | `UNCLASSIFIED_FIELD` | Add `evidence` or `inferred_from`. Do not pick `simulated` to get past it. |
+| `EVIDENCE_INCOMPLETE` | Evidence needs a url, a **64-hex** sha256, and a snapshot path. A short or absent digest is a citation that cannot be checked wearing the word that means it was. |
+| `EVIDENCE_UNVERIFIED` | A cited artifact is missing, or no longer hashes to its digest. Not downgraded to `simulated` — that would hide a broken pipeline behind a plausible table. |
+| `RESERVED_CHARACTER` | A name contains `,` `:` or `#`. Those are `--table` delimiters, so such a name **injects extra columns** rather than producing a bad one. |
+| `RECORDS_MALFORMED` / `RECORDS_UNREADABLE` | The records file is not readable, or not a JSON list of objects. |
 | `AMBIGUOUS_ORIGIN` | The field has both. It is one or the other. |
 | `NO_RECORDS` | You found nothing. That is a complete run, not a table — report it, do not emit. |
 | `PROGRESS_WENT_BACKWARDS` | Your loop restarted rather than resumed. Fix the loop; do not lower the number. |
@@ -123,7 +131,7 @@ the same shape Parallax uses, so one branch handles both.
 
 ```bash
 cd skills/simulation/data-provider
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 40 tests
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 52 tests
 ```
 
 `PYTHONDONTWRITEBYTECODE` because a same-size edit inside one second reuses stale
