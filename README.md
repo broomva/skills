@@ -67,6 +67,7 @@ npx skills add broomva/skills --skill '*'
 | [`handoff`](skills/orchestration/handoff/) | Fresh-session handoff doc drafting |
 | [`p9`](skills/orchestration/p9/) | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | [`persist`](skills/orchestration/persist/) | bstack P12 — Persistent Loop Discipline |
+| [`resume`](skills/orchestration/resume/) | Restore an arc killed mid-flight by an API error, a dropped connection or an expired login — reconstruct what died from the transcript, recover dead subagents' work off disk, and continue rather than conclude |
 | [`role-x`](skills/orchestration/role-x/) | bstack P17 — Lens-Routed Request Articulation |
 
 ### Skill & prompt tooling — `skills/tooling/`

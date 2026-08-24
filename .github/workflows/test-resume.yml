@@ -1,0 +1,48 @@
+name: test-resume
+
+# Python test gate for the `resume` skill (skills/orchestration/resume/).
+# Path-filtered so it runs ONLY when skills/orchestration/resume/** changes — the
+# monorepo's tests-optional default (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/orchestration/resume/**'
+      - '.github/workflows/test-resume.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/orchestration/resume/**'
+      - '.github/workflows/test-resume.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-resume-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/orchestration/resume
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Unit tests (forensic core)
+        # PYTHONDONTWRITEBYTECODE: same-size mutants can otherwise reuse stale
+        # .pyc and report SURVIVED without running.
+        run: PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/ -v
+      - name: Trigger eval is valid JSON
+        run: python -c "import json;d=json.load(open('evals/prompts.json'));assert len(d['cases'])==16"
