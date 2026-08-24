@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 96 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 97 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**96 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**97 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -54,6 +54,7 @@ npx skills add broomva/skills --skill '*'
 | [`harness-engineering-playbook`](skills/governance/harness-engineering-playbook/) | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture… |
 | [`keel`](skills/governance/keel/) | Measures whether a codebase's verification is grounded in independent, real-world signals rather than circular self-checks |
 | [`unhobble`](skills/governance/unhobble/) | Audit and rightsize a context surface (CLAUDE.md, AGENTS.md, SKILL.md, prompts) against the Claude-5 context-engineering reversals — measures token budget, hard-rule ratio, duplicate sections and contradiction candidates, then adjudicates keep / relocate / delete by whether an independent mechanism already enforces the prose |
+| [`legal-readiness`](skills/governance/legal-readiness/) | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
 ### Orchestration & autonomy — `skills/orchestration/`
 
@@ -81,7 +82,7 @@ npx skills add broomva/skills --skill '*'
 | [`prove-the-negative`](skills/tooling/prove-the-negative/) | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 96 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 97 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -255,11 +256,11 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 96 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
+The 97 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
-| Governance & control | `skills/governance/` | 8 |
+| Governance & control | `skills/governance/` | 9 |
 | Orchestration & autonomy | `skills/orchestration/` | 9 |
 | Skill & prompt tooling | `skills/tooling/` | 9 |
 | Knowledge & memory | `skills/knowledge/` | 8 |
