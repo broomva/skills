@@ -460,13 +460,18 @@ def _superlative_problems(label: str, text: str, disk: dict, names: dict[str, st
             problems.append(
                 f"{label}: claims {m.group('n')} category buckets, disk has {len(disk)}")
     for m in _LARGEST_RX.finditer(text):
+        # Compare the SET, not one member of it. Two buckets can tie for
+        # largest — after #190 moved parallax out of tooling, `tooling` and
+        # `governance` both held 9 — and naming only one asserts a uniqueness
+        # the data does not have. `check` accepted any tied winner, so the
+        # document could claim a single largest bucket and still pass.
         winners = {names.get(c, c) for c, n in sizes.items() if n == hi}
+        claimed = {x.strip() for x in m.group("name").split(",") if x.strip()}
         if int(m.group("n")) != hi:
             problems.append(f"{label}: largest bucket says {m.group('n')}, disk has {hi}")
-        if m.group("name").strip() not in winners:
+        if claimed != winners:
             problems.append(
-                f"{label}: largest bucket says {m.group('name').strip()!r}, "
-                f"disk has {sorted(winners)}")
+                f"{label}: largest buckets say {sorted(claimed)}, disk has {sorted(winners)}")
     for m in _SMALLEST_RX.finditer(text):
         holders = {names.get(c, c) for c, n in sizes.items() if n == lo}
         claimed = {x.strip() for x in m.group("names").split(",") if x.strip()}
@@ -516,7 +521,7 @@ def _canonical_aggregates(disk: dict, names: dict[str, str]) -> dict[str, str]:
     """The correct text of every aggregate bullet, derived from disk."""
     sizes = {c: len(v) for c, v in disk.items()}
     hi, lo = max(sizes.values()), min(sizes.values())
-    top = sorted(names.get(c, c) for c, n in sizes.items() if n == hi)[0]
+    top = ", ".join(sorted(names.get(c, c) for c, n in sizes.items() if n == hi))
     bottom = ", ".join(sorted(names.get(c, c) for c, n in sizes.items() if n == lo))
     return {
         "**Total skills** aggregate": f"- **Total skills**: {sum(sizes.values())}",

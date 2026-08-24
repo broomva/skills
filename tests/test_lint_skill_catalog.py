@@ -491,7 +491,7 @@ class TestAggregatesThatNeverSayTheWordSkill:
 
     def test_a_wrong_largest_name_is_reported(self, tmp_path, lint):
         problems = self._inv_with(tmp_path, lint, largest="Governance")
-        assert any("largest bucket says 'Governance'" in p for p in problems), problems
+        assert any("largest buckets say" in p and "Governance" in p for p in problems), problems
 
     def test_a_wrong_smallest_count_is_reported(self, tmp_path, lint):
         problems = self._inv_with(tmp_path, lint, lo=99)
@@ -1129,3 +1129,57 @@ class TestFixDoesExactlyWhatCheckDemandsAndNoMore:
         lint.fix(lint.discover(lint._SKILLS_DIR))
         assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
         assert "`zeta`" in lint._README.read_text()
+
+
+class TestATieForLargestNamesBothBuckets:
+    """Two buckets can tie for largest — after #190 moved `parallax` out of
+    `tooling`, both `tooling` and `governance` held 9 — and naming only one
+    asserts a uniqueness the data does not have.
+
+    Found by dogfooding this linter on PR #155, which adds a skill to
+    `governance` and creates exactly that tie. `check` accepted any tied winner,
+    so the document could claim a single largest bucket and still pass.
+    """
+
+    def _tied(self, tmp_path, lint):
+        """governance and tooling both hold 3."""
+        skills = {
+            "governance": {"alpha": "A.", "beta": "B.", "epsilon": "E."},
+            "tooling": {"gamma": "G.", "delta": "D.", "skills-catalog": "Catalog."},
+        }
+        buckets = {c: len(v) for c, v in skills.items()}
+        total = sum(buckets.values())
+        rrows = {c: [_rrow(c, n, d) for n, d in sorted(v.items())] for c, v in skills.items()}
+        irows = {c: [_irow(n, d) for n, d in sorted(v.items())] for c, v in skills.items()}
+        agg = AGGREGATES.format(total=total, nbuckets=len(buckets),
+                                largest="Governance, Tooling", hi=3, lo=3,
+                                smallest="Governance, Tooling")
+        _build(tmp_path, lint,
+               readme=_readme(rrows, total, buckets),
+               inventory=_inventory(irows, total, buckets, aggregates=agg),
+               catalog=_catalog_skill(total, buckets), skills=skills)
+        return buckets, total
+
+    def test_naming_both_tied_buckets_is_accepted(self, tmp_path, lint):
+        """CONTROL: the honest statement must pass."""
+        self._tied(tmp_path, lint)
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+
+    def test_naming_only_one_of_two_tied_buckets_is_reported(self, tmp_path, lint):
+        self._tied(tmp_path, lint)
+        text = lint._INVENTORY.read_text().replace(
+            "- **Largest bucket**: Governance, Tooling (3)",
+            "- **Largest bucket**: Governance (3)")
+        lint._INVENTORY.write_text(text, encoding="utf-8")
+        problems = lint.check(lint.discover(lint._SKILLS_DIR), lint._load())
+        assert any("largest buckets say" in p for p in problems), problems
+
+    def test_fix_writes_both_tied_buckets(self, tmp_path, lint):
+        self._tied(tmp_path, lint)
+        text = lint._INVENTORY.read_text().replace(
+            "- **Largest bucket**: Governance, Tooling (3)",
+            "- **Largest bucket**: Governance (3)")
+        lint._INVENTORY.write_text(text, encoding="utf-8")
+        lint.fix(lint.discover(lint._SKILLS_DIR))
+        assert lint.check(lint.discover(lint._SKILLS_DIR), lint._load()) == []
+        assert "**Largest bucket**: Governance, Tooling (3)" in lint._INVENTORY.read_text()
