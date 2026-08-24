@@ -335,3 +335,49 @@ class TestEveryReaderSurvivesAnUnreadableFILE:
         (d / filename).write_bytes(b"\xff\xfe not utf-8 at all\n")
         problems = lint.lint_skill(d)          # must not raise
         assert any(filename in p and "not valid UTF-8" in p for p in problems), problems
+
+
+class TestBothFenceEndsAreExact:
+    """The opening fence had a test; the CLOSING one did not, and a mutation
+    loosening it to `startswith("---")` survived. I had written that both ends
+    were exact — the code was, the suite was not."""
+
+    def _skill(self, tmp_path, name, body: str):
+        d = tmp_path / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(body, encoding="utf-8")
+        (d / "CHANGELOG.md").write_text("## [1.0.0]\n", encoding="utf-8")
+        return d
+
+    def test_a_closing_fence_with_a_suffix_is_not_a_fence(self, tmp_path, lint):
+        body = "---\nname: closed-badly\ndescription: D.\nversion: 1.0.0\n---yaml\n"
+        problems = lint.lint_skill(self._skill(tmp_path, "closed-badly", body))
+        assert any("no closing --- fence" in p for p in problems), problems
+
+    def test_a_plain_closing_fence_parses(self, tmp_path, lint):
+        """CONTROL for the case above."""
+        body = "---\nname: closed-well\ndescription: D.\nversion: 1.0.0\n---\n"
+        assert lint.lint_skill(self._skill(tmp_path, "closed-well", body)) == []
+
+
+class TestTheTallyNumberItself:
+    def test_the_versioned_count_excludes_an_unreadable_manifest(self, tmp_path, lint, capsys):
+        """Asserting only that `main` exits 1 left the COUNT unchecked, so a
+        mutation restoring the two-state tally survived. The number a reader
+        trusts is the thing being claimed, so assert the number."""
+        for name, raw in (
+            ("v1", "---\nname: v1\ndescription: D.\nversion: 1.0.0\n---\n".encode("utf-8")),
+            ("v2", "---\nname: v2\ndescription: D.\nversion: 2.0.0\n---\n".encode("utf-8")),
+            ("bom", "﻿---\nname: bom\ndescription: D.\nversion: 3.0.0\n---\n".encode("utf-8")),
+        ):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "SKILL.md").write_bytes(raw)
+            (d / "CHANGELOG.md").write_text(
+                f"## [{'1.0.0' if name == 'v1' else '2.0.0' if name == 'v2' else '3.0.0'}]\n",
+                encoding="utf-8")
+        lint._SKILLS_DIR = tmp_path
+        lint.main()
+        out = capsys.readouterr()
+        # two readable versioned skills; the BOM one must NOT be tallied
+        assert "3 versioned" not in (out.out + out.err), out.out + out.err
