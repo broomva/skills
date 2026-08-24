@@ -14,6 +14,8 @@ import ipaddress
 import itertools
 import json
 import math
+import os
+import subprocess
 import re
 import shutil
 import socket
@@ -206,10 +208,41 @@ TIME_SENSITIVE_EVIDENCE = EVIDENCE_KINDS
 HASH_REQUIRED_EVIDENCE = EVIDENCE_KINDS
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 
-#: Evidence kinds whose `locator` names a file inside the repository under
-#: review. For these, and only these, the declared `sha256` is a claim the tool
-#: can CHECK rather than merely shape-validate.
+#: Evidence kinds whose `locator` is EXPECTED to name a file in the repository.
+#: Advisory only — see `_locator_is_repo_path`. Verification keys on the
+#: locator, never on this set, because `kind` is author-supplied.
 FILE_BACKED_EVIDENCE = {"repo", "test"}
+
+#: A locator that is an absolute URL, or a bare git object id. Neither names a
+#: file in the worktree, so neither is verifiable by recomputing a digest — and
+#: `references/manifest-schema.md` explicitly permits "exact file and
+#: line/commit", so rejecting the commit form would be a false red.
+_URL_LOCATOR_RX = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_COMMIT_LOCATOR_RX = re.compile(r"^[0-9a-f]{7,64}$", re.IGNORECASE)
+
+#: Path-shaped: no whitespace, no scheme, not a bare hash. Deliberately a test
+#: on the LOCATOR and not on `kind`.
+_PATH_LOCATOR_RX = re.compile(r"^[^\s:]+(?::\d+(?:-\d+)?)?$")
+
+
+def _locator_is_repo_path(locator: str) -> bool:
+    """Does this locator name a file in the repository under review?
+
+    Answered from the locator ITSELF, never from the author-supplied `kind`.
+    `kind` is a label the manifest's author writes, so keying verification on it
+    meant relabelling `repo` to `other` — both in the allowed set — carried the
+    identical fabricated locator and digest straight past verification AND past
+    the counsel-readiness gate. This skill had already learned that lesson one
+    function over: legal assertions are routed on what the claim SAYS rather
+    than on its declared `type`, for exactly this reason.
+
+    To evade this now, an author has to stop pointing at a repository file —
+    at which point the locator no longer names the evidence it claims to.
+    """
+    locator = locator.strip()
+    if not locator or _URL_LOCATOR_RX.match(locator) or _COMMIT_LOCATOR_RX.match(locator):
+        return False
+    return bool(_PATH_LOCATOR_RX.match(locator))
 
 #: `pricing.tsx:1`, `src/a.ts:10-40`, or a bare path. The line span identifies
 #: WHERE in the file the evidence is; the digest covers the whole file, because
@@ -1386,13 +1419,68 @@ def _iter_file_backed_evidence(node: Any, path: str = "") -> Any:
     own kinds, so they are not swept up here.
     """
     if isinstance(node, dict):
-        if node.get("kind") in FILE_BACKED_EVIDENCE and "locator" in node:
+        if (
+            node.get("kind") in EVIDENCE_KINDS
+            and "sha256" in node
+            and _locator_is_repo_path(str(node.get("locator", "")))
+        ):
             yield path, node
         for key, value in node.items():
             yield from _iter_file_backed_evidence(value, f"{path}.{key}" if path else key)
     elif isinstance(node, list):
         for index, value in enumerate(node):
             yield from _iter_file_backed_evidence(value, f"{path}[{index}]")
+
+
+def _normalize_repo_url(url: str) -> str:
+    """`git@github.com:o/r.git`, `https://github.com/o/r`, and
+    `https://github.com/o/r.git` name the same repository."""
+    url = url.strip().rstrip("/")
+    url = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url, flags=re.IGNORECASE)
+    url = re.sub(r"^[^/@]+@", "", url)
+    url = url.replace(":", "/", 1) if "/" not in url.split(":")[0] else url
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url.lower()
+
+
+def _git(root: Path, *args: str) -> str | None:
+    """Read-only git, with a minimal environment and no shell."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True, text=True, timeout=15,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""),
+                 "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _repo_identity_errors(data: dict[str, Any], root: Path) -> list[str]:
+    """Bind the verified root to the repository this manifest is ABOUT.
+
+    Without this, `--repo-root /` happily hashes `etc/hosts` and reports a clean
+    verification: the digests were checked against SOME tree, and nothing
+    recorded which. A verification that does not name what it verified is not
+    evidence.
+    """
+    toplevel = _git(root, "rev-parse", "--show-toplevel")
+    if toplevel is None:
+        return [f"--repo-root {root}: not a git repository; evidence digests would be "
+                "verified against an unidentified directory"]
+    declared = str((data.get("project") or {}).get("repository") or "").strip()
+    if not declared:
+        return []
+    remote = _git(root, "remote", "get-url", "origin")
+    if remote is None:
+        return [f"--repo-root {root}: no `origin` remote, so it cannot be matched "
+                f"against project.repository {declared!r}"]
+    if _normalize_repo_url(remote) != _normalize_repo_url(declared):
+        return [f"--repo-root {root}: origin {remote!r} is not project.repository "
+                f"{declared!r}; the digests would bind to the wrong repository"]
+    return []
 
 
 def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
@@ -1414,6 +1502,12 @@ def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
         return [f"--repo-root {repo_root}: not a readable directory ({type(exc).__name__})"]
     if not root.is_dir():
         return [f"--repo-root {repo_root}: not a directory"]
+    identity = _repo_identity_errors(data, root)
+    if identity:
+        # Refuse to report a verification bound to the wrong tree. Reporting
+        # per-file results here would read as "checked", which is the thing
+        # this guard exists to prevent.
+        return identity
 
     for path, item in _iter_file_backed_evidence(data):
         locator = str(item.get("locator", ""))
@@ -1451,6 +1545,23 @@ def verify_evidence_digests(data: dict[str, Any], repo_root: Path) -> list[str]:
             errors.append(
                 f"{path}.sha256: declared {declared[:12]}... but {rel} hashes to "
                 f"{actual[:12]}... — the evidence does not match the artifact")
+            continue
+        # The digest proves WHICH file; the line span says WHERE in it. A span
+        # was parsed and then never checked, so `:999999-1` — a range that runs
+        # backwards, in a file with far fewer lines — pointed a reader at
+        # nothing while the row read as fully verified.
+        start = int(match.group("start")) if match.group("start") else None
+        end = int(match.group("end")) if match.group("end") else None
+        if start is None:
+            continue
+        if start < 1 or (end is not None and end < start):
+            errors.append(f"{path}.locator: line span {locator.split(':')[-1]!r} is not a range")
+            continue
+        lines = resolved.read_bytes().count(b"\n") + 1
+        if max(start, end or start) > lines:
+            errors.append(
+                f"{path}.locator: line {max(start, end or start)} is past the end of "
+                f"{rel} ({lines} line(s)) — the span names nothing")
     return errors
 
 

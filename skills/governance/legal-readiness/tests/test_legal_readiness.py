@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -1613,37 +1614,44 @@ class TestEvidenceDigestsBindToAnArtifact:
     digest, not that the evidence says what the manifest claims.
     """
 
-    def test_a_fabricated_digest_is_reported(self, tmp_path, valid_manifest, lr):
-        (tmp_path / "pricing.tsx").write_text("real content\n", encoding="utf-8")
+    @pytest.fixture()
+    def repo(self, tmp_path):
+        """A real git checkout whose origin matches the fixture manifest. The
+        identity guard runs BEFORE per-file verification, so a bare tmp_path now
+        stops at "not a git repository" and never reaches the checks below."""
+        return _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+
+    def test_a_fabricated_digest_is_reported(self, repo, valid_manifest, lr):
+        (repo / "pricing.tsx").write_text("real content\n", encoding="utf-8")
         data = _with_repo_evidence(valid_manifest, _repo_evidence("pricing.tsx:1", "a" * 64))
-        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        errors = lr.validate_manifest(data, repo_root=repo)
         assert any("does not match the artifact" in e for e in errors), errors
 
-    def test_a_correct_digest_is_accepted(self, tmp_path, valid_manifest, lr):
+    def test_a_correct_digest_is_accepted(self, repo, valid_manifest, lr):
         """CONTROL: the check must not report on every input, or the case above
         proves only that it rejects things."""
         body = b"real content\n"
-        (tmp_path / "pricing.tsx").write_bytes(body)
+        (repo / "pricing.tsx").write_bytes(body)
         data = _with_repo_evidence(
             valid_manifest,
             _repo_evidence("pricing.tsx:1", hashlib.sha256(body).hexdigest()))
-        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        errors = lr.validate_manifest(data, repo_root=repo)
         assert not [e for e in errors if "sha256" in e or "locator" in e], errors
 
     def test_a_digest_that_matched_stops_matching_when_the_file_changes(
-        self, tmp_path, valid_manifest, lr
+        self, repo, valid_manifest, lr
     ):
         """The property the digest exists for: it must NOTICE an edit."""
-        target = tmp_path / "pricing.tsx"
+        target = repo / "pricing.tsx"
         target.write_bytes(b"v1\n")
         data = _with_repo_evidence(
             valid_manifest,
             _repo_evidence("pricing.tsx", hashlib.sha256(b"v1\n").hexdigest()))
-        assert not [e for e in lr.validate_manifest(data, repo_root=tmp_path)
+        assert not [e for e in lr.validate_manifest(data, repo_root=repo)
                     if "sha256" in e]
         target.write_bytes(b"v2\n")
         assert any("does not match the artifact" in e
-                   for e in lr.validate_manifest(data, repo_root=tmp_path))
+                   for e in lr.validate_manifest(data, repo_root=repo))
 
     @pytest.mark.parametrize("locator,expect", [
         ("no/such/file.tsx", "does not resolve"),
@@ -1651,12 +1659,12 @@ class TestEvidenceDigestsBindToAnArtifact:
         ("/etc/passwd", "must be relative"),
     ])
     def test_an_unresolvable_locator_is_a_finding_not_a_pass(
-        self, tmp_path, valid_manifest, locator, expect, lr
+        self, repo, valid_manifest, locator, expect, lr
     ):
         """Every branch that cannot COMPLETE the check is a finding. A locator
         naming nothing is the purest form of a digest binding to nothing."""
         data = _with_repo_evidence(valid_manifest, _repo_evidence(locator, "a" * 64))
-        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        errors = lr.validate_manifest(data, repo_root=repo)
         assert any(expect in e for e in errors), errors
 
     def test_a_locator_escaping_the_root_is_a_finding(self, tmp_path, valid_manifest, lr):
@@ -1665,8 +1673,7 @@ class TestEvidenceDigestsBindToAnArtifact:
         first — so the guard, the security-relevant branch here, was covered by
         a test that could not exercise it. A mutation sweep found that; the
         suite could not."""
-        root = tmp_path / "repo"
-        root.mkdir()
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
         outside = tmp_path / "outside.tsx"
         outside.write_bytes(b"secrets\n")
         data = _with_repo_evidence(
@@ -1680,8 +1687,7 @@ class TestEvidenceDigestsBindToAnArtifact:
         """The same escape by a different route: an in-repo path whose target is
         outside. `resolve()` follows it, so only the containment check catches
         this one."""
-        root = tmp_path / "repo"
-        root.mkdir()
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
         outside = tmp_path / "outside.tsx"
         outside.write_bytes(b"secrets\n")
         (root / "link.tsx").symlink_to(outside)
@@ -1691,18 +1697,18 @@ class TestEvidenceDigestsBindToAnArtifact:
         errors = lr.validate_manifest(data, repo_root=root)
         assert any("escapes the repository root" in e for e in errors), errors
 
-    def test_a_directory_locator_is_a_finding(self, tmp_path, valid_manifest, lr):
-        (tmp_path / "src").mkdir()
+    def test_a_directory_locator_is_a_finding(self, repo, valid_manifest, lr):
+        (repo / "src").mkdir()
         data = _with_repo_evidence(valid_manifest, _repo_evidence("src", "a" * 64))
-        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        errors = lr.validate_manifest(data, repo_root=repo)
         assert any("is a directory, not an artifact" in e for e in errors), errors
 
-    def test_an_unreadable_repo_root_is_a_finding(self, tmp_path, valid_manifest, lr):
+    def test_an_unreadable_repo_root_is_a_finding(self, repo, valid_manifest, lr):
         data = _with_repo_evidence(valid_manifest, _repo_evidence("a.tsx", "a" * 64))
-        errors = lr.validate_manifest(data, repo_root=tmp_path / "nope")
+        errors = lr.validate_manifest(data, repo_root=repo / "nope")
         assert any("not a readable directory" in e for e in errors), errors
 
-    def test_non_file_backed_evidence_is_left_alone(self, tmp_path, valid_manifest, lr):
+    def test_non_file_backed_evidence_is_left_alone(self, repo, valid_manifest, lr):
         """CONTROL: a `law` or `counsel` citation has no file to hash, and must
         not be dragged into a check it cannot satisfy."""
         data = copy.deepcopy(valid_manifest)
@@ -1711,7 +1717,7 @@ class TestEvidenceDigestsBindToAnArtifact:
             "verified_by": "counsel", "observed_at": "2026-08-10T00:00:00-05:00",
             "sha256": "c" * 64,
         }]
-        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        errors = lr.validate_manifest(data, repo_root=repo)
         assert not [e for e in errors if "locator" in e or "artifact" in e], errors
 
 
@@ -1737,3 +1743,126 @@ class TestCounselReadinessRequiresVerifiedDigests:
         data["launch_disposition"]["status"] = "ready-for-counsel-review"
         assert not [e for e in lr.validate_manifest(data)
                     if "were not verified" in e]
+
+
+def _git_repo(root: Path, origin: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(root),
+           "GIT_CONFIG_GLOBAL": str(root / ".gitconfig"), "GIT_CONFIG_SYSTEM": "/dev/null"}
+    subprocess.run(["git", "-C", str(root), "init", "-q"], check=True, env=env)
+    subprocess.run(["git", "-C", str(root), "remote", "add", "origin", origin],
+                   check=True, env=env)
+    return root
+
+
+class TestVerificationRoutesOnTheLocatorNotTheLabel:
+    """The round-1 BLOCKER. `kind` is written by the manifest's author, so
+    keying verification on it meant relabelling `repo` to `other` — both in the
+    allowed set — carried the identical fabricated locator and digest past
+    verification AND past the counsel-readiness gate.
+
+    This skill had already learned the lesson one function over: legal
+    assertions route on what the claim SAYS, not on its declared `type`. The
+    same hole was rebuilt for evidence.
+    """
+
+    @pytest.mark.parametrize("kind", sorted({"repo", "test", "other", "dashboard",
+                                             "policy", "law", "counsel", "invoice"}))
+    def test_a_path_shaped_locator_is_verified_whatever_the_kind(
+        self, tmp_path, valid_manifest, lr, kind
+    ):
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "pricing.tsx").write_bytes(b"real\n")
+        data = copy.deepcopy(valid_manifest)
+        data["claims"][0]["evidence"] = [dict(_repo_evidence("pricing.tsx:1", "a" * 64), kind=kind)]
+        errors = lr.validate_manifest(data, repo_root=root)
+        assert any("does not match the artifact" in e for e in errors), (kind, errors)
+
+    @pytest.mark.parametrize("locator", [
+        "https://example.gov/statute",
+        "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        "Memo from counsel dated 2026-01-01",
+    ])
+    def test_a_non_path_locator_is_left_alone(self, tmp_path, valid_manifest, lr, locator):
+        """CONTROL, and the false-red half. A statute URL, a commit id — which
+        `references/manifest-schema.md` explicitly permits — and a prose
+        citation name no worktree file, and dragging them into a check they
+        cannot satisfy would trade this false green for a false red."""
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        data = copy.deepcopy(valid_manifest)
+        data["claims"][0]["evidence"] = [dict(_repo_evidence(locator, "a" * 64), kind="law")]
+        errors = lr.validate_manifest(data, repo_root=root)
+        assert not [e for e in errors if "artifact" in e or "does not resolve" in e], errors
+
+    def test_the_counsel_gate_uses_the_same_predicate(self, valid_manifest, lr):
+        """The gate and the verifier must agree on what counts as verifiable, or
+        the bypass reopens in whichever one is laxer."""
+        data = copy.deepcopy(valid_manifest)
+        data["claims"][0]["evidence"] = [dict(_repo_evidence("pricing.tsx:1", "a" * 64),
+                                              kind="other")]
+        data["launch_disposition"]["status"] = "ready-for-counsel-review"
+        assert any("were not verified" in e for e in lr.validate_manifest(data))
+
+
+class TestTheVerifiedTreeIsTheRepositoryUnderReview:
+    """`--repo-root /` hashed `etc/hosts` and reported a clean verification: the
+    digests were checked against SOME tree and nothing recorded which. A
+    verification that does not name what it verified is not evidence."""
+
+    def test_a_non_repository_root_is_refused(self, tmp_path, valid_manifest, lr):
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("a.tsx", "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=tmp_path)
+        assert any("not a git repository" in e for e in errors), errors
+
+    def test_a_mismatched_origin_is_refused(self, tmp_path, valid_manifest, lr):
+        root = _git_repo(tmp_path / "repo", "https://github.com/someone/else")
+        data = _with_repo_evidence(valid_manifest, _repo_evidence("a.tsx", "a" * 64))
+        errors = lr.validate_manifest(data, repo_root=root)
+        assert any("the wrong repository" in e for e in errors), errors
+
+    @pytest.mark.parametrize("origin", [
+        "https://github.com/mothlight/notes",
+        "https://github.com/mothlight/notes.git",
+        "git@github.com:mothlight/notes.git",
+    ])
+    def test_equivalent_remote_spellings_are_accepted(
+        self, tmp_path, valid_manifest, lr, origin
+    ):
+        """CONTROL: SSH and HTTPS forms, with and without `.git`, name the same
+        repository. Rejecting them would be a false red on ordinary checkouts."""
+        root = _git_repo(tmp_path / "repo", origin)
+        body = b"real\n"
+        (root / "a.tsx").write_bytes(body)
+        data = _with_repo_evidence(
+            valid_manifest, _repo_evidence("a.tsx", hashlib.sha256(body).hexdigest()))
+        assert not [e for e in lr.validate_manifest(data, repo_root=root)
+                    if "--repo-root" in e or "artifact" in e]
+
+
+class TestALineSpanMustNameSomething:
+    @pytest.fixture()
+    def repo(self, tmp_path):
+        root = _git_repo(tmp_path / "repo", "https://github.com/mothlight/notes")
+        (root / "a.tsx").write_bytes(b"one\ntwo\nthree\n")
+        return root
+
+    @pytest.mark.parametrize("span,expect", [
+        (":2", None),
+        (":1-3", None),
+        (":999999-1", "is not a range"),
+        (":0", "is not a range"),
+        (":99", "past the end"),
+        (":1-99", "past the end"),
+        ("", None),
+    ])
+    def test_spans(self, repo, valid_manifest, lr, span, expect):
+        """The digest proves WHICH file; the span says WHERE in it. It was
+        parsed and never checked, so a backwards range in a three-line file read
+        as fully verified."""
+        digest = hashlib.sha256((repo / "a.tsx").read_bytes()).hexdigest()
+        data = _with_repo_evidence(valid_manifest, _repo_evidence(f"a.tsx{span}", digest))
+        errors = [e for e in lr.validate_manifest(data, repo_root=repo) if "locator" in e]
+        if expect is None:
+            assert not errors, (span, errors)
+        else:
+            assert any(expect in e for e in errors), (span, errors)
