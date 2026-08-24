@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 93 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 95 agent skills in the broomva/skills monorepo,
   organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -23,7 +23,7 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-94 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+95 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
@@ -36,7 +36,7 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Operating cadence (`cadence`) | 4 | drift-check, morning-briefing, stakeholder-update |
 | Publishing & growth (`publishing`) | 7 | blog-post, content-creation, revenuecast |
 | Video & multimedia (`video`) | 6 | brainrot-for-good, content-engine, creative-review |
-| Audio & music (`audio`) | 2 | livecoding, omnivoice |
+| Audio & music (`audio`) | 3 | livecoding, omnivoice |
 | Design & brand (`design`) | 7 | arcan-glass, broomva-design, design-engineering |
 | Finance & payments (`finance`) | 4 | finance-substrate, haima, investment-management |
 | Compute infrastructure (`compute`) | 3 | agentic-vps, colab-remote, remote-gpu |
@@ -47,7 +47,7 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Neuroscience & BCI (`neuroscience`) | 3 | tribe-v2-agent-alignment, tribe-v2-bci-applied, tribe-v2-neuroscience |
 | Healthcare (`healthcare`) | 2 | founder-mode-oncology, health |
 | Science (`science`) | 1 | ocean-genomics |
-| Simulation (`simulation`) | 1 | parallax |
+| Simulation (`simulation`) | 2 | parallax |
 | Commerce & procurement (`commerce`) | 3 | d1-cli, procurer, swapit |
 | Everyday utilities (`utilities`) | 2 | gasgo, alkosto-wait-optimizer |
 

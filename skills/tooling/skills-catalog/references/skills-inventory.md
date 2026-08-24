@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 94 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
+> 95 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
 
 ## Governance & control — `skills/governance/` (8)
 
@@ -40,7 +40,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 94 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 95 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -104,12 +104,13 @@
 | `ltx-video` | Set up, configure, and run LTX-2/LTX-2.3 (Lightricks) for AI video and audio generation |
 | `video-cut` | Edit raw footage into a finished cut by conversation, fully local |
 
-## Audio & music — `skills/audio/` (2)
+## Audio & music — `skills/audio/` (3)
 
 | Skill | What it does |
 |---|---|
 | `livecoding` | Algorave-grade livecoded music workflow — TidalCycles patterns (Haskell DSL driving SuperDirt over OSC) + Hydra-synth visuals (browser or VS Code Simple Browser via a |
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
+| `talkback` | Speak an explanation out loud while working in any project — tiered text-to-speech with a pluggable backend (ElevenLabs by default and quota-guarded, macOS `say` via `--fast` for free instant local… |
 
 ## Design & brand — `skills/design/` (7)
 
@@ -189,7 +190,7 @@
 |---|---|
 | `ocean-genomics` | Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics, protein structure prediction, and marine biodiversity analysis |
 
-## Simulation — `skills/simulation/` (1)
+## Simulation — `skills/simulation/` (2)
 
 | Skill | What it does |
 |---|---|
@@ -215,8 +216,8 @@
 
 ## Aggregates
 
-- **Total skills**: 93
+- **Total skills**: 95
 - **Total category buckets**: 23
 - **Largest bucket**: Skill & prompt tooling (9)
-- **Smallest buckets** (1): Science, Simulation
+- **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
