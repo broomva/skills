@@ -767,8 +767,10 @@ echo "T54. a directory at the archive name is stepped over, not linked into"
 LED=$(newledger t54)
 printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
 mkdir "$LED.archived.1"
-OUT=$(rbout reset --run-id=t54 --ledger="$LED")
-RC=$(rb reset --run-id=t54 --ledger="$LED")
+# One invocation for both, for the reason T43 carries: a second reset would run
+# with the ledger already archived -- "nothing to reset", exit 0 -- so its code
+# describes a different command than the one being measured.
+OUT=$(bash "$RB" reset --run-id=t54 --ledger="$LED" 2>&1); RC=$?
 DIR_EMPTY=$([ -d "$LED.archived.1" ] && [ -z "$(ls -A "$LED.archived.1")" ] && echo yes || echo no)
 # The path it NAMED must be the path that holds it.
 NAMED=$(printf '%s\n' "$OUT" | sed -n 's/^round-budget: archived -> //p' | head -1)
