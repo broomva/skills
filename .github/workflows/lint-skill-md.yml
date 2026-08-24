@@ -140,14 +140,23 @@ jobs:
         run: |
           mkdir -p skills/tooling/zzz-naked-probe/scripts
           echo 'x = 1' > skills/tooling/zzz-naked-probe/scripts/impl.py
+          # And the NESTED position, `<...>/skills/<child>`. A depth-2 rule
+          # exempted it, and the depth-2 probe alone would not have noticed.
+          mkdir -p skills/tooling/zzz-naked-probe-host/skills/zzz-nested-probe/scripts
+          printf -- '---\nname: zzz-naked-probe-host\ndescription: Probe.\n---\n' \
+            > skills/tooling/zzz-naked-probe-host/SKILL.md
+          echo 'x = 1' > skills/tooling/zzz-naked-probe-host/skills/zzz-nested-probe/scripts/impl.py
           set +e
           python3 scripts/lint_skill_md.py > /tmp/naked.txt 2>&1
           code=$?
           set -e
-          rm -rf skills/tooling/zzz-naked-probe
+          rm -rf skills/tooling/zzz-naked-probe skills/tooling/zzz-naked-probe-host
           if [ "$code" -ne 1 ]; then
             echo "::error::a manifestless skill dir must exit 1, got $code"; cat /tmp/naked.txt; exit 1
           fi
+          grep -q 'zzz-nested-probe' /tmp/naked.txt || {
+            echo "::error::a nested sub-skill with no manifest went unreported"
+            cat /tmp/naked.txt; exit 1; }
           if grep -q 'Traceback' /tmp/naked.txt; then
             echo "::error::the lint crashed instead of reporting"; cat /tmp/naked.txt; exit 1
           fi
