@@ -859,3 +859,26 @@ def test_a_validly_chained_log_with_no_genesis_is_refused(tmp_path):
     assert rows and rows[0]["seq"] == 0, "sequence is contiguous from zero"
     ok, reason, _ = F.verify_chain(d.log, KEY)
     assert not ok and "genesis" in reason
+
+
+def test_robots_txt_itself_is_always_fetchable(tmp_path):
+    """Asking robots.txt whether we may read robots.txt is circular.
+
+    It failed closed, so a host whose rules had not been read yet refused every
+    url -- including the rules. Found by running against a real host: every other
+    test stubs `allows`, so the one function whose job is to talk to the network
+    was never exercised by the suite that covers this file.
+    """
+    import urllib.error
+    import urllib.robotparser as rp
+
+    p = F.Politeness(interval=0.0)
+    orig = rp.RobotFileParser.read
+    rp.RobotFileParser.read = lambda self: (_ for _ in ()).throw(
+        urllib.error.HTTPError("u", 503, "busy", {}, None)
+    )
+    try:
+        assert p.allows("https://example.com/robots.txt") is True
+        assert p.allows("https://example.com/anything-else") is False
+    finally:
+        rp.RobotFileParser.read = orig

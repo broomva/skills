@@ -391,6 +391,14 @@ class Politeness:
         return host if port in (None, default) else f"{host}:{port}"
 
     def allows(self, url: str) -> bool:
+        # robots.txt itself is always fetchable. Asking robots.txt whether we may
+        # read robots.txt is circular, and it fails CLOSED -- so a crawl of a site
+        # whose rules we could not yet have read refuses every url including the
+        # rules. Found by running against a real host, not by a test: every test
+        # stubs `allows`, so the one function whose job is to talk to the network
+        # was never exercised by the suite that covers this file.
+        if urllib.parse.urlsplit(url).path == "/robots.txt":
+            return True
         host = self.host_of(url)
         if host not in self._robots:
             rp = urllib.robotparser.RobotFileParser()
