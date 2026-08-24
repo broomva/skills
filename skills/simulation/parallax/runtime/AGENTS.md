@@ -124,8 +124,8 @@ reproducibility class stronger than its inputs warrant, is a serious bug.
 2. **`out/` and `.parallax/` are gitignored.** Both this directory's `.gitignore`
    and the monorepo root's cover `.parallax/`; `out/` is covered only here, and the
    nearest file wins either way. An artifact anyone else needs — a receipt, a
-   screenshot — written to `out/` exists on exactly one laptop. Human-read documents live in
-   `parallax-web/`, not here.
+   screenshot — written to `out/` exists on exactly one laptop. Human-read documents
+   belong in `docs/`, not in `out/`.
 3. **Verify a deploy with `/health`, never a deploy API.** `/health` reports the
    running **commit**. A deploy-status API reports that a deploy was *accepted*, and
    `version` is a source constant; neither can tell you which code is serving.

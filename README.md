@@ -35,7 +35,6 @@ npx skills add broomva/skills --skill '*'
 | [`skills/`](skills/) | **The monorepo.** Skills bucketed by single-noun category at `skills/<category>/<name>/` (depth-2), each with `SKILL.md` + optional `references/`/`scripts/`/`assets/` per the [agentskills.io spec](https://agentskills.io/specification). Includes the catalog skill at [`skills/tooling/skills-catalog/`](skills/tooling/skills-catalog/), and one skill that also vendors the runtime it drives at [`skills/simulation/parallax/runtime/`](skills/simulation/parallax/runtime/). |
 | [`skills-catalog/references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md) | Full categorized inventory across all 23 buckets (companion to the catalog skill) |
 | [`skills-showcase/`](skills-showcase/) | Remotion video + X thread renderer for the inventory |
-| [`parallax-web/`](parallax-web/) | Presentation site for the ontology simulation layer (Next.js static export) — landing, use cases, and the scroll cinema |
 | [`.github/workflows/`](.github/workflows/) | CI: SKILL.md frontmatter lint (validates `name` matches parent dir + required fields present per agentskills.io spec) |
 | `_shared/` | (reserved) shared utilities used by multiple Tier-2 skills |
 
