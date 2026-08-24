@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseArgs, runCli } from "../src/cli";
 import { proposeOntology } from "../src/core/ontology";
 
@@ -188,6 +191,22 @@ describe("business-data: the proposal reflects what was supplied", () => {
 });
 
 describe("business-data: the CLI grammar", () => {
+  // `runCli` writes pending proposals into `.parallax/` in the CURRENT directory.
+  // Left alone, this suite wrote them into the repository -- gitignored, so
+  // invisible, but it made the tests stateful across runs and made them fail
+  // outright in a read-only checkout. Each test gets its own directory instead.
+  let cwd = "";
+  let scratch = "";
+  beforeEach(() => {
+    cwd = process.cwd();
+    scratch = realpathSync(mkdtempSync(join(tmpdir(), "parallax-ingress-")));
+    process.chdir(scratch);
+  });
+  afterEach(() => {
+    process.chdir(cwd);
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
   const propose = (table: string) => {
     const parsed = parseArgs(["propose", "--kind", "business-data", "--table", table, "--json"]);
     return parsed;
