@@ -23,7 +23,7 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-93 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+94 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|

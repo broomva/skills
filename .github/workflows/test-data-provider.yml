@@ -1,0 +1,149 @@
+name: test-data-provider
+
+# The deterministic core of the data provider layer
+# (skills/simulation/data-provider/).
+#
+# The provider's SEARCHING is the agent's job and is not tested here -- there is
+# no corpus, no credential and no network in CI, and a test that mocked all three
+# would be testing the mock. What is tested is everything that must be identical
+# every time and checkable afterwards: that a field cannot come into existence
+# unclassified, that a column with one guess in it is a simulated column, that
+# progress cannot go backwards, that a run which found nothing still terminates,
+# and that a missing run is an error rather than a reassuring 0%.
+#
+# That split is the design, not a limitation. A model that both gathers evidence
+# and decides whether the evidence is good is grading its own homework; a model
+# that gathers, and a function that grades against a stated rule, is not. The
+# function is the half a test can hold.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/simulation/data-provider/**'
+      - '.github/workflows/test-data-provider.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/simulation/data-provider/**'
+      - '.github/workflows/test-data-provider.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-data-provider-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (the provider core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: skills/simulation/data-provider
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: python3 -m pip install --upgrade pytest
+
+      - name: Test
+        # PYTHONDONTWRITEBYTECODE because a same-size edit inside one second
+        # reuses stale bytecode (CPython invalidates on mtime+size), which
+        # reports a mutant as SURVIVED without ever running it.
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m pytest tests/ -q
+
+      - name: The refusals are reachable from the command line
+        # The rules are worth nothing if only the library enforces them. This
+        # drives the CLI a caller actually runs and asserts the typed refusal and
+        # the exit code, because a rule that raises inside a function and prints
+        # a traceback outside it has not been shipped.
+        run: |
+          echo '[{"company": {"value": "Acme"}}]' > /tmp/unclassified.json
+          set +e
+          out=$(python3 scripts/provider.py emit --table leads --records /tmp/unclassified.json 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::an unclassified field should exit 2, got $code"; exit 1; }
+          echo "$out" | grep -q UNCLASSIFIED_FIELD || {
+            echo "::error::the refusal did not name its code"; exit 1; }
+
+      - name: A missing run is an error, not a run at 0%
+        run: |
+          set +e
+          out=$(python3 scripts/provider.py status --run nope --root /tmp 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" = "2" ] || { echo "::error::a missing run should exit 2, got $code"; exit 1; }
+          echo "$out" | grep -q RUN_NOT_FOUND || {
+            echo "::error::a missing run was not reported as missing"; exit 1; }
+
+  handoff:
+    name: what it emits, Parallax accepts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # THE SEAM, TESTED AS A SEAM.
+    #
+    # The provider's whole purpose is to hand a table to Parallax with the
+    # observed/simulated distinction intact. Testing the two halves separately
+    # would leave the join -- a CLI grammar string, parsed by a different
+    # language, in a different directory -- checked by nobody. That string is
+    # exactly the kind of thing that stays green on both sides while agreeing
+    # with neither.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Build the runtime the provider feeds
+        working-directory: skills/simulation/parallax/runtime
+        run: |
+          bun install
+          bun link
+          command -v parallax || { echo "::error::parallax is not on PATH"; exit 1; }
+
+      - name: The provider emits, Parallax accepts, and the origins survive
+        working-directory: skills/simulation/data-provider
+        run: |
+          cat > /tmp/records.json <<'JSON'
+          [
+            {"company": {"value": "A", "evidence": {"url": "https://x.test/1", "sha256": "aaaa", "snapshot": "evidence/a.snapshot"}},
+             "fit":     {"value": 0.8, "inferred_from": "category match"}},
+            {"company": {"value": "B", "evidence": {"url": "https://x.test/2", "sha256": "bbbb", "snapshot": "evidence/b.snapshot"}},
+             "fit":     {"value": 0.6, "inferred_from": "category match"}}
+          ]
+          JSON
+          cmd=$(python3 scripts/provider.py emit --table leads --records /tmp/records.json)
+          echo "emitted: $cmd"
+          arg=${cmd#*--table }
+
+          cd "$(mktemp -d)"
+          parallax propose --kind business-data --table "$arg" --json > out.json
+          cat out.json
+
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open("out.json"))
+          assert d["ok"], d
+          fields = {f["key"]: f for f in d["value"]["stateFields"]}
+          # The row count was COUNTED by the provider, not declared by anyone.
+          assert fields["leads_rows"]["value"] == 2, fields["leads_rows"]
+          # And the distinction the provider established is still visible in the
+          # document a human is asked to accept. This is the whole claim.
+          assert "observed" in fields["leads.company"]["from"], fields["leads.company"]
+          assert "simulated" in fields["leads.fit"]["from"], fields["leads.fit"]
+          print("handoff ok: 2 rows, company observed, fit simulated")
+          PY
