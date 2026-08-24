@@ -12,6 +12,7 @@ information needed to classify it is gone.
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 import threading
 from pathlib import Path
@@ -193,40 +194,94 @@ def test_second_sighting_does_not_duplicate_but_is_counted(tmp_path):
 
 
 def test_sighting_does_not_overwrite_a_verdict(tmp_path):
-    """A later sighting is corroboration, not a correction that silently reopens.
-
-    Asserted through BOTH read paths. The first version of this test checked
-    only get_record(), which read the payload -- so a mutation that reset the
-    verdict COLUMN survived, because the scheduler and the reader consult
-    different copies of the same fact.
-    """
+    """A later sighting is corroboration, not a correction that silently reopens."""
     conn = S.connect(tmp_path / "s.db")
     S.put_record(conn, node(id="n1"))
     S.set_verdict(conn, "n1", "refuted", "checked and wrong")
     S.put_record(conn, node(id="n1"), by="w2")
-
     assert S.get_record(conn, "n1")["verdict"] == "refuted"
-    assert S.inventory(conn)["by_verdict"] == {"refuted": 1}, "the column too"
-    assert S.expandable_ids(conn) == [], "a re-sighted refutation must not expand"
-    assert S.drifted(conn) == []
+    assert S.inventory(conn)["by_verdict"] == {"refuted": 1}
+    assert S.expandable_ids(conn) == []
 
 
-def test_column_and_payload_never_disagree(tmp_path):
-    """The indexed columns are authoritative; drift is a reportable number."""
+def test_a_differing_re_sighting_is_kept_as_a_conflict(tmp_path):
+    """'Record everything' has no exception for the copy that lost a race."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="a", verdict="entailed"))
-    S.put_record(conn, node(id="b", depth=2, origin="simulated"))
-    S.set_verdict(conn, "b", "refuted", "inferred from a refuted parent")
-    assert S.drifted(conn) == []
+    S.put_record(conn, node(id="n1", depth=1), by="w1")
+    out = S.put_record(conn, node(id="n1", depth=1, attrs={"role": "CTO"}), by="w2")
+    assert out == "conflicted"
+    cf = S.conflicts(conn)
+    assert len(cf) == 1 and cf[0]["payload"]["attrs"] == {"role": "CTO"}
+    assert S.inventory(conn)["conflicts"] == 1
 
-    # Simulate a writer that updates only the column -- the exact shape the
-    # mutation sweep exploited. drifted() must see it.
-    conn.execute("UPDATE records SET verdict = 'entailed' WHERE id = 'b'")
-    conn.commit()
-    drift = S.drifted(conn)
-    assert len(drift) == 1 and drift[0]["field"] == "verdict"
-    # And the reader is not fooled into disagreeing with the scheduler.
-    assert S.get_record(conn, "b")["verdict"] == "entailed"
+
+# ------------------------------------- one copy of each fact (BLOCKER, codex)
+
+
+def test_generated_columns_cannot_be_written_directly(tmp_path):
+    """Drift is impossible rather than detectable.
+
+    The first schema stored verdict/origin/depth twice -- an indexed column and
+    the payload. Cross-model review showed that writing origin='observed',
+    verdict='entailed' onto a SIMULATED row made the scheduler expand it while a
+    reader still saw no evidence. Overlaying the columns on read made it worse by
+    concealing the contradiction. Generated columns remove the case: SQLite
+    refuses the write outright.
+    """
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="n2", origin="simulated"))
+    with pytest.raises(sqlite3.OperationalError, match="generated column"):
+        conn.execute("UPDATE records SET origin='observed' WHERE id='n2'")
+
+
+def test_a_simulated_record_can_never_become_expandable_by_a_column_write(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="n2", origin="simulated"))
+    for col in ("origin", "verdict"):
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute(f"UPDATE records SET {col}='x' WHERE id='n2'")
+    assert S.expandable_ids(conn) == []
+    got = S.get_record(conn, "n2")
+    assert got["origin"] == "simulated" and got["evidence"] is None
+
+
+# ------------------------------- a refutation is never erased (BLOCKER, codex)
+
+
+def test_a_refutation_cannot_be_silently_erased(tmp_path):
+    """refuted -> entailed used to null the reason and re-expand the record.
+
+    That resurrected a claim the crawl had already disproved AND dropped the
+    disproof -- the exact inverse of "record everything".
+    """
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="n1"))
+    S.set_verdict(conn, "n1", "refuted", "the span does not say this")
+    with pytest.raises(S.StoreError, match="requires an explicit `supersedes`"):
+        S.set_verdict(conn, "n1", "entailed")
+    assert S.get_record(conn, "n1")["verdict"] == "refuted"
+    assert S.expandable_ids(conn) == []
+
+
+def test_superseding_a_refutation_keeps_both_on_the_record(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="n1"))
+    S.set_verdict(conn, "n1", "refuted", "misread the span")
+    S.set_verdict(conn, "n1", "entailed", supersedes="re-read at the right offsets")
+
+    hist = S.verdict_history(conn, "n1")
+    assert [h["verdict"] for h in hist] == ["unchecked", "refuted", "entailed"]
+    assert hist[1]["refutation"] == "misread the span", "the disproof survives"
+    assert hist[2]["supersedes"] == "re-read at the right offsets"
+    assert S.expandable_ids(conn) == ["n1"]
+
+
+def test_verdict_history_is_append_only(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.put_record(conn, node(id="n1"))
+    S.set_verdict(conn, "n1", "inconclusive")
+    S.set_verdict(conn, "n1", "refuted", "resolved against it")
+    assert len(S.verdict_history(conn, "n1")) == 3
 
 
 # --------------------------------------------------------------- frontier
@@ -243,8 +298,8 @@ def test_claim_is_exclusive(tmp_path):
     conn = S.connect(tmp_path / "s.db")
     S.push_frontier(conn, "acme", 0)
     first = S.claim(conn, "w1", max_depth=4)
-    assert first["key"] == "acme"
-    assert S.claim(conn, "w2", max_depth=4) is None, "a claimed item is not re-issued"
+    assert first["key"] == "acme" and first["claim_token"]
+    assert S.claim(conn, "w2", max_depth=4) is None
 
 
 def test_claim_respects_the_depth_bound(tmp_path):
@@ -260,25 +315,96 @@ def test_claim_is_breadth_first(tmp_path):
     assert S.claim(conn, "w1", max_depth=5)["key"] == "shallow"
 
 
+# ------------------------------------ crashed workers (BLOCKER, codex)
+
+
+def test_an_expired_lease_is_reclaimable(tmp_path):
+    """A worker that claims and dies must cost one lease, not the item.
+
+    Before leases the row was excluded from claim() forever while
+    frontier_stats reported remaining=0 -- a run that silently skipped work and
+    called itself complete.
+    """
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 0)
+    first = S.claim(conn, "w1", max_depth=4, lease=10.0, now=1000.0)
+    assert first["key"] == "acme"
+    assert S.claim(conn, "w2", max_depth=4, now=1005.0) is None, "lease still held"
+
+    again = S.claim(conn, "w2", max_depth=4, now=1011.0)
+    assert again["key"] == "acme", "reclaimed after the lease lapsed"
+    assert again["claim_token"] != first["claim_token"]
+
+
+def test_an_expired_lease_is_not_counted_as_in_flight(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 0)
+    S.claim(conn, "w1", max_depth=4, lease=10.0, now=1000.0)
+    st = S.frontier_stats(conn, now=1011.0)
+    assert st["expired"] == 1 and st["in_flight"] == 0
+    assert st["remaining"] == 1, "a stranded item is still outstanding work"
+
+
+def test_a_stale_token_cannot_finish_a_reclaimed_item(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 0)
+    dead = S.claim(conn, "w1", max_depth=4, lease=10.0, now=1000.0)
+    S.claim(conn, "w2", max_depth=4, now=1011.0)
+    with pytest.raises(S.StoreError, match="no open item with that claim token"):
+        S.finish(conn, "acme", dead["claim_token"])
+
+
+# ---------------------------------- finish needs ownership (MAJOR, codex)
+
+
+def test_finish_requires_a_claim_token(tmp_path):
+    """finish(key) used to succeed for a caller that never claimed the item."""
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 0)
+    with pytest.raises(S.StoreError, match="no open item with that claim token"):
+        S.finish(conn, "acme", "not-a-real-token")
+    assert S.frontier_stats(conn)["done"] == 0
+
+
+def test_finish_with_the_right_token_completes(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    S.push_frontier(conn, "acme", 0)
+    row = S.claim(conn, "w1", max_depth=4)
+    S.finish(conn, "acme", row["claim_token"])
+    assert S.frontier_stats(conn)["done"] == 1
+
+
+# ------------------------------------------------------------ concurrency
+
+
 def test_concurrent_claims_never_collide(tmp_path):
-    """The real test of the protocol: 8 threads, 40 items, no key issued twice."""
+    """8 threads, 40 items, no key issued twice -- and no worker may die quietly.
+
+    Thread.join() does not propagate exceptions, so a crashed worker used to
+    leave both final assertions green while the others did its share.
+    """
     db = tmp_path / "s.db"
     seed = S.connect(db)
     for i in range(40):
         S.push_frontier(seed, f"e{i:02d}", 0)
 
     taken: list[str] = []
+    errors: list[BaseException] = []
     lock = threading.Lock()
 
     def worker(name: str) -> None:
-        conn = S.connect(db)
-        while True:
-            row = S.claim(conn, name, max_depth=4)
-            if row is None:
-                return
+        try:
+            conn = S.connect(db)
+            while True:
+                row = S.claim(conn, name, max_depth=4)
+                if row is None:
+                    return
+                with lock:
+                    taken.append(row["key"])
+                S.finish(conn, row["key"], row["claim_token"])
+        except BaseException as exc:  # noqa: BLE001 -- the point is to see it
             with lock:
-                taken.append(row["key"])
-            S.finish(conn, row["key"])
+                errors.append(exc)
 
     threads = [threading.Thread(target=worker, args=(f"w{i}",)) for i in range(8)]
     for t in threads:
@@ -286,16 +412,16 @@ def test_concurrent_claims_never_collide(tmp_path):
     for t in threads:
         t.join()
 
-    assert len(taken) == 40, f"every item claimed exactly once, got {len(taken)}"
+    assert errors == [], f"a worker raised: {errors[:2]}"
+    assert len(taken) == 40
     assert len(set(taken)) == 40, "no key was handed to two workers"
     assert S.frontier_stats(seed)["remaining"] == 0
 
 
 def test_frontier_stats_reports_an_honest_remainder(tmp_path):
-    """A partial run must be distinguishable from a complete one."""
     conn = S.connect(tmp_path / "s.db")
     for i in range(5):
         S.push_frontier(conn, f"e{i}", 0)
-    S.claim(conn, "w1", max_depth=4)
-    st = S.frontier_stats(conn)
-    assert st == {"total": 5, "done": 0, "in_flight": 1, "remaining": 4}
+    S.claim(conn, "w1", max_depth=4, now=1000.0)
+    st = S.frontier_stats(conn, now=1000.0)
+    assert st == {"total": 5, "done": 0, "in_flight": 1, "expired": 0, "remaining": 4}

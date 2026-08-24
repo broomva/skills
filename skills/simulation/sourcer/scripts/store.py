@@ -23,6 +23,7 @@ path, by construction rather than by discipline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -199,23 +200,55 @@ class Record:
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 
--- Records. Append-only by policy: `verdict` and `refutation` may be filled in
--- once, and nothing is ever removed. There is no DELETE anywhere in this file.
+-- Records. The payload is the SINGLE source of truth; every queryable field is a
+-- GENERATED column reading out of it.
+--
+-- The first version stored these as ordinary columns alongside the payload, so
+-- each fact existed twice. Cross-model review demonstrated the consequence:
+-- writing origin='observed', verdict='entailed' onto a simulated row made the
+-- scheduler expand it while a reader still saw no evidence and a populated
+-- inferred_from. The repair at the time -- overlaying the columns on read -- made
+-- it worse, because it CONCEALED the contradiction instead of refusing it.
+--
+-- Generated columns remove the case rather than detect it. There is one copy, so
+-- there is nothing to drift, and a hand-written UPDATE against a generated column
+-- is rejected by SQLite rather than silently believed.
 CREATE TABLE IF NOT EXISTS records (
   id             TEXT PRIMARY KEY,
-  kind           TEXT NOT NULL,
-  canonical_key  TEXT NOT NULL,
-  depth          INTEGER NOT NULL,
-  layer          TEXT NOT NULL,
-  origin         TEXT NOT NULL,
-  verdict        TEXT NOT NULL,
   payload        TEXT NOT NULL,
   first_seen     REAL NOT NULL,
-  last_seen      REAL NOT NULL
+  last_seen      REAL NOT NULL,
+  kind           TEXT    GENERATED ALWAYS AS (json_extract(payload,'$.kind'))    VIRTUAL,
+  canonical_key  TEXT    GENERATED ALWAYS AS (json_extract(payload,'$.canonical_key')) VIRTUAL,
+  depth          INTEGER GENERATED ALWAYS AS (json_extract(payload,'$.depth'))   VIRTUAL,
+  layer          TEXT    GENERATED ALWAYS AS (json_extract(payload,'$.layer'))   VIRTUAL,
+  origin         TEXT    GENERATED ALWAYS AS (json_extract(payload,'$.origin'))  VIRTUAL,
+  verdict        TEXT    GENERATED ALWAYS AS (json_extract(payload,'$.verdict')) VIRTUAL,
+  refutation     TEXT    GENERATED ALWAYS AS (json_extract(payload,'$.refutation')) VIRTUAL
 );
 CREATE INDEX IF NOT EXISTS idx_records_depth  ON records(depth);
 CREATE INDEX IF NOT EXISTS idx_records_origin ON records(origin);
 CREATE INDEX IF NOT EXISTS idx_records_kind   ON records(kind);
+
+-- Verdict history. Append-only, and the reason "record everything" is a schema
+-- property rather than a promise.
+--
+-- set_verdict() used to overwrite. Cross-model review showed a refuted record
+-- could be resurrected -- set_verdict(id,'refuted','wrong') then
+-- set_verdict(id,'entailed') left refutation NULL and put the record back in
+-- expandable_ids(). A claim the crawl had already disproved returned to spending
+-- the fetch budget, and the disproof was gone. That is the exact inverse of the
+-- operator's instruction, so the history is now the record and the payload's
+-- verdict is only its latest entry.
+CREATE TABLE IF NOT EXISTS verdicts (
+  record_id   TEXT NOT NULL,
+  seq         INTEGER NOT NULL,
+  at          REAL NOT NULL,
+  verdict     TEXT NOT NULL,
+  refutation  TEXT,
+  supersedes  TEXT,
+  PRIMARY KEY (record_id, seq)
+);
 
 -- Re-sightings. A second agent reaching a record a sibling already holds
 -- records that it was seen again, rather than a duplicate -- this is the
@@ -225,23 +258,36 @@ CREATE TABLE IF NOT EXISTS sightings (
   record_id  TEXT NOT NULL,
   at         REAL NOT NULL,
   by         TEXT NOT NULL,
-  depth      INTEGER NOT NULL
+  depth      INTEGER NOT NULL,
+  conflict   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sightings_rec ON sightings(record_id);
 
 -- The frontier. The one genuinely shared mutable structure, and therefore the
 -- only place needing a concurrency protocol. `claimed_by` is set with a
 -- conditional UPDATE so two agents cannot crawl one entity.
+-- The frontier. Claims carry an EXPIRING lease and an ownership token.
+--
+-- Without them a worker that claimed an item and died removed it from the crawl
+-- permanently, while frontier_stats() reported remaining=0 -- a run that silently
+-- skipped work and called itself complete. `finish` also accepted any caller, so
+-- a key could be marked done by something that never held it.
 CREATE TABLE IF NOT EXISTS frontier (
   key         TEXT PRIMARY KEY,
   depth       INTEGER NOT NULL,
   parent_id   TEXT,
   claimed_by  TEXT,
-  claimed_at  REAL,
+  claim_token TEXT,
+  lease_until REAL,
+  attempts    INTEGER NOT NULL DEFAULT 0,
   done_at     REAL
 );
-CREATE INDEX IF NOT EXISTS idx_frontier_open ON frontier(done_at, claimed_by, depth);
+CREATE INDEX IF NOT EXISTS idx_frontier_open ON frontier(done_at, lease_until, depth);
 """
+
+# How long a claim is held before another worker may reclaim it. A crashed
+# worker costs one lease, not the item.
+LEASE_SECONDS = 300.0
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -265,41 +311,50 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def put_record(conn: sqlite3.Connection, rec: Record, by: str = "-") -> str:
     """Insert a record, or sight it again if already held.
 
-    Returns "inserted" or "sighted". Never overwrites a record's substance: a
-    second observation of the same canonical key is corroboration, not a
-    correction, and treating it as an overwrite would silently drop whichever
-    copy lost the race.
+    Returns "inserted" or "sighted". The insert is a single atomic statement --
+    the earlier SELECT-then-INSERT let two workers both observe an absent id and
+    one then raise, losing a claim that had already been paid for.
+
+    A re-sighting never rewrites substance. Two records sharing a canonical key
+    are corroboration; if their payloads genuinely differ the difference is kept
+    as a conflict row rather than discarded, because "record everything" does not
+    have an exception for the copy that lost a race.
     """
     now = time.time()
-    cur = conn.execute("SELECT id FROM records WHERE id = ?", (rec.id,))
-    if cur.fetchone() is None:
+    payload = json.dumps(rec.as_dict(), sort_keys=True)
+    cur = conn.execute(
+        "INSERT INTO records (id, payload, first_seen, last_seen) VALUES (?,?,?,?)"
+        " ON CONFLICT(id) DO NOTHING",
+        (rec.id, payload, now, now),
+    )
+    inserted = cur.rowcount == 1
+    if inserted:
         conn.execute(
-            "INSERT INTO records (id, kind, canonical_key, depth, layer, origin,"
-            " verdict, payload, first_seen, last_seen)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                rec.id,
-                rec.kind,
-                rec.canonical_key,
-                rec.depth,
-                rec.layer,
-                rec.origin,
-                rec.verdict,
-                json.dumps(rec.as_dict(), sort_keys=True),
-                now,
-                now,
-            ),
+            "INSERT INTO verdicts (record_id, seq, at, verdict, refutation)"
+            " VALUES (?,?,?,?,?)",
+            (rec.id, 0, now, rec.verdict, rec.refutation),
         )
-        outcome = "inserted"
     else:
+        held = conn.execute(
+            "SELECT payload FROM records WHERE id = ?", (rec.id,)
+        ).fetchone()["payload"]
         conn.execute("UPDATE records SET last_seen = ? WHERE id = ?", (now, rec.id))
-        outcome = "sighted"
+        if json.loads(held) != json.loads(payload):
+            # Same identity, different substance. Keeping only the first would
+            # silently drop a paid-for observation.
+            conn.execute(
+                "INSERT INTO sightings (record_id, at, by, depth, conflict)"
+                " VALUES (?,?,?,?,?)",
+                (rec.id, now, by, rec.depth, payload),
+            )
+            conn.commit()
+            return "conflicted"
     conn.execute(
-        "INSERT INTO sightings (record_id, at, by, depth) VALUES (?,?,?,?)",
+        "INSERT INTO sightings (record_id, at, by, depth, conflict) VALUES (?,?,?,?,NULL)",
         (rec.id, now, by, rec.depth),
     )
     conn.commit()
-    return outcome
+    return "inserted" if inserted else "sighted"
 
 
 def set_verdict(
@@ -307,81 +362,87 @@ def set_verdict(
     record_id: str,
     verdict: Verdict,
     refutation: Optional[str] = None,
+    supersedes: Optional[str] = None,
 ) -> None:
-    """Attach a verifier's judgement. The record itself is never removed.
+    """Append a verdict. History is append-only; a refutation is never erased.
 
-    Refuted records stay in the store, carrying the reason they were refuted, so
-    a reader can see what the crawl believed and why it stopped believing it.
+    Leaving a `refuted` verdict requires an explicit `supersedes` reason. Without
+    that requirement the sequence refuted -> entailed silently resurrected a claim
+    the crawl had already disproved AND dropped the disproof, which is the exact
+    inverse of the rule this store exists to keep.
     """
     if verdict == "refuted" and not refutation:
         raise StoreError(f"{record_id}: refuted requires a refutation reason")
     row = conn.execute(
-        "SELECT payload FROM records WHERE id = ?", (record_id,)
+        "SELECT payload, verdict FROM records WHERE id = ?", (record_id,)
     ).fetchone()
     if row is None:
         raise StoreError(f"{record_id}: no such record")
+
+    current = row["verdict"]
+    if current == "refuted" and verdict != "refuted" and not supersedes:
+        raise StoreError(
+            f"{record_id}: leaving a refuted verdict requires an explicit "
+            "`supersedes` reason. A refutation is evidence, and evidence is not "
+            "dropped because a later pass disagreed -- say why it is superseded "
+            "and both stay on the record."
+        )
+
+    seq = conn.execute(
+        "SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM verdicts WHERE record_id = ?",
+        (record_id,),
+    ).fetchone()["n"]
+    conn.execute(
+        "INSERT INTO verdicts (record_id, seq, at, verdict, refutation, supersedes)"
+        " VALUES (?,?,?,?,?,?)",
+        (record_id, seq, time.time(), verdict, refutation, supersedes),
+    )
     payload = json.loads(row["payload"])
     payload["verdict"] = verdict
     payload["refutation"] = refutation
     conn.execute(
-        "UPDATE records SET verdict = ?, payload = ? WHERE id = ?",
-        (verdict, json.dumps(payload, sort_keys=True), record_id),
+        "UPDATE records SET payload = ? WHERE id = ?",
+        (json.dumps(payload, sort_keys=True), record_id),
     )
     conn.commit()
 
 
+def verdict_history(conn: sqlite3.Connection, record_id: str) -> list[dict]:
+    """Every verdict this record has ever carried, oldest first."""
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT seq, at, verdict, refutation, supersedes FROM verdicts"
+            " WHERE record_id = ? ORDER BY seq",
+            (record_id,),
+        )
+    ]
+
+
 def get_record(conn: sqlite3.Connection, record_id: str) -> Optional[dict]:
-    """Read a record, with the indexed columns overlaid onto the payload.
-
-    `verdict`, `origin`, `depth` and `layer` are stored twice: as columns, so
-    they can be queried and grouped, and inside the payload, so a record round
-    trips as one object. Two copies of a fact will eventually disagree, and a
-    reader that happened to consult the payload while `expandable_ids` consulted
-    the column would then be reading a different record than the scheduler was.
-
-    Mutation testing found exactly that: an UPDATE that touched only the column
-    left the payload stale and every payload-reading assertion still passed. The
-    columns are therefore authoritative and are overlaid here, so the two cannot
-    be observed disagreeing even if a writer updates only one.
-    """
+    """Read a record. The payload is the only copy, so nothing is overlaid."""
     row = conn.execute(
-        "SELECT payload, verdict, origin, depth, layer FROM records WHERE id = ?",
-        (record_id,),
+        "SELECT payload FROM records WHERE id = ?", (record_id,)
     ).fetchone()
-    if row is None:
-        return None
-    payload = json.loads(row["payload"])
-    payload["verdict"] = row["verdict"]
-    payload["origin"] = row["origin"]
-    payload["depth"] = row["depth"]
-    payload["layer"] = row["layer"]
-    return payload
-
-
-def drifted(conn: sqlite3.Connection) -> list[dict]:
-    """Records whose indexed columns disagree with their stored payload.
-
-    Should always be empty. It is a query rather than an assertion because the
-    gate suite reports it as a number, and a check that can only crash cannot be
-    counted -- a denominator of zero is indistinguishable from a pass.
-    """
-    out = []
-    for r in conn.execute(
-        "SELECT id, payload, verdict, origin, depth, layer FROM records"
-    ):
-        p = json.loads(r["payload"])
-        for col in ("verdict", "origin", "depth", "layer"):
-            if p.get(col) != r[col]:
-                out.append(
-                    {"id": r["id"], "field": col, "column": r[col], "payload": p.get(col)}
-                )
-    return out
+    return json.loads(row["payload"]) if row else None
 
 
 def sighting_count(conn: sqlite3.Connection, record_id: str) -> int:
     return conn.execute(
         "SELECT COUNT(*) AS n FROM sightings WHERE record_id = ?", (record_id,)
     ).fetchone()["n"]
+
+
+def conflicts(conn: sqlite3.Connection) -> list[dict]:
+    """Re-sightings whose substance differed from the record already held."""
+    return [
+        {"record_id": r["record_id"], "at": r["at"], "by": r["by"],
+         "payload": json.loads(r["conflict"])}
+        for r in conn.execute(
+            "SELECT record_id, at, by, conflict FROM sightings"
+            " WHERE conflict IS NOT NULL ORDER BY at"
+        )
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -394,74 +455,114 @@ def push_frontier(
 ) -> bool:
     """Offer an entity for crawling at `depth`. Returns True if newly queued.
 
-    Re-offering a key already seen is a no-op rather than a duplicate row: the
-    visited set and the queue are the same table, which is what makes
-    "have we already been here" answerable without a second structure that can
-    disagree with this one.
+    INSERT OR IGNORE rather than catching IntegrityError: the previous version
+    swallowed *every* integrity error as "already present" and left the
+    transaction open, so a genuinely invalid row read as a duplicate while the
+    single WAL writer lock was still held.
     """
-    try:
-        conn.execute(
-            "INSERT INTO frontier (key, depth, parent_id) VALUES (?,?,?)",
-            (key, depth, parent_id),
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO frontier (key, depth, parent_id) VALUES (?,?,?)",
+        (key, depth, parent_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
 
 
-def claim(conn: sqlite3.Connection, worker: str, max_depth: int) -> Optional[sqlite3.Row]:
-    """Atomically take one unclaimed frontier item, shallowest first.
+def claim(
+    conn: sqlite3.Connection,
+    worker: str,
+    max_depth: int,
+    lease: float = LEASE_SECONDS,
+    now: Optional[float] = None,
+) -> Optional[sqlite3.Row]:
+    """Atomically take one frontier item, shallowest first, under a lease.
 
-    The conditional UPDATE is the whole concurrency protocol. Two workers racing
-    the same row produce one winner and one `rowcount == 0`, because SQLite
-    serialises writers -- so no lease, no lock file, and no clock is involved.
+    Returns a row carrying `claim_token`, which `finish` requires. An item whose
+    lease has expired is reclaimable: a worker that crashed mid-item costs one
+    lease, where before it removed the item from the crawl permanently while the
+    run still reported itself complete.
     """
-    while True:
+    t = time.time() if now is None else now
+    for _ in range(64):
         row = conn.execute(
-            "SELECT key, depth, parent_id FROM frontier"
-            " WHERE claimed_by IS NULL AND done_at IS NULL AND depth <= ?"
+            "SELECT key, depth, parent_id, attempts FROM frontier"
+            " WHERE done_at IS NULL AND depth <= ?"
+            "   AND (lease_until IS NULL OR lease_until < ?)"
             " ORDER BY depth ASC, key ASC LIMIT 1",
-            (max_depth,),
+            (max_depth, t),
         ).fetchone()
         if row is None:
             return None
+        token = hashlib.sha256(
+            f"{worker}:{row['key']}:{t}:{row['attempts']}".encode()
+        ).hexdigest()[:16]
         cur = conn.execute(
-            "UPDATE frontier SET claimed_by = ?, claimed_at = ?"
-            " WHERE key = ? AND claimed_by IS NULL AND done_at IS NULL",
-            (worker, time.time(), row["key"]),
+            "UPDATE frontier SET claimed_by = ?, claim_token = ?, lease_until = ?,"
+            " attempts = attempts + 1"
+            " WHERE key = ? AND done_at IS NULL"
+            "   AND (lease_until IS NULL OR lease_until < ?)",
+            (worker, token, t + lease, row["key"], t),
         )
         conn.commit()
         if cur.rowcount == 1:
-            return row
-        # Lost the race; another worker holds it. Try the next one.
+            return {
+                "key": row["key"], "depth": row["depth"],
+                "parent_id": row["parent_id"], "claim_token": token,
+            }
+        # Lost the race for this row; another worker holds it. Try the next.
+    raise StoreError(
+        "claim() exhausted 64 attempts without acquiring a row -- this is "
+        "contention or a livelock, and looping forever would hide it"
+    )
 
 
-def finish(conn: sqlite3.Connection, key: str) -> None:
-    conn.execute("UPDATE frontier SET done_at = ? WHERE key = ?", (time.time(), key))
+def finish(conn: sqlite3.Connection, key: str, claim_token: str) -> None:
+    """Mark an item done. Only the holder of the current lease may.
+
+    The token requirement is not ceremony: `finish(key)` used to succeed for any
+    caller, including one that had never claimed the item, so a key could be
+    marked done before it was ever crawled and the run would still look complete.
+    """
+    cur = conn.execute(
+        "UPDATE frontier SET done_at = ?, lease_until = NULL"
+        " WHERE key = ? AND claim_token = ? AND done_at IS NULL",
+        (time.time(), key, claim_token),
+    )
     conn.commit()
+    if cur.rowcount != 1:
+        raise StoreError(
+            f"{key}: refusing to finish -- no open item with that claim token. "
+            "The lease may have expired and been reclaimed by another worker."
+        )
 
 
-def frontier_stats(conn: sqlite3.Connection) -> dict:
+def frontier_stats(conn: sqlite3.Connection, now: Optional[float] = None) -> dict:
     """The denominator, and the parts of it that cannot lie.
 
-    `remaining` is what a run that stops early must report, because a
-    fully-green partial answer and a fully-green complete one are
-    indistinguishable without it.
+    `expired` is counted separately from `in_flight`: an item whose lease lapsed
+    is not being worked on, and folding it into either "done" or "in flight"
+    is how a run that dropped work reports itself complete.
     """
+    t = time.time() if now is None else now
     row = conn.execute(
         "SELECT COUNT(*) AS total,"
         " SUM(CASE WHEN done_at IS NOT NULL THEN 1 ELSE 0 END) AS done,"
-        " SUM(CASE WHEN claimed_by IS NOT NULL AND done_at IS NULL THEN 1 ELSE 0 END) AS in_flight"
-        " FROM frontier"
+        " SUM(CASE WHEN done_at IS NULL AND lease_until IS NOT NULL AND lease_until >= ?"
+        "          THEN 1 ELSE 0 END) AS in_flight,"
+        " SUM(CASE WHEN done_at IS NULL AND lease_until IS NOT NULL AND lease_until < ?"
+        "          THEN 1 ELSE 0 END) AS expired"
+        " FROM frontier",
+        (t, t),
     ).fetchone()
     total = row["total"] or 0
     done = row["done"] or 0
     in_flight = row["in_flight"] or 0
+    expired = row["expired"] or 0
     return {
         "total": total,
         "done": done,
         "in_flight": in_flight,
+        "expired": expired,
         "remaining": total - done - in_flight,
     }
 
@@ -470,28 +571,23 @@ def inventory(conn: sqlite3.Connection) -> dict:
     """Everything the store holds, partitioned rather than filtered.
 
     Reported by depth, origin and verdict so that "record everything" stays
-    auditable: a consumer that wants only hop<=2 observed-entailed rows can say
-    so, and can also see exactly how much it chose not to look at.
+    auditable: a consumer wanting only hop<=2 observed-entailed rows can say so,
+    and can also see exactly how much it chose not to look at.
     """
-    by_depth: dict[int, int] = {}
-    for r in conn.execute("SELECT depth, COUNT(*) AS n FROM records GROUP BY depth"):
-        by_depth[r["depth"]] = r["n"]
-    by_origin: dict[str, int] = {}
-    for r in conn.execute("SELECT origin, COUNT(*) AS n FROM records GROUP BY origin"):
-        by_origin[r["origin"]] = r["n"]
-    by_verdict: dict[str, int] = {}
-    for r in conn.execute("SELECT verdict, COUNT(*) AS n FROM records GROUP BY verdict"):
-        by_verdict[r["verdict"]] = r["n"]
-    by_kind: dict[str, int] = {}
-    for r in conn.execute("SELECT kind, COUNT(*) AS n FROM records GROUP BY kind"):
-        by_kind[r["kind"]] = r["n"]
+    def group(col: str) -> dict:
+        return {
+            r[col]: r["n"]
+            for r in conn.execute(f"SELECT {col}, COUNT(*) AS n FROM records GROUP BY {col}")
+        }
+
     total = conn.execute("SELECT COUNT(*) AS n FROM records").fetchone()["n"]
     return {
         "total": total,
-        "by_depth": dict(sorted(by_depth.items())),
-        "by_origin": by_origin,
-        "by_verdict": by_verdict,
-        "by_kind": by_kind,
+        "by_depth": dict(sorted(group("depth").items())),
+        "by_origin": group("origin"),
+        "by_verdict": group("verdict"),
+        "by_kind": group("kind"),
+        "conflicts": len(conflicts(conn)),
         "frontier": frontier_stats(conn),
     }
 
@@ -499,9 +595,9 @@ def inventory(conn: sqlite3.Connection) -> dict:
 def expandable_ids(conn: sqlite3.Connection) -> list[str]:
     """Records permitted to seed the next hop -- observed AND entailed.
 
-    Expressed as a query rather than by calling Record.expandable() per row so
-    that the store and the dataclass cannot drift into disagreeing about which
-    records spend the budget.
+    A SQL query rather than a per-row call so the store and the dataclass cannot
+    drift about which records spend the budget. Both now read the same single
+    copy of each field, so they cannot disagree even in principle.
     """
     return [
         r["id"]

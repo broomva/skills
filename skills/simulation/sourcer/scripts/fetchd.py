@@ -29,6 +29,7 @@ tamper-evidence against a process that can read the log requires a key it cannot
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import hmac
 import json
@@ -132,21 +133,52 @@ def genesis_row(plan_digest: str, key: Optional[bytes] = None) -> dict:
     return row
 
 
+def _head_path(log_path: Path) -> Path:
+    return log_path.with_suffix(log_path.suffix + ".head")
+
+
 def append_row(log_path: Path, row: dict, key: Optional[bytes] = None) -> dict:
-    """Append one row, chained to its predecessor. Append-only by construction."""
+    """Append one chained row, under an exclusive lock, updating the head.
+
+    Three things beyond "write a line", each closing a demonstrated hole:
+
+    * The whole read-predecessor-then-append is held under `flock`. Two fetches
+      that read the same predecessor MAC produce sibling rows, and the second
+      then fails verification forever -- a fork, not a tamper, but
+      indistinguishable from one afterwards.
+    * Each row carries a sequence number, so a row cannot be reordered or
+      dropped from the middle without the count disagreeing.
+    * The head (last MAC + row count) is written to a SIDECAR. Truncating the
+      log is otherwise invisible: every surviving row still chains correctly to
+      its predecessor, so a run that lost its tail verifies as a complete one.
+      The head lives outside the file being truncated, which is the only place
+      it can usefully live.
+    """
     key = key or _chain_key()
-    prev_mac = ""
-    if log_path.exists():
-        lines = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
-        if lines:
-            prev_mac = json.loads(lines[-1])["mac"]
-    body = dict(row)
-    body.pop("mac", None)
-    body["mac"] = _row_mac(prev_mac, {k: v for k, v in body.items() if k != "mac"}, key)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(body, sort_keys=True) + "\n")
-    return body
+    lock_path = log_path.with_suffix(log_path.suffix + ".lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            prev_mac, seq = "", 0
+            if log_path.exists():
+                lines = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
+                if lines:
+                    last = json.loads(lines[-1])
+                    prev_mac = last["mac"]
+                    seq = last.get("seq", len(lines) - 1) + 1
+            body = {k: v for k, v in row.items() if k != "mac"}
+            body["seq"] = seq
+            body["mac"] = _row_mac(prev_mac, {k: v for k, v in body.items() if k != "mac"}, key)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(body, sort_keys=True) + "\n")
+            _head_path(log_path).write_text(
+                json.dumps({"mac": body["mac"], "rows": seq + 1}, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return body
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str]:
@@ -160,18 +192,38 @@ def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str
         return False, "fetch log does not exist"
     prev_mac = ""
     n = 0
+    rows = []
     for i, line in enumerate(log_path.read_text().splitlines()):
         if not line.strip():
             continue
-        n += 1
         row = json.loads(line)
+        rows.append(row)
+        if n == 0 and row.get("kind") != "genesis":
+            return False, (
+                "row 0 is not the genesis row -- a log that starts mid-run has "
+                "no anchor to the sealed plan, so it verifies without being about "
+                "anything in particular"
+            )
+        if row.get("seq") != n:
+            return False, f"row {i}: seq {row.get('seq')!r}, expected {n} (row dropped or reordered)"
         claimed = row.get("mac")
         recomputed = _row_mac(prev_mac, {k: v for k, v in row.items() if k != "mac"}, key)
         if claimed != recomputed:
             return False, f"row {i}: mac mismatch (row edited, reordered or forged)"
         prev_mac = claimed
+        n += 1
     if n == 0:
         return False, "fetch log is empty -- an empty chain verifies vacuously"
+
+    head_path = _head_path(log_path)
+    if not head_path.exists():
+        return False, "head sidecar missing -- truncation would be undetectable"
+    head = json.loads(head_path.read_text())
+    if head.get("rows") != n or head.get("mac") != prev_mac:
+        return False, (
+            f"head says {head.get('rows')} rows ending {str(head.get('mac'))[:12]}, "
+            f"log has {n} ending {prev_mac[:12]} -- the log was truncated or replaced"
+        )
     return True, f"{n} rows chained"
 
 
@@ -204,14 +256,33 @@ class Politeness:
             rp.set_url(f"{parts.scheme}://{host}/robots.txt")
             try:
                 rp.read()
+            except urllib.error.HTTPError as exc:
+                if exc.code in (401, 403):
+                    # Explicitly withheld. The convention is that this forbids
+                    # the whole site, and guessing otherwise is not ours to do.
+                    self._robots[host] = None
+                    return False
+                if exc.code >= 400:
+                    # An explicit absence (404 and friends) is the documented
+                    # "no restrictions" case. Naming the codes matters: the
+                    # earlier bare `except Exception` also converted parser
+                    # defects, malformed urls and programming errors into
+                    # permission, so the one branch nobody wanted was the
+                    # default.
+                    self._robots[host] = rp
+                    return True
+                self._robots[host] = None
+                return False
             except Exception:
-                # A host with no reachable robots.txt is treated as permitting.
-                # This is the documented convention, and stating it matters:
-                # silence here is an inference, not a permission granted.
-                self._robots[host] = rp
-                return True
+                # Network failure, timeout, parser defect, bug. None of these is
+                # evidence that crawling is allowed, so fail closed.
+                self._robots[host] = None
+                return False
             self._robots[host] = rp
-        return self._robots[host].can_fetch(USER_AGENT, url)
+        rp = self._robots[host]
+        if rp is None:
+            return False
+        return rp.can_fetch(USER_AGENT, url)
 
     def wait(self, url: str, sleeper=time.sleep, clock=time.monotonic) -> float:
         host = self.host_of(url)
@@ -289,14 +360,28 @@ class FetchDaemon:
         body = json.dumps(plan, sort_keys=True, indent=2) + "\n"
         plan_path.write_text(body, encoding="utf-8")
         digest = sha256_of(body.encode("utf-8"))
-        row = genesis_row(digest, self.key)
-        self.log.parent.mkdir(parents=True, exist_ok=True)
-        with self.log.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, sort_keys=True) + "\n")
+        # Through append_row, not a raw write: genesis needs its seq and must
+        # update the head like any other row, or verify_chain's own truncation
+        # and ordering checks would refuse the very first line.
+        append_row(self.log, {"kind": "genesis", "plan_digest": digest,
+                              "at": time.time()}, self.key)
         return digest
 
     def fetch(self, url: str) -> FetchResult:
-        """Fetch, store content-addressed, and chain the row. The only writer."""
+        """Fetch, store content-addressed, and chain the row. The only writer.
+
+        Refuses before the plan is sealed. A fetch outside a sealed plan has no
+        denominator to be measured against and no genesis row to anchor to, and
+        a log that begins with a fetch verifies happily while being about
+        nothing in particular.
+        """
+        if not (self.dir / "plan.json").exists():
+            raise FetchError(
+                "no sealed plan -- call seal_plan() before the first fetch. The "
+                "plan fixes the denominator (seeds, depth bound, fetch budget) "
+                "before anything is found, so the run cannot later grow the "
+                "number it is measured against."
+            )
         if not self.politeness.allows(url):
             raise RobotsRefusal(f"robots.txt disallows {url}")
         self.politeness.wait(url)
@@ -355,13 +440,19 @@ class FetchDaemon:
         below the store in the dependency order -- the daemon must not need to
         know what a record is.
         """
-        ok, why = self.usable_as_evidence(res)
-        if not ok:
-            raise FetchError(f"{res.url}: not citable as evidence -- {why}")
-        if not self.attests(res.url, res.sha256):
+        # Read the receipt back out of the chained log rather than trusting the
+        # FetchResult handed in. A caller can construct a FetchResult with any
+        # status and length it likes -- including a 200 for a pair that was
+        # actually fetched as a 404 -- so validating the argument validates the
+        # caller's assertion rather than what happened.
+        receipt = self.receipt_for(res.url, res.sha256)
+        if receipt is None:
             raise ChainBroken(
                 f"{res.url}: no chained log row pairs this url with {res.sha256[:12]}"
             )
+        ok, why = self.usable_as_evidence(receipt)
+        if not ok:
+            raise FetchError(f"{res.url}: not citable as evidence -- {why}")
         if span_start < 0 or span_end <= span_start:
             raise FetchError(
                 f"span [{span_start},{span_end}) is empty or inverted -- a citation "
@@ -387,6 +478,26 @@ class FetchDaemon:
             "span_end": span_end,
             "quote": quote.decode("utf-8", errors="replace"),
         }
+
+    def receipt_for(self, url: str, digest: str) -> Optional[FetchResult]:
+        """The daemon's own logged record of a fetch, or None.
+
+        Verifies the chain first, via pairs(), so a receipt can never be read
+        out of a log that does not hold together.
+        """
+        if (url, digest) not in self.pairs():
+            return None
+        for line in self.log.read_text().splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("kind") == "fetch" and row["url"] == url and row["sha256"] == digest:
+                return FetchResult(
+                    url=row["url"], sha256=row["sha256"], snapshot=row["snapshot"],
+                    status=row["status"], tool=row["tool"],
+                    retrieved_at=row["retrieved_at"], n_bytes=row["n_bytes"],
+                )
+        return None
 
     def pairs(self) -> set[tuple[str, str]]:
         """Every (url, digest) this run actually fetched.

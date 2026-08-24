@@ -34,16 +34,23 @@ class FakeRobots(F.Politeness):
         return self._allow
 
 
-def daemon(tmp_path, pages=None, allow=True, key=KEY):
+def daemon(tmp_path, pages=None, allow=True, key=KEY, seal=True):
+    """A daemon with its plan already sealed, which is the normal state.
+
+    `seal=False` is for the tests that assert fetching before sealing is refused.
+    """
     pages = pages or {"https://example.com/a": (200, b"ACME S.A.S. hires a CTO")}
 
     def transport(url):
         return pages.get(url, (404, b"not found"))
 
-    return F.FetchDaemon(
+    d = F.FetchDaemon(
         root=tmp_path, run_id="r1", politeness=FakeRobots(allow=allow),
         transport=transport, key=key,
     )
+    if seal:
+        d.seal_plan({"seeds": ["acme"], "max_depth": 2})
+    return d
 
 
 # ------------------------------------------------------- content addressing
@@ -79,7 +86,6 @@ def test_missing_chain_key_is_a_refusal_not_a_default(tmp_path, monkeypatch):
 def test_key_is_never_written_into_the_run_directory(tmp_path):
     """A key stored beside the log is readable by whatever can read the log."""
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"], "max_depth": 2})
     d.fetch("https://example.com/a")
     for p in d.dir.rglob("*"):
         if p.is_file():
@@ -91,7 +97,6 @@ def test_key_is_never_written_into_the_run_directory(tmp_path):
 
 def test_chain_verifies_and_counts_rows(tmp_path):
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     d.fetch("https://example.com/a")
     ok, reason = F.verify_chain(d.log, KEY)
     assert ok and "2 rows" in reason
@@ -99,7 +104,6 @@ def test_chain_verifies_and_counts_rows(tmp_path):
 
 def test_editing_a_row_breaks_the_chain(tmp_path):
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     d.fetch("https://example.com/a")
 
     lines = d.log.read_text().splitlines()
@@ -115,7 +119,6 @@ def test_editing_a_row_breaks_the_chain(tmp_path):
 def test_a_reader_without_the_key_cannot_forge_a_row(tmp_path):
     """The whole reason the chain is keyed rather than a plain hash."""
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     d.fetch("https://example.com/a")
 
     # An attacker who can READ the log appends a plausible row, recomputing the
@@ -138,14 +141,13 @@ def test_empty_chain_does_not_verify_vacuously(tmp_path):
 
 
 def test_plan_is_sealed_once(tmp_path):
-    d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"], "max_depth": 2})
+    d = daemon(tmp_path)          # daemon() seals on construction
     with pytest.raises(F.FetchError, match="already exists"):
         d.seal_plan({"seeds": ["acme"], "max_depth": 99})
 
 
 def test_genesis_commits_to_the_plan_digest(tmp_path):
-    d = daemon(tmp_path)
+    d = daemon(tmp_path, seal=False)
     digest = d.seal_plan({"seeds": ["acme"], "max_depth": 2})
     genesis = json.loads(d.log.read_text().splitlines()[0])
     assert genesis["kind"] == "genesis"
@@ -219,7 +221,6 @@ def test_authored_bytes_are_not_attested(tmp_path):
     url with those bytes.
     """
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     d.fetch("https://example.com/a")
 
     forged = b"ACME S.A.S. was founded by a person who does not exist"
@@ -256,7 +257,6 @@ def test_attests_refuses_when_the_chain_does_not_verify(tmp_path):
     composed. A check nobody calls is not a weaker check, it is an absent one.
     """
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     real = d.fetch("https://example.com/a")
     assert d.attests(real.url, real.sha256)
 
@@ -271,7 +271,6 @@ def test_attests_refuses_when_the_chain_does_not_verify(tmp_path):
 def test_a_broken_chain_poisons_every_pair_not_just_the_forged_one(tmp_path):
     """A log that can be edited can be edited to contain any pair."""
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     real = d.fetch("https://example.com/a")
 
     lines = d.log.read_text().splitlines()
@@ -287,7 +286,6 @@ def test_a_broken_chain_poisons_every_pair_not_just_the_forged_one(tmp_path):
 def test_chain_broken_is_fatal_not_falsy(tmp_path):
     """False would say 'not fetched'; the truth is 'this log proves nothing'."""
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     d.fetch("https://example.com/a")
     with d.log.open("a") as fh:
         fh.write('{"kind":"fetch","url":"u","sha256":"z","mac":"nope"}\n')
@@ -302,7 +300,6 @@ def test_chain_broken_is_fatal_not_falsy(tmp_path):
 def test_chain_cache_is_invalidated_by_a_write(tmp_path):
     """Memoisation must not hold a stale pass across a tamper."""
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     real = d.fetch("https://example.com/a")
     assert d.attests(real.url, real.sha256), "warms the cache"
 
@@ -331,7 +328,6 @@ def test_every_public_check_has_a_caller():
 def test_evidence_for_refuses_a_404_body(tmp_path):
     """Binds usable_as_evidence to a caller: the extractor cannot skip it."""
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/missing")
     with pytest.raises(F.FetchError, match="not a page"):
         d.evidence_for(res, 0, 3)
@@ -339,7 +335,6 @@ def test_evidence_for_refuses_a_404_body(tmp_path):
 
 def test_evidence_for_refuses_an_empty_payload(tmp_path):
     d = daemon(tmp_path, pages={"https://example.com/e": (200, b"")})
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/e")
     with pytest.raises(F.FetchError, match="zero bytes"):
         d.evidence_for(res, 0, 1)
@@ -347,7 +342,6 @@ def test_evidence_for_refuses_an_empty_payload(tmp_path):
 
 def test_evidence_for_refuses_a_span_past_the_artifact(tmp_path):
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/a")
     with pytest.raises(F.FetchError, match="runs past the artifact"):
         d.evidence_for(res, 0, 100_000)
@@ -355,7 +349,6 @@ def test_evidence_for_refuses_a_span_past_the_artifact(tmp_path):
 
 def test_evidence_for_refuses_an_inverted_or_empty_span(tmp_path):
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/a")
     with pytest.raises(F.FetchError, match="empty or inverted"):
         d.evidence_for(res, 5, 5)
@@ -363,7 +356,6 @@ def test_evidence_for_refuses_an_inverted_or_empty_span(tmp_path):
 
 def test_evidence_for_refuses_a_whitespace_span(tmp_path):
     d = daemon(tmp_path, pages={"https://example.com/w": (200, b"ACME    \n   CTO")})
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/w")
     with pytest.raises(F.FetchError, match="whitespace"):
         d.evidence_for(res, 4, 12)
@@ -376,7 +368,6 @@ def test_evidence_for_quotes_the_actual_bytes_at_the_offsets(tmp_path):
     it at the committed offsets means the extractor had to point at a location.
     """
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/a")   # b"ACME S.A.S. hires a CTO"
     ev = d.evidence_for(res, 0, 11)
     assert ev["quote"] == "ACME S.A.S."
@@ -385,9 +376,86 @@ def test_evidence_for_quotes_the_actual_bytes_at_the_offsets(tmp_path):
 
 def test_evidence_for_refuses_when_the_chain_is_broken(tmp_path):
     d = daemon(tmp_path)
-    d.seal_plan({"seeds": ["acme"]})
     res = d.fetch("https://example.com/a")
     with d.log.open("a") as fh:
         fh.write('{"kind":"fetch","url":"u","sha256":"z","mac":"nope"}\n')
     with pytest.raises(F.ChainBroken):
         d.evidence_for(res, 0, 4)
+
+
+# --------------------------------- truncation and forgery (BLOCKER, codex)
+
+
+def test_truncating_the_log_is_detected(tmp_path):
+    """Every surviving row still chains; only the head sidecar disagrees.
+
+    Without it a run that lost its tail verified as a complete one -- the
+    chain proves rows were not EDITED, and says nothing about rows removed
+    from the end.
+    """
+    d = daemon(tmp_path)
+    d.fetch("https://example.com/a")
+    d.fetch("https://example.com/missing")
+
+    lines = d.log.read_text().splitlines()
+    d.log.write_text("\n".join(lines[:-1]) + "\n")
+
+    ok, reason = F.verify_chain(d.log, KEY)
+    assert not ok and "truncated" in reason
+
+
+def test_a_log_without_genesis_does_not_verify(tmp_path):
+    d = daemon(tmp_path)
+    d.fetch("https://example.com/a")
+    lines = d.log.read_text().splitlines()
+    d.log.write_text("\n".join(lines[1:]) + "\n")
+    ok, reason = F.verify_chain(d.log, KEY)
+    assert not ok and ("genesis" in reason or "seq" in reason)
+
+
+def test_rows_carry_contiguous_sequence_numbers(tmp_path):
+    d = daemon(tmp_path)
+    d.fetch("https://example.com/a")
+    seqs = [json.loads(ln)["seq"] for ln in d.log.read_text().splitlines() if ln.strip()]
+    assert seqs == list(range(len(seqs)))
+
+
+def test_a_caller_supplied_status_cannot_launder_a_404(tmp_path):
+    """MAJOR (codex): usable_as_evidence trusted the argument, not the log.
+
+    Fetch a url as 404, then hand evidence_for a FetchResult claiming 200 for
+    the same (url, digest). The receipt is now read back out of the chained log,
+    so the caller's assertion is not what gets checked.
+    """
+    d = daemon(tmp_path)
+    real = d.fetch("https://example.com/missing")
+    assert real.status == 404
+
+    laundered = F.FetchResult(
+        url=real.url, sha256=real.sha256, snapshot=real.snapshot,
+        status=200, tool="urllib", retrieved_at=real.retrieved_at,
+        n_bytes=max(real.n_bytes, 100),
+    )
+    with pytest.raises(F.FetchError, match="not a page"):
+        d.evidence_for(laundered, 0, 3)
+
+
+# --------------------------------------------- robots fails closed (codex)
+
+
+def test_robots_failure_is_not_permission(tmp_path):
+    """A parser defect or network error used to read as 'crawling allowed'."""
+    class Exploding(F.Politeness):
+        def __init__(self):
+            super().__init__(interval=0.0)
+        def _read(self, rp):
+            raise RuntimeError("parser blew up")
+
+    p = F.Politeness(interval=0.0)
+    import urllib.robotparser as rparser
+    orig = rparser.RobotFileParser.read
+    rparser.RobotFileParser.read = lambda self: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        assert p.allows("https://example.com/a") is False
+    finally:
+        rparser.RobotFileParser.read = orig
