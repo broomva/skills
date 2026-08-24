@@ -482,6 +482,53 @@ class TestGrammarSafety:
         assert line.startswith("parallax propose --kind business-data --table ")
 
 
+class TestContainment:
+    def test_an_absolute_snapshot_path_is_refused(self):
+        """`Path("a") / "/etc/passwd"` DISCARDS the left operand in Python.
+
+        So an absolute snapshot does not point inside the run directory, it
+        points anywhere on the disk -- and verify_snapshot would then confirm the
+        digest of a file the run never fetched. A citation satisfiable by an
+        arbitrary local file is not a citation.
+        """
+        with pytest.raises(p.ProviderError) as e:
+            p.Evidence(url="https://x", sha256="d" * 64, retrieved_at="", snapshot="/etc/passwd")
+        assert e.value.code == "EVIDENCE_ESCAPES_RUN"
+
+    def test_a_climbing_snapshot_path_is_refused(self):
+        with pytest.raises(p.ProviderError) as e:
+            p.Evidence(url="https://x", sha256="d" * 64, retrieved_at="", snapshot="../../secrets")
+        assert e.value.code == "EVIDENCE_ESCAPES_RUN"
+
+    def test_verification_cannot_be_satisfied_by_a_file_outside_the_run(self, tmp_path: Path):
+        # The end-to-end version of the above: an artifact that genuinely exists
+        # and genuinely hashes, but is not inside the run, must not verify.
+        outside = tmp_path / "elsewhere.html"
+        outside.write_bytes(b"<html>not ours</html>")
+        with pytest.raises(p.ProviderError):
+            p.Evidence(
+                url="https://x",
+                sha256=p.sha256_of(outside.read_bytes()),
+                retrieved_at="",
+                snapshot=str(outside),
+            )
+
+
+class TestEmitBoundaryValidation:
+    def test_a_reserved_character_is_caught_even_bypassing_the_constructor(self):
+        """`Field` is a plain dataclass, so `make_field` can be walked around.
+
+        A name of "a,b" then emits `leads#1:a,b:string:observed`, which parses as
+        TWO columns, the second carrying a provenance nobody asserted. Validating
+        only at the constructor protects only the path that uses it.
+        """
+        ev_ = ev()
+        rows = [p.Record([p.Field("a,b", "x", ev_, None)])]
+        with pytest.raises(p.ProviderError) as e:
+            p.emit_table_arg("leads", rows, evidence_verified=True)
+        assert e.value.code == "RESERVED_CHARACTER"
+
+
 class TestEvidenceShape:
     def test_a_digest_that_is_not_a_digest_is_refused(self):
         for bad in ("aaaa", "", "z" * 64, "A" * 64):

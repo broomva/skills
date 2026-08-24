@@ -119,6 +119,7 @@ the same shape Parallax uses, so one branch handles both.
 | `UNCLASSIFIED_FIELD` | Add `evidence` or `inferred_from`. Do not pick `simulated` to get past it. |
 | `EVIDENCE_INCOMPLETE` | Evidence needs a url, a **64-hex** sha256, and a snapshot path. A short or absent digest is a citation that cannot be checked wearing the word that means it was. |
 | `EVIDENCE_UNVERIFIED` | Either a cited artifact is missing / no longer hashes to its digest, or observed records reached `emit_table_arg` without having been verified at all. Not downgraded to `simulated` — that would hide a broken pipeline behind a plausible table. |
+| `EVIDENCE_ESCAPES_RUN` | A snapshot path is absolute or climbs with `..`. It must stay inside the run directory — Python's `/` discards the left operand on an absolute right-hand side, so such a path would let verification be satisfied by any file on the disk. |
 | `RESERVED_CHARACTER` | A name contains `,` `:` or `#`. Those are `--table` delimiters, so such a name **injects extra columns** rather than producing a bad one. |
 | `RECORDS_MALFORMED` / `RECORDS_UNREADABLE` | The records file is not readable, or not a JSON list of objects. |
 | `AMBIGUOUS_ORIGIN` | The field has both. It is one or the other. |
@@ -131,7 +132,7 @@ the same shape Parallax uses, so one branch handles both.
 
 ```bash
 cd skills/simulation/data-provider
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 54 tests
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/ -q     # 58 tests
 ```
 
 `PYTHONDONTWRITEBYTECODE` because a same-size edit inside one second reuses stale

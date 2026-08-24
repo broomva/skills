@@ -53,7 +53,7 @@ import shlex
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Literal
 
 # Parallax keeps its own thread state in `.parallax/`; provider runs live beside
@@ -130,6 +130,24 @@ class Evidence:
             raise ProviderError(
                 "EVIDENCE_INCOMPLETE",
                 "evidence needs the snapshot path of what was actually read",
+            )
+        # The snapshot path is joined onto the run directory, and `Path("a") /
+        # "/etc/passwd"` in Python DISCARDS the left operand. So an absolute path
+        # here does not point inside the run, it points anywhere on the disk --
+        # and `verify_snapshot` would then happily confirm the digest of a file
+        # the run never fetched. A citation that can be satisfied by an arbitrary
+        # local file is not a citation.
+        if PurePosixPath(self.snapshot).is_absolute() or self.snapshot.startswith("/"):
+            raise ProviderError(
+                "EVIDENCE_ESCAPES_RUN",
+                f"snapshot path {self.snapshot!r} is absolute; it must be relative to the run directory",
+                snapshot=self.snapshot,
+            )
+        if ".." in PurePosixPath(self.snapshot).parts:
+            raise ProviderError(
+                "EVIDENCE_ESCAPES_RUN",
+                f"snapshot path {self.snapshot!r} climbs out of the run directory",
+                snapshot=self.snapshot,
             )
 
     def as_dict(self) -> dict[str, Any]:
@@ -352,6 +370,20 @@ def emit_table_arg(table: str, records: list[Record], *, evidence_verified: bool
         )
 
     origins = judge_columns(records)
+    # Checked HERE as well as in `make_field`. `Field` is a plain dataclass, so a
+    # caller can build one directly and skip the constructor entirely -- and a
+    # name of "a,b" then emits `leads#1:a,b:string:observed`, which parses as TWO
+    # columns, the second carrying a provenance nobody asserted. Validating only
+    # at the constructor protects the path that goes through the constructor.
+    for name in origins:
+        bad = [c for c in _RESERVED if c in name]
+        if bad:
+            raise ProviderError(
+                "RESERVED_CHARACTER",
+                f"column {name!r} contains {bad!r}, which the --table grammar uses as a delimiter",
+                column=name,
+                characters=bad,
+            )
     parts: list[str] = []
     for name in origins:
         values = [f.value for r in records for f in r.fields if f.name == name]
