@@ -3,8 +3,8 @@
 
 Tiered TTS with a pluggable backend:
 
-    say         macOS native. Free, unlimited, instant. The default.
-    elevenlabs  Best quality. Opt-in per call, quota-guarded.
+    elevenlabs  Best quality. The default, quota-guarded.
+    say         macOS native. Free, unlimited, no network. `--fast`.
     omnivoice   Local OmniVoice Studio. Unlimited + private. Requires the
                 backend up on $OMNIVOICE_API_URL (default localhost:3900).
 
@@ -315,12 +315,15 @@ def main() -> int:
     )
     p.add_argument("text", nargs="*", help="text to speak (or pipe via stdin)")
     p.add_argument(
-        "-b", "--backend", default=os.environ.get("TALKBACK_BACKEND", "say"),
+        "-b", "--backend",
+        default=os.environ.get("TALKBACK_BACKEND", "elevenlabs"),
         choices=["say", "elevenlabs", "omnivoice"],
-        help="TTS backend (default: say)",
+        help="TTS backend (default: elevenlabs)",
     )
     p.add_argument("--good", action="store_true",
-                   help="shorthand for --backend elevenlabs")
+                   help="force ElevenLabs (already the default)")
+    p.add_argument("--fast", action="store_true",
+                   help="force the local `say` voice — no network round trip")
     p.add_argument("-v", "--voice", default=None,
                    help="backend voice: a `say` voice name, or an ElevenLabs voice id")
     p.add_argument("--model", default=ELEVEN_DEFAULT_MODEL, help="ElevenLabs model id")
@@ -378,7 +381,12 @@ def main() -> int:
         print("[talkback] nothing speakable in that input", file=sys.stderr)
         return 1
 
-    requested = "elevenlabs" if a.good else a.backend
+    if a.fast:
+        requested = "say"
+    elif a.good:
+        requested = "elevenlabs"
+    else:
+        requested = a.backend
     try:
         backend, note = resolve_backend(requested, len(text), a.strict)
     except RuntimeError as e:

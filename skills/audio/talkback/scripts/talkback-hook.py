@@ -9,8 +9,10 @@ What it says, in order of preference:
   1. an explicit `<!-- talkback: ... -->` marker the agent left in its message
   2. otherwise, the opening sentences of the final message, up to a char cap
 
-It never uses a metered backend. An automatic per-turn readback is exactly the
-thing that would silently drain a quota, so this is hardwired to `say`.
+It defaults to the free backend even when a metered one is affordable. A
+readback fires on every turn, unattended, for audio nobody asked for — on a
+130k-character plan a couple of busy days would still eat a third of the month.
+Set TALKBACK_HOOK_BACKEND=elevenlabs to override deliberately.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ HERE = Path(__file__).resolve().parent
 STATE_DIR = Path(os.environ.get("TALKBACK_HOME", Path.home() / ".talkback"))
 FLAG = STATE_DIR / "hook-enabled"
 CAP = int(os.environ.get("TALKBACK_HOOK_CHARS", "320"))
+HOOK_BACKEND = os.environ.get("TALKBACK_HOOK_BACKEND", "say")
 
 MARKER_RE = re.compile(r"<!--\s*talkback:\s*(.+?)\s*-->", re.S | re.I)
 
@@ -122,7 +125,7 @@ def main() -> int:
     # Detach so the turn is never held open for the length of the audio.
     try:
         subprocess.Popen(
-            [sys.executable, str(HERE / "talkback.py"), "-b", "say", "--", spoken],
+            [sys.executable, str(HERE / "talkback.py"), "-b", HOOK_BACKEND, "--", spoken],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,

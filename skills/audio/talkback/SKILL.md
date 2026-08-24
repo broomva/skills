@@ -4,15 +4,15 @@ category: audio
 version: 0.1.0
 description: >-
   Speak an explanation out loud while working in any project — tiered
-  text-to-speech with a pluggable backend (macOS `say` free and unlimited by
-  default, ElevenLabs opt-in and quota-guarded for when quality matters, local
+  text-to-speech with a pluggable backend (ElevenLabs by default and
+  quota-guarded, macOS `say` via `--fast` for free instant local speech, local
   OmniVoice as an unlimited private tier). Markdown-aware, so code fences, URLs
   and deep paths collapse to short spoken placeholders instead of being dictated
   character by character, while snake_case identifiers survive intact so the
   listener can still search for them. Every utterance is saved to disk for later
   replay. Includes an optional Stop hook that speaks a short readback when a
-  turn ends, off by default and hardwired to the free backend so it can never
-  drain a metered quota. Use when the user asks to hear something rather than
+  turn ends, off by default and using the free backend so unattended per-turn
+  audio cannot quietly drain a metered quota. Use when the user asks to hear something rather than
   read it — an explanation of a change, a walkthrough of what just happened, a
   summary they want while looking away from the screen.
 author: broomva
@@ -28,10 +28,10 @@ trigger_keywords:
 when_to_use: >
   The user wants to LISTEN rather than read — typically because they are away
   from the screen, resting their eyes, or want a walkthrough while doing
-  something else. Default to the free `say` backend; only reach for ElevenLabs
-  when the user asks for good quality, because the account quota is small and
-  shared across the month. Speak a written-for-the-ear summary, never a
-  read-aloud of raw markdown.
+  something else. Default to the ElevenLabs voice — the plan affords it. Use
+  `--fast` for throwaway lines or when network latency matters. Speak a
+  written-for-the-ear summary, never a read-aloud of raw markdown; the listener
+  cannot scroll back, so lead with the conclusion.
 ---
 
 # talkback — hear it instead of reading it
@@ -44,8 +44,8 @@ silently spends a metered quota.
 ```bash
 S=~/.claude/skills/talkback/scripts
 
-$S/talkback.py "Here is what changed and why it matters."   # free, instant
-$S/talkback.py --good "The bit that deserves a good voice."  # ElevenLabs
+$S/talkback.py "Here is what changed and why it matters."   # ElevenLabs (default)
+$S/talkback.py --fast "Throwaway line."                      # local, instant, free
 $S/talkback.py --quota                                       # what's left
 $S/talkback.py --voices                                      # list voices
 $S/talkback.py --dry-run "..."                               # see spoken text, synthesise nothing
@@ -60,26 +60,30 @@ Do not pipe raw markdown or a diff into the tool. Compose two to five sentences
 of plain spoken prose — what changed, why, what it means for them — and pass
 that. The listener cannot scroll back, so lead with the conclusion.
 
-Default to `say`. Reach for `--good` only when the user asks for a better voice,
-or when the audio is going to be kept and re-listened to. State which backend
+Default to the good voice — the plan comfortably affords it. Reach for `--fast`
+when the text is throwaway or you want zero network latency. State which backend
 was used if it fell back.
 
 ## Backends
 
 | Backend | Cost | Quality | Notes |
 |---|---|---|---|
-| `say` (**default**) | free, unlimited | fair | macOS native, ~instant, no network |
-| `elevenlabs` (`--good`) | metered | best | quota-guarded, auto-falls back to `say` |
+| `elevenlabs` (**default**) | metered | best | quota-guarded, auto-falls back to `say` |
+| `say` (`--fast`) | free, unlimited | fair | macOS native, ~instant, no network |
 | `omnivoice` | free, unlimited | good | local + private; needs the backend up. **Unverified** — see below |
 
 `--strict` turns any fallback into a hard failure (exit 1) instead, for scripts
 that must not silently degrade.
 
-### The ElevenLabs quota is the real constraint
+### Quota
 
-The account is free tier: **10,000 characters/month, non-extendable.** A
-two-minute spoken explanation is roughly 1,500 characters, so that is about six
-per month. This is why `say` is the default and `--good` is opt-in.
+The account is Creator tier: **130,958 characters/month**. A two-minute spoken
+explanation is roughly 1,500 characters, so that is about 87 of them a month —
+enough that the good voice can be the default rather than a treat.
+
+Verify at point of use, never from memory — `talkback.py --quota` reads it live.
+The tier has changed once already, and a number in a doc is stale the moment the
+plan moves.
 
 Before synthesising, the tool reads the live quota and keeps a 250-character
 reserve, so one long explanation can never drain the balance completely. If the
@@ -87,7 +91,11 @@ request would not fit, it warns on stderr and uses `say` instead.
 
 Credentials resolve in order: `$ELEVENLABS_API_KEY` → `~/.elevenlabs/api_key`
 (written by `elevenlabs auth login`) → `ELEVENLABS_API_KEY` in
-`~/broomva/.env.local`.
+`~/broomva/.env.local`. Two distinct keys exist on this machine and they resolve
+to the **same** account, so checking one is checking both.
+
+Creator tier also unlocks **instant and professional voice cloning** (30 voice
+slots, 1 professional). `--voices` lists what the account can currently use.
 
 > The `@elevenlabs/cli` package is **not** used at runtime and cannot do this —
 > its whole surface is `auth · agents · tools · tests · components`, which
@@ -123,9 +131,10 @@ present) with a timestamped, slugged filename, and is appended to
 
 **Off by default.** It speaks only while `~/.talkback/hook-enabled` exists,
 always exits 0 so it can never block a turn, hands the audio to a detached
-process so the turn does not wait for playback, and is **hardwired to `say`** —
-an automatic per-turn readback is exactly the thing that would quietly drain a
-metered quota.
+process so the turn does not wait for playback, and **defaults to `say`** even
+though the plan could afford otherwise — a readback fires on every turn,
+unattended, for audio nobody asked for, and a couple of busy days would still eat
+a third of the month. Override deliberately with `TALKBACK_HOOK_BACKEND`.
 
 ```bash
 $S/talkback-hook.py --on       # enable
@@ -158,9 +167,10 @@ readback, end the message with a marker — the hook prefers it when present:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TALKBACK_BACKEND` | `say` | default backend |
+| `TALKBACK_BACKEND` | `elevenlabs` | default backend |
 | `TALKBACK_SAY_VOICE` | `Samantha` | macOS voice name |
 | `TALKBACK_ELEVEN_VOICE` | River | ElevenLabs voice id |
 | `TALKBACK_HOOK_CHARS` | `320` | readback cap |
+| `TALKBACK_HOOK_BACKEND` | `say` | backend for the Stop-hook readback |
 | `TALKBACK_HOME` | `~/.talkback` | state + audio directory |
 | `OMNIVOICE_API_URL` | `http://localhost:3900` | local backend |
