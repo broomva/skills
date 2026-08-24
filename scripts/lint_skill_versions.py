@@ -31,11 +31,19 @@ from pathlib import Path
 import yaml
 
 # SemVer 2.0.0 (https://semver.org) — numeric core + optional pre-release/build.
+# `\d` is Unicode-aware and `$` matches before a trailing newline, so the
+# previous `^...$` + `.match()` pair accepted "1.2.3\n" and the Arabic-Indic
+# "1٢.0.0" as valid SemVer. ASCII classes + `fullmatch` at the call site.
 _SEMVER = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
-    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?",
+    re.ASCII,
 )
+
+#: A ``## [x.y.z]`` heading inside a fenced block is an EXAMPLE, not a release.
+_FENCE_RX = re.compile(r"^(?P<f>```+|~~~+).*?^(?P=f)[^\n]*$", re.M | re.S)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SKILLS_DIR = _REPO_ROOT / "skills"
@@ -56,8 +64,19 @@ def _read_bytes(path: Path) -> tuple[bytes | None, str | None]:
     """
     try:
         return path.read_bytes(), None
+    except FileNotFoundError:
+        # A DANGLING SYMLINK is not an absence: something IS there, naming a
+        # target that is not. `.exists()` follows the link and answers False,
+        # so the four `.exists()` preflights this replaces let a broken symlink
+        # exempt a skill from every rule below — absent-reads-as-consistent,
+        # reintroduced one layer ABOVE the shared reader written to kill it.
+        if path.is_symlink():
+            return None, "is a broken symlink"
+        return None, None
     except OSError as exc:
-        return None, f"{path.name} could not be read ({type(exc).__name__})"
+        # Includes an unreadable ANCESTOR directory (EACCES), which `.exists()`
+        # also reports as a plain False.
+        return None, f"could not be read ({type(exc).__name__})"
 
 
 def _read_utf8(path: Path) -> tuple[str | None, str | None]:
@@ -65,11 +84,12 @@ def _read_utf8(path: Path) -> tuple[str | None, str | None]:
     raw, unreadable = _read_bytes(path)
     if unreadable:
         return None, unreadable
-    assert raw is not None
+    if raw is None:
+        return None, None  # absent — the caller decides whether that is a finding
     try:
         return raw.decode("utf-8"), None
     except UnicodeDecodeError as exc:
-        return None, f"{path.name} is not valid UTF-8 ({exc.reason})"
+        return None, f"is not valid UTF-8 ({exc.reason})"
 
 
 def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
@@ -89,32 +109,40 @@ def _read_frontmatter(skill_md: Path) -> tuple[dict, str | None]:
     """
     raw, unreadable = _read_bytes(skill_md)
     if unreadable:
-        return {}, unreadable
-    assert raw is not None
+        return {}, unreadable, True
+    if raw is None:
+        return {}, None, False  # no SKILL.md here at all
     if raw.startswith(b"\xef\xbb\xbf"):
-        return {}, "starts with a UTF-8 BOM before the --- fence"
+        return {}, "starts with a UTF-8 BOM before the --- fence", True
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        return {}, f"is not valid UTF-8 ({exc.reason})"
+        return {}, f"is not valid UTF-8 ({exc.reason})", True
+    # CRLF is a line ending, not a fence defect: splitting on "\n" alone left a
+    # trailing "\r" on every line, so exact fence equality rejected every
+    # well-formed CRLF manifest as having no frontmatter. Normalise the TEXT,
+    # not just the split — the closing-fence offset indexes back into it, and
+    # normalising only the lines shifted that slice by one byte per line,
+    # silently truncating the last frontmatter value ("1.0.0" -> "1.0").
+    text = text.replace("\r\n", "\n")
     lines = text.split("\n")
     # EXACT fences at both ends. `first.strip()` accepted a whitespace-decorated
     # opener, and `find("\n---")` accepted `---yaml` as a CLOSING fence — the
     # same laxness the opening check had already been tightened against, left
     # in place at the other end.
     if not lines or lines[0] != "---":
-        return {}, "does not start with a --- frontmatter fence"
+        return {}, "does not start with a --- frontmatter fence", True
     closing = next((i for i, line in enumerate(lines[1:], 1) if line == "---"), None)
     if closing is None:
-        return {}, "has no closing --- fence"
+        return {}, "has no closing --- fence", True
     end = len("\n".join(lines[:closing]))
     try:
         data = yaml.safe_load(text[3:end])
     except yaml.YAMLError as exc:
-        return {}, f"has unparseable YAML frontmatter ({str(exc).splitlines()[0][:60]})"
+        return {}, f"has unparseable YAML frontmatter ({str(exc).splitlines()[0][:60]})", True
     if not isinstance(data, dict):
-        return {}, "frontmatter is not a mapping"
-    return data, None
+        return {}, "frontmatter is not a mapping", True
+    return data, None, True
 
 
 def _frontmatter(skill_md: Path) -> dict:
@@ -149,16 +177,15 @@ def _pyproject_version(path: Path) -> tuple[str | None, str | None]:
     all, so the version-agreement rule silently stopped applying to exactly the
     file most likely to be wrong.
     """
-    if not path.exists():
-        return None, None
     text, unreadable = _read_utf8(path)
     if unreadable:
-        return None, unreadable
-    assert text is not None
+        return None, f"pyproject.toml {unreadable}"
+    if text is None:
+        return None, None  # genuinely absent — pyproject.toml is optional
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        return None, f"pyproject.toml could not be read ({type(exc).__name__})"
+        return None, f"pyproject.toml is not valid TOML ({type(exc).__name__})"
     project = data.get("project")
     if not isinstance(project, dict):
         return None, None
@@ -170,16 +197,15 @@ def _pyproject_version(path: Path) -> tuple[str | None, str | None]:
 
 def _package_json_version(path: Path) -> tuple[str | None, str | None]:
     """`(version, reason_it_could_not_be_read)` — see `_pyproject_version`."""
-    if not path.exists():
-        return None, None
     text, unreadable = _read_utf8(path)
     if unreadable:
-        return None, unreadable
-    assert text is not None
+        return None, f"package.json {unreadable}"
+    if text is None:
+        return None, None  # genuinely absent — package.json is optional
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
-        return None, f"package.json could not be read ({type(exc).__name__})"
+        return None, f"package.json is not valid JSON ({type(exc).__name__})"
     if not isinstance(data, dict):
         return None, "package.json is not a JSON object"
     v = data.get("version")
@@ -198,35 +224,44 @@ def _changelog_has_version(path: Path, version: str) -> tuple[bool, str | None]:
     readable, and unreadable collapsed into two states — with the opposite
     symptom, which is why looking for silent passes alone did not find it.
     """
-    if not path.exists():
-        return False, None
     text, unreadable = _read_utf8(path)
     if unreadable:
-        return False, unreadable
-    assert text is not None
-    return f"## [{version}]" in text, None
+        return False, f"CHANGELOG.md {unreadable}"
+    if text is None:
+        return False, None  # absent CHANGELOG -> the caller reports it missing
+    # A LINE-ANCHORED heading, with fenced blocks stripped first. `"## [v]" in
+    # text` was a substring search, so a CHANGELOG that merely SHOWED the
+    # heading in a usage example satisfied the requirement to DECLARE it.
+    body = _FENCE_RX.sub("", text)
+    return (
+        re.search(rf"^\#\#[^\S\n]+\[{re.escape(version)}\]", body, re.M) is not None,
+        None,
+    )
 
 
 def lint_skill(skill_dir: Path) -> list[str]:
     """Return a list of error strings for one skill (empty == OK / exempt)."""
     skill_md = skill_dir / "SKILL.md"
-    if not skill_md.exists():
-        return []
     name = skill_dir.name
-    fm, unreadable = _read_frontmatter(skill_md)
+    fm, unreadable, present = _read_frontmatter(skill_md)
+    if not present:
+        return []
     if unreadable:
         # NOT an exemption. "I could not read the manifest" is a finding about
         # the manifest; treating it as "there is nothing to check" is how a
         # skill opts out of every rule below by carrying an invisible byte.
         return [f"{name}: SKILL.md {unreadable} — cannot determine whether it is versioned"]
+    errors: list[str] = []
+    # Checked BEFORE and INDEPENDENTLY of `_skill_version`. Running it only when
+    # no canonical version was found let `version: 1.2.3` + `metadata.version:`
+    # (null) pass: one failed declaration is invisible behind one that worked.
+    if _skill_version_is_explicitly_null(fm):
+        errors.append("SKILL.md declares an empty version — remove the key or set one")
     version = _skill_version(fm)
     if version is None:
-        if _skill_version_is_explicitly_null(fm):
-            return [f"{name}: SKILL.md declares an empty version — remove the key or set one"]
-        return []  # unversioned → pre-release → exempt
+        return [f"{name}: {e}" for e in errors]  # unversioned → pre-release → exempt
 
-    errors: list[str] = []
-    if not _SEMVER.match(version):
+    if not _SEMVER.fullmatch(version):
         errors.append(f"SKILL.md version {version!r} is not valid SemVer (MAJOR.MINOR.PATCH)")
 
     py, py_unreadable = _pyproject_version(skill_dir / "pyproject.toml")

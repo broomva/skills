@@ -60,9 +60,14 @@ class TestTheControl:
         assert any("SemVer" in p for p in problems), problems
 
     def test_a_readable_manifest_with_a_good_version_is_clean(self, tmp_path, lint):
-        """NEGATIVE CONTROL: the check must not report on every input."""
-        raw = b"---\nname: fine\ndescription: D.\n---\n"
-        assert lint.lint_skill(_skill(tmp_path, "fine", raw)) == []
+        """NEGATIVE CONTROL: the check must not report on every input.
+
+        The fixture used to carry NO version, so this passed by EXEMPTION — the
+        unversioned early return — and would have stayed green with every rule
+        below it deleted. It now declares a real version and a matching
+        CHANGELOG, so "clean" means the rules ran and found nothing.
+        """
+        assert lint.lint_skill(_versioned(tmp_path, "fine")) == []
 
 
 class TestAnUnreadableManifestIsAFindingNotAnExemption:
@@ -160,11 +165,14 @@ class TestAnUnreadablePackageManifestIsAlsoAFinding:
     """
 
     @pytest.mark.parametrize("filename,body,expect", [
-        ("pyproject__toml", "[project\nversion = broken", "pyproject.toml could not be read"),
-        ("package__json", '{"version": ', "package.json could not be read"),
+        # Malformed SYNTAX and an unreadable FILE are different findings and now
+        # say so: calling a truncated JSON literal "could not be read" pointed a
+        # reader at permissions when the defect was a missing brace.
+        ("pyproject__toml", "[project\nversion = broken", "pyproject.toml is not valid TOML"),
+        ("package__json", '{"version": ', "package.json is not valid JSON"),
         ("package__json", '["not", "an", "object"]', "not a JSON object"),
         ("package__json", '{"version": null}', "declares a null version"),
-        ("pyproject__toml", '[project]\nversion =\n', "could not be read"),
+        ("pyproject__toml", '[project]\nversion =\n', "is not valid TOML"),
     ])
     def test_it_is_reported_rather_than_treated_as_absent(
         self, tmp_path, lint, filename, body, expect
@@ -358,3 +366,127 @@ class TestBothFenceEndsAreExact:
         """CONTROL for the case above."""
         body = "---\nname: closed-well\ndescription: D.\nversion: 1.0.0\n---\n"
         assert lint.lint_skill(self._skill(tmp_path, "closed-well", body)) == []
+
+
+class TestABrokenSymlinkIsNotAnAbsence:
+    """The round-3 BLOCKER, and the sharpest instance of this file's own defect
+    class: four `.exists()` preflights sat IN FRONT of the shared reader written
+    to eliminate exactly this. `.exists()` follows a symlink and answers False
+    for a dangling one, so a broken link named SKILL.md made the skill look
+    unversioned and exempted it from every rule — measured against a live
+    control that reports two problems for the identical real file.
+    """
+
+    @pytest.mark.parametrize("filename", ["SKILL.md", "pyproject.toml", "package.json", "CHANGELOG.md"])
+    def test_each_reader_reports_a_dangling_link(self, tmp_path, lint, filename):
+        d = _versioned(tmp_path, f"link-{filename.replace('.', '-')}")
+        target = d / filename
+        if target.exists():
+            target.unlink()
+        target.symlink_to(tmp_path / "no-such-target")
+        problems = lint.lint_skill(d)
+        assert problems, f"a dangling {filename} silently exempted the skill"
+        assert any("broken symlink" in p for p in problems), problems
+
+    def test_a_genuinely_absent_optional_manifest_is_still_exempt(self, tmp_path, lint):
+        """CONTROL for the above: absent must keep meaning absent, or the fix
+        for a false green is just a false red."""
+        assert lint.lint_skill(_versioned(tmp_path, "no-optionals")) == []
+
+    def test_a_directory_without_a_skill_md_is_not_a_skill(self, tmp_path, lint):
+        d = tmp_path / "empty"
+        d.mkdir()
+        assert lint.lint_skill(d) == []
+
+
+class TestSemVerIsAsciiAndAnchored:
+    """`\\d` is Unicode-aware and `$` matches before a trailing newline, so
+    `.match()` on `^...$` accepted both "1.2.3\\n" and the Arabic-Indic
+    "1٢.0.0" as valid SemVer."""
+
+    @pytest.mark.parametrize("version", ["1.2.3\n", "1٢.0.0", "1.2.3-1٢", "1.2.3 ", "v1.2.3", "1.2"])
+    def test_invalid_versions_are_rejected(self, lint, version):
+        assert not lint._SEMVER.fullmatch(version), f"{version!r} accepted as SemVer"
+
+    @pytest.mark.parametrize("version", ["0.0.4", "1.2.3", "10.20.30", "1.2.3-rc.1", "1.2.3-rc.1+build.5"])
+    def test_valid_versions_are_accepted(self, lint, version):
+        """CONTROL: tightening must not reject the spec's own examples."""
+        assert lint._SEMVER.fullmatch(version), f"{version!r} rejected as SemVer"
+
+
+class TestChangelogHeadingIsDeclaredNotMerelyMentioned:
+    """`f"## [{version}]" in text` was a substring search, so a CHANGELOG that
+    only SHOWED the heading — in a fenced usage example, or mid-sentence —
+    satisfied the requirement to DECLARE the release."""
+
+    @pytest.mark.parametrize("body,declared", [
+        ("## [1.2.3]\n- x\n", True),
+        ("## [1.2.3] - 2026-01-01\n", True),
+        ("##   [1.2.3]\n", True),
+        ("```\n## [1.2.3]\n```\n", False),
+        ("~~~\n## [1.2.3]\n~~~\n", False),
+        ("see the ## [1.2.3] section\n", False),
+        ("### [1.2.3]\n", False),
+        ("## [1.2.4]\n", False),
+    ])
+    def test_only_a_real_heading_counts(self, tmp_path, lint, body, declared):
+        d = _versioned(tmp_path, f"cl-{abs(hash(body))}")
+        (d / "CHANGELOG.md").write_text(body, encoding="utf-8")
+        missing = [p for p in lint.lint_skill(d) if "CHANGELOG.md missing" in p]
+        assert (not missing) == declared, (body, lint.lint_skill(d))
+
+
+class TestEveryDeclarationIsChecked:
+    """`metadata.version` had no POSITIVE test — deleting its extraction branch
+    survived the suite — and the empty-version check ran only when NO canonical
+    version was found, so one failed declaration hid behind one that worked."""
+
+    def test_a_valid_metadata_version_is_used(self, tmp_path, lint):
+        d = tmp_path / "meta-ok"
+        d.mkdir()
+        (d / "SKILL.md").write_text(
+            "---\nname: meta-ok\ndescription: D.\nmetadata:\n  version: 2.0.0\n---\n",
+            encoding="utf-8")
+        (d / "CHANGELOG.md").write_text("## [2.0.0]\n", encoding="utf-8")
+        assert lint.lint_skill(d) == []
+
+    def test_a_metadata_version_is_actually_enforced(self, tmp_path, lint):
+        """The other half: if `metadata.version` were ignored, this would be
+        exempt rather than reported."""
+        d = tmp_path / "meta-bad"
+        d.mkdir()
+        (d / "SKILL.md").write_text(
+            "---\nname: meta-bad\ndescription: D.\nmetadata:\n  version: not-semver\n---\n",
+            encoding="utf-8")
+        assert any("not valid SemVer" in p for p in lint.lint_skill(d))
+
+    def test_a_null_metadata_version_beside_a_valid_one_is_reported(self, tmp_path, lint):
+        d = _versioned(tmp_path, "mixed")
+        (d / "SKILL.md").write_text(
+            "---\nname: mixed\ndescription: D.\nversion: 1.2.3\nmetadata:\n  version:\n---\n",
+            encoding="utf-8")
+        assert any("empty version" in p for p in lint.lint_skill(d)), lint.lint_skill(d)
+
+
+class TestCrlfIsALineEndingNotAFenceDefect:
+    def test_a_crlf_manifest_parses(self, tmp_path, lint):
+        """Exact fence equality on a `split(chr(10))` left a trailing CR on every
+        line, so every well-formed CRLF manifest read as having no frontmatter —
+        a false RED introduced by the fix for a false GREEN."""
+        d = tmp_path / "crlf"
+        d.mkdir()
+        (d / "SKILL.md").write_bytes(
+            b"---\r\nname: crlf\r\ndescription: D.\r\nversion: 1.0.0\r\n---\r\nbody\r\n")
+        (d / "CHANGELOG.md").write_text("## [1.0.0]\n", encoding="utf-8")
+        assert lint.lint_skill(d) == []
+
+    def test_the_crlf_value_is_not_truncated(self, tmp_path, lint):
+        """Normalising only the LINES shifted the closing-fence offset by one
+        byte per line, silently truncating the last value ("1.0.0" -> "1.0")."""
+        d = tmp_path / "crlf-trunc"
+        d.mkdir()
+        (d / "SKILL.md").write_bytes(
+            b"---\r\nname: t\r\ndescription: D.\r\nversion: 1.0.0\r\n---\r\n")
+        fm, unreadable, present = lint._read_frontmatter(d / "SKILL.md")
+        assert (present, unreadable) == (True, None)
+        assert fm["version"] == "1.0.0", fm
