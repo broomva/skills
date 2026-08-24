@@ -29,7 +29,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 # --------------------------------------------------------------------------
 # The provenance lattice -- mirrors provenance.ts exactly.
@@ -273,7 +273,7 @@ CREATE INDEX IF NOT EXISTS idx_sightings_rec ON sightings(record_id);
 -- skipped work and called itself complete. `finish` also accepted any caller, so
 -- a key could be marked done by something that never held it.
 CREATE TABLE IF NOT EXISTS frontier (
-  key         TEXT PRIMARY KEY,
+  key         TEXT PRIMARY KEY NOT NULL,
   depth       INTEGER NOT NULL,
   parent_id   TEXT,
   claimed_by  TEXT,
@@ -308,18 +308,55 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def put_record(conn: sqlite3.Connection, rec: Record, by: str = "-") -> str:
+def put_record(
+    conn: sqlite3.Connection,
+    rec: Record,
+    by: str = "-",
+    attestor: Optional[Callable[[str, str], bool]] = None,
+) -> str:
     """Insert a record, or sight it again if already held.
 
-    Returns "inserted" or "sighted". The insert is a single atomic statement --
-    the earlier SELECT-then-INSERT let two workers both observe an absent id and
-    one then raise, losing a claim that had already been paid for.
+    An `observed` record REQUIRES an `attestor` -- a callable answering "did the
+    fetch daemon actually fetch these bytes from this url", i.e.
+    `FetchDaemon.attests`. Without one this refuses.
+
+    That requirement is the whole custody architecture, and its absence was the
+    hole cross-model review found. The daemon could prove bytes came off a wire,
+    and the store never asked: a Record carrying an entirely invented Evidence --
+    a url never requested, a digest of nothing -- was accepted and became
+    expandable. The check existed at one entry point and the other entry point
+    did not use it, which is the same shape as `verify_chain` having no caller.
+
+    Passing `attestor=lambda *_: True` is possible and is the one thing a reader
+    should look for in a diff. It is not defended against, because a store cannot
+    stop its own caller lying to it; what it can do is make the lie explicit
+    rather than the default.
+
+    Returns "inserted", "sighted" or "conflicted". The insert is a single atomic
+    statement -- the earlier SELECT-then-INSERT let two workers both observe an
+    absent id and one then raise, losing a claim already paid for.
 
     A re-sighting never rewrites substance. Two records sharing a canonical key
     are corroboration; if their payloads genuinely differ the difference is kept
     as a conflict row rather than discarded, because "record everything" does not
     have an exception for the copy that lost a race.
     """
+    if rec.origin == "observed":
+        if attestor is None:
+            raise StoreError(
+                f"{rec.id}: an observed record requires an attestor. Its evidence "
+                "claims bytes came from a url, and nothing here has checked that "
+                "-- pass FetchDaemon.attests so the claim is verified rather than "
+                "believed."
+            )
+        assert rec.evidence is not None  # guaranteed by __post_init__
+        if not attestor(rec.evidence.url, rec.evidence.sha256):
+            raise StoreError(
+                f"{rec.id}: no fetch attests {rec.evidence.url} at "
+                f"{rec.evidence.sha256[:12]} -- these bytes were never fetched, so "
+                "the record cannot be observed. Record it as simulated with an "
+                "inferred_from, or fetch the page."
+            )
     now = time.time()
     payload = json.dumps(rec.as_dict(), sort_keys=True)
     cur = conn.execute(

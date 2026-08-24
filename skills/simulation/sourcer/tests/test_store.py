@@ -23,6 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import store as S  # noqa: E402
 
+# Stands in for FetchDaemon.attests. Tests about the STORE are not about custody,
+# so they say so explicitly rather than leaving the requirement unexercised --
+# and test_observed_record_requires_an_attestor asserts the requirement itself.
+ATTESTS_ALL = lambda url, digest: True   # noqa: E731
+ATTESTS_NONE = lambda url, digest: False  # noqa: E731
+
 
 def ev(url="https://example.com/a", digest="a" * 64, start=0, end=5, quote="ACME"):
     return S.Evidence(
@@ -116,7 +122,7 @@ def test_depth_and_layer_are_validated():
 def test_refuted_record_is_retained_with_its_refutation(tmp_path):
     """The operator's rule: a claim paid for in tokens is kept even when wrong."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"))
+    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "the span does not mention this person")
 
     got = S.get_record(conn, "n1")
@@ -135,11 +141,11 @@ def test_nothing_in_the_module_deletes():
 
 def test_every_origin_and_verdict_survives_and_is_counted(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="a", depth=0, verdict="entailed"))
-    S.put_record(conn, node(id="b", depth=1, origin="simulated"))
-    S.put_record(conn, node(id="c", depth=2))
+    S.put_record(conn, node(id="a", depth=0, verdict="entailed"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="b", depth=1, origin="simulated"), attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="c", depth=2), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "c", "refuted", "no such span")
-    S.put_record(conn, node(id="d", depth=2, verdict="inconclusive"))
+    S.put_record(conn, node(id="d", depth=2, verdict="inconclusive"), attestor=ATTESTS_ALL)
 
     inv = S.inventory(conn)
     assert inv["total"] == 4, "every record is retained regardless of verdict"
@@ -173,8 +179,8 @@ def test_expandable_ids_agrees_with_the_dataclass(tmp_path):
         node(id="bad", verdict="inconclusive"),
     ]
     for r in recs:
-        S.put_record(conn, r)
-    S.put_record(conn, node(id="ref"))
+        S.put_record(conn, r, attestor=ATTESTS_ALL)
+    S.put_record(conn, node(id="ref"), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "ref", "refuted", "nope")
 
     from_query = set(S.expandable_ids(conn))
@@ -187,8 +193,8 @@ def test_expandable_ids_agrees_with_the_dataclass(tmp_path):
 
 def test_second_sighting_does_not_duplicate_but_is_counted(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    assert S.put_record(conn, node(id="n1"), by="w1") == "inserted"
-    assert S.put_record(conn, node(id="n1"), by="w2") == "sighted"
+    assert S.put_record(conn, node(id="n1"), by="w1", attestor=ATTESTS_ALL) == "inserted"
+    assert S.put_record(conn, node(id="n1"), by="w2", attestor=ATTESTS_ALL) == "sighted"
     assert S.inventory(conn)["total"] == 1
     assert S.sighting_count(conn, "n1") == 2
 
@@ -196,9 +202,9 @@ def test_second_sighting_does_not_duplicate_but_is_counted(tmp_path):
 def test_sighting_does_not_overwrite_a_verdict(tmp_path):
     """A later sighting is corroboration, not a correction that silently reopens."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"))
+    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "checked and wrong")
-    S.put_record(conn, node(id="n1"), by="w2")
+    S.put_record(conn, node(id="n1"), by="w2", attestor=ATTESTS_ALL)
     assert S.get_record(conn, "n1")["verdict"] == "refuted"
     assert S.inventory(conn)["by_verdict"] == {"refuted": 1}
     assert S.expandable_ids(conn) == []
@@ -207,8 +213,8 @@ def test_sighting_does_not_overwrite_a_verdict(tmp_path):
 def test_a_differing_re_sighting_is_kept_as_a_conflict(tmp_path):
     """'Record everything' has no exception for the copy that lost a race."""
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1", depth=1), by="w1")
-    out = S.put_record(conn, node(id="n1", depth=1, attrs={"role": "CTO"}), by="w2")
+    S.put_record(conn, node(id="n1", depth=1), by="w1", attestor=ATTESTS_ALL)
+    out = S.put_record(conn, node(id="n1", depth=1, attrs={"role": "CTO"}), by="w2", attestor=ATTESTS_ALL)
     assert out == "conflicted"
     cf = S.conflicts(conn)
     assert len(cf) == 1 and cf[0]["payload"]["attrs"] == {"role": "CTO"}
@@ -229,14 +235,14 @@ def test_generated_columns_cannot_be_written_directly(tmp_path):
     refuses the write outright.
     """
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n2", origin="simulated"))
+    S.put_record(conn, node(id="n2", origin="simulated"), attestor=ATTESTS_ALL)
     with pytest.raises(sqlite3.OperationalError, match="generated column"):
         conn.execute("UPDATE records SET origin='observed' WHERE id='n2'")
 
 
 def test_a_simulated_record_can_never_become_expandable_by_a_column_write(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n2", origin="simulated"))
+    S.put_record(conn, node(id="n2", origin="simulated"), attestor=ATTESTS_ALL)
     for col in ("origin", "verdict"):
         with pytest.raises(sqlite3.OperationalError):
             conn.execute(f"UPDATE records SET {col}='x' WHERE id='n2'")
@@ -255,7 +261,7 @@ def test_a_refutation_cannot_be_silently_erased(tmp_path):
     disproof -- the exact inverse of "record everything".
     """
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"))
+    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "the span does not say this")
     with pytest.raises(S.StoreError, match="requires an explicit `supersedes`"):
         S.set_verdict(conn, "n1", "entailed")
@@ -265,7 +271,7 @@ def test_a_refutation_cannot_be_silently_erased(tmp_path):
 
 def test_superseding_a_refutation_keeps_both_on_the_record(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"))
+    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "refuted", "misread the span")
     S.set_verdict(conn, "n1", "entailed", supersedes="re-read at the right offsets")
 
@@ -278,7 +284,7 @@ def test_superseding_a_refutation_keeps_both_on_the_record(tmp_path):
 
 def test_verdict_history_is_append_only(tmp_path):
     conn = S.connect(tmp_path / "s.db")
-    S.put_record(conn, node(id="n1"))
+    S.put_record(conn, node(id="n1"), attestor=ATTESTS_ALL)
     S.set_verdict(conn, "n1", "inconclusive")
     S.set_verdict(conn, "n1", "refuted", "resolved against it")
     assert len(S.verdict_history(conn, "n1")) == 3
@@ -425,3 +431,45 @@ def test_frontier_stats_reports_an_honest_remainder(tmp_path):
     S.claim(conn, "w1", max_depth=4, now=1000.0)
     st = S.frontier_stats(conn, now=1000.0)
     assert st == {"total": 5, "done": 0, "in_flight": 1, "expired": 0, "remaining": 4}
+
+
+# ------------------------- custody reaches the store (BLOCKER, strata B)
+
+
+def test_observed_record_requires_an_attestor(tmp_path):
+    """The architectural hole: the daemon could prove custody and the store never asked.
+
+    A Record carrying an entirely invented Evidence -- a url never requested, a
+    digest of nothing -- was accepted and became expandable. The check existed at
+    one entry point and the other entry point did not use it.
+    """
+    conn = S.connect(tmp_path / "s.db")
+    with pytest.raises(S.StoreError, match="requires an attestor"):
+        S.put_record(conn, node(id="x1"))
+
+
+def test_unattested_evidence_is_refused(tmp_path):
+    conn = S.connect(tmp_path / "s.db")
+    fake = S.Evidence(url="https://example.com/never-fetched", sha256="f" * 64,
+                      snapshot="snapshots/" + "f" * 64, span_start=0, span_end=4,
+                      quote="FAKE")
+    rec = S.Record(id="x1", kind="node", canonical_key="k", depth=3, layer="L2",
+                   origin="observed", evidence=fake)
+    with pytest.raises(S.StoreError, match="no fetch attests"):
+        S.put_record(conn, rec, attestor=ATTESTS_NONE)
+    assert S.inventory(conn)["total"] == 0
+    assert S.expandable_ids(conn) == []
+
+
+def test_a_simulated_record_needs_no_attestor(tmp_path):
+    """Custody is about bytes. An inference has none and claims none."""
+    conn = S.connect(tmp_path / "s.db")
+    assert S.put_record(conn, node(id="s1", origin="simulated")) == "inserted"
+
+
+def test_the_attestor_is_asked_about_the_cited_pair(tmp_path):
+    """Not merely called -- called with the url and digest the record cites."""
+    conn = S.connect(tmp_path / "s.db")
+    seen = []
+    S.put_record(conn, node(id="n1"), attestor=lambda u, d: (seen.append((u, d)), True)[1])
+    assert seen == [("https://example.com/a", "a" * 64)]

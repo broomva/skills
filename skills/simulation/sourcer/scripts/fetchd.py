@@ -57,6 +57,10 @@ class RobotsRefusal(FetchError):
     """The host's robots.txt disallows this path."""
 
 
+class RedirectRefusal(FetchError):
+    """The response came from a different url than the one requested."""
+
+
 class ChainBroken(FetchError):
     """The fetch log does not verify, so nothing in it may be attested.
 
@@ -64,6 +68,16 @@ class ChainBroken(FetchError):
     pair was not fetched"; it means the log is not evidence about any pair, and
     a caller that reads a False here would draw the smaller conclusion.
     """
+
+
+def _canonical_url(url: str) -> str:
+    """Compare urls by what identifies a resource, not by spelling."""
+    p = urllib.parse.urlsplit(url)
+    host = (p.hostname or "").lower()
+    port = p.port
+    default = {"http": 80, "https": 443}.get(p.scheme)
+    netloc = host if port in (None, default) else f"{host}:{port}"
+    return urllib.parse.urlunsplit((p.scheme.lower(), netloc, p.path or "/", p.query, ""))
 
 
 def sha256_of(payload: bytes) -> str:
@@ -196,7 +210,14 @@ def verify_chain(log_path: Path, key: Optional[bytes] = None) -> tuple[bool, str
     for i, line in enumerate(log_path.read_text().splitlines()):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            return False, (
+                f"row {i}: unparseable -- a torn write or a truncated line. A "
+                "malformed log is not a log that says nothing; it is one that "
+                "cannot be trusted about anything."
+            )
         rows.append(row)
         if n == 0 and row.get("kind") != "genesis":
             return False, (
@@ -246,7 +267,17 @@ class Politeness:
         self._robots: dict[str, urllib.robotparser.RobotFileParser] = {}
 
     def host_of(self, url: str) -> str:
-        return urllib.parse.urlsplit(url).netloc
+        """The rate-limiting identity of a url.
+
+        Raw netloc made example.com, EXAMPLE.com, example.com:443 and
+        a@example.com four distinct hosts, so one server received four times the
+        intended request rate while every per-host check still looked satisfied.
+        """
+        parts = urllib.parse.urlsplit(url)
+        host = (parts.hostname or "").lower()
+        port = parts.port
+        default = {"http": 80, "https": 443}.get(parts.scheme, None)
+        return host if port in (None, default) else f"{host}:{port}"
 
     def allows(self, url: str) -> bool:
         host = self.host_of(url)
@@ -329,7 +360,6 @@ class FetchDaemon:
         self.politeness = politeness or Politeness()
         self.transport = transport or self._http
         self.key = key or _chain_key()
-        self._chain_cache: Optional[tuple] = None
 
     # -- transport ---------------------------------------------------------
 
@@ -338,6 +368,15 @@ class FetchDaemon:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
+                # urllib follows redirects silently. Attesting the bytes to the
+                # url we ASKED for rather than the one that answered would let a
+                # crawl cite example.com for content served by anywhere-else.
+                final = resp.url
+                if _canonical_url(final) != _canonical_url(url):
+                    raise RedirectRefusal(
+                        f"{url} redirected to {final} -- refetch the final url so "
+                        "the attested pair names where the bytes actually came from"
+                    )
                 return resp.status, resp.read(MAX_BYTES)
         except urllib.error.HTTPError as exc:
             # The error body is NOT evidence, but the status is a fact worth
@@ -395,8 +434,19 @@ class FetchDaemon:
         # deduplication rather than a race. This is what lets the store be
         # written by many workers without a lock on this path.
         target = self.snapshots / digest
+        if target.exists() and sha256_of(target.read_bytes()) != digest:
+            # A file already sitting at the content-addressed path whose content
+            # does not hash to its own name was not written by this daemon --
+            # it was planted, or a previous write was torn. Either way the
+            # daemon must not record a digest for bytes it did not verify.
+            target.unlink()
         if not target.exists():
-            target.write_bytes(payload)
+            # Write via a temporary file and rename, so a crash mid-write cannot
+            # leave a truncated snapshot sitting at a name that claims to be its
+            # own hash.
+            tmp = target.with_suffix(".partial")
+            tmp.write_bytes(payload)
+            os.replace(tmp, target)
 
         result = FetchResult(
             url=url,
@@ -530,22 +580,20 @@ class FetchDaemon:
         return out
 
     def chain_ok(self) -> tuple[bool, str]:
-        """Verify the log's chain, memoised on the file's identity.
+        """Verify the log's chain. Not memoised, deliberately.
 
-        Memoised because `attests` is called per claim and the log grows to
-        thousands of rows; keyed on (size, mtime_ns) so that any write -- which
-        is the only thing that can invalidate the result -- misses the cache.
+        The first version cached on (st_size, st_mtime_ns). Both are attacker-
+        controlled: a same-length edit followed by `os.utime` restoring the
+        original mtime hits the cache, and a broken chain then reads as verified.
+        Cross-model review demonstrated it.
+
+        Any cache key cheap enough to be worth having is derived from metadata an
+        editor can restore; a key that is not -- hashing the file -- costs the
+        same as the verification it was meant to skip. So the optimisation is
+        removed rather than made subtler. Verification is one HMAC per row and
+        the caller is doing network I/O.
         """
-        try:
-            st = self.log.stat()
-        except FileNotFoundError:
-            return False, "fetch log does not exist"
-        stamp = (st.st_size, st.st_mtime_ns)
-        if self._chain_cache is not None and self._chain_cache[0] == stamp:
-            return self._chain_cache[1]
-        result = verify_chain(self.log, self.key)
-        self._chain_cache = (stamp, result)
-        return result
+        return verify_chain(self.log, self.key)
 
     def attests(self, url: str, digest: str) -> bool:
         """Did THIS daemon fetch THESE bytes from THIS url?
