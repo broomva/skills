@@ -19,14 +19,22 @@ name: lint-skill-md
 on:
   pull_request:
     paths:
-      - 'skills/**/SKILL.md'
+      # `skills/**`, not `skills/**/SKILL.md`: adding a skill as a SYMLINKED
+      # DIRECTORY, or deleting a manifest, changes no path matching the
+      # narrower glob, so the gate would not run on exactly the changes it
+      # exists to catch.
+      - 'skills/**'
       - 'scripts/lint_skill_md.py'
       - 'tests/test_lint_skill_md.py'
       - '.github/workflows/lint-skill-md.yml'
   push:
     branches: [main]
     paths:
-      - 'skills/**/SKILL.md'
+      # `skills/**`, not `skills/**/SKILL.md`: adding a skill as a SYMLINKED
+      # DIRECTORY, or deleting a manifest, changes no path matching the
+      # narrower glob, so the gate would not run on exactly the changes it
+      # exists to catch.
+      - 'skills/**'
       - 'scripts/lint_skill_md.py'
       - 'tests/test_lint_skill_md.py'
       - '.github/workflows/lint-skill-md.yml'
