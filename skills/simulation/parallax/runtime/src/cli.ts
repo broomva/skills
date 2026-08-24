@@ -339,7 +339,26 @@ function tables(argv: Argv): Result<TableSpec[], CliError> {
     for (const chunk of raw.slice(colon + 1).split(",")) {
       const parts = chunk.split(":").map((s) => s.trim());
       const colName = parts[0] ?? "";
-      if (colName.length === 0) continue;
+      // An empty segment is a REFUSAL, not a skip. `leads:company,,nit` used to
+      // yield two columns and say nothing, so a typo silently produced a table
+      // with a column missing -- and this file already refuses an unknown flag
+      // for exactly that reason: something quietly dropped is a choice the
+      // caller did not make and cannot see.
+      if (colName.length === 0) {
+        return fail("BAD_FLAG_VALUE", "--table has an empty column between commas", {
+          flag: "table",
+          given: raw,
+        });
+      }
+      // Likewise a fourth positional part. `company:string:observed:GARBAGE`
+      // parsed happily and threw GARBAGE away.
+      if (parts.length > 3) {
+        return fail(
+          "BAD_FLAG_VALUE",
+          `column "${colName}" has ${parts.length} parts; the grammar is <col>[:<type>[:<origin>]]`,
+          { flag: "table", given: raw },
+        );
+      }
       const type = parts[1];
       const origin = parts[2];
       if (type !== undefined && type.length > 0 && !isColumnType(type)) {

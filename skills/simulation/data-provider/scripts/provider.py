@@ -267,16 +267,22 @@ def emit_table_arg(table: str, records: list[Record]) -> str:
         # A column whose type could not be inferred is emitted WITHOUT one, so
         # that Parallax raises the blocking question. Emitting `string` to keep
         # the string tidy would answer a question nobody asked us.
-        segments = [name]
         if col_type is not None:
-            segments.append(col_type)
-            segments.append(origins[name])
+            parts.append(f"{name}:{col_type}:{origins[name]}")
         else:
-            # The grammar is positional, so an origin cannot be supplied without a
-            # type. An untyped column blocks acceptance anyway, which is the
-            # correct outcome and not something to work around here.
-            pass
-        parts.append(":".join(segments))
+            # An untyped column still knows where its values came from, and the
+            # grammar can say so: the type segment is left EMPTY rather than the
+            # origin being dropped.
+            #
+            # An earlier version dropped it, on the stated grounds that "the
+            # grammar is positional so an origin cannot be supplied without a
+            # type". That was wrong about the grammar, and wrong in the direction
+            # that costs the most: the column whose type we could not infer is
+            # exactly the one whose provenance a reader most needs, and it was
+            # the one where we threw it away. The blocking question about the
+            # type is raised either way.
+            parts.append(f"{name}::{origins[name]}")
+        
     return f"{table}#{len(records)}:{','.join(parts)}"
 
 

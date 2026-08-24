@@ -171,19 +171,22 @@ class TestEmit:
         assert "company:string:observed" in arg
         assert "score:number:simulated" in arg
 
-    def test_an_untyped_column_is_emitted_without_a_type(self):
-        """So that Parallax raises the blocking question.
+    def test_an_untyped_column_keeps_its_origin(self):
+        """The column whose type we could not infer still says where it came from.
 
-        Emitting `string` to keep the argument tidy would answer a question
-        nobody asked us, in the one place a human was supposed to be consulted.
+        An earlier version dropped the origin here, reasoning that the grammar
+        was positional and could not express one without a type. It can --
+        `name::origin` -- and dropping it lost provenance in exactly the case
+        where a reader needs it most. The type question still blocks either way.
         """
         rows = [
             p.Record([p.make_field("mixed", 1, evidence=ev())]),
             p.Record([p.make_field("mixed", "two", evidence=ev())]),
         ]
         arg = p.emit_table_arg("leads", rows)
-        assert "mixed," in arg or arg.endswith("mixed")
-        assert "mixed:" not in arg
+        assert "mixed::observed" in arg, arg
+        # and NOT a guessed type
+        assert "mixed:string" not in arg
 
     def test_emitting_nothing_is_refused_with_a_reason(self):
         with pytest.raises(p.ProviderError) as e:

@@ -246,6 +246,52 @@ describe("business-data: the CLI grammar", () => {
     expect(out.join("")).toContain("BAD_FLAG_VALUE");
   });
 
+  test("an empty column between commas is refused, not skipped", async () => {
+    // `leads:company,,nit` used to yield TWO columns and say nothing, so a typo
+    // produced a table with a column missing and no way to notice. This file
+    // already refuses an unknown flag for the same reason.
+    const out: string[] = [];
+    const code = await runCli(
+      ["propose", "--kind", "business-data", "--table", "leads:company,,nit", "--json"],
+      { out: (t) => out.push(t), err: (t) => out.push(t) },
+    );
+    expect(code).toBe(2);
+    expect(out.join("")).toContain("empty column");
+  });
+
+  test("a fourth positional part is refused, not dropped", async () => {
+    // `company:string:observed:GARBAGE` parsed happily and threw GARBAGE away.
+    const out: string[] = [];
+    const code = await runCli(
+      [
+        "propose",
+        "--kind",
+        "business-data",
+        "--table",
+        "leads#1:company:string:observed:GARBAGE",
+        "--json",
+      ],
+      { out: (t) => out.push(t), err: (t) => out.push(t) },
+    );
+    expect(code).toBe(2);
+    expect(out.join("")).toContain("BAD_FLAG_VALUE");
+  });
+
+  test("an origin CAN be given without a type, with an empty middle segment", () => {
+    // `name::observed` is legal and meaningful: "I read this, but I could not
+    // determine its type". The type question still blocks; the provenance is not
+    // thrown away to keep the string tidy.
+    const parsed = parseArgs([
+      "propose",
+      "--kind",
+      "business-data",
+      "--table",
+      "leads#2:company::observed",
+      "--json",
+    ]);
+    expect(parsed.ok).toBe(true);
+  });
+
   test("a CLI-typed row count with no origins is refused by the CORE, not the flag", async () => {
     // The two layers do different jobs and this pins the split: the flag checks
     // grammar, `proposeOntology` checks whether the claim is legal. Both
