@@ -80,7 +80,11 @@ def test_same_bytes_twice_is_dedup_not_a_race(tmp_path):
     a = d.fetch("https://example.com/a")
     b = d.fetch("https://example.com/a")
     assert a.sha256 == b.sha256
-    assert len(list(d.snapshots.iterdir())) == 1
+    # Two snapshots: the page, and the host's robots.txt, which the daemon now
+    # fetches for itself so the rules a crawl ran under are auditable bytes.
+    # The PAGE is stored once, which is the claim under test.
+    assert sum(1 for f in d.snapshots.iterdir() if f.name == a.sha256) == 1
+    assert len(list(d.snapshots.iterdir())) == 2
 
 
 # ----------------------------------------------------------- the key itself
@@ -130,7 +134,9 @@ def test_chain_verifies_and_counts_rows(tmp_path):
     d = daemon(tmp_path)
     d.fetch("https://example.com/a")
     ok, reason, _rows = F.verify_chain(d.log, KEY)
-    assert ok and "2 rows" in reason
+    # genesis + robots.txt + the page. robots is a real fetch and gets a real
+    # row; that is the point of routing it through the daemon.
+    assert ok and "3 rows" in reason
 
 
 def test_editing_a_row_breaks_the_chain(tmp_path):
@@ -496,21 +502,14 @@ def test_a_caller_supplied_status_cannot_launder_a_404(tmp_path):
 
 
 def test_robots_failure_is_not_permission(tmp_path):
-    """A parser defect or network error used to read as 'crawling allowed'."""
-    class Exploding(F.Politeness):
-        def __init__(self):
-            super().__init__(interval=0.0)
-        def _read(self, rp):
-            raise RuntimeError("parser blew up")
+    """A network error or parser defect used to read as 'crawling allowed'.
 
+    `status=0` is how the daemon reports "there was no clean answer" -- a
+    refusal, a redirect, a timeout. None of those is evidence of consent.
+    """
     p = F.Politeness(interval=0.0)
-    import urllib.robotparser as rparser
-    orig = rparser.RobotFileParser.read
-    rparser.RobotFileParser.read = lambda self: (_ for _ in ()).throw(RuntimeError("boom"))
-    try:
-        assert p.allows("https://example.com/a") is False
-    finally:
-        rparser.RobotFileParser.read = orig
+    p.load("example.com", 0, b"")
+    assert p.allows("https://example.com/a") is False
 
 
 # ---------------------- the quote is finally checked (BLOCKER, adjudicator)
@@ -619,7 +618,10 @@ def test_a_redirect_is_refused(tmp_path):
     d = daemon(tmp_path, pages={"https://example.com/a": (200, b"page", "https://elsewhere.example/x")})
     with pytest.raises(F.RedirectRefusal, match="redirected to"):
         d.fetch("https://example.com/a")
-    assert d.pairs() == set(), "nothing was attested"
+    # The host's robots.txt is attested -- it was fetched and did not redirect.
+    # What must NOT be attested is the page that did.
+    assert ("https://example.com/a", F.sha256_of(b"page")) not in d.pairs()
+    assert {u for (u, _d) in d.pairs()} == {"https://example.com/robots.txt"}
 
 
 def test_a_non_redirect_with_a_cosmetically_different_url_is_fine(tmp_path):
@@ -655,53 +657,46 @@ def test_a_planted_snapshot_is_replaced_not_trusted(tmp_path):
     assert d.open_attested(res.url, res.sha256) == b"ACME S.A.S. hires a CTO"
 
 
-def test_robots_401_and_403_forbid_the_site(tmp_path):
+@pytest.mark.parametrize("code", [401, 403])
+def test_robots_401_and_403_forbid_the_site(code):
     """Explicitly withheld is not the same as absent."""
-    import urllib.error
-    import urllib.robotparser as rp
-
-    for code in (401, 403):
-        p = F.Politeness(interval=0.0)
-        orig = rp.RobotFileParser.read
-        rp.RobotFileParser.read = lambda self, c=code: (_ for _ in ()).throw(
-            urllib.error.HTTPError("u", c, "no", {}, None)
-        )
-        try:
-            assert p.allows("https://example.com/a") is False, f"{code} must forbid"
-        finally:
-            rp.RobotFileParser.read = orig
+    p = F.Politeness(interval=0.0)
+    p.load("example.com", code, b"")
+    assert p.allows("https://example.com/a") is False, f"{code} must forbid"
 
 
-def test_robots_404_permits(tmp_path):
+def test_robots_404_permits():
     """An explicit absence is the documented no-restrictions case."""
-    import urllib.error
-    import urllib.robotparser as rp
-
     p = F.Politeness(interval=0.0)
-    orig = rp.RobotFileParser.read
-    rp.RobotFileParser.read = lambda self: (_ for _ in ()).throw(
-        urllib.error.HTTPError("u", 404, "gone", {}, None)
-    )
-    try:
-        assert p.allows("https://example.com/a") is True
-    finally:
-        rp.RobotFileParser.read = orig
+    p.load("example.com", 404, b"")
+    assert p.allows("https://example.com/a") is True
 
 
-def test_robots_5xx_forbids(tmp_path):
-    """A server error is not evidence that crawling is allowed."""
-    import urllib.error
-    import urllib.robotparser as rp
+def test_robots_5xx_forbids():
+    """A server error is the absence of an answer, not the answer 'yes'.
 
+    The bound matters: `>= 400` also permitted 5xx, so a server having a bad day
+    read as a site consenting to be crawled.
+    """
     p = F.Politeness(interval=0.0)
-    orig = rp.RobotFileParser.read
-    rp.RobotFileParser.read = lambda self: (_ for _ in ()).throw(
-        urllib.error.HTTPError("u", 503, "busy", {}, None)
-    )
-    try:
-        assert p.allows("https://example.com/a") is False
-    finally:
-        rp.RobotFileParser.read = orig
+    p.load("example.com", 503, b"")
+    assert p.allows("https://example.com/a") is False
+
+
+def test_robots_rules_are_parsed_from_the_bytes_the_daemon_held():
+    """The whole point of the change: rules come from an artifact, not a recall."""
+    p = F.Politeness(interval=0.0)
+    p.load("example.com", 200,
+           b"User-agent: *\nDisallow: /private\nAllow: /\n")
+    assert p.allows("https://example.com/public") is True
+    assert p.allows("https://example.com/private/x") is False
+
+
+def test_an_unloaded_host_is_refused():
+    """No fetch-on-demand. 'I have no idea what this site permits' reads as no."""
+    p = F.Politeness(interval=0.0)
+    assert p.allows("https://never-loaded.test/a") is False
+    assert p.knows("never-loaded.test") is False
 
 
 # ------------------------- the fourth instance: plan.json had no reader
@@ -869,16 +864,8 @@ def test_robots_txt_itself_is_always_fetchable(tmp_path):
     test stubs `allows`, so the one function whose job is to talk to the network
     was never exercised by the suite that covers this file.
     """
-    import urllib.error
-    import urllib.robotparser as rp
-
     p = F.Politeness(interval=0.0)
-    orig = rp.RobotFileParser.read
-    rp.RobotFileParser.read = lambda self: (_ for _ in ()).throw(
-        urllib.error.HTTPError("u", 503, "busy", {}, None)
-    )
-    try:
-        assert p.allows("https://example.com/robots.txt") is True
-        assert p.allows("https://example.com/anything-else") is False
-    finally:
-        rp.RobotFileParser.read = orig
+    # Nothing loaded: every url on the host is refused EXCEPT the rules file,
+    # which is how the rules can ever be read in the first place.
+    assert p.allows("https://example.com/robots.txt") is True
+    assert p.allows("https://example.com/anything-else") is False

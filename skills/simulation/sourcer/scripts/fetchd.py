@@ -390,46 +390,61 @@ class Politeness:
         default = {"http": 80, "https": 443}.get(parts.scheme, None)
         return host if port in (None, default) else f"{host}:{port}"
 
+    def knows(self, host: str) -> bool:
+        """Have this host's rules been loaded? Asked by the daemon, not by a caller."""
+        return host in self._robots
+
+    def load(self, host: str, status: int, payload: bytes) -> None:
+        """Install a host's rules from bytes the DAEMON fetched. The only way in.
+
+        This class used to read robots.txt itself, through
+        `RobotFileParser.read()`, and that was an architectural hole rather than
+        an inefficiency: those bytes never passed through the daemon, so they
+        were never snapshotted and never chained. The run's claim "we honoured
+        robots.txt" therefore rested on this object's memory of a request nobody
+        can audit -- which is exactly the class of claim the whole custody split
+        exists to abolish. `transport-custody` now demands that every fetched
+        host have a snapshotted rules file, and it found this by failing.
+
+        Status handling is unchanged, and each branch is a distinction worth
+        keeping: 401/403 is permission explicitly withheld, other 4xx is the
+        documented absence-means-no-restrictions case, and 5xx is the absence of
+        an answer rather than the answer "yes".
+        """
+        rp = urllib.robotparser.RobotFileParser()
+        if status in (401, 403):
+            self._robots[host] = None
+        elif 400 <= status < 500:
+            rp.parse([])
+            self._robots[host] = rp
+        elif 200 <= status < 300:
+            try:
+                rp.parse(payload.decode("utf-8", errors="replace").splitlines())
+            except Exception:
+                # A parser defect is not evidence that crawling is allowed.
+                self._robots[host] = None
+                return
+            self._robots[host] = rp
+        else:
+            self._robots[host] = None
+
     def allows(self, url: str) -> bool:
-        # robots.txt itself is always fetchable. Asking robots.txt whether we may
-        # read robots.txt is circular, and it fails CLOSED -- so a crawl of a site
-        # whose rules we could not yet have read refuses every url including the
-        # rules. Found by running against a real host, not by a test: every test
-        # stubs `allows`, so the one function whose job is to talk to the network
-        # was never exercised by the suite that covers this file.
+        """May this url be fetched? Pure -- no network, no I/O.
+
+        robots.txt itself is always fetchable. Asking robots.txt whether we may
+        read robots.txt is circular, and it fails CLOSED -- so a crawl of a site
+        whose rules we could not yet have read refuses every url including the
+        rules. Found by running against a real host, not by a test.
+
+        An unloaded host is refused rather than fetched-on-demand. The daemon
+        loads rules before it asks, so reaching here without them is a defect in
+        the caller, and the safe reading of "I have no idea what this site
+        permits" is no.
+        """
         if urllib.parse.urlsplit(url).path == "/robots.txt":
             return True
-        host = self.host_of(url)
-        if host not in self._robots:
-            rp = urllib.robotparser.RobotFileParser()
-            parts = urllib.parse.urlsplit(url)
-            rp.set_url(f"{parts.scheme}://{host}/robots.txt")
-            try:
-                rp.read()
-            except urllib.error.HTTPError as exc:
-                if exc.code in (401, 403):
-                    # Explicitly withheld. The convention is that this forbids
-                    # the whole site, and guessing otherwise is not ours to do.
-                    self._robots[host] = None
-                    return False
-                if 400 <= exc.code < 500:
-                    # An explicit absence -- 404 and friends -- is the documented
-                    # "no restrictions" case. The bound is deliberate: `>= 400`
-                    # also permitted 5xx, so a server having a bad day read as a
-                    # site consenting to be crawled. A 503 is the absence of an
-                    # answer, not the answer "yes".
-                    self._robots[host] = rp
-                    return True
-                self._robots[host] = None
-                return False
-            except Exception:
-                # Network failure, timeout, parser defect, bug. None of these is
-                # evidence that crawling is allowed, so fail closed.
-                self._robots[host] = None
-                return False
-            self._robots[host] = rp
-        rp = self._robots[host]
-        if rp is None:
+        rp = self._robots.get(self.host_of(url), "unloaded")
+        if rp is None or rp == "unloaded":
             return False
         return rp.can_fetch(USER_AGENT, url)
 
@@ -538,6 +553,7 @@ class FetchDaemon:
                 "before anything is found, so the run cannot later grow the "
                 "number it is measured against."
             )
+        self._ensure_robots(url)
         if not self.politeness.allows(url):
             raise RobotsRefusal(f"robots.txt disallows {url}")
         self.politeness.wait(url)
@@ -591,7 +607,48 @@ class FetchDaemon:
             n_bytes=len(payload),
         )
         append_row(self.log, {"kind": "fetch", **result.as_dict()}, self.key)
+
+        # A robots.txt this daemon fetched -- for whatever reason, including a
+        # traversal asking for it directly -- installs that host's rules. Doing
+        # it here rather than only in `_ensure_robots` means the file is never
+        # fetched twice: whichever path reaches it first, the second path finds
+        # the host already known.
+        if urllib.parse.urlsplit(url).path == "/robots.txt":
+            self.politeness.load(self.politeness.host_of(url), status, payload)
         return result
+
+    def _ensure_robots(self, url: str) -> None:
+        """Fetch this host's rules THROUGH the daemon, once, before asking them.
+
+        The point is provenance, not politeness: fetching robots.txt here means
+        it is content-addressed, chained and auditable like every other page, so
+        "this crawl ran under these rules" is a checkable statement about bytes
+        rather than a recollection. `transport-custody` asserts exactly that.
+
+        Fails closed on anything that is not a clean answer -- a refusal, a
+        redirect, a network error -- because none of those is evidence that
+        crawling is allowed.
+        """
+        parts = urllib.parse.urlsplit(url)
+        if parts.path == "/robots.txt":
+            return  # circular; `allows` exempts it and `fetch` loads it
+        host = self.politeness.host_of(url)
+        if self.politeness.knows(host):
+            return
+        robots_url = urllib.parse.urlunsplit(
+            (parts.scheme, host, "/robots.txt", "", "")
+        )
+        try:
+            res = self.fetch(robots_url)
+        except FetchError:
+            self.politeness.load(host, 0, b"")
+            return
+        # `fetch` has already called `load` for a robots.txt path, so there is
+        # nothing to do here on success. The guard remains for the case where a
+        # future change stops it doing so, which would otherwise silently leave
+        # the host unloaded and every url on it refused.
+        if not self.politeness.knows(host):
+            self.politeness.load(host, res.status, b"")
 
     # -- checks ------------------------------------------------------------
 

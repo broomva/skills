@@ -256,14 +256,47 @@ def test_a_planted_snapshot_fails_transport_custody(run):
     assert any("hash to its own name" in f for f in r.failures)
 
 
-def test_a_host_fetched_without_its_robots_fails_custody(tmp_path):
-    """'We honoured robots.txt' must rest on bytes, not on the daemon's memory."""
+def test_the_daemon_snapshots_robots_for_every_host_it_touches(tmp_path):
+    """'We honoured robots.txt' must rest on bytes, not on the daemon's memory.
+
+    This gate found a real hole: `Politeness` used to read robots.txt itself
+    through `RobotFileParser.read()`, so those bytes never passed through the
+    daemon and were never chained. The rules a crawl ran under were unauditable.
+    Now the daemon fetches them, and custody holds for a host it has never seen
+    before -- which is the case the depth loop produces every time it expands to
+    a new site.
+    """
     d = F.FetchDaemon(
-        root=tmp_path / "runs", run_id="r1", politeness=AllowAll(),
+        root=tmp_path / "runs", run_id="r1",
+        transport=lambda u: (200, b"User-agent: *\nAllow: /\n", u)
+        if u.endswith("/robots.txt") else (200, PAGE, u),
+        key=KEY,
+    )
+    d.seal_plan({"seeds": ["x"], "max_depth": 0})
+    d.fetch("https://never-seen.test/page")
+    assert ("https://never-seen.test/robots.txt", F.sha256_of(
+        b"User-agent: *\nAllow: /\n")) in d.pairs()
+    assert G.gate_transport_custody(d, []).status == G.PASS
+
+
+def test_a_host_whose_rules_were_never_fetched_fails_custody(tmp_path):
+    """The gate still has to be able to say no.
+
+    Pre-loading the rules is the one way a host gets fetched without its
+    robots.txt being snapshotted -- `_ensure_robots` short-circuits on a host it
+    already knows. That is a legitimate thing for a caller to do and exactly
+    what the gate exists to notice, because the resulting run cannot show which
+    rules it ran under.
+    """
+    polite = F.Politeness(interval=0.0)
+    polite.load("preloaded.test", 200, b"User-agent: *\nAllow: /\n")
+    d = F.FetchDaemon(
+        root=tmp_path / "runs", run_id="r1", politeness=polite,
         transport=lambda u: (200, PAGE, u), key=KEY,
     )
     d.seal_plan({"seeds": ["x"], "max_depth": 0})
-    d.fetch("https://never-asked.test/page")
+    d.fetch("https://preloaded.test/page")
+    assert {u for (u, _dg) in d.pairs()} == {"https://preloaded.test/page"}
     r = G.gate_transport_custody(d, [])
     assert r.status == G.FAIL
     assert any("robots.txt being snapshotted" in f for f in r.failures)
