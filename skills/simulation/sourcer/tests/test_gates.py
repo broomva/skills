@@ -646,3 +646,50 @@ def test_an_inverted_endpoint_span_fails_containment():
         dict(base, attrs={X.SUBJECT_SPAN: "10:20", X.OBJECT_SPAN: "0:5"})
     ])
     assert ok.status == G.PASS
+
+
+def test_a_page_read_that_yielded_nothing_is_accounted_for(run, tmp_path):
+    """The fourth fate, found by crawling a page with no relations in the
+    vocabulary.
+
+    `inventory-closed` knew three: used, dropped-with-reason, explicitly unread.
+    A page a worker READ that honestly produced no claims is none of them, so
+    every such page read as silent loss — which is the one thing this gate
+    exists to tell it apart from.
+    """
+    d, conn, trav = run
+    PAGES["https://example.com/quiet"] = b"<html>nothing relatable here</html>"
+    try:
+        d.fetch("https://example.com/quiet")
+        before = G.gate_inventory_closed(d, S.select(conn), trav)
+        assert before.status == G.FAIL
+        assert any("quiet" in f for f in before.failures)
+
+        (d.dir / "read.jsonl").write_text(
+            json.dumps({"url": "https://example.com/quiet", "digest": "x",
+                        "claims_seen": 0, "admitted": 0}) + "\n",
+            encoding="utf-8",
+        )
+        after = G.gate_inventory_closed(d, S.select(conn), trav)
+        assert after.status == G.PASS
+    finally:
+        PAGES.pop("https://example.com/quiet")
+
+
+def test_the_read_ledger_survives_a_corrupt_line(run):
+    """One bad line must not take out the ledger — a crash here would turn a
+    cosmetic defect into a failed gate."""
+    d, conn, trav = run
+    (d.dir / "read.jsonl").write_text(
+        "not json\n"
+        + json.dumps({"url": "https://example.com/ok"}) + "\n"
+        + json.dumps({"no_url": True}) + "\n",
+        encoding="utf-8",
+    )
+    assert G.read_ledger(d.dir) == {"https://example.com/ok"}
+
+
+def test_an_absent_read_ledger_is_an_empty_set_not_an_error(run):
+    d, conn, trav = run
+    assert not (d.dir / "read.jsonl").exists()
+    assert G.read_ledger(d.dir) == set()

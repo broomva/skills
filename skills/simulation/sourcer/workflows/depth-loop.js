@@ -67,6 +67,18 @@ if (!SCRIPTS || !RUN || !DB || SEEDS.length === 0) {
 // the right default for a real run, where a key on an argv is a key in `ps`.
 // A model returning "[]" as a string is normal; a model returning prose is not,
 // and the difference must be a dropped page rather than a dead workflow.
+// The shape `extract.claims_from_json` will accept. Checked here so a bad claim
+// is dropped for free rather than refused after a verifier has been paid for.
+function wellFormed(c) {
+  const int = (v) => Number.isInteger(v)
+  const mention = (m) => m && typeof m.kind === 'string' &&
+                         int(m.span_start) && int(m.span_end) &&
+                         m.span_end > m.span_start
+  return c && typeof c.predicate === 'string' &&
+         mention(c.subject) && mention(c.object) &&
+         int(c.span_start) && int(c.span_end) && c.span_end > c.span_start
+}
+
 function safeParse(text) {
   try {
     const v = JSON.parse(text ?? '[]')
@@ -123,6 +135,7 @@ const TAKE_SCHEMA = {
     path: { type: 'string' },
     n_bytes: { type: 'integer' },
     vocabulary: { type: 'string' },
+    claim_schema: { type: 'string' },
     reason: { type: 'string' },
   },
   required: ['found'],
@@ -202,7 +215,8 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
        Its stdout has an "item" object (or "item": null). FLATTEN it:
          {"found": true, "url": ..., "digest": ..., "depth": ...,
           "claim_token": ..., "path": ..., "n_bytes": ...,
-          "vocabulary": <the "vocabulary" string>}
+          "vocabulary": <the "vocabulary" string>,
+          "claim_schema": <the "claim_schema" string>}
        If "item" is null return {"found": false, "reason": <its "reason">}.
        That is a normal answer meaning the frontier is empty or the budget is
        spent; do not retry it.`,
@@ -238,6 +252,8 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
        ${taken.vocabulary}
 
+       ${taken.claim_schema}
+
        Emit a claim only where the page states the relation. Two entities
        appearing on the same page are co-mentioned, not related: your relation
        span must contain both endpoint spans AND stay inside the size bound
@@ -262,6 +278,15 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
       const verdicts = {}
       for (let i = 0; i < claims.length; i++) {
         const c = claims[i]
+        // Shape-check BEFORE spending a judge. A real run emitted `{start,end}`
+        // instead of `{span_start,span_end}`, so every offset interpolated as
+        // `undefined`, and four verifier agents were spent reading "bytes
+        // undefined..undefined" before `land` refused the batch anyway. A
+        // malformed claim must cost nothing.
+        if (!wellFormed(c)) {
+          log(`claim ${i} is malformed (offsets missing or not integers); dropped`)
+          continue
+        }
         const v = await agent(
           `Judge one claim against one span. You are not told who produced either.
 
@@ -283,7 +308,10 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
         // optional; defaulting to false would refute claims nobody judged.
         if (v && typeof v.entailed === 'boolean') verdicts[String(i)] = v.entailed
       }
-      return { taken, claims, verdicts }
+      // Only the well-formed ones travel onward. `land` refuses the WHOLE batch
+      // on one bad claim -- correctly, it is a wire-format error -- so letting a
+      // malformed claim through here loses every good claim beside it.
+      return { taken, claims: claims.filter(wellFormed), verdicts }
     },
 
     // -- land: the script decides, from artifacts on disk ------------------

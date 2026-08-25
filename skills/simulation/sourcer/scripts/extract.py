@@ -131,6 +131,16 @@ MAX_ATTR_CHARS = 200
 #: spellings of one company merge.
 EXACT_KINDS = frozenset({"profile"})
 
+#: The wire format, as data. `claims_from_json` validates against these and
+#: `claim_schema_doc` renders them, so the shape an extractor is TOLD and the
+#: shape it is CHECKED against are one thing. A real crawl found the cost of
+#: their being two: an agent guessed `{start, end}` instead of
+#: `{span_start, span_end}`, every claim was refused, and four verifier agents
+#: were spent judging spans that had already been interpolated as `undefined`.
+CLAIM_KEYS = frozenset({"subject", "predicate", "object", "span_start",
+                        "span_end", "attrs"})
+MENTION_KEYS = frozenset({"kind", "span_start", "span_end"})
+
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
 
@@ -476,7 +486,7 @@ def claims_from_json(blob: str) -> list:
     for i, item in enumerate(data):
         if not isinstance(item, dict):
             raise ExtractionError(f"claim {i} is {type(item).__name__}, not an object")
-        allowed = {"subject", "predicate", "object", "span_start", "span_end", "attrs"}
+        allowed = CLAIM_KEYS
         extra = set(item) - allowed
         if extra:
             raise ExtractionError(
@@ -502,7 +512,7 @@ def claims_from_json(blob: str) -> list:
 def _mention(raw, where: str) -> Mention:
     if not isinstance(raw, dict):
         raise ExtractionError(f"{where} is {type(raw).__name__}, not an object")
-    allowed = {"kind", "span_start", "span_end"}
+    allowed = MENTION_KEYS
     extra = set(raw) - allowed
     if extra:
         raise ExtractionError(f"{where} carries unknown keys {sorted(extra)}")
@@ -537,6 +547,38 @@ def _int(v, where: str) -> int:
     if isinstance(v, bool) or not isinstance(v, int):
         raise ExtractionError(f"{where} must be an integer, got {v!r}")
     return v
+
+
+def claim_schema_doc() -> str:
+    """The exact JSON an extractor must emit, generated from what is validated.
+
+    Written out as an example rather than as a schema, because the consumer is a
+    model reading a prompt. Generated from `CLAIM_KEYS`/`MENTION_KEYS` so that a
+    field added to the parser cannot be missing from the shape the extractor is
+    shown — the recorded failure mode being exactly that gap.
+    """
+    return (
+        "Emit a JSON list. Each element has EXACTLY these keys "
+        f"({', '.join(sorted(CLAIM_KEYS - {'attrs'}))}, and optionally attrs):\n"
+        "\n"
+        "  [\n"
+        "    {\n"
+        '      "subject":   {"kind": "org",    "span_start": 120, "span_end": 131},\n'
+        '      "predicate": "employs",\n'
+        '      "object":    {"kind": "person", "span_start": 143, "span_end": 157},\n'
+        '      "span_start": 120,\n'
+        '      "span_end":   190,\n'
+        '      "attrs":      {"title": "CTO"}\n'
+        "    }\n"
+        "  ]\n"
+        "\n"
+        f"A mention has exactly {sorted(MENTION_KEYS)} — no other key, and in "
+        "particular NO name field.\n"
+        "The offsets are `span_start`/`span_end`, never `start`/`end`.\n"
+        "The outer `span_start`/`span_end` are the RELATION's span and must "
+        "contain both mention spans.\n"
+        "Any other key is refused outright rather than ignored."
+    )
 
 
 def vocabulary_doc() -> str:
@@ -590,4 +632,7 @@ __all__ = [
     "admit",
     "claims_from_json",
     "vocabulary_doc",
+    "claim_schema_doc",
+    "CLAIM_KEYS",
+    "MENTION_KEYS",
 ]

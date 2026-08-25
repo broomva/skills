@@ -490,6 +490,35 @@ def gate_lattice_exact(records) -> GateResult:
                          "path through a simulated grade exists")
 
 
+def read_ledger(run_dir) -> set:
+    """Pages a worker read, whatever they yielded, from `<run>/read.jsonl`.
+
+    A page that was read and honestly produced no claims is not "used", not
+    "dropped-with-reason" and not "unread" -- it fits none of the three fates
+    this gate knows, and without a ledger it reads as silent loss. Which is the
+    one thing the gate exists to tell it apart from.
+
+    TRUST BOUNDARY, stated rather than assumed: this file is NOT in the MAC'd
+    chain, so anything that can write the run directory can add a line to it and
+    make a genuinely lost page look accounted for. That is acceptable only
+    because crawl agents have no write access to the run directory at all -- the
+    same custody split the daemon rests on -- and because this gate is about
+    silent loss rather than about tamper, which the chain covers.
+    """
+    path = Path(run_dir) / "read.jsonl"
+    if not path.is_file():
+        return set()
+    out = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.add(json.loads(line)["url"])
+        except (ValueError, KeyError):
+            continue
+    return out
+
+
 def gate_inventory_closed(daemon, records, traversal=None, unread=()) -> GateResult:
     """Silent loss. Every fetched page is used, dropped-with-reason, or unread.
 
@@ -524,9 +553,13 @@ def gate_inventory_closed(daemon, records, traversal=None, unread=()) -> GateRes
         # accounted for by appearing in the traversal's document ledger.
         dropped |= {doc.get("url") for doc in d.get("docs", [])}
 
-    unaccounted = fetched - used - dropped - set(unread)
+    unaccounted = fetched - used - dropped - set(unread) - read_ledger(daemon.dir)
     for url in sorted(unaccounted):
-        failures.append(f"{url}: fetched, then accounted for nowhere")
+        failures.append(
+            f"{url}: fetched, then accounted for nowhere -- not cited by a "
+            "record, not dropped by the traversal, not in the read ledger, and "
+            "not declared unread"
+        )
     return _result(name, stage, CLOSED, failures, len(fetched),
                    empty="the run fetched nothing")
 

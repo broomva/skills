@@ -200,6 +200,10 @@ def cmd_take(args) -> int:
             "n_bytes": res.n_bytes,
         },
         "vocabulary": X.vocabulary_doc(),
+        # The SHAPE, not just the vocabulary. An extractor told what predicates
+        # exist and left to guess the JSON around them guesses wrong, and the
+        # refusal arrives after a verifier has already been spent on it.
+        "claim_schema": X.claim_schema_doc(),
     }, indent=2, sort_keys=True))
     return OK
 
@@ -338,6 +342,19 @@ def cmd_land(args) -> int:
     ids = {r.id for r in landed}
     written = [r for r in S.select(conn) if r.get("id") in ids]
     stats.expanded = L.expand(conn, written, depth + 1, parent_id=args.url)
+
+    # Record that this page was READ, whatever it yielded. `inventory-closed`
+    # knows three fates for a fetched page -- used, dropped-with-reason, or
+    # explicitly unread -- and a page that was read and honestly produced
+    # nothing is none of them. Without this ledger every such page reads as
+    # silent loss, which is exactly the thing the gate exists to distinguish
+    # it from. A real crawl of a page with no relations in the vocabulary hit
+    # this on the first run.
+    with (Path(args.run) / "read.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "url": args.url, "digest": args.digest, "depth": depth,
+            "claims_seen": stats.claims_seen, "admitted": stats.admitted,
+        }, sort_keys=True) + "\n")
 
     try:
         S.finish(conn, args.url, args.token)
