@@ -691,6 +691,15 @@ def run_decoys() -> list:
         must_reject("transport-custody", "a snapshot that does not hash to its own name",
               gate_transport_custody(d, honest))
         planted.unlink()
+        # The other half of custody, and a different failure: the snapshots on
+        # disk are all fine, but a record cites a pair the chained log never
+        # recorded. Distinct from span-verbatim's version -- there the bytes
+        # disagree with the quote; here there are no bytes at all.
+        never = dict(ev)
+        never["sha256"] = "b" * 64
+        never["snapshot"] = "snapshots/" + "b" * 64
+        must_reject("transport-custody", "a record citing a pair never fetched",
+              gate_transport_custody(d, [node(evidence=never)]))
 
     return out
 

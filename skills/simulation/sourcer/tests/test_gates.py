@@ -210,6 +210,23 @@ def test_an_annotating_gate_never_changes_the_verdict(run):
     assert suite.verdict == G.VALID
 
 
+@pytest.mark.parametrize("status", [G.FAIL, G.INCONCLUSIVE])
+def test_the_verdict_reads_policy_not_status(status):
+    """It is `policy`, not loudness, that decides whether a gate can gate.
+
+    A mutation sweep found this untested: corroboration-grade never actually
+    returns FAIL, so dropping the `policy == CLOSED` guard changed nothing
+    observable. The guard still has to hold, because the next annotating gate
+    might report a failure and must still not sink the run.
+    """
+    annotating = G.GateResult("some-annotation", "whole map", G.ANNOTATE,
+                              status, 3, "loud but advisory", ("x",))
+    assert G.SuiteResult(results=[annotating]).verdict == G.VALID
+    closed = G.GateResult("some-gate", "whole map", G.CLOSED, status, 3,
+                          "", ("x",))
+    assert G.SuiteResult(results=[closed]).verdict == G.INVALID
+
+
 # --------------------------------------------------------------------------
 # Individual gates saying no
 # --------------------------------------------------------------------------
@@ -307,6 +324,46 @@ def test_lattice_exact_does_not_hang_on_a_cycle():
     ]
     r = G.gate_lattice_exact(recs)
     assert r.status == G.FAIL
+
+
+def test_triple_entailed_distinguishes_missing_spans_from_unparseable_ones():
+    """Two different bugs, and the operator needs to be told which one.
+
+    A mutation sweep found the `no recorded span` branch removable with the
+    suite still green: without it the string falls through to the parser and
+    fails anyway, so the gate still says no. It says no for the wrong reason —
+    "the producer never recorded this" is a defect in `admit`, while
+    "it recorded garbage" is a defect in the data. Asserting the message is what
+    keeps the branch meaningful.
+    """
+    base = {
+        "id": "edge::e", "kind": "edge", "predicate": "employs",
+        "src": "org::a", "dst": "person::b",
+        "evidence": {"url": "u", "sha256": "d", "span_start": 0, "span_end": 50,
+                     "quote": "q"},
+    }
+    missing = G.gate_triple_entailed([dict(base, attrs={})])
+    assert missing.status == G.FAIL
+    assert any("no recorded subject span" in f for f in missing.failures)
+    assert not any("unparseable" in f for f in missing.failures)
+
+    garbage = G.gate_triple_entailed([
+        dict(base, attrs={X.SUBJECT_SPAN: "not-a-span", X.OBJECT_SPAN: "0:5"})
+    ])
+    assert garbage.status == G.FAIL
+    assert any("unparseable" in f for f in garbage.failures)
+
+
+def test_transport_custody_catches_a_pair_that_was_never_fetched(run):
+    """Distinct from span-verbatim's version: there the bytes disagree with the
+    quote, here there are no bytes at all. A mutation sweep found this branch
+    untested — the only custody test exercised the self-hash half."""
+    d, conn, trav = run
+    records = S.select(conn)
+    records[0]["evidence"]["sha256"] = "c" * 64
+    r = G.gate_transport_custody(d, records)
+    assert r.status == G.FAIL
+    assert any("cited but never fetched" in f for f in r.failures)
 
 
 def test_projection_fidelity_refuses_an_unchecked_record(run):
