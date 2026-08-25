@@ -113,6 +113,11 @@ python3 scripts/sourcer.py take   --run RUN --db DB        # -> a path to read
 python3 scripts/sourcer.py land   --run RUN --db DB --url … --digest … \
                                   --depth … --token … --claims c.json --verdicts v.json
 python3 scripts/sourcer.py status --run RUN --db DB
+
+# and the three that turn a finished map into something downstream can use
+python3 scripts/sourcer.py resolve --run RUN --db DB   # identity candidates
+python3 scripts/sourcer.py emit --run RUN --db DB      # -> parallax propose ...
+python3 scripts/sourcer.py project --run RUN --db DB --entities <entities-dir>
 python3 scripts/gates.py          --run RUN --db DB --json  # 0 VALID, 2 INVALID
 ```
 
@@ -201,12 +206,58 @@ this workspace has actually shipped:
 | `scripts/extract.py` | typed `(subject, predicate, object)` over a closed vocabulary |
 | `scripts/loop.py` | the depth loop; verification before expansion |
 | `scripts/gates.py` | the twelve gates, the probes, and the CLI |
-| `scripts/sourcer.py` | `plan` · `take` · `land` · `status` |
+| `scripts/identity.py` | exact keys merge; everything softer becomes an edge |
+| `scripts/emit.py` | the node + edge tables Parallax ingests |
+| `scripts/project.py` | the map as Layer-3 entity pages |
+| `scripts/sourcer.py` | `plan` · `take` · `land` · `status` · `resolve` · `emit` · `project` |
 | `workflows/depth-loop.js` | the agent orchestration |
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 SOURCER_CHAIN_KEY=test python3 -m pytest tests/ -q
 ```
+
+## What leaves the map
+
+Two handoffs, and both refuse to say more than the map does.
+
+**`emit` → Parallax.** A node table and an edge table, in the `--table` grammar
+`data-provider` already owns — **imported, never re-spelled**, because two
+spellings of one contract is the drift that keeps both sides green while they
+agree with neither. If `data-provider` is absent this refuses rather than
+falling back to a local copy, since the fallback *is* the second spelling. Only
+`entailed` rows go, the observed/simulated grade survives into the proposal, and
+an edge whose endpoint did not ship is dropped **and counted** — a table
+asserting a relation between two things it does not contain says more than the
+map does.
+
+**`project` → `research/entities/`.** One page per observed, entailed node,
+each carrying the URL, digest and byte span its claim was read from, and each
+stamped `generated: sourcer` with "do not edit by hand" — a projection is
+regenerable, so a hand edit is a claim with no evidence behind it. Simulated
+records do **not** project: a page is what a later reader cites, and an
+inference cited as a page loses its grade on the way. Dry-run by default,
+because writing into a permanent shared graph is not something a command should
+do because you forgot a flag.
+
+## Identity
+
+`resolve` proposes; it never merges. Two records with the same canonical key are
+already one entity — the store merged them at birth. Two that merely *look*
+alike become a `possibly_same_as` edge, and the asymmetry is the whole design:
+**a wrong merge is much harder to notice than a missing one.** A missing merge
+is two nodes a reader can see and join; a wrong merge silently attributes one
+company's leadership and subsidiaries to another, and the evidence for both now
+hangs off one id.
+
+Every proposal is `simulated` — no page says two records are the same entity —
+so `expandable()` refuses to let one spend the fetch budget on descendants. A
+similarity score is not evidence.
+
+Comparison is token overlap after stripping accents and legal forms, not edit
+distance, because the failure that matters is the one edit distance gets
+backwards: `Banco Agrario` and `Banco Agrícola` are two banks a few characters
+apart, while `Nacional de Café` and `Café Nacional` are one company in a
+different order.
 
 ## Known limits, named rather than discovered later
 

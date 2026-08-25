@@ -94,7 +94,8 @@ def test_documented_commands_exist():
 
     parser = C.build_parser()
     verbs = set(parser._subparsers._group_actions[0].choices)
-    assert verbs == {"plan", "take", "land", "status"}, verbs
+    assert verbs == {"plan", "take", "land", "status",
+                     "resolve", "emit", "project"}, verbs
     doc = text()
     for verb in sorted(verbs):
         assert f"sourcer.py {verb}" in doc, f"`{verb}` exists but is undocumented"
@@ -216,3 +217,49 @@ def test_the_workflow_names_every_required_flag_somewhere():
                     f"depth-loop.js never mentions `{verb}`'s required "
                     f"{action.option_strings[0]}"
                 )
+
+
+# --------------------------------------------------------------------------
+# references/ — generated-from-the-code docs, checked against the code
+# --------------------------------------------------------------------------
+
+
+def test_the_vocabulary_reference_lists_every_predicate():
+    """A reference that goes stale is worse than no reference: it reads as
+    authoritative and is wrong. So the code is the source and this checks it."""
+    ref = (SKILL.parent / "references" / "vocabulary.md").read_text()
+    for p in X.PREDICATES:
+        assert f"`{p}`" in ref, f"{p} is in the vocabulary but not in the reference"
+    assert f"`{X.SAME_AS}`" in ref
+    for kind in X.ENTITY_KINDS:
+        assert f"`{kind}`" in ref, f"{kind} is an entity kind but is undocumented"
+    for name, value in (("MAX_RELATION_SPAN", X.MAX_RELATION_SPAN),
+                        ("MIN_NAME_CHARS", X.MIN_NAME_CHARS),
+                        ("MAX_NAME_CHARS", X.MAX_NAME_CHARS),
+                        ("MAX_ATTR_CHARS", X.MAX_ATTR_CHARS)):
+        assert f"`{name}`" in ref and str(value) in ref, f"{name} is stale"
+    for a in sorted(X.ATTR_KEYS):
+        assert f"`{a}`" in ref
+
+
+def test_the_vocabulary_reference_names_the_expansion_predicates():
+    ref = (SKILL.parent / "references" / "vocabulary.md").read_text()
+    for p in L.EXPANSION_PREDICATES:
+        assert f"`{p}`" in ref
+    assert "EXPANSION_PREDICATES" in ref
+
+
+def test_the_gates_reference_lists_exactly_the_gates_that_run():
+    """Same rule as the SKILL.md table: names, not a count."""
+    ref = (SKILL.parent / "references" / "gates.md").read_text()
+    listed = set(re.findall(r"^\| [a-z -]+ \| `([a-z-]+)` \|", ref, re.M))
+    assert listed == set(suite_gates()), (
+        f"extra {sorted(listed - set(suite_gates()))}, "
+        f"missing {sorted(set(suite_gates()) - listed)}"
+    )
+    assert "eleven fail closed" in ref
+
+
+def test_the_gates_reference_probe_count_is_real():
+    ref = (SKILL.parent / "references" / "gates.md").read_text()
+    assert f"{len(G.run_decoys())} probes" in ref

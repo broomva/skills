@@ -6,10 +6,13 @@ fetches, never writes to the store, and never says whether its own claim is
 good. Everything that decides -- what may be admitted, what verified, what
 expands -- happens here, in code, from the artifacts on disk.
 
-    plan    seal the denominator and push the seeds
-    take    claim one frontier item, fetch it, hand back a path to read
-    land    admit the agent's claims, apply the verdicts, expand what survived
-    status  where the run is, in the terms the gates will ask about
+    plan     seal the denominator and push the seeds
+    take     claim one frontier item, fetch it, hand back a path to read
+    land     admit the agent's claims, apply the verdicts, expand what survived
+    status   where the run is, in the terms the gates will ask about
+    resolve  propose possibly_same_as edges -- proposes, never merges
+    emit     the node and edge tables Parallax ingests
+    project  the map as Layer-3 entity pages (dry-run by default)
 
 `take` and `land` are two commands rather than one because the agent's work sits
 between them. That is also why `land` takes a claim token: the item was leased
@@ -30,9 +33,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import emit as E  # noqa: E402
 import extract as X  # noqa: E402
 import fetchd as F  # noqa: E402
+import identity as I  # noqa: E402
 import loop as L  # noqa: E402
+import project as PJ  # noqa: E402
 import store as S  # noqa: E402
 import traverse as T  # noqa: E402
 
@@ -388,6 +394,54 @@ def _release(conn, key: str, token: str) -> None:
         pass
 
 
+def cmd_resolve(args) -> int:
+    """Propose identity candidates. Merges nothing, ever.
+
+    Exit 0 with an empty list is the normal answer for a map with no
+    near-duplicates, and is reported as such rather than as silence.
+    """
+    _daemon, conn = _open(args)
+    try:
+        report = I.resolve(conn, depth=args.depth, threshold=args.threshold,
+                           max_pairs=args.max_pairs)
+    except I.IdentityError as exc:
+        raise Refusal(str(exc)) from exc
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return OK
+
+
+def cmd_emit(args) -> int:
+    """The Parallax handoff: node and edge tables, provenance intact."""
+    daemon, conn = _open(args)
+    try:
+        out = E.emit(S.select(conn), prefix=args.prefix, daemon=daemon)
+    except E.EmitError as exc:
+        raise Refusal(str(exc)) from exc
+    print(json.dumps(out, indent=2, sort_keys=True))
+    return OK
+
+
+def cmd_project(args) -> int:
+    """The knowledge-graph handoff. DRY-RUN unless --write is given.
+
+    Writing into a permanent, shared, hand-curated graph is not a default.
+    """
+    _daemon, conn = _open(args)
+    records = S.select(conn)
+    pages = PJ.build(records, run_id=Path(args.run).name)
+    if not pages:
+        print(json.dumps({
+            "pages": 0, "dry_run": not args.write,
+            "reason": "no record in this map is an observed, entailed node of a "
+                      "kind the graph has a type for",
+        }, indent=2, sort_keys=True))
+        return OK
+    out = PJ.write(pages, Path(args.entities), dry_run=not args.write)
+    out["projected"] = [p.as_dict() for p in pages]
+    print(json.dumps(out, indent=2, sort_keys=True))
+    return OK
+
+
 def cmd_status(args) -> int:
     daemon, conn = _open(args)
     plan_path = daemon.dir / "plan.json"
@@ -440,6 +494,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = common(sub.add_parser("status", help="where the run is"))
     p.set_defaults(fn=cmd_status)
+
+    p = common(sub.add_parser("resolve", help="propose possibly_same_as edges"))
+    p.add_argument("--threshold", type=float, default=I.DEFAULT_THRESHOLD)
+    p.add_argument("--max-pairs", type=int, default=I.DEFAULT_MAX_PAIRS)
+    p.add_argument("--depth", type=int, default=0)
+    p.set_defaults(fn=cmd_resolve)
+
+    p = common(sub.add_parser("emit", help="the tables Parallax ingests"))
+    p.add_argument("--prefix", default="sourcer")
+    p.set_defaults(fn=cmd_emit)
+
+    p = common(sub.add_parser("project", help="the map as Layer-3 entity pages"))
+    p.add_argument("--entities", required=True, help="the entities directory")
+    p.add_argument("--write", action="store_true",
+                   help="actually write; without it this is a dry run")
+    p.set_defaults(fn=cmd_project)
     return ap
 
 
