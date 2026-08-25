@@ -223,16 +223,21 @@ def test_verdicts_are_what_make_a_page_expand(tmp_path, capsys):
     C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"], "--token", item["claim_token"],
             "--claims", str(claims), "--verdicts", str(verdicts)])
     d = out(capsys)
-    assert d["stats"]["refuted"] == 1
+    assert d["stats"]["refuted"] == 1, "the edge is refuted"
+    assert d["stats"]["inconclusive"] == 2, "its endpoints were looked at"
     assert d["stats"]["entailed"] == 0
     assert d["stats"]["expanded"] == 0, "an unverified edge is not a way to travel"
     conn = S.connect(tmp_path / "map.db")
     verdicts_by_kind = {r["kind"]: r["verdict"] for r in S.select(conn)}
     assert verdicts_by_kind["edge"] == "refuted"
-    assert verdicts_by_kind["node"] == "unchecked", (
-        "a refuted relation does not make the entities wrong -- but unchecked "
-        "still keeps them out of the next hop"
-    )
+    # INCONCLUSIVE, not unchecked. The store draws that line deliberately:
+    # unchecked means nobody looked, inconclusive means somebody looked and the
+    # artifact could not settle it. A judge refused the RELATION; whether the
+    # entity is correctly named is a different question it did not answer.
+    # Leaving them unchecked made every run containing one refutation fail
+    # `span-entails-claim` — a gate that fires on correct behaviour is noise.
+    assert verdicts_by_kind["node"] == "inconclusive"
+    assert S.expandable_ids(conn) == [], "inconclusive still cannot expand"
 
 
 def test_a_fully_verified_page_expands_to_the_next_hop(tmp_path, capsys):

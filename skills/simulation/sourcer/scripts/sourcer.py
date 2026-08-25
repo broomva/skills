@@ -312,13 +312,30 @@ def cmd_land(args) -> int:
                 S.set_verdict(conn, rec.id, "entailed")
                 stats.entailed += 1
         else:
-            for rec in (r for r in records if r.kind == "edge"):
-                S.set_verdict(
-                    conn, rec.id, "refuted",
-                    refutation="the blinded verifier did not find the span to "
-                               "support this relation",
-                )
-                stats.refuted += 1
+            for rec in records:
+                if rec.kind == "edge":
+                    S.set_verdict(
+                        conn, rec.id, "refuted",
+                        refutation="the blinded verifier did not find the span to "
+                                   "support this relation",
+                    )
+                    stats.refuted += 1
+                else:
+                    # `inconclusive`, NOT `unchecked`. The store draws that
+                    # distinction precisely: unchecked means nobody looked,
+                    # inconclusive means somebody looked and the artifact could
+                    # not settle it. A judge refused this claim, so the endpoint
+                    # WAS looked at -- what remains unsettled is only whether
+                    # the entity is correctly named, which the relation verdict
+                    # does not answer either way.
+                    #
+                    # Leaving them `unchecked` made every run containing a
+                    # single refutation fail `span-entails-claim`, which turns a
+                    # gate into noise: a crawl that correctly disbelieved one
+                    # claim reported the same INVALID as one nobody judged at
+                    # all. Found on a real crawl of iana.org/about.
+                    S.set_verdict(conn, rec.id, "inconclusive")
+                    stats.inconclusive += 1
 
     # RE-CHECK the lease before expanding. Authorising once at the top is not
     # enough on its own: the lease can lapse while the agent's claims are being

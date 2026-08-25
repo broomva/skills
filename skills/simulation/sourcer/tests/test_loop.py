@@ -431,7 +431,7 @@ def test_stats_round_trip_as_a_dict(rig):
     s = L.run(d, conn, plan(), extractor, believe_all).as_dict()
     assert set(s) == {
         "fetched", "items_done", "claims_seen", "admitted", "rejected",
-        "entailed", "refuted", "expanded", "budget_stops", "notes",
+        "entailed", "refuted", "inconclusive", "expanded", "budget_stops", "notes",
     }
 
 

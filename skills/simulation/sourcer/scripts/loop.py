@@ -104,6 +104,7 @@ class LoopStats:
     rejected: int = 0
     entailed: int = 0
     refuted: int = 0
+    inconclusive: int = 0
     expanded: int = 0
     budget_stops: int = 0
     notes: list = field(default_factory=list)
@@ -117,6 +118,7 @@ class LoopStats:
             "rejected": self.rejected,
             "entailed": self.entailed,
             "refuted": self.refuted,
+            "inconclusive": self.inconclusive,
             "expanded": self.expanded,
             "budget_stops": self.budget_stops,
             "notes": list(self.notes),
@@ -278,13 +280,18 @@ def process_item(
         if entailed:
             S.set_verdict(conn, rec.id, "entailed")
             stats.entailed += 1
-        else:
+        elif rec.kind == "edge":
             S.set_verdict(
                 conn, rec.id, "refuted",
                 refutation="the blinded verifier did not find the span to support "
                            "this claim",
             )
             stats.refuted += 1
+        else:
+            # See `cmd_land`: a judge looked, and what it settled was the
+            # relation, not the naming. `inconclusive` says exactly that.
+            S.set_verdict(conn, rec.id, "inconclusive")
+            stats.inconclusive += 1
 
     # -- expand, from the store, reading the verdicts just written ----------
     ids = {r.id for r in fresh}

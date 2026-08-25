@@ -971,6 +971,13 @@ def run_suite(
 ) -> SuiteResult:
     """Every gate, in stage order, over what the run left on disk."""
     records = S.select(conn)
+    # The verdict-auditing gates get the CANONICAL records only. A conflicting
+    # re-sighting is retained deliberately -- the run paid for it and nothing is
+    # deleted -- but it carries no verdict of its own, so auditing it as though
+    # it did made any conflict fail the run for a claim that WAS judged. The
+    # structural gates still see everything, because a conflict payload is a
+    # record that exists and must be admissible and verbatim like any other.
+    canonical = S.select(conn, include_conflicts=False)
     decoys = run_decoys()
     return SuiteResult(
         results=[
@@ -978,9 +985,9 @@ def run_suite(
             gate_transport_custody(daemon, records),
             gate_record_admissible(records),
             gate_span_verbatim(daemon, records),
-            gate_span_entails_claim(daemon, records, verifier),
+            gate_span_entails_claim(daemon, canonical, verifier),
             gate_edge_admissible(records),
-            gate_triple_entailed(records),
+            gate_triple_entailed(canonical),
             gate_lattice_exact(records),
             gate_inventory_closed(daemon, records, traversal, unread),
             gate_corroboration_grade(records),
