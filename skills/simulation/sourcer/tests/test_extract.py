@@ -382,17 +382,32 @@ def test_edge_ids_are_deterministic_and_do_not_collide():
     assert a != X.edge_id("org::b", "employs", "person::a")
 
 
-def test_edge_ids_survive_a_field_boundary_shifting():
-    """The separator, tested at the collision it actually prevents.
+@pytest.mark.parametrize("a,b", [
+    (("a", "p", "pb"), ("ap", "p", "b")),
+    # The same shape in key-flavoured text, to show it is not an artifact of
+    # single-letter fixtures.
+    (("org::a", "employs", "employsperson::b"),
+     ("org::aemploys", "employs", "person::b")),
+])
+def test_edge_ids_survive_a_field_boundary_shifting(a, b):
+    """The separator, tested at a collision that is actually reachable.
 
-    An earlier version of this test asserted a pair that does not collide under
-    concatenation either, so a mutation sweep removing the separators survived
-    it. These two DO concatenate to the same string: without a delimiter, both
-    ("a", "bc", "d") and ("ab", "c", "d") are "abcd", and the store would read
-    two unrelated edges as one edge sighted twice.
+    Two earlier fixtures for this were inert, and a mutation sweep caught both.
+    The first shifted the PREDICATE boundary — which cannot collide, because the
+    predicate is also in the returned id, so the strings differ regardless. The
+    second shifted src/dst across the predicate, which also cannot collide,
+    because moving a character past a fixed middle field changes the
+    concatenation. What does collide is a shift that keeps the predicate in
+    place and moves its text between the outer fields, and both pairs below
+    concatenate to one string.
+
+    Today's key grammar (`kind::[a-z0-9-]+`) probably makes this unreachable
+    through `admit`. That is an argument for keeping the separator, not for
+    dropping it: the id function should not be correct only for as long as
+    nobody widens the slug alphabet.
     """
-    assert "a" + "bc" + "d" == "ab" + "c" + "d", "the fixture must actually collide"
-    assert X.edge_id("a", "bc", "d") != X.edge_id("ab", "c", "d")
+    assert "".join(a) == "".join(b), "the fixture must actually collide"
+    assert X.edge_id(*a) != X.edge_id(*b)
 
 
 def test_the_daemon_still_refuses_forged_evidence_after_extraction(rig, tmp_path):
