@@ -27,8 +27,9 @@
 //                      maxDepth: 2, budget: 40,
 //                      run: "/tmp/crawl/r1", db: "/tmp/crawl/map.db" } })
 //
-// SOURCER_CHAIN_KEY must be set in the environment. An unkeyed chain verifies
-// and proves nothing, so the daemon refuses to construct without one.
+// SOURCER_CHAIN_KEY must reach the agents. Pass `chainKey` in args, or have it
+// already in the ambient environment — an unkeyed chain verifies and proves
+// nothing, so the daemon refuses to construct without one.
 
 export const meta = {
   name: 'sourcer-depth-loop',
@@ -60,7 +61,13 @@ if (!SCRIPTS || !RUN || !DB || SEEDS.length === 0) {
   )
 }
 
-const PY = `PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/sourcer.py`
+// Each agent gets a FRESH shell, so an export in this process reaches none of
+// them. The key therefore travels on the command line when `args.chainKey` is
+// given, and otherwise the ambient environment must already carry it — which is
+// the right default for a real run, where a key on an argv is a key in `ps`.
+const KEY = args?.chainKey ? `SOURCER_CHAIN_KEY=${args.chainKey} ` : ''
+const PY = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/sourcer.py`
+const GATES = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/gates.py`
 
 // The claim a verifier is asked to judge, with the endpoints NAMED.
 //
@@ -240,7 +247,7 @@ phase('Gate')
 const suite = await agent(
   `Run exactly this and return its stdout verbatim as JSON:
 
-     PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/gates.py --run ${RUN} --db ${DB} --json
+     ${GATES} --run ${RUN} --db ${DB} --json
 
    Exit 0 is VALID and exit 2 is INVALID. Both are answers -- return the JSON
    either way. Do not modify anything to change the outcome.`,

@@ -1,4 +1,4 @@
-"""The command line the workflow drives. One entry point, four verbs.
+"""The command line the workflow drives. One entry point, seven verbs.
 
 The split this file exists to enforce: **agents read, code decides.** A crawl
 agent is given a path to bytes already on disk and returns spans; it never
