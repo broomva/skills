@@ -165,9 +165,14 @@ def page_for(record: dict, records: list, run_id: str, today: Optional[str] = No
     # that was never written is a dangling reference the graph reports as broken,
     # and pointing at a record verification did not entail would assert exactly
     # what projection-fidelity forbids.
-    projected = {r["canonical_key"] for r in projectable(records)}
+    # Keyed by record ID, because that is what an edge's `dst` holds. Comparing
+    # it against `canonical_key` silently dropped every related link whenever
+    # the two differed -- the SAME defect the emitted tables had, surviving one
+    # module along, which is the fourth time this arc has fixed something at one
+    # site and left it standing at another.
+    projected = {r["id"]: r["canonical_key"] for r in projectable(records)}
     related = sorted({
-        yaml_scalar("[[" + slug_of(e["dst"]) + "]]")
+        yaml_scalar("[[" + slug_of(projected[e["dst"]]) + "]]")
         for e in out_edges if e.get("dst") in projected
     })
 
@@ -180,7 +185,7 @@ def page_for(record: dict, records: list, run_id: str, today: Optional[str] = No
         "tags:",
         *[f"  - {t}" for t in PROJECTION_TAGS],
         "sources:",
-        f"  - sourcer-run-{run_id}",
+        f"  - {yaml_scalar(f'sourcer-run-{run_id}')}",
         "related:",
         *[f"  - {r}" for r in related],
         f"created: {yaml_scalar(stamp)}",

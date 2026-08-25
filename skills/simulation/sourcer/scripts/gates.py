@@ -511,12 +511,23 @@ def read_ledger(run_dir) -> set:
     this gate knows, and without a ledger it reads as silent loss. Which is the
     one thing the gate exists to tell it apart from.
 
-    TRUST BOUNDARY, stated rather than assumed: this file is NOT in the MAC'd
-    chain, so anything that can write the run directory can add a line to it and
-    make a genuinely lost page look accounted for. That is acceptable only
-    because crawl agents have no write access to the run directory at all -- the
-    same custody split the daemon rests on -- and because this gate is about
-    silent loss rather than about tamper, which the chain covers.
+    TRUST BOUNDARY, stated rather than assumed, and corrected once already: this
+    file is NOT in the MAC'd chain, so anything that can write the run directory
+    can add a line and make a genuinely lost page look accounted for.
+
+    The first version of this comment claimed crawl agents have no write access
+    to the run directory. A review pointed out that the workflow itself
+    falsified that -- it told the landing agent to write `claims.json` INTO the
+    run directory, so the agent had exactly the access the comment denied. The
+    workflow now writes agent scratch elsewhere, which makes the claim true
+    rather than aspirational; but the honest statement of what this rests on is
+    a DEPLOYMENT property (the run directory is writable only by the daemon and
+    the CLI), not something this gate can verify about itself. It is the same
+    class of assumption as the custody split, and it is named here for the same
+    reason.
+
+    This gate is about SILENT LOSS, not about tamper, which the chain covers and
+    `plan-sealed-and-log-chained` reports.
     """
     path = Path(run_dir) / "read.jsonl"
     if not path.is_file():

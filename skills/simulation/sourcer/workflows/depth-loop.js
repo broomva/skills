@@ -92,11 +92,29 @@ function safeParse(text) {
   }
 }
 
+// Validated, not merely interpolated. This lands inside a shell command, so
+// an unconstrained value is a command injection with the operator's own hands
+// on it: `x; touch /tmp/pwned; #` would have run. A chain key is a secret, and
+// a secret is hex-ish or nothing.
+if (args?.chainKey !== undefined &&
+    !/^[A-Za-z0-9._-]{1,128}$/.test(String(args.chainKey))) {
+  throw new Error(
+    'chainKey must match /^[A-Za-z0-9._-]{1,128}$/ — it is interpolated into a ' +
+    'shell command, so anything else is an injection'
+  )
+}
 const KEY = args?.chainKey ? `SOURCER_CHAIN_KEY=${args.chainKey} ` : ''
 // Extractor payloads that did not parse. Surfaced in the return value so a run
 // cannot look complete while an agent was silently producing nothing.
 const extractionFailures = []
+const takeFailures = []
 
+// Agent scratch lives OUTSIDE the run directory. `inventory-closed` rests on
+// `read.jsonl` and `traversal.json` being writable only by the daemon and the
+// CLI -- and telling an agent to write `claims.json` INTO the run directory
+// handed it exactly the access that assumption denies. A review caught the
+// comment claiming a boundary this very file was breaking.
+const SCRATCH = args?.scratch ?? `${RUN}-agent-scratch`
 const PY = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/sourcer.py`
 const GATES = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/gates.py`
 
@@ -229,7 +247,15 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
        spent; do not retry it.`,
       { label: `take:d${depth}:w${i}`, phase: 'Plan', schema: TAKE_SCHEMA },
     )
-    if (!taken?.found || !taken.digest) break
+    if (!taken?.found) break
+    // `found: true` with nothing else is schema-valid and is NOT an empty
+    // frontier -- treating it as one silently ended the depth early. It is a
+    // broken answer, and it now says so.
+    if (!taken.digest || !taken.url || !taken.claim_token || !taken.path) {
+      log(`take:d${depth}:w${i} reported found but omitted required fields`)
+      takeFailures.push({ depth, worker: i, got: Object.keys(taken).join(',') })
+      break
+    }
     items.push(taken)
   }
   if (items.length === 0) {
@@ -276,14 +302,27 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
     ).then(r => {
       const parsed = safeParse(r?.claims_json)
       if (parsed.failed) {
-        log(`extract:${taken.digest.slice(0, 8)} returned unparseable claims (${parsed.why}) — page dropped, NOT counted as empty`)
+        log(`extract:${taken.digest.slice(0, 8)} returned unparseable claims (${parsed.why}) — page NOT landed`)
         extractionFailures.push({ url: taken.url, why: parsed.why })
+        // NOT landed at all. Passing `[]` onward made `land` record an honestly
+        // empty read, so a broken extractor produced a green run that a page
+        // genuinely relating nothing is indistinguishable from.
+        return { taken, claims: [], parseFailed: true }
       }
-      return { taken, claims: parsed.claims }
+      // Malformed claims are dropped HERE, before any index is taken, because
+      // the verdict map is keyed by POSITION: filtering after verification
+      // renumbered the array and left every verdict pointing one slot off, so a
+      // judged claim landed unchecked. That was a regression this diff
+      // introduced and a review caught.
+      const good = parsed.claims.filter(wellFormed)
+      const dropped = parsed.claims.length - good.length
+      if (dropped) log(`extract:${taken.digest.slice(0, 8)}: dropped ${dropped} malformed claim(s) before verification`)
+      return { taken, claims: good, parseFailed: false }
     }),
 
     // -- verify: blind, one judge per claim -------------------------------
-    async ({ taken, claims }) => {
+    async ({ taken, claims, parseFailed }) => {
+      if (parseFailed) return { taken, claims: [], verdicts: {}, parseFailed }
       // A second signature is worth something only when its claim has a
       // different upstream. The daemon attests that these bytes came from this
       // URL; the extractor, that this claim came from these bytes; the verifier,
@@ -292,15 +331,6 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
       const verdicts = {}
       for (let i = 0; i < claims.length; i++) {
         const c = claims[i]
-        // Shape-check BEFORE spending a judge. A real run emitted `{start,end}`
-        // instead of `{span_start,span_end}`, so every offset interpolated as
-        // `undefined`, and four verifier agents were spent reading "bytes
-        // undefined..undefined" before `land` refused the batch anyway. A
-        // malformed claim must cost nothing.
-        if (!wellFormed(c)) {
-          log(`claim ${i} is malformed (offsets missing or not integers); dropped`)
-          continue
-        }
         const v = await agent(
           `Judge one claim against one span. You are not told who produced either.
 
@@ -322,22 +352,27 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
         // optional; defaulting to false would refute claims nobody judged.
         if (v && typeof v.entailed === 'boolean') verdicts[String(i)] = v.entailed
       }
-      // Only the well-formed ones travel onward. `land` refuses the WHOLE batch
-      // on one bad claim -- correctly, it is a wire-format error -- so letting a
-      // malformed claim through here loses every good claim beside it.
-      return { taken, claims: claims.filter(wellFormed), verdicts }
+      // Indices are stable: malformed claims were dropped upstream, before any
+      // verdict key was assigned.
+      return { taken, claims, verdicts, parseFailed }
     },
 
     // -- land: the script decides, from artifacts on disk ------------------
-    ({ taken, claims, verdicts }) => {
+    ({ taken, claims, verdicts, parseFailed }) => {
+      if (parseFailed) {
+        return Promise.resolve(
+          { ok: false, error: 'extractor output unparseable; deliberately not landed' })
+      }
       const tag = taken.digest.slice(0, 8)
       return agent(
-        `Write these two files exactly as given, then run one command.
+        `Create ${SCRATCH} if it does not exist, write these two files exactly
+         as given, then run one command. Write NOTHING inside ${RUN} — that
+         directory is the daemon's, and the inventory gate rests on it.
 
-           ${RUN}/claims-${tag}.json
+           ${SCRATCH}/claims-${tag}.json
            ${JSON.stringify(claims)}
 
-           ${RUN}/verdicts-${tag}.json
+           ${SCRATCH}/verdicts-${tag}.json
            ${JSON.stringify(verdicts)}
 
          Then run exactly:
@@ -345,8 +380,8 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
            ${PY} land --run ${RUN} --db ${DB} \\
              --url ${taken.url} --digest ${taken.digest} \\
              --token ${taken.claim_token} \\
-             --claims ${RUN}/claims-${tag}.json \\
-             --verdicts ${RUN}/verdicts-${tag}.json
+             --claims ${SCRATCH}/claims-${tag}.json \\
+             --verdicts ${SCRATCH}/verdicts-${tag}.json
 
          Return {"ok": true, "admitted": ..., "entailed": ..., "refuted": ...,
          "expanded": ...} from its stdout "stats". Exit 2 is a refusal: return
@@ -386,6 +421,7 @@ const suite = await agent(
 return {
   verdict: suite?.verdict ?? 'UNKNOWN',
   extractionFailures,
+  takeFailures,
   failing: suite?.failing ?? '',
   probes: `${suite?.probes_ok ?? '?'}/${suite?.probes_total ?? '?'}`,
   note: suite?.verdict === 'VALID'

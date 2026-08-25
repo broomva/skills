@@ -321,6 +321,14 @@ def cmd_land(args) -> int:
                     )
                     stats.refuted += 1
                 else:
+                    # ONLY from `unchecked`. A node is shared between claims, and
+                    # an earlier honest claim may already have entailed it --
+                    # downgrading that because a LATER, unrelated relation was
+                    # refused would let one refusal erase a verdict it says
+                    # nothing about.
+                    current = S.get_record(conn, rec.id) or {}
+                    if current.get("verdict") != "unchecked":
+                        continue
                     # `inconclusive`, NOT `unchecked`. The store draws that
                     # distinction precisely: unchecked means nobody looked,
                     # inconclusive means somebody looked and the artifact could

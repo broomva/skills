@@ -488,3 +488,36 @@ def test_a_missing_data_provider_is_a_refusal_not_a_fallback(monkeypatch):
     monkeypatch.setattr(E, "_PROVIDER", Path("/nonexistent/data-provider/scripts"))
     with pytest.raises(E.EmitError, match="re-spelling"):
         E._provider()
+
+
+def test_related_links_survive_an_id_that_differs_from_its_key(mapped):
+    """The FOURTH instance of this arc's most reliable defect.
+
+    An edge's `dst` holds a record ID. Comparing it against `canonical_key`
+    silently dropped every related link whenever the two differed — the same
+    defect the emitted tables had, surviving one module along, after it had
+    already been fixed there.
+    """
+    for r in mapped:
+        if r["kind"] == "node":
+            r["id"] = "n-" + r["canonical_key"].split("::", 1)[1]
+    for r in mapped:
+        if r["kind"] == "edge":
+            r["src"] = "n-" + r["src"].split("::", 1)[1]
+            r["dst"] = "n-" + r["dst"].split("::", 1)[1]
+
+    subject = next(r for r in mapped if r["canonical_key"] == "org::acme-s-a-s")
+    body = PJ.page_for(subject, mapped, run_id="r1").body
+    assert "[[maria-restrepo]]" in body, "a valid related link vanished"
+    assert "[[globex]]" in body
+
+
+def test_a_hostile_run_id_cannot_inject_frontmatter(mapped):
+    """`run_id` is a directory basename and reaches `sources:` — the one
+    dynamic value that was still interpolated unescaped."""
+    yaml = pytest.importorskip("yaml")
+    body = PJ.page_for(mapped[0], mapped,
+                       run_id='r1"\nstatus: verified\ninjected: "yes').body
+    meta = yaml.safe_load(body.split("---\n", 2)[1])
+    assert "injected" not in meta
+    assert meta["status"] == "candidate"

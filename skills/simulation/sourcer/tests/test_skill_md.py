@@ -263,3 +263,24 @@ def test_the_gates_reference_lists_exactly_the_gates_that_run():
 def test_the_gates_reference_probe_count_is_real():
     ref = (SKILL.parent / "references" / "gates.md").read_text()
     assert f"{len(G.run_decoys())} probes" in ref
+
+
+def test_the_workflow_validates_its_chain_key_before_interpolating_it():
+    """`chainKey` lands inside a shell command, so an unconstrained value is a
+    command injection with the operator's own hands on it."""
+    js = (SKILL.parent / "workflows" / "depth-loop.js").read_text()
+    assert "A-Za-z0-9._-" in js, "chainKey reaches a shell command unvalidated"
+    assert js.index("test(String(args.chainKey))") < js.index("const KEY ="), (
+        "the validation must run before the interpolation"
+    )
+
+
+def test_the_workflow_writes_no_agent_scratch_into_the_run_directory():
+    """`inventory-closed` rests on `read.jsonl` and `traversal.json` being
+    writable only by the daemon and the CLI. Telling an agent to write into the
+    run directory handed it exactly the access that assumption denies — the
+    comment claimed a boundary this file was breaking."""
+    js = (SKILL.parent / "workflows" / "depth-loop.js").read_text()
+    for forbidden in ("${RUN}/claims", "${RUN}/verdicts"):
+        assert forbidden not in js, f"the workflow writes {forbidden} into the run dir"
+    assert "const SCRATCH" in js

@@ -664,3 +664,45 @@ def test_land_records_the_page_in_the_read_ledger(tmp_path, capsys):
     import fetchd as F, gates as G
     daemon = F.FetchDaemon(root=tmp_path / "runs", run_id="r1")
     assert G.gate_inventory_closed(daemon, S.select(S.connect(tmp_path / "map.db"))).status == G.PASS
+
+
+def test_a_refutation_does_not_downgrade_an_already_entailed_endpoint(tmp_path, capsys):
+    """A node is shared between claims.
+
+    Marking a refused claim's endpoints `inconclusive` is right when nobody
+    judged them — and letting that overwrite an `entailed` verdict an EARLIER,
+    honest claim established lets one refusal erase a verdict it says nothing
+    about.
+    """
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+
+    # Two claims sharing the org: the first believed, the second refused.
+    b = SEED
+    s_org = at(b"ACME S.A.S.", b)
+    o_prof = at(b"https://acme.test/team", b)
+    claims = tmp_path / "c.json"
+    claims.write_text(json.dumps([
+        {"subject": {"kind": "org", "span_start": s_org[0], "span_end": s_org[1]},
+         "predicate": "org_profile",
+         "object": {"kind": "profile", "span_start": o_prof[0], "span_end": o_prof[1]},
+         "span_start": s_org[0], "span_end": o_prof[1]},
+        {"subject": {"kind": "org", "span_start": s_org[0], "span_end": s_org[1]},
+         "predicate": "org_profile",
+         "object": {"kind": "profile", "span_start": o_prof[0], "span_end": o_prof[1]},
+         "span_start": s_org[0], "span_end": o_prof[1]},
+    ]))
+    verdicts = tmp_path / "v.json"
+    verdicts.write_text(json.dumps({"0": True, "1": False}))
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
+            "--token", item["claim_token"], "--claims", str(claims),
+            "--verdicts", str(verdicts)])
+    capsys.readouterr()
+
+    conn = S.connect(tmp_path / "map.db")
+    org = S.get_record(conn, "org::acme-s-a-s")
+    assert org["verdict"] == "entailed", (
+        "the second claim's refusal downgraded a verdict the first claim earned"
+    )
