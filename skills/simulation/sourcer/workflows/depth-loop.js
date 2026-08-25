@@ -401,10 +401,17 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
 phase('Gate')
 
+// An EMPTY projection is passed deliberately. This workflow crawls; it does not
+// project, and `projection-fidelity` is fail-closed, so saying nothing left
+// every otherwise-perfect run reporting INVALID for a gate that had nothing to
+// judge. An empty projection is the operator SAYING "this run asserts nothing
+// downstream" -- which is a real statement the gate can pass on -- rather than
+// silence, which it correctly cannot.
 const suite = await agent(
   `Run exactly this and return its stdout verbatim as JSON:
 
-     ${GATES} --run ${RUN} --db ${DB} --json
+     echo '[]' > ${SCRATCH}/projection.json && \\
+     ${GATES} --run ${RUN} --db ${DB} --projection ${SCRATCH}/projection.json --json
 
    Exit 0 is VALID and exit 2 is INVALID. Both are answers. Return
    {"verdict": "<the verdict>", "probes_ok": <n>, "probes_total": <n>,
