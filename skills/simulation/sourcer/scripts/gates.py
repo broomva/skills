@@ -177,6 +177,22 @@ def gate_transport_custody(daemon, records) -> GateResult:
         if (url, digest) not in pairs:
             failures.append(f"{url} @ {digest[:12]}: cited but never fetched")
 
+    # Every FILE, not merely every cited one. Checking only citations left a
+    # gap the live dogfood walked straight into: a planted file named by its own
+    # correct digest, cited by nothing, satisfied both checks above and the
+    # gate reported pass. "Bytes in the store that never came off a wire" is the
+    # thing this gate is named for, and an uncited planted file is exactly that
+    # -- it is also precisely what a record refused today would cite tomorrow.
+    logged = {digest for (_u, digest) in pairs}
+    for path in snaps:
+        if path.name.endswith(".partial"):
+            continue
+        if path.name not in logged:
+            failures.append(
+                f"{path.name[:12]}: in the snapshot store but in no daemon row "
+                "-- authored, not fetched"
+            )
+
     # robots.txt, per host that was fetched at all.
     fetched_hosts = {_host_of(u) for (u, _d) in pairs}
     robots_hosts = {_host_of(u) for (u, _d) in pairs if u.endswith("/robots.txt")}
@@ -274,29 +290,50 @@ def gate_span_verbatim(daemon, records) -> GateResult:
 def gate_span_entails_claim(daemon, records, verifier=None) -> GateResult:
     """A real, correctly-hashed span that does not actually support the claim.
 
-    Judgement, not arithmetic, so it needs a verifier -- a model that sees the
-    span and the claim and never sees the extractor's reasoning. Without one the
-    gate is `inconclusive`, which for a fail-closed gate is INVALID. Reporting
-    "nothing to object to" when nobody looked is the exact move that turns this
-    suite into decoration.
+    Judgement, not arithmetic -- so the judging happens in the loop, where a
+    blinded verifier sees the span and the claim and never sees the extractor's
+    reasoning. What this gate audits is the LEDGER that judging left behind: an
+    observed record still sitting at `unchecked` is one nobody looked at, and a
+    map full of those has not been verified however green everything else is.
+
+    An earlier version demanded a fresh verifier callable at gate time and
+    reported `inconclusive` without one, which made every command-line run
+    INVALID by construction -- there is no way to hand a model to argparse. It
+    was also asking a second judge to redo work whose answer was already
+    recorded, and then ignoring the recording. Found by running the suite over a
+    real crawl rather than by reading it.
+
+    `refuted` is NOT a failure. `Record everything. Expand only what verifies.`
+    means a disbelieved claim is expected to be present, carrying its
+    refutation, and simply not seeding anything. Failing the run because the
+    verifier did its job would inarguably invert the rule.
+
+    A `verifier` may still be supplied, and then it re-judges everything the
+    ledger records as entailed. Disagreement is a failure: two blinded judges
+    reaching opposite conclusions about one span means at least one of them is
+    not judging what it claims to be.
     """
     name, stage = "span-entails-claim", "per node"
-    nodes = [
+    observed = [
         r for r in records
         if r.get("kind") == "node" and r.get("origin") == "observed" and r.get("evidence")
     ]
-    if verifier is None:
-        return GateResult(
-            name, stage, CLOSED, INCONCLUSIVE, 0,
-            f"no blinded verifier configured; {len(nodes)} node(s) unjudged",
-        )
-    failures = []
-    for r in nodes:
-        ev = r["evidence"]
-        claim = f"{r.get('canonical_key')} is named here"
-        if not verifier(ev["quote"], claim):
-            failures.append(f"{r.get('id')}: span does not entail {claim!r}")
-    return _result(name, stage, CLOSED, failures, len(nodes),
+    failures = [
+        f"{r.get('id')}: still unchecked -- the blinded verifier never judged it"
+        for r in observed if r.get("verdict") == "unchecked"
+    ]
+    if verifier is not None:
+        for r in observed:
+            if r.get("verdict") != "entailed":
+                continue
+            ev = r["evidence"]
+            claim = f"{r.get('canonical_key')} is named here"
+            if not verifier(ev["quote"], claim):
+                failures.append(
+                    f"{r.get('id')}: recorded entailed, but a second blinded judge "
+                    f"does not find the span to support {claim!r}"
+                )
+    return _result(name, stage, CLOSED, failures, len(observed),
                    empty="the map holds no observed node records")
 
 
@@ -570,6 +607,10 @@ def _decoy_rig(tmp: Path):
     return d, res, page
 
 
+def sha256_of_bytes(payload: bytes) -> str:
+    return F.sha256_of(payload)
+
+
 def run_decoys() -> list:
     """Plant a known-false claim in each deterministic gate; require rejection.
 
@@ -700,6 +741,14 @@ def run_decoys() -> list:
         never["snapshot"] = "snapshots/" + "b" * 64
         must_reject("transport-custody", "a record citing a pair never fetched",
               gate_transport_custody(d, [node(evidence=never)]))
+        # And the uncited case, which is the one that got through: a file whose
+        # name IS its own hash, referenced by no record at all.
+        authored = b"planted, never fetched"
+        stray = d.snapshots / sha256_of_bytes(authored)
+        stray.write_bytes(authored)
+        must_reject("transport-custody", "an uncited file planted in the store",
+              gate_transport_custody(d, honest))
+        stray.unlink()
 
     return out
 

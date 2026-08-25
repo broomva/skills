@@ -169,14 +169,38 @@ def test_the_suite_covers_the_twelve_gates_the_spec_names(run):
 # --------------------------------------------------------------------------
 
 
-def test_no_verifier_makes_the_run_invalid(run):
-    """The whole reason `inconclusive` is a status and not a synonym for pass."""
+def test_an_unjudged_record_fails_the_entailment_gate(run):
+    """The gate audits the verdict ledger the blinded verifier left behind.
+
+    A record still at `unchecked` is one nobody looked at. A map full of those
+    has not been verified, however green everything else is.
+    """
     d, conn, trav = run
+    S.set_verdict(conn, "org::acme-s-a-s", "unchecked")
     suite = G.run_suite(d, conn, traversal=trav, projection=[])
     entails = next(r for r in suite.results if r.gate == "span-entails-claim")
-    assert entails.status == G.INCONCLUSIVE
-    assert entails.counted == 0
+    assert entails.status == G.FAIL
+    assert entails.counted == 2, "both observed nodes are the denominator"
+    assert any("never judged it" in f for f in entails.failures)
     assert suite.verdict == G.INVALID
+
+
+def test_a_refuted_record_does_not_fail_the_entailment_gate(run):
+    """`Record everything. Expand only what verifies.` -- two rules.
+
+    A disbelieved claim is EXPECTED to be present, carrying its refutation and
+    seeding nothing. Failing the run because the verifier did its job would
+    invert the rule the whole store is built on.
+    """
+    d, conn, trav = run
+    S.set_verdict(conn, "org::acme-s-a-s", "refuted", refutation="the span says no")
+    suite = G.run_suite(d, conn, traversal=trav, projection=[])
+    entails = next(r for r in suite.results if r.gate == "span-entails-claim")
+    assert entails.status == G.PASS
+    assert entails.counted == 2
+    # ...and it is still in the map, and still cannot expand.
+    assert "org::acme-s-a-s" not in S.expandable_ids(conn)
+    assert any(r["id"] == "org::acme-s-a-s" for r in S.select(conn))
 
 
 def test_no_projection_makes_the_run_invalid(run):
@@ -187,13 +211,16 @@ def test_no_projection_makes_the_run_invalid(run):
     assert suite.verdict == G.INVALID
 
 
-def test_a_verifier_that_refuses_everything_fails_the_run(run):
+def test_a_second_judge_disagreeing_with_the_ledger_fails_the_run(run):
+    """Two blinded judges reaching opposite conclusions about one span means at
+    least one of them is not judging what it claims to be."""
     d, conn, trav = run
     suite = G.run_suite(d, conn, traversal=trav, verifier=entails_nothing,
                         projection=[])
     entails = next(r for r in suite.results if r.gate == "span-entails-claim")
     assert entails.status == G.FAIL
     assert entails.counted == 2, "both node records must have been judged"
+    assert any("second blinded judge" in f for f in entails.failures)
     assert suite.verdict == G.INVALID
 
 
