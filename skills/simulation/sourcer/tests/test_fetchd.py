@@ -869,3 +869,43 @@ def test_robots_txt_itself_is_always_fetchable(tmp_path):
     # which is how the rules can ever be read in the first place.
     assert p.allows("https://example.com/robots.txt") is True
     assert p.allows("https://example.com/anything-else") is False
+
+
+# ------------------- the malformed authority, at every site that reads a port
+
+
+@pytest.mark.parametrize("fn", [
+    lambda u: F.Politeness(interval=0.0).host_of(u),
+    lambda u: F.Politeness(interval=0.0).origin_of(u),
+    lambda u: F.Politeness(interval=0.0).allows(u),
+    lambda u: F.Politeness(interval=0.0).wait(u),
+    lambda u: F._canonical_url(u),
+    lambda u: F.split_url(u),
+])
+def test_a_malformed_authority_is_a_typed_refusal_everywhere(fn):
+    """`urlsplit` parses lazily and only raises when `.port` is read.
+
+    The first fix for this landed in traverse.py alone and left all five copies
+    here — which is the recorded failure mode of this codebase, so it is tested
+    across every function that reads a port rather than at the one that was
+    reported.
+    """
+    with pytest.raises(F.FetchError, match="malformed authority"):
+        fn("https://example.com:bogus/a")
+
+
+def test_a_well_formed_authority_still_works_everywhere():
+    """The refusal must not be the answer for ordinary urls."""
+    p = F.Politeness(interval=0.0)
+    assert p.host_of("https://example.com:8443/a") == "example.com:8443"
+    assert p.origin_of("https://example.com/a") == "https://example.com"
+    assert F._canonical_url("HTTPS://Example.com:443/a") == "https://example.com/a"
+
+
+def test_a_malformed_url_cannot_crash_a_fetch(tmp_path):
+    """It reaches `fetch` through `_ensure_robots`, so it must be a refusal."""
+    d = F.FetchDaemon(root=tmp_path, run_id="r1", politeness=F.Politeness(interval=0.0),
+                      transport=lambda u: (200, b"x", u), key=KEY)
+    d.seal_plan({"seeds": ["x"], "max_depth": 0})
+    with pytest.raises(F.FetchError, match="malformed authority"):
+        d.fetch("https://example.com:bogus/a")

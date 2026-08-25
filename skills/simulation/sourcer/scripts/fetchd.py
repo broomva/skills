@@ -79,11 +79,29 @@ class ChainBroken(FetchError):
     """
 
 
+def split_url(url: str):
+    """`urlsplit` plus a port read that cannot explode. Returns (parts, port).
+
+    `urlsplit` parses lazily: `https://example.com:bogus/a` splits happily and
+    only raises when `.port` is read. Every function here that needed a port was
+    therefore one malformed URL away from a `ValueError` its callers do not
+    catch -- `host_of`, `origin_of`, `allows`, `wait` and `_canonical_url` all
+    had it, and fixing only the copy in traverse.py left all five.
+
+    A malformed authority is a refusal this module owns, so it raises
+    `FetchError` and every existing caller already handles it.
+    """
+    parts = urllib.parse.urlsplit(url)
+    try:
+        return parts, parts.port
+    except ValueError as exc:
+        raise FetchError(f"{url}: malformed authority -- {exc}") from exc
+
+
 def _canonical_url(url: str) -> str:
     """Compare urls by what identifies a resource, not by spelling."""
-    p = urllib.parse.urlsplit(url)
+    p, port = split_url(url)
     host = (p.hostname or "").lower()
-    port = p.port
     default = {"http": 80, "https": 443}.get(p.scheme)
     netloc = host if port in (None, default) else f"{host}:{port}"
     return urllib.parse.urlunsplit((p.scheme.lower(), netloc, p.path or "/", p.query, ""))
@@ -397,9 +415,8 @@ class Politeness:
         a@example.com four distinct hosts, so one server received four times the
         intended request rate while every per-host check still looked satisfied.
         """
-        parts = urllib.parse.urlsplit(url)
+        parts, port = split_url(url)
         host = (parts.hostname or "").lower()
-        port = parts.port
         default = {"http": 80, "https": 443}.get(parts.scheme, None)
         return host if port in (None, default) else f"{host}:{port}"
 
@@ -412,7 +429,7 @@ class Politeness:
         Keying rules by host let a permissive http policy authorise every https
         fetch on the same name, and the https rules were never read.
         """
-        parts = urllib.parse.urlsplit(url)
+        parts, _port = split_url(url)
         return f"{parts.scheme}://{self.host_of(url)}"
 
     def knows(self, origin: str) -> bool:
