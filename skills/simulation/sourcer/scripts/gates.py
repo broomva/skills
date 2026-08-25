@@ -370,16 +370,37 @@ def gate_edge_admissible(records) -> GateResult:
 def gate_triple_entailed(records) -> GateResult:
     """A relation inferred from mere co-mention on a page.
 
-    Re-checked here from stored data rather than trusted from construction. The
-    endpoint offsets travel on the edge precisely so this gate does not have to
-    ask the producer whether it validated them -- a gate that reads a flag set by
-    the thing it is auditing is auditing nothing.
+    Two halves, and neither is sufficient alone.
+
+    The ARITHMETIC half is re-checked here from stored data rather than trusted
+    from construction: the endpoint offsets travel on the edge precisely so this
+    gate does not have to ask the producer whether it validated them, since a
+    gate that reads a flag set by the thing it is auditing is auditing nothing.
+    But containment and a width bound only rule out co-mention that is far
+    apart. Two names within 600 bytes of each other -- an ordinary team page --
+    satisfy the arithmetic completely while stating no relation at all.
+
+    So the JUDGEMENT half has to have happened, and this gate audits that it
+    did. An edge still at `unchecked` is a relation nobody judged, and a map
+    holding those has not established the one thing it exists to establish.
+    Found by probing rather than reading: `span-entails-claim` filters to nodes,
+    so before this an unjudged EDGE passed every per-edge gate and the run
+    reported VALID. Only `projection-fidelity` would have caught it, and only if
+    someone happened to project that particular edge.
+
+    `refuted` is not a failure here, for the same reason it is not one there:
+    a disbelieved relation is kept, carries its refutation, and expands nothing.
     """
     name, stage = "triple-entailed", "per edge"
     failures = []
     edges = [r for r in records if r.get("kind") == "edge"]
     for r in edges:
         rid = r.get("id")
+        if r.get("verdict") == "unchecked":
+            failures.append(
+                f"{rid}: still unchecked -- the arithmetic cannot establish that a "
+                "relation is stated, only that it could be; nobody judged this one"
+            )
         ev, attrs = r.get("evidence"), r.get("attrs") or {}
         if not ev:
             failures.append(f"{rid}: an edge with no evidence")
@@ -707,6 +728,8 @@ def run_decoys() -> list:
                                                 X.OBJECT_SPAN: "900:914"})]))
         must_reject("triple-entailed", "an edge with no recorded endpoint spans",
               gate_triple_entailed([edge(attrs={})]))
+        must_reject("triple-entailed", "a relation nobody judged",
+              gate_triple_entailed([edge(verdict="unchecked")]))
 
         # -- lattice-exact
         must_reject("lattice-exact", "an observed grade derived from a simulated record",

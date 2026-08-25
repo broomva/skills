@@ -549,3 +549,42 @@ def test_the_cli_reports_every_gate_with_its_denominator(run, capsys, monkeypatc
         assert gate in text
     assert "n=" in text
     assert "verdict: INVALID" in text
+
+
+def test_an_unjudged_edge_fails_the_relation_gate(run):
+    """The arithmetic cannot establish that a relation is STATED.
+
+    Containment and a 600-byte width bound rule out co-mention that is far
+    apart. Two names within 600 bytes of each other — an ordinary team page —
+    satisfy the arithmetic completely while stating no relation at all. So the
+    judgement must have happened, and this gate audits that it did.
+
+    Found by probing, not reading: `span-entails-claim` filters to nodes, so
+    before this an unjudged EDGE passed every per-edge gate and the whole run
+    reported VALID. Only `projection-fidelity` would have noticed, and only if
+    someone happened to project that particular edge.
+    """
+    d, conn, trav = run
+    edge_id = next(r["id"] for r in S.select(conn) if r["kind"] == "edge")
+    S.set_verdict(conn, edge_id, "unchecked")
+    records = S.select(conn)
+    # Every OTHER per-edge check is satisfied -- this is not a case the
+    # arithmetic could have caught.
+    assert G.gate_edge_admissible(records).status == G.PASS
+    assert G.gate_span_entails_claim(d, records).status == G.PASS
+    r = G.gate_triple_entailed(records)
+    assert r.status == G.FAIL
+    assert any("nobody judged this one" in f for f in r.failures)
+    suite = G.run_suite(d, conn, traversal=trav, projection=[])
+    assert suite.verdict == G.INVALID
+
+
+def test_a_refuted_edge_does_not_fail_the_relation_gate(run):
+    """Symmetric with nodes: a disbelieved relation is kept, carries its
+    refutation, and expands nothing. Failing on it would invert the rule."""
+    d, conn, trav = run
+    edge_id = next(r["id"] for r in S.select(conn) if r["kind"] == "edge")
+    S.set_verdict(conn, edge_id, "refuted", refutation="the span does not say it")
+    records = S.select(conn)
+    assert G.gate_triple_entailed(records).status == G.PASS
+    assert edge_id not in S.expandable_ids(conn)
