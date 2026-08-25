@@ -276,6 +276,13 @@ different order.
 - **The vocabulary is closed and small.** A predicate outside it is refused
   rather than stored loosely, which means a relation the vocabulary cannot
   express is a relation this skill will not record.
+- **A refuted relation leaves its endpoints `inconclusive`, not `entailed`.**
+  The relation being unstated does not make the entities misnamed, but nobody
+  settled that either — so they are kept, reported, and excluded from every
+  handoff and from the next hop.
+- **Conflicting re-sightings are retained and carry no verdict of their own.**
+  Every gate that reads a verdict reads the canonical record; the structural
+  gates see everything, because a conflict payload is a record that exists.
 - **The lease is narrowed, not fenced.** `land` authorises before it mutates and
   re-checks immediately before touching the frontier, so a worker whose lease
   died cannot expand someone else's item. It is still a check followed by a
