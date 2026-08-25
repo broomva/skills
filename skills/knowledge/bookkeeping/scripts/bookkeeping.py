@@ -381,11 +381,36 @@ def ensure_dirs() -> None:
         (ENTITIES_DIR / et).mkdir(parents=True, exist_ok=True)
 
 
-def existing_entity_slugs() -> list[str]:
-    """Return all entity slugs currently in the entities directory."""
+def entities_dir_for(path: "Path | str") -> Path:
+    """The entity corpus that CONTAINS `path`, falling back to `ENTITIES_DIR`.
+
+    `ENTITIES_DIR` is resolved once from config, so a check that consults it
+    while operating on a file given by an arbitrary path answers about a
+    different tree. That is not hypothetical: the workspace mandates git
+    worktrees for substantive work (P10), so an agent linting an entity in its
+    worktree had wikilinks resolved against whatever branch the main checkout
+    happened to be parked on — measured at 264 pattern entities against the
+    worktree's 283, on an unrelated branch.
+
+    The visible direction is noise: a link to an entity that exists in the tree
+    under edit is flagged broken. The quiet direction is the hazard: a link to
+    an entity that exists ONLY in the configured root PASSES, and breaks the
+    moment the branch merges — a check reporting clean about a corpus that is
+    not the one being changed.
+    """
+    p = Path(path).resolve()
+    for parent in p.parents:
+        if parent.name == "entities" and parent.parent.name == "research":
+            return parent
+    return ENTITIES_DIR
+
+
+def existing_entity_slugs(entities_dir: "Path | None" = None) -> list[str]:
+    """Return all entity slugs in `entities_dir` (default: the configured one)."""
+    base = ENTITIES_DIR if entities_dir is None else Path(entities_dir)
     slugs = []
     for et in ENTITY_TYPES:
-        type_dir = ENTITIES_DIR / et
+        type_dir = base / et
         if type_dir.exists():
             for p in type_dir.glob("*.md"):
                 slugs.append(p.stem)
@@ -3012,7 +3037,10 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
 
     # Resolve wikilinks in body — skip HTML comment lines to avoid false positives
     wikilinks = extract_wikilinks_md(body)
-    existing = set(existing_entity_slugs())
+    # Resolved against the tree that CONTAINS this page, not the configured
+    # root — see `entities_dir_for`. Linting a worktree file against the main
+    # checkout's corpus reports on a different branch.
+    existing = set(existing_entity_slugs(entities_dir_for(entity_path)))
     for target, _edge in wikilinks:
         slug = wikilink_slug(target)
         if slug and slug not in existing:

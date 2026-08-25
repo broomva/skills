@@ -16,7 +16,7 @@
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 | `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
-## Orchestration & autonomy — `skills/orchestration/` (8)
+## Orchestration & autonomy — `skills/orchestration/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -28,6 +28,7 @@
 | `p9` | Something is running and you are stuck waiting on it — CI checks on a pushed PR, a deploy going out, a build, a slow migration or reindex |
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
+| `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
 
 ## Skill & prompt tooling — `skills/tooling/` (9)
 
@@ -220,6 +221,6 @@
 
 - **Total skills**: 97
 - **Total category buckets**: 23
-- **Largest bucket**: Governance & control, Skill & prompt tooling (9)
+- **Largest bucket**: Governance & control, Orchestration & autonomy, Skill & prompt tooling (9)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

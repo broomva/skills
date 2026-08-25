@@ -33,6 +33,16 @@ trap 'rm -rf "$TMP"' EXIT
 # bad fixtures, not missing checks.
 newledger() { echo "$TMP/ledger.$1.tsv"; }
 
+# "It archives rather than deletes" is the whole claim of `reset`, so a positive
+# arm that checks only the exit code -- or only that the original is gone --
+# passes a --force that reported success and did nothing, and passes one that
+# simply deleted the ledger. Count what actually landed.
+# `-type f` because a DIRECTORY or a symlink sitting at an archive name is
+# exactly what T53/T54 put there on purpose. Counting those as archives would
+# let "the archive landed" be satisfied by the obstacle it was supposed to step
+# around.
+archives_of() { find "$(dirname "$1")" -maxdepth 1 -type f -name "$(basename "$1").archived.*" 2>/dev/null | wc -l | tr -d ' '; }
+
 # Run round-budget, capture exit code without tripping the outer pipefail.
 rb() { local rc=0; bash "$RB" "$@" >/dev/null 2>&1 || rc=$?; echo "$rc"; }
 rbout() { bash "$RB" "$@" 2>&1 || true; }
@@ -469,11 +479,16 @@ echo "T39. a corrupt ledger is archivable, but only deliberately"
 LED=$(newledger t39)
 printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
 RC_PLAIN=$(rb reset --run-id=t39 --ledger="$LED")
+# Exit 6 is what a refusal RETURNS, not what it DOES. Checked between the two
+# calls, because a reset that archived and then exited 6 leaves the --force call
+# with nothing to reset -- "nothing to reset", exit 0 -- and every later
+# assertion here still passes.
+SURVIVED_PLAIN=$([ -f "$LED" ] && echo yes || echo no)
 RC_FORCE=$(rb reset --run-id=t39 --ledger="$LED" --force)
-if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ ! -f "$LED" ]; then
-    ok "T39: refused without --force, archived with it"
+if [ "$RC_PLAIN" = "6" ] && [ "$SURVIVED_PLAIN" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ ! -f "$LED" ]; then
+    ok "T39: refused without --force AND left in place, archived with it"
 else
-    fail "T39: corrupt reset gating" "plain=$RC_PLAIN (want 6), force=$RC_FORCE (want 0), present=$([ -f "$LED" ] && echo yes || echo no)"
+    fail "T39: corrupt reset gating" "plain=$RC_PLAIN (want 6), survived plain=$SURVIVED_PLAIN (want yes), force=$RC_FORCE (want 0), present=$([ -f "$LED" ] && echo yes || echo no)"
 fi
 
 # ── T41: corrupting a LIVE ledger must not launder it ─────────────────────
@@ -481,7 +496,12 @@ echo "T41. junk appended to a live ledger does not buy a reset"
 LED=$(newledger t41)
 printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nJUNK\n' > "$LED"
 RC=$(rb reset --run-id=t41 --ledger="$LED")
-if [ "$RC" = "6" ]; then ok "T41: corrupt-then-reset refused"; else fail "T41: corrupt-then-reset" "exit $RC, want 6"; fi
+SURVIVED=$([ -f "$LED" ] && echo yes || echo no)
+if [ "$RC" = "6" ] && [ "$SURVIVED" = "yes" ]; then
+    ok "T41: corrupt-then-reset refused, and the ledger is still there"
+else
+    fail "T41: corrupt-then-reset" "exit $RC (want 6), survived=$SURVIVED (want yes)"
+fi
 
 # ── T42: a trailing pass cannot launder a NONTERMINAL absorbing stop ──────
 # The recorders refused only past a terminal VERDICT, so the ledger grew past a
@@ -511,6 +531,314 @@ printf 'ROUND\t1\t9\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
 bash "$RB" reset --run-id=t40 --ledger="$LED" >/dev/null
 N_ARCH=$(find "$(dirname "$LED")" -name "$(basename "$LED").archived.*" | wc -l | tr -d ' ')
 if [ "$N_ARCH" = "2" ]; then ok "T40: both archives survive"; else fail "T40: archive clobber" "$N_ARCH archive(s), want 2"; fi
+
+# ─── reset answers a DIFFERENT question than budget ───────────────────────
+#
+# `budget` asks "may another ROUND RUN?"; `reset` asks "may this LEDGER BE
+# DISCARDED?". reset reused budget's precedence, under which every NONTERMINAL
+# absorbing stop and the round-8 ceiling read as "closed", so one plain reset —
+# no --force, no corruption — cleared a stop and the next budget said
+# "AUTHORIZED — round 1 of 3 free rounds". T34 could not catch it: its live arm
+# is a ledger with no stop at all, and its finished arm has an explicit terminal
+# verdict. Every case between the two was unpinned.
+#
+# One test per stop class, because the classes are what the shipped predicate
+# conflated, and each carries its own mutation that widens the predicate by
+# exactly that one class.
+#
+# Every one of them asserts BOTH arms -- refused plainly, archived under --force.
+# Asserting only the refusal is the vacuity T1/T2 exist to rule out: a gate that
+# refuses EVERYTHING passes a refusal-only test while being useless, and the
+# --force arm is this file's T2 for each class.
+
+# ── T43: a score regression is a stop, not a finished arc ─────────────────
+echo "T43. reset refuses a regression, and --force says what it discarded"
+LED=$(newledger t43)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\n' > "$LED"
+RC_PLAIN=$(rb reset --run-id=t43 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+# Output and exit code from ONE invocation. Taking them from two calls meant
+# the first archived the ledger and the SECOND ran with no ledger at all --
+# "nothing to reset", exit 0 -- so the 0 being asserted came from the wrong
+# command and would have held even if the archival itself had failed.
+OUT=$(bash "$RB" reset --run-id=t43 --ledger="$LED" --force 2>&1); RC_FORCE=$?
+ARCH=$(archives_of "$LED")
+if [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ] && echo "$OUT" | grep -q "FORCED past regressed"; then
+    ok "T43: regression refused plainly, discarded only by --force"
+else
+    fail "T43: regression is not a finished arc" "plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1), out: $OUT"
+fi
+
+# ── T44: two REFUTED predictions is a stop, not a finished arc ────────────
+echo "T44. reset refuses an arc stopped by two REFUTED predictions"
+LED=$(newledger t44)
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\nVERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\n' > "$LED"
+RC=$(rb reset --run-id=t44 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t44 --ledger="$LED" --force)
+ARCH=$(archives_of "$LED")
+if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
+    ok "T44: two-REFUTED stop is not resettable, and --force still can"
+else
+    fail "T44: two-REFUTED stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
+fi
+
+# ── T45: two rounds reproducing nothing is a stop, not a finished arc ─────
+echo "T45. reset refuses an arc stopped by two no-defect rounds"
+LED=$(newledger t45)
+printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\n' > "$LED"
+RC=$(rb reset --run-id=t45 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t45 --ledger="$LED" --force)
+ARCH=$(archives_of "$LED")
+if [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
+    ok "T45: no-defect stop is not resettable, and --force still can"
+else
+    fail "T45: no-defect stop" "plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
+fi
+
+# ── T46: the human ceiling is an escalation, not a finished arc ───────────
+# The ceiling exists because unbounded self-granted budget is the resource-
+# acquisition pillar the workspace leaves open by design. A reset that clears it
+# hands the agent exactly that: hit 8, reset, start again at round 1.
+echo "T46. reset refuses an arc at the human ceiling"
+LED=$(newledger t46)
+for i in 1 2 3 4 5 6 7 8; do printf 'ROUND\t%s\t5\tyes\t\t-\n' "$i"; done > "$LED"
+RC_BUDGET=$(rb budget --run-id=t46 --ledger="$LED")
+RC=$(rb reset --run-id=t46 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t46 --ledger="$LED" --force)
+ARCH=$(archives_of "$LED")
+if [ "$RC_BUDGET" = "7" ] && [ "$RC" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
+    ok "T46: the ceiling is not resettable, and --force still can"
+else
+    fail "T46: ceiling stop" "budget=$RC_BUDGET (want 7), plain=$RC (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
+fi
+
+# ── T47: the pass arm reads the RULE, not the score ───────────────────────
+# The predicate reset needs is "did this arc END BY PASSING", not "is the last
+# score >= 7". Keyed on the score, a self-reported 9 appended after a regression
+# reads as a finished arc — which is the older defect this file already pins for
+# `budget` at T31, unpinned for `reset` until now. The two arms of this test are
+# the same ledger minus the regression, so a gate that simply always refuses
+# cannot pass it.
+echo "T47. a trailing self-reported pass does not make a stopped arc finished"
+LED=$(newledger t47)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED"
+RC_LAUNDER=$(rb reset --run-id=t47 --ledger="$LED")
+LED2=$(newledger t47b)
+printf 'ROUND\t1\t3\tyes\t\t-\nROUND\t2\t6\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED2"
+RC_CLEAN=$(rb reset --run-id=t47b --ledger="$LED2")
+if [ "$RC_LAUNDER" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
+    ok "T47: pass-after-regression refused, a clean pass still archives"
+else
+    fail "T47: pass arm reads the rule" "laundered=$RC_LAUNDER (want 6), clean=$RC_CLEAN (want 0)"
+fi
+
+# ── T48: --force is a reset flag, not a global one ────────────────────────
+# Parsed in the shared arg loop, `budget --force` and `record-round --force` were
+# both accepted and both did nothing. A flag accepted where it has no meaning
+# reads as a flag that had one.
+echo "T48. --force is refused by every command that is not reset"
+LED=$(newledger t48)
+RC_BUDGET=$(rb budget --run-id=t48 --ledger="$LED" --force)
+RC_ROUND=$(rb record-round --run-id=t48 --ledger="$LED" --score=5 --defect=yes --force)
+RC_VERDICT=$(rb record-verdict --run-id=t48 --ledger="$LED" --verdict=STOP --force)
+# Polarity: a gate that rejected --force EVERYWHERE would pass the three above.
+# It must still be accepted by the one command it belongs to.
+LED2=$(newledger t48b)
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\n' > "$LED2"
+RC_ACCEPTED=$(rb reset --run-id=t48b --ledger="$LED2" --force)
+if [ "$RC_BUDGET" = "2" ] && [ "$RC_ROUND" = "2" ] && [ "$RC_VERDICT" = "2" ] && [ "$RC_ACCEPTED" = "0" ]; then
+    ok "T48: --force rejected outside reset, accepted by it"
+else
+    fail "T48: --force scope" "budget=$RC_BUDGET round=$RC_ROUND verdict=$RC_VERDICT (want 2 each), reset=$RC_ACCEPTED (want 0)"
+fi
+
+# ── T49: --force does not open a LIVE arc ─────────────────────────────────
+# --force exists because a stopped arc has no in-band way out: refuse_past_terminal
+# blocks the very verdict that would declare it over. A LIVE arc has one — record
+# its verdict — so the hatch must not reach it, or --force becomes a plain reset
+# with an extra word.
+echo "T49. --force does not reset a live arc"
+LED=$(newledger t49)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+RC_PLAIN=$(rb reset --run-id=t49 --ledger="$LED")
+RC_FORCE=$(rb reset --run-id=t49 --ledger="$LED" --force)
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+# Polarity, and the in-band route named in the refusal message: record the
+# verdict and the SAME ledger becomes resettable with no --force at all. Both
+# arms refusing would otherwise be satisfied by a reset that never says yes.
+bash "$RB" record-verdict --run-id=t49 --ledger="$LED" --verdict=STOP >/dev/null 2>&1
+RC_AFTER=$(rb reset --run-id=t49 --ledger="$LED")
+if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_AFTER" = "0" ]; then
+    ok "T49: live arc refuses --force; recording its verdict is the way out"
+else
+    fail "T49: --force reaches a live arc" "plain=$RC_PLAIN force=$RC_FORCE (want 6 each), survived=$STILL (want yes), after-verdict=$RC_AFTER (want 0)"
+fi
+
+# ── T50: the corrupt path never destroys what already sits at its name ────
+# The corrupt path wrote "$LEDGER.archived.corrupt.$$" with no never-clobber
+# loop while the healthy path four lines below it had one. One archiver, both
+# callers — so the collision is forced here at the name the corrupt path picks.
+#
+# The assertion is PRESERVED BYTES, not a filename. An earlier version required
+# ".corrupt.1.1" to exist, and a reviewer showed that killed the pid-based
+# mutant for the WRONG reason: a pid namer collides with nothing, so it destroys
+# nothing, and the test was reddening on an absent expected NAME rather than on
+# any clobber. What must hold is that the entry already there survives and the
+# ledger still lands beside it. Its clobber protection is the SAME loop the
+# healthy path uses, mutation-proved once at T40 — one site, one proof.
+echo "T50. a forced archive does not destroy what already sits at its name"
+LED=$(newledger t50)
+printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
+printf 'SENTINEL\n' > "$LED.archived.corrupt.1"
+RC=$(rb reset --run-id=t50 --ledger="$LED" --force)
+KEPT=$(cat "$LED.archived.corrupt.1" 2>/dev/null)
+ARCH=$(archives_of "$LED")
+if [ "$RC" = "0" ] && [ "$KEPT" = "SENTINEL" ] && [ "$ARCH" -ge 2 ]; then
+    ok "T50: the occupied name survives and the ledger lands beside it"
+else
+    fail "T50: corrupt archive clobbers" "exit $RC (want 0), sentinel='$KEPT' (want SENTINEL), archives=$ARCH (want >=2)"
+fi
+
+# ── T51: --help is the documentation surface for --force ──────────────────
+# The help is this file's own comment block with the markers stripped by sed,
+# and the strip used `\?` -- a GNU extension that BSD sed reads as a literal
+# '?', so on macOS it matched nothing and every line printed with its '#'. That
+# is the platform this is developed on, so the flag documented in the Usage
+# block was unreadable exactly where it would be read.
+echo "T51. --help renders as text and documents --force"
+OUT=$(rbout --help)
+HASHED=$(printf '%s\n' "$OUT" | grep -c '^#' || true)
+if [ "$HASHED" = "0" ] && printf '%s\n' "$OUT" | grep -q -- "--force"; then
+    ok "T51: help is text, and --force is in it"
+else
+    fail "T51: help renders" "$HASHED line(s) still carry a leading '#'; --force present: $(printf '%s\n' "$OUT" | grep -qc -- "--force" && echo yes || echo no)"
+fi
+
+# ── T52: an UNREADABLE ledger is exactly what --force is for ──────────────
+# T39 covers UNPARSABLE (readable bytes, bad content). Unreadable is a different
+# failure -- chmod 000, a bad ACL -- and it reached the same branch, so it looked
+# covered. It was not: consolidating the two archive paths made the corrupt one
+# derive its name by READING the ledger, which aborts under `set -e` before the
+# mv. The one loud archiving path became no path at all, exit 1 (not even a
+# documented code), ledger still in place, `rm` the only remaining discard.
+echo "T52. reset --force archives a ledger it cannot read"
+LED=$(newledger t52)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+chmod 000 "$LED"
+if [ -r "$LED" ]; then
+    ok "T52: skipped (ledger still readable after chmod 000)"
+else
+    RC_PLAIN=$(rb reset --run-id=t52 --ledger="$LED")
+    SURVIVED_PLAIN=$([ -e "$LED" ] && echo yes || echo no)
+    RC_FORCE=$(rb reset --run-id=t52 --ledger="$LED" --force)
+    GONE=$([ -e "$LED" ] && echo no || echo yes)
+    # "gone" alone is satisfied by DELETION -- the outcome this command exists
+    # to replace. The archive must exist.
+    ARCH=$(archives_of "$LED")
+    if [ "$RC_PLAIN" = "6" ] && [ "$SURVIVED_PLAIN" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$GONE" = "yes" ] && [ "$ARCH" -ge 1 ]; then
+        ok "T52: unreadable ledger refused plainly, archived under --force"
+    else
+        fail "T52: unreadable ledger archive" "plain=$RC_PLAIN (want 6), survived plain=$SURVIVED_PLAIN (want yes), force=$RC_FORCE (want 0), gone=$GONE (want yes), archives=$ARCH (want >=1)"
+    fi
+fi
+chmod 644 "$LED" 2>/dev/null || true
+
+# ── T53: "already here" must mean the ENTRY, not what it points at ────────
+# `[ -e ]` follows the link. A DANGLING symlink at the chosen archive name tests
+# FALSE, so the never-clobber loop stopped there and the mv destroyed that
+# entry -- the precise event the loop exists to prevent, in the one case its own
+# test could not see.
+echo "T53. a dangling symlink at the archive name is not clobbered"
+LED=$(newledger t53)
+printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
+ln -s "$TMP/t53-no-such-target" "$LED.archived.1"
+# The fixture must be DANGLING or this test silently exercises `-e` instead of
+# `-L` and passes against the defect. `-e` follows the link, so on a dangling
+# one it is false while `-L` is true.
+DANGLING=$([ ! -e "$LED.archived.1" ] && [ -L "$LED.archived.1" ] && echo yes || echo no)
+RC=$(rb reset --run-id=t53 --ledger="$LED")
+STILL_LINK=$([ -L "$LED.archived.1" ] && echo yes || echo no)
+SIDESTEP=$([ -e "$LED.archived.1.1" ] && echo yes || echo no)
+if [ "$DANGLING" = "yes" ] && [ "$RC" = "0" ] && [ "$STILL_LINK" = "yes" ] && [ "$SIDESTEP" = "yes" ]; then
+    ok "T53: the symlink survives and the archive steps aside"
+else
+    fail "T53: dangling symlink clobbered" "fixture dangling=$DANGLING (want yes), exit $RC (want 0), symlink intact=$STILL_LINK (want yes), sidestep=$SIDESTEP (want yes)"
+fi
+
+# ── T54: `ln` does not fail on a DIRECTORY — it links into it ─────────────
+# `ln src dir` is not a collision to link(1): it places the link INSIDE dir and
+# exits 0. So an atomic reservation cannot be the only test. Before the entry
+# check was restored, a directory at the chosen name made reset report
+# "archived -> $ARCHIVE" while the ledger actually landed at $ARCHIVE/<basename>
+# -- the operator told where it went, and told wrong.
+echo "T54. a directory at the archive name is stepped over, not linked into"
+LED=$(newledger t54)
+printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
+mkdir "$LED.archived.1"
+# One invocation for both, for the reason T43 carries: a second reset would run
+# with the ledger already archived -- "nothing to reset", exit 0 -- so its code
+# describes a different command than the one being measured.
+OUT=$(bash "$RB" reset --run-id=t54 --ledger="$LED" 2>&1); RC=$?
+DIR_EMPTY=$([ -d "$LED.archived.1" ] && [ -z "$(ls -A "$LED.archived.1")" ] && echo yes || echo no)
+# The path it NAMED must be the path that holds it.
+NAMED=$(printf '%s\n' "$OUT" | sed -n 's/^round-budget: archived -> //p' | head -1)
+NAMED_IS_FILE=$([ -f "$NAMED" ] && echo yes || echo no)
+if [ "$DIR_EMPTY" = "yes" ] && [ "$NAMED_IS_FILE" = "yes" ]; then
+    ok "T54: the directory is untouched and the reported path holds the archive"
+else
+    fail "T54: directory at archive name" "dir left empty=$DIR_EMPTY (want yes), named path '$NAMED' is a file=$NAMED_IS_FILE (want yes), rc=$RC"
+fi
+
+# ── T55: an unusable verdict token is a stop class too ────────────────────
+# The per-class set covered regression, two-REFUTED, two-no-defect and the
+# ceiling, and omitted this one -- so widening reset to treat `unusable_verdict`
+# as finished survived the whole suite. It is a NONTERMINAL stop like the other
+# four: a VERDICT row carrying a token that is neither CONTINUE nor terminal
+# bought a round once, and nothing about it declares the arc over.
+echo "T55. an unusable verdict token is not a finished arc"
+LED=$(newledger t55)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nVERDICT\t\t\t\n' > "$LED"
+RC_BUDGET=$(rb budget --run-id=t55 --ledger="$LED")
+RC_PLAIN=$(rb reset --run-id=t55 --ledger="$LED")
+STILL=$([ -f "$LED" ] && echo yes || echo no)
+RC_FORCE=$(rb reset --run-id=t55 --ledger="$LED" --force)
+ARCH=$(archives_of "$LED")
+if [ "$RC_BUDGET" = "6" ] && [ "$RC_PLAIN" = "6" ] && [ "$STILL" = "yes" ] && [ "$RC_FORCE" = "0" ] && [ "$ARCH" -ge 1 ]; then
+    ok "T55: unusable-verdict stop is not resettable, and --force still can"
+else
+    fail "T55: unusable-verdict stop" "budget=$RC_BUDGET (want 6), plain=$RC_PLAIN (want 6), survived=$STILL (want yes), force=$RC_FORCE (want 0), archives=$ARCH (want >=1)"
+fi
+
+# ── T56: corrupting a live ledger IS the way past the live gate ───────────
+# T49 pins "--force does not open a LIVE arc". That is true only while the
+# ledger still PARSES: append one junk line and it takes the corrupt path, which
+# --force is allowed to archive on purpose — a corrupt ledger must stay
+# discardable, or `rm` becomes the only escape and that one is silent.
+#
+# So the hole is real and it is chosen. This test pins it as BEHAVIOUR rather
+# than leaving it as an undocumented gap, because SKILL.md used to claim a live
+# arc was refused "--force included" full stop, which is false the moment the
+# file is corrupted. Both halves are asserted: it goes through, and it lands
+# LOUDLY under .archived.corrupt. so the escape is auditable.
+echo "T56. corrupting a live ledger routes it to the corrupt path, loudly"
+LED=$(newledger t56)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+RC_LIVE=$(rb reset --run-id=t56 --ledger="$LED" --force)
+printf 'GARBAGE\n' >> "$LED"
+RC_CORRUPT_PLAIN=$(rb reset --run-id=t56 --ledger="$LED")
+RC_CORRUPT_FORCE=$(rb reset --run-id=t56 --ledger="$LED" --force)
+CORRUPT_ARCHIVES=$(find "$(dirname "$LED")" -maxdepth 1 -type f -name "$(basename "$LED").archived.corrupt.*" 2>/dev/null | wc -l | tr -d ' ')
+# RC_LIVE=6 is the polarity arm: without it, a reset that archived EVERYTHING
+# would satisfy the rest of this test.
+if [ "$RC_LIVE" = "6" ] && [ "$RC_CORRUPT_PLAIN" = "6" ] && [ "$RC_CORRUPT_FORCE" = "0" ] && [ "$CORRUPT_ARCHIVES" = "1" ]; then
+    ok "T56: live+force refused; corrupt+force archives once, under .corrupt."
+else
+    fail "T56: corrupt-path escape not as documented" \
+        "live+force=$RC_LIVE (want 6), corrupt+plain=$RC_CORRUPT_PLAIN (want 6), corrupt+force=$RC_CORRUPT_FORCE (want 0), corrupt archives=$CORRUPT_ARCHIVES (want 1)"
+fi
 
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
