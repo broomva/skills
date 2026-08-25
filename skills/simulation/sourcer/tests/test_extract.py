@@ -380,8 +380,19 @@ def test_edge_ids_are_deterministic_and_do_not_collide():
     a = X.edge_id("org::a", "employs", "person::b")
     assert a == X.edge_id("org::a", "employs", "person::b")
     assert a != X.edge_id("org::b", "employs", "person::a")
-    # Separator confusion: `a::b|p|c` vs `a|b::p|c` must not collide.
-    assert X.edge_id("x::y", "p", "z") != X.edge_id("x", "y::p", "z")
+
+
+def test_edge_ids_survive_a_field_boundary_shifting():
+    """The separator, tested at the collision it actually prevents.
+
+    An earlier version of this test asserted a pair that does not collide under
+    concatenation either, so a mutation sweep removing the separators survived
+    it. These two DO concatenate to the same string: without a delimiter, both
+    ("a", "bc", "d") and ("ab", "c", "d") are "abcd", and the store would read
+    two unrelated edges as one edge sighted twice.
+    """
+    assert "a" + "bc" + "d" == "ab" + "c" + "d", "the fixture must actually collide"
+    assert X.edge_id("a", "bc", "d") != X.edge_id("ab", "c", "d")
 
 
 def test_the_daemon_still_refuses_forged_evidence_after_extraction(rig, tmp_path):
@@ -434,6 +445,26 @@ def test_an_extractor_that_names_an_entity_is_refused():
         "predicate": "employs",
         "object": {"kind": "person", "span_start": 6, "span_end": 10},
         "span_start": 0, "span_end": 20,
+    }])
+    with pytest.raises(X.ExtractionError, match="unknown keys"):
+        X.claims_from_json(blob)
+
+
+def test_an_unknown_key_on_the_claim_itself_is_refused():
+    """The mention-level check and the claim-level check are different code.
+
+    A mutation sweep found the claim-level one unenforced: the only test for an
+    invented field put it inside a `subject`, so removing the outer refusal
+    changed nothing. `confidence` is the realistic case — a model asked for
+    structured output volunteers one, and silently dropping it would let a
+    reader believe the number was considered.
+    """
+    blob = json.dumps([{
+        "subject": {"kind": "org", "span_start": 0, "span_end": 5},
+        "predicate": "employs",
+        "object": {"kind": "person", "span_start": 6, "span_end": 10},
+        "span_start": 0, "span_end": 20,
+        "confidence": 0.91,
     }])
     with pytest.raises(X.ExtractionError, match="unknown keys"):
         X.claims_from_json(blob)

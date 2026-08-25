@@ -309,9 +309,12 @@ class Entity:
 def edge_id(src: str, predicate: str, dst: str) -> str:
     """A deterministic id for an edge.
 
-    Hashed rather than concatenated because a key may contain any of the
-    separators, and `a::b|p|c` colliding with `a|b::p|c` is a merge of two
-    unrelated edges that no later check would notice.
+    The NUL separators are the point. Joined without them, `("a", "bc", "d")`
+    and `("ab", "c", "d")` are both `"abcd"` -- two unrelated edges sharing an
+    id, which the store reads as one edge sighted twice and no later check
+    would notice. NUL cannot occur in a key (keys are slugs) or in a predicate
+    (the vocabulary is closed), so it is the one byte that cannot be smuggled
+    into a field to forge a boundary.
     """
     h = hashlib.sha256(f"{src}\x00{predicate}\x00{dst}".encode()).hexdigest()[:16]
     return f"edge::{predicate}::{h}"
