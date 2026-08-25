@@ -179,6 +179,45 @@ def test_only_profile_edges_expand(rig):
     assert S.frontier_stats(conn)["total"] == 2
 
 
+def test_a_non_expansion_predicate_pointing_at_a_profile_does_not_expand(tmp_path):
+    """EXPANSION_PREDICATES is the control point, not an accident of typing.
+
+    Today the typed vocabulary already makes this unreachable through `admit`:
+    `has_profile` and `org_profile` are the only predicates whose range is
+    `profile`, so no other edge can point at one. A mutation sweep found the
+    guard removable for exactly that reason. It is still the guard that decides
+    what the crawl may follow, and the next predicate given a `profile` range
+    must not silently become a way to move.
+    """
+    conn = S.connect(tmp_path / "m.db")
+    records = [
+        {"id": "e", "kind": "edge", "predicate": "competitor_of", "dst": "p",
+         "src": "org::a", "origin": "observed", "verdict": "entailed"},
+        {"id": "p", "kind": "node", "canonical_key": "profile::x",
+         "origin": "observed", "verdict": "entailed",
+         "attrs": {"name": "https://acme.test/t"}},
+    ]
+    assert L.expand(conn, records, depth=1) == 0
+    records[0]["predicate"] = "org_profile"
+    assert L.expand(conn, records, depth=1) == 1
+
+
+def test_expansion_reads_the_verdicts_from_the_store_not_from_memory(rig):
+    """The ordering, stated as the thing that actually goes wrong without it.
+
+    The in-memory records are all `unchecked` at construction; the verdicts only
+    exist in the store, written by the verify stage. Expanding from the objects
+    in hand rather than re-reading would therefore expand nothing at all -- and
+    the version where expansion runs FIRST is the same bug with the opposite
+    sign, expanding everything before any verdict is known.
+    """
+    d, conn = rig
+    L.run(d, conn, plan(), extractor, believe_all)
+    # The profile page was reached, which is only possible if expansion saw an
+    # `entailed` verdict that did not exist on the object it was built from.
+    assert "https://acme.test/team" in {u for (u, _dg) in d.pairs()}
+
+
 @pytest.mark.parametrize("name,expected", [
     ("https://acme.test/team", "https://acme.test/team"),
     ("http://acme.test/x", "http://acme.test/x"),
