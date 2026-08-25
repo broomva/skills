@@ -533,8 +533,14 @@ def test_the_cli_exits_2_on_an_invalid_run(run, capsys, monkeypatch):
         "--run", str(d.dir), "--db", str(Path(d.root).parent / "map.db"), "--json",
     ])
     out = json.loads(capsys.readouterr().out)
-    # No verifier and no projection on the command line, so two closed gates are
-    # inconclusive and the run cannot be VALID.
+    # No projection was supplied, so `projection-fidelity` is inconclusive and a
+    # fail-closed gate that could not run makes the whole run INVALID. Asserted
+    # by name rather than by count: an earlier version of this comment said
+    # "two closed gates", which stopped being true the moment
+    # `span-entails-claim` began reading the verdict ledger instead of demanding
+    # a verifier -- a false description a passing test happily carried.
+    inconclusive = [g["gate"] for g in out["gates"] if g["status"] == "inconclusive"]
+    assert inconclusive == ["projection-fidelity"], inconclusive
     assert out["verdict"] == "INVALID"
     assert code == 2, "2, not 1 -- a crash also exits 1"
 
