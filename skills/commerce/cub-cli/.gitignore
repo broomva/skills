@@ -1,0 +1,10 @@
+# Session material — NEVER commit. Contains live auth cookies.
+session.json
+cookies.json
+*.har
+# ...except the synthetic test fixtures, which carry no session data and
+# without which a fresh checkout cannot run the suite.
+!fixtures/*.har
+node_modules/
+*.sqlite
+*.sqlite-journal

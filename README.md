@@ -244,6 +244,7 @@ npx skills add broomva/skills --skill '*'
 
 | Skill | What it does |
 |---|---|
+| [`cub-cli`](skills/commerce/cub-cli/) | Shop the Cub grocery storefront (Instacart Storefront Pro) from the command line — sale sweeps by depth of discount, department browse, price watch; recovers the persisted-query surface from the storefront's own SSR payload, never pays |
 | [`d1-cli`](skills/commerce/d1-cli/) | Shop Tiendas D1 (Colombia) from the command line — search, resolve your nearest store, price a basket against its real stock, quote delivery; builds carts but never pays |
 | [`procurer`](skills/commerce/procurer/) | Grounded procurement research for any real-world need |
 | [`swapit`](skills/commerce/swapit/) | Stateful, local-first household toxics inventory + swap engine |

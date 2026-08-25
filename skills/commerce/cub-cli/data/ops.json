@@ -1,0 +1,460 @@
+{
+ "_provenance": {
+  "method": "Extracted from <script id=\"ssr-query-perf-data\"> on cub.com pages \u2014 the server's own record of the GraphQL requests it issued during SSR. No browser automation involved.",
+  "capturedAt": "2026-08-25",
+  "endpoint": "https://www.cub.com/graphql",
+  "transport": "GET with operationName + variables + extensions.persistedQuery.sha256Hash (Apollo APQ)",
+  "note": "Endpoint is persisted-query-only: raw queries and introspection both return PERSISTED_QUERY_NOT_SUPPORTED. New operations must be harvested from live traffic (see `cub harvest`).",
+  "redaction": "Session-scoped identifiers (slotId, pageViewId, previewToken, addressId, debugPlacementId) are replaced with type placeholders. Store constants are kept; see src/constants.ts. sampleVariables is documentation only \u2014 the client builds its own variables."
+ },
+ "operations": {
+  "GetRetailerBySlug": {
+   "sha256Hash": "367659e8274b260e4596e57b7c79fc64087ab55c174bb77158a197675d5fdbb7",
+   "sampleVariables": {
+    "slug": "cub"
+   },
+   "capturedFrom": "storefront"
+  },
+  "AppGlobalRootPageVariant": {
+   "sha256Hash": "1cdfd57bdda152f6a63d51dca662405807f60ab82195576835038d9755a35b6b",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "UserLocale": {
+   "sha256Hash": "28c7631056230f79746ab100af90ecc1b057a80dea76ecde552ee883cfec2f99",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "CurrentStoreConfiguration": {
+   "sha256Hash": "7bed5b1eaee7d1ed7049ccaa93abc91dcdd3b5c3a6e8574c6baef6eb5d2a0f8b",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StoreAppUserlessPlatformExperiments": {
+   "sha256Hash": "adb8e8f1db50be8258223c0f1dbb334569a0fc252eb3f2432f37d25909ecb2fb",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "GetPrivacyConfiguration": {
+   "sha256Hash": "74f1851e8404f5424b466c4928bdbf31f32f57d0e54adad66e9df18459e47721",
+   "sampleVariables": {
+    "clientPersistedOptOutStatus": null,
+    "clientGpcEnabled": false
+   },
+   "capturedFrom": "storefront"
+  },
+  "GetLastUserLocation": {
+   "sha256Hash": "6c76952dbbaf5fe8b79d2ae6dc96af8ccca133285868e7efb9a81ffe624e37e1",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StoreAppTrackingProperties": {
+   "sha256Hash": "0d977572cba6d219fcb6f246f2bc05bf13bbf7b5cc592fda26db845eea75714c",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "BrowsePlacementsSource": {
+   "sha256Hash": "9fb47750e606acdf001a8b1c2e41c429878982c2fe9c5569243d331a3b2cb689",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StoreHeaderNavigationStrings": {
+   "sha256Hash": "836277e4eb751b949b2f0939b826670a63cbb4bd4ff813bae784b5cf5e248470",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "DisplayExperimentVariants": {
+   "sha256Hash": "af0b91d67839104ea1fe81e9c7ffc85ce439fe903e50fbd9caef7fb5a93ffdd8",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StoreShopLayoutComponentVariantV2": {
+   "sha256Hash": "bf2aa54f00b7cbf57c4ec1fea1880374be873349909a95b382635a857195b1b3",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "MealsHubEnabled": {
+   "sha256Hash": "7198cf4738024a842fb282ec9840f03440c1c69e99f57261424d475f5aa277cd",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "ItemDetailsV4DensificationExperimentPreview": {
+   "sha256Hash": "3f1fc12e8526d6f4bb3034c855e74c616401d0a9997a953d6be5883d3540627b",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "ItemCarouselViewMoreModal": {
+   "sha256Hash": "fd053dceb3ec20c09c9200b37c720153127860137b662da59c0d693d4aea70f8",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "LandingFeatureVariant": {
+   "sha256Hash": "a0f82382d1d01631f3a0744ae0b34c0790154550e11b8c5b08f194c46fb0c02f",
+   "sampleVariables": {
+    "featureVariantType": "userMarketplaceWeb",
+    "rouletteDependency": {
+     "featureName": "ads_shoppable_list_platform_item_card_web",
+     "variants": [
+      "variant"
+     ]
+    }
+   },
+   "capturedFrom": "storefront"
+  },
+  "StorefrontPlacementsV2Enabled": {
+   "sha256Hash": "d6813ddacdfe32d40a17c669c5fac9ce4806eb527e616f976ce806d20c267f65",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "GetReplacementsVariants": {
+   "sha256Hash": "147aad01b575766cee82f280a0b6610b5367ee1986769f51bb3fdf2c5343fe7d",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "UserPreferences": {
+   "sha256Hash": "7c1a26bf55e511d9380e1738752e286ac50a96b9ac24519aa7f2061d5b522437",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StorefrontEmptyError": {
+   "sha256Hash": "60357b721aa2ddab614621f4995731ac715d746eb860953205e8c98e09e06284",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "storeInfoModalAlwaysVisibleSfxVariantQuery": {
+   "sha256Hash": "d0024106c0ba6db558b3f1d0aa4729cfb817cd3810253ac560a9ca08698a686c",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "ItemViewLayoutQuery": {
+   "sha256Hash": "53470eafcdef0c9107ca93cf2947be7ba3ef2149ff50c25a5c68f69c28be8604",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "ImpersonationBannerQuery": {
+   "sha256Hash": "8f8f3cf193ed686404bdeec814474bcf4ec41056f9dc6a87c6cb8166c792b4cd",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "ItemViewLayout": {
+   "sha256Hash": "fa48ad1b6e7bd0fb21fac064e88d0c6d163f042e8554a185c6dadbfdb1faa3ff",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "UserAddresses": {
+   "sha256Hash": "22e6dfa5cb0c9e731bfb696f34f573c1c2e31b8191e96c2b14329c33400a0ddc",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "FullSizeLogoMobileHeaderOptions": {
+   "sha256Hash": "fbe212606af4a1b009de9a141838767e1ce713705cccc3bc10ab9523cfc1b59f",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "CurrentUser": {
+   "sha256Hash": "7bdaa54dc2bc33ff8bb66af35da45efc94b2d1eb21ac53841cc214cdd6cc852a",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StoreHeaderLayout": {
+   "sha256Hash": "216b60ae2d6f2ba34061aa6dfcdb6cd89958d15ea67cdae9a0607ba56c0b167f",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "ShopCollectionScoped": {
+   "sha256Hash": "f20693c3c551f0e0fbdcac9b2ca7aa6db50f9224a39967ba5ac767bb2b598f85",
+   "sampleVariables": {
+    "retailerSlug": "cub",
+    "postalCode": "55113",
+    "coordinates": {
+     "latitude": 45.013695,
+     "longitude": -93.156822
+    },
+    "addressId": null,
+    "allowCanonicalFallback": true
+   },
+   "capturedFrom": "storefront"
+  },
+  "RetailersUxStorefront": {
+   "sha256Hash": "0704167e57b0c492a4c2f1f8e13197a38983a2dac373e3dd062c3f7361880a40",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "SaverStoreRetailerEligibilityQuery": {
+   "sha256Hash": "3ffd536ebc8f7e6ee1a3f034dc0d3561c01885a9b34384a8199612dd651ad9c4",
+   "sampleVariables": {
+    "retailerId": "142",
+    "serviceType": "DELIVERY",
+    "retailerLocationId": "24999",
+    "postalCode": "55113",
+    "coordinates": {
+     "latitude": 45.013695,
+     "longitude": -93.156822
+    },
+    "addressId": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "GetStoreLogo": {
+   "sha256Hash": "05b0f70e5628a7638b6278d2184bf5cb17c0a7c3a4f504c0a653cb0ef9f10f7f",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "StorefrontBottomBannerQuery": {
+   "sha256Hash": "020d415f8bb49f9f05f1f830fcd06f3cdb1196fdd8784ffd3ae25e61acadf476",
+   "sampleVariables": {
+    "shopId": "9758",
+    "postalCode": "55113",
+    "debugPlacementId": ""
+   },
+   "capturedFrom": "storefront"
+  },
+  "RetailerLoyalty": {
+   "sha256Hash": "f27ee8f6385bd7ac9124a0d2738f8ec265fdeaa5146b5acc55085dea26a68a96",
+   "sampleVariables": {
+    "retailerId": "142",
+    "zoneId": "205",
+    "surface": "storefront"
+   },
+   "capturedFrom": "storefront"
+  },
+  "StorefrontDesktopSidebarLayouts": {
+   "sha256Hash": "65aebe45e26ad40322ebe3406f7466a111db839155de3b9788440ef1cf604e78",
+   "sampleVariables": {
+    "shopId": "9758",
+    "previewToken": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "BrowseByPreferences": {
+   "sha256Hash": "6c64643d3d660b8a13e5117342b8cb5302b3d763862c2ee0c38bcd0771d47c8a",
+   "sampleVariables": {
+    "yourPreferencesRank": -1,
+    "otherPreferencesRank": 1,
+    "shopId": "9758",
+    "surface": "store_menu"
+   },
+   "capturedFrom": "storefront"
+  },
+  "DesktopSidebarNavigations": {
+   "sha256Hash": "9a1d47b127e37caaac2ba7ec9b8d967eb29d2eb4401384939aa1e40c6265cece",
+   "sampleVariables": {
+    "shopId": "9758",
+    "previewToken": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "StorefrontMeta": {
+   "sha256Hash": "a9f7f16f56e7d8082a09618fa156dbd3921cbd55dc753c23281f48e2dc84f269",
+   "sampleVariables": {
+    "pageSlug": null,
+    "pageType": "customStorefront",
+    "shopId": "9758"
+   },
+   "capturedFrom": "storefront"
+  },
+  "GetShopFooterNavigation": {
+   "sha256Hash": "0dc41e01bd799243994dd72e3185ce21c9d3f7811e75f99bb8c6cf772026d88b",
+   "sampleVariables": {
+    "shopId": "9758",
+    "previewToken": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "DesktopLayoutNavigations": {
+   "sha256Hash": "b6d677c1c3e27f6ed53633b3cde6bfad547edcd37e70339fe6385677b39ba5c1",
+   "sampleVariables": {
+    "shopId": "9758",
+    "previewToken": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "ShopBaskets": {
+   "sha256Hash": "868584829e143dc4eb31b360c895c63e11e75af1b6d033ec8a9518d39079e937",
+   "sampleVariables": {
+    "shopId": "9758",
+    "addressId": ""
+   },
+   "capturedFrom": "storefront"
+  },
+  "ActiveCartId": {
+   "sha256Hash": "6803f97683d706ab6faa3c658a0d6766299dbe1ff55f78b720ca2ef77de7c5c7",
+   "sampleVariables": {
+    "addressId": null,
+    "shopId": "9758"
+   },
+   "capturedFrom": "storefront"
+  },
+  "StoreMenuRetailerLayout": {
+   "sha256Hash": "5606c5bc321ebb8140c34570fc6ec051514b0f86cf5c1367f30ba31b52e82101",
+   "sampleVariables": {
+    "retailerId": "142"
+   },
+   "capturedFrom": "storefront"
+  },
+  "StorefrontLayoutsData": {
+   "sha256Hash": "87838ee762d12f587136da29ca3ab6d237e5d1f1cf8bb5e38b55470b98e0b9d0",
+   "sampleVariables": {
+    "shopId": "9758",
+    "previewToken": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "StorefrontPlacements": {
+   "sha256Hash": "125b4a30113ac84cabdff12db1804e960afdd31fdc22c72d68142b0b0b603f18",
+   "sampleVariables": {
+    "shopId": "9758",
+    "visibilityConditionParams": {
+     "collectionHubId": null,
+     "featureOverrides": {}
+    },
+    "debugPlacementId": "",
+    "previewToken": null,
+    "first": 5,
+    "postalCode": "55113",
+    "zoneId": "205",
+    "coordinates": {
+     "latitude": 45.013695,
+     "longitude": -93.156822
+    }
+   },
+   "capturedFrom": "storefront"
+  },
+  "DepartmentNavCollections": {
+   "sha256Hash": "ecf77405d43648a4e53301584a57165728a5ccc942b06f3a8a57ad342ef46013",
+   "sampleVariables": {
+    "includeSlugs": [
+     "dynamic_collection-sales"
+    ],
+    "shopId": "9758",
+    "postalCode": "55113"
+   },
+   "capturedFrom": "storefront"
+  },
+  "SocialIconsNav": {
+   "sha256Hash": "6656937ddc3fec284d1b35a714271bd4ee5c77c81077b22d4a7d74f06e61b571",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "SlotPlacements": {
+   "sha256Hash": "516f6417072d159180b74bcfbee9298ecf2c3edf4c2a30e2a902394df30e56ea",
+   "sampleVariables": {
+    "slotId": "<str>",
+    "shopId": "9758",
+    "postalCode": "55113",
+    "zoneId": "205",
+    "slotPlacementLimit": 6,
+    "first": 4
+   },
+   "capturedFrom": "storefront"
+  },
+  "SimpleShopCollection": {
+   "sha256Hash": "d438f50ce0c6b59526c922754c7908bfbfa073c8893f466f0276f40a0074501a",
+   "sampleVariables": {
+    "postalCode": "55113",
+    "coordinates": {
+     "latitude": 45.013695,
+     "longitude": -93.156822
+    },
+    "addressId": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "CategoryItemIds": {
+   "sha256Hash": "2e52876da9495d1c6acd2bd431d3fb398629c424b44d2f03d377a418bbda844a",
+   "sampleVariables": {
+    "orderBy": "default",
+    "pageViewId": "<str>",
+    "categoryId": "all",
+    "pageSource": "storefront",
+    "first": 5,
+    "accountType": null,
+    "shopId": "9758",
+    "postalCode": "55113",
+    "zoneId": "205"
+   },
+   "capturedFrom": "storefront"
+  },
+  "ShopCollectionUnscoped": {
+   "sha256Hash": "e4274fe3bbcb2464e3bca7be8368fdb702ca6b13b76d0042647d7470f44a8be7",
+   "sampleVariables": {
+    "postalCode": "55113",
+    "coordinates": {
+     "latitude": 45.013695,
+     "longitude": -93.156822
+    },
+    "addressId": null
+   },
+   "capturedFrom": "storefront"
+  },
+  "CollectionProductsWithFeaturedProducts": {
+   "sha256Hash": "043e0a19b2ae6172441e3f44b8230fbc663ceeb0aa62ca9a2bee3ad1c30ba14c",
+   "sampleVariables": {
+    "shopId": "9758",
+    "postalCode": "55113",
+    "zoneId": "205",
+    "slug": "rc-on-sale-recommended-for-you",
+    "filters": [],
+    "pageViewId": "<str>",
+    "itemsDisplayType": "collections_storefront",
+    "first": 5,
+    "pageSource": "storefront"
+   },
+   "capturedFrom": "storefront"
+  },
+  "ContextualizedShopsGroupQuery": {
+   "sha256Hash": "7ccab8a803816eb6860577c3cd6002ac47857ba521657f89e70f575512c03a85",
+   "sampleVariables": {
+    "coordinates": {
+     "latitude": 45.013695,
+     "longitude": -93.156822
+    },
+    "postalCode": "55113",
+    "zoneId": "205",
+    "homeDebugEnabled": false,
+    "shopIds": [
+     "9758",
+     "121403",
+     "755153",
+     "398674",
+     "755857",
+     "755837"
+    ],
+    "context": "all",
+    "contexts": [
+     "all"
+    ]
+   },
+   "capturedFrom": "storefront"
+  },
+  "GetRetailerLocationAddress": {
+   "sha256Hash": "b80a5ef08c6fe88df0b9a2e78a099dd6141345b213df0f9f517803674b6eee94",
+   "sampleVariables": {
+    "id": "24999"
+   },
+   "capturedFrom": "storefront"
+  },
+  "StoreInStoreHeaderCountVariant": {
+   "sha256Hash": "8941c6bd375cbb03b189cd54c43415f7189ba52a712f903636faf88331ced6e4",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "AuthEntrypointConfiguration": {
+   "sha256Hash": "8ecd69fd33e02fcbf5a1112777868172b32e3caba983e6db0c2dbbc541a4f5a0",
+   "sampleVariables": {
+    "filter": "all"
+   },
+   "capturedFrom": "storefront"
+  },
+  "GetRetailerLogos": {
+   "sha256Hash": "ace6b75262914b9d66608268bd8765723e32d8318a8223ecef148b6c4c2963dd",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  },
+  "SharedCurrentUser": {
+   "sha256Hash": "a828d85421f20d09b98fe0f044829ab245512b412e9957b5340093ebc25cb5a3",
+   "sampleVariables": {},
+   "capturedFrom": "storefront"
+  }
+ }
+}

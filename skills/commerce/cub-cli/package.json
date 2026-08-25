@@ -1,0 +1,14 @@
+{
+  "name": "cub-cli",
+  "version": "0.1.0",
+  "description": "CLI for the Cub grocery storefront (Instacart Storefront Pro) — deals, browse, search and price-watch over a captured persisted-query API surface.",
+  "type": "module",
+  "bin": { "cub": "./src/cli.ts" },
+  "scripts": {
+    "cub": "bun run src/cli.ts",
+    "test": "bun test"
+  },
+  "engines": { "bun": ">=1.1.0" },
+  "license": "MIT",
+  "private": true
+}
