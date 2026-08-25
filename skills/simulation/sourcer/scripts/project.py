@@ -89,24 +89,54 @@ def slug_of(key: str) -> str:
 
 
 def core_claim_for(record: dict, edges: list) -> str:
-    """One sentence, under the linter's hard cap, saying what the map holds.
+    """One distilled sentence under the linter's hard cap. NEVER truncated.
 
-    Truncated at a word boundary with an ellipsis rather than mid-token: a claim
-    cut to `...the company acquir` reads as a typo, and the cap is an ERROR so
-    there is no version of this that gets to be sloppy and still land.
+    `bookkeeping lint` rejects a `core_claim` ending in an ellipsis outright —
+    "a truncation marker (mid-sentence cut) — mis-promotion artifact, not a
+    distilled claim (BRO-1689)". The first version of this cut at a word
+    boundary and appended `…`, which is precisely what that rule names. Found by
+    running the real linter over a real crawl, not by reading the schema.
+
+    So it distils instead: name a couple of relations and COUNT the rest. A
+    `profile` object is deliberately not named — a social URL renders as
+    `https twitter com ecopetrol sa 461184bb9bd0ffed` once slugged, which is
+    noise in a one-line claim — but it is still counted, so the sentence stays
+    true about how much the map holds.
     """
     name = (record.get("attrs") or {}).get("name", record.get("canonical_key", ""))
-    rels = [f"{e.get('predicate')} {_short(e.get('dst'))}" for e in edges[:3]]
-    claim = (
-        f"{name} — {'; '.join(rels)}." if rels
-        else f"{name} was found and verified, with no relations yet established."
-    )
+    named, profiles = [], 0
+    for e in edges:
+        dst = str(e.get("dst") or "")
+        if dst.startswith("profile::"):
+            profiles += 1
+            continue
+        named.append(f"{e.get('predicate')} {_short(dst)}")
+
+    if not named and not profiles:
+        return f"{name} was found and verified, with no relations yet established."
+
+    parts = []
+    for n in named[:2]:
+        candidate = "; ".join(parts + [n])
+        if len(f"{name} — {candidate}.") <= MAX_CORE_CLAIM - 30:
+            parts.append(n)
+
+    rest = len(named) - len(parts)
+    tail = []
+    if rest > 0:
+        tail.append(f"{rest} more relation{'s' if rest != 1 else ''}")
+    if profiles:
+        tail.append(f"{profiles} public profile{'s' if profiles != 1 else ''}")
+
+    body = "; ".join(parts + tail) if parts else ", ".join(tail)
+    claim = f"{name} — {body}."
     if len(claim) <= MAX_CORE_CLAIM:
         return claim
-    cut = claim[: MAX_CORE_CLAIM - 1]
-    if " " in cut:
-        cut = cut[: cut.rindex(" ")]
-    return cut + "…"
+
+    # Last resort: counts only. Still a distilled claim, still not a cut.
+    total = len(named) + profiles
+    short = f"{name} — {total} verified relation{'s' if total != 1 else ''}."
+    return short if len(short) <= MAX_CORE_CLAIM else f"{name[:MAX_CORE_CLAIM - 2]}."
 
 
 def _short(key) -> str:

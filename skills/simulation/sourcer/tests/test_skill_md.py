@@ -284,3 +284,41 @@ def test_the_workflow_writes_no_agent_scratch_into_the_run_directory():
     for forbidden in ("${RUN}/claims", "${RUN}/verdicts"):
         assert forbidden not in js, f"the workflow writes {forbidden} into the run dir"
     assert "const SCRATCH" in js
+
+
+def test_every_entity_consumer_reads_canonical_records():
+    """The audit that would have caught all five sites at once.
+
+    `select()` returns retained conflict payloads by default — correctly, since
+    the run paid for them and nothing is deleted. But a consumer reasoning about
+    ENTITIES wants the current reading, and this mistake was made at five
+    separate call sites, each found separately and days apart: three
+    verdict-auditing gates, the identity proposer (which offered one pair 55
+    times on a real crawl) and the Parallax emitter (which would have shipped
+    seven rows for one company).
+
+    So the rule is checked across the whole surface rather than at whichever
+    site was reported. Exactly one caller reads WITH conflicts, and it is named.
+    """
+    import re
+
+    scripts = SKILL.parent / "scripts"
+    with_conflicts = []
+    for f in sorted(scripts.glob("*.py")):
+        if f.name == "store.py":
+            continue
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if re.search(r"S\.select\(conn\)", line):
+                with_conflicts.append(f"{f.name}:{i}")
+
+    # Pinned by FILE, not by line: a line number makes this fail on any edit
+    # above it, and a test that cries wolf gets deleted.
+    files = sorted({c.split(":")[0] for c in with_conflicts})
+    assert files == ["gates.py"], (
+        "a consumer reads conflict payloads where it almost certainly wants "
+        f"S.canonical(conn): {with_conflicts}"
+    )
+    # And that one is deliberate: the STRUCTURAL gates must see every record
+    # that exists, because a conflict payload is a record.
+    gates = (scripts / "gates.py").read_text()
+    assert "Deliberately WITH conflicts" in gates

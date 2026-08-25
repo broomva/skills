@@ -215,8 +215,33 @@ def test_core_claim_never_exceeds_the_linters_hard_cap(mapped):
                   for i in range(5)]
     claim = PJ.core_claim_for(mapped[0], long_edges)
     assert len(claim) <= PJ.MAX_CORE_CLAIM
-    assert claim.endswith("…")
-    assert not claim[:-1].endswith(" "), "truncate at a word boundary, not mid-token"
+    # DISTILLED, never truncated. `bookkeeping lint` rejects a claim ending in
+    # an ellipsis outright — "a truncation marker (mid-sentence cut) —
+    # mis-promotion artifact, not a distilled claim (BRO-1689)". The first
+    # version of this cut at a word boundary and appended `…`, which is exactly
+    # what that rule names, and the real linter caught it on a real crawl.
+    assert "…" not in claim and "..." not in claim
+    assert claim.endswith(".")
+    assert "more relation" in claim, "the remainder must be counted, not dropped"
+
+
+def test_a_core_claim_counts_profiles_rather_than_naming_them(mapped):
+    """A social URL slugs to `https twitter com ecopetrol sa 461184bb9bd0ffed`,
+    which is noise in a one-line claim — but dropping it silently would make the
+    sentence understate what the map holds."""
+    edges = [
+        dict(mapped[3], dst="profile::https-twitter-com-x", predicate="org_profile"),
+        dict(mapped[3], dst="profile::https-facebook-com-x", predicate="org_profile"),
+    ]
+    claim = PJ.core_claim_for(mapped[0], edges)
+    assert "2 public profiles" in claim
+    assert "twitter" not in claim
+    assert len(claim) <= PJ.MAX_CORE_CLAIM
+
+
+def test_a_record_with_no_relations_says_so(mapped):
+    claim = PJ.core_claim_for(mapped[0], [])
+    assert "no relations yet established" in claim
 
 
 def test_every_projection_tag_is_in_the_controlled_vocabulary():
@@ -485,9 +510,29 @@ def test_the_cross_skill_contract_is_checked_before_it_is_used(monkeypatch):
 
 def test_a_missing_data_provider_is_a_refusal_not_a_fallback(monkeypatch):
     """A fallback IS the second spelling of the grammar."""
-    monkeypatch.setattr(E, "_PROVIDER", Path("/nonexistent/data-provider/scripts"))
+    monkeypatch.setattr(E, "_provider_dir",
+                        lambda: Path("/nonexistent/data-provider/scripts"))
     with pytest.raises(E.EmitError, match="re-spelling"):
         E._provider()
+
+
+def test_data_provider_is_found_in_every_layout_this_skill_ships_in(tmp_path, monkeypatch):
+    """The repo layout is `skills/simulation/{sourcer,data-provider}`; INSTALLED
+    it is flat, `~/.claude/skills/{sourcer,data-provider}`.
+
+    Resolving only the repo-relative path meant `emit` refused on every
+    installed copy — which is the copy people actually run — and the repo layout
+    hid it completely. Found by installing the skill and running it.
+    """
+    for layout in (("skills", "simulation"), ("skills",)):
+        root = tmp_path / "-".join(layout or ("flat",))
+        here = root.joinpath(*layout, "sourcer", "scripts")
+        sibling = root.joinpath(*layout, "data-provider", "scripts")
+        here.mkdir(parents=True)
+        sibling.mkdir(parents=True)
+        (sibling / "provider.py").write_text("# stand-in")
+        monkeypatch.setattr(E, "__file__", str(here / "emit.py"))
+        assert E._provider_dir() == sibling, f"layout {layout} not resolved"
 
 
 def test_related_links_survive_an_id_that_differs_from_its_key(mapped):

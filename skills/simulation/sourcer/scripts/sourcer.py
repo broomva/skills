@@ -167,7 +167,7 @@ def cmd_take(args) -> int:
         }, indent=2, sort_keys=True))
         return OK
 
-    row = S.claim(conn, args.worker, max_depth=plan["max_depth"])
+    row = S.claim(conn, args.worker, max_depth=plan["max_depth"], lease=args.lease)
     if row is None:
         print(json.dumps({
             "item": None, "reason": "the frontier holds nothing claimable",
@@ -365,7 +365,7 @@ def cmd_land(args) -> int:
         ) from exc
 
     ids = {r.id for r in landed}
-    written = [r for r in S.select(conn) if r.get("id") in ids]
+    written = [r for r in S.canonical(conn) if r.get("id") in ids]
     stats.expanded = L.expand(conn, written, depth + 1, parent_id=args.url)
 
     # Record that this page was READ, whatever it yielded. `inventory-closed`
@@ -464,7 +464,9 @@ def cmd_emit(args) -> int:
     """The Parallax handoff: node and edge tables, provenance intact."""
     daemon, conn = _open(args)
     try:
-        out = E.emit(S.select(conn), prefix=args.prefix, daemon=daemon)
+        # Canonical: emitting conflict payloads would ship seven rows for
+        # one company and let Parallax count them as seven entities.
+        out = E.emit(S.canonical(conn), prefix=args.prefix, daemon=daemon)
     except E.EmitError as exc:
         raise Refusal(str(exc)) from exc
     print(json.dumps(out, indent=2, sort_keys=True))
@@ -481,7 +483,7 @@ def cmd_project(args) -> int:
     # retained conflict payload carries `unchecked` and would both fail the
     # fidelity gate and, if it ever passed, project a page for a reading the map
     # does not currently hold.
-    records = S.select(conn, include_conflicts=False)
+    records = S.canonical(conn)
     pages = PJ.build(records, run_id=Path(args.run).name)
     if not pages:
         print(json.dumps({
@@ -549,6 +551,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = common(sub.add_parser("take", help="claim, fetch, and hand back a path"))
     p.add_argument("--worker", default="w1")
+    # The store's 300s default is a LIBRARY default, sized for code. The work
+    # that happens between `take` and `land` is a model reading a page and a
+    # second model judging every claim on it, and on a 160KB corporate page that
+    # ran past 300s -- so `land` was correctly refused for a lease that had
+    # lapsed, and an entire crawl was lost with every claim already extracted.
+    # The lease exists to return a CRASHED worker's item to the frontier; sizing
+    # it below the honest duration of the work turns it into a guillotine.
+    p.add_argument("--lease", type=float, default=1800.0,
+                   help="seconds to hold the item (default 1800; the store's "
+                        "own default of 300 is sized for code, not for agents)")
     p.set_defaults(fn=cmd_take)
 
     p = common(sub.add_parser("land", help="admit claims, apply verdicts, expand"))

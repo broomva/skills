@@ -981,6 +981,10 @@ def run_suite(
     unread=(),
 ) -> SuiteResult:
     """Every gate, in stage order, over what the run left on disk."""
+    # Deliberately WITH conflicts: the STRUCTURAL gates must see every record
+    # that exists, because a retained conflict payload is a record and must be
+    # admissible and verbatim like any other. Only the verdict-auditing gates
+    # take `canonical` -- see `S.canonical`.
     records = S.select(conn)
     # The verdict-auditing gates get the CANONICAL records only. A conflicting
     # re-sighting is retained deliberately -- the run paid for it and nothing is
@@ -995,7 +999,7 @@ def run_suite(
     # sites left `projection-fidelity` refusing a projection of records that
     # were entailed -- the same defect, one site along, which is this codebase's
     # most reliable failure mode.
-    canonical = S.select(conn, include_conflicts=False)
+    canonical = S.canonical(conn)
     decoys = run_decoys()
     return SuiteResult(
         results=[

@@ -767,6 +767,24 @@ def select(
     return sorted(out, key=lambda p: (p.get("id", ""), p.get("depth", 0)))
 
 
+def canonical(conn: sqlite3.Connection, **kw) -> list[dict]:
+    """The map's CURRENT reading: one record per identity, no conflict payloads.
+
+    `select()` returns retained conflicting re-sightings by default, and that is
+    right -- the run paid for them and nothing is deleted. But almost every
+    consumer that reasons about ENTITIES wants the current reading, and reaching
+    for `select()` gives it duplicates that carry the birth verdict `unchecked`.
+
+    That mistake has now been made at five separate call sites in this codebase,
+    each found separately: three verdict-auditing gates, the identity proposer
+    (which offered the same pair 55 times on a real crawl), and the Parallax
+    emitter (which would have shipped seven rows for one company). Naming the
+    intent is the fix; `include_conflicts=False` at five call sites is the same
+    mistake waiting for a sixth.
+    """
+    return select(conn, include_conflicts=False, **kw)
+
+
 def expandable_ids(conn: sqlite3.Connection) -> list[str]:
     """Records permitted to seed the next hop -- observed AND entailed.
 

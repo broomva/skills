@@ -37,7 +37,22 @@ import extract as X  # noqa: E402
 #: Where `data-provider` lives relative to this skill. Both are under
 #: `skills/simulation/`, and the import is by path rather than by package
 #: because neither skill is installed -- they are directories a runner points at.
-_PROVIDER = Path(__file__).resolve().parents[2] / "data-provider" / "scripts"
+#: Two layouts, because the skill lives in two shapes and only one of them was
+#: ever tested. In the repo it is `skills/simulation/{sourcer,data-provider}`;
+#: INSTALLED it is flat -- `~/.claude/skills/{sourcer,data-provider}`. The
+#: repo-relative path alone meant `emit` refused on every installed copy, which
+#: is the copy people actually run, and the repo layout hid it completely.
+def _provider_dir() -> Path:
+    """Where data-provider is, across every layout this skill ships in."""
+    here = Path(__file__).resolve()
+    for cand in (
+        here.parents[2] / "data-provider" / "scripts",          # skills/simulation/*
+        here.parents[2] / "simulation" / "data-provider" / "scripts",
+        here.parents[1].parent / "data-provider" / "scripts",   # flat install
+    ):
+        if (cand / "provider.py").is_file():
+            return cand
+    return here.parents[2] / "data-provider" / "scripts"        # for the message
 
 
 class EmitError(Exception):
@@ -51,14 +66,15 @@ def _provider():
     be a second implementation of a grammar that already exists, and the whole
     point of importing is that there is only one.
     """
-    if not (_PROVIDER / "provider.py").is_file():
+    provider_dir = _provider_dir()
+    if not (provider_dir / "provider.py").is_file():
         raise EmitError(
-            f"data-provider is not at {_PROVIDER}. This module emits through its "
+            f"data-provider is not at {provider_dir}. This module emits through its "
             "`--table` grammar rather than re-spelling it, so a missing "
             "data-provider is a refusal and not a reason to write the string here."
         )
-    if str(_PROVIDER) not in sys.path:
-        sys.path.insert(0, str(_PROVIDER))
+    if str(provider_dir) not in sys.path:
+        sys.path.insert(0, str(provider_dir))
     import provider  # noqa: PLC0415
 
     for needed in ("Record", "Field", "Evidence", "emit_table_arg", "ProviderError"):

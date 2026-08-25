@@ -582,3 +582,74 @@ def test_the_profile_digest_is_wide_enough_to_resist_a_search():
     digest = key.rsplit("-", 1)[-1]
     assert len(digest) == 16, f"digest is {len(digest) * 4} bits: {key}"
     assert all(c in "0123456789abcdef" for c in digest)
+
+
+# --------------------------------------------------------------------------
+# Real HTML, and the Spanish-language market this was built for
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("entity,plain", [
+    ("Ecopetrol&nbsp;S.A.", "Ecopetrol S.A."),
+    ("Ecopetrol&#160;S.A.", "Ecopetrol S.A."),
+    ("Caf&eacute; Nacional", "Café Nacional"),
+    ("A &amp; B Ltda", "A & B Ltda"),
+])
+def test_html_entities_do_not_fork_an_entity(entity, plain):
+    """The quote is RAW BYTES off an HTML page.
+
+    Found on the first crawl of a real corporate site: `Ecopetrol&nbsp;S.A.`
+    keyed to `org::ecopetrol-nbsp-s-a`, a different company from the same name
+    written `Ecopetrol S.A.` three lines down. `&nbsp;` between a name and its
+    legal form is the ordinary way to stop the two wrapping apart, so this is
+    not an edge case on real pages — it is the common case.
+    """
+    assert X.key_for("org", entity) == X.key_for("org", plain)
+
+
+@pytest.mark.parametrize("accented,plain,expected", [
+    ("Café Nacional", "Cafe Nacional", "org::cafe-nacional"),
+    ("Compañía Nacional", "Compania Nacional", "org::compania-nacional"),
+    ("Ecopetrol Perú", "Ecopetrol Peru", "org::ecopetrol-peru"),
+    ("Petróleos de Bogotá", "Petroleos de Bogota", "org::petroleos-de-bogota"),
+])
+def test_accents_are_folded_into_the_key_not_deleted_from_it(accented, plain, expected):
+    """The slug alphabet is `[a-z0-9]`, so an unfolded accent is not kept — it
+    is DELETED.
+
+    Before this, `Compañía` slugged to `compa-a` and `Ecopetrol Perú` to
+    `ecopetrol-per`, while `Café Nacional` and `Cafe Nacional` became two
+    different companies. In a Spanish-language market that is most names.
+    """
+    assert X.key_for("org", accented) == expected
+    assert X.key_for("org", plain) == expected
+
+
+def test_the_name_keeps_its_accents_even_though_the_key_folds_them():
+    """`attrs.name` is what the page says and what a reader should see."""
+    assert X.normalize_name("Compañía Nacional") == "Compañía Nacional"
+    assert X.fold_accents("Compañía Nacional") == "Compania Nacional"
+
+
+def test_identity_and_key_for_agree_about_accents_and_entities():
+    """They had drifted on exactly this: `comparable` folded accents and
+    `key_for`, which actually MERGES entities, did not — so the module
+    proposing merges and the module performing them disagreed about what a name
+    is. One shared `fold_accents` now, imported rather than spelled twice.
+
+    They still differ elsewhere, correctly: `comparable` drops legal forms
+    because `ACME S.A.S.` and `ACME Ltda` are candidates for being one company,
+    while `key_for` keeps them because they are not the SAME company until
+    somebody says so. Same normalisation, different questions.
+    """
+    import identity as I
+
+    for accented, plain in (("Compañía Nacional", "Compania Nacional"),
+                            ("Café Nacional", "Cafe Nacional"),
+                            ("Ecopetrol&nbsp;S.A.", "Ecopetrol S.A.")):
+        assert X.key_for("org", accented) == X.key_for("org", plain)
+        assert I.comparable(accented) == I.comparable(plain)
+
+    # And the difference that is deliberate, asserted so it is not read as drift.
+    assert X.key_for("org", "ACME S.A.S.") != X.key_for("org", "ACME Ltda")
+    assert I.comparable("ACME S.A.S.") == I.comparable("ACME Ltda")
