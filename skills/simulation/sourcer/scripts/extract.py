@@ -98,6 +98,13 @@ INVERSES: dict = {
     "parent_of": "subsidiary_of",
 }
 
+#: Reserved edge attributes, written by `admit` rather than by an extractor.
+#: Underscore-prefixed so they cannot collide with ATTR_KEYS, which is the
+#: allowlist for what a *model* may say; these are structural and carry the
+#: endpoint offsets a later gate needs to re-check containment for itself.
+SUBJECT_SPAN = "_subject_span"
+OBJECT_SPAN = "_object_span"
+
 #: Attributes an edge may carry. Closed, because an unevidenced attribute is a
 #: claim wearing a data hat -- these ride on the EDGE's evidence span and are
 #: therefore judged by the same entailment check as the relation itself.
@@ -400,7 +407,20 @@ def admit(
         predicate=claim.predicate,
         src=subject.key,
         dst=obj.key,
-        attrs=dict(claim.attrs),
+        attrs=dict(
+            claim.attrs,
+            # The endpoint spans travel WITH the edge, as offsets into the edge's
+            # own page. Without them the containment and width checks exist only
+            # at construction, and a gate re-reading the store later would have to
+            # take the producer's word that they ever ran -- which is the shape of
+            # every check in this codebase that turned out to be decorative. The
+            # node records cannot serve instead: on a re-sighting the store keeps
+            # the FIRST record, whose spans point into a different page entirely.
+            **{
+                SUBJECT_SPAN: f"{claim.subject.span_start}:{claim.subject.span_end}",
+                OBJECT_SPAN: f"{claim.object.span_start}:{claim.object.span_end}",
+            },
+        ),
     )
     return nodes + [edge]
 
@@ -514,6 +534,8 @@ __all__ = [
     "SYMMETRIC",
     "INVERSES",
     "ATTR_KEYS",
+    "SUBJECT_SPAN",
+    "OBJECT_SPAN",
     "MAX_RELATION_SPAN",
     "MIN_NAME_CHARS",
     "MAX_NAME_CHARS",
