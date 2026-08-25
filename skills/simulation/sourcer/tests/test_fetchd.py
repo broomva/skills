@@ -909,3 +909,36 @@ def test_a_malformed_url_cannot_crash_a_fetch(tmp_path):
     d.seal_plan({"seeds": ["x"], "max_depth": 0})
     with pytest.raises(F.FetchError, match="malformed authority"):
         d.fetch("https://example.com:bogus/a")
+
+
+def test_a_query_bearing_robots_url_is_not_the_policy():
+    """Path equality alone was not enough.
+
+    `/robots.txt?anything` has that path, so it was exempted from the permission
+    check AND installed as the origin's policy — letting a page under the
+    crawler's own control supply permissive rules.
+    """
+    assert F._is_robots_url("https://x.test/robots.txt") is True
+    for spoof in ("https://x.test/robots.txt?m=1",
+                  "https://x.test/robots.txt#frag",
+                  "https://x.test/a/robots.txt",
+                  "https://x.test/robots.txt.bak"):
+        assert F._is_robots_url(spoof) is False, spoof
+
+
+def test_a_spoofed_robots_url_neither_bypasses_nor_installs_rules(tmp_path):
+    """Driven through the daemon, not just the predicate."""
+    pages = {
+        "https://x.test/robots.txt": (200, b"User-agent: *\nDisallow: /private\n"),
+        "https://x.test/robots.txt?m=1": (200, b"User-agent: *\nAllow: /\n"),
+    }
+    d = F.FetchDaemon(
+        root=tmp_path, run_id="r1", politeness=F.Politeness(interval=0.0),
+        transport=lambda u: (*pages.get(u, (200, b"page")), u), key=KEY,
+    )
+    d.seal_plan({"seeds": ["x"], "max_depth": 0})
+    # The spoof is not exempt, and the real rules get fetched to judge it...
+    with pytest.raises(F.RobotsRefusal):
+        d.fetch("https://x.test/private/a")
+    # ...and the permissive spoof did not become the policy.
+    assert d.politeness.allows("https://x.test/private/b") is False

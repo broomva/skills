@@ -633,3 +633,48 @@ def test_a_queued_page_is_claimable_at_its_depth(tmp_path):
     assert S.claim(conn, "w1", max_depth=0) is None, "depth bound must hold"
     row = S.claim(conn, "w1", max_depth=1)
     assert row["key"] == "https://example.com/a"
+
+
+def test_a_malformed_authority_is_dropped_not_raised():
+    """`urlsplit` parses lazily and only raises when `.port` is read, so a
+    hostile `<loc>` reached into the middle of parsing and threw a type
+    `traverse()` does not catch — aborting a whole crawl over one bad entry."""
+    doc = T.parse_sitemap(
+        urlset("https://example.com/ok", "https://example.com:bogus/a"),
+        "https://example.com/sm.xml",
+    )
+    assert doc.locs == ("https://example.com/ok",)
+    assert len(doc.dropped) == 1
+    assert "off-host" in doc.dropped[0][1]
+
+
+def test_a_malformed_authority_does_not_abort_a_traversal(tmp_path):
+    d = rig(tmp_path, {
+        "https://example.com/robots.txt": (200, robots("https://example.com/sm.xml")),
+        "https://example.com/sm.xml": (
+            200, urlset("https://example.com:bogus/a", "https://example.com/good"),
+        ),
+    })
+    out = T.traverse(d, "https://example.com/", budget=10)
+    assert out.pages == ["https://example.com/good"]
+    assert out.closes()
+
+
+def test_trailing_bytes_after_the_first_gzip_member_are_refused():
+    """`decompressobj` stops after the first member and parks the rest in
+    `unused_data`. Returning the first alone meant
+    `gzip(small_sitemap) + gzip(10GB)` inflated to 76 bytes, passed every cap,
+    and silently discarded whatever else the file claimed to hold."""
+    good = urlset("https://example.com/a")
+    blob = gzip.compress(good) + gzip.compress(b"A" * 5000)
+    with pytest.raises(T.TraversalError, match="trailing bytes"):
+        T.decompress_if_gzip(blob, cap=1000)
+    # A single member is still fine, so this is a boundary and not a ban.
+    assert T.decompress_if_gzip(gzip.compress(good)) == good
+
+
+def test_a_truncated_gzip_stream_is_refused():
+    good = urlset("https://example.com/a")
+    truncated = gzip.compress(good)[:-6]
+    with pytest.raises((T.TraversalError, zlib.error)):
+        T.decompress_if_gzip(truncated)

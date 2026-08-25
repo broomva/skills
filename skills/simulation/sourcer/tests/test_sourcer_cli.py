@@ -463,3 +463,52 @@ def test_the_whole_cycle_produces_a_map_the_gates_accept(tmp_path, capsys):
     # verified. That is the whole product in one assertion.
     keys = {r["canonical_key"] for r in records}
     assert "person::maria-restrepo" in keys
+
+
+def test_depth_comes_from_the_lease_at_a_real_depth(tmp_path, capsys):
+    """At depth 0 this test could not tell a lease-read from a hardcoded 0.
+
+    So it runs a full first hop, expands, and lands the SECOND item — where the
+    lease says depth 1 and anything reading an argument or a constant would say
+    0, and its descendants would then enter at 1 instead of 2, walking under the
+    sealed max_depth indefinitely.
+    """
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse", "--max-depth", "3"])
+    capsys.readouterr()
+    first = _take(tmp_path, capsys)
+    assert first["depth"] == 0
+    cf = tmp_path / "c1.json"; cf.write_text(json.dumps(seed_claims()))
+    vf = tmp_path / "v1.json"; vf.write_text(json.dumps({"0": True}))
+    C.main(["land", *paths(tmp_path), "--url", first["url"],
+            "--digest", first["digest"], "--token", first["claim_token"],
+            "--claims", str(cf), "--verdicts", str(vf)])
+    assert out(capsys)["stats"]["expanded"] == 1
+
+    second = _take(tmp_path, capsys)
+    assert second["url"] == "https://acme.test/team"
+    assert second["depth"] == 1, "the expansion queued it at depth 1"
+    cf2 = tmp_path / "c2.json"; cf2.write_text(json.dumps([]))
+    C.main(["land", *paths(tmp_path), "--url", second["url"],
+            "--digest", second["digest"], "--token", second["claim_token"],
+            "--claims", str(cf2)])
+    assert out(capsys)["depth"] == 1, "land must read the depth off the lease"
+
+
+def test_a_non_2xx_fetch_still_spends_the_budget(tmp_path, capsys):
+    """A 404 costs a request to the host.
+
+    Counting only successes let a run that spent its whole budget on dead pages
+    keep asking for more — the budget bounds what the crawl DOES, not what it
+    got away with.
+    """
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/gone",
+            "--no-traverse", "--budget", "2"])
+    capsys.readouterr()
+    # One dead fetch (plus its robots.txt) exhausts a budget of 2.
+    C.main(["take", *paths(tmp_path)])
+    assert out(capsys)["item"] is None       # 404
+    C.main(["take", *paths(tmp_path)])
+    d = out(capsys)
+    assert d["item"] is None
+    assert "budget" in d["reason"], d["reason"]

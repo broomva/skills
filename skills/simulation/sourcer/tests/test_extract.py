@@ -511,3 +511,64 @@ def test_malformed_extractor_output_is_refused(blob, match):
 def test_an_empty_claim_list_is_a_valid_answer():
     """A page that relates nothing is a real outcome, not a failure."""
     assert X.claims_from_json("[]") == []
+
+
+# --------------------------------------------------------------------------
+# Exact-identity kinds
+# --------------------------------------------------------------------------
+
+
+def test_distinct_urls_do_not_collapse_to_one_profile_key():
+    """A slug is lossy, and for a URL that is a defect.
+
+    `https://a.test/x-y` and `https://a.test/x/y` both slug to
+    `https-a-test-x-y`, so the store merged two different pages into one record,
+    the first sighting's name won, and an edge verified against the second
+    expanded the crawl to the first — fetching a URL absent from the evidence
+    that authorised it.
+    """
+    a = X.key_for("profile", "https://a.test/x-y")
+    b = X.key_for("profile", "https://a.test/x/y")
+    assert a != b, f"both are {a}"
+    # Same URL is still the same key, or nothing would ever merge or re-sight.
+    assert X.key_for("profile", "https://a.test/x/y") == b
+
+
+def test_names_still_normalise_for_kinds_whose_identity_is_a_name():
+    """The exactness is per kind on purpose. Two spellings of one company are
+    one company, and losing that would be the opposite defect."""
+    assert X.key_for("org", "ACME S.A.S.") == X.key_for("org", "acme s.a.s.")
+    assert X.key_for("org", "ＡＣＭＥ　S.A.S.") == X.key_for("org", "ACME S.A.S.")
+    assert "org" not in X.EXACT_KINDS and "profile" in X.EXACT_KINDS
+
+
+def test_a_profile_key_is_still_derivable_from_its_quote():
+    """`record-admissible` recomputes the key from the bytes; the digest must
+    not break that, or every profile record would fail the gate."""
+    url = "https://a.test/x/y"
+    assert X.key_for("profile", url) == X.key_for("profile", f"  {url}  ")
+
+
+@pytest.mark.parametrize("bad", [[1, 2], "text", 0, 3.5, True])
+def test_attrs_must_be_an_object(bad):
+    """`item.get("attrs") or {}` silently discarded falsey non-objects and
+    handed a truthy list to `set()`, raising AttributeError instead of a typed
+    refusal. Both are the same mistake: treating a shape error as a value."""
+    blob = json.dumps([{
+        "subject": {"kind": "org", "span_start": 0, "span_end": 5},
+        "predicate": "employs",
+        "object": {"kind": "person", "span_start": 6, "span_end": 10},
+        "span_start": 0, "span_end": 20, "attrs": bad,
+    }])
+    with pytest.raises(X.ExtractionError, match="must be an object"):
+        X.claims_from_json(blob)
+
+
+def test_absent_attrs_are_still_fine():
+    blob = json.dumps([{
+        "subject": {"kind": "org", "span_start": 0, "span_end": 5},
+        "predicate": "employs",
+        "object": {"kind": "person", "span_start": 6, "span_end": 10},
+        "span_start": 0, "span_end": 20,
+    }])
+    assert X.claims_from_json(blob)[0].attrs == {}
