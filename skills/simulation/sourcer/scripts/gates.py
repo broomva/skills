@@ -977,6 +977,13 @@ def run_suite(
     # it did made any conflict fail the run for a claim that WAS judged. The
     # structural gates still see everything, because a conflict payload is a
     # record that exists and must be admissible and verbatim like any other.
+    # THE VERDICT-AUDITING SET. Three gates read verdicts, and all three must
+    # read the canonical record: `by_id` lets a retained conflict payload win
+    # the lookup, and a conflict payload carries the birth verdict `unchecked`
+    # because it was never given one of its own. Fixing this at two of the three
+    # sites left `projection-fidelity` refusing a projection of records that
+    # were entailed -- the same defect, one site along, which is this codebase's
+    # most reliable failure mode.
     canonical = S.select(conn, include_conflicts=False)
     decoys = run_decoys()
     return SuiteResult(
@@ -991,7 +998,7 @@ def run_suite(
             gate_lattice_exact(records),
             gate_inventory_closed(daemon, records, traversal, unread),
             gate_corroboration_grade(records),
-            gate_projection_fidelity(records, projection),
+            gate_projection_fidelity(canonical, projection),
             gate_suite_proven(decoys),
         ],
         decoys=decoys,

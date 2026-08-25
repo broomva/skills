@@ -469,7 +469,11 @@ def cmd_project(args) -> int:
     Writing into a permanent, shared, hand-curated graph is not a default.
     """
     _daemon, conn = _open(args)
-    records = S.select(conn)
+    # Canonical records only, for the same reason the verdict gates use them: a
+    # retained conflict payload carries `unchecked` and would both fail the
+    # fidelity gate and, if it ever passed, project a page for a reading the map
+    # does not currently hold.
+    records = S.select(conn, include_conflicts=False)
     pages = PJ.build(records, run_id=Path(args.run).name)
     if not pages:
         print(json.dumps({

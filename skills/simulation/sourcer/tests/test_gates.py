@@ -728,3 +728,38 @@ def test_every_traversal_is_checked_not_just_the_first(run):
     r = G.gate_inventory_closed(d, S.select(conn), [good, broken])
     assert r.status == G.FAIL
     assert any("does not close" in f for f in r.failures)
+
+
+def test_no_verdict_gate_reads_a_conflict_payload(run):
+    """The root cause, tested once for all three gates that share it.
+
+    A retained conflict payload carries the birth verdict `unchecked`, because it
+    was never given one of its own — and `by_id` lets it win the lookup. Fixing
+    that at two of the three verdict-auditing gates left `projection-fidelity`
+    refusing a projection of records that were entailed, which is this
+    codebase's most reliable failure mode: the same defect, one site along.
+
+    So this asserts the property across every gate that reads a verdict, and a
+    fourth such gate added later will be caught by the same test.
+    """
+    d, conn, trav = run
+    canonical = S.select(conn, include_conflicts=False)
+    entailed = [r["id"] for r in canonical if r["verdict"] == "entailed"]
+    assert entailed, "the fixture must hold entailed records"
+
+    # Re-sight one record with a differing payload: the store keeps it as a
+    # conflict, and it carries `unchecked`.
+    target = next(r for r in canonical if r["kind"] == "node")
+    ev = target["evidence"]
+    S.put_record(conn, S.Record(
+        id=target["id"], kind="node", canonical_key=target["canonical_key"],
+        depth=target["depth"], layer="L2", origin="observed",
+        evidence=S.Evidence(**ev), attrs={"name": "a different reading"},
+    ), admitter=d)
+    assert S.inventory(conn)["conflicts"] == 1, "the fixture must create a conflict"
+
+    suite = G.run_suite(d, conn, traversal=trav,
+                        projection=[{"id": i} for i in entailed])
+    for name in ("span-entails-claim", "triple-entailed", "projection-fidelity"):
+        r = next(x for x in suite.results if x.gate == name)
+        assert r.status == G.PASS, f"{name} read a conflict payload: {r.failures}"
