@@ -512,3 +512,52 @@ def test_a_non_2xx_fetch_still_spends_the_budget(tmp_path, capsys):
     d = out(capsys)
     assert d["item"] is None
     assert "budget" in d["reason"], d["reason"]
+
+
+def test_a_receipt_refusal_releases_the_lease(tmp_path, capsys):
+    """The lease was validated a moment earlier, so holding it through a refusal
+    leaves the run reporting work in flight that nobody is doing."""
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "c.json"; claims.write_text(json.dumps([]))
+    code = C.main(["land", *paths(tmp_path), "--url", item["url"],
+                   "--digest", "d" * 64, "--token", item["claim_token"],
+                   "--claims", str(claims)])
+    assert code == 2
+    assert "no chained log row" in capsys.readouterr().err
+    conn = S.connect(tmp_path / "map.db")
+    assert S.frontier_stats(conn)["in_flight"] == 0, "the lease was stranded"
+
+
+def test_a_lapsed_lease_is_a_typed_refusal_not_a_traceback(tmp_path, capsys):
+    """Dropping the wrapper around the final `finish` turned exit 2 into exit 1
+    and lost the reason — the one thing the exit codes exist to keep apart."""
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "c.json"; claims.write_text(json.dumps(seed_claims()))
+    conn = S.connect(tmp_path / "map.db")
+    # Expire the lease after `take` but before `land` commits.
+    conn.execute("UPDATE frontier SET lease_until = 1 WHERE key = ?", (item["url"],))
+    conn.commit()
+    code = C.main(["land", *paths(tmp_path), "--url", item["url"],
+                   "--digest", item["digest"], "--token", item["claim_token"],
+                   "--claims", str(claims)])
+    assert code == 2, "a lapsed lease is a refusal, not a crash"
+    assert "claim token" in capsys.readouterr().err
+    # And nothing was expanded on a dead lease.
+    assert S.frontier_stats(conn)["total"] == 1
+
+
+def test_a_spent_budget_stops_the_next_seed_entirely(tmp_path, capsys):
+    """`max(1, budget - spent)` handed out one more document after the shared
+    budget was already gone, so two seeds under `--budget 1` fetched twice."""
+    C.main(["plan", *paths(tmp_path), "--budget", "1",
+            "--seed", "https://example.com/about",
+            "--seed", "https://acme.test/team"])
+    d = out(capsys)
+    notes = [t.get("note", "") for t in d["traversals"]]
+    assert any("spent before this seed" in n for n in notes), d["traversals"]

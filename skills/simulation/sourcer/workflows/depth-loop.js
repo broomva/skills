@@ -217,7 +217,7 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
            ${PY} land --run ${RUN} --db ${DB} \\
              --url ${taken.item.url} --digest ${taken.item.digest} \\
-             --depth ${taken.item.depth} --token ${taken.item.claim_token} \\
+             --token ${taken.item.claim_token} \\
              --claims ${RUN}/claims-${tag}.json \\
              --verdicts ${RUN}/verdicts-${tag}.json
 

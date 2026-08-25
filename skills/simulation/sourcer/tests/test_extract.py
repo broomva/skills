@@ -572,3 +572,13 @@ def test_absent_attrs_are_still_fine():
         "span_start": 0, "span_end": 20,
     }])
     assert X.claims_from_json(blob)[0].attrs == {}
+
+
+def test_the_profile_digest_is_wide_enough_to_resist_a_search():
+    """32 bits is ~2^16 tries for a collision — cheap for anyone choosing their
+    own URLs, and a collision merges two pages into one record that
+    `record-admissible` then happily re-derives."""
+    key = X.key_for("profile", "https://a.test/x")
+    digest = key.rsplit("-", 1)[-1]
+    assert len(digest) == 16, f"digest is {len(digest) * 4} bits: {key}"
+    assert all(c in "0123456789abcdef" for c in digest)

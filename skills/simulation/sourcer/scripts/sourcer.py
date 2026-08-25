@@ -86,7 +86,17 @@ def cmd_plan(args) -> int:
         # left is what stops `--budget 1` spending two requests before the loop
         # has claimed anything.
         spent = sum(1 for r in daemon.verified_rows() if r.get("kind") == "fetch")
-        left = max(1, args.budget - spent)
+        left = args.budget - spent
+        if left < 1:
+            # `max(1, ...)` handed out one more document after the shared budget
+            # was already gone, so two seeds under `--budget 1` fetched twice.
+            # A spent budget is spent.
+            out["traversals"].append({
+                "seed": seed, "pages": [], "dropped": [], "docs": [],
+                "seen": 0, "closes": True, "robots_url": None,
+                "note": f"fetch budget of {args.budget} spent before this seed",
+            })
+            continue
         trav = T.traverse(daemon, seed, budget=args.budget, max_docs=left)
         out["traversals"].append(trav.as_dict())
         out["queued"] += T.push_pages(conn, trav.pages, depth=0, parent_id=seed)
@@ -216,6 +226,10 @@ def cmd_land(args) -> int:
 
     res = daemon.receipt_for(args.url, args.digest)
     if res is None:
+        # Release on the way out. The lease was validated a moment ago, so
+        # holding it through a refusal would leave the run reporting work in
+        # flight that nobody is doing until it expires.
+        _release(conn, args.url, args.token)
         raise Refusal(
             f"{args.url} @ {args.digest[:12]}: no chained log row pairs these. "
             "`land` may only be called for a page `take` actually fetched."
@@ -275,11 +289,36 @@ def cmd_land(args) -> int:
                 )
                 stats.refuted += 1
 
+    # RE-CHECK the lease before expanding. Authorising once at the top is not
+    # enough on its own: the lease can lapse while the agent's claims are being
+    # admitted, and another worker can reclaim the item. Admitting records under
+    # a stale lease is survivable -- records are content-addressed and
+    # `put_record` treats a repeat as a re-sighting -- but EXPANSION is not, so
+    # the frontier is only touched under a lease that is still live.
+    #
+    # This narrows the window rather than removing it; a check and a write are
+    # two statements, and closing that properly means one transaction spanning
+    # the whole of `land`, which the store does not offer across a process
+    # boundary. What it does guarantee is that a worker whose lease died before
+    # it got here cannot push work for someone else's item.
+    try:
+        S.held_lease(conn, args.url, args.token)
+    except S.StoreError as exc:
+        raise Refusal(
+            f"the lease lapsed during land, so the frontier was not expanded: {exc}"
+        ) from exc
+
     ids = {r.id for r in landed}
     written = [r for r in S.select(conn) if r.get("id") in ids]
     stats.expanded = L.expand(conn, written, depth + 1, parent_id=args.url)
 
-    S.finish(conn, args.url, args.token)
+    try:
+        S.finish(conn, args.url, args.token)
+    except S.StoreError as exc:
+        # A typed refusal, not a traceback. Dropping this wrapper turned exit 2
+        # into exit 1 and lost the reason -- the one thing the exit codes exist
+        # to keep apart.
+        raise Refusal(str(exc)) from exc
 
     print(json.dumps({
         "depth": depth,

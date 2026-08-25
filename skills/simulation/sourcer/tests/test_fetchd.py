@@ -942,3 +942,28 @@ def test_a_spoofed_robots_url_neither_bypasses_nor_installs_rules(tmp_path):
         d.fetch("https://x.test/private/a")
     # ...and the permissive spoof did not become the policy.
     assert d.politeness.allows("https://x.test/private/b") is False
+
+
+@pytest.mark.parametrize("url", ["https://[::1/x", "http://[oops/y", "https://["])
+def test_an_unparseable_url_is_a_typed_refusal(url):
+    """`urlsplit` ITSELF raises on some authorities.
+
+    `https://[::1/x` is an unterminated IPv6 literal and never gets as far as a
+    port read, so the first version of `split_url` — which caught only the lazy
+    `.port` failure — let exactly the class it was written for escape.
+    """
+    with pytest.raises(F.FetchError, match="unparseable url"):
+        F.split_url(url)
+
+
+def test_ipv6_authorities_keep_their_brackets():
+    """`hostname` strips the brackets, and without them two different origins
+    render identically and the robots url built from them is not a valid url."""
+    p = F.Politeness(interval=0.0)
+    assert p.host_of("http://[::1]:8080/x") == "[::1]:8080"
+    assert p.host_of("http://[::1]/x") == "[::1]"
+    assert p.origin_of("http://[::1]:8080/x") != p.origin_of("http://[::1]/x")
+    # The pair the reviewer named: distinct origins that used to collide.
+    assert p.origin_of("http://[::1]:8080/x") == "http://[::1]:8080"
+    # An IPv4 host is untouched.
+    assert p.host_of("http://127.0.0.1:8080/x") == "127.0.0.1:8080"

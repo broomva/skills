@@ -142,3 +142,77 @@ def test_the_chain_key_requirement_is_documented_and_real():
     finally:
         if saved is not None:
             os.environ[F.CHAIN_KEY_ENV] = saved
+
+
+# --------------------------------------------------------------------------
+# The workflow's invocations, checked against the real parser
+# --------------------------------------------------------------------------
+
+
+def _invocations(js: str, verb: str) -> list:
+    """Every `<runner> <verb> ...` command line the workflow issues.
+
+    The runner is a template variable (`${PY}`), not a literal path, which is
+    why matching on `sourcer.py` found nothing at all.
+    """
+    return re.findall(rf"\$\{{PY\}}\s+{verb}\b([^`]*)", js, re.S)
+
+
+def test_the_workflow_only_passes_flags_the_cli_accepts():
+    """The regression this exists to prevent actually happened.
+
+    `--depth` was removed from `land` because it was a security defect, and the
+    workflow kept passing it — so `depth-loop.js` would have died on argument
+    parsing at the first page. A JS syntax check does not catch that; nothing
+    but comparing the two sides does. The workflow is a shell script written in
+    another language, which is exactly the kind of seam that stays green on both
+    sides while agreeing with neither.
+    """
+    import sourcer as C
+
+    js = (SKILL.parent / "workflows" / "depth-loop.js").read_text()
+    parser = C.build_parser()
+    subs = parser._subparsers._group_actions[0].choices
+
+    seen_any = False
+    for verb, sub in subs.items():
+        known = set()
+        for action in sub._actions:
+            known.update(action.option_strings)
+        blocks = _invocations(js, verb)
+        for block in blocks:
+            seen_any = True
+            for flag in set(re.findall(r"(--[a-z][a-z-]*)", block)):
+                assert flag in known, (
+                    f"depth-loop.js passes {flag} to `{verb}`, which does not "
+                    f"accept it. Accepts: {sorted(known)}"
+                )
+    # The first version of this test used a pattern that matched NOTHING -- the
+    # workflow invokes through a `${PY}` variable, not a literal `sourcer.py` --
+    # so it passed while checking zero invocations.
+    assert seen_any, "no invocations were found; the pattern is measuring nothing"
+
+
+def test_the_workflow_names_every_required_flag_somewhere():
+    """The other direction: a required argument the workflow forgets entirely.
+
+    Checked against the WHOLE file rather than the invocation line, because
+    some arguments are assembled into a variable first -- `--seed` is built by
+    `SEEDS.map(...)` and reaches the command as `${seedArgs}`. That makes this
+    the weaker half of the pair: it catches a flag the workflow never mentions,
+    not one it drops from a particular call. The strong half is the test above,
+    which catches a flag the CLI does not accept, and that is the direction the
+    `--depth` regression actually broke.
+    """
+    import sourcer as C
+
+    js = (SKILL.parent / "workflows" / "depth-loop.js").read_text()
+    subs = C.build_parser()._subparsers._group_actions[0].choices
+    for verb in ("plan", "take", "land"):
+        assert _invocations(js, verb), f"the workflow never invokes `{verb}`"
+        for action in subs[verb]._actions:
+            if action.required and action.option_strings:
+                assert action.option_strings[0] in js, (
+                    f"depth-loop.js never mentions `{verb}`'s required "
+                    f"{action.option_strings[0]}"
+                )

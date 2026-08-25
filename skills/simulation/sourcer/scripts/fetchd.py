@@ -91,7 +91,14 @@ def split_url(url: str):
     A malformed authority is a refusal this module owns, so it raises
     `FetchError` and every existing caller already handles it.
     """
-    parts = urllib.parse.urlsplit(url)
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError as exc:
+        # `urlsplit` ITSELF raises on some authorities -- `https://[::1/x` is an
+        # unterminated IPv6 literal and never gets as far as a port read. The
+        # first version of this wrapper caught only the lazy `.port` failure, so
+        # exactly the class it was written for still escaped.
+        raise FetchError(f"{url}: unparseable url -- {exc}") from exc
     try:
         return parts, parts.port
     except ValueError as exc:
@@ -417,6 +424,12 @@ class Politeness:
         """
         parts, port = split_url(url)
         host = (parts.hostname or "").lower()
+        # `hostname` strips the brackets from an IPv6 literal, so re-adding them
+        # is not cosmetic: without it `http://[::1]:8080/` and
+        # `http://[::1:8080]/` both render as `::1:8080`, which collides two
+        # different origins AND builds a robots url that is not a valid url.
+        if ":" in host:
+            host = f"[{host}]"
         default = {"http": 80, "https": 443}.get(parts.scheme, None)
         return host if port in (None, default) else f"{host}:{port}"
 

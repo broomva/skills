@@ -189,7 +189,11 @@ def key_for(kind: str, name: str) -> str:
         #
         # So kinds whose identity is exact carry a digest of the exact
         # normalised name. Still readable, no longer ambiguous.
-        digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:8]
+        # 16 hex characters, not 8. Eight is 32 bits, and a same-slug family
+        # only needs ~2^16 tries to find a pair that collides -- cheap for
+        # anyone choosing their own URLs, and a collision here merges two pages
+        # into one record that `record-admissible` then happily re-derives.
+        digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
         return f"{kind}::{slug}-{digest}"
     return f"{kind}::{slug}"
 
