@@ -552,12 +552,32 @@ def test_a_lapsed_lease_is_a_typed_refusal_not_a_traceback(tmp_path, capsys):
     assert S.frontier_stats(conn)["total"] == 1
 
 
-def test_a_spent_budget_stops_the_next_seed_entirely(tmp_path, capsys):
+def test_a_budget_too_small_to_traverse_does_not_traverse(tmp_path, capsys):
     """`max(1, budget - spent)` handed out one more document after the shared
-    budget was already gone, so two seeds under `--budget 1` fetched twice."""
+    budget was already gone, so two seeds under `--budget 1` fetched twice.
+
+    The floor is TWO, not one: a traversal costs at least the host's robots.txt
+    plus one sitemap, and `max_docs` bounds only the sitemaps.
+    """
     C.main(["plan", *paths(tmp_path), "--budget", "1",
             "--seed", "https://example.com/about",
             "--seed", "https://acme.test/team"])
     d = out(capsys)
     notes = [t.get("note", "") for t in d["traversals"]]
-    assert any("spent before this seed" in n for n in notes), d["traversals"]
+    assert all("cannot cover a traversal" in n for n in notes), d["traversals"]
+    # Nothing was fetched at all, so the budget is intact for the crawl itself.
+    import fetchd as F
+    daemon = F.FetchDaemon(root=tmp_path / "runs", run_id="r1")
+    assert daemon.pairs() == set(), "a traversal ran on a budget that could not pay"
+    # ...and the seeds are still queued, which is what makes the refusal safe.
+    conn = S.connect(tmp_path / "map.db")
+    assert S.frontier_stats(conn)["total"] == 2
+
+
+def test_a_budget_that_can_pay_still_traverses(tmp_path, capsys):
+    """The bound must not be the answer for an ordinary run."""
+    C.main(["plan", *paths(tmp_path), "--budget", "10",
+            "--seed", "https://example.com/about"])
+    d = out(capsys)
+    assert d["traversals"][0]["docs"], "a funded traversal must actually run"
+    assert d["traversals"][0]["closes"] is True

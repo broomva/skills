@@ -86,18 +86,31 @@ def cmd_plan(args) -> int:
         # left is what stops `--budget 1` spending two requests before the loop
         # has claimed anything.
         spent = sum(1 for r in daemon.verified_rows() if r.get("kind") == "fetch")
+        # `left < 2`, not `< 1`. A traversal costs at least TWO requests -- the
+        # host's robots.txt plus one sitemap -- and `max_docs` bounds only the
+        # sitemap documents, so a remaining allowance of exactly one was still
+        # an overspend by one.
         left = args.budget - spent
-        if left < 1:
+        if left < 2:
             # `max(1, ...)` handed out one more document after the shared budget
             # was already gone, so two seeds under `--budget 1` fetched twice.
             # A spent budget is spent.
             out["traversals"].append({
                 "seed": seed, "pages": [], "dropped": [], "docs": [],
                 "seen": 0, "closes": True, "robots_url": None,
-                "note": f"fetch budget of {args.budget} spent before this seed",
+                "note": f"fetch budget of {args.budget} cannot cover a traversal "
+                        f"of this seed ({left} request(s) left, 2 needed)",
             })
+            # The seed is still QUEUED. Skipping the traversal means the crawl
+            # does not learn the site's other pages; it must not mean the crawl
+            # forgets the page it was actually pointed at, or a small budget
+            # would produce a run with an empty frontier and nothing to read.
+            out["queued"] += int(S.push_frontier(conn, seed, 0))
             continue
-        trav = T.traverse(daemon, seed, budget=args.budget, max_docs=left)
+        # Both bounds, not just the document count: `budget` caps how many pages
+        # reach the frontier and must not promise more than the run can fetch.
+        trav = T.traverse(daemon, seed, budget=min(args.budget, left),
+                          max_docs=left - 1)
         out["traversals"].append(trav.as_dict())
         out["queued"] += T.push_pages(conn, trav.pages, depth=0, parent_id=seed)
         # The seed itself is a page worth reading even when it is absent from

@@ -225,3 +225,17 @@ PYTHONDONTWRITEBYTECODE=1 SOURCER_CHAIN_KEY=test python3 -m pytest tests/ -q
 - **The vocabulary is closed and small.** A predicate outside it is refused
   rather than stored loosely, which means a relation the vocabulary cannot
   express is a relation this skill will not record.
+- **The lease is narrowed, not fenced.** `land` authorises before it mutates and
+  re-checks immediately before touching the frontier, so a worker whose lease
+  died cannot expand someone else's item. It is still a check followed by a
+  write, and closing that properly needs one transaction spanning the whole of
+  `land` — which the store does not offer across a process boundary. What a
+  lapsed lease can still do is admit records, and that is deliberate: records
+  are content-addressed, and `put_record` records a differing re-sighting as a
+  **conflict** that `select()` returns and `payloads_held` counts. Nothing is
+  lost, which is the whole point of *record everything*.
+- **Profile keys are unversioned.** The key shape is `profile::<slug>-<digest>`
+  with no version marker, so changing the derivation invalidates any store
+  written by an earlier build. That is acceptable only because nothing has
+  shipped; the first release that people run against a persisted map needs a
+  key version or a migration.
