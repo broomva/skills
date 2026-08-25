@@ -581,3 +581,81 @@ def test_a_budget_that_can_pay_still_traverses(tmp_path, capsys):
     d = out(capsys)
     assert d["traversals"][0]["docs"], "a funded traversal must actually run"
     assert d["traversals"][0]["closes"] is True
+
+
+def test_project_write_runs_projection_fidelity_first(tmp_path, capsys, monkeypatch):
+    """`--write` reached the filesystem without ever consulting the gate that is
+    advertised as stopping a projection from asserting more than the map holds —
+    so the one permanent, shared destination was the path the gate did not
+    cover."""
+    import gates as G
+    import project as PJ
+
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "c.json"; claims.write_text(json.dumps(seed_claims()))
+    verdicts = tmp_path / "v.json"; verdicts.write_text(json.dumps({"0": True}))
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
+            "--token", item["claim_token"], "--claims", str(claims),
+            "--verdicts", str(verdicts)])
+    capsys.readouterr()
+
+    ents = tmp_path / "entities"
+    assert C.main(["project", *paths(tmp_path), "--entities", str(ents),
+                   "--write"]) == 0
+    d = out(capsys)
+    assert d["projection_fidelity"]["status"] == "pass"
+    assert d["projection_fidelity"]["counted"] == len(d["projected"])
+    assert (ents / "org" / "acme-s-a-s.md").is_file()
+
+
+def test_project_refuses_to_write_when_fidelity_says_no(tmp_path, capsys, monkeypatch):
+    """The other polarity, so the test above is not just a happy path."""
+    import gates as G
+
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "c.json"; claims.write_text(json.dumps(seed_claims()))
+    verdicts = tmp_path / "v.json"; verdicts.write_text(json.dumps({"0": True}))
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
+            "--token", item["claim_token"], "--claims", str(claims),
+            "--verdicts", str(verdicts)])
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        G, "gate_projection_fidelity",
+        lambda records, projection=None: G.GateResult(
+            "projection-fidelity", "pre-ship", G.CLOSED, G.FAIL, 1, "", ("nope",)),
+    )
+    ents = tmp_path / "entities"
+    assert C.main(["project", *paths(tmp_path), "--entities", str(ents),
+                   "--write"]) == 2
+    assert "projection-fidelity says no" in capsys.readouterr().err
+    assert not ents.exists(), "nothing may be written when the gate refuses"
+
+
+def test_land_records_the_page_in_the_read_ledger(tmp_path, capsys):
+    """A page read that honestly yielded nothing must be accounted for, or
+    `inventory-closed` reads it as silent loss."""
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "c.json"; claims.write_text(json.dumps([]))
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
+            "--token", item["claim_token"], "--claims", str(claims)])
+    capsys.readouterr()
+
+    ledger = tmp_path / "runs" / "r1" / "read.jsonl"
+    assert ledger.is_file()
+    rows = [json.loads(x) for x in ledger.read_text().splitlines() if x.strip()]
+    assert rows[0]["url"] == item["url"]
+    assert rows[0]["claims_seen"] == 0 and rows[0]["admitted"] == 0
+
+    import fetchd as F, gates as G
+    daemon = F.FetchDaemon(root=tmp_path / "runs", run_id="r1")
+    assert G.gate_inventory_closed(daemon, S.select(S.connect(tmp_path / "map.db"))).status == G.PASS

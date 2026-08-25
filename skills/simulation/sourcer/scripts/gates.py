@@ -45,6 +45,7 @@ import argparse
 import json
 import sys
 import tempfile
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -490,6 +491,18 @@ def gate_lattice_exact(records) -> GateResult:
                          "path through a simulated grade exists")
 
 
+def _is_robots(url: str) -> bool:
+    """A canonical rules file -- no query, no fragment, exactly that path.
+
+    The same predicate `fetchd` uses to decide what may install a policy, for
+    the same reason: `/robots.txt?x` is a different resource, and letting it
+    count here would let a page under the crawler's own control excuse itself
+    from the inventory.
+    """
+    parts = urllib.parse.urlsplit(url)
+    return parts.path == "/robots.txt" and not parts.query and not parts.fragment
+
+
 def read_ledger(run_dir) -> set:
     """Pages a worker read, whatever they yielded, from `<run>/read.jsonl`.
 
@@ -553,7 +566,15 @@ def gate_inventory_closed(daemon, records, traversal=None, unread=()) -> GateRes
         # accounted for by appearing in the traversal's document ledger.
         dropped |= {doc.get("url") for doc in d.get("docs", [])}
 
-    unaccounted = fetched - used - dropped - set(unread) - read_ledger(daemon.dir)
+    # A rules file is fetched to be OBEYED, not to be cited, so no record will
+    # ever name it and it has no other fate to be given. `transport-custody`
+    # already REQUIRES one per fetched origin, so accounting for it here is not
+    # a loophole -- it is the same fact read from the other side. Without this a
+    # crawl that skipped traversal (`--no-traverse`) failed this gate on the one
+    # fetch the architecture insists on making.
+    robots = {u for u in fetched if _is_robots(u)}
+    unaccounted = (fetched - used - dropped - robots
+                   - set(unread) - read_ledger(daemon.dir))
     for url in sorted(unaccounted):
         failures.append(
             f"{url}: fetched, then accounted for nowhere -- not cited by a "
@@ -565,7 +586,16 @@ def gate_inventory_closed(daemon, records, traversal=None, unread=()) -> GateRes
 
 
 def _traversals(traversal) -> list:
-    """Normalise whatever the caller passed into a list of traversal dicts."""
+    """Normalise whatever the caller passed into a list of traversal dicts.
+
+    SAME TRUST BOUNDARY AS `read_ledger`, stated for the same reason: neither
+    `traversal.json` nor the ledger is in the MAC'd chain, so anything able to
+    write the run directory can add a document row and make a genuinely lost
+    page look accounted for. That is acceptable only because crawl agents have
+    no write access to the run directory -- the custody split the daemon rests
+    on -- and because this gate is about SILENT LOSS rather than about tamper,
+    which the chain covers and `plan-sealed-and-log-chained` reports.
+    """
     if traversal is None:
         return []
     if isinstance(traversal, list):

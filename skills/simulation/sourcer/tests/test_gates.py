@@ -693,3 +693,38 @@ def test_an_absent_read_ledger_is_an_empty_set_not_an_error(run):
     d, conn, trav = run
     assert not (d.dir / "read.jsonl").exists()
     assert G.read_ledger(d.dir) == set()
+
+
+def test_a_spoofed_robots_url_is_not_excused_from_the_inventory(tmp_path):
+    """A rules file is accounted for by construction because it is fetched to be
+    OBEYED. `/robots.txt?x` is a different resource, and letting a substring
+    match count it would let a page under the crawler's own control excuse
+    itself from the inventory."""
+    assert G._is_robots("https://x.test/robots.txt") is True
+    for spoof in ("https://x.test/robots.txt?m=1", "https://x.test/a/robots.txt",
+                  "https://x.test/robots.txt#f", "https://x.test/robots.txt.bak"):
+        assert G._is_robots(spoof) is False, spoof
+
+    d = F.FetchDaemon(
+        root=tmp_path / "runs", run_id="r1",
+        transport=lambda u: (200, b"User-agent: *\nAllow: /\n", u)
+        if u.endswith("/robots.txt") and "?" not in u else (200, PAGE, u),
+        key=KEY,
+    )
+    d.seal_plan({"seeds": ["x"], "max_depth": 0})
+    d.fetch("https://x.test/robots.txt?m=1")
+    r = G.gate_inventory_closed(d, [])
+    assert r.status == G.FAIL
+    assert any("robots.txt?m=1" in f for f in r.failures)
+
+
+def test_every_traversal_is_checked_not_just_the_first(run):
+    """`plan` runs one traversal per seed and writes them as a list. Checking
+    only the first silently ignored every later seed, and its pages then read as
+    unaccounted."""
+    d, conn, trav = run
+    good = trav.as_dict()
+    broken = dict(good, seed="https://second.test/", closes=False, seen=99)
+    r = G.gate_inventory_closed(d, S.select(conn), [good, broken])
+    assert r.status == G.FAIL
+    assert any("does not close" in f for f in r.failures)

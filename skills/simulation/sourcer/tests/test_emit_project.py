@@ -55,6 +55,14 @@ def edge(src, dst, predicate="employs", verdict="entailed", **over):
     return base
 
 
+class OkDaemon:
+    """A daemon whose chain verifies, which `emit` now requires for observed rows."""
+
+    def verified_rows(self):
+        return [{"kind": "fetch", "url": EV["url"], "sha256": EV["sha256"],
+                 "retrieved_at": "1750000000.0"}]
+
+
 @pytest.fixture
 def mapped():
     """A small verified map: two orgs, a person, and two relations."""
@@ -107,7 +115,7 @@ def test_the_grammar_comes_from_data_provider_not_from_here():
 
 
 def test_both_tables_are_emitted_with_real_row_counts(mapped):
-    out = E.emit(mapped, prefix="t")
+    out = E.emit(mapped, prefix="t", daemon=OkDaemon())
     assert out["tables"]["nodes"]["rows"] == 3
     assert out["tables"]["edges"]["rows"] == 2
     assert out["tables"]["nodes"]["arg"].startswith("t_nodes#3:")
@@ -121,7 +129,7 @@ def test_the_observed_simulated_distinction_survives_the_handoff(mapped):
     """The entire reason the crawl was built this way, and trivially lost in a
     table. If this is not in the emitted string, the handoff is lossy."""
     mapped.append(node("org::guess", "Guessed Co", origin="simulated"))
-    arg = E.emit(mapped)["tables"]["nodes"]["arg"]
+    arg = E.emit(mapped, daemon=OkDaemon())["tables"]["nodes"]["arg"]
     assert "simulated" in arg, arg
 
 
@@ -129,7 +137,7 @@ def test_an_edge_whose_endpoint_did_not_ship_is_dropped_and_reported(mapped):
     """A table asserting a relation between two things it does not contain says
     more than the map does — exactly what projection-fidelity refuses."""
     mapped[2]["verdict"] = "unchecked"          # org::globex stops shipping
-    out = E.emit(mapped)
+    out = E.emit(mapped, daemon=OkDaemon())
     assert out["tables"]["edges"]["rows"] == 1
     dropped = out["dropped_edges"]
     assert len(dropped) == 1
@@ -142,28 +150,47 @@ def test_an_empty_map_is_a_refusal_not_an_empty_table():
         E.emit([node("org::x", "X", verdict="unchecked")])
 
 
-def test_retrieval_times_come_from_the_chain_and_say_so(mapped, tmp_path):
+def test_retrieval_times_come_from_the_chain(mapped):
     """sourcer's Evidence carries no timestamp because the CHAIN carries it.
     Inventing one here would look identical and mean nothing."""
-    out = E.emit(mapped, daemon=None)
-    assert out["retrieval_times_resolved"] is False
-
-    class FakeDaemon:
-        def verified_rows(self):
-            return [{"kind": "fetch", "url": EV["url"], "sha256": EV["sha256"],
-                     "retrieved_at": "1750000000.0"}]
-
-    times = E.retrieval_times(FakeDaemon())
+    times = E.retrieval_times(OkDaemon())
     assert times[(EV["url"], EV["sha256"])] == "1750000000.0"
-    assert E.emit(mapped, daemon=FakeDaemon())["retrieval_times_resolved"] is True
+    assert E.emit(mapped, daemon=OkDaemon())["retrieval_times_resolved"] is True
 
 
-def test_an_unreadable_daemon_yields_no_times_rather_than_now(mapped):
+def test_emitting_observed_rows_without_a_daemon_is_refused(mapped):
+    """The table is emitted with `evidence_verified=True`, and that claim has to
+    rest on something."""
+    with pytest.raises(E.EmitError, match="needs the daemon"):
+        E.emit(mapped, daemon=None)
+
+
+def test_a_broken_chain_refuses_the_whole_emit(mapped):
+    """Failing OPEN at exactly the point the custody argument rests is worse
+    than not checking at all.
+
+    `retrieval_times` used to swallow the exception and return `{}`, so a run
+    whose log had been tampered with still produced a Parallax table — carrying
+    the custody claim, with an empty timestamp as the only tell.
+    """
     class Broken:
         def verified_rows(self):
             raise RuntimeError("chain is broken")
 
-    assert E.retrieval_times(Broken()) == {}
+    with pytest.raises(RuntimeError):
+        E.retrieval_times(Broken())
+    with pytest.raises(E.EmitError, match="unverifiable run"):
+        E.emit(mapped, daemon=Broken())
+
+
+def test_a_map_of_only_simulated_rows_needs_no_daemon(mapped):
+    """The requirement is about custody, so it applies exactly where custody is
+    claimed. A simulated row claims none."""
+    sim = [node("org::guess", "Guessed Co", origin="simulated"),
+           node("org::other", "Other Co", origin="simulated")]
+    out = E.emit(sim, daemon=None)
+    assert out["tables"]["nodes"]["rows"] == 2
+    assert "simulated" in out["tables"]["nodes"]["arg"]
 
 
 # --------------------------------------------------------------------------
@@ -353,3 +380,111 @@ def test_the_linter_would_reject_an_over_length_claim(tmp_path):
     assert r.returncode != 0 or "No errors found" not in r.stdout, (
         "the linter accepted an over-length core_claim, so passing it proves nothing"
     )
+
+
+# --------------------------------------------------------------------------
+# P20 close-out findings, each at the property the fix actually holds
+# --------------------------------------------------------------------------
+
+
+def test_node_rows_join_on_the_field_edges_actually_reference(mapped):
+    """An edge's `src`/`dst` hold record IDs. Emitting `canonical_key` as the
+    node table's join column made every edge point at a key no node row carried,
+    whenever the two differed — two silently unjoinable tables."""
+    for r in mapped:
+        if r["kind"] == "node":
+            r["id"] = "n-" + r["canonical_key"].split("::", 1)[1]
+    for r in mapped:
+        if r["kind"] == "edge":
+            r["src"] = "n-" + r["src"].split("::", 1)[1]
+            r["dst"] = "n-" + r["dst"].split("::", 1)[1]
+
+    rows = E.node_rows(mapped, {})
+    keys = {f.value for row in rows for f in row.fields if f.name == "key"}
+    edges = E.edge_rows(mapped, {})
+    endpoints = {f.value for row in edges for f in row.fields
+                 if f.name in ("subject", "object")}
+    assert endpoints <= keys, f"edges point at {endpoints - keys}, which no node row carries"
+    # ...and the canonical key is still carried, just not as the join column.
+    assert any(f.name == "canonical_key" for row in rows for f in row.fields)
+
+
+def test_a_simulated_edge_never_reaches_a_projected_page(mapped):
+    """A `possibly_same_as` proposal is simulated AND entailed, so a filter on
+    verdict alone let it render into a permanent page's core_claim, related
+    links and Relations list — carrying no evidence, on a page whose whole
+    contract is that every claim points at bytes."""
+    mapped.append({
+        "id": "same", "kind": "edge", "canonical_key": "same", "depth": 0,
+        "layer": "L2", "origin": "simulated", "verdict": "entailed",
+        "predicate": X.SAME_AS, "src": "org::acme-s-a-s", "dst": "org::twin",
+        "evidence": None, "inferred_from": ["org::acme-s-a-s", "org::twin"],
+        "attrs": {},
+    })
+    mapped.append(node("org::twin", "ACME Ltda"))
+    body = PJ.page_for(mapped[0], mapped, run_id="r1").body
+    assert X.SAME_AS not in body
+    # `org::twin` projects and is reachable ONLY through the simulated edge, so
+    # a related link to it could only have come from that edge.
+    assert "[[twin]]" not in body, "a simulated edge must not create a related link"
+    # The observed edges are still there, so this is a filter and not a mute.
+    assert "employs" in body and "[[globex]]" in body
+
+
+@pytest.mark.parametrize("hostile", [
+    'X"\nstatus: verified\ninjected: "yes',
+    'A: b\n- c\n',
+    'quote " and \\ backslash',
+])
+def test_an_adversarial_name_cannot_inject_frontmatter(hostile):
+    """Entity names come out of CRAWLED BYTES, so a hostile page names itself.
+
+    Demonstrated before it was fixed: a page's parsed frontmatter carried an
+    `injected` key that no code ever wrote.
+    """
+    yaml = pytest.importorskip("yaml")
+    ev = dict(EV, quote=hostile)
+    rec = node("org::evil", hostile, evidence=ev)
+    body = PJ.page_for(rec, [rec], run_id="r1").body
+    meta = yaml.safe_load(body.split("---\n", 2)[1])
+    assert set(meta) == {"id", "type", "status", "core_claim", "tags",
+                         "sources", "related", "created", "updated", "generated"}
+    assert "injected" not in meta
+    assert meta["status"] == "candidate", "status must not be overwritable"
+
+
+def test_two_keys_that_slug_to_one_path_are_refused(mapped):
+    """Without this the second page silently overwrites the first while
+    `emitted_ids` reports both as projected — a projection claiming more
+    entities than it wrote."""
+    mapped.append(node("org::acme.s.a.s", "ACME dot S dot A dot S"))
+    assert PJ.slug_of("org::acme.s.a.s") == PJ.slug_of("org::acme-s-a-s")
+    with pytest.raises(PJ.ProjectionError, match="both project to"):
+        PJ.build(mapped, run_id="r1")
+
+
+def test_the_cross_skill_contract_is_checked_before_it_is_used(monkeypatch):
+    """Partial version drift must be a named refusal, not a runtime AttributeError.
+
+    `emit` uses `Record`, `Field`, `Evidence`, `emit_table_arg` and the error
+    type. Checking only some of them means the ones it forgot fail deep inside a
+    call, with a traceback instead of a sentence.
+    """
+    import types
+
+    real = E._provider()
+    for missing in ("Record", "Field", "Evidence", "emit_table_arg", "ProviderError"):
+        stub = types.ModuleType("provider")
+        for name in ("Record", "Field", "Evidence", "emit_table_arg", "ProviderError"):
+            if name != missing:
+                setattr(stub, name, getattr(real, name))
+        monkeypatch.setitem(sys.modules, "provider", stub)
+        with pytest.raises(E.EmitError, match=missing):
+            E._provider()
+
+
+def test_a_missing_data_provider_is_a_refusal_not_a_fallback(monkeypatch):
+    """A fallback IS the second spelling of the grammar."""
+    monkeypatch.setattr(E, "_PROVIDER", Path("/nonexistent/data-provider/scripts"))
+    with pytest.raises(E.EmitError, match="re-spelling"):
+        E._provider()

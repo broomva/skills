@@ -82,14 +82,21 @@ function wellFormed(c) {
 function safeParse(text) {
   try {
     const v = JSON.parse(text ?? '[]')
-    return Array.isArray(v) ? v : []
-  } catch {
-    log(`extractor returned unparseable claims; treating the page as empty`)
-    return []
+    if (Array.isArray(v)) return { claims: v, failed: false }
+    return { claims: [], failed: true, why: `claims_json was ${typeof v}, not a list` }
+  } catch (e) {
+    // A parse failure is NOT the same answer as "this page relates nothing",
+    // and collapsing the two let a broken extractor produce a green, empty run
+    // that looked like an honest one. It is reported and counted.
+    return { claims: [], failed: true, why: String(e && e.message || e) }
   }
 }
 
 const KEY = args?.chainKey ? `SOURCER_CHAIN_KEY=${args.chainKey} ` : ''
+// Extractor payloads that did not parse. Surfaced in the return value so a run
+// cannot look complete while an agent was silently producing nothing.
+const extractionFailures = []
+
 const PY = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/sourcer.py`
 const GATES = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/gates.py`
 
@@ -266,7 +273,14 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
        A string, because a nested array comes back mangled otherwise.`,
       { label: `extract:${taken.digest.slice(0, 8)}`, phase: 'Extract',
         schema: CLAIMS_SCHEMA },
-    ).then(r => ({ taken, claims: safeParse(r?.claims_json) })),
+    ).then(r => {
+      const parsed = safeParse(r?.claims_json)
+      if (parsed.failed) {
+        log(`extract:${taken.digest.slice(0, 8)} returned unparseable claims (${parsed.why}) — page dropped, NOT counted as empty`)
+        extractionFailures.push({ url: taken.url, why: parsed.why })
+      }
+      return { taken, claims: parsed.claims }
+    }),
 
     // -- verify: blind, one judge per claim -------------------------------
     async ({ taken, claims }) => {
@@ -371,6 +385,7 @@ const suite = await agent(
 // a green suite is easy to over-read, and the precise wording is the value.
 return {
   verdict: suite?.verdict ?? 'UNKNOWN',
+  extractionFailures,
   failing: suite?.failing ?? '',
   probes: `${suite?.probes_ok ?? '?'}/${suite?.probes_total ?? '?'}`,
   note: suite?.verdict === 'VALID'

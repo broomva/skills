@@ -461,8 +461,22 @@ def cmd_project(args) -> int:
                       "kind the graph has a type for",
         }, indent=2, sort_keys=True))
         return OK
+    # RUN THE GATE before writing. `projection-fidelity` is advertised as the
+    # thing that stops a projection asserting more than the map holds, and
+    # `--write` reached the filesystem without ever consulting it -- so the one
+    # permanent, shared destination was the one path the gate did not cover.
+    import gates as G
+
+    fidelity = G.gate_projection_fidelity(records, PJ.emitted_ids(records))
+    if fidelity.status != G.PASS:
+        raise Refusal(
+            f"projection-fidelity says no ({fidelity.status}): "
+            + "; ".join(fidelity.failures[:5])
+        )
+
     out = PJ.write(pages, Path(args.entities), dry_run=not args.write)
     out["projected"] = [p.as_dict() for p in pages]
+    out["projection_fidelity"] = fidelity.as_dict()
     print(json.dumps(out, indent=2, sort_keys=True))
     return OK
 

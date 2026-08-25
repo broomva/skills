@@ -29,6 +29,7 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
+import json
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -60,6 +61,22 @@ _SLUG = re.compile(r"[^a-z0-9]+")
 
 class ProjectionError(Exception):
     """A refusal. Never a page asserting more than the map holds."""
+
+
+def yaml_scalar(text) -> str:
+    """A YAML-safe scalar for adversary-controlled text.
+
+    Entity names come out of crawled bytes, so a hostile page can name itself
+    `X"\nstatus: verified\ninjected: "yes` and — with naive `f'"{name}"'`
+    quoting — write arbitrary keys into the frontmatter of a permanent
+    knowledge-graph page. Demonstrated, not hypothetical: a review produced a
+    page whose parsed frontmatter carried an `injected` key.
+
+    JSON encoding is the fix and needs no dependency: YAML is a superset of JSON
+    for scalars, so a `json.dumps` string is always a valid, fully-escaped
+    double-quoted YAML scalar.
+    """
+    return json.dumps("" if text is None else str(text), ensure_ascii=False)
 
 
 def slug_of(key: str) -> str:
@@ -133,10 +150,16 @@ def page_for(record: dict, records: list, run_id: str, today: Optional[str] = No
     ev = record.get("evidence") or {}
     stamp = today or date.today().isoformat()
 
+    # OBSERVED edges only. A `possibly_same_as` proposal is simulated and
+    # entailed, and without the origin filter it rendered straight into the
+    # core_claim, the related links and the Relations list of a permanent page
+    # -- carrying no evidence, on a page whose whole contract is that every
+    # claim points at bytes. Exactly what this module's own docstring says it
+    # prevents, prevented by nothing.
     out_edges = [
         e for e in records
         if e.get("kind") == "edge" and e.get("src") == record.get("id")
-        and e.get("verdict") == "entailed"
+        and e.get("verdict") == "entailed" and e.get("origin") == "observed"
     ]
     # `related:` links only to entities that ALSO project. A wikilink to a page
     # that was never written is a dangling reference the graph reports as broken,
@@ -144,23 +167,24 @@ def page_for(record: dict, records: list, run_id: str, today: Optional[str] = No
     # what projection-fidelity forbids.
     projected = {r["canonical_key"] for r in projectable(records)}
     related = sorted({
-        f'"[[{slug_of(e["dst"])}]]"' for e in out_edges if e.get("dst") in projected
+        yaml_scalar("[[" + slug_of(e["dst"]) + "]]")
+        for e in out_edges if e.get("dst") in projected
     })
 
     lines = [
         "---",
-        f'id: "{KIND_TO_TYPE[kind]}/{slug_of(key)}"',
+        f"id: {yaml_scalar(KIND_TO_TYPE[kind] + '/' + slug_of(key))}",
         f"type: {KIND_TO_TYPE[kind]}",
         "status: candidate",
-        f'core_claim: "{core_claim_for(record, out_edges)}"',
+        f"core_claim: {yaml_scalar(core_claim_for(record, out_edges))}",
         "tags:",
         *[f"  - {t}" for t in PROJECTION_TAGS],
         "sources:",
         f"  - sourcer-run-{run_id}",
         "related:",
         *[f"  - {r}" for r in related],
-        f'created: "{stamp}"',
-        f'updated: "{stamp}"',
+        f"created: {yaml_scalar(stamp)}",
+        f"updated: {yaml_scalar(stamp)}",
         "generated: sourcer",
         "---",
         "",
@@ -208,8 +232,24 @@ def page_for(record: dict, records: list, run_id: str, today: Optional[str] = No
 
 
 def build(records, run_id: str, today: Optional[str] = None) -> list:
-    """Every page this map projects to. Writes nothing."""
-    return [page_for(r, records, run_id, today) for r in projectable(records)]
+    """Every page this map projects to. Writes nothing.
+
+    Refuses on a path collision. Two distinct keys can slug to one filename, and
+    without this the second page silently overwrites the first while
+    `emitted_ids` reports both as projected -- a projection that claims more
+    entities than it wrote.
+    """
+    pages = [page_for(r, records, run_id, today) for r in projectable(records)]
+    seen: dict = {}
+    for page in pages:
+        if page.path in seen and seen[page.path] != page.key:
+            raise ProjectionError(
+                f"{page.key} and {seen[page.path]} both project to {page.path}; "
+                "one would silently overwrite the other while both are reported "
+                "as written"
+            )
+        seen[page.path] = page.key
+    return pages
 
 
 def emitted_ids(records) -> list:

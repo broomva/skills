@@ -61,7 +61,7 @@ def _provider():
         sys.path.insert(0, str(_PROVIDER))
     import provider  # noqa: PLC0415
 
-    for needed in ("Record", "Field", "emit_table_arg"):
+    for needed in ("Record", "Field", "Evidence", "emit_table_arg", "ProviderError"):
         if not hasattr(provider, needed):
             raise EmitError(
                 f"data-provider has no `{needed}`; its contract changed and this "
@@ -99,10 +99,12 @@ def retrieval_times(daemon) -> dict:
     """
     if daemon is None:
         return {}
-    try:
-        rows = daemon.verified_rows()
-    except Exception:
-        return {}
+    # NOT swallowed. `verified_rows` raises when the chain does not hold, and
+    # returning `{}` there meant a run whose log had been tampered with emitted
+    # a table anyway -- with `evidence_verified=True` attached, which is the one
+    # claim this module makes on its own authority. Failing open at exactly the
+    # point the custody argument rests is worse than not checking at all.
+    rows = daemon.verified_rows()
     return {
         (r.get("url"), r.get("sha256")): str(r.get("retrieved_at", ""))
         for r in rows if r.get("kind") == "fetch"
@@ -150,7 +152,12 @@ def node_rows(records, when: Optional[dict] = None) -> list:
         key = r.get("canonical_key", "")
         name = (r.get("attrs") or {}).get("name", key)
         out.append(provider.Record(fields=[
-            _field(provider, "key", key, r, when),
+            # The JOIN column is the record `id`, because that is what an edge's
+            # `src`/`dst` hold. Emitting `canonical_key` here made every edge in
+            # the table point at a key no node row carried, whenever the two
+            # differed -- a silently unjoinable pair of tables.
+            _field(provider, "key", r.get("id"), r, when),
+            _field(provider, "canonical_key", key, r, when),
             _field(provider, "kind", key.split("::", 1)[0], r, when),
             _field(provider, "name", name, r, when),
             _field(provider, "depth", r.get("depth", 0), r, when),
@@ -213,7 +220,25 @@ def emit(records, prefix: str = "sourcer", daemon=None) -> dict:
     that a caller cannot skip verification silently.
     """
     provider = _provider()
-    when = retrieval_times(daemon)
+    # An observed row's whole meaning is that bytes back it. Emitting one
+    # without a daemon that can still verify its own chain would be asserting
+    # custody nobody checked, so it refuses rather than degrades.
+    if any(r.get("origin") == "observed" for r in shippable(records)):
+        if daemon is None:
+            raise EmitError(
+                "this map holds observed rows, so `emit` needs the daemon that "
+                "fetched them: the table is emitted with evidence_verified=True "
+                "and that claim has to rest on something"
+            )
+        try:
+            when = retrieval_times(daemon)
+        except Exception as exc:
+            raise EmitError(
+                f"refusing to emit from an unverifiable run: {exc}. Every row "
+                "would carry a custody claim the chain cannot support."
+            ) from exc
+    else:
+        when = retrieval_times(daemon)
     nodes, edges = node_rows(records, when), edge_rows(records, when)
     if not nodes and not edges:
         raise EmitError(

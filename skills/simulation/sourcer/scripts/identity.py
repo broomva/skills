@@ -56,8 +56,13 @@ LEGAL_FORMS = frozenset({
 #: Connectives are safe to drop because they carry no identity at all. Anything
 #: that DOES carry identity must stay: every entry here makes two names look
 #: more alike, so a wrong entry manufactures candidate pairs.
+#: `holdings` and `company` are NOT here, though they look like noise. Dropping
+#: them scored `Acme Holdings` and `Acme Company` at 1.0 — two plausibly
+#: distinct sister entities proposed as one. Bounded harm, since a proposal is
+#: simulated and non-expandable, but a proposer whose list is full of
+#: near-certain false positives is a proposer nobody reads.
 STOPWORDS = frozenset({
-    "the", "group", "holdings", "holding", "company", "and",
+    "the", "group", "and",
     "de", "del", "la", "las", "el", "los", "y", "of", "for", "en",
 })
 

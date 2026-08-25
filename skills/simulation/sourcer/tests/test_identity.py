@@ -259,3 +259,25 @@ def test_resolve_on_a_map_with_no_duplicates_says_so(tmp_path):
     assert report["proposed"] == 0
     assert report["merged"] == 0
     assert "never a merge" in report["note"]
+
+
+@pytest.mark.parametrize("a,b", [
+    ("Acme Holdings", "Acme Company"),
+    ("Acme Holdings", "Acme Ventures"),
+])
+def test_words_that_carry_identity_are_not_stopwords(a, b):
+    """`holdings` and `company` LOOK like noise and are not.
+
+    Dropping them scored these at 1.0 — two plausibly distinct sister entities
+    proposed as one. The harm is bounded, since a proposal is simulated and
+    non-expandable, but a proposer whose list is full of near-certain false
+    positives is a proposer nobody reads.
+    """
+    assert I.similarity(a, b) < I.DEFAULT_THRESHOLD
+    assert "holdings" not in I.STOPWORDS and "company" not in I.STOPWORDS
+
+
+def test_words_that_carry_no_identity_still_are_stopwords():
+    """The other direction: the list must not become empty out of caution."""
+    assert I.similarity("Alpha Group", "Beta Group") < I.DEFAULT_THRESHOLD
+    assert I.similarity("Nacional de Café", "Café Nacional") == I.EXACT_AFTER_NORMALISATION
