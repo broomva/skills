@@ -509,16 +509,17 @@ def gate_inventory_closed(daemon, records, traversal=None, unread=()) -> GateRes
     }
     used = {r["evidence"]["url"] for r in records if r.get("evidence")}
     dropped = set()
-    if traversal is not None:
-        d = traversal if isinstance(traversal, dict) else traversal.as_dict()
+    # One traversal or many. `plan` runs one per seed and writes them as a list,
+    # so accepting only a single dict silently ignored every seed after the
+    # first -- and the pages it found then read as unaccounted.
+    for d in _traversals(traversal):
         if not d.get("closes", False):
             failures.append(
-                f"the traversal's own accounting does not close: "
+                f"a traversal's own accounting does not close: "
                 f"{len(d.get('pages', []))} pages + {len(d.get('dropped', []))} "
                 f"dropped != {d.get('seen')} seen"
             )
-        dropped = {x.get("url") for x in d.get("dropped", [])}
-        dropped |= {doc.get("url") for doc in d.get("docs", []) if doc.get("note") != "ok"}
+        dropped |= {x.get("url") for x in d.get("dropped", [])}
         # A sitemap or robots.txt is fetched to be READ, not to be cited. It is
         # accounted for by appearing in the traversal's document ledger.
         dropped |= {doc.get("url") for doc in d.get("docs", [])}
@@ -528,6 +529,15 @@ def gate_inventory_closed(daemon, records, traversal=None, unread=()) -> GateRes
         failures.append(f"{url}: fetched, then accounted for nowhere")
     return _result(name, stage, CLOSED, failures, len(fetched),
                    empty="the run fetched nothing")
+
+
+def _traversals(traversal) -> list:
+    """Normalise whatever the caller passed into a list of traversal dicts."""
+    if traversal is None:
+        return []
+    if isinstance(traversal, list):
+        return [t if isinstance(t, dict) else t.as_dict() for t in traversal]
+    return [traversal if isinstance(traversal, dict) else traversal.as_dict()]
 
 
 def gate_corroboration_grade(records) -> GateResult:
@@ -930,7 +940,8 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--run", required=True, help="the run directory (holds plan.json)")
     ap.add_argument("--db", required=True, help="the store's sqlite file")
-    ap.add_argument("--traversal", help="a traversal.as_dict() JSON file")
+    ap.add_argument("--traversal",
+                    help="a traversal JSON file; defaults to <run>/traversal.json")
     ap.add_argument("--projection", help="a JSON list of records about to be asserted")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
@@ -938,7 +949,11 @@ def main(argv=None) -> int:
     run = Path(args.run)
     daemon = F.FetchDaemon(root=run.parent, run_id=run.name)
     conn = S.connect(Path(args.db))
-    traversal = json.loads(Path(args.traversal).read_text()) if args.traversal else None
+    # Found in the run directory when not named. A gate that needs a flag an
+    # operator must remember is a gate that fails for reasons unrelated to the
+    # thing it measures.
+    trav_path = Path(args.traversal) if args.traversal else (run / "traversal.json")
+    traversal = json.loads(trav_path.read_text()) if trav_path.is_file() else None
     projection = json.loads(Path(args.projection).read_text()) if args.projection else None
 
     suite = run_suite(daemon, conn, traversal=traversal, projection=projection)

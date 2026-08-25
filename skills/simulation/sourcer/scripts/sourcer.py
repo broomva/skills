@@ -123,6 +123,14 @@ def cmd_plan(args) -> int:
         # the sitemap, which is common: a sitemap lists what a publisher wants
         # indexed, not everything that exists.
         out["queued"] += int(S.push_frontier(conn, seed, 0))
+    # Persist the traversal record INTO THE RUN. `inventory-closed` needs it to
+    # tell "fetched and accounted for" from "fetched and lost", and requiring an
+    # operator to remember `--traversal` meant every workflow run failed that
+    # gate for a reason that had nothing to do with the crawl. A run directory
+    # should describe itself.
+    (run / "traversal.json").write_text(
+        json.dumps(out["traversals"], indent=2, sort_keys=True), encoding="utf-8"
+    )
     print(json.dumps(out, indent=2, sort_keys=True))
     return OK
 

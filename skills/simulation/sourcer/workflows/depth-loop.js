@@ -65,6 +65,18 @@ if (!SCRIPTS || !RUN || !DB || SEEDS.length === 0) {
 // them. The key therefore travels on the command line when `args.chainKey` is
 // given, and otherwise the ambient environment must already carry it — which is
 // the right default for a real run, where a key on an argv is a key in `ps`.
+// A model returning "[]" as a string is normal; a model returning prose is not,
+// and the difference must be a dropped page rather than a dead workflow.
+function safeParse(text) {
+  try {
+    const v = JSON.parse(text ?? '[]')
+    return Array.isArray(v) ? v : []
+  } catch {
+    log(`extractor returned unparseable claims; treating the page as empty`)
+    return []
+  }
+}
+
 const KEY = args?.chainKey ? `SOURCER_CHAIN_KEY=${args.chainKey} ` : ''
 const PY = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/sourcer.py`
 const GATES = `${KEY}PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/gates.py`
@@ -85,11 +97,73 @@ function claimText(taken, c) {
   return `the subject at bytes ${c.subject.span_start}..${c.subject.span_end} ` +
          `(a ${c.subject.kind}) stands in the relation "${c.predicate}" to ` +
          `the object at bytes ${c.object.span_start}..${c.object.span_end} ` +
-         `(a ${c.object.kind}) — read all three ranges of ${taken.item.path} ` +
+         `(a ${c.object.kind}) — read all three ranges of ${taken.path} ` +
          `and judge whether the relation span STATES that relation between ` +
          `those two specific things, not merely that it mentions both`
 }
-const JSON_OBJ = { type: 'object', additionalProperties: true }
+// Schemas declare their FIELDS, and every field is a scalar.
+//
+// `{type:'object', additionalProperties:true}` looks permissive and is a trap:
+// with no declared properties the structured-output layer hands nested objects
+// back as JSON *strings*, so `taken.item.digest` was `undefined` and every
+// pipeline stage died on it. Found by running the workflow, not by reading it —
+// a schema that describes nothing is the same vacuity this skill is about.
+//
+// So `take` returns a FLAT record rather than a nested `item`. Flat scalars
+// cannot be coerced into anything, which makes the contract robust instead of
+// merely correct-when-it-works.
+const TAKE_SCHEMA = {
+  type: 'object',
+  properties: {
+    found: { type: 'boolean' },
+    url: { type: 'string' },
+    digest: { type: 'string' },
+    depth: { type: 'integer' },
+    claim_token: { type: 'string' },
+    path: { type: 'string' },
+    n_bytes: { type: 'integer' },
+    vocabulary: { type: 'string' },
+    reason: { type: 'string' },
+  },
+  required: ['found'],
+}
+
+const CLAIMS_SCHEMA = {
+  type: 'object',
+  properties: { claims_json: { type: 'string' }, count: { type: 'integer' } },
+  required: ['claims_json', 'count'],
+}
+
+const VERDICT_SCHEMA = {
+  type: 'object',
+  properties: { entailed: { type: 'boolean' }, why: { type: 'string' } },
+  required: ['entailed'],
+}
+
+const LAND_SCHEMA = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' }, admitted: { type: 'integer' },
+    entailed: { type: 'integer' }, refuted: { type: 'integer' },
+    expanded: { type: 'integer' }, error: { type: 'string' },
+  },
+  required: ['ok'],
+}
+
+const GATES_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string' }, failing: { type: 'string' },
+    probes_ok: { type: 'integer' }, probes_total: { type: 'integer' },
+  },
+  required: ['verdict'],
+}
+
+const PLAN_SCHEMA = {
+  type: 'object',
+  properties: { queued: { type: 'integer' }, refused: { type: 'string' } },
+  required: ['queued'],
+}
 
 // ---------------------------------------------------------------------------
 
@@ -101,12 +175,12 @@ const planned = await agent(
 
      ${PY} plan --run ${RUN} --db ${DB} ${seedArgs} --max-depth ${MAX_DEPTH} --budget ${BUDGET}
 
-   Do not edit any file. Do not run anything else. If it exits 2, return its
-   stderr as {"refused": "<text>"} -- a refusal is an answer, not an obstacle to
-   work around.`,
-  { label: 'plan', schema: JSON_OBJ },
+   Return {"queued": <the "queued" number from its stdout>}. If it exits 2,
+   return {"queued": 0, "refused": "<its stderr>"} — a refusal is an answer, not
+   an obstacle to work around. Do not edit any file. Do not run anything else.`,
+  { label: 'plan', schema: PLAN_SCHEMA },
 )
-log(`planned: queued ${planned?.queued ?? '?'} page(s) from ${SEEDS.length} seed(s)`)
+log(`planned: queued ${planned?.queued ?? 0} page(s) from ${SEEDS.length} seed(s)`)
 
 // ---------------------------------------------------------------------------
 // The depth loop.
@@ -125,11 +199,16 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
          ${PY} take --run ${RUN} --db ${DB} --worker w${i}
 
-       Return the JSON unchanged. An "item" of null is a normal answer meaning
-       the frontier is empty or the budget is spent; do not retry it.`,
-      { label: `take:d${depth}:w${i}`, phase: 'Plan', schema: JSON_OBJ },
+       Its stdout has an "item" object (or "item": null). FLATTEN it:
+         {"found": true, "url": ..., "digest": ..., "depth": ...,
+          "claim_token": ..., "path": ..., "n_bytes": ...,
+          "vocabulary": <the "vocabulary" string>}
+       If "item" is null return {"found": false, "reason": <its "reason">}.
+       That is a normal answer meaning the frontier is empty or the budget is
+       spent; do not retry it.`,
+      { label: `take:d${depth}:w${i}`, phase: 'Plan', schema: TAKE_SCHEMA },
     )
-    if (!taken?.item) break
+    if (!taken?.found || !taken.digest) break
     items.push(taken)
   }
   if (items.length === 0) {
@@ -147,9 +226,9 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
       `You are reading ONE page that is already on disk. You have no network and
        you must not fetch anything.
 
-         file: ${taken.item.path}
-         url:  ${taken.item.url}   (context only -- do NOT fetch it)
-         size: ${taken.item.n_bytes} bytes
+         file: ${taken.path}
+         url:  ${taken.url}   (context only -- do NOT fetch it)
+         size: ${taken.n_bytes} bytes
 
        Return a JSON list of relation claims. Each claim locates its entities by
        BYTE OFFSET into that file. There is no field in which to write a name:
@@ -165,10 +244,13 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
        above, so there is no span that makes co-mention pass. Widening the span
        until it encloses both is the move that bound exists to refuse.
 
-       An empty list is a correct answer for a page that relates nothing.`,
-      { label: `extract:${taken.item.digest.slice(0, 8)}`, phase: 'Extract',
-        schema: { type: 'array', items: JSON_OBJ } },
-    ).then(claims => ({ taken, claims: claims ?? [] })),
+       An empty list is a correct answer for a page that relates nothing.
+
+       Return {"claims_json": "<the JSON list as a STRING>", "count": <n>}.
+       A string, because a nested array comes back mangled otherwise.`,
+      { label: `extract:${taken.digest.slice(0, 8)}`, phase: 'Extract',
+        schema: CLAIMS_SCHEMA },
+    ).then(r => ({ taken, claims: safeParse(r?.claims_json) })),
 
     // -- verify: blind, one judge per claim -------------------------------
     async ({ taken, claims }) => {
@@ -183,7 +265,7 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
         const v = await agent(
           `Judge one claim against one span. You are not told who produced either.
 
-             span:  bytes ${c.span_start}..${c.span_end} of ${taken.item.path}
+             span:  bytes ${c.span_start}..${c.span_end} of ${taken.path}
                     read exactly that byte range of that file, and nothing else
              claim: ${JSON.stringify(claimText(taken, c))}
 
@@ -193,11 +275,7 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
            Answer {"entailed": true} or {"entailed": false, "why": "..."}.`,
           { label: `verify:d${depth}:${c.predicate}`, phase: 'Verify',
-            schema: {
-              type: 'object',
-              properties: { entailed: { type: 'boolean' }, why: { type: 'string' } },
-              required: ['entailed'],
-            } },
+            schema: VERDICT_SCHEMA },
         )
         // A verifier that did not answer leaves the claim out of the file
         // entirely, so its records stay `unchecked` -- which is NOT permission
@@ -210,7 +288,7 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
     // -- land: the script decides, from artifacts on disk ------------------
     ({ taken, claims, verdicts }) => {
-      const tag = taken.item.digest.slice(0, 8)
+      const tag = taken.digest.slice(0, 8)
       return agent(
         `Write these two files exactly as given, then run one command.
 
@@ -223,16 +301,18 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
          Then run exactly:
 
            ${PY} land --run ${RUN} --db ${DB} \\
-             --url ${taken.item.url} --digest ${taken.item.digest} \\
-             --token ${taken.item.claim_token} \\
+             --url ${taken.url} --digest ${taken.digest} \\
+             --token ${taken.claim_token} \\
              --claims ${RUN}/claims-${tag}.json \\
              --verdicts ${RUN}/verdicts-${tag}.json
 
-         Return its stdout verbatim as JSON. Exit 2 is a refusal carrying a
-         reason: return that reason. Do not edit the files to get past it, and
-         do not retry -- the lease is released either way, and a second attempt
-         would be landing claims against an item you no longer hold.`,
-        { label: `land:${tag}`, phase: 'Extract', schema: JSON_OBJ },
+         Return {"ok": true, "admitted": ..., "entailed": ..., "refuted": ...,
+         "expanded": ...} from its stdout "stats". Exit 2 is a refusal: return
+         {"ok": false, "error": "<its stderr>"}. Do not edit the files to get
+         past it, and do not retry -- the lease is released either way, and a
+         second attempt would be landing claims against an item you no longer
+         hold.`,
+        { label: `land:${tag}`, phase: 'Extract', schema: LAND_SCHEMA },
       )
     },
   )
@@ -249,9 +329,12 @@ const suite = await agent(
 
      ${GATES} --run ${RUN} --db ${DB} --json
 
-   Exit 0 is VALID and exit 2 is INVALID. Both are answers -- return the JSON
-   either way. Do not modify anything to change the outcome.`,
-  { label: 'gates', schema: JSON_OBJ },
+   Exit 0 is VALID and exit 2 is INVALID. Both are answers. Return
+   {"verdict": "<the verdict>", "probes_ok": <n>, "probes_total": <n>,
+    "failing": "<comma-separated names of gates whose status is not pass or
+    annotate, or an empty string>"}. Do not modify anything to change the
+    outcome.`,
+  { label: 'gates', schema: GATES_SCHEMA },
 )
 
 // A run whose gates did not pass is not a smaller result; it is a result nobody
@@ -260,7 +343,8 @@ const suite = await agent(
 // a green suite is easy to over-read, and the precise wording is the value.
 return {
   verdict: suite?.verdict ?? 'UNKNOWN',
-  gates: suite?.gates ?? [],
+  failing: suite?.failing ?? '',
+  probes: `${suite?.probes_ok ?? '?'}/${suite?.probes_total ?? '?'}`,
   note: suite?.verdict === 'VALID'
     ? 'A page at each cited URL, held at each cited digest, verifiably says what the map says it says. That is NOT a claim that what those pages say is true.'
     : 'INVALID -- do not read this map as findings. Check the failing gates below.',
