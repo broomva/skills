@@ -61,6 +61,12 @@ MAX_INDEX_DEPTH = 3
 #: is the difference between the two that does not require telling them apart.
 DEFAULT_MAX_DOCS = 50
 
+#: How much compressed input is fed to the inflater at a time. A module-level
+#: constant rather than a local so a test can shrink it: the truncation bug the
+#: cap defends against only appears across a chunk boundary, and with a 64KB
+#: step every realistic test fixture is a single chunk and can never reach it.
+CHUNK_BYTES = 64 * 1024
+
 #: First two bytes of a gzip member. Sitemaps are routinely served as `.xml.gz`
 #: with a `Content-Type` that does not say so, so sniff the bytes rather than
 #: trusting either the extension or the header.
@@ -196,29 +202,32 @@ def decompress_if_gzip(payload: bytes, cap: int = MAX_SITEMAP_BYTES) -> bytes:
     obj = zlib.decompressobj(zlib.MAX_WBITS | 16)  # 16 => gzip wrapper
     out = bytearray()
     view = memoryview(payload)
-    step = 64 * 1024
-    for off in range(0, len(view), step):
-        # The `+ 1` in max_length is load-bearing. When zlib hits max_length it
-        # parks the rest in `unconsumed_tail`, and feeding the next chunk would
-        # silently discard it -- so a truncated inflate must never be a state we
-        # continue from. Asking for one byte more than the cap guarantees that
-        # the only way to hit the limit is to cross it, and crossing it raises.
+    over = (
+        f"gzipped sitemap expands past {cap} bytes -- refusing to materialise "
+        "it. A compression ratio this high is a bomb, not a large sitemap."
+    )
+    for off in range(0, len(view), CHUNK_BYTES):
         try:
-            out += obj.decompress(view[off : off + step], cap - len(out) + 1)
+            out += obj.decompress(view[off : off + CHUNK_BYTES], cap - len(out) + 1)
         except zlib.error as exc:
             raise TraversalError(f"corrupt gzip sitemap: {exc}") from exc
+        # `unconsumed_tail` is non-empty exactly when max_length stopped the
+        # inflate early. Feeding the next chunk on top of that silently DISCARDS
+        # the tail, so a truncated inflate must never be a state we continue
+        # from. Checking the tail is the direct statement of that; the `+ 1`
+        # above is the arithmetic that makes hitting the limit imply crossing
+        # the cap, and neither is trusted to cover for the other -- a mutation
+        # sweep found the arithmetic alone was unenforced by any test.
+        if obj.unconsumed_tail:
+            raise TraversalError(over)
         if len(out) > cap:
-            raise TraversalError(
-                f"gzipped sitemap expands past {cap} bytes -- refusing to "
-                "materialise it. A compression ratio this high is a bomb, not a "
-                "large sitemap."
-            )
+            raise TraversalError(over)
     try:
         out += obj.flush()
     except zlib.error as exc:
         raise TraversalError(f"corrupt gzip sitemap: {exc}") from exc
     if len(out) > cap:
-        raise TraversalError(f"gzipped sitemap expands past {cap} bytes")
+        raise TraversalError(over)
     return bytes(out)
 
 
@@ -545,6 +554,7 @@ __all__ = [
     "MAX_SITEMAP_BYTES",
     "MAX_INDEX_DEPTH",
     "DEFAULT_MAX_DOCS",
+    "CHUNK_BYTES",
     "host_of",
     "robots_url_for",
     "sitemap_refs",

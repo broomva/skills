@@ -17,6 +17,7 @@ the same `pages` list, and `seen` is the only place they differ.
 from __future__ import annotations
 
 import gzip
+import random
 import sys
 import zlib
 from pathlib import Path
@@ -288,6 +289,29 @@ def test_a_payload_just_under_the_cap_still_inflates():
     assert out == body
 
 
+def test_a_multi_chunk_payload_at_the_cap_is_not_silently_truncated(monkeypatch):
+    """The bound must refuse, never quietly return a prefix.
+
+    Found by a mutation sweep: dropping the `+ 1` from max_length survived the
+    whole suite, because with a 64KB chunk step every fixture here is a single
+    chunk and the truncation only exists across a chunk boundary. Shrinking the
+    step is what makes the failure reachable at test scale at all.
+    """
+    monkeypatch.setattr(T, "CHUNK_BYTES", 256)
+    # Incompressible on purpose: the chunking is over COMPRESSED input, so
+    # 8KB of "x" is one 43-byte chunk and never crosses a boundary. Seeded so
+    # the fixture is the same bytes on every run.
+    rnd = random.Random(20260824)
+    body = bytes(rnd.randrange(256) for _ in range(8192))
+    blob = gzip.compress(body)
+    assert len(blob) > 4 * 256, "fixture must span several inflate chunks"
+    # Under the cap: complete bytes, no prefix.
+    assert T.decompress_if_gzip(blob, cap=len(body) + 10) == body
+    # Over the cap: a refusal, not a truncated return.
+    with pytest.raises(T.TraversalError, match="expands past"):
+        T.decompress_if_gzip(blob, cap=1000)
+
+
 def test_corrupt_gzip_is_a_refusal_not_a_crash():
     broken = bytearray(gzip.compress(urlset("https://example.com/a")))
     broken[10:20] = b"\x00" * 10
@@ -298,6 +322,53 @@ def test_corrupt_gzip_is_a_refusal_not_a_crash():
 # --------------------------------------------------------------------------
 # The traversal, end to end
 # --------------------------------------------------------------------------
+
+
+def test_closes_reports_false_when_the_accounting_does_not_balance():
+    """The polarity test for `closes()`, and the reason it exists.
+
+    A mutation sweep replaced the whole body with `return True` and all 44 tests
+    still passed -- so every `assert out.closes()` in this file was asserting a
+    constant. An invariant no test has ever seen fail is not an invariant, it is
+    a decoration.
+    """
+    t = T.Traversal(seed="s", robots_url="r")
+    t.seen = 3
+    assert not t.closes(), "0 accounted for, 3 seen"
+    t.pages.append("https://example.com/a")
+    assert not t.closes(), "1 accounted for, 3 seen"
+    t.drop("https://example.com/b", "budget exhausted")
+    assert not t.closes(), "2 accounted for, 3 seen"
+    t.drop("https://example.com/c", "off-host")
+    assert t.closes()
+    # And it fails in the other direction too: recording something never seen.
+    t.drop("https://example.com/d", "phantom")
+    assert not t.closes(), "4 accounted for, 3 seen"
+
+
+def test_over_depth_index_named_by_two_parents_yields_one_drop(tmp_path):
+    """Two shards naming the same too-deep index must not double-count it.
+
+    The `enqueued` guard is not what makes the crawl terminate -- `fetched`
+    already does that, which is why a mutation sweep found removing it survived
+    the termination test. What it protects is the denominator: a candidate
+    counted twice makes `seen` disagree with the number of distinct URLs the
+    traversal actually considered.
+    """
+    d = rig(tmp_path, {
+        "https://example.com/robots.txt": (200, robots("https://example.com/i.xml")),
+        "https://example.com/i.xml": (
+            200, index("https://example.com/a.xml", "https://example.com/b.xml"),
+        ),
+        # Both children name the SAME grandchild, which sits past the bound.
+        "https://example.com/a.xml": (200, index("https://example.com/deep.xml")),
+        "https://example.com/b.xml": (200, index("https://example.com/deep.xml")),
+    })
+    out = T.traverse(d, "https://example.com/", budget=10, max_index_depth=1)
+    deep = [x for x in out.dropped if x["url"] == "https://example.com/deep.xml"]
+    assert len(deep) == 1, f"counted {len(deep)} times: {out.dropped}"
+    assert out.seen == 1
+    assert out.closes()
 
 
 def test_a_whole_site_traversal(tmp_path):
