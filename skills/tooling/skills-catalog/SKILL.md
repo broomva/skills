@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 97 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 98 agent skills in the broomva/skills monorepo,
   organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -23,7 +23,7 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-97 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+98 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
@@ -47,7 +47,7 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Neuroscience & BCI (`neuroscience`) | 3 | tribe-v2-agent-alignment, tribe-v2-bci-applied, tribe-v2-neuroscience |
 | Healthcare (`healthcare`) | 2 | founder-mode-oncology, health |
 | Science (`science`) | 1 | ocean-genomics |
-| Simulation (`simulation`) | 2 | parallax |
+| Simulation (`simulation`) | 3 | parallax |
 | Commerce & procurement (`commerce`) | 3 | d1-cli, procurer, swapit |
 | Everyday utilities (`utilities`) | 2 | gasgo, alkosto-wait-optimizer |
 

@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 97 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
+> 98 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
 
 ## Governance & control — `skills/governance/` (9)
 
@@ -42,7 +42,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 97 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 98 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -192,12 +192,13 @@
 |---|---|
 | `ocean-genomics` | Comprehensive bioinformatics and ocean genomics skill for eDNA metabarcoding, metagenomics, protein structure prediction, and marine biodiversity analysis |
 
-## Simulation — `skills/simulation/` (2)
+## Simulation — `skills/simulation/` (3)
 
 | Skill | What it does |
 |---|---|
 | `data-provider` | Turn a question about the world into a table Parallax can accept, with every field typed observed or simulated at the moment it is written. Records findings against the artifact they were read from, hashes it, judges each column by rule, and emits the exact `parallax propose` invocation |
 | `parallax` | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+| `sourcer` | Crawl a set of sites into a verified entity graph — companies, the people who run them, the relationships between them — where every claim points at the bytes it came from and nothing expands until… |
 
 ## Commerce & procurement — `skills/commerce/` (3)
 
@@ -218,7 +219,7 @@
 
 ## Aggregates
 
-- **Total skills**: 97
+- **Total skills**: 98
 - **Total category buckets**: 23
 - **Largest bucket**: Governance & control, Orchestration & autonomy, Skill & prompt tooling (9)
 - **Smallest buckets** (1): Science

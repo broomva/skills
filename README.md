@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 97 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 98 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**97 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**98 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -82,7 +82,7 @@ npx skills add broomva/skills --skill '*'
 | [`prove-the-negative`](skills/tooling/prove-the-negative/) | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 97 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 98 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -238,6 +238,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`data-provider`](skills/simulation/data-provider/) | Turn a question about the world into a table Parallax can accept, with every field typed observed or simulated at the moment it is written. You search; it records findings against the artifact they were read from, hashes it, judges each column by rule, and emits the exact `parallax propose` invocation |
 | [`parallax`](skills/simulation/parallax/) | Drive Parallax — the ontology simulation layer: propose an ontology from a context, a human accepts it before anything runs, then roll it forward with every answer typed observed or simulated. Routes state to the next command and a typed refusal to its remedy, for all 52 error codes. Ships the runtime it drives at `runtime/`, so installing the skill installs the layer |
+| [`sourcer`](skills/simulation/sourcer/) | Crawl a set of sites into a verified entity graph — companies, the people who run them, the relationships between them — where every claim points at the bytes it came from and nothing expands until… |
 
 ### Commerce & procurement — `skills/commerce/`
 
@@ -256,7 +257,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 97 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
+The 98 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
@@ -280,7 +281,7 @@ The 97 skills bucket into 23 single-noun categories — one row per `skills/<cat
 | Neuroscience & BCI | `skills/neuroscience/` | 3 |
 | Healthcare | `skills/healthcare/` | 2 |
 | Science | `skills/science/` | 1 |
-| Simulation | `skills/simulation/` | 2 |
+| Simulation | `skills/simulation/` | 3 |
 | Commerce & procurement | `skills/commerce/` | 3 |
 | Everyday utilities | `skills/utilities/` | 2 |
 Full details with descriptions in [`references/skills-inventory.md`](skills/tooling/skills-catalog/references/skills-inventory.md).
