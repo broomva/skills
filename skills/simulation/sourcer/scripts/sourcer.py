@@ -365,7 +365,7 @@ def cmd_land(args) -> int:
         ) from exc
 
     ids = {r.id for r in landed}
-    written = [r for r in S.select(conn) if r.get("id") in ids]
+    written = [r for r in S.canonical(conn) if r.get("id") in ids]
     stats.expanded = L.expand(conn, written, depth + 1, parent_id=args.url)
 
     # Record that this page was READ, whatever it yielded. `inventory-closed`
@@ -464,7 +464,9 @@ def cmd_emit(args) -> int:
     """The Parallax handoff: node and edge tables, provenance intact."""
     daemon, conn = _open(args)
     try:
-        out = E.emit(S.select(conn), prefix=args.prefix, daemon=daemon)
+        # Canonical: emitting conflict payloads would ship seven rows for
+        # one company and let Parallax count them as seven entities.
+        out = E.emit(S.canonical(conn), prefix=args.prefix, daemon=daemon)
     except E.EmitError as exc:
         raise Refusal(str(exc)) from exc
     print(json.dumps(out, indent=2, sort_keys=True))
@@ -481,7 +483,7 @@ def cmd_project(args) -> int:
     # retained conflict payload carries `unchecked` and would both fail the
     # fidelity gate and, if it ever passed, project a page for a reading the map
     # does not currently hold.
-    records = S.select(conn, include_conflicts=False)
+    records = S.canonical(conn)
     pages = PJ.build(records, run_id=Path(args.run).name)
     if not pages:
         print(json.dumps({

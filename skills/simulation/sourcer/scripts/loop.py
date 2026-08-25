@@ -295,7 +295,8 @@ def process_item(
 
     # -- expand, from the store, reading the verdicts just written ----------
     ids = {r.id for r in fresh}
-    written = [r for r in S.select(conn) if r.get("id") in ids]
+    # Canonical: expansion is a decision about the map's current reading.
+    written = [r for r in S.canonical(conn) if r.get("id") in ids]
     stats.expanded += expand(conn, written, depth + 1, parent_id=url)
 
 

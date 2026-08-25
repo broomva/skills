@@ -282,7 +282,10 @@ def resolve(conn, depth: int = 0, threshold: float = DEFAULT_THRESHOLD,
     """
     import store as S
 
-    records = S.select(conn)
+    # Canonical: a conflict payload is a retained re-sighting, not another
+    # entity. Reading them proposed the same pair once per payload -- 55
+    # proposals for one real map, which is a list nobody reads.
+    records = S.canonical(conn)
     found = candidates(records, threshold=threshold, max_pairs=max_pairs)
     inserted = 0
     for c in found:
