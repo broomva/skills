@@ -168,12 +168,28 @@ def cmd_take(args) -> int:
 def cmd_land(args) -> int:
     """Admit the claims, apply the verdicts, expand what survived, finish.
 
-    `--verdicts` maps a record id to true/false and comes from a verifier that
-    never saw the extractor's reasoning. A record with no verdict stays
-    `unchecked` -- which is not a synonym for `inconclusive` and is emphatically
-    not permission to expand. Omitting the file entirely therefore admits
-    everything and expands nothing, which is the correct behaviour for a run
-    whose verifier did not report.
+    `--verdicts` maps a CLAIM INDEX -- `"0"`, `"1"` -- to true or false, and
+    comes from a verifier that never saw the extractor's reasoning.
+
+    Keyed by claim rather than by record id, and that is not a convenience. A
+    record id is derived during `admit`, from the bytes; the verifier runs
+    before admission and cannot know one. Asking it for ids would mean either
+    handing it the extractor's output to name things (which is the coupling the
+    blinding exists to prevent) or running admission first and verification
+    second, which is the batch model this design rejects.
+
+    One claim yields three records, and a verdict lands on them asymmetrically
+    because they are different propositions. `true` entails all three: if the
+    span states the relation, it named the endpoints correctly to do so. `false`
+    refutes only the EDGE -- the entities may well be named correctly on a page
+    that does not state the relation between them, and refuting them on that
+    basis would discard a true reading because a different one failed. The nodes
+    stay `unchecked`, which keeps them out of the next hop either way.
+
+    A claim with no verdict stays `unchecked` throughout -- not a synonym for
+    `inconclusive`, and emphatically not permission to expand. Omitting the file
+    therefore admits everything and expands nothing, which is the correct
+    behaviour for a run whose verifier did not report.
     """
     daemon, conn = _open(args)
     res = daemon.receipt_for(args.url, args.digest)
@@ -195,14 +211,16 @@ def cmd_land(args) -> int:
     verdicts = json.loads(Path(args.verdicts).read_text()) if args.verdicts else {}
     stats = L.LoopStats()
     landed = []
-    for claim in claims:
+    by_claim: dict = {}
+    for idx, claim in enumerate(claims):
         stats.claims_seen += 1
         try:
             records = X.admit(daemon, res, claim, depth=args.depth)
         except (X.ExtractionError, F.FetchError) as exc:
             stats.rejected += 1
-            stats.notes.append(f"claim rejected -- {exc}")
+            stats.notes.append(f"claim {idx} rejected -- {exc}")
             continue
+        kept = []
         for rec in records:
             try:
                 S.put_record(conn, rec, admitter=daemon)
@@ -211,19 +229,25 @@ def cmd_land(args) -> int:
                 stats.notes.append(f"{rec.id} refused by the store -- {exc}")
                 continue
             stats.admitted += 1
+            kept.append(rec)
             landed.append(rec)
+        by_claim[idx] = kept
 
-    for rec in landed:
-        if rec.id not in verdicts:
+    for idx, records in by_claim.items():
+        if str(idx) not in verdicts:
             continue
-        if verdicts[rec.id]:
-            S.set_verdict(conn, rec.id, "entailed")
-            stats.entailed += 1
+        if verdicts[str(idx)]:
+            for rec in records:
+                S.set_verdict(conn, rec.id, "entailed")
+                stats.entailed += 1
         else:
-            S.set_verdict(conn, rec.id, "refuted",
-                          refutation="the blinded verifier did not find the span "
-                                     "to support this claim")
-            stats.refuted += 1
+            for rec in (r for r in records if r.kind == "edge"):
+                S.set_verdict(
+                    conn, rec.id, "refuted",
+                    refutation="the blinded verifier did not find the span to "
+                               "support this relation",
+                )
+                stats.refuted += 1
 
     ids = {r.id for r in landed}
     written = [r for r in S.select(conn) if r.get("id") in ids]
@@ -294,7 +318,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--depth", type=int, required=True)
     p.add_argument("--token", required=True)
     p.add_argument("--claims", required=True, help="JSON list of claims")
-    p.add_argument("--verdicts", help="JSON object of record id -> bool")
+    p.add_argument("--verdicts",
+                   help='JSON object of claim index -> bool, e.g. {"0": true}')
     p.set_defaults(fn=cmd_land)
 
     p = common(sub.add_parser("status", help="where the run is"))

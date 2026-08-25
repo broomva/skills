@@ -217,19 +217,24 @@ def test_verdicts_are_what_make_a_page_expand(tmp_path, capsys):
     item = _take(tmp_path, capsys)
     claims = tmp_path / "claims.json"
     claims.write_text(json.dumps(seed_claims()))
-    # Both NODES verified; the edge between them deliberately gets no verdict.
+    # The verifier says no. Only the EDGE is refuted -- the entities may be
+    # named correctly on a page that does not state the relation between them.
     verdicts = tmp_path / "v.json"
-    verdicts.write_text(json.dumps({
-        "org::acme-s-a-s": True,
-        "profile::https-acme-test-team": True,
-    }))
+    verdicts.write_text(json.dumps({"0": False}))
     C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
             "--depth", str(item["depth"]), "--token", item["claim_token"],
             "--claims", str(claims), "--verdicts", str(verdicts)])
     d = out(capsys)
-    # Both node ids verified; the edge did not, so the crawl must NOT move.
-    assert d["stats"]["entailed"] == 2
+    assert d["stats"]["refuted"] == 1
+    assert d["stats"]["entailed"] == 0
     assert d["stats"]["expanded"] == 0, "an unverified edge is not a way to travel"
+    conn = S.connect(tmp_path / "map.db")
+    verdicts_by_kind = {r["kind"]: r["verdict"] for r in S.select(conn)}
+    assert verdicts_by_kind["edge"] == "refuted"
+    assert verdicts_by_kind["node"] == "unchecked", (
+        "a refuted relation does not make the entities wrong -- but unchecked "
+        "still keeps them out of the next hop"
+    )
 
 
 def test_a_fully_verified_page_expands_to_the_next_hop(tmp_path, capsys):
@@ -240,15 +245,8 @@ def test_a_fully_verified_page_expands_to_the_next_hop(tmp_path, capsys):
     claims = tmp_path / "claims.json"
     claims.write_text(json.dumps(seed_claims()))
 
-    # Compute the edge id the same way `admit` does, from the closed vocabulary.
-    import extract as X
-    eid = X.edge_id("org::acme-s-a-s", "org_profile", "profile::https-acme-test-team")
     verdicts = tmp_path / "v.json"
-    verdicts.write_text(json.dumps({
-        "org::acme-s-a-s": True,
-        "profile::https-acme-test-team": True,
-        eid: True,
-    }))
+    verdicts.write_text(json.dumps({"0": True}))
     C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
             "--depth", str(item["depth"]), "--token", item["claim_token"],
             "--claims", str(claims), "--verdicts", str(verdicts)])
@@ -337,19 +335,18 @@ def test_the_whole_cycle_produces_a_map_the_gates_accept(tmp_path, capsys):
     which is exactly how an architectural hole survives; this drives the four of
     them through argv and then asks the gates whether the result holds up.
     """
-    import extract as X
-
     C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
             "--budget", "20"])
     capsys.readouterr()
 
-    def cycle(claim_builder, verdict_ids):
+    def cycle(claim_builder):
         item = _take(tmp_path, capsys)
         assert item is not None
+        claims = claim_builder()
         cf = tmp_path / f"c-{item['digest'][:8]}.json"
-        cf.write_text(json.dumps(claim_builder()))
+        cf.write_text(json.dumps(claims))
         vf = tmp_path / f"v-{item['digest'][:8]}.json"
-        vf.write_text(json.dumps({i: True for i in verdict_ids}))
+        vf.write_text(json.dumps({str(i): True for i in range(len(claims))}))
         C.main(["land", *paths(tmp_path), "--url", item["url"],
                 "--digest", item["digest"], "--depth", str(item["depth"]),
                 "--token", item["claim_token"], "--claims", str(cf),
@@ -357,10 +354,7 @@ def test_the_whole_cycle_produces_a_map_the_gates_accept(tmp_path, capsys):
         return out(capsys)
 
     # The sitemap queued /about; take it, and land the profile claim.
-    first = cycle(seed_claims, [
-        "org::acme-s-a-s", "profile::https-acme-test-team",
-        X.edge_id("org::acme-s-a-s", "org_profile", "profile::https-acme-test-team"),
-    ])
+    first = cycle(seed_claims)
     assert first["stats"]["expanded"] == 1
 
     def team_claims():
@@ -373,10 +367,7 @@ def test_the_whole_cycle_produces_a_map_the_gates_accept(tmp_path, capsys):
             "span_start": s[0], "span_end": at(b"as CTO.", TEAM)[1],
         }]
 
-    second = cycle(team_claims, [
-        "org::acme-s-a-s", "person::maria-restrepo",
-        X.edge_id("org::acme-s-a-s", "employs", "person::maria-restrepo"),
-    ])
+    second = cycle(team_claims)
     assert second["stats"]["admitted"] == 3
 
     # -- and now the gates, over what all of that left on disk ---------------
