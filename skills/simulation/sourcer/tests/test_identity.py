@@ -49,11 +49,33 @@ def test_legal_forms_do_not_distinguish_companies():
     assert I.comparable("ACME S.A.S.") == I.comparable("ACME Ltda")
 
 
-def test_accents_do_not_distinguish_companies():
-    """One word written by two systems. A crawl that treats `Café` and `Cafe` as
-    two companies has failed at the first hurdle in every non-English market —
+@pytest.mark.parametrize("accented,plain", [
+    # `Café` is the WEAK case and was the only one here at first: `é` sits at a
+    # syllable boundary, so dropping the combining-character filter splits it
+    # into the same tokens anyway and a mutation sweep found the filter
+    # removable. These are the cases where it actually decides the answer.
+    ("Compañía Nacional", "Compania Nacional"),      # compan|i|a without it
+    ("Zürich Versicherung", "Zurich Versicherung"),  # zu|rich without it
+    ("Ångström AB", "Angstrom AB"),
+    ("Škoda Auto", "Skoda Auto"),
+    ("Café Nacional", "Cafe Nacional"),
+])
+def test_accents_do_not_distinguish_companies(accented, plain):
+    """One word written by two systems. A crawl that treats these as two
+    companies has failed at the first hurdle in every non-English market —
     which is the market this was built for."""
-    assert I.similarity("Café Nacional", "Cafe Nacional") == I.EXACT_AFTER_NORMALISATION
+    assert I.similarity(accented, plain) == I.EXACT_AFTER_NORMALISATION
+    assert I.comparable(accented) == I.comparable(plain)
+
+
+def test_an_accented_name_does_not_shatter_into_fragments():
+    """The failure the filter prevents, stated directly.
+
+    Without it `Compañía` tokenises to `compan`, `i`, `a` — three fragments that
+    match nothing and, once `_join_initials` runs, produce a spurious `ia`
+    token. A company whose name shatters is a company that merges with nobody.
+    """
+    assert I.comparable("Compañía Nacional") == ("compania", "nacional")
 
 
 def test_token_order_does_not_distinguish_companies():
