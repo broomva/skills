@@ -105,7 +105,16 @@ def host_of(url: str) -> str:
     """
     parts = urllib.parse.urlsplit(url)
     host = (parts.hostname or "").lower()
-    port = parts.port
+    try:
+        port = parts.port
+    except ValueError:
+        # `urlsplit` parses lazily: `https://example.com:bogus/a` splits fine and
+        # only raises when `.port` is read. A hostile sitemap can therefore reach
+        # into the middle of parsing and throw a type traverse() does not catch,
+        # aborting a whole crawl over one bad <loc>. An unparseable authority is
+        # not a host, so it gets an identity nothing can match and is dropped by
+        # the containment check like any other off-host entry.
+        return "\x00invalid-authority"
     default = {"http": 80, "https": 443}.get(parts.scheme)
     return host if port in (None, default) else f"{host}:{port}"
 
@@ -228,6 +237,21 @@ def decompress_if_gzip(payload: bytes, cap: int = MAX_SITEMAP_BYTES) -> bytes:
         raise TraversalError(f"corrupt gzip sitemap: {exc}") from exc
     if len(out) > cap:
         raise TraversalError(over)
+    if obj.unused_data:
+        # A gzip stream may hold several members; `decompressobj` stops after the
+        # first and parks the rest in `unused_data`. Returning the first member
+        # alone meant `gzip(small_valid_sitemap) + gzip(10GB_of_A)` inflated to
+        # 76 bytes, passed every cap, and silently discarded whatever else the
+        # file claimed to contain. Refusing is right rather than decompressing
+        # on: a multi-member sitemap is outside the format, so the choice is
+        # between refusing it and inventing a rule about which member counts.
+        raise TraversalError(
+            f"gzipped sitemap carries {len(obj.unused_data)} trailing bytes after "
+            "the first member -- refused. Decoding only the first member would "
+            "silently drop whatever the rest of the file claims to hold."
+        )
+    if not obj.eof:
+        raise TraversalError("truncated gzip sitemap -- the stream never ended")
     return bytes(out)
 
 

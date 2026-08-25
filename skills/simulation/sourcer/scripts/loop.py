@@ -140,6 +140,30 @@ def profile_url(record: dict) -> Optional[str]:
     return name
 
 
+def proposition(record, names: dict) -> str:
+    """The claim a verifier is asked to judge. The WHOLE claim.
+
+    This function exists because of a defect that made every other defence in
+    the pipeline moot. The verifier used to be handed the bare predicate for an
+    edge -- `"employs"` -- so on a page reading `ACME employs Alice. Globex
+    employs Bob.` a claim relating ACME to BOB fits inside 600 bytes, contains
+    both mentions, and asks the judge only "does this text say `employs`". It
+    does. The crossed edge was then recorded `entailed` and passed every gate:
+    a complete path from genuine attested bytes to a false verified relation.
+
+    A verifier cannot refuse a claim it was never shown. So it gets the named
+    endpoints, in order, and the name comes from the bytes -- which is exactly
+    what makes it safe to put in the question.
+    """
+    if record.kind == "edge":
+        src = names.get(record.src, record.src)
+        dst = names.get(record.dst, record.dst)
+        return f"{src!r} {record.predicate} {dst!r}"
+    kind = record.canonical_key.split("::", 1)[0]
+    name = (record.attrs or {}).get("name", record.canonical_key)
+    return f"this text names the {kind} {name!r}"
+
+
 def expand(conn, records, depth: int, parent_id: Optional[str] = None) -> int:
     """Push the next hop's URLs. Only from records that verified.
 
@@ -196,6 +220,15 @@ def process_item(
     except F.FetchError as exc:
         stats.notes.append(f"{url}: {type(exc).__name__}: {exc}")
         return
+    except Exception as exc:
+        # NOT just FetchError. A transport raising `urllib.error.URLError`, a
+        # socket timeout, or any defect below the daemon is not a domain
+        # refusal -- and letting it escape meant `run`'s `finally` marked the
+        # lease DONE on the way out, so the item was permanently dropped from a
+        # crawl that then reported itself complete. One bad page must cost one
+        # page.
+        stats.notes.append(f"{url}: transport raised {type(exc).__name__}: {exc}")
+        return
     stats.fetched += 1
 
     ok, why = daemon.usable_as_evidence(res)
@@ -233,11 +266,12 @@ def process_item(
             fresh.append(rec)
 
     # -- verify, per record, BEFORE anything expands ------------------------
+    names = {r.id: (r.attrs or {}).get("name", r.canonical_key)
+             for r in fresh if r.kind == "node"}
     for rec in fresh:
         quote = rec.evidence.quote if rec.evidence else ""
-        subject = rec.predicate if rec.kind == "edge" else rec.canonical_key
         try:
-            entailed = bool(verifier(quote, subject))
+            entailed = bool(verifier(quote, proposition(rec, names)))
         except Exception as exc:
             stats.notes.append(f"{rec.id}: verifier raised {type(exc).__name__}: {exc}")
             continue
@@ -306,6 +340,7 @@ __all__ = [
     "LoopStats",
     "EXPANSION_PREDICATES",
     "profile_url",
+    "proposition",
     "expand",
     "process_item",
     "run",

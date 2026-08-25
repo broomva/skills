@@ -433,3 +433,98 @@ def test_stats_round_trip_as_a_dict(rig):
         "fetched", "items_done", "claims_seen", "admitted", "rejected",
         "entailed", "refuted", "expanded", "budget_stops", "notes",
     }
+
+
+# --------------------------------------------------------------------------
+# The verifier must be shown the whole claim
+# --------------------------------------------------------------------------
+
+CROSSED = b"ACME employs Alice. Globex employs Bob."
+
+
+def test_the_verifier_is_asked_about_the_named_endpoints_not_the_predicate():
+    """A crossed relation fits inside 600 bytes and contains both mentions.
+
+    On this page, relating ACME to Bob satisfies every arithmetic defence. The
+    verifier used to be handed the bare predicate — `"employs"` — so it was
+    asked only "does this text say employs", which it plainly does. The crossed
+    edge was recorded `entailed` and passed every gate: a complete path from
+    genuine attested bytes to a false verified relation.
+
+    A verifier cannot refuse a claim it was never shown.
+    """
+    class Rec:
+        kind, predicate = "edge", "employs"
+        src, dst, canonical_key, attrs = "org::acme", "person::bob", "edge::x", {}
+
+    names = {"org::acme": "ACME", "person::bob": "Bob"}
+    asked = L.proposition(Rec(), names)
+    assert "ACME" in asked and "Bob" in asked, asked
+    assert asked != "employs"
+
+    # A judge that reads the page can now say no, and the wording is what lets it.
+    def honest(quote, claim):
+        return "'ACME' employs 'Alice'" == claim
+
+    assert honest(CROSSED.decode(), asked) is False
+    assert honest(CROSSED.decode(),
+                  L.proposition(Rec(), {"org::acme": "ACME",
+                                        "person::bob": "Alice"})) is True
+
+
+def test_a_crossed_relation_is_refused_end_to_end(tmp_path):
+    """The same defect driven through the real loop, with a judge that reads."""
+    pages = {"https://x.test/robots.txt": b"User-agent: *\nAllow: /\n",
+             "https://x.test/p": CROSSED}
+    d = F.FetchDaemon(
+        root=tmp_path / "runs", run_id="r1", politeness=AllowAll(),
+        transport=lambda u: (200, pages[u], u) if u in pages else (404, b"x", u),
+        key=KEY,
+    )
+    d.seal_plan({"seeds": ["https://x.test/p"], "max_depth": 0})
+    conn = S.connect(tmp_path / "m.db")
+
+    def crossed_extractor(payload, url):
+        s = at(b"ACME", CROSSED)
+        o = at(b"Bob", CROSSED)
+        return [X.Claim(subject=X.Mention("org", *s), predicate="employs",
+                        object=X.Mention("person", *o),
+                        span_start=0, span_end=len(CROSSED))]
+
+    def reads_the_page(quote, claim):
+        # Only believes a relation the text actually states.
+        return "'ACME' employs 'Alice'" in claim or "names the" in claim
+
+    stats = L.run(d, conn,
+                  L.Plan(seeds=("https://x.test/p",), max_depth=0, fetch_budget=5),
+                  crossed_extractor, reads_the_page)
+    assert stats.refuted == 1, stats.as_dict()
+    edge = [r for r in S.select(conn) if r["kind"] == "edge"][0]
+    assert edge["verdict"] == "refuted"
+    assert edge["id"] not in S.expandable_ids(conn)
+
+
+def test_a_transport_error_does_not_silently_lose_the_item(tmp_path):
+    """An exception below the daemon is not a domain refusal.
+
+    Letting it escape meant `run`'s `finally` marked the lease DONE on the way
+    out, so the item was permanently dropped from a crawl that then reported
+    itself complete. One bad page must cost one page.
+    """
+    import urllib.error
+
+    def flaky(url):
+        if url.endswith("/robots.txt"):
+            return (200, b"User-agent: *\nAllow: /\n", url)
+        raise urllib.error.URLError("connection reset")
+
+    d = F.FetchDaemon(root=tmp_path / "runs", run_id="r1",
+                      politeness=AllowAll(), transport=flaky, key=KEY)
+    d.seal_plan({"seeds": ["https://x.test/p"], "max_depth": 0})
+    conn = S.connect(tmp_path / "m.db")
+    stats = L.run(d, conn,
+                  L.Plan(seeds=("https://x.test/p",), max_depth=0, fetch_budget=5),
+                  extractor, believe_all)
+    assert any("transport raised URLError" in n for n in stats.notes), stats.notes
+    assert stats.items_done == 1
+    assert S.frontier_stats(conn)["in_flight"] == 0

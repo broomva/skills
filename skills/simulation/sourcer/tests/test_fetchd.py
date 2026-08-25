@@ -508,7 +508,7 @@ def test_robots_failure_is_not_permission(tmp_path):
     refusal, a redirect, a timeout. None of those is evidence of consent.
     """
     p = F.Politeness(interval=0.0)
-    p.load("example.com", 0, b"")
+    p.load("https://example.com", 0, b"")
     assert p.allows("https://example.com/a") is False
 
 
@@ -661,14 +661,14 @@ def test_a_planted_snapshot_is_replaced_not_trusted(tmp_path):
 def test_robots_401_and_403_forbid_the_site(code):
     """Explicitly withheld is not the same as absent."""
     p = F.Politeness(interval=0.0)
-    p.load("example.com", code, b"")
+    p.load("https://example.com", code, b"")
     assert p.allows("https://example.com/a") is False, f"{code} must forbid"
 
 
 def test_robots_404_permits():
     """An explicit absence is the documented no-restrictions case."""
     p = F.Politeness(interval=0.0)
-    p.load("example.com", 404, b"")
+    p.load("https://example.com", 404, b"")
     assert p.allows("https://example.com/a") is True
 
 
@@ -679,14 +679,14 @@ def test_robots_5xx_forbids():
     read as a site consenting to be crawled.
     """
     p = F.Politeness(interval=0.0)
-    p.load("example.com", 503, b"")
+    p.load("https://example.com", 503, b"")
     assert p.allows("https://example.com/a") is False
 
 
 def test_robots_rules_are_parsed_from_the_bytes_the_daemon_held():
     """The whole point of the change: rules come from an artifact, not a recall."""
     p = F.Politeness(interval=0.0)
-    p.load("example.com", 200,
+    p.load("https://example.com", 200,
            b"User-agent: *\nDisallow: /private\nAllow: /\n")
     assert p.allows("https://example.com/public") is True
     assert p.allows("https://example.com/private/x") is False
@@ -696,7 +696,7 @@ def test_an_unloaded_host_is_refused():
     """No fetch-on-demand. 'I have no idea what this site permits' reads as no."""
     p = F.Politeness(interval=0.0)
     assert p.allows("https://never-loaded.test/a") is False
-    assert p.knows("never-loaded.test") is False
+    assert p.knows("https://never-loaded.test") is False
 
 
 # ------------------------- the fourth instance: plan.json had no reader

@@ -364,6 +364,19 @@ def verify_chain(
 # --------------------------------------------------------------------------
 
 
+def _is_robots_url(url: str) -> bool:
+    """Is this THE rules file for its origin?
+
+    Path equality alone was not enough. `/robots.txt?anything` has that path, so
+    it was exempted from the permission check AND installed as the origin's
+    policy -- letting a page under the crawler's own control supply permissive
+    rules. A query string means a different resource; the canonical rules file
+    has none, and no fragment either.
+    """
+    parts = urllib.parse.urlsplit(url)
+    return parts.path == "/robots.txt" and not parts.query and not parts.fragment
+
+
 class Politeness:
     """robots.txt and a per-host floor between requests.
 
@@ -390,12 +403,24 @@ class Politeness:
         default = {"http": 80, "https": 443}.get(parts.scheme, None)
         return host if port in (None, default) else f"{host}:{port}"
 
-    def knows(self, host: str) -> bool:
-        """Have this host's rules been loaded? Asked by the daemon, not by a caller."""
-        return host in self._robots
+    def origin_of(self, url: str) -> str:
+        """scheme://host[:port] -- the identity robots.txt rules belong to.
 
-    def load(self, host: str, status: int, payload: bytes) -> None:
-        """Install a host's rules from bytes the DAEMON fetched. The only way in.
+        NOT `host_of`. Rate limiting is per host, because that is what a server
+        feels; permission is per ORIGIN, because http://x/robots.txt and
+        https://x/robots.txt are two documents that may say different things.
+        Keying rules by host let a permissive http policy authorise every https
+        fetch on the same name, and the https rules were never read.
+        """
+        parts = urllib.parse.urlsplit(url)
+        return f"{parts.scheme}://{self.host_of(url)}"
+
+    def knows(self, origin: str) -> bool:
+        """Have this origin's rules been loaded? Asked by the daemon, not a caller."""
+        return origin in self._robots
+
+    def load(self, origin: str, status: int, payload: bytes) -> None:
+        """Install an ORIGIN's rules from bytes the DAEMON fetched. The only way in.
 
         This class used to read robots.txt itself, through
         `RobotFileParser.read()`, and that was an architectural hole rather than
@@ -413,20 +438,20 @@ class Politeness:
         """
         rp = urllib.robotparser.RobotFileParser()
         if status in (401, 403):
-            self._robots[host] = None
+            self._robots[origin] = None
         elif 400 <= status < 500:
             rp.parse([])
-            self._robots[host] = rp
+            self._robots[origin] = rp
         elif 200 <= status < 300:
             try:
                 rp.parse(payload.decode("utf-8", errors="replace").splitlines())
             except Exception:
                 # A parser defect is not evidence that crawling is allowed.
-                self._robots[host] = None
+                self._robots[origin] = None
                 return
-            self._robots[host] = rp
+            self._robots[origin] = rp
         else:
-            self._robots[host] = None
+            self._robots[origin] = None
 
     def allows(self, url: str) -> bool:
         """May this url be fetched? Pure -- no network, no I/O.
@@ -441,9 +466,9 @@ class Politeness:
         the caller, and the safe reading of "I have no idea what this site
         permits" is no.
         """
-        if urllib.parse.urlsplit(url).path == "/robots.txt":
+        if _is_robots_url(url):
             return True
-        rp = self._robots.get(self.host_of(url), "unloaded")
+        rp = self._robots.get(self.origin_of(url), "unloaded")
         if rp is None or rp == "unloaded":
             return False
         return rp.can_fetch(USER_AGENT, url)
@@ -613,8 +638,8 @@ class FetchDaemon:
         # it here rather than only in `_ensure_robots` means the file is never
         # fetched twice: whichever path reaches it first, the second path finds
         # the host already known.
-        if urllib.parse.urlsplit(url).path == "/robots.txt":
-            self.politeness.load(self.politeness.host_of(url), status, payload)
+        if _is_robots_url(url):
+            self.politeness.load(self.politeness.origin_of(url), status, payload)
         return result
 
     def _ensure_robots(self, url: str) -> None:
@@ -629,26 +654,26 @@ class FetchDaemon:
         redirect, a network error -- because none of those is evidence that
         crawling is allowed.
         """
-        parts = urllib.parse.urlsplit(url)
-        if parts.path == "/robots.txt":
+        if _is_robots_url(url):
             return  # circular; `allows` exempts it and `fetch` loads it
-        host = self.politeness.host_of(url)
-        if self.politeness.knows(host):
+        parts = urllib.parse.urlsplit(url)
+        origin = self.politeness.origin_of(url)
+        if self.politeness.knows(origin):
             return
         robots_url = urllib.parse.urlunsplit(
-            (parts.scheme, host, "/robots.txt", "", "")
+            (parts.scheme, self.politeness.host_of(url), "/robots.txt", "", "")
         )
         try:
             res = self.fetch(robots_url)
         except FetchError:
-            self.politeness.load(host, 0, b"")
+            self.politeness.load(origin, 0, b"")
             return
         # `fetch` has already called `load` for a robots.txt path, so there is
         # nothing to do here on success. The guard remains for the case where a
         # future change stops it doing so, which would otherwise silently leave
         # the host unloaded and every url on it refused.
-        if not self.politeness.knows(host):
-            self.politeness.load(host, res.status, b"")
+        if not self.politeness.knows(origin):
+            self.politeness.load(origin, res.status, b"")
 
     # -- checks ------------------------------------------------------------
 

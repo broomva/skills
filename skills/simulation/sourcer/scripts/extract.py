@@ -125,6 +125,12 @@ MAX_NAME_CHARS = 120
 #: Longest an attribute value may be, for the same reason.
 MAX_ATTR_CHARS = 200
 
+#: Kinds whose identity is EXACT rather than normalised. A profile is a URL,
+#: and two URLs that differ by one character are two pages however similar their
+#: slugs look. Everything else is a name, where normalising is what makes two
+#: spellings of one company merge.
+EXACT_KINDS = frozenset({"profile"})
+
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
 
@@ -166,11 +172,25 @@ def key_for(kind: str, name: str) -> str:
     """
     if kind not in ENTITY_KINDS:
         raise ExtractionError(f"{kind!r} is not one of {ENTITY_KINDS}")
-    slug = _SLUG_STRIP.sub("-", normalize_name(name).casefold()).strip("-")
+    norm = normalize_name(name)
+    slug = _SLUG_STRIP.sub("-", norm.casefold()).strip("-")
     if not slug:
         raise ExtractionError(
             f"{name!r} normalises to an empty key -- punctuation is not a name"
         )
+    if kind in EXACT_KINDS:
+        # A slug is LOSSY, and for most kinds that is the point: `ACME S.A.S.`
+        # and `acme s.a.s.` are one company and should merge. For a URL it is a
+        # defect. `https://a.test/x-y` and `https://a.test/x/y` both slug to
+        # `https-a-test-x-y`, so the store merges two different pages into one
+        # record, the first sighting's name wins, and an edge verified against
+        # the second expands the crawl to the first -- fetching a URL that
+        # appears nowhere in the evidence that authorised it.
+        #
+        # So kinds whose identity is exact carry a digest of the exact
+        # normalised name. Still readable, no longer ambiguous.
+        digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:8]
+        return f"{kind}::{slug}-{digest}"
     return f"{kind}::{slug}"
 
 
@@ -469,7 +489,7 @@ def claims_from_json(blob: str) -> list:
                 object=_mention(item["object"], f"claim {i} object"),
                 span_start=_int(item["span_start"], f"claim {i} span_start"),
                 span_end=_int(item["span_end"], f"claim {i} span_end"),
-                attrs=item.get("attrs") or {},
+                attrs=_attrs(item.get("attrs"), f"claim {i} attrs"),
             )
         )
     return out
@@ -490,6 +510,21 @@ def _mention(raw, where: str) -> Mention:
         span_start=_int(raw["span_start"], f"{where}.span_start"),
         span_end=_int(raw["span_end"], f"{where}.span_end"),
     )
+
+
+def _attrs(v, where: str) -> dict:
+    """Attributes must be an object, or absent. Nothing else.
+
+    `item.get("attrs") or {}` silently discarded every falsey non-object -- `0`,
+    `""`, `[]` -- and handed a truthy list straight to `set()`, which raised an
+    AttributeError rather than a typed refusal. Both are the same mistake:
+    treating a shape error as a value.
+    """
+    if v is None:
+        return {}
+    if not isinstance(v, dict):
+        raise ExtractionError(f"{where} must be an object, got {type(v).__name__}")
+    return v
 
 
 def _int(v, where: str) -> int:
@@ -534,6 +569,7 @@ __all__ = [
     "SYMMETRIC",
     "INVERSES",
     "ATTR_KEYS",
+    "EXACT_KINDS",
     "SUBJECT_SPAN",
     "OBJECT_SPAN",
     "MAX_RELATION_SPAN",

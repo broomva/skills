@@ -182,11 +182,14 @@ this workspace has actually shipped:
   and makes a fail-closed run `INVALID` exactly as a failure does. Reading "no
   verifier configured" as "nothing to object to" would turn the two judgement
   gates into decoration.
-- **The suite proves itself every run.** `gate-suite-proven` puts 23 probes
-  through the deterministic gates — 18 planted decoys they must reject and 5
-  honest maps they must accept. The accepting half is not ceremony: a gate that
-  fails everything rejects every decoy, so decoys alone could be satisfied by
-  breaking the gate rather than by it working.
+- **The suite proves itself every run.** `gate-suite-proven` puts 25 probes
+  through the deterministic gates — 18 planted decoys they must reject and 7
+  honest maps they must accept — and requires **both polarities per gate**, not
+  in aggregate. The accepting half is not ceremony: a gate that fails everything
+  rejects every decoy, so decoys alone could be satisfied by breaking the gate
+  rather than by it working. Counting the accepting half globally was its own
+  hole — an always-failing gate passed all of its own decoys while other gates
+  supplied the suite's accepting total.
 
 ## What is in the box
 

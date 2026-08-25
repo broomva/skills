@@ -422,6 +422,16 @@ def gate_triple_entailed(records) -> GateResult:
             except ValueError:
                 failures.append(f"{rid}: {label} span {raw!r} is unparseable")
                 continue
+            if a < 0 or b <= a:
+                # `20:10` satisfies `lo <= a and b <= hi` for any enclosing
+                # range, so an inverted span sailed through the containment
+                # check that is supposed to be the independent structural
+                # recheck. An empty or backwards span points at no bytes.
+                failures.append(
+                    f"{rid}: {label} span [{a},{b}) is empty or inverted -- it "
+                    "locates no bytes, so containment says nothing about it"
+                )
+                continue
             if not (lo <= a and b <= hi):
                 failures.append(
                     f"{rid}: {label} span [{a},{b}) is outside the relation span "
@@ -687,6 +697,9 @@ def run_decoys() -> list:
             ("edge-admissible", gate_edge_admissible(honest)),
             ("triple-entailed", gate_triple_entailed(honest)),
             ("lattice-exact", gate_lattice_exact(honest)),
+            ("transport-custody", gate_transport_custody(d, honest)),
+            ("projection-fidelity",
+             gate_projection_fidelity(honest, [{"id": "org::acme-s-a-s"}])),
         ):
             must_accept(g, "an honest map", r)
 
@@ -776,6 +789,33 @@ def run_decoys() -> list:
     return out
 
 
+#: Gates that `run_decoys` must probe in BOTH directions. Named explicitly so
+#: adding a gate without probing it fails a test rather than passing silently.
+PROBED_GATES = (
+    "transport-custody", "record-admissible", "span-verbatim",
+    "edge-admissible", "triple-entailed", "lattice-exact",
+    "projection-fidelity",
+)
+
+
+def probe_coverage(decoys) -> list:
+    """Gates missing a probe in either direction.
+
+    An aggregate count is not enough, and that was a real hole: with
+    `must-accept` counted globally, an always-FAIL `transport-custody` still
+    satisfied every one of its own must-reject probes while OTHER gates supplied
+    the suite's accepting half. The polarity pair has to hold per gate, or a
+    broken gate is indistinguishable from a strict one.
+    """
+    gaps = []
+    for gate in PROBED_GATES:
+        polarities = {d.polarity for d in decoys if d.gate == gate}
+        for want in ("must-reject", "must-accept"):
+            if want not in polarities:
+                gaps.append(f"{gate}: no {want} probe")
+    return gaps
+
+
 def gate_suite_proven(decoys) -> GateResult:
     """The gate that keeps the others honest.
 
@@ -787,7 +827,7 @@ def gate_suite_proven(decoys) -> GateResult:
     name, stage = "gate-suite-proven", "pre-ship"
     missed = [
         f"{d.gate} [{d.polarity}]: {d.description}" for d in decoys if not d.ok
-    ]
+    ] + probe_coverage(decoys)
     return _result(name, stage, CLOSED, missed, len(decoys),
                    empty="no probes were run, which proves nothing")
 

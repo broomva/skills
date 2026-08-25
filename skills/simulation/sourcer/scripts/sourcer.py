@@ -81,7 +81,13 @@ def cmd_plan(args) -> int:
         if args.no_traverse:
             out["queued"] += int(S.push_frontier(conn, seed, 0))
             continue
-        trav = T.traverse(daemon, seed, budget=args.budget)
+        # The traversal's own fetches (robots.txt, sitemaps) come out of the same
+        # sealed budget as the crawl's. Bounding its document count by what is
+        # left is what stops `--budget 1` spending two requests before the loop
+        # has claimed anything.
+        spent = sum(1 for r in daemon.verified_rows() if r.get("kind") == "fetch")
+        left = max(1, args.budget - spent)
+        trav = T.traverse(daemon, seed, budget=args.budget, max_docs=left)
         out["traversals"].append(trav.as_dict())
         out["queued"] += T.push_pages(conn, trav.pages, depth=0, parent_id=seed)
         # The seed itself is a page worth reading even when it is absent from
@@ -111,10 +117,11 @@ def cmd_take(args) -> int:
         raise Refusal(f"{plan_path}: no sealed plan -- run `plan` first")
     plan = json.loads(plan_path.read_text())
 
-    n_fetched = sum(
-        1 for r in daemon.verified_rows()
-        if r.get("kind") == "fetch" and 200 <= int(r.get("status", 0)) < 300
-    )
+    # EVERY fetch row, not just the 2xx ones. A 404 and a redirect refusal each
+    # cost a request to the host; counting only successes let a run that spent
+    # its whole budget on dead pages keep asking for more. The budget bounds
+    # what the crawl DOES, not what it got away with.
+    n_fetched = sum(1 for r in daemon.verified_rows() if r.get("kind") == "fetch")
     if n_fetched >= plan["fetch_budget"]:
         print(json.dumps({
             "item": None,
@@ -192,6 +199,21 @@ def cmd_land(args) -> int:
     behaviour for a run whose verifier did not report.
     """
     daemon, conn = _open(args)
+
+    # AUTHORISE FIRST. This used to be the last step -- `S.finish` at the very
+    # end raised on a bad token, by which point the records were admitted, the
+    # verdicts written and the frontier expanded. A caller with a wrong or
+    # expired token got every mutation it asked for and an error message.
+    try:
+        lease = S.held_lease(conn, args.url, args.token)
+    except S.StoreError as exc:
+        raise Refusal(str(exc)) from exc
+    # And the depth comes from the LEASE, never from an argument. As a free
+    # parameter it let a worker holding a valid lease on a depth-2 item land it
+    # as depth 0 and push its descendants in at depth 1, walking under the
+    # sealed max_depth for as long as it liked.
+    depth = lease["depth"]
+
     res = daemon.receipt_for(args.url, args.digest)
     if res is None:
         raise Refusal(
@@ -205,17 +227,21 @@ def cmd_land(args) -> int:
         # The lease is released even on a refusal: the item was taken, tried and
         # is not still outstanding. Otherwise a malformed extractor output would
         # leave the run reporting work in flight that nobody is doing.
-        S.finish(conn, args.url, args.token)
+        _release(conn, args.url, args.token)
         raise Refusal(f"extractor output refused: {exc}") from exc
 
-    verdicts = json.loads(Path(args.verdicts).read_text()) if args.verdicts else {}
+    try:
+        verdicts = _verdicts(Path(args.verdicts)) if args.verdicts else {}
+    except Refusal:
+        _release(conn, args.url, args.token)
+        raise
     stats = L.LoopStats()
     landed = []
     by_claim: dict = {}
     for idx, claim in enumerate(claims):
         stats.claims_seen += 1
         try:
-            records = X.admit(daemon, res, claim, depth=args.depth)
+            records = X.admit(daemon, res, claim, depth=depth)
         except (X.ExtractionError, F.FetchError) as exc:
             stats.rejected += 1
             stats.notes.append(f"claim {idx} rejected -- {exc}")
@@ -251,14 +277,12 @@ def cmd_land(args) -> int:
 
     ids = {r.id for r in landed}
     written = [r for r in S.select(conn) if r.get("id") in ids]
-    stats.expanded = L.expand(conn, written, args.depth + 1, parent_id=args.url)
+    stats.expanded = L.expand(conn, written, depth + 1, parent_id=args.url)
 
-    try:
-        S.finish(conn, args.url, args.token)
-    except S.StoreError as exc:
-        raise Refusal(str(exc)) from exc
+    S.finish(conn, args.url, args.token)
 
     print(json.dumps({
+        "depth": depth,
         "landed": sorted(ids),
         "stats": stats.as_dict(),
         "frontier": S.frontier_stats(conn),
@@ -269,6 +293,47 @@ def cmd_land(args) -> int:
 # --------------------------------------------------------------------------
 # status
 # --------------------------------------------------------------------------
+
+
+def _verdicts(path: Path) -> dict:
+    """Parse a verdicts file, requiring JSON booleans and nothing else.
+
+    Truthiness is not a verdict. `{"0": "false"}` is a string, and a string is
+    truthy, so it marked all three of a claim's records `entailed` and let the
+    crawl expand on the strength of a judge that said no. A verifier that
+    reports in any shape but `true`/`false` has not reported, and guessing what
+    it meant is exactly the coercion this pipeline refuses everywhere else.
+    """
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise Refusal(f"{path}: not JSON -- {exc}") from exc
+    if not isinstance(raw, dict):
+        raise Refusal(f"{path}: expected an object of claim index -> bool")
+    out = {}
+    for k, v in raw.items():
+        if not isinstance(v, bool):
+            raise Refusal(
+                f"{path}: verdict for claim {k!r} is {type(v).__name__} "
+                f"({v!r}); a verdict must be JSON true or false"
+            )
+        if not (isinstance(k, str) and k.isdigit()):
+            raise Refusal(f"{path}: {k!r} is not a claim index")
+        out[k] = v
+    return out
+
+
+def _release(conn, key: str, token: str) -> None:
+    """Release a lease on the way out of a refusal, without masking it.
+
+    `finish` raises when the lease has already lapsed, and letting that escape
+    from an error path replaced a typed refusal with an unhandled traceback --
+    turning exit 2 into exit 1 and losing the reason.
+    """
+    try:
+        S.finish(conn, key, token)
+    except S.StoreError:
+        pass
 
 
 def cmd_status(args) -> int:
@@ -315,7 +380,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = common(sub.add_parser("land", help="admit claims, apply verdicts, expand"))
     p.add_argument("--url", required=True)
     p.add_argument("--digest", required=True)
-    p.add_argument("--depth", type=int, required=True)
     p.add_argument("--token", required=True)
     p.add_argument("--claims", required=True, help="JSON list of claims")
     p.add_argument("--verdicts",

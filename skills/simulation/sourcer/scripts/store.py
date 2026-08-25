@@ -598,6 +598,37 @@ def claim(
     )
 
 
+def held_lease(
+    conn: sqlite3.Connection, key: str, claim_token: str, now: Optional[float] = None
+) -> dict:
+    """The frontier row this token currently holds a live lease on, or refuse.
+
+    Split out of `finish` so authorisation can happen BEFORE any mutation rather
+    than as a side effect of the last step. A caller that admitted records, wrote
+    verdicts and expanded the frontier and only then discovered it never held the
+    lease has already done all the damage the token exists to prevent.
+
+    Returns the row, so the caller can take the item's DEPTH from the lease
+    instead of from an argument. That removes a second class of defect rather
+    than checking for it: depth arrived as a free parameter, so a worker holding
+    a valid lease on a depth-2 item could land it as depth 0 and walk its
+    descendants in under the sealed max_depth indefinitely.
+    """
+    t = time.time() if now is None else now
+    row = conn.execute(
+        "SELECT key, depth, parent_id FROM frontier"
+        " WHERE key = ? AND claim_token = ? AND done_at IS NULL"
+        "   AND lease_until IS NOT NULL AND lease_until >= ?",
+        (key, claim_token, t),
+    ).fetchone()
+    if row is None:
+        raise StoreError(
+            f"{key}: no item held under that claim token with a live lease. It "
+            "expired, was reclaimed, or was never claimed by you."
+        )
+    return {"key": row["key"], "depth": row["depth"], "parent_id": row["parent_id"]}
+
+
 def finish(
     conn: sqlite3.Connection, key: str, claim_token: str, now: Optional[float] = None
 ) -> None:

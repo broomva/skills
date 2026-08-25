@@ -196,8 +196,7 @@ def test_land_admits_claims_and_expands_only_what_verified(tmp_path, capsys):
 
     claims = tmp_path / "claims.json"
     claims.write_text(json.dumps(seed_claims()))
-    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
-            "--depth", str(item["depth"]), "--token", item["claim_token"],
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"], "--token", item["claim_token"],
             "--claims", str(claims)])
     d = out(capsys)
     assert d["stats"]["admitted"] == 3
@@ -221,8 +220,7 @@ def test_verdicts_are_what_make_a_page_expand(tmp_path, capsys):
     # named correctly on a page that does not state the relation between them.
     verdicts = tmp_path / "v.json"
     verdicts.write_text(json.dumps({"0": False}))
-    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
-            "--depth", str(item["depth"]), "--token", item["claim_token"],
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"], "--token", item["claim_token"],
             "--claims", str(claims), "--verdicts", str(verdicts)])
     d = out(capsys)
     assert d["stats"]["refuted"] == 1
@@ -247,8 +245,7 @@ def test_a_fully_verified_page_expands_to_the_next_hop(tmp_path, capsys):
 
     verdicts = tmp_path / "v.json"
     verdicts.write_text(json.dumps({"0": True}))
-    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"],
-            "--depth", str(item["depth"]), "--token", item["claim_token"],
+    C.main(["land", *paths(tmp_path), "--url", item["url"], "--digest", item["digest"], "--token", item["claim_token"],
             "--claims", str(claims), "--verdicts", str(verdicts)])
     d = out(capsys)
     assert d["stats"]["entailed"] == 3
@@ -265,24 +262,98 @@ def test_landing_a_page_that_was_never_fetched_is_refused(tmp_path, capsys):
     claims = tmp_path / "claims.json"
     claims.write_text(json.dumps([]))
     code = C.main(["land", *paths(tmp_path), "--url", "https://elsewhere.test/x",
-                   "--digest", "0" * 64, "--depth", "0",
-                   "--token", item["claim_token"], "--claims", str(claims)])
+                   "--digest", "0" * 64, "--token", item["claim_token"],
+                   "--claims", str(claims)])
     assert code == 2
-    assert "no chained log row" in capsys.readouterr().err
+    # The lease is checked first now, so a url nobody holds is refused there.
+    # Either refusal is correct; what matters is that it is REFUSED and typed.
+    assert "no item held under that claim token" in capsys.readouterr().err
 
 
-def test_a_wrong_claim_token_cannot_finish_an_item(tmp_path, capsys):
+def test_a_wrong_claim_token_mutates_nothing_at_all(tmp_path, capsys):
+    """Authorisation happens BEFORE any mutation, not as a side effect of the
+    last step.
+
+    The earlier version of this test submitted an EMPTY claims list, so there
+    was no mutation for it to miss — and the token was in fact only checked by
+    the final `finish`, after records were admitted, verdicts written and the
+    frontier expanded. A caller with a wrong token got everything it asked for
+    and an error message. This submits REAL claims and a REAL verdict, which is
+    the only way the test can see the difference.
+    """
     C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
             "--no-traverse"])
     capsys.readouterr()
     item = _take(tmp_path, capsys)
     claims = tmp_path / "claims.json"
-    claims.write_text(json.dumps([]))
+    claims.write_text(json.dumps(seed_claims()))
+    verdicts = tmp_path / "v.json"
+    verdicts.write_text(json.dumps({"0": True}))
+
     code = C.main(["land", *paths(tmp_path), "--url", item["url"],
-                   "--digest", item["digest"], "--depth", str(item["depth"]),
-                   "--token", "not-the-token", "--claims", str(claims)])
+                   "--digest", item["digest"], "--token", "not-the-token",
+                   "--claims", str(claims), "--verdicts", str(verdicts)])
     assert code == 2
-    assert "refusing to finish" in capsys.readouterr().err
+    assert "no item held under that claim token" in capsys.readouterr().err
+
+    conn = S.connect(tmp_path / "map.db")
+    assert S.inventory(conn)["total"] == 0, "records were admitted without a lease"
+    assert S.expandable_ids(conn) == []
+    assert S.frontier_stats(conn)["total"] == 1, "the frontier was expanded"
+    # ...and the real holder can still land it, so the refusal cost nothing.
+    assert C.main(["land", *paths(tmp_path), "--url", item["url"],
+                   "--digest", item["digest"], "--token", item["claim_token"],
+                   "--claims", str(claims), "--verdicts", str(verdicts)]) == 0
+
+
+def test_the_depth_comes_from_the_lease_and_cannot_be_supplied(tmp_path, capsys):
+    """`--depth` is gone, not validated.
+
+    As a free argument it let a worker holding a valid lease on a depth-2 item
+    land it as depth 0 and push its descendants in at depth 1 — walking under
+    the sealed max_depth for as long as it liked. Removing the argument removes
+    the class of defect instead of checking for it.
+    """
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "claims.json"
+    claims.write_text(json.dumps(seed_claims()))
+    with pytest.raises(SystemExit):
+        C.main(["land", *paths(tmp_path), "--url", item["url"],
+                "--digest", item["digest"], "--token", item["claim_token"],
+                "--claims", str(claims), "--depth", "0"])
+    capsys.readouterr()
+    C.main(["land", *paths(tmp_path), "--url", item["url"],
+            "--digest", item["digest"], "--token", item["claim_token"],
+            "--claims", str(claims)])
+    assert out(capsys)["depth"] == item["depth"], "depth must come from the lease"
+
+
+@pytest.mark.parametrize("bad", ['{"0": "false"}', '{"0": 1}', '{"0": null}',
+                                 '[true]', '{"zero": true}'])
+def test_a_verdict_that_is_not_a_json_boolean_is_refused(tmp_path, capsys, bad):
+    """Truthiness is not a verdict.
+
+    `{"0": "false"}` is a string, and a string is truthy, so it marked all three
+    of a claim's records `entailed` and let the crawl expand on the strength of
+    a judge that said no.
+    """
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    item = _take(tmp_path, capsys)
+    claims = tmp_path / "claims.json"
+    claims.write_text(json.dumps(seed_claims()))
+    verdicts = tmp_path / "v.json"
+    verdicts.write_text(bad)
+    code = C.main(["land", *paths(tmp_path), "--url", item["url"],
+                   "--digest", item["digest"], "--token", item["claim_token"],
+                   "--claims", str(claims), "--verdicts", str(verdicts)])
+    assert code == 2
+    conn = S.connect(tmp_path / "map.db")
+    assert S.expandable_ids(conn) == [], "a malformed verdict must not verify anything"
 
 
 def test_malformed_extractor_output_is_refused_and_releases_the_lease(tmp_path, capsys):
@@ -293,7 +364,7 @@ def test_malformed_extractor_output_is_refused_and_releases_the_lease(tmp_path, 
     claims = tmp_path / "claims.json"
     claims.write_text('[{"subject": {"kind": "org", "name": "ACME"}}]')
     code = C.main(["land", *paths(tmp_path), "--url", item["url"],
-                   "--digest", item["digest"], "--depth", str(item["depth"]),
+                   "--digest", item["digest"],
                    "--token", item["claim_token"], "--claims", str(claims)])
     assert code == 2
     assert "extractor output refused" in capsys.readouterr().err
@@ -348,7 +419,7 @@ def test_the_whole_cycle_produces_a_map_the_gates_accept(tmp_path, capsys):
         vf = tmp_path / f"v-{item['digest'][:8]}.json"
         vf.write_text(json.dumps({str(i): True for i in range(len(claims))}))
         C.main(["land", *paths(tmp_path), "--url", item["url"],
-                "--digest", item["digest"], "--depth", str(item["depth"]),
+                "--digest", item["digest"],
                 "--token", item["claim_token"], "--claims", str(cf),
                 "--verdicts", str(vf)])
         return out(capsys)

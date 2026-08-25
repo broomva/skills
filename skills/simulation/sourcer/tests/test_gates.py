@@ -316,7 +316,7 @@ def test_a_host_whose_rules_were_never_fetched_fails_custody(tmp_path):
     rules it ran under.
     """
     polite = F.Politeness(interval=0.0)
-    polite.load("preloaded.test", 200, b"User-agent: *\nAllow: /\n")
+    polite.load("https://preloaded.test", 200, b"User-agent: *\nAllow: /\n")
     d = F.FetchDaemon(
         root=tmp_path / "runs", run_id="r1", politeness=polite,
         transport=lambda u: (200, PAGE, u), key=KEY,
@@ -594,3 +594,55 @@ def test_a_refuted_edge_does_not_fail_the_relation_gate(run):
     records = S.select(conn)
     assert G.gate_triple_entailed(records).status == G.PASS
     assert edge_id not in S.expandable_ids(conn)
+
+
+def test_an_always_failing_gate_is_caught_by_its_OWN_probes(monkeypatch):
+    """Polarity has to hold per gate, not in aggregate.
+
+    With must-accept counted globally, an always-FAIL `transport-custody`
+    satisfied every one of its own must-reject probes while OTHER gates supplied
+    the suite's accepting half — so a gate that refused everything was
+    indistinguishable from a strict one. Probed on a gate that previously had no
+    must-accept probe at all, which is exactly the case that was invisible.
+    """
+    monkeypatch.setattr(
+        G, "gate_transport_custody",
+        lambda daemon, records: G.GateResult("transport-custody", "ingest",
+                                             G.CLOSED, G.FAIL, 1, "", ("no",)),
+    )
+    probes = G.run_decoys()
+    missed = [p for p in probes if not p.ok]
+    assert missed, "an always-failing gate must fail its own must-accept probe"
+    assert all(p.gate == "transport-custody" for p in missed)
+    assert G.gate_suite_proven(probes).status == G.FAIL
+
+
+def test_every_probed_gate_has_both_polarities():
+    """The coverage rule itself, and that it can report a gap."""
+    probes = G.run_decoys()
+    assert G.probe_coverage(probes) == []
+    thinned = [p for p in probes
+               if not (p.gate == "lattice-exact" and p.polarity == "must-accept")]
+    gaps = G.probe_coverage(thinned)
+    assert gaps == ["lattice-exact: no must-accept probe"], gaps
+    assert G.gate_suite_proven(thinned).status == G.FAIL
+
+
+def test_an_inverted_endpoint_span_fails_containment():
+    """`20:10` satisfies `lo <= a and b <= hi` for any enclosing range, so it
+    sailed through the check that is meant to be the independent recheck."""
+    base = {
+        "id": "edge::e", "kind": "edge", "predicate": "employs", "verdict": "entailed",
+        "src": "org::a", "dst": "person::b",
+        "evidence": {"url": "u", "sha256": "d", "span_start": 0, "span_end": 50,
+                     "quote": "q"},
+    }
+    r = G.gate_triple_entailed([
+        dict(base, attrs={X.SUBJECT_SPAN: "20:10", X.OBJECT_SPAN: "0:5"})
+    ])
+    assert r.status == G.FAIL
+    assert any("empty or inverted" in f for f in r.failures)
+    ok = G.gate_triple_entailed([
+        dict(base, attrs={X.SUBJECT_SPAN: "10:20", X.OBJECT_SPAN: "0:5"})
+    ])
+    assert ok.status == G.PASS

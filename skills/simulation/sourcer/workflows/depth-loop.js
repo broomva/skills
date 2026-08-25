@@ -61,6 +61,27 @@ if (!SCRIPTS || !RUN || !DB || SEEDS.length === 0) {
 }
 
 const PY = `PYTHONDONTWRITEBYTECODE=1 python3 ${SCRIPTS}/sourcer.py`
+
+// The claim a verifier is asked to judge, with the endpoints NAMED.
+//
+// Asking about the bare predicate is a real defect and not a cosmetic one. On a
+// page reading `ACME employs Alice. Globex employs Bob.`, relating ACME to Bob
+// fits inside the relation-span bound and contains both mentions, so the only
+// thing standing between it and an `entailed` edge is the question the judge is
+// asked. "Does this text say employs" is answered yes. A verifier cannot refuse
+// a claim it was never shown.
+//
+// The names are byte ranges of the snapshot, quoted for the judge to compare
+// against the span — the agent still reads the file, it is simply told which
+// two things the relation is between.
+function claimText(taken, c) {
+  return `the subject at bytes ${c.subject.span_start}..${c.subject.span_end} ` +
+         `(a ${c.subject.kind}) stands in the relation "${c.predicate}" to ` +
+         `the object at bytes ${c.object.span_start}..${c.object.span_end} ` +
+         `(a ${c.object.kind}) — read all three ranges of ${taken.item.path} ` +
+         `and judge whether the relation span STATES that relation between ` +
+         `those two specific things, not merely that it mentions both`
+}
 const JSON_OBJ = { type: 'object', additionalProperties: true }
 
 // ---------------------------------------------------------------------------
@@ -157,8 +178,7 @@ for (let depth = 0; depth <= MAX_DEPTH; depth++) {
 
              span:  bytes ${c.span_start}..${c.span_end} of ${taken.item.path}
                     read exactly that byte range of that file, and nothing else
-             claim: a ${c.subject.kind} stands in the relation "${c.predicate}"
-                    to a ${c.object.kind}
+             claim: ${JSON.stringify(claimText(taken, c))}
 
            Does that span, on its own, STATE that relation? Not "is it
            plausible", not "is it probably true of the world" -- does the text
