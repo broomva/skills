@@ -37,6 +37,7 @@ module restating them.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import unicodedata
@@ -167,10 +168,41 @@ def normalize_name(raw: str) -> str:
     the wrong answer. Whitespace is collapsed rather than stripped-at-the-ends
     only: a name split across a line break in the HTML is one name.
     """
-    text = unicodedata.normalize("NFKC", raw)
+    # HTML entities FIRST. The quote is raw bytes off an HTML page, so a name
+    # spanning `Ecopetrol&nbsp;S.A.` arrives with the entity undecoded and keys
+    # to `org::ecopetrol-nbsp-s-a` -- a different entity from the same company
+    # written `Ecopetrol S.A.` three lines down. Found on the first crawl of a
+    # real corporate site, where `&nbsp;` between a name and its legal form is
+    # the normal way to stop the two wrapping apart.
+    #
+    # Decoding is the correct reading rather than a convenience: an entity is
+    # what the page DISPLAYS, and `&amp;` displays as `&`. NFKC then folds the
+    # resulting U+00A0 into an ordinary space, so the two spellings converge.
+    text = unicodedata.normalize("NFKC", html.unescape(raw))
     # Any unicode space -- including NBSP, which is what a real page puts
     # between a company name and its legal suffix.
     return " ".join(text.split())
+
+
+def fold_accents(text: str) -> str:
+    """Decompose and drop combining marks: `Compañía` -> `Compania`.
+
+    THE one place this is done, imported by `identity` rather than spelled
+    twice. The two had drifted: `identity.comparable` folded accents while
+    `key_for` -- the function that actually MERGES entities -- did not, so the
+    module proposing merges and the module performing them disagreed about what
+    a name is.
+
+    The slug alphabet is `[a-z0-9]`, so an unfolded accent is not merely kept,
+    it is DELETED: `Compañía` slugged to `compa-a` and `Ecopetrol Perú` to
+    `ecopetrol-per`, while `Café Nacional` and `Cafe Nacional` became two
+    different companies. In a Spanish-language market -- which is the one this
+    was built for -- that is most names.
+    """
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(c)
+    )
 
 
 def key_for(kind: str, name: str) -> str:
@@ -183,7 +215,11 @@ def key_for(kind: str, name: str) -> str:
     if kind not in ENTITY_KINDS:
         raise ExtractionError(f"{kind!r} is not one of {ENTITY_KINDS}")
     norm = normalize_name(name)
-    slug = _SLUG_STRIP.sub("-", norm.casefold()).strip("-")
+    # The KEY folds accents; the NAME keeps them. `attrs.name` stays
+    # `Compañía Nacional` because that is what the page says and what a reader
+    # should see; the key becomes `org::compania-nacional` because that is what
+    # has to match the same company written without them.
+    slug = _SLUG_STRIP.sub("-", fold_accents(norm).casefold()).strip("-")
     if not slug:
         raise ExtractionError(
             f"{name!r} normalises to an empty key -- punctuation is not a name"
@@ -626,6 +662,7 @@ __all__ = [
     "Claim",
     "Entity",
     "normalize_name",
+    "fold_accents",
     "key_for",
     "edge_id",
     "resolve",

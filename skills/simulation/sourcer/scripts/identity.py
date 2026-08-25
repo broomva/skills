@@ -24,9 +24,9 @@ laundering `meet_origin` exists to prevent.
 
 from __future__ import annotations
 
+import html
 import re
 import sys
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -125,8 +125,9 @@ def comparable(name: str) -> tuple:
     Legal forms and stopwords come out. What remains is the part of a name that
     actually identifies something.
     """
-    text = unicodedata.normalize("NFKD", name)
-    text = "".join(c for c in text if not unicodedata.combining(c))
+    # Imported, not re-spelled. These two modules had drifted on exactly this
+    # question once already -- see `extract.fold_accents`.
+    text = X.fold_accents(html.unescape(name))
     tokens = _join_initials([t for t in _NON_ALNUM.split(text.casefold()) if t])
     kept = tuple(t for t in tokens if t not in LEGAL_FORMS and t not in STOPWORDS)
     # A name that is ENTIRELY legal forms and stopwords keeps its tokens rather

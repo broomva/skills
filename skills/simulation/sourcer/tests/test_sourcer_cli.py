@@ -706,3 +706,33 @@ def test_a_refutation_does_not_downgrade_an_already_entailed_endpoint(tmp_path, 
     assert org["verdict"] == "entailed", (
         "the second claim's refusal downgraded a verdict the first claim earned"
     )
+
+
+def test_take_leases_long_enough_for_agent_work(tmp_path, capsys):
+    """The store's 300s default is sized for CODE.
+
+    Between `take` and `land` a model reads a page and a second model judges
+    every claim on it. On a 160KB corporate page that ran past 300s, so `land`
+    was correctly refused for a lapsed lease and an entire crawl was lost with
+    every claim already extracted. The lease exists to return a CRASHED
+    worker's item to the frontier; sizing it below the honest duration of the
+    work turns it into a guillotine.
+    """
+    import store as S
+
+    parser = C.build_parser()
+    take = parser._subparsers._group_actions[0].choices["take"]
+    lease = next(a for a in take._actions if "--lease" in a.option_strings)
+    assert lease.default >= 1800, "the default lease is too short for agent work"
+    assert lease.default > S.LEASE_SECONDS, "it must exceed the library default"
+
+    C.main(["plan", *paths(tmp_path), "--seed", "https://example.com/about",
+            "--no-traverse"])
+    capsys.readouterr()
+    C.main(["take", *paths(tmp_path), "--lease", "900"])
+    item = out(capsys)["item"]
+    conn = S.connect(tmp_path / "map.db")
+    row = conn.execute("SELECT lease_until FROM frontier WHERE key = ?",
+                       (item["url"],)).fetchone()
+    import time
+    assert row["lease_until"] - time.time() > 600, "the --lease value was ignored"

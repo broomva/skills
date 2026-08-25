@@ -167,7 +167,7 @@ def cmd_take(args) -> int:
         }, indent=2, sort_keys=True))
         return OK
 
-    row = S.claim(conn, args.worker, max_depth=plan["max_depth"])
+    row = S.claim(conn, args.worker, max_depth=plan["max_depth"], lease=args.lease)
     if row is None:
         print(json.dumps({
             "item": None, "reason": "the frontier holds nothing claimable",
@@ -549,6 +549,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = common(sub.add_parser("take", help="claim, fetch, and hand back a path"))
     p.add_argument("--worker", default="w1")
+    # The store's 300s default is a LIBRARY default, sized for code. The work
+    # that happens between `take` and `land` is a model reading a page and a
+    # second model judging every claim on it, and on a 160KB corporate page that
+    # ran past 300s -- so `land` was correctly refused for a lease that had
+    # lapsed, and an entire crawl was lost with every claim already extracted.
+    # The lease exists to return a CRASHED worker's item to the frontier; sizing
+    # it below the honest duration of the work turns it into a guillotine.
+    p.add_argument("--lease", type=float, default=1800.0,
+                   help="seconds to hold the item (default 1800; the store's "
+                        "own default of 300 is sized for code, not for agents)")
     p.set_defaults(fn=cmd_take)
 
     p = common(sub.add_parser("land", help="admit claims, apply verdicts, expand"))
