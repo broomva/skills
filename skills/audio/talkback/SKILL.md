@@ -1,7 +1,7 @@
 ---
 name: talkback
 category: audio
-version: 0.2.0
+version: 0.3.0
 description: >-
   Speak an explanation out loud while working in any project — tiered
   text-to-speech with a pluggable backend (ElevenLabs by default and
@@ -10,11 +10,13 @@ description: >-
   and deep paths collapse to short spoken placeholders instead of being dictated
   character by character, while snake_case identifiers survive intact so the
   listener can still search for them. Every utterance is saved to disk for later
-  replay. Includes an optional Stop hook that speaks a short readback when a
-  turn ends — off by default, and when on it speaks only on turns the agent
-  explicitly marked, so acknowledgements never become audio. Use when the user asks to hear something rather than
-  read it — an explanation of a change, a walkthrough of what just happened, a
-  summary they want while looking away from the screen.
+  replay. Also carries a **talk mode** toggle: turn it on and the agent speaks a
+  readback at the end of every turn, for as long as that session lasts. Talk
+  mode is off by default and scoped to the single session that enabled it, so
+  parallel agents in other worktrees stay silent. Use when the user asks to hear
+  something rather than read it — an explanation of a change, a walkthrough of
+  what just happened, a summary they want while looking away from the screen —
+  or when they want the session narrated as it goes.
 author: broomva
 license: MIT
 tags: [tts, voice, audio, elevenlabs, accessibility, narration, explain, say]
@@ -25,6 +27,9 @@ trigger_keywords:
   - tell me what you did, narrate that, walk me through it out loud
   - i want to hear it, say it, out loud, audio explanation
   - text to speech, tts, elevenlabs, voice quota
+  - talk mode, talk mode on, talk mode off, turn on talk mode
+  - keep talking, narrate everything, continuous talkback, talk to me
+  - stop talking, be quiet, mute, silence, stop the voice
 when_to_use: >
   The user wants to LISTEN rather than read — typically because they are away
   from the screen, resting their eyes, or want a walkthrough while doing
@@ -39,10 +44,9 @@ when_to_use: >
 Speaks text aloud from any project directory, saves the audio, and never
 silently spends a metered quota.
 
-**This is an on-demand tool.** It speaks when asked — the user says "explain that
-out loud", or the script is run directly. It does not narrate on its own. The
-turn-end hook at the bottom is an optional extra that ships off; ignore it unless
-the user asks for automatic readbacks.
+**On demand by default.** It speaks when asked — the user says "explain that out
+loud", or the script is run directly. It does not narrate on its own until
+someone turns **talk mode** on, and talk mode belongs to one session at a time.
 
 ## Use it
 
@@ -54,6 +58,10 @@ $S/talkback.py --fast "Throwaway line."                      # local, instant, f
 $S/talkback.py --quota                                       # what's left
 $S/talkback.py --voices                                      # list voices
 $S/talkback.py --dry-run "..."                               # see spoken text, synthesise nothing
+
+$S/talkback-hook.py --on                                     # talk mode ON, this session only
+$S/talkback-hook.py --off                                    # stop talking
+$S/talkback-hook.py --status                                 # who is talking, is the hook wired
 ```
 
 Text can also be piped: `git log -1 --format=%B | $S/talkback.py`.
@@ -132,38 +140,57 @@ Every utterance lands in `~/.talkback/audio/` as mp3 (converted via ffmpeg when
 present) with a timestamped, slugged filename, and is appended to
 `~/.talkback/ledger.jsonl`. Use `--no-save` to discard, `--out-dir` to redirect.
 
-## Optional: speak a readback when a turn ends
+## Talk mode — narrate the session as it goes
 
-The `Stop` hook fires **every time the agent finishes a turn** — including
-one-line answers. Narrating all of those is worse than narrating none, so the
-hook is off by default and, when on, speaks only on turns that earn it.
+Talk mode makes the agent speak a short readback at the end of **every turn**,
+for as long as the session lasts. It ships **off**, it is turned on by hand, and
+it belongs to **one session**.
 
 ```bash
-$S/talkback-hook.py --on            # enable, marker mode (default)
-$S/talkback-hook.py --on always     # enable, every substantial turn
-$S/talkback-hook.py --off           # kill switch
-$S/talkback-hook.py --status        # shows mode + backend
+$S/talkback-hook.py --on                    # continuous, THIS session only
+$S/talkback-hook.py --on marker             # only turns carrying a marker
+$S/talkback-hook.py --on --backend elevenlabs   # the good voice, metered
+$S/talkback-hook.py --off                   # stop talking (this session)
+$S/talkback-hook.py --off --all             # kill switch, everywhere
+$S/talkback-hook.py --status                # mode, backend, who else is talking
+$S/talkback-hook.py --sessions              # every session currently talking
 ```
+
+### Why session-scoped
+
+The `Stop` hook is registered once, globally and permanently — a toggle you
+cannot flip during a session is not a toggle. So the hook fires in *every*
+session, and the **flag** is what scopes it: talk mode is a property of a
+session, not of the machine.
+
+The flag is `~/.talkback/sessions/<session-id>`; a session that never opted in
+has none, so the hook exits 0 without a sound. That is what keeps six parallel
+agents in six worktrees silent while the one session you are watching talks. The
+pre-0.3.0 design had a single machine-wide flag, which is why it was never
+turned on: enabling it made every agent on the box audible at once.
+
+The session id is read from `CLAUDE_CODE_SESSION_ID`, falling back to the newest
+transcript for the working directory; `--session <id>` sets it explicitly. On
+the hook side it comes from the payload's `session_id`, falling back to the
+transcript filename stem.
 
 ### Modes
 
 | Mode | Speaks when |
 |---|---|
-| `marker` (**default**) | the agent left a `<!-- talkback: … -->` marker — and only then |
-| `always` | every turn over `TALKBACK_HOOK_MIN_CHARS` (80), marker preferred when present |
+| `always` (**session default**) | every turn over `TALKBACK_HOOK_MIN_CHARS` (80); a marker still wins when present |
+| `marker` | only when the agent left a `<!-- talkback: … -->` marker |
+| `off` | never — written by `--off` when a global flag would otherwise re-enable the session |
 
-`marker` is the default because the marker is **authored, not extracted**: the
-agent writes it deliberately when a turn did something worth hearing, so the
-hook stays silent through acknowledgements and speaks a real summary rather than
-whatever preamble the message happened to open with.
-
-The mode is stored as the body of the flag file, so it survives restarts. An
-empty flag file (the pre-0.2.0 format) reads as `marker`.
-`TALKBACK_HOOK_MODE` overrides.
+`always` is the session default because that is what talk mode is *for*: you
+asked to hear the session, so short acknowledgements are the only thing worth
+suppressing. `marker` is there for a long unattended arc where you want the
+milestones and not the narration.
 
 ### The marker
 
-To opt a turn in, end the message with:
+To opt a single turn in — in `marker` mode, or to speak a written-for-the-ear
+summary instead of the message's opening lines — end the message with:
 
 ```html
 <!-- talkback: Refactored the auth layer, three call sites, tests green. -->
@@ -173,30 +200,66 @@ In `always` mode a markerless turn falls back to the opening sentences of the
 message, capped at 320 characters (`TALKBACK_HOOK_CHARS`) and trimmed to a
 sentence boundary.
 
+### Lifecycle
+
+- `SessionEnd` deletes the session's flag, so talk mode never outlives the
+  session that asked for it. `/clear` ends a session too — re-enable after one.
+- Sessions that die without a `SessionEnd` (a killed terminal, a crashed
+  harness) are reaped by an idle TTL, `TALKBACK_SESSION_TTL_HOURS` (24). Every
+  spoken turn touches the flag, so this is an idle timeout and not a cap on how
+  long a session may talk.
+- A new readback **interrupts** one still playing rather than talking over it —
+  turns end faster than audio plays, and the newest summary is the one worth
+  hearing. `TALKBACK_BARGE_IN=0` to queue nothing and let them overlap instead.
+
+### The global flag, if you really want it
+
+```bash
+$S/talkback-hook.py --on --global      # every session on the machine speaks
+```
+
+Deliberately a separate gesture, and it defaults to `marker`. A session can
+still mute itself over it (`--off` writes an `off` flag rather than deleting
+one, so the session does not fall back to the global setting), and
+`--off --all` clears everything.
+
 ### Safety properties
 
-- **Off unless the flag file exists** — an unconfigured machine is silent.
+- **Silent unless a flag exists** — an unconfigured machine, and every session
+  that did not opt in, make no sound.
 - **Always exits 0**, so it can never block a turn from completing. It survives
-  malformed stdin, `{}`, and a missing transcript.
-- **Detaches playback**, so no turn waits on audio (measured at 0s).
+  malformed stdin, `{}`, a missing transcript, and a backend that throws.
+- **No identity, no audio** — a payload carrying neither a session id nor a
+  transcript path is not spoken for, because isolation could not be guaranteed.
+- **Session keys are validated** before becoming a path, so a `../` in a payload
+  cannot point the flag lookup outside `~/.talkback/sessions/`.
+- **Detaches playback**, so no turn waits on audio.
 - **Defaults to the free backend** even when a metered one is affordable: it
-  fires unattended, for audio nobody asked for. `TALKBACK_HOOK_BACKEND` overrides.
+  fires unattended, on every turn, for audio nobody asked for.
 
 ### Registering it
+
+```bash
+$S/talkback-hook.py --install --dry-run   # show what would change
+$S/talkback-hook.py --install             # register Stop + SessionEnd
+$S/talkback-hook.py --uninstall           # remove them again
+```
+
+`--install` edits `~/.claude/settings.json` idempotently, backing it up first,
+and adds:
 
 ```json
 {
   "hooks": {
-    "Stop": [
-      { "hooks": [ { "type": "command",
-        "command": "~/.claude/skills/talkback/scripts/talkback-hook.py" } ] }
-    ]
+    "Stop":       [ { "hooks": [ { "type": "command", "command": ".../talkback-hook.py" } ] } ],
+    "SessionEnd": [ { "hooks": [ { "type": "command", "command": ".../talkback-hook.py" } ] } ]
   }
 }
 ```
 
-Goes in `~/.claude/settings.json`. Registration alone does nothing until
-`--on`; both are required.
+Claude Code reads hooks at session start, so a fresh install takes effect in the
+**next** session. Registration alone makes no sound; `--on` is still required,
+and it is required again in every session.
 
 ## Environment
 
@@ -207,7 +270,9 @@ Goes in `~/.claude/settings.json`. Registration alone does nothing until
 | `TALKBACK_ELEVEN_VOICE` | River | ElevenLabs voice id |
 | `TALKBACK_HOOK_CHARS` | `320` | readback cap |
 | `TALKBACK_HOOK_BACKEND` | `say` | backend for the Stop-hook readback |
-| `TALKBACK_HOOK_MODE` | `marker` | `marker` or `always` |
+| `TALKBACK_HOOK_MODE` | *(unset)* | overrides the stored mode: `marker` or `always` |
 | `TALKBACK_HOOK_MIN_CHARS` | `80` | floor below which `always` mode stays silent |
+| `TALKBACK_SESSION_TTL_HOURS` | `24` | idle timeout that reaps a dead session's flag |
+| `TALKBACK_BARGE_IN` | `1` | a new readback cuts off one still playing |
 | `TALKBACK_HOME` | `~/.talkback` | state + audio directory |
 | `OMNIVOICE_API_URL` | `http://localhost:3900` | local backend |

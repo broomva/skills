@@ -30,7 +30,6 @@ HOME = Path.home()
 STATE_DIR = Path(os.environ.get("TALKBACK_HOME", HOME / ".talkback"))
 AUDIO_DIR = STATE_DIR / "audio"
 LEDGER = STATE_DIR / "ledger.jsonl"
-ENABLED_FLAG = STATE_DIR / "hook-enabled"
 
 ELEVEN_API = "https://api.elevenlabs.io"
 ELEVEN_DEFAULT_VOICE = "SAz9YHcvj6GT2YYXdXww"  # River — relaxed, neutral, informative
