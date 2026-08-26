@@ -237,8 +237,39 @@ def _holds_a_manifest(link: Path) -> bool:
     return unreadable
 
 
+def _is_skill_dir(rel: Path) -> bool:
+    """Is `rel` (relative to `skills/`) a position where a skill lives?
+
+    Two positions, because the repository has two:
+
+      - `<category>/<skill>` — the ordinary case, 97 of them.
+      - `<...>/skills/<child>` — a nested sub-skill. `skills/video/content-engine/`
+        holds four beneath a `skills/` container, and the workflow header has
+        always said they are checked the same way.
+
+    Depth alone was not enough, and the difference is not cosmetic: with a
+    depth-2 test, `content-engine/skills/naked/` — a nested skill with no
+    manifest — exited 0. The rule closed the shape at one position and left it
+    open at the other, which is this file's whole history in one line.
+
+    Deliberately NOT "any directory holding files". The `skills/` container
+    itself holds no manifest of its own and must not be asked for one, or the
+    fix for a false green becomes a worse false red on the live tree.
+    """
+    parts = rel.parts
+    if len(parts) == 2:
+        return True
+    return len(parts) >= 2 and parts[-2] == "skills"
+
+
 def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
-    """`(skill_dirs_manifests, reasons_a_subtree_could_not_be_enumerated)`.
+    """`(manifests_found, findings_about_the_tree_itself)`.
+
+    The second element was named for the only thing it used to carry — subtrees
+    that could not be enumerated. It now also carries skill directories that
+    ship no manifest, which is a finding about the tree rather than about any
+    one manifest, and so has nowhere else to live. Both are the same sentence:
+    something here was NOT checked, and saying so is the point.
 
     `os.walk` with `onerror`, NOT `rglob`. Two reasons:
 
@@ -282,6 +313,16 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
         # changes today.
         for sub in subdirs:
             link = Path(root) / sub
+            # A symlinked directory holding no manifest is LEFT ALONE, and the
+            # asymmetry is deliberate. `followlinks=False` means it never
+            # becomes a `root`, so the missing-manifest branch cannot see it —
+            # review called that a way to occupy a skill position and stay
+            # exempt, which is true. It is not closeable by position: at depth 2
+            # a linked `assets/` is indistinguishable from a linked skill, and
+            # five CONTROL tests below exist precisely to keep ordinary linked
+            # asset and reference directories from being reported. `skills/`
+            # holds zero symlinks today, so the exempt case has no instance and
+            # the false red would have five.
             if link.is_symlink() and _holds_a_manifest(link):
                 unwalkable.append(
                     f"{rel / sub}: is a symlinked directory holding a SKILL.md and was "
@@ -294,6 +335,25 @@ def discover(skills_dir: Path) -> tuple[list[Path], list[str]]:
             unwalkable.append(
                 f"{rel}/SKILL.md: is a directory, not a manifest — "
                 "the skill was NOT checked")
+        elif _is_skill_dir(rel) and (files or subdirs):
+            # Deliberately AFTER `_prune`, and this was argued both ways.
+            # Counting entries BEFORE pruning closes a narrow hole — a directory
+            # whose only content is `.claude/` reads as empty and is exempt —
+            # and costs 13 tests that encode the vendored-exclusion policy on
+            # purpose: `node_modules/`, `.venv/`, `.tox/`, `extensions/` would
+            # all become evidence that a skill is here. A tree this linter has
+            # opted out of WALKING is not evidence a skill is present. No
+            # directory on the live tree has only pruned content, so the hole
+            # has no instance and the false red would have 13.
+            # The gate validated every manifest it FOUND and never asked whether
+            # a skill had one, so a skill shipping scripts/ and tests/ and no
+            # SKILL.md was not failed — it was invisible, and the run said OK.
+            # Reading a manifest and requiring a manifest are different checks;
+            # only the first was here. `files or subdirs` keeps an empty
+            # directory out of it, because an empty directory is not a skill.
+            unwalkable.append(
+                f"{rel}: is a skill directory with no SKILL.md — "
+                "a skill without a manifest is not checked by anything")
     return sorted(found), unwalkable
 
 
