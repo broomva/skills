@@ -325,8 +325,19 @@ and adds:
 ```
 
 Claude Code reads hooks at session start, so a fresh install takes effect in the
-**next** session. Registration alone makes no sound; `--on` is still required,
-and it is required again in every session.
+**next** session — and `--on` in a session that started before the install will
+sit there enabled and silent. That silence is indistinguishable from the feature
+not working, so `--on` and `--status` detect the case (install timestamp versus
+the session transcript's creation time) and say it outright:
+
+```
+⚠ this session started BEFORE the hook was registered, so the
+  harness never loaded it here — nothing will be spoken until you
+  restart Claude Code and run --on again in the new session.
+```
+
+Registration alone makes no sound; `--on` is still required, and it is required
+again in every session.
 
 ## Environment
 

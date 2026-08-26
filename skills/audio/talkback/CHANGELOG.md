@@ -26,7 +26,12 @@ never turned on.
   while only one session talks. A toggle you cannot flip mid-session is not a
   toggle, so the hook must already be there — the flag is what scopes it.
 - `--install` / `--uninstall` register the hook in `~/.claude/settings.json`
-  idempotently, backing the file up first.
+  idempotently, backing the file up first, and record **when** they did.
+  `--on` and `--status` compare that against the session transcript's
+  creation time and warn when the session started first: Claude Code
+  snapshots hooks at session start, so talk mode enabled in such a session
+  sits there silent, and that silence is indistinguishable from the feature
+  being broken. Observed on the session that built this.
 - A **`SessionEnd`** handler that drops the session's flag, plus an idle TTL
   (`TALKBACK_SESSION_TTL_HOURS`, 24) for sessions that die without one. Every
   spoken turn touches the flag, so the TTL is an idle timeout and not a cap on
