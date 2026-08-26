@@ -747,9 +747,11 @@ def handle_stop(payload: dict, keys: list[str]) -> int:
     if state is None:
         return 0  # this session did not opt in: silent, no trace
     config, _scope, flag_path = state
+    # A muted session is silenced inside readback(), which is the one place that
+    # decides what a mode means. An early-out here as well would be a second
+    # site enforcing the same rule, and a rule spelled at two sites is a rule a
+    # mutation at either site survives.
     mode = effective_mode(config)
-    if mode == MUTED:
-        return 0  # this session said stop, even though the global flag is set
 
     tp = payload.get("transcript_path")
     if not tp:
