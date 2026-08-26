@@ -6,6 +6,7 @@ OFF by default. Talk mode is enabled per session:
     talkback-hook.py --on          # continuous readback, THIS session only
     talkback-hook.py --off         # silence THIS session
     talkback-hook.py --status      # this session + anything else that is talking
+    talkback-hook.py --outputs     # audio output devices on this host
 
 The flag is `~/.talkback/sessions/<session-id>`. A session that never opted in
 has no flag, so the hook exits 0 without a sound — which is what makes it safe
@@ -221,6 +222,18 @@ def effective_backend(config: dict) -> str:
     return backend or "say"
 
 
+def effective_output(config: dict) -> str:
+    """Which audio output this session's readbacks come out of.
+
+    Per session, not per machine: sessions are driven from different devices and
+    land on different speakers. Empty means the host's system output.
+    """
+    env = os.environ.get("TALKBACK_OUTPUT", "").strip()
+    if env:
+        return env
+    return str(config.get("output", "")).strip()
+
+
 def prune_stale(now: float | None = None) -> list[str]:
     """Drop flags for sessions that have gone quiet past the idle TTL.
 
@@ -344,12 +357,15 @@ def stop_previous_speech() -> None:
     pid_file.unlink(missing_ok=True)
 
 
-def speak_detached(spoken: str, backend: str) -> int | None:
+def speak_detached(spoken: str, backend: str, output: str = "") -> int | None:
     """Fire the utterance without holding the turn open for the audio."""
     stop_previous_speech()
+    cmd = [sys.executable, str(HERE / "talkback.py"), "-b", backend]
+    if output:
+        cmd += ["-d", output]
     try:
         proc = subprocess.Popen(
-            [sys.executable, str(HERE / "talkback.py"), "-b", backend, "--", spoken],
+            cmd + ["--", spoken],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -484,7 +500,7 @@ def cmd_on(argv: list[str]) -> int:
     is_global = _flag(argv, "--global")
     positional = [a for a in argv[1:] if not a.startswith("--")]
     # `--session X` / `--backend Y` values are options, not the mode word
-    for opt in ("--session", "--backend"):
+    for opt in ("--session", "--backend", "--output"):
         val = _opt(argv, opt)
         if val in positional:
             positional.remove(val)
@@ -498,6 +514,9 @@ def cmd_on(argv: list[str]) -> int:
     backend = _opt(argv, "--backend")
     if backend:
         config["backend"] = backend
+    output = _opt(argv, "--output")
+    if output:
+        config["output"] = output
     config["enabled_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
     if is_global:
@@ -516,7 +535,9 @@ def cmd_on(argv: list[str]) -> int:
     config["cwd"] = os.getcwd()
     write_config(sessions_dir() / sid, config)
     prune_stale()
-    print(f"talkback: talk mode ON for session {sid} (mode={mode}, backend={effective_backend(config)})")
+    out = effective_output(config)
+    print(f"talkback: talk mode ON for session {sid} (mode={mode}, "
+          f"backend={effective_backend(config)}, output={out or 'system default'})")
     if mode == "always":
         print(f"  speaks on every turn over {MIN_CHARS} chars — this session only")
     else:
@@ -527,7 +548,7 @@ def cmd_on(argv: list[str]) -> int:
     if read_config(global_flag()) is not None:
         print("  note: the GLOBAL flag is also set — every session speaks. `--off --all`.")
     if not _flag(argv, "--quiet"):
-        speak_detached("Talk mode on.", effective_backend(config))
+        speak_detached("Talk mode on.", effective_backend(config), effective_output(config))
     return 0
 
 
@@ -579,7 +600,8 @@ def cmd_status(argv: list[str]) -> int:
     else:
         config, scope, _ = state
         print(f"talkback: talk mode ON for this session via the {scope} flag "
-              f"(mode={effective_mode(config)}, backend={effective_backend(config)})")
+              f"(mode={effective_mode(config)}, backend={effective_backend(config)}, "
+              f"output={effective_output(config) or 'system default'})")
     print(f"  session id: {sid or '(unknown)'}")
 
     others = [(k, c) for k, c in enabled_sessions() if k != sid]
@@ -613,6 +635,7 @@ def cmd_sessions() -> int:
     for key, config in rows:
         print(f"{key}  mode={config.get('mode', SESSION_DEFAULT_MODE)}"
               f"  backend={config.get('backend', HOOK_BACKEND)}"
+              f"  output={config.get('output', 'system default')}"
               f"  cwd={config.get('cwd', '?')}")
     return 0
 
@@ -629,6 +652,9 @@ def cli(argv: list[str]) -> int | None:
         return cmd_status(argv)
     if cmd == "--sessions":
         return cmd_sessions()
+    if cmd == "--outputs":
+        # One implementation of device enumeration, in talkback.py.
+        return subprocess.run([sys.executable, str(HERE / "talkback.py"), "--outputs"]).returncode
     if cmd == "--install":
         return install(dry_run=_flag(argv, "--dry-run"))
     if cmd == "--uninstall":
@@ -672,7 +698,7 @@ def handle_stop(payload: dict, keys: list[str]) -> int:
     if not spoken or not spoken.strip():
         return 0
 
-    speak_detached(spoken, effective_backend(config))
+    speak_detached(spoken, effective_backend(config), effective_output(config))
     # Mark the session live, so the idle TTL only ever reaps sessions that ended
     # without a SessionEnd.
     try:

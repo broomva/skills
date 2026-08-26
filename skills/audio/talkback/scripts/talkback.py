@@ -35,6 +35,12 @@ ELEVEN_API = "https://api.elevenlabs.io"
 ELEVEN_DEFAULT_VOICE = "SAz9YHcvj6GT2YYXdXww"  # River — relaxed, neutral, informative
 ELEVEN_DEFAULT_MODEL = "eleven_turbo_v2_5"
 SAY_DEFAULT_VOICE = os.environ.get("TALKBACK_SAY_VOICE", "Samantha")
+#: Where the sound comes out. Empty means the system default output. Audio plays
+#: on the machine running this script — if a session is driven from a phone or
+#: another device, the sound still lands on the host, so the useful lever is
+#: choosing which of the HOST's outputs (AirPods, an AirPlay speaker, a display)
+#: it goes to.
+DEFAULT_OUTPUT = os.environ.get("TALKBACK_OUTPUT", "")
 OMNIVOICE_URL = os.environ.get("OMNIVOICE_API_URL", "http://localhost:3900")
 
 # Keep a floor of characters in reserve so a quota is never fully drained by
@@ -253,10 +259,107 @@ def backend_omnivoice(text: str, out_base: Path, profile: str | None) -> Path:
 
 
 # --------------------------------------------------------------------------
+# audio output devices
+# --------------------------------------------------------------------------
+
+_SAY_DEVICE_RE = re.compile(r"^\s*(\d+)\s+(.+?)\s*$")
+_CA_DEVICE_RE = re.compile(r"\[(\d+)\]\s+(.+?),\s*([^,]+)\s*$")
+
+
+def say_outputs() -> list[tuple[str, str]]:
+    """`(id, name)` for every output device, from `say -a '?'`.
+
+    `say` lists outputs only, which is what we want — the CoreAudio list below
+    is indexed across inputs and outputs together.
+    """
+    if not shutil.which("say"):
+        return []
+    try:
+        out = subprocess.run(["say", "-a", "?"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    rows = []
+    for line in out.splitlines():
+        m = _SAY_DEVICE_RE.match(line)
+        if m:
+            rows.append((m.group(1), m.group(2)))
+    return rows
+
+
+def coreaudio_devices() -> list[tuple[int, str]]:
+    """`(index, name)` as ffmpeg's audiotoolbox muxer numbers them.
+
+    These indices are what `-audio_device_index` takes, and they are NOT the
+    `say -a` ids: this list interleaves inputs and outputs.
+    """
+    if not shutil.which("ffmpeg"):
+        return []
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono",
+             "-t", "0.01", "-f", "audiotoolbox", "-list_devices", "true", "-"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return []
+    rows = []
+    for line in (proc.stderr or "").splitlines():
+        m = _CA_DEVICE_RE.search(line)
+        if m:
+            rows.append((int(m.group(1)), m.group(2).strip()))
+    return rows
+
+
+def list_outputs() -> None:
+    rows = say_outputs()
+    if not rows:
+        print("no audio output devices found (macOS `say` unavailable)")
+        return
+    print("# audio outputs — pass a name or id to --device")
+    for dev_id, name in rows:
+        print(f"{dev_id:>5}  {name}")
+    print("\nAudio plays on the machine running talkback. A session driven from")
+    print("another device still sounds here, so pick one of THESE outputs.")
+
+
+def _ca_index(device: str) -> int | None:
+    """Match a `say` device name onto ffmpeg's CoreAudio index."""
+    if not device:
+        return None
+    wanted = device.strip().lower()
+    for index, name in coreaudio_devices():
+        if name.strip().lower() == wanted:
+            return index
+    return None
+
+
+# --------------------------------------------------------------------------
 # playback + ledger
 # --------------------------------------------------------------------------
 
-def play(path: Path) -> None:
+def play(path: Path, device: str = "") -> None:
+    """Play the file, on `device` when one is named.
+
+    `afplay` cannot target a device, so a named output routes through ffmpeg's
+    audiotoolbox muxer instead. A device that cannot be resolved falls back to
+    the system default with a warning: a readback is never worth failing over.
+    """
+    if device:
+        index = _ca_index(device)
+        if index is None:
+            print(f"[talkback] output {device!r} not found; using the default device",
+                  file=sys.stderr)
+        elif shutil.which("ffmpeg"):
+            rc = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                 "-f", "audiotoolbox", "-audio_device_index", str(index), "-"],
+                check=False,
+            ).returncode
+            if rc == 0:
+                return
+            print(f"[talkback] ffmpeg could not play on {device!r}; using the default",
+                  file=sys.stderr)
+
     player = shutil.which("afplay") or shutil.which("ffplay")
     if not player:
         print(f"[talkback] no player found; audio at {path}", file=sys.stderr)
@@ -335,6 +438,10 @@ def main() -> int:
                    help="read full file paths aloud instead of just the basename")
     p.add_argument("--quota", action="store_true", help="report ElevenLabs quota and exit")
     p.add_argument("--voices", action="store_true", help="list available voices and exit")
+    p.add_argument("-d", "--device", default=DEFAULT_OUTPUT,
+                   help="audio output device, by name or `say -a` id (default: system output)")
+    p.add_argument("--outputs", action="store_true",
+                   help="list audio output devices and exit")
     p.add_argument("--dry-run", action="store_true",
                    help="show the spoken text and chosen backend, synthesise nothing")
     a = p.parse_args()
@@ -353,6 +460,10 @@ def main() -> int:
             reset = " · resets " + datetime.fromtimestamp(q["resets_unix"]).strftime("%Y-%m-%d")
         print(f"ElevenLabs [{q['tier']}] {q['used']}/{q['limit']} used · "
               f"{q['remaining']} remaining{reset}")
+        return 0
+
+    if a.outputs:
+        list_outputs()
         return 0
 
     if a.voices:
@@ -426,12 +537,13 @@ def main() -> int:
             return 1
 
     if not a.no_play:
-        play(path)
+        play(path, a.device)
 
     record({
         "ts": datetime.now().isoformat(timespec="seconds"),
         "backend": backend,
         "chars": len(text),
+        "device": a.device or None,
         "audio": str(path) if not a.no_save else None,
         "cwd": os.getcwd(),
     })

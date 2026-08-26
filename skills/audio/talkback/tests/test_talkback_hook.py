@@ -48,6 +48,7 @@ def hook(tmp_path, monkeypatch):
     monkeypatch.setenv("TALKBACK_HOME", str(tmp_path / "talkback"))
     monkeypatch.delenv("TALKBACK_HOOK_MODE", raising=False)
     monkeypatch.delenv("TALKBACK_HOOK_BACKEND", raising=False)
+    monkeypatch.delenv("TALKBACK_OUTPUT", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
     mod = _load()
@@ -58,8 +59,11 @@ def hook(tmp_path, monkeypatch):
 @pytest.fixture()
 def spoken(hook, monkeypatch):
     """Capture what would have been spoken instead of speaking it."""
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(hook, "speak_detached", lambda text, backend: calls.append((text, backend)))
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        hook, "speak_detached",
+        lambda text, backend, output="": calls.append((text, backend, output)),
+    )
     return calls
 
 
@@ -135,6 +139,22 @@ def test_per_session_backend_is_honoured(hook, tmp_path, monkeypatch, spoken):
     hook.write_config(hook.sessions_dir() / SESSION_B, {"mode": "always"})
     _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_B))
     assert spoken[1][1] == "say"
+
+
+def test_per_session_output_routes_the_audio(hook, tmp_path, monkeypatch, spoken):
+    """Two sessions on one host must be able to come out of two speakers."""
+    hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always", "output": "AirPods"})
+    hook.write_config(hook.sessions_dir() / SESSION_B, {"mode": "always"})
+    _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_A))
+    _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_B))
+    assert [c[2] for c in spoken] == ["AirPods", ""]
+
+
+def test_env_output_overrides_the_stored_one(hook, tmp_path, monkeypatch, spoken):
+    monkeypatch.setenv("TALKBACK_OUTPUT", "MacBook Pro Speakers")
+    hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always", "output": "AirPods"})
+    _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_A))
+    assert spoken[0][2] == "MacBook Pro Speakers"
 
 
 # --------------------------------------------------------------------------
@@ -340,7 +360,7 @@ def test_missing_transcript_exits_zero(hook, monkeypatch, spoken):
 def test_a_raising_speaker_still_exits_zero(hook, tmp_path, monkeypatch):
     hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always"})
 
-    def boom(text, backend):
+    def boom(text, backend, output=""):
         raise RuntimeError("no audio device")
 
     monkeypatch.setattr(hook, "speak_detached", boom)
@@ -353,7 +373,7 @@ def test_a_raising_speaker_still_exits_zero(hook, tmp_path, monkeypatch):
 
 def _run(hook, monkeypatch, argv: list[str]) -> int:
     monkeypatch.setattr(sys, "argv", ["talkback-hook.py", *argv])
-    monkeypatch.setattr(hook, "speak_detached", lambda text, backend: None)
+    monkeypatch.setattr(hook, "speak_detached", lambda text, backend, output="": None)
     return hook.main()
 
 
@@ -380,6 +400,14 @@ def test_on_accepts_a_backend_option_without_reading_it_as_the_mode(hook, monkey
     assert _run(hook, monkeypatch, ["--on", "--backend", "elevenlabs"]) == 0
     config = hook.read_config(hook.sessions_dir() / SESSION_A)
     assert config == {**config, "mode": "always", "backend": "elevenlabs"}
+
+
+def test_on_stores_the_output_without_reading_it_as_the_mode(hook, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION_A)
+    assert _run(hook, monkeypatch, ["--on", "--output", "AirPods"]) == 0
+    config = hook.read_config(hook.sessions_dir() / SESSION_A)
+    assert config["mode"] == "always"
+    assert config["output"] == "AirPods"
 
 
 def test_off_removes_this_sessions_flag_only(hook, monkeypatch):
