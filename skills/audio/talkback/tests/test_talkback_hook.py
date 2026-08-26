@@ -573,3 +573,47 @@ def test_uninstall_removes_talkback_and_leaves_neighbours(hook, monkeypatch):
         h["command"] for m in settings["hooks"]["Stop"] for h in m["hooks"]
     ]
     assert commands == ["/x/other-hook.sh"]
+
+
+# --------------------------------------------------------------------------
+# the mid-session registration trap
+# --------------------------------------------------------------------------
+
+def _fake_session_transcript(hook, tmp_path, monkeypatch, session: str, when: float):
+    home = tmp_path / "home"
+    project = home / ".claude" / "projects" / "-w-proj"
+    project.mkdir(parents=True, exist_ok=True)
+    t = project / f"{session}.jsonl"
+    t.write_text("{}\n")
+    os.utime(t, (when, when))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return t
+
+
+def test_a_hook_registered_after_the_session_started_is_flagged(hook, tmp_path, monkeypatch):
+    """Claude Code snapshots hooks at session start; silence would look like a bug."""
+    _fake_session_transcript(hook, tmp_path, monkeypatch, SESSION_A, when=1000.0)
+    hook.install_marker().parent.mkdir(parents=True, exist_ok=True)
+    hook.install_marker().write_text("2000.0\n")
+    assert hook.registered_after_session_started(SESSION_A) is True
+
+
+def test_a_hook_registered_before_the_session_is_not_flagged(hook, tmp_path, monkeypatch):
+    """Control: same machinery, opposite order, must stay quiet."""
+    _fake_session_transcript(hook, tmp_path, monkeypatch, SESSION_A, when=3000.0)
+    hook.install_marker().parent.mkdir(parents=True, exist_ok=True)
+    hook.install_marker().write_text("2000.0\n")
+    assert hook.registered_after_session_started(SESSION_A) is False
+
+
+def test_no_install_marker_never_guesses(hook, tmp_path, monkeypatch):
+    """A pre-0.3.0 install has no marker; warning on a guess would be worse."""
+    _fake_session_transcript(hook, tmp_path, monkeypatch, SESSION_A, when=1000.0)
+    assert hook.registered_after_session_started(SESSION_A) is False
+    assert hook.registered_after_session_started(None) is False
+
+
+def test_install_records_when_it_registered(hook, monkeypatch):
+    hook.SETTINGS.write_text(json.dumps({"hooks": {}}))
+    assert _run(hook, monkeypatch, ["--install"]) == 0
+    assert float(hook.install_marker().read_text().strip()) > 0

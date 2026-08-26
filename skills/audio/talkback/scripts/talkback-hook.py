@@ -128,6 +128,10 @@ def speech_pid_file() -> Path:
     return state_dir() / "speaking.pid"
 
 
+def install_marker() -> Path:
+    return state_dir() / "installed-at"
+
+
 # --------------------------------------------------------------------------
 # session identity
 # --------------------------------------------------------------------------
@@ -185,6 +189,37 @@ def cli_session_id(explicit: str | None = None) -> str | None:
         if k:
             return k
     return newest_transcript_session()
+
+
+def session_started_at(session_id: str) -> float | None:
+    """When this session's transcript was created — i.e. when it started."""
+    base = Path.home() / ".claude" / "projects"
+    try:
+        for path in base.glob(f"*/{session_id}.jsonl"):
+            st = path.stat()
+            return getattr(st, "st_birthtime", st.st_mtime)
+    except OSError:
+        return None
+    return None
+
+
+def registered_after_session_started(session_id: str | None) -> bool:
+    """Was the hook registered after this session began?
+
+    Claude Code snapshots its hook registrations at session start, so a hook
+    added mid-session does not fire until the next one. Turning talk mode on in
+    such a session produces silence that is indistinguishable from the feature
+    not working — which is exactly what a default-silent design looks like when
+    it breaks. Say so instead.
+    """
+    if not session_id:
+        return False
+    try:
+        installed = float(install_marker().read_text().strip())
+    except (OSError, ValueError):
+        return False  # installed before this was recorded — do not guess
+    started = session_started_at(session_id)
+    return started is not None and installed > started
 
 
 # --------------------------------------------------------------------------
@@ -496,6 +531,11 @@ def install(dry_run: bool = False) -> int:
     except OSError as e:
         print(f"cannot write {SETTINGS}: {e}", file=sys.stderr)
         return 1
+    try:
+        install_marker().parent.mkdir(parents=True, exist_ok=True)
+        install_marker().write_text(f"{time.time()}\n")
+    except OSError:
+        pass
     print(f"talkback hook: registered for {', '.join(missing)}")
     print(f"  backup: {backup}")
     print("  restart Claude Code to pick it up; it stays silent until --on")
@@ -606,6 +646,10 @@ def cmd_on(argv: list[str]) -> int:
         print(f"  speaks the opening {CAP} chars of every turn over {MIN_CHARS}")
     else:
         print("  speaks only on turns carrying a <!-- talkback: ... --> marker")
+    if registered_after_session_started(sid):
+        print("  ⚠ this session started BEFORE the hook was registered, so the")
+        print("    harness never loaded it here — nothing will be spoken until you")
+        print("    restart Claude Code and run --on again in the new session.")
     others = [k for k, _ in enabled_sessions() if k != sid]
     if others:
         print(f"  note: {len(others)} other session(s) also have talk mode on")
@@ -677,6 +721,9 @@ def cmd_status(argv: list[str]) -> int:
     else:
         print("  no other session is talking")
     print(f"  global flag: {'SET' if global_flag().exists() else 'unset'}")
+    if registered_after_session_started(sid):
+        print("  ⚠ hook registered AFTER this session started — not loaded here;"
+              " restart to activate")
 
     try:
         settings = json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
