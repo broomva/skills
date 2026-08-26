@@ -48,6 +48,17 @@ never turned on.
 
 ### Changed
 
+- **Readbacks speak the whole turn by default.** `full` replaces `always` as the
+  session default (`always` still reads as `full`), joined by `brief` — the old
+  capped excerpt — and the existing `marker`. A capped excerpt is a preview of
+  the answer, not the answer: you would still have to read the screen, which is
+  the thing talk mode exists to avoid. `full` also has no length floor, so a
+  short result still gets spoken. `TALKBACK_FULL_MAX_CHARS` puts a ceiling on
+  it, off by default. In `full`, a marker becomes the headline spoken ahead of
+  the body rather than replacing it.
+- `TALKBACK_ON_OVERLAP=queue` serializes playback so a long full readback is
+  never cut off by the next turn; `interrupt` (the default) keeps the previous
+  barge-in behaviour.
 - **Backends now form a ladder** — `elevenlabs → omnivoice → say` — instead of a
   single fall-back-to-`say`. A rung that cannot take the job hands off to the
   next one down, so the voice degrades rather than the audio going missing, and

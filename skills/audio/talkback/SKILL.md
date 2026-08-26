@@ -11,9 +11,10 @@ description: >-
   character by character, while snake_case identifiers survive intact so the
   listener can still search for them. Every utterance is saved to disk for later
   replay. Also carries a **talk mode** toggle: turn it on and the agent speaks a
-  readback at the end of every turn, for as long as that session lasts. Talk
-  mode is off by default and scoped to the single session that enabled it, so
-  parallel agents in other worktrees stay silent. Use when the user asks to hear
+  full readback of every turn, for as long as that session lasts — the whole
+  response, not a summary of it, with `brief` and `marker` levels for when you
+  want less. Talk mode is off by default and scoped to the single session that
+  enabled it, so parallel agents in other worktrees stay silent. Use when the user asks to hear
   something rather than read it — an explanation of a change, a walkthrough of
   what just happened, a summary they want while looking away from the screen —
   or when they want the session narrated as it goes.
@@ -160,7 +161,8 @@ for as long as the session lasts. It ships **off**, it is turned on by hand, and
 it belongs to **one session**.
 
 ```bash
-$S/talkback-hook.py --on                    # continuous, THIS session only
+$S/talkback-hook.py --on                    # full detail, every turn, THIS session
+$S/talkback-hook.py --on brief              # opening lines only
 $S/talkback-hook.py --on marker             # only turns carrying a marker
 $S/talkback-hook.py --on --backend elevenlabs   # the good voice, metered
 $S/talkback-hook.py --on --output "AirPods Pro"  # which speaker this session uses
@@ -188,23 +190,47 @@ transcript for the working directory; `--session <id>` sets it explicitly. On
 the hook side it comes from the payload's `session_id`, falling back to the
 transcript filename stem.
 
-### Modes
+### Detail levels
 
-| Mode | Speaks when |
+| Mode | Speaks |
 |---|---|
-| `always` (**session default**) | every turn over `TALKBACK_HOOK_MIN_CHARS` (80); a marker still wins when present |
-| `marker` | only when the agent left a `<!-- talkback: … -->` marker |
+| `full` (**session default**) | the **whole** turn, every turn — led by the marker when the agent wrote one |
+| `brief` | the opening `TALKBACK_HOOK_CHARS` (320) of turns over `TALKBACK_HOOK_MIN_CHARS` (80); a marker wins when present |
+| `marker` | only turns carrying a `<!-- talkback: … -->` marker, and only the marker text |
 | `off` | never — written by `--off` when a global flag would otherwise re-enable the session |
 
-Readbacks take the **whole ladder** — ElevenLabs first, descending only when a
-rung is unusable. A talk-mode session therefore spends quota; the reserve guard
-stands, so the balance runs down to the reserve and the session keeps talking on
-the next rung rather than going quiet. `--on --backend say` pins it low.
+`full` is the default because the point of a readback is to walk away and come
+back **knowing what happened**. A capped excerpt is a preview of the answer, not
+the answer — you would still have to read the screen, which is the thing talk
+mode exists to avoid. What gets dropped is only what cannot be heard at all
+(code fences, URLs, deep paths — see *Spoken-text handling*), never what is
+merely long. `full` has no length floor either: "done, tests green" is a result
+you want when you are away, not noise.
 
-`always` is the session default because that is what talk mode is *for*: you
-asked to hear the session, so short acknowledgements are the only thing worth
-suppressing. `marker` is there for a long unattended arc where you want the
-milestones and not the narration.
+`brief` and `marker` are for a long unattended arc where you want the shape of
+progress rather than the transcript of it.
+
+`TALKBACK_FULL_MAX_CHARS` puts a ceiling on `full`, off by default — a ceiling
+turns `full` back into `brief` at exactly the turns worth hearing in full.
+
+Readbacks take the **whole backend ladder** — ElevenLabs first, descending only
+when a rung is unusable. Full detail on every turn therefore spends real quota:
+a 1,500-character turn is ~1% of the monthly Creator balance, so a long session
+will reach the reserve, at which point it keeps talking on the next rung rather
+than going quiet. `--on --backend say` pins it low, `--on brief` shortens it.
+
+### When one readback runs into the next
+
+A full readback can still be playing when the next turn ends.
+`TALKBACK_ON_OVERLAP` decides what happens:
+
+| Value | Behaviour |
+|---|---|
+| `interrupt` (**default**) | the new readback cuts off the old one — the newest state is the one worth hearing |
+| `queue` | they play in order, so a long detailed readback is never truncated; you fall behind but hear everything |
+
+`queue` is the right setting for an unattended arc you intend to listen back to
+in full; `interrupt` is right when you are at the machine and want the latest.
 
 ### The marker
 
@@ -215,9 +241,10 @@ summary instead of the message's opening lines — end the message with:
 <!-- talkback: Refactored the auth layer, three call sites, tests green. -->
 ```
 
-In `always` mode a markerless turn falls back to the opening sentences of the
-message, capped at 320 characters (`TALKBACK_HOOK_CHARS`) and trimmed to a
-sentence boundary.
+In `full` mode the marker becomes the **headline**: it is spoken first, then the
+whole turn behind it, so the readback leads with the conclusion without losing
+the detail. In `brief` mode the marker *replaces* the excerpt, and a markerless
+turn falls back to the opening sentences trimmed to a sentence boundary.
 
 ### Which speaker
 
@@ -249,9 +276,8 @@ the default device rather than failing the readback.
   harness) are reaped by an idle TTL, `TALKBACK_SESSION_TTL_HOURS` (24). Every
   spoken turn touches the flag, so this is an idle timeout and not a cap on how
   long a session may talk.
-- A new readback **interrupts** one still playing rather than talking over it —
-  turns end faster than audio plays, and the newest summary is the one worth
-  hearing. `TALKBACK_BARGE_IN=0` to queue nothing and let them overlap instead.
+- Overlap is governed by `TALKBACK_ON_OVERLAP` (above). `TALKBACK_BARGE_IN=0`
+  disables the interrupt without switching to a queue, letting readbacks overlap.
 
 ### The global flag, if you really want it
 
@@ -309,11 +335,13 @@ and it is required again in every session.
 | `TALKBACK_BACKEND` | `elevenlabs` | default backend |
 | `TALKBACK_SAY_VOICE` | `Samantha` | macOS voice name |
 | `TALKBACK_ELEVEN_VOICE` | River | ElevenLabs voice id |
-| `TALKBACK_HOOK_CHARS` | `320` | readback cap |
+| `TALKBACK_HOOK_CHARS` | `320` | `brief` excerpt cap |
+| `TALKBACK_FULL_MAX_CHARS` | `0` | ceiling on `full` (0 = none) |
+| `TALKBACK_ON_OVERLAP` | `interrupt` | `interrupt` or `queue` when readbacks collide |
 | `TALKBACK_CHAIN` | `elevenlabs,omnivoice,say` | the quality ladder, best first |
 | `TALKBACK_HOOK_BACKEND` | `elevenlabs` | top rung for talk-mode readbacks |
 | `TALKBACK_OUTPUT` | *(unset)* | audio output device, overriding the session's |
-| `TALKBACK_HOOK_MODE` | *(unset)* | overrides the stored mode: `marker` or `always` |
+| `TALKBACK_HOOK_MODE` | *(unset)* | overrides the stored mode: `full`, `brief` or `marker` |
 | `TALKBACK_HOOK_MIN_CHARS` | `80` | floor below which `always` mode stays silent |
 | `TALKBACK_SESSION_TTL_HOURS` | `24` | idle timeout that reaps a dead session's flag |
 | `TALKBACK_BARGE_IN` | `1` | a new readback cuts off one still playing |
