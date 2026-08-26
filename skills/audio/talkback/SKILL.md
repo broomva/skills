@@ -62,6 +62,7 @@ $S/talkback.py --dry-run "..."                               # see spoken text, 
 $S/talkback-hook.py --on                                     # talk mode ON, this session only
 $S/talkback-hook.py --off                                    # stop talking
 $S/talkback-hook.py --status                                 # who is talking, is the hook wired
+$S/talkback-hook.py --outputs                                # audio outputs on this host
 ```
 
 Text can also be piped: `git log -1 --format=%B | $S/talkback.py`.
@@ -150,6 +151,7 @@ it belongs to **one session**.
 $S/talkback-hook.py --on                    # continuous, THIS session only
 $S/talkback-hook.py --on marker             # only turns carrying a marker
 $S/talkback-hook.py --on --backend elevenlabs   # the good voice, metered
+$S/talkback-hook.py --on --output "AirPods Pro"  # which speaker this session uses
 $S/talkback-hook.py --off                   # stop talking (this session)
 $S/talkback-hook.py --off --all             # kill switch, everywhere
 $S/talkback-hook.py --status                # mode, backend, who else is talking
@@ -199,6 +201,28 @@ summary instead of the message's opening lines — end the message with:
 In `always` mode a markerless turn falls back to the opening sentences of the
 message, capped at 320 characters (`TALKBACK_HOOK_CHARS`) and trimmed to a
 sentence boundary.
+
+### Which speaker
+
+Audio comes out of the **machine running Claude Code**. A session you are
+driving from a phone, a tablet or another laptop still sounds on the host, so
+the lever that matters is choosing which of the *host's* outputs it lands on —
+AirPods paired to the Mac, an AirPlay speaker, a display, the built-in speakers.
+
+```bash
+$S/talkback-hook.py --outputs             # what this host can play through
+$S/talkback-hook.py --on --output "AirPods Pro"
+$S/talkback.py -d "MacBook Pro Speakers" "one-off line on a chosen device"
+```
+
+The output is stored **per session**, so two sessions on one host can come out
+of two different speakers. `TALKBACK_OUTPUT` overrides. An unset output means
+the system default.
+
+A device is named the way `say -a '?'` names it. Routing to a named device goes
+through ffmpeg's `audiotoolbox` muxer, because `afplay` cannot target one; if
+ffmpeg is missing or the name does not resolve, it warns on stderr and plays on
+the default device rather than failing the readback.
 
 ### Lifecycle
 
@@ -270,6 +294,7 @@ and it is required again in every session.
 | `TALKBACK_ELEVEN_VOICE` | River | ElevenLabs voice id |
 | `TALKBACK_HOOK_CHARS` | `320` | readback cap |
 | `TALKBACK_HOOK_BACKEND` | `say` | backend for the Stop-hook readback |
+| `TALKBACK_OUTPUT` | *(unset)* | audio output device, overriding the session's |
 | `TALKBACK_HOOK_MODE` | *(unset)* | overrides the stored mode: `marker` or `always` |
 | `TALKBACK_HOOK_MIN_CHARS` | `80` | floor below which `always` mode stays silent |
 | `TALKBACK_SESSION_TTL_HOURS` | `24` | idle timeout that reaps a dead session's flag |

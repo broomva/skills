@@ -34,6 +34,13 @@ never turned on.
 - **Barge-in**: a new readback interrupts one still playing instead of speaking
   over it (`TALKBACK_BARGE_IN=0` to disable). Turns end faster than audio plays.
 - Per-session backend, `--on --backend elevenlabs`.
+- **Per-session audio output.** `--outputs` lists the host's output devices,
+  `--on --output "AirPods Pro"` pins one to a session, and `talkback.py
+  -d <device>` routes a one-off line. Two sessions on one host can come out of
+  two speakers. Routing goes through ffmpeg's `audiotoolbox` muxer, because
+  `afplay` cannot target a device; an unresolvable name warns and plays on the
+  default rather than failing the readback. Audio still sounds on the machine
+  running Claude Code — a session driven from another device does not move it.
 - A test suite (54 cases), including the isolation predicate in **both**
   polarities: an opted-in session speaks, and a concurrent session under the
   identical setup stays silent. A one-sided test passes just as happily against
