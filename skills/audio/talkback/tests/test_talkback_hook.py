@@ -33,6 +33,11 @@ LONG_TURN = (
 )
 
 
+def _load_with_env():
+    """Re-import so env-read module constants (CAP, FULL_MAX_CHARS) take."""
+    return _load()
+
+
 def _load():
     spec = importlib.util.spec_from_file_location("talkback_hook_under_test", _SCRIPT)
     assert spec and spec.loader
@@ -49,6 +54,7 @@ def hook(tmp_path, monkeypatch):
     monkeypatch.delenv("TALKBACK_HOOK_MODE", raising=False)
     monkeypatch.delenv("TALKBACK_HOOK_BACKEND", raising=False)
     monkeypatch.delenv("TALKBACK_OUTPUT", raising=False)
+    monkeypatch.delenv("TALKBACK_FULL_MAX_CHARS", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
     mod = _load()
@@ -284,7 +290,8 @@ def test_a_speaking_turn_keeps_the_session_alive(hook, tmp_path, monkeypatch, sp
 # config reading
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("body,expected", [("marker", "marker"), ("always", "always"), ("off", "off")])
+@pytest.mark.parametrize("body,expected", [("marker", "marker"), ("always", "always"),
+                                          ("full", "full"), ("brief", "brief"), ("off", "off")])
 def test_legacy_bare_mode_body_still_reads(hook, body, expected):
     path = hook.sessions_dir() / SESSION_A
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -298,7 +305,7 @@ def test_empty_flag_file_takes_the_scope_default(hook):
     path.write_text("")
     config, scope, _ = hook.resolve_state([SESSION_A])
     assert scope == "session"
-    assert hook.effective_mode(config) == hook.SESSION_DEFAULT_MODE == "always"
+    assert hook.effective_mode(config) == hook.SESSION_DEFAULT_MODE == "full"
 
 
 def test_global_default_mode_is_the_quiet_one(hook):
@@ -320,27 +327,76 @@ def test_corrupt_flag_body_does_not_crash(hook):
 # what gets spoken
 # --------------------------------------------------------------------------
 
-def test_marker_mode_is_silent_without_a_marker(hook):
-    assert hook.condense(LONG_TURN, "marker") is None
+LONG_BODY = (
+    "Rewrote the resolver so the flag is keyed on the session id. "
+    + "Then wired the SessionEnd cleanup behind it. " * 12
+)
 
 
-def test_marker_wins_in_every_mode(hook):
-    text = LONG_TURN + "\n<!-- talkback: Keyed the flag on the session. -->"
-    assert hook.condense(text, "marker") == "Keyed the flag on the session."
-    assert hook.condense(text, "always") == "Keyed the flag on the session."
+def test_full_speaks_the_whole_turn(hook):
+    """The default is the answer, not a preview of it."""
+    out = hook.readback(LONG_BODY, "full")
+    assert out == LONG_BODY.strip()
+    assert len(out) > hook.CAP  # the thing `brief` would have cut
 
 
-def test_always_mode_stays_silent_under_the_floor(hook):
-    assert hook.condense("done", "always") is None
-    assert hook.condense("x" * (hook.MIN_CHARS + 1), "always") is not None
-
-
-def test_long_turns_are_cut_at_a_sentence_boundary(hook):
-    body = ("First sentence is a normal length one. " * 20)
-    out = hook.condense(body, "always")
+def test_brief_cuts_where_full_does_not(hook):
+    """Control for the test above: the ladder really has two rungs."""
+    out = hook.readback(LONG_BODY, "brief")
     assert out is not None
     assert len(out) <= hook.CAP
-    assert out.rstrip().endswith(".")
+    assert out != LONG_BODY.strip()
+
+
+def test_full_has_no_floor(hook):
+    """A short result is still a result when you are away from the screen."""
+    assert hook.readback("Done, tests green.", "full") == "Done, tests green."
+    assert hook.readback("Done, tests green.", "brief") is None
+
+
+def test_full_leads_with_the_marker_then_gives_the_body(hook):
+    text = LONG_BODY + "\n<!-- talkback: Keyed the flag on the session. -->"
+    out = hook.readback(text, "full")
+    assert out.startswith("Keyed the flag on the session.")
+    assert LONG_BODY.strip() in out
+
+
+def test_marker_mode_speaks_only_the_marker(hook):
+    text = LONG_BODY + "\n<!-- talkback: Keyed the flag on the session. -->"
+    assert hook.readback(text, "marker") == "Keyed the flag on the session."
+    assert hook.readback(LONG_BODY, "marker") is None
+
+
+def test_brief_prefers_the_marker_over_an_excerpt(hook):
+    text = LONG_BODY + "\n<!-- talkback: Keyed the flag on the session. -->"
+    assert hook.readback(text, "brief") == "Keyed the flag on the session."
+
+
+def test_full_ceiling_is_off_unless_asked_for(hook, monkeypatch):
+    monkeypatch.setenv("TALKBACK_FULL_MAX_CHARS", "120")
+    capped = _load_with_env()
+    out = capped.readback(LONG_BODY, "full")
+    assert len(out) <= 120
+    # control: the same body is uncapped in the default module
+    assert len(hook.readback(LONG_BODY, "full")) > 120
+
+
+def test_always_is_an_alias_for_full(hook):
+    """0.3.0 flags say `always`; they must not silently become a preview."""
+    assert hook.normalize_mode("always") == "full"
+    assert hook.readback(LONG_BODY, hook.normalize_mode("always")) == LONG_BODY.strip()
+
+
+def test_a_legacy_always_flag_speaks_in_full(hook, tmp_path, monkeypatch, spoken):
+    hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always"})
+    _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_A, LONG_BODY))
+    assert spoken[0][0] == LONG_BODY.strip()
+
+
+def test_unknown_mode_normalizes_to_nothing(hook):
+    assert hook.normalize_mode("shouty") is None
+    assert hook.normalize_mode("") is None
+    assert hook.normalize_mode(None) is None
 
 
 def test_muted_mode_never_produces_audio(hook, tmp_path, monkeypatch, spoken):
@@ -391,10 +447,10 @@ def _run(hook, monkeypatch, argv: list[str]) -> int:
     return hook.main()
 
 
-def test_on_defaults_to_continuous_for_a_session(hook, monkeypatch, capsys):
+def test_on_defaults_to_full_detail_for_a_session(hook, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION_A)
     assert _run(hook, monkeypatch, ["--on"]) == 0
-    assert hook.read_config(hook.sessions_dir() / SESSION_A)["mode"] == "always"
+    assert hook.read_config(hook.sessions_dir() / SESSION_A)["mode"] == "full"
     assert not hook.global_flag().exists()  # never writes the machine-wide flag
 
 
@@ -413,14 +469,21 @@ def test_on_accepts_a_backend_option_without_reading_it_as_the_mode(hook, monkey
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION_A)
     assert _run(hook, monkeypatch, ["--on", "--backend", "elevenlabs"]) == 0
     config = hook.read_config(hook.sessions_dir() / SESSION_A)
-    assert config == {**config, "mode": "always", "backend": "elevenlabs"}
+    assert config["mode"] == "full"
+    assert config["backend"] == "elevenlabs"
+
+
+def test_on_accepts_an_explicit_detail_level(hook, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION_A)
+    assert _run(hook, monkeypatch, ["--on", "brief"]) == 0
+    assert hook.read_config(hook.sessions_dir() / SESSION_A)["mode"] == "brief"
 
 
 def test_on_stores_the_output_without_reading_it_as_the_mode(hook, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION_A)
     assert _run(hook, monkeypatch, ["--on", "--output", "AirPods"]) == 0
     config = hook.read_config(hook.sessions_dir() / SESSION_A)
-    assert config["mode"] == "always"
+    assert config["mode"] == "full"
     assert config["output"] == "AirPods"
 
 

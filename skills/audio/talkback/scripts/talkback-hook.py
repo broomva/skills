@@ -14,12 +14,16 @@ to register the hook once, globally and permanently, while only one session is
 ever audible. The point of the whole design: parallel agents in other worktrees
 stay silent, because talk mode is a property of a session, not of the machine.
 
-Two modes, stored in the flag's body:
+Three detail levels, stored in the flag's body:
 
-  always  (session default)  speak on every turn over MIN_CHARS. This is the
-                             "continuous talkback" the toggle exists for.
-  marker                     speak ONLY on turns where the agent deliberately
-                             left a `<!-- talkback: ... -->` marker.
+  full  (session default)  speak the WHOLE turn. The point of a readback is to
+                           walk away and come back knowing what happened; a
+                           capped excerpt is a preview of the answer, not the
+                           answer.
+  brief                    the opening TALKBACK_HOOK_CHARS of turns over
+                           MIN_CHARS — the 0.3.0 behaviour.
+  marker                   only turns where the agent deliberately left a
+                           `<!-- talkback: ... -->` marker.
 
 `--on --global` restores the pre-0.3.0 machine-wide flag. It is a deliberate,
 separate gesture and it defaults to `marker`, because a global flag makes every
@@ -49,22 +53,36 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-#: Modes `--on` will set.
-MODES = ("marker", "always")
+#: How much of the turn gets spoken. `--on` will set any of these.
+MODES = ("full", "brief", "marker")
+#: `always` was 0.3.0's name for "speak every turn"; it meant the capped
+#: opening. It now resolves to `full`, because a readback you come back to has
+#: to carry the details, not a preview of them.
+MODE_ALIASES = {"always": "full"}
 #: `--off` writes `off` as a session tombstone when a global flag is set —
 #: without it, deleting the session flag would fall back to the global one and
 #: "stop talking" would not stop the talking.
 MUTED = "off"
-READABLE_MODES = MODES + (MUTED,)
-#: A session opts in deliberately and wants to hear the work — continuous.
-SESSION_DEFAULT_MODE = "always"
+READABLE_MODES = MODES + (MUTED,) + tuple(MODE_ALIASES)
+#: A session opts in deliberately and wants to hear the work, in full.
+SESSION_DEFAULT_MODE = "full"
 #: The machine-wide flag makes every agent audible, so it stays conservative.
 GLOBAL_DEFAULT_MODE = "marker"
 
+#: `brief` only: where the opening excerpt is cut.
 CAP = int(os.environ.get("TALKBACK_HOOK_CHARS", "320"))
-# In `always` mode, a turn shorter than this is an acknowledgement, not a
-# report. Narrating it costs more attention than it returns.
+# In `brief` mode, a turn shorter than this is an acknowledgement, not a report,
+# and narrating a preview of it costs more attention than it returns. `full`
+# has no floor: if you asked to hear the session, "done, tests green" is a
+# result you want, not noise.
 MIN_CHARS = int(os.environ.get("TALKBACK_HOOK_MIN_CHARS", "80"))
+#: `full` speaks the whole turn. 0 = no ceiling; set a number to bound a very
+#: long one. It is off by default deliberately — a ceiling on `full` turns it
+#: back into `brief` at exactly the turns worth hearing in full.
+FULL_MAX_CHARS = int(os.environ.get("TALKBACK_FULL_MAX_CHARS", "0"))
+#: What a new readback does to one still playing: `interrupt` (newest wins) or
+#: `queue` (play them in order, so a long detailed readback is never cut off).
+ON_OVERLAP = os.environ.get("TALKBACK_ON_OVERLAP", "interrupt").strip().lower()
 #: Talk mode uses the full quality ladder by default: elevenlabs → omnivoice →
 #: say. talkback.py descends it on its own when a rung is unusable — no key,
 #: quota spent, local server down — so an unattended readback degrades in voice
@@ -76,7 +94,8 @@ HOOK_BACKEND = os.environ.get("TALKBACK_HOOK_BACKEND", "elevenlabs")
 # is gone. Every fire touches the live flag, so this is an idle timeout, not a
 # lifetime cap: a twelve-hour session keeps talking.
 TTL_HOURS = float(os.environ.get("TALKBACK_SESSION_TTL_HOURS", "24"))
-BARGE_IN = os.environ.get("TALKBACK_BARGE_IN", "1") not in ("0", "false", "no")
+BARGE_IN = (os.environ.get("TALKBACK_BARGE_IN", "1") not in ("0", "false", "no")
+            and ON_OVERLAP != "queue")
 
 MARKER_RE = re.compile(r"<!--\s*talkback:\s*(.+?)\s*-->", re.S | re.I)
 #: Session ids are uuids. Anything that is not one is not allowed to become a
@@ -213,12 +232,19 @@ def resolve_state(keys: list[str]) -> tuple[dict, str, Path] | None:
     return None
 
 
+def normalize_mode(mode: str | None) -> str | None:
+    """Canonical mode name, or None if it is not one."""
+    if not mode:
+        return None
+    mode = mode.strip().lower()
+    mode = MODE_ALIASES.get(mode, mode)
+    return mode if mode in MODES + (MUTED,) else None
+
+
 def effective_mode(config: dict) -> str:
-    env = os.environ.get("TALKBACK_HOOK_MODE", "").strip().lower()
-    if env in MODES:
-        return env
-    mode = str(config.get("mode", "")).strip().lower()
-    return mode if mode in READABLE_MODES else SESSION_DEFAULT_MODE
+    return (normalize_mode(os.environ.get("TALKBACK_HOOK_MODE"))
+            or normalize_mode(config.get("mode"))
+            or SESSION_DEFAULT_MODE)
 
 
 def effective_backend(config: dict) -> str:
@@ -310,24 +336,49 @@ def last_assistant_text(transcript: Path) -> str:
     return text
 
 
-def condense(text: str, mode: str = SESSION_DEFAULT_MODE) -> str | None:
-    """Return what to speak, or None when this turn should stay silent."""
-    m = MARKER_RE.search(text)
-    if m:
-        return m.group(1).strip() or None
-    if mode == "marker":
-        return None  # no marker, no audio — the whole point of this mode
-    body = MARKER_RE.sub("", text).strip()
-    if len(body) < MIN_CHARS:
-        return None
-    if len(body) <= CAP:
+def _cut_at_sentence(body: str, cap: int) -> str:
+    if len(body) <= cap:
         return body
-    cut = body[:CAP]
+    cut = body[:cap]
     for sep in (". ", "! ", "? "):
         i = cut.rfind(sep)
-        if i > CAP // 3:
+        if i > cap // 3:
             return cut[: i + 1]
     return cut.rsplit(" ", 1)[0] + "..."
+
+
+def readback(text: str, mode: str = SESSION_DEFAULT_MODE) -> str | None:
+    """What to speak for this turn, or None to stay silent.
+
+    `full` is the default because the point of a readback is to be able to walk
+    away and come back knowing what happened. A capped excerpt is a preview of
+    the answer, not the answer — you would still have to read the screen, which
+    is the thing talk mode exists to avoid. What does get dropped is what cannot
+    be heard at all (code fences, URLs, deep paths — `talkback.py` handles
+    that), not what is merely long.
+    """
+    m = MARKER_RE.search(text)
+    headline = (m.group(1).strip() if m else "")
+    body = MARKER_RE.sub("", text).strip()
+
+    if mode == MUTED:
+        return None
+    if mode == "marker":
+        return headline or None
+    if mode == "brief":
+        if headline:
+            return headline
+        if len(body) < MIN_CHARS:
+            return None
+        return _cut_at_sentence(body, CAP)
+
+    # full — the whole turn, led by the marker when the agent wrote one
+    if not body:
+        return headline or None
+    spoken = f"{headline} {body}".strip() if headline else body
+    if FULL_MAX_CHARS > 0:
+        spoken = _cut_at_sentence(spoken, FULL_MAX_CHARS)
+    return spoken or None
 
 
 def _is_our_speech(pid: int) -> bool:
@@ -370,12 +421,14 @@ def speak_detached(spoken: str, backend: str, output: str = "") -> int | None:
     cmd = [sys.executable, str(HERE / "talkback.py"), "-b", backend]
     if output:
         cmd += ["-d", output]
+    env = {**os.environ, "TALKBACK_ON_OVERLAP": ON_OVERLAP}
     try:
         proc = subprocess.Popen(
             cmd + ["--", spoken],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=env,
             start_new_session=True,  # its own process group, so barge-in can kill it
         )
     except Exception:
@@ -511,10 +564,12 @@ def cmd_on(argv: list[str]) -> int:
         val = _opt(argv, opt)
         if val in positional:
             positional.remove(val)
-    mode = (positional[0].strip().lower() if positional
-            else (GLOBAL_DEFAULT_MODE if is_global else SESSION_DEFAULT_MODE))
-    if mode not in MODES:
-        print(f"unknown mode {mode!r} — expected one of {', '.join(MODES)}", file=sys.stderr)
+    raw_mode = (positional[0] if positional
+                else (GLOBAL_DEFAULT_MODE if is_global else SESSION_DEFAULT_MODE))
+    mode = normalize_mode(raw_mode)
+    if mode is None or mode == MUTED:
+        print(f"unknown mode {raw_mode!r} — expected one of {', '.join(MODES)}",
+              file=sys.stderr)
         return 2
 
     config = {"mode": mode}
@@ -545,8 +600,10 @@ def cmd_on(argv: list[str]) -> int:
     out = effective_output(config)
     print(f"talkback: talk mode ON for session {sid} (mode={mode}, "
           f"backend={effective_backend(config)}, output={out or 'system default'})")
-    if mode == "always":
-        print(f"  speaks on every turn over {MIN_CHARS} chars — this session only")
+    if mode == "full":
+        print("  speaks the whole of every turn — this session only")
+    elif mode == "brief":
+        print(f"  speaks the opening {CAP} chars of every turn over {MIN_CHARS}")
     else:
         print("  speaks only on turns carrying a <!-- talkback: ... --> marker")
     others = [k for k, _ in enabled_sessions() if k != sid]
@@ -701,7 +758,7 @@ def handle_stop(payload: dict, keys: list[str]) -> int:
     if not text.strip():
         return 0
 
-    spoken = condense(text, mode)
+    spoken = readback(text, mode)
     if not spoken or not spoken.strip():
         return 0
 

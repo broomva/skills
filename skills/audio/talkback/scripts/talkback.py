@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import re
+import fcntl
 import shutil
 import subprocess
 import sys
@@ -347,6 +348,24 @@ def _ca_index(device: str) -> int | None:
 # playback + ledger
 # --------------------------------------------------------------------------
 
+def _play_lock():
+    """Serialize playback across processes when overlap policy is `queue`.
+
+    Returned as a context-manager-ish handle the caller keeps open for the
+    duration of playback; the flock releases when the process exits even if it
+    is killed, so a crashed player cannot wedge the queue.
+    """
+    if os.environ.get("TALKBACK_ON_OVERLAP", "").strip().lower() != "queue":
+        return None
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        fh = (STATE_DIR / "play.lock").open("w")
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        return fh
+    except OSError:
+        return None
+
+
 def play(path: Path, device: str = "") -> None:
     """Play the file, on `device` when one is named.
 
@@ -354,6 +373,15 @@ def play(path: Path, device: str = "") -> None:
     audiotoolbox muxer instead. A device that cannot be resolved falls back to
     the system default with a warning: a readback is never worth failing over.
     """
+    lock = _play_lock()
+    try:
+        _play(path, device)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def _play(path: Path, device: str) -> None:
     if device:
         index = _ca_index(device)
         if index is None:
