@@ -48,6 +48,14 @@ never turned on.
 
 ### Changed
 
+- **Backends now form a ladder** — `elevenlabs → omnivoice → say` — instead of a
+  single fall-back-to-`say`. A rung that cannot take the job hands off to the
+  next one down, so the voice degrades rather than the audio going missing, and
+  asking for a rung explicitly starts there and only descends (`--fast` never
+  climbs back to a metered backend). `TALKBACK_CHAIN` reorders it.
+- Talk-mode readbacks default to the **top** of that ladder rather than to
+  `say`. The ElevenLabs reserve guard still stands, so a chatty session runs the
+  balance down to the reserve and then keeps talking on the next rung.
 - `--on` now means **this session**, and defaults to `always` (continuous) —
   that is what talk mode is for. The machine-wide flag moved behind an explicit
   `--on --global` and keeps `marker` as its default.

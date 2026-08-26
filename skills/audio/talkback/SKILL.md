@@ -86,6 +86,18 @@ was used if it fell back.
 | `say` (`--fast`) | free, unlimited | fair | macOS native, ~instant, no network |
 | `omnivoice` | free, unlimited | good | local + private; needs the backend up. **Unverified** — see below |
 
+### The ladder
+
+`elevenlabs → omnivoice → say`, best first. A rung that cannot take the job —
+no key, quota spent to the reserve, local server down, synthesis error — hands
+off to the next one down, so the voice degrades instead of the audio going
+missing. `TALKBACK_CHAIN` reorders it.
+
+Asking for a rung explicitly starts the ladder **there and only descends**:
+`--fast` means "local now" and never climbs back up to a metered backend. Every
+fallback prints the reason on stderr and the chosen backend lands in the ledger,
+so a degraded run is never silent about being degraded.
+
 `--strict` turns any fallback into a hard failure (exit 1) instead, for scripts
 that must not silently degrade.
 
@@ -132,7 +144,7 @@ Agent prose is not written to be heard, so the text is prepared first:
 - deep paths shorten to the basename (`src/lib/engine.py` → `engine.py`); pass
   `--keep-paths` to hear them in full
 - markdown emphasis is stripped **only where it delimits a span** — a bare
-  underscore inside `resolve_backend` is left alone, because eating it turns a
+  underscore inside `backend_chain` is left alone, because eating it turns a
   symbol the listener could search for into one they cannot
 
 ## Saved audio
@@ -183,6 +195,11 @@ transcript filename stem.
 | `always` (**session default**) | every turn over `TALKBACK_HOOK_MIN_CHARS` (80); a marker still wins when present |
 | `marker` | only when the agent left a `<!-- talkback: … -->` marker |
 | `off` | never — written by `--off` when a global flag would otherwise re-enable the session |
+
+Readbacks take the **whole ladder** — ElevenLabs first, descending only when a
+rung is unusable. A talk-mode session therefore spends quota; the reserve guard
+stands, so the balance runs down to the reserve and the session keeps talking on
+the next rung rather than going quiet. `--on --backend say` pins it low.
 
 `always` is the session default because that is what talk mode is *for*: you
 asked to hear the session, so short acknowledgements are the only thing worth
@@ -293,7 +310,8 @@ and it is required again in every session.
 | `TALKBACK_SAY_VOICE` | `Samantha` | macOS voice name |
 | `TALKBACK_ELEVEN_VOICE` | River | ElevenLabs voice id |
 | `TALKBACK_HOOK_CHARS` | `320` | readback cap |
-| `TALKBACK_HOOK_BACKEND` | `say` | backend for the Stop-hook readback |
+| `TALKBACK_CHAIN` | `elevenlabs,omnivoice,say` | the quality ladder, best first |
+| `TALKBACK_HOOK_BACKEND` | `elevenlabs` | top rung for talk-mode readbacks |
 | `TALKBACK_OUTPUT` | *(unset)* | audio output device, overriding the session's |
 | `TALKBACK_HOOK_MODE` | *(unset)* | overrides the stored mode: `marker` or `always` |
 | `TALKBACK_HOOK_MIN_CHARS` | `80` | floor below which `always` mode stays silent |

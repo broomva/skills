@@ -47,6 +47,16 @@ OMNIVOICE_URL = os.environ.get("OMNIVOICE_API_URL", "http://localhost:3900")
 # one long explanation; the next short one should still get through.
 ELEVEN_RESERVE_CHARS = 250
 
+#: The quality ladder, best first. A backend that is unusable — no key, quota
+#: spent, local server down, synthesis error — hands off to the next one down,
+#: so the voice degrades instead of the audio disappearing. Asking for a rung
+#: explicitly starts the ladder THERE and only descends: `--fast` means "local
+#: now" and must not climb back up to a metered backend.
+CHAIN = tuple(
+    b.strip() for b in os.environ.get("TALKBACK_CHAIN", "elevenlabs,omnivoice,say").split(",")
+    if b.strip()
+)
+
 
 # --------------------------------------------------------------------------
 # text preparation
@@ -62,7 +72,7 @@ _PATH_RE = re.compile(r"(?<![\w/])(?:[\w.-]+/){1,}[\w.-]+")
 _WS_RE = re.compile(r"\s+")
 
 # Emphasis is stripped only where the marker actually delimits a span. A bare
-# underscore inside an identifier (resolve_backend) is not emphasis, and eating
+# underscore inside an identifier (backend_chain) is not emphasis, and eating
 # it turns a symbol the listener could search for into one they cannot.
 _EMPH_PATTERNS = [
     re.compile(r"\*\*(.+?)\*\*", re.S),
@@ -378,37 +388,45 @@ def record(entry: dict) -> None:
 
 # --------------------------------------------------------------------------
 
-def resolve_backend(requested: str, n_chars: int, strict: bool) -> tuple[str, str]:
-    """Return (backend, note). Falls back to `say` rather than failing loudly."""
-    if requested == "say":
-        return "say", ""
-    if requested == "omnivoice":
+def backend_chain(requested: str) -> list[str]:
+    """Backends to try, in order: `requested`, then everything below it."""
+    chain = list(CHAIN)
+    if requested in chain:
+        return chain[chain.index(requested):]
+    return [requested] + chain
+
+
+def backend_viable(backend: str, n_chars: int) -> tuple[bool, str]:
+    """Can this backend take the job right now? `(ok, why-not)`."""
+    if backend == "say":
+        if not shutil.which("say"):
+            return False, "`say` is unavailable (macOS only)"
+        return True, ""
+    if backend == "omnivoice":
         if omnivoice_up():
-            return "omnivoice", ""
-        if strict:
-            raise RuntimeError(f"omnivoice backend unreachable at {OMNIVOICE_URL}")
-        return "say", f"omnivoice down at {OMNIVOICE_URL} — fell back to say"
-    if requested == "elevenlabs":
+            return True, ""
+        return False, f"unreachable at {OMNIVOICE_URL}"
+    if backend == "elevenlabs":
         key = eleven_key()
         if not key:
-            if strict:
-                raise RuntimeError("no ElevenLabs key")
-            return "say", "no ElevenLabs key — fell back to say"
+            return False, "no API key"
         q = eleven_quota(key)
         if q is None:
-            if strict:
-                raise RuntimeError("could not read ElevenLabs quota")
-            return "say", "ElevenLabs quota unreadable — fell back to say"
+            return False, "quota unreadable"
         if q["remaining"] - n_chars < ELEVEN_RESERVE_CHARS:
-            msg = (
-                f"ElevenLabs quota too low ({q['remaining']}/{q['limit']} left, "
-                f"need {n_chars}) — fell back to say"
-            )
-            if strict:
-                raise RuntimeError(msg.replace(" — fell back to say", ""))
-            return "say", msg
-        return "elevenlabs", ""
-    return "say", ""
+            return False, (f"quota too low ({q['remaining']}/{q['limit']} left, "
+                           f"need {n_chars})")
+        return True, ""
+    return True, ""
+
+
+def synthesise(backend: str, text: str, out_base: Path, a) -> Path:
+    if backend == "elevenlabs":
+        voice = a.voice or os.environ.get("TALKBACK_ELEVEN_VOICE", ELEVEN_DEFAULT_VOICE)
+        return backend_elevenlabs(text, out_base, voice, a.model)
+    if backend == "omnivoice":
+        return backend_omnivoice(text, out_base, a.voice)
+    return backend_say(text, out_base, a.voice or SAY_DEFAULT_VOICE)
 
 
 def main() -> int:
@@ -497,44 +515,47 @@ def main() -> int:
         requested = "elevenlabs"
     else:
         requested = a.backend
-    try:
-        backend, note = resolve_backend(requested, len(text), a.strict)
-    except RuntimeError as e:
-        print(f"[talkback] {e}", file=sys.stderr)
-        return 1
-    if note:
-        print(f"[talkback] {note}", file=sys.stderr)
+    candidates = backend_chain(requested)
 
     if a.dry_run:
-        print(f"[talkback] backend={backend} chars={len(text)}")
-        print(text)
-        return 0
+        for candidate in candidates:
+            ok, why = backend_viable(candidate, len(text))
+            if ok:
+                print(f"[talkback] backend={candidate} chars={len(text)}")
+                print(text)
+                return 0
+            print(f"[talkback] {candidate}: {why}", file=sys.stderr)
+            if a.strict:
+                return 1
+        print("[talkback] no backend available", file=sys.stderr)
+        return 1
 
     out_dir = Path(a.out_dir) if a.out_dir else AUDIO_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_base = out_dir / f"{stamp}-{slugify(text)}"
 
-    try:
-        if backend == "elevenlabs":
-            voice = a.voice or os.environ.get("TALKBACK_ELEVEN_VOICE", ELEVEN_DEFAULT_VOICE)
-            path = backend_elevenlabs(text, out_base, voice, a.model)
-        elif backend == "omnivoice":
-            path = backend_omnivoice(text, out_base, a.voice)
-        else:
-            path = backend_say(text, out_base, a.voice or SAY_DEFAULT_VOICE)
-    except Exception as e:
-        print(f"[talkback] {backend} failed: {e}", file=sys.stderr)
-        if backend != "say" and not a.strict:
-            print("[talkback] retrying with say", file=sys.stderr)
-            try:
-                path = backend_say(text, out_base, SAY_DEFAULT_VOICE)
-                backend = "say"
-            except Exception as e2:
-                print(f"[talkback] say also failed: {e2}", file=sys.stderr)
+    backend, path = "", None
+    for candidate in candidates:
+        ok, why = backend_viable(candidate, len(text))
+        if not ok:
+            print(f"[talkback] {candidate}: {why}", file=sys.stderr)
+            if a.strict:
                 return 1
-        else:
-            return 1
+            continue
+        try:
+            path = synthesise(candidate, text, out_base, a)
+            backend = candidate
+            break
+        except Exception as e:
+            print(f"[talkback] {candidate} failed: {e}", file=sys.stderr)
+            if a.strict:
+                return 1
+    if path is None:
+        print("[talkback] every backend in the chain failed", file=sys.stderr)
+        return 1
+    if backend != requested:
+        print(f"[talkback] fell back to {backend}", file=sys.stderr)
 
     if not a.no_play:
         play(path, a.device)

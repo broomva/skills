@@ -134,11 +134,25 @@ def test_per_session_backend_is_honoured(hook, tmp_path, monkeypatch, spoken):
     hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always", "backend": "elevenlabs"})
     _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_A))
     assert spoken[0][1] == "elevenlabs"
-    # control: the default really is the free backend, so the assertion above
-    # is reading the config and not a constant.
+    # control: the default is a *different* backend, so the assertion above is
+    # reading the config and not a constant.
     hook.write_config(hook.sessions_dir() / SESSION_B, {"mode": "always"})
     _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_B))
-    assert spoken[1][1] == "say"
+    assert spoken[1][1] == "elevenlabs"
+
+
+def test_the_default_backend_is_the_top_of_the_ladder(hook, tmp_path, monkeypatch, spoken):
+    """Talk mode asks for the best voice; talkback.py descends when it cannot."""
+    hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always"})
+    _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_A))
+    assert spoken[0][1] == "elevenlabs"
+
+
+def test_env_backend_overrides_the_default(hook, tmp_path, monkeypatch, spoken):
+    monkeypatch.setenv("TALKBACK_HOOK_BACKEND", "say")
+    hook.write_config(hook.sessions_dir() / SESSION_A, {"mode": "always"})
+    _fire(hook, monkeypatch, _stop_payload(tmp_path, SESSION_A))
+    assert spoken[0][1] == "say"
 
 
 def test_per_session_output_routes_the_audio(hook, tmp_path, monkeypatch, spoken):

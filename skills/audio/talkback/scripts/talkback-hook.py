@@ -31,9 +31,10 @@ Registered for two events:
   SessionEnd  drop this session's flag, so talk mode never outlives the session
               that asked for it
 
-It defaults to the free `say` backend even when a metered one is affordable: it
-fires unattended, on every turn, for audio nobody asked for. Set
-TALKBACK_HOOK_BACKEND=elevenlabs (or `--on --backend elevenlabs`) to override.
+Readbacks run the full quality ladder — elevenlabs, then omnivoice, then the OS
+voice — descending a rung whenever one is unusable, so an unattended turn
+degrades in voice rather than falling silent. TALKBACK_HOOK_BACKEND (or
+`--on --backend say`) pins a rung and only descends from there.
 """
 from __future__ import annotations
 
@@ -64,7 +65,13 @@ CAP = int(os.environ.get("TALKBACK_HOOK_CHARS", "320"))
 # In `always` mode, a turn shorter than this is an acknowledgement, not a
 # report. Narrating it costs more attention than it returns.
 MIN_CHARS = int(os.environ.get("TALKBACK_HOOK_MIN_CHARS", "80"))
-HOOK_BACKEND = os.environ.get("TALKBACK_HOOK_BACKEND", "say")
+#: Talk mode uses the full quality ladder by default: elevenlabs → omnivoice →
+#: say. talkback.py descends it on its own when a rung is unusable — no key,
+#: quota spent, local server down — so an unattended readback degrades in voice
+#: rather than going missing. The ElevenLabs reserve guard still stands, so a
+#: chatty session runs the balance down to the reserve and then keeps talking on
+#: the next rung.
+HOOK_BACKEND = os.environ.get("TALKBACK_HOOK_BACKEND", "elevenlabs")
 # A session flag whose session has been silent this long is from a session that
 # is gone. Every fire touches the live flag, so this is an idle timeout, not a
 # lifetime cap: a twelve-hour session keeps talking.
@@ -219,7 +226,7 @@ def effective_backend(config: dict) -> str:
     if env:
         return env
     backend = str(config.get("backend", "")).strip()
-    return backend or "say"
+    return backend or HOOK_BACKEND
 
 
 def effective_output(config: dict) -> str:
