@@ -10,8 +10,12 @@ Reproduced live 2026-08-24 against the real state store:
   `still OPEN; leaving as GREEN` → `drained 0`.
 
   Since `watch` is the only transition into GREEN, the entire lifecycle was
-  unreachable for that repo, and `p9 watch` announced this by exiting **0**
-  without arming — so an `/autonomous` arc proceeded believing CI was watched.
+  unreachable for that repo. `p9 watch` refuses LOUDLY — exit
+  ``EXIT_CONCURRENCY_CEILING`` (5) on a distinct code, message on stderr. An
+  earlier draft of this file said it "exits 0 without arming"; that was wrong
+  and is pinned below rather than restated, because a claim about an exit code
+  with no test behind it is how the wrong number survived review in the first
+  place.
 
 Root cause: `open_prs()` drops a row only when `is_terminal()`, and GREEN and
 MERGE_READY are not terminal. The state machine had no value meaning
@@ -199,3 +203,22 @@ class TestWatchCliBehindAGreenRow:
             _park(p9, pr, WORKSPACE, p9.PRState.GREEN)
         assert p9.main(
             ["watch", "432", "--repo", WORKSPACE, "--dry-run"]) == p9.EXIT_OK
+
+
+def test_ceiling_refusal_exit_code_is_distinct_and_loud(p9, monkeypatch, capsys):
+    """The refusal is not silent, and not exit 0.
+
+    Pins the number the module docstring names. `/autonomous` branches on this
+    code to decide whether CI is actually being watched, so "which code" is
+    load-bearing, not cosmetic.
+    """
+    monkeypatch.setenv("BROOMVA_P9_SESSION", "A")
+    S = p9.PRState
+    _park(p9, 900, WORKSPACE, S.WATCHING, session_id="A")
+
+    rc = p9.main(["watch", "901", "--repo", WORKSPACE, "--dry-run"])
+
+    assert rc == p9.EXIT_CONCURRENCY_CEILING
+    assert rc == 5, "the docstring names 5; if this moves, update both"
+    assert rc != 0, "exit 0 would let an arc believe CI is watched when it is not"
+    assert "max_concurrent_prs" in capsys.readouterr().err

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -264,10 +266,78 @@ class TestWatcherDedup:
         assert rc == p9.EXIT_DEGRADED
 
     def test_force_supersedes_live_watcher(self, p9, monkeypatch):
+        """--force must stop the PROCESS, not just write a row over it.
+
+        This recorded ``os.getpid()`` as the watcher pid, which was harmless
+        only because nothing on the supersede path ever signalled it. Once it
+        did, the test SIGTERMed the pytest process running it (exit 143). A
+        real child is the only fixture that can tell "superseded" apart from
+        "row rewritten while the process kept running" — BRO-2305 P20 round 1.
+        """
         monkeypatch.setenv("BROOMVA_P9_SESSION", "A")
-        _watching(p9, 42, "broomva/life", "A", pid=os.getpid())
-        rc = p9.main(["watch", "42", "--repo", "broomva/life", "--dry-run", "--force"])
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            _watching(p9, 42, "broomva/life", "A", pid=child.pid)
+            rc = p9.main(["watch", "42", "--repo", "broomva/life",
+                          "--dry-run", "--force"])
+            assert rc == 0
+
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline and child.poll() is None:
+                time.sleep(0.05)
+            assert child.poll() is not None, (
+                "the superseded watcher is still running: --force rewrote the "
+                "row and left an orphan holding the resource"
+            )
+
+            row = p9.latest_row(42, "broomva/life")
+            extra = row.get("extra") or {}
+            assert row["to_state"] == p9.PRState.WATCHING.value
+            sup = [e for e in p9._read_state_rows()
+                   if e.get("watcher_id") == "watch-supersede"]
+            assert sup, "no supersede event recorded"
+            assert sup[-1]["extra"]["termination"] == "terminated"
+            assert sup[-1]["extra"]["superseded_pid"] == child.pid
+            assert "dead_pid" not in sup[-1]["extra"], (
+                "the pid was alive one line earlier; the old name asserted "
+                "the property this path cannot assume"
+            )
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+
+    def test_terminate_watcher_reports_what_it_did(self, p9):
+        """Both polarities, against real processes — no mocking of liveness."""
+        assert p9.terminate_watcher(0) == "no-pid"
+        assert p9.terminate_watcher(-1) == "no-pid"
+
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            assert p9.is_watcher_alive(child.pid) is True
+            assert p9.terminate_watcher(child.pid) == "terminated"
+            assert child.poll() is not None
+            assert p9.is_watcher_alive(child.pid) is False
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+
+        # A pid that has already exited is reported as such, not as a kill.
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait(timeout=10)
+        assert p9.terminate_watcher(gone.pid) in ("already-gone", "terminated")
+
+    def test_supersede_of_a_dead_watcher_records_not_alive(self, p9, monkeypatch):
+        """--adopt supersedes a dead row; there is nothing to terminate."""
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "A")
+        _watching(p9, 43, "broomva/life", "A", pid=999999)  # dead
+        rc = p9.main(["watch", "43", "--repo", "broomva/life",
+                      "--dry-run", "--adopt"])
         assert rc == 0
+        sup = [e for e in p9._read_state_rows()
+               if e.get("watcher_id") == "watch-supersede"]
+        assert sup[-1]["extra"]["termination"] == "not-alive"
 
     def test_dead_fresh_row_needs_adopt(self, p9, monkeypatch):
         monkeypatch.setenv("BROOMVA_P9_SESSION", "A")

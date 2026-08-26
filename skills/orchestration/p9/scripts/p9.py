@@ -1945,6 +1945,61 @@ def is_watcher_alive(pid: int) -> bool:
     return True
 
 
+def _reap_if_child(pid: int) -> None:
+    """Clear a zombie if this pid is our own child; a no-op otherwise.
+
+    A terminated process keeps its pid until the parent reaps it, and
+    ``os.kill(pid, 0)`` succeeds against a zombie — so liveness alone cannot
+    tell "still running" from "dead, awaiting reap". Without this, terminating
+    a watcher we spawned reads as failure: the signal worked and the pid
+    persists. Non-children raise ChildProcessError and are left alone.
+    """
+    with contextlib.suppress(ChildProcessError, OSError):
+        os.waitpid(pid, os.WNOHANG)
+
+
+def terminate_watcher(pid: int, grace: float = 3.0) -> str:
+    """Terminate a watcher we are superseding. Returns what actually happened.
+
+    BRO-2305. `--force` exists to supersede a watcher the caller has just been
+    told is ALIVE, and the supersede path wrote an ABANDONED row without ever
+    signalling it. The row said the watch was over; the process did not stop.
+    Every later reader — the ceiling included — then reasoned from a state
+    value that had no relationship to the process still holding the resource.
+
+    Nothing here infers liveness from state. It signals, waits, escalates, and
+    reports the outcome so the event records what was done rather than what was
+    assumed. A pid we may not signal (another user's) is reported as such
+    instead of being counted as terminated.
+
+    There is no "survived" outcome after SIGKILL, and that is not optimism:
+    SIGKILL is untrappable, so a pid still answering afterwards is a zombie
+    holding no resources, not a watcher holding a slot.
+    """
+    if pid <= 0:
+        return "no-pid"
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return "already-gone"
+    except PermissionError:
+        return "not-ours"
+    deadline = time.monotonic() + max(0.0, grace)
+    while time.monotonic() < deadline:
+        _reap_if_child(pid)
+        if not is_watcher_alive(pid):
+            return "terminated"
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return "terminated"
+    except PermissionError:
+        return "not-ours"
+    _reap_if_child(pid)
+    return "killed"
+
+
 def _watcher_grace_seconds() -> float:
     """How long a WATCHING/HEALING row is protected from reaping after its
     last event. Covers the window where the watcher pid is gone but the fold
@@ -2472,14 +2527,32 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return EXIT_DEGRADED
-        # Supersede the stale/forced row to free the slot before re-watching.
+        # Free the slot before re-watching — and stop the process, not just the
+        # row. `--force` reaches here precisely when `alive` is True, and
+        # writing ABANDONED over a running watcher leaves an orphan that no
+        # later reader can see: `open_prs` keys by (repo, pr) and keeps only the
+        # LAST row, so this superseded row — the only one carrying `epid` — is
+        # discarded before the ceiling ever counts it. Repeat the sequence and
+        # live `gh` processes accumulate without bound (BRO-2305, P20 round 1).
+        termination = terminate_watcher(epid) if alive else "not-alive"
         append_state_event(PRStateEvent(
             ts=_utcnow(), pr=pr, repo=repo or "",
             from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
             watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
+            # `superseded_pid`, not `dead_pid`: on the --force branch the pid was
+            # demonstrably alive a line ago. The old name asserted the very
+            # property this path cannot assume, which is how "a parked row has no
+            # live watcher" came to read as safe.
             extra={"reason": "superseded by re-watch",
-                   "dead_pid": epid, "forced": force, "adopt": adopt},
+                   "superseded_pid": epid, "termination": termination,
+                   "forced": force, "adopt": adopt},
         ))
+        if termination in ("not-ours", "survived"):
+            print(
+                f"p9: superseded watcher pid={epid} was NOT terminated "
+                f"({termination}); it may still be running.",
+                file=sys.stderr,
+            )
 
     # Scope comes from policy (BRO-1988), not from this code's opinion.
     # `repo or None` on top of that: with no resolvable repo, identity is
