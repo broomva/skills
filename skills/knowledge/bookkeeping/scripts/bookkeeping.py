@@ -3355,6 +3355,27 @@ def _default_entity_lookup(slug: str) -> "dict | None":
     return fm if isinstance(fm, dict) else {}
 
 
+def _same_entity_ref(target: str, own_slug: str, own_type: "str | None") -> bool:
+    """True when `target` addresses the page identified by (own_type, own_slug).
+
+    A supersedes target is written either bare (`current`) or type-qualified
+    (`concept/current`); `_find_entity_file` resolves both to the same page.
+    Comparing raw strings therefore lets the qualified form name a page while
+    reading as a different entity — which is how a self-supersession slipped
+    past both the audit and `revise`'s own guard.
+
+    When the page's own type is unknown the qualified form is NOT treated as a
+    match: without a type there is nothing to distinguish `concept/current`
+    from `pattern/current`, and a false self-supersession warning on a
+    legitimate cross-type predecessor is the worse error.
+    """
+    t = target.strip().strip("/")
+    if "/" in t:
+        prefix, _, stem = t.rpartition("/")
+        return bool(own_type) and stem == own_slug and prefix == own_type
+    return t == own_slug
+
+
 def _lint_temporal_envelope(
     path_str: str,
     fm: dict,
@@ -3409,6 +3430,7 @@ def _lint_temporal_envelope(
     self_slug = (
         fm.get("slug") if isinstance(fm.get("slug"), str) else None
     ) or Path(path_str).stem
+    self_type = Path(path_str).parent.name or None
     supersedes_raw = fm.get("supersedes")
     entries: list[object]
     if supersedes_raw is None:
@@ -3440,7 +3462,7 @@ def _lint_temporal_envelope(
             ))
             continue
         slug = m.group(1).strip()
-        if self_slug and slug == self_slug:
+        if self_slug and _same_entity_ref(slug, self_slug, self_type):
             errors.append(LintError(
                 path_str, "temporal_supersedes",
                 f"supersedes lists its own slug {slug!r} — a record cannot "
@@ -6256,7 +6278,13 @@ def cmd_revise(args: argparse.Namespace) -> None:
     if not targets:
         print("[revise] --supersedes requires at least one slug", file=sys.stderr)
         sys.exit(2)
-    if entity in targets:
+    # Resolve first: `entity` and the targets may each be written bare or
+    # type-qualified, and a raw `in` test lets the two spellings of one page
+    # read as two entities.
+    _own_path = _find_entity_file(entity)
+    _own_slug = _own_path.stem if _own_path else entity.rpartition("/")[2] or entity
+    _own_type = _own_path.parent.name if _own_path else None
+    if any(_same_entity_ref(t, _own_slug, _own_type) for t in targets):
         print(f"[revise] '{entity}' cannot supersede itself", file=sys.stderr)
         sys.exit(2)
     missing = [s for s in targets if _find_entity_file(s) is None]
