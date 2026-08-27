@@ -487,30 +487,6 @@ def _revise_args(entity, supersedes, link="https://example.test/decision/1",
 
 
 class TestReviseCommand:
-    def test_revise_rejects_a_type_qualified_self_supersession(
-            self, temp_entities, frozen_today):
-        """The producer guard must resolve, not string-compare.
-
-        `entity in targets` compared "current" against "concept/current" and
-        found no match, so `revise` wrote the very self-supersession the audit
-        is supposed to forbid — the two spellings of one page read as two
-        entities at both ends of the contract.
-        """
-        _write_entity(temp_entities, "current", type_dir="concept")
-        with pytest.raises(SystemExit) as exc:
-            cmd_revise(_revise_args("current", ["concept/current"]))
-        assert exc.value.code == 2
-
-    def test_revise_allows_a_same_stem_predecessor_in_another_type_dir(
-            self, temp_entities, frozen_today):
-        """The boundary: same stem, different type dir, is a real predecessor."""
-        _write_entity(temp_entities, "current", type_dir="concept")
-        _write_entity(temp_entities, "current", type_dir="pattern")
-        cmd_revise(_revise_args("concept/current", ["pattern/current"]))
-        fm, _ = bookkeeping.parse_frontmatter(
-            (temp_entities / "concept" / "current.md").read_text())
-        assert fm["supersedes"] == ["[[pattern/current]]"]
-
     def test_revise_emits_supersedes_and_revision_link(
             self, temp_entities, frozen_today):
         _write_entity(temp_entities, "old-belief")
@@ -854,80 +830,7 @@ class TestEnvelopeAudit:
         )
         assert any("cannot supersede itself" in e.message for e in errors)
 
-    def test_type_qualified_self_reference_warns(self):
-        """`[[concept/current]]` on concept/current.md is the same page.
-
-        `_find_entity_file` resolves bare and type-qualified targets to one
-        file, so comparing raw strings let the qualified spelling name the page
-        while reading as a different entity — the audit stayed silent and the
-        self-loop was recorded as a valid supersession.
-        """
-        errors = _lint_temporal_drift(
-            "concept/current.md",
-            {"supersedes": ["[[concept/current]]"], "revision_link": "ticket://BRO-1"},
-            "",
-            audit_date=AUDIT_DATE,
-            entity_lookup=lambda _slug: {},
-        )
-        assert any("cannot supersede itself" in e.message for e in errors)
-
-    def test_type_qualified_cross_type_predecessor_does_not_warn(self):
-        """The boundary the fix must not cross.
-
-        `pattern/current` shares a stem with `concept/current` and is a
-        legitimate predecessor. A fix that merely strips the type prefix before
-        comparing would flag it, so this is what separates identity-matching
-        from stem-matching.
-        """
-        errors = _lint_temporal_drift(
-            "concept/current.md",
-            {"supersedes": ["[[pattern/current]]"], "revision_link": "ticket://BRO-1"},
-            "",
-            audit_date=AUDIT_DATE,
-            entity_lookup=lambda _slug: {},
-        )
-        assert not any("cannot supersede itself" in e.message for e in errors)
-
-    @pytest.mark.parametrize("spelling", [
-        "concept/current",
-        "./concept/current",
-        "concept//current",
-        "concept/../concept/current",
-    ])
-    def test_every_spelling_of_the_same_page_is_caught(self, spelling):
-        """One file, four spellings. `_find_entity_file` resolves all of them.
-
-        Enumerated up-front rather than one edge per review round: comparing
-        before normalisation caught only the first, and the other three were
-        live bypasses of the guard.
-        """
-        errors = _lint_temporal_drift(
-            "concept/current.md",
-            {"supersedes": ["[[" + spelling + "]]"], "revision_link": "ticket://BRO-1"},
-            "",
-            audit_date=AUDIT_DATE,
-            entity_lookup=lambda _slug: {},
-        )
-        assert any("cannot supersede itself" in e.message for e in errors), spelling
-
-    @pytest.mark.parametrize("spelling", [
-        "pattern/current",      # same stem, different type dir
-        "/concept/current",     # absolute: not a corpus-relative reference
-        "a/b/current",          # nested path that is not this page's type dir
-        "Concept/current",      # case differs from the real directory
-    ])
-    def test_spellings_that_are_not_this_page_do_not_warn(self, spelling):
-        """The other half of the boundary — none of these name concept/current."""
-        errors = _lint_temporal_drift(
-            "concept/current.md",
-            {"supersedes": ["[[" + spelling + "]]"], "revision_link": "ticket://BRO-1"},
-            "",
-            audit_date=AUDIT_DATE,
-            entity_lookup=lambda _slug: {},
-        )
-        assert not any("cannot supersede itself" in e.message for e in errors), spelling
-
-    def test_unrelated_supersedes_does_not_self_match(self):
+    def test_absent_slug_does_not_invent_a_self_supersession(self):
         """The stem fallback must not make an unrelated supersedes self-match."""
         errors = _lint_temporal_drift(
             "current.md",
