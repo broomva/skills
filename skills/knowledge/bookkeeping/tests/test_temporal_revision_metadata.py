@@ -888,6 +888,45 @@ class TestEnvelopeAudit:
         )
         assert not any("cannot supersede itself" in e.message for e in errors)
 
+    @pytest.mark.parametrize("spelling", [
+        "concept/current",
+        "./concept/current",
+        "concept//current",
+        "concept/../concept/current",
+    ])
+    def test_every_spelling_of_the_same_page_is_caught(self, spelling):
+        """One file, four spellings. `_find_entity_file` resolves all of them.
+
+        Enumerated up-front rather than one edge per review round: comparing
+        before normalisation caught only the first, and the other three were
+        live bypasses of the guard.
+        """
+        errors = _lint_temporal_drift(
+            "concept/current.md",
+            {"supersedes": ["[[" + spelling + "]]"], "revision_link": "ticket://BRO-1"},
+            "",
+            audit_date=AUDIT_DATE,
+            entity_lookup=lambda _slug: {},
+        )
+        assert any("cannot supersede itself" in e.message for e in errors), spelling
+
+    @pytest.mark.parametrize("spelling", [
+        "pattern/current",      # same stem, different type dir
+        "/concept/current",     # absolute: not a corpus-relative reference
+        "a/b/current",          # nested path that is not this page's type dir
+        "Concept/current",      # case differs from the real directory
+    ])
+    def test_spellings_that_are_not_this_page_do_not_warn(self, spelling):
+        """The other half of the boundary — none of these name concept/current."""
+        errors = _lint_temporal_drift(
+            "concept/current.md",
+            {"supersedes": ["[[" + spelling + "]]"], "revision_link": "ticket://BRO-1"},
+            "",
+            audit_date=AUDIT_DATE,
+            entity_lookup=lambda _slug: {},
+        )
+        assert not any("cannot supersede itself" in e.message for e in errors), spelling
+
     def test_unrelated_supersedes_does_not_self_match(self):
         """The stem fallback must not make an unrelated supersedes self-match."""
         errors = _lint_temporal_drift(

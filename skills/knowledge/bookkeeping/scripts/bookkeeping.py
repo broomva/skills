@@ -30,6 +30,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
+import posixpath
 from pathlib import Path
 from typing import Optional
 
@@ -3369,11 +3370,25 @@ def _same_entity_ref(target: str, own_slug: str, own_type: "str | None") -> bool
     from `pattern/current`, and a false self-supersession warning on a
     legitimate cross-type predecessor is the worse error.
     """
-    t = target.strip().strip("/")
-    if "/" in t:
-        prefix, _, stem = t.rpartition("/")
-        return bool(own_type) and stem == own_slug and prefix == own_type
-    return t == own_slug
+    t = target.strip()
+    if not t:
+        return False
+    if "/" not in t:
+        return t == own_slug
+    if not own_type:
+        return False
+    # Spelling is not identity: `concept/x`, `./concept/x`, `concept//x` and
+    # `concept/../concept/x` all resolve to one file, so the comparison has to
+    # happen after normalisation or the qualified form slips past again — the
+    # same way it slipped past the raw string compare.
+    norm = posixpath.normpath(t)
+    # A reference that climbs out of the corpus root is not a canonical entity
+    # reference; leave it to the unresolvable-target check rather than claiming
+    # it names this page.
+    if norm.startswith("/") or norm == ".." or norm.startswith("../"):
+        return False
+    prefix, _, stem = norm.rpartition("/")
+    return stem == own_slug and prefix == own_type
 
 
 def _lint_temporal_envelope(
