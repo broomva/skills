@@ -59,6 +59,7 @@ $S/talkback.py --fast "Throwaway line."                      # local, instant, f
 $S/talkback.py --quota                                       # what's left
 $S/talkback.py --voices                                      # list voices
 $S/talkback.py --dry-run "..."                               # see spoken text, synthesise nothing
+$S/talkback.py --help                                        # every flag
 
 $S/talkback-hook.py --on                                     # talk mode ON, this session only
 $S/talkback-hook.py --off                                    # stop talking
@@ -70,6 +71,12 @@ Text can also be piped: `git log -1 --format=%B | $S/talkback.py`.
 
 ## How the agent should use it
 
+Two different things live here. **Speaking once** is composed prose you pass to
+`talkback.py`. **Talk mode** is a standing setting you flip with
+`talkback-hook.py`; you never compose its text, the hook reads the turn.
+
+### Speaking once
+
 When the user asks to hear an explanation, **write for the ear, then speak it.**
 Do not pipe raw markdown or a diff into the tool. Compose two to five sentences
 of plain spoken prose — what changed, why, what it means for them — and pass
@@ -78,6 +85,41 @@ that. The listener cannot scroll back, so lead with the conclusion.
 Default to the good voice — the plan comfortably affords it. Reach for `--fast`
 when the text is throwaway or you want zero network latency. State which backend
 was used if it fell back.
+
+### Driving talk mode
+
+What the user says maps to one command. Run it; do not also narrate the change
+by hand, because the hook will speak the turn you are writing.
+
+| The user says | Run |
+|---|---|
+| "talk mode on", "keep talking", "narrate this session" | `talkback-hook.py --on` |
+| "stop talking", "mute", "be quiet" | `talkback-hook.py --off` |
+| "just the highlights", "less detail" | `talkback-hook.py --on brief` |
+| "only tell me the important bits" | `talkback-hook.py --on marker` |
+| "use my AirPods", "play it on X" | `talkback-hook.py --outputs`, then `--on --output "<name>"` |
+| "use the cheap voice", "stop spending quota" | `talkback-hook.py --on --backend say` |
+| "is it on?", "why can't I hear anything?" | `talkback-hook.py --status` |
+| "is something else talking?" | `talkback-hook.py --sessions` |
+| "make everything quiet" (all sessions) | `talkback-hook.py --off --all` |
+
+Three things to check before telling the user it works:
+
+- **`--status` reports whether the hook is registered.** If it is not, run
+  `--install` and tell them a restart is needed.
+- **If `--status` warns that the hook was registered after this session
+  started**, talk mode is on and will make no sound here. Say so — do not let
+  them discover it as silence.
+- **Talk mode does not survive the session.** After a restart or a `/clear` it
+  is off again and needs `--on`. That is deliberate, not a bug; say it once
+  rather than letting them re-ask.
+
+In `marker` mode — and any time you want the readback to be a written-for-the-ear
+summary rather than the turn itself — end the message with a marker:
+
+```html
+<!-- talkback: Refactored the auth layer, three call sites, tests green. -->
+```
 
 ## Backends
 
@@ -303,6 +345,55 @@ one, so the session does not fall back to the global setting), and
 - **Detaches playback**, so no turn waits on audio.
 - **Defaults to the free backend** even when a metered one is affordable: it
   fires unattended, on every turn, for audio nobody asked for.
+
+### Full CLI
+
+`talkback-hook.py --help` prints this; it is repeated here so an agent that has
+loaded the skill never has to shell out to discover a flag.
+
+| Command | Does |
+|---|---|
+| `--on [full\|brief\|marker]` | talk mode ON for this session, at that detail level (default `full`) |
+| `--off` | stop talking in this session |
+| `--status` | mode, backend, output, other talking sessions, registration state |
+| `--sessions` | every session currently talking |
+| `--outputs` | audio output devices on this host |
+| `--install` | register the `Stop` + `SessionEnd` hooks in `~/.claude/settings.json` |
+| `--uninstall` | remove them again |
+| `-h`, `--help` | usage |
+
+| Option | Applies to | Does |
+|---|---|---|
+| `--global` | `--on`, `--off` | act on the machine-wide flag — **every** session speaks |
+| `--all` | `--off` | kill switch: clear every session flag and the global one |
+| `--backend <name>` | `--on` | `elevenlabs` \| `omnivoice` \| `say` — the top rung for this session |
+| `--output <device>` | `--on` | output device, by name or `say -a` id |
+| `--session <id>` | any | target another session instead of the current one |
+| `--quiet` | `--on` | skip the spoken "talk mode on" confirmation |
+| `--dry-run` | `--install` | print what would change, write nothing |
+
+With no arguments the script **is** the hook: it reads a payload on stdin and
+exits 0. Never run it bare by hand.
+
+And the one-off speech CLI, `talkback.py`:
+
+| Flag | Does |
+|---|---|
+| `-b`, `--backend <name>` | `elevenlabs` (default) \| `omnivoice` \| `say` — top of the ladder |
+| `--fast` | force `say`: local, instant, free, and never climbs back up |
+| `--good` | force `elevenlabs` (already the default) |
+| `-v`, `--voice <v>` | a `say` voice name, or an ElevenLabs voice id |
+| `--model <id>` | ElevenLabs model id (default `eleven_turbo_v2_5`) |
+| `-d`, `--device <dev>` | audio output device |
+| `--outputs` | list output devices and exit |
+| `--voices` | list available voices and exit |
+| `--quota` | report the live ElevenLabs balance and exit |
+| `--dry-run` | print the spoken text and chosen backend, synthesise nothing |
+| `--no-play` | synthesise and save, play nothing |
+| `--no-save` | play, then discard the audio |
+| `--out-dir <dir>` | where audio lands (default `~/.talkback/audio/`) |
+| `--keep-paths` | read full file paths aloud instead of just the basename |
+| `--strict` | any fallback becomes a hard failure (exit 1) |
 
 ### Registering it
 

@@ -53,6 +53,37 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
+#: The complete CLI surface, in one place. `--help` prints it, and a test in
+#: tests/test_talkback_docs.py asserts every flag the dispatcher accepts appears
+#: here AND in SKILL.md — an undocumented flag is a flag no agent will ever use,
+#: and the failure is silent in both directions.
+USAGE = """\
+usage: talkback-hook.py <command> [options]
+       talkback-hook.py                  # no args: run as a hook, payload on stdin
+
+commands:
+  --on [full|brief|marker]   talk mode ON for THIS session (detail level, default full)
+  --off                      stop talking in this session
+  --status                   mode, backend, output, who else is talking, is it registered
+  --sessions                 every session currently talking
+  --outputs                  audio output devices on this host
+  --install                  register the Stop + SessionEnd hooks in ~/.claude/settings.json
+  --uninstall                remove them again
+  -h, --help                 this text
+
+options:
+  --global                   --on/--off act on the machine-wide flag: EVERY session speaks
+  --all                      --off kill switch: clear every session flag and the global one
+  --backend <name>           elevenlabs | omnivoice | say — the top rung for this session
+  --output <device>          output device, by name or `say -a` id (list them with --outputs)
+  --session <id>             target another session instead of the current one
+  --quiet                    --on skips the spoken "talk mode on" confirmation
+  --dry-run                  --install prints what would change and writes nothing
+
+one-off speech (not talk mode) lives in the sibling script:
+  talkback.py --help
+"""
+
 #: How much of the turn gets spoken. `--on` will set any of these.
 MODES = ("full", "brief", "marker")
 #: `always` was 0.3.0's name for "speak every turn"; it meant the capped
@@ -772,6 +803,7 @@ def cli(argv: list[str]) -> int | None:
         return uninstall()
     if cmd in ("-h", "--help"):
         print(__doc__)
+        print(USAGE)
         return 0
     return None
 
