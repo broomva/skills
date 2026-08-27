@@ -3400,7 +3400,15 @@ def _lint_temporal_envelope(
             "warning",
         ))
 
-    self_slug = fm.get("slug") if isinstance(fm.get("slug"), str) else None
+    # The frontmatter `slug:` is redundant with the filename stem everywhere it
+    # appears, and is being deleted corpus-wide (workspace#530). Every other read
+    # of it already falls back to the stem; this one did not, and it is the whole
+    # guard below — absent the field it went None, the self-supersession check
+    # short-circuited, and the self-reference fell through to entity_lookup(),
+    # which resolves (the file is itself) and records a self-loop as valid.
+    self_slug = (
+        fm.get("slug") if isinstance(fm.get("slug"), str) else None
+    ) or Path(path_str).stem
     supersedes_raw = fm.get("supersedes")
     entries: list[object]
     if supersedes_raw is None:
