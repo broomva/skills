@@ -46,6 +46,14 @@ never turned on.
   `afplay` cannot target a device; an unresolvable name warns and plays on the
   default rather than failing the readback. Audio still sounds on the machine
   running Claude Code — a session driven from another device does not move it.
+- **The full CLI is documented in two places, and a gate keeps it that way.**
+  `--help` prints a complete usage block (it was the module docstring, which
+  listed four of nine commands); SKILL.md carries the same reference plus a
+  trigger-to-command table for the agent — "stop talking" → `--off`, "use my
+  AirPods" → `--outputs` then `--on --output`. `tests/test_talkback_docs.py`
+  extracts every flag and env var from the real source and fails until each
+  appears in both. An undocumented flag is a flag no agent reaches, and nothing
+  about that failure is visible: the code works and the docs read clean.
 - A test suite (54 cases), including the isolation predicate in **both**
   polarities: an opted-in session speaks, and a concurrent session under the
   identical setup stays silent. A one-sided test passes just as happily against
