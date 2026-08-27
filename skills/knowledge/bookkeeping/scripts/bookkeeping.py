@@ -6296,10 +6296,10 @@ def cmd_revise(args: argparse.Namespace) -> None:
     # Resolve first: `entity` and the targets may each be written bare or
     # type-qualified, and a raw `in` test lets the two spellings of one page
     # read as two entities.
-    _own_path = _find_entity_file(entity)
-    _own_slug = _own_path.stem if _own_path else entity.rpartition("/")[2] or entity
-    _own_type = _own_path.parent.name if _own_path else None
-    if any(_same_entity_ref(t, _own_slug, _own_type) for t in targets):
+    # entity_path is the file revise is about to write; resolving a second time
+    # would let the guard and the write disagree if the tree changed in between.
+    if any(_same_entity_ref(t, entity_path.stem, entity_path.parent.name)
+           for t in targets):
         print(f"[revise] '{entity}' cannot supersede itself", file=sys.stderr)
         sys.exit(2)
     missing = [s for s in targets if _find_entity_file(s) is None]
