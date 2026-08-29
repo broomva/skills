@@ -54,17 +54,46 @@ when_to_use: |
 | A watcher/wait looks wedged | `p9 stuck-scan` — structured dump + notification |
 | About to `sleep` | **Don't.** Pull from `p9 wait-queue pop` instead |
 
-## Parallel agent sessions (BRO-1529)
+## Parallel agent sessions (BRO-1529, BRO-2373)
 
 P9 state lives in one shared dir (`~/.config/broomva/p9/`). Concurrent agents
 stay collision-free by **scoping every record to a session id**.
 
-> **Contract:** each parallel agent session/worktree/wave-plan MUST export
-> `BROOMVA_P9_SESSION=<stable-unique-id>` before calling `p9`. Fanout (P5)
-> worktrees, `bstack wave` plans, and autonomous runs each set their own.
-> If unset, p9 falls back to a single persisted id (`session-default.id`) —
-> i.e. backward-compatible **global** behavior, *not* isolation. No env var ⇒
-> no parallel safety.
+**Isolation is on by default — no export required** (BRO-2373). `p9` resolves
+its scope in this order:
+
+| # | Source | When it applies |
+|---|---|---|
+| 1 | `BROOMVA_P9_SESSION` | explicit override, for a harness that knows its own scope better than p9 can infer it (`bstack wave` plans, tests) |
+| 2 | a **harness marker** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` | automatic; the id is `<prefix>-<hash12>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered |
+| 3 | persisted `session-default.id` | nothing derivable — one shared scope, the pre-BRO-2373 behavior |
+
+Adding a harness is one row in `SESSION_MARKERS` (`p9.py`); a row that does not
+actually isolate fails `test_every_declared_marker_isolates`.
+
+> **Why this changed.** BRO-1529 built the scoping and required rung 1. A
+> workspace-wide grep found `BROOMVA_P9_SESSION` set in *tests and nowhere
+> else*, so every real agent landed on rung 3: **1364 of 3508** recorded
+> events carried one shared id. The per-session ceiling was a global one, and
+> two agents in one repo starved each other at `max_concurrent_prs: 1` on
+> different PRs. The guarantee this section used to promise had never held.
+
+Two properties the derivation deliberately trades for:
+
+- **Stable over precise.** An id that moves between two invocations of one
+  session fragments the ceiling and orphans that session's wait-queue. So
+  derivation reads env only — it never stats a marker file that may be
+  unlinked mid-session.
+- **The git worktree is not part of the key**, even though including it would
+  separate P5 Fanout subagents that share one process. An agent that `cd`s
+  between repos — routine in this monorepo — would otherwise change identity
+  mid-session. Fanout separation is left to `max_concurrent_prs_scope`, which
+  already keeps different repos apart.
+
+Known and bounded: a recycled pid can reproduce a prior session's marker, so a
+new session may inherit a dead one's scope. Rung 3 does that for *every*
+session, so derivation is strictly no worse, and `p9 reap` drains the dead rows
+either way.
 
 What the session id buys you:
 
