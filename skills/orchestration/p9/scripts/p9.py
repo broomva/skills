@@ -136,6 +136,52 @@ def stuck_markers_dir() -> Path:
     return p9_home() / "stuck"
 
 
+# Harness markers that identify ONE agent stream, most specific first.
+# Each row is (env var, id prefix). The prefix survives into the session id
+# so `p9 status` shows which harness answered — a bare hash would make an
+# isolation failure indistinguishable from a derivation failure.
+#
+# Adding a harness is one row. The value is used verbatim (only hashed for
+# width); nothing here parses it, so a harness changing its format cannot
+# silently split one session into two.
+SESSION_MARKERS: tuple[tuple[str, str], ...] = (
+    # Claude Code: per-session control socket, path embeds the session pid.
+    ("CLAUDE_CODE_MESSAGING_SOCKET", "cc"),
+    # Orca: per-worktree agent launch identity.
+    ("ORCA_WORKTREE_ID", "orca"),
+    # Generic contract for any other harness that wants in without a code
+    # change — same shape, lowest precedence among derived markers.
+    ("AGENT_SESSION_ID", "agent"),
+)
+
+
+def _derive_session_marker() -> tuple[str, str] | None:
+    """First present harness marker as ``(prefix, raw_value)``, else None.
+
+    Pure env read — no stat, no subprocess. A marker whose file may be
+    unlinked mid-session must still yield the same id on every invocation,
+    so nothing here touches the filesystem.
+    """
+    for env_name, prefix in SESSION_MARKERS:
+        raw = os.environ.get(env_name)
+        if raw and raw.strip():
+            return prefix, raw.strip()
+    return None
+
+
+def derived_session_id() -> str | None:
+    """Session id derived from the harness, or None if none is present.
+
+    Public so `p9 doctor` can report what identity this process resolved to
+    without re-implementing the precedence.
+    """
+    marker = _derive_session_marker()
+    if marker is None:
+        return None
+    prefix, raw = marker
+    return f"{prefix}-{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
+
+
 def current_session_id() -> str:
     """Resolve the scope key for this invocation.
 
@@ -145,22 +191,54 @@ def current_session_id() -> str:
     collide on the ceiling or steal each other's wait-work.
 
     Precedence:
-      1. ``BROOMVA_P9_SESSION`` env — the contract a parallel harness
-         (Fanout P5 worktree, ``bstack wave`` plan, autonomous run) sets
-         per session. This is the ONLY way to get true isolation between
-         concurrent agents on one machine, because separate processes share
-         no other stable per-session marker.
-      2. A persisted per-state-dir uuid (``session-default.id``), stable
-         across invocations. Keeps single-session / no-env usage on ONE
-         scope — i.e. backward-compatible global behavior — rather than
-         fragmenting every CLI call into its own scope.
+      1. ``BROOMVA_P9_SESSION`` env — an explicit override for a harness
+         that knows its own scope better than we can infer it (``bstack
+         wave`` plans, tests).
+      2. A marker derived from the harness (:data:`SESSION_MARKERS`). This
+         is what makes isolation the **default** rather than something a
+         caller must opt into.
+      3. A persisted per-state-dir uuid (``session-default.id``), stable
+         across invocations — the pre-derivation behavior, kept for
+         environments that expose no marker at all.
 
-    The fallback is created under ``session.lock`` (double-checked) so a
-    burst of concurrent first-invocations converges on a single id.
+    Why derivation was added (BRO-2373): rung 1 was the *only* isolating
+    path, and a workspace-wide grep found it set in tests and nowhere else.
+    Every real agent therefore landed on rung 3 — one shared id — so the
+    per-session ceiling degenerated to a global one and two agents in one
+    repo starved each other at ``max_concurrent_prs: 1``. 1364 of 3508
+    recorded events carried that single shared id. The docstring this
+    replaces asserted that "separate processes share no other stable
+    per-session marker"; that was never true in either harness this
+    workspace runs under.
+
+    **Stability is the binding constraint, not precision.** The id must not
+    change between two invocations of the same session, or the wait-queue
+    and the ceiling fragment into uselessness. Two consequences:
+
+    * Nothing here stats a file or shells out — a marker file unlinked
+      mid-session must not move the id.
+    * The git worktree is deliberately **not** part of the key, even though
+      it would separate P5 Fanout subagents that share one process. An
+      agent that ``cd``s between repos — routine in this monorepo — would
+      otherwise change identity mid-session and lose its own queued work.
+      Fanout separation is left to the repo-scoped ceiling
+      (``max_concurrent_prs_scope``), which already keeps different repos
+      apart.
+
+    Known and bounded: a recycled pid can reproduce a prior session's
+    marker, so a new session may inherit a dead one's scope. That is
+    exactly what rung 3 does for *every* session today, so derivation is
+    strictly no worse, and ``p9 reap`` drains the dead rows either way.
+
+    The rung-3 fallback is created under ``session.lock`` (double-checked)
+    so a burst of concurrent first-invocations converges on a single id.
     """
     env = os.environ.get("BROOMVA_P9_SESSION")
     if env and env.strip():
         return env.strip()
+    derived = derived_session_id()
+    if derived is not None:
+        return derived
     path = session_default_id_path()
     if path.exists():
         txt = path.read_text(encoding="utf-8").strip()
@@ -181,6 +259,7 @@ def current_session_id() -> str:
         tmp.write_text(sid, encoding="utf-8")
         os.replace(tmp, path)
         return sid
+
 
 
 def policy_yaml_path() -> Path:
