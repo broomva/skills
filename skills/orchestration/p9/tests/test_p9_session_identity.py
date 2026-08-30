@@ -200,3 +200,132 @@ class TestStability:
         sandbox.watch(101, CLAUDE_CODE_MESSAGING_SOCKET=missing)
         b = sandbox.watch(202, CLAUDE_CODE_MESSAGING_SOCKET=missing)
         assert _session_of(b).startswith("cc-")
+
+
+CC = "CLAUDE_CODE_MESSAGING_SOCKET"
+ORCA = "ORCA_WORKTREE_ID"
+AGENT = "AGENT_SESSION_ID"
+
+
+class TestSharedProcessRegime:
+    """The round-1 BLOCKER: several markers present at once, one of them shared.
+
+    The first version of these tests injected each marker **independently**,
+    which is not the regime production runs in — here `CLAUDE_CODE_MESSAGING_SOCKET`
+    and `ORCA_WORKTREE_ID` are *both* set. Under first-present precedence the
+    shared Claude socket masked the distinguishing Orca id and two agents
+    collided exactly as before the fix. These tests pin the composite.
+    """
+
+    def test_shared_socket_distinct_worktrees_do_not_collide(self, sandbox):
+        a = sandbox.watch(101, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"})
+        b = sandbox.watch(202, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/b"})
+        assert a.returncode == 0, a.stderr
+        assert b.returncode == 0, (
+            "two agents sharing one Claude process but in different worktrees "
+            f"resolved to the same scope: {b.stderr}")
+
+    def test_identical_marker_sets_still_share_a_scope(self, sandbox):
+        """Negative control for the composite: same set => same id."""
+        m = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}
+        assert sandbox.watch(101, **m).returncode == 0
+        assert sandbox.watch(202, **m).returncode == CEILING
+
+    def test_any_differing_marker_separates(self, sandbox):
+        """Composite is discriminating on every field, not just the first."""
+        base = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a", AGENT: "x"}
+        assert sandbox.watch(101, **base).returncode == 0
+        assert sandbox.watch(202, **{**base, AGENT: "y"}).returncode == 0
+
+
+class TestLatch:
+    """Identity is latched, so a changing marker SET cannot move it — while a
+    changing marker VALUE still must."""
+
+    def test_marker_disappearing_keeps_the_identity(self, sandbox):
+        """`env -i` strips markers; a wrapper that sanitizes env reaches this."""
+        full = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}
+        sandbox.watch(101, **full)
+        before = _session_of(sandbox.watch(202, **full))
+        after = _session_of(sandbox.watch(303, **{CC: "/tmp/cc-socks/1.sock"}))
+        assert before == after, f"identity moved when a marker vanished: {before} != {after}"
+
+    def test_marker_appearing_keeps_the_identity(self, sandbox):
+        partial = {CC: "/tmp/cc-socks/1.sock"}
+        sandbox.watch(101, **partial)
+        before = _session_of(sandbox.watch(202, **partial))
+        after = _session_of(sandbox.watch(
+            303, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}))
+        assert before == after, f"identity moved when a marker appeared: {before} != {after}"
+
+    def test_the_latch_does_not_leak_across_a_conflicting_marker(self, sandbox):
+        """The latch must not re-open the BLOCKER it was added alongside.
+
+        Agent A latches {cc=S, orca=W1}. Agent B arrives with {cc=S, orca=W2}.
+        They overlap on `cc` — if overlap alone were enough to adopt, B would
+        inherit A's identity and collide. Disagreement on `orca` must veto it.
+        """
+        assert sandbox.watch(
+            101, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}).returncode == 0
+        assert sandbox.watch(
+            202, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/b"}).returncode == 0
+
+
+class TestValueFidelity:
+    """Properties of the composite itself.
+
+    These call the function in-process rather than through the CLI: they are
+    about how a marker *value* maps to an id, not about the multi-process
+    regime, and reading an id out of a ceiling refusal would make them
+    assertions about the error-message parser instead.
+    """
+
+    @staticmethod
+    def _id_for(markers):
+        return _p9._composite_id(markers)
+
+    def test_whitespace_variants_are_distinct_identities(self):
+        """A prior revision stripped marker values and merged four identities.
+
+        `'x'`, `' x '`, `'  x'` and `'x  '` all became one scope. Whitespace
+        decides presence; it must never decide identity.
+        """
+        ids = {v: self._id_for({AGENT: v}) for v in ("x", " x ", "  x", "x  ")}
+        assert len(set(ids.values())) == 4, f"distinct values merged: {ids}"
+
+    def test_blank_values_are_absent_not_identities(self):
+        """Presence is still whitespace-insensitive — only identity is not."""
+        import os
+        for blank in ("", "   ", "\t"):
+            os.environ[AGENT] = blank
+            try:
+                assert _p9._present_markers().get(AGENT) is None
+            finally:
+                os.environ.pop(AGENT, None)
+
+    def test_a_marker_value_cannot_forge_a_field_boundary(self):
+        """Composite fields are separated by Unit Separator, which no env var
+        value can contain — so one marker cannot impersonate two."""
+        honest = self._id_for({CC: "a", ORCA: "b"})
+        forged = self._id_for({CC: f"a{_p9._MARKER_SEP}ORCA_WORKTREE_ID=b"})
+        assert honest != forged
+
+    def test_marker_order_is_declaration_order_not_dict_order(self):
+        """Two dicts with the same pairs in different insertion order are one
+        identity — otherwise the id would depend on how the env was read."""
+        assert self._id_for({CC: "s", ORCA: "w"}) == self._id_for({ORCA: "w", CC: "s"})
+
+
+class TestLatchCompatibility:
+    """The adopt-or-mint predicate, in isolation."""
+
+    def test_agreement_on_overlap_adopts(self):
+        assert _p9._latch_compatible({CC: "s"}, {CC: "s", ORCA: "w"})
+        assert _p9._latch_compatible({CC: "s", ORCA: "w"}, {CC: "s"})
+
+    def test_disagreement_on_any_shared_marker_vetoes(self):
+        assert not _p9._latch_compatible({CC: "s", ORCA: "w1"},
+                                         {CC: "s", ORCA: "w2"})
+
+    def test_no_overlap_never_adopts(self):
+        assert not _p9._latch_compatible({CC: "s"}, {ORCA: "w"})
