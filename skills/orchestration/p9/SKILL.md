@@ -85,7 +85,8 @@ otherwise mask a lower-priority marker that distinguishes them: two agents
 under one Claude process but in different Orca worktrees both resolved to the
 same `cc-*` id and starved each other. Composing is never *less*
 discriminating — an identical marker set gives an identical id, and any
-difference in any marker gives a different one.
+difference in any marker gives a different payload — hence a different id, up
+to the 64-bit bound noted below.
 
 **Identity is not latched, and that is deliberate.** A latch was built and
 removed. Adopting an existing identity when the marker *set* changes is
@@ -105,7 +106,9 @@ two concurrent agents have in common. Only an identifier present on **every**
 invocation satisfies both, and p9 cannot mint one; the harness must issue it.
 That is rung 1.
 
-So the accepted failure mode is **fragmentation, never merging**: an agent
+So the accepted failure mode is **fragmentation rather than merging** — barring
+a 64-bit hash collision, and barring two agents whose marker sets are genuinely
+identical, which no derivation can separate. An agent
 whose environment is sanitized mid-session (`env -i` strips these markers)
 changes identity and loses its queued work. That costs a ceiling slot and some
 orphaned queue items; merging would cost isolation itself. Between an edge case

@@ -217,7 +217,8 @@ def derived_session_id() -> str | None:
     distinguishes them: two agents under one Claude process but in different
     Orca worktrees both resolved to one `cc-*` id and starved each other. The
     composite is never *less* discriminating — an identical marker set gives an
-    identical id, any difference gives a different one.
+    identical id, any difference gives a different *payload* — hence a
+    different id, up to the 64-bit bound below.
 
     **No latch, deliberately.** A previous revision latched the composite so a
     marker appearing or disappearing mid-session would keep its identity. That
@@ -239,7 +240,9 @@ def derived_session_id() -> str | None:
     cannot mint one — it has to be issued by the harness. That is
     ``BROOMVA_P9_SESSION`` (rung 1), and wiring it is tracked separately.
 
-    So the accepted failure mode here is **fragmentation, not merging**: an
+    So the accepted failure mode here is **fragmentation rather than merging**
+    — barring a 64-bit hash collision, and barring two agents whose marker sets
+    are genuinely identical, which no derivation can separate. An
     agent whose environment is sanitized mid-session (``env -i`` strips these)
     changes identity and loses its queued work. That costs a ceiling slot and
     some orphaned queue items. Merging costs isolation — the whole property
