@@ -160,10 +160,6 @@ SESSION_MARKERS: tuple[tuple[str, str], ...] = (
 _MARKER_SEP = "\x1f"
 
 
-def sessions_dir() -> Path:
-    return p9_home() / "sessions"
-
-
 def _present_markers() -> dict[str, str]:
     """Every declared marker currently set, name -> **raw** value.
 
@@ -206,38 +202,49 @@ def _composite_id(markers: dict[str, str]) -> str:
     payload = _MARKER_SEP.join(
         f"{n}:{len(markers[n])}:{markers[n]}"
         for n, _p in SESSION_MARKERS if n in markers)
-    return f"{prefix}-{hashlib.sha256(payload.encode()).hexdigest()[:16]}"
-
-
-def _latch_compatible(latched: dict[str, str], present: dict[str, str]) -> bool:
-    """Can ``present`` be the same session as an already-latched marker set?
-
-    Yes when they **agree everywhere they overlap** and overlap at all. So a
-    marker appearing or disappearing mid-session keeps the identity, while a
-    marker whose *value* differs never does.
-
-    That asymmetry is the whole point. ``{cc=S}`` later becoming
-    ``{cc=S, orca=W}`` is one session gaining a marker -> adopt. But
-    ``{cc=S, orca=W2}`` against a latched ``{cc=S, orca=W1}`` is a *different*
-    agent sharing a process -> conflict on ``orca`` -> never adopt, or the
-    shared marker would leak one session's identity into the other's and
-    re-open the round-1 BLOCKER through the latch.
-    """
-    shared = latched.keys() & present.keys()
-    if not shared:
-        return False
-    return all(latched[k] == present[k] for k in shared)
+    # `surrogateescape`: os.environ decodes undecodable POSIX bytes into
+    # surrogates, and a plain .encode() raises UnicodeEncodeError on them.
+    digest = hashlib.sha256(
+        payload.encode("utf-8", "surrogateescape")).hexdigest()
+    return f"{prefix}-{digest[:16]}"
 
 
 def derived_session_id() -> str | None:
     """Session id derived from the harness, or None if no marker is present.
 
-    Latched on first use (BRO-2373 round 1 MAJOR): identity is otherwise
-    recomputed from a mutable environment on every invocation, and an id that
-    moves between two invocations of one session fragments the ceiling and
-    orphans that session's queued work. Measured: both markers here survive
-    subshells unchanged, but ``env -i`` strips them, so any wrapper that
-    sanitizes the environment reaches this.
+    **Composite over every present marker**, never first-present. A marker
+    shared by two agents would otherwise mask a lower-priority marker that
+    distinguishes them: two agents under one Claude process but in different
+    Orca worktrees both resolved to one `cc-*` id and starved each other. The
+    composite is never *less* discriminating — an identical marker set gives an
+    identical id, any difference gives a different one.
+
+    **No latch, deliberately.** A previous revision latched the composite so a
+    marker appearing or disappearing mid-session would keep its identity. That
+    is unsound, and demonstrably so: adoption by marker-set overlap is
+    non-transitive. ``A={cc:S, orca:W1}`` latches, ``A={cc:S}`` adopts A's id
+    and records a *subset* latch, and then ``B={cc:S, orca:W2}`` — which
+    correctly rejects A's full latch — adopts the subset one and merges into A.
+    Verified against this function; the round-1 BLOCKER came back through the
+    round-2 fix for it.
+
+    The two requirements are irreconcilable here, not merely hard:
+
+    * stability across a changing marker set *requires* adopting on partial
+      overlap;
+    * distinctness *requires* never adopting on partial overlap, because a
+      shared marker is exactly what two concurrent agents have in common.
+
+    Only an identifier present on **every** invocation satisfies both, and p9
+    cannot mint one — it has to be issued by the harness. That is
+    ``BROOMVA_P9_SESSION`` (rung 1), and wiring it is tracked separately.
+
+    So the accepted failure mode here is **fragmentation, not merging**: an
+    agent whose environment is sanitized mid-session (``env -i`` strips these)
+    changes identity and loses its queued work. That costs a ceiling slot and
+    some orphaned queue items. Merging costs isolation — the whole property
+    this function exists to provide. Between an edge case that over-isolates
+    and one that under-isolates, only the first is safe to ship.
 
     Public so `p9 doctor` can report the resolved identity without
     re-implementing the precedence.
@@ -245,49 +252,7 @@ def derived_session_id() -> str | None:
     markers = _present_markers()
     if not markers:
         return None
-    composite = _composite_id(markers)
-    latch = sessions_dir() / f"{composite}.json"
-    # Fast path: this exact marker set has been seen before.
-    if latch.exists():
-        try:
-            return str(json.loads(latch.read_text(encoding="utf-8"))["id"])
-        except (OSError, ValueError, KeyError):
-            pass  # corrupt latch: fall through and rewrite it under the lock
-    with file_lock(session_lock_path()):
-        if latch.exists():
-            try:
-                return str(json.loads(latch.read_text(encoding="utf-8"))["id"])
-            except (OSError, ValueError, KeyError):
-                pass
-        # A marker appeared or disappeared: adopt the existing identity rather
-        # than minting a second one for the same session. Ambiguity (more than
-        # one compatible latch) mints a new id instead of guessing — that
-        # over-fragments, which costs a wasted ceiling slot, where guessing
-        # wrong merges two live sessions.
-        adopted: str | None = None
-        candidates = 0
-        for f in sorted(sessions_dir().glob("*.json")):
-            try:
-                rec = json.loads(f.read_text(encoding="utf-8"))
-                other = dict(rec["markers"])
-                other_id = str(rec["id"])
-            except (OSError, ValueError, KeyError, TypeError):
-                continue
-            if _latch_compatible(other, markers):
-                candidates += 1
-                adopted = other_id
-        resolved = adopted if candidates == 1 else composite
-        _write_latch(latch, resolved, markers)
-        return resolved
-
-
-def _write_latch(path: Path, sid: str, markers: dict[str, str]) -> None:
-    """Persist a latch atomically. Callers hold ``session.lock``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"id": sid, "markers": markers}),
-                   encoding="utf-8")
-    os.replace(tmp, path)
+    return _composite_id(markers)
 
 
 def current_session_id() -> str:

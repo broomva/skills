@@ -78,47 +78,58 @@ actually isolate fails `test_every_declared_marker_isolates`.
 > two agents in one repo starved each other at `max_concurrent_prs: 1` on
 > different PRs. The guarantee this section used to promise had never held.
 
-### Why a composite, and why latched
+### Why a composite, and why nothing is latched
 
 **Composite, not first-present.** A marker *shared* by two agents would
-otherwise mask a lower-priority marker that distinguishes them: two Fanout
-agents under one Claude process but in different Orca worktrees both resolved
-to the same `cc-*` id and starved each other exactly as before. Composing is
-never *less* discriminating — an identical marker set gives an identical id,
-and any difference in any marker gives a different one.
+otherwise mask a lower-priority marker that distinguishes them: two agents
+under one Claude process but in different Orca worktrees both resolved to the
+same `cc-*` id and starved each other. Composing is never *less*
+discriminating — an identical marker set gives an identical id, and any
+difference in any marker gives a different one.
 
-**Latched on first use.** Identity is otherwise recomputed from a mutable
-environment every invocation, and an id that moves between two invocations of
-one session fragments the ceiling and orphans that session's queued work.
-Measured: both markers survive subshells unchanged, but `env -i` strips them,
-so any wrapper that sanitizes the environment reaches this.
+**Identity is not latched, and that is deliberate.** A latch was built and
+removed. Adopting an existing identity when the marker *set* changes is
+non-transitive, so a subset latch bridges two sets that explicitly conflict:
 
-The adopt rule is deliberately asymmetric, and the asymmetry is load-bearing:
+```
+A {cc:S, orca:W1}  -> latches id C
+A {cc:S}           -> adopts C, records a SUBSET latch {cc:S}
+B {cc:S, orca:W2}  -> rejects A's full latch (orca conflicts)
+                      ...then adopts the SUBSET latch -> merges into A
+```
 
-| Latched | Now present | Result |
-|---|---|---|
-| `{cc=S}` | `{cc=S, orca=W}` | **adopt** — one session gained a marker |
-| `{cc=S, orca=W}` | `{cc=S}` | **adopt** — one session lost a marker |
-| `{cc=S, orca=W1}` | `{cc=S, orca=W2}` | **veto** — a *different* agent sharing a process |
-| more than one compatible latch | — | **mint a new id** — never guess |
+The two requirements are irreconcilable, not merely hard: stability across a
+changing marker set *requires* adopting on partial overlap, and distinctness
+*requires* never adopting on partial overlap — a shared marker is exactly what
+two concurrent agents have in common. Only an identifier present on **every**
+invocation satisfies both, and p9 cannot mint one; the harness must issue it.
+That is rung 1.
 
-Without the veto the latch would re-open the very collision it ships beside:
-the shared socket would leak one session's identity into another's.
+So the accepted failure mode is **fragmentation, never merging**: an agent
+whose environment is sanitized mid-session (`env -i` strips these markers)
+changes identity and loses its queued work. That costs a ceiling slot and some
+orphaned queue items; merging would cost isolation itself. Between an edge case
+that over-isolates and one that under-isolates, only the first is safe.
+
+**A harness that wants stability across a sanitized environment should set
+`BROOMVA_P9_SESSION`** — rung 1 exists precisely for the case derivation
+cannot serve.
 
 **The git worktree is not itself a marker.** An agent that `cd`s between repos
 — routine in this monorepo — would otherwise change identity mid-session.
 `ORCA_WORKTREE_ID` already carries worktree identity where a harness exposes it.
 
 **Marker values are never normalized.** Whitespace decides *presence*, never
-*identity*: an earlier revision stripped values "to be forgiving" and thereby
-merged `'x'`, `' x '`, `'  x'` and `'x  '` into one scope. The composite is
-length-prefixed per field, so a crafted value cannot forge a field boundary.
+*identity*: an earlier revision stripped values "to be forgiving" and merged
+`'x'`, `' x '`, `'  x'` and `'x  '` into one scope. The composite is
+length-prefixed per field, so a crafted value cannot forge a field boundary,
+and values are encoded with `surrogateescape` so an undecodable POSIX byte
+does not raise.
 
-Known and **not** fully solved: a recycled pid can reproduce a prior session's
-marker. `p9 reap` drains dead rows, but a *live* watcher left by a dead parent
-is not safely drainable, so this is a real residue — narrower than rung 3,
-which shares one scope unconditionally, and not zero. The 64-bit id is a
-birthday bound, not an impossibility claim.
+Known and **not** solved: two agents in one worktree under one process expose
+an identical marker set and therefore share a scope. Derivation cannot separate
+them — only rung 1 can. A recycled pid can likewise reproduce a prior session's
+marker. The 64-bit id is a birthday bound, not an impossibility claim.
 
 What the session id buys you:
 

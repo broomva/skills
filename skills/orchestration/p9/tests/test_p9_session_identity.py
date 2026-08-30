@@ -238,37 +238,38 @@ class TestSharedProcessRegime:
         assert sandbox.watch(202, **{**base, AGENT: "y"}).returncode == 0
 
 
-class TestLatch:
-    """Identity is latched, so a changing marker SET cannot move it — while a
-    changing marker VALUE still must."""
+class TestNoAdoptionAcrossMarkerSets:
+    """Identity is NOT latched, and that is the deliberate choice.
 
-    def test_marker_disappearing_keeps_the_identity(self, sandbox):
-        """`env -i` strips markers; a wrapper that sanitizes env reaches this."""
-        full = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}
-        sandbox.watch(101, **full)
-        before = _session_of(sandbox.watch(202, **full))
-        after = _session_of(sandbox.watch(303, **{CC: "/tmp/cc-socks/1.sock"}))
-        assert before == after, f"identity moved when a marker vanished: {before} != {after}"
+    A latch was tried and removed: adoption by marker-set overlap is
+    non-transitive, so a *subset* latch bridges two sets that explicitly
+    conflict — ``{cc:S, orca:W1}`` then ``{cc:S}`` then ``{cc:S, orca:W2}``
+    merged two distinct agents. See ``derived_session_id``.
 
-    def test_marker_appearing_keeps_the_identity(self, sandbox):
-        partial = {CC: "/tmp/cc-socks/1.sock"}
-        sandbox.watch(101, **partial)
-        before = _session_of(sandbox.watch(202, **partial))
-        after = _session_of(sandbox.watch(
-            303, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}))
-        assert before == after, f"identity moved when a marker appeared: {before} != {after}"
+    The accepted consequence is that identity moves when the marker *set*
+    changes. These tests pin the direction of that failure: it must
+    over-isolate (fragment), never under-isolate (merge).
+    """
 
-    def test_the_latch_does_not_leak_across_a_conflicting_marker(self, sandbox):
-        """The latch must not re-open the BLOCKER it was added alongside.
+    def test_a_changed_marker_set_fragments_rather_than_merges(self, sandbox):
+        """The A-full -> A-subset -> B-conflicting sequence must not merge.
 
-        Agent A latches {cc=S, orca=W1}. Agent B arrives with {cc=S, orca=W2}.
-        They overlap on `cc` — if overlap alone were enough to adopt, B would
-        inherit A's identity and collide. Disagreement on `orca` must veto it.
+        This is the exact sequence that defeated the latch.
         """
-        assert sandbox.watch(
-            101, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}).returncode == 0
-        assert sandbox.watch(
-            202, **{CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/b"}).returncode == 0
+        full_a = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}
+        subset = {CC: "/tmp/cc-socks/1.sock"}
+        full_b = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/b"}
+        ids = [_p9._composite_id(m) for m in (full_a, subset, full_b)]
+        assert len(set(ids)) == 3, (
+            f"a marker-set change collapsed two distinct agents: {ids}")
+
+    def test_fragmentation_is_the_documented_direction(self, sandbox):
+        """An agent losing a marker gets a NEW scope, not someone else's."""
+        full = {CC: "/tmp/cc-socks/1.sock", ORCA: "uuid::/wt/a"}
+        assert sandbox.watch(101, **full).returncode == 0
+        # Same agent, environment sanitized: it fragments (arms again) rather
+        # than inheriting any other session's scope.
+        assert sandbox.watch(202, **{CC: "/tmp/cc-socks/1.sock"}).returncode == 0
 
 
 class TestValueFidelity:
@@ -324,18 +325,3 @@ class TestValueFidelity:
         """Two dicts with the same pairs in different insertion order are one
         identity — otherwise the id would depend on how the env was read."""
         assert self._id_for({CC: "s", ORCA: "w"}) == self._id_for({ORCA: "w", CC: "s"})
-
-
-class TestLatchCompatibility:
-    """The adopt-or-mint predicate, in isolation."""
-
-    def test_agreement_on_overlap_adopts(self):
-        assert _p9._latch_compatible({CC: "s"}, {CC: "s", ORCA: "w"})
-        assert _p9._latch_compatible({CC: "s", ORCA: "w"}, {CC: "s"})
-
-    def test_disagreement_on_any_shared_marker_vetoes(self):
-        assert not _p9._latch_compatible({CC: "s", ORCA: "w1"},
-                                         {CC: "s", ORCA: "w2"})
-
-    def test_no_overlap_never_adopts(self):
-        assert not _p9._latch_compatible({CC: "s"}, {ORCA: "w"})
