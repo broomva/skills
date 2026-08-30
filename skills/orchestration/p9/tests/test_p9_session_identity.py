@@ -284,13 +284,23 @@ class TestValueFidelity:
     def _id_for(markers):
         return _p9._composite_id(markers)
 
-    def test_whitespace_variants_are_distinct_identities(self):
+    def test_whitespace_variants_are_distinct_identities(self, monkeypatch):
         """A prior revision stripped marker values and merged four identities.
 
         `'x'`, `' x '`, `'  x'` and `'x  '` all became one scope. Whitespace
         decides presence; it must never decide identity.
+
+        Goes through ``_present_markers`` deliberately. An earlier version of
+        this test called ``_composite_id`` directly and a mutant that restored
+        the strip **survived** — the strip lives in the reader, so a test that
+        skips the reader cannot reach it.
         """
-        ids = {v: self._id_for({AGENT: v}) for v in ("x", " x ", "  x", "x  ")}
+        ids = {}
+        for v in ("x", " x ", "  x", "x  "):
+            monkeypatch.setenv(AGENT, v)
+            markers = _p9._present_markers()
+            assert markers.get(AGENT) == v, "the reader mutated the value"
+            ids[v] = _p9._composite_id(markers)
         assert len(set(ids.values())) == 4, f"distinct values merged: {ids}"
 
     def test_blank_values_are_absent_not_identities(self):

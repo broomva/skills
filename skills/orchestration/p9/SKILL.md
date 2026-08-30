@@ -65,7 +65,7 @@ its scope in this order:
 | # | Source | When it applies |
 |---|---|---|
 | 1 | `BROOMVA_P9_SESSION` | explicit override, for a harness that knows its own scope better than p9 can infer it (`bstack wave` plans, tests) |
-| 2 | a **harness marker** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` | automatic; the id is `<prefix>-<hash12>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered |
+| 2 | a latched **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
 | 3 | persisted `session-default.id` | nothing derivable — one shared scope, the pre-BRO-2373 behavior |
 
 Adding a harness is one row in `SESSION_MARKERS` (`p9.py`); a row that does not
@@ -78,22 +78,47 @@ actually isolate fails `test_every_declared_marker_isolates`.
 > two agents in one repo starved each other at `max_concurrent_prs: 1` on
 > different PRs. The guarantee this section used to promise had never held.
 
-Two properties the derivation deliberately trades for:
+### Why a composite, and why latched
 
-- **Stable over precise.** An id that moves between two invocations of one
-  session fragments the ceiling and orphans that session's wait-queue. So
-  derivation reads env only — it never stats a marker file that may be
-  unlinked mid-session.
-- **The git worktree is not part of the key**, even though including it would
-  separate P5 Fanout subagents that share one process. An agent that `cd`s
-  between repos — routine in this monorepo — would otherwise change identity
-  mid-session. Fanout separation is left to `max_concurrent_prs_scope`, which
-  already keeps different repos apart.
+**Composite, not first-present.** A marker *shared* by two agents would
+otherwise mask a lower-priority marker that distinguishes them: two Fanout
+agents under one Claude process but in different Orca worktrees both resolved
+to the same `cc-*` id and starved each other exactly as before. Composing is
+never *less* discriminating — an identical marker set gives an identical id,
+and any difference in any marker gives a different one.
 
-Known and bounded: a recycled pid can reproduce a prior session's marker, so a
-new session may inherit a dead one's scope. Rung 3 does that for *every*
-session, so derivation is strictly no worse, and `p9 reap` drains the dead rows
-either way.
+**Latched on first use.** Identity is otherwise recomputed from a mutable
+environment every invocation, and an id that moves between two invocations of
+one session fragments the ceiling and orphans that session's queued work.
+Measured: both markers survive subshells unchanged, but `env -i` strips them,
+so any wrapper that sanitizes the environment reaches this.
+
+The adopt rule is deliberately asymmetric, and the asymmetry is load-bearing:
+
+| Latched | Now present | Result |
+|---|---|---|
+| `{cc=S}` | `{cc=S, orca=W}` | **adopt** — one session gained a marker |
+| `{cc=S, orca=W}` | `{cc=S}` | **adopt** — one session lost a marker |
+| `{cc=S, orca=W1}` | `{cc=S, orca=W2}` | **veto** — a *different* agent sharing a process |
+| more than one compatible latch | — | **mint a new id** — never guess |
+
+Without the veto the latch would re-open the very collision it ships beside:
+the shared socket would leak one session's identity into another's.
+
+**The git worktree is not itself a marker.** An agent that `cd`s between repos
+— routine in this monorepo — would otherwise change identity mid-session.
+`ORCA_WORKTREE_ID` already carries worktree identity where a harness exposes it.
+
+**Marker values are never normalized.** Whitespace decides *presence*, never
+*identity*: an earlier revision stripped values "to be forgiving" and thereby
+merged `'x'`, `' x '`, `'  x'` and `'x  '` into one scope. The composite is
+length-prefixed per field, so a crafted value cannot forge a field boundary.
+
+Known and **not** fully solved: a recycled pid can reproduce a prior session's
+marker. `p9 reap` drains dead rows, but a *live* watcher left by a dead parent
+is not safely drainable, so this is a real residue — narrower than rung 3,
+which shares one scope unconditionally, and not zero. The 64-bit id is a
+birthday bound, not an impossibility claim.
 
 What the session id buys you:
 
