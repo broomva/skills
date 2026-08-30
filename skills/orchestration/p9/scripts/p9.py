@@ -136,6 +136,128 @@ def stuck_markers_dir() -> Path:
     return p9_home() / "stuck"
 
 
+# Harness markers that identify ONE agent stream. Each row is (env var, id
+# prefix); the prefix of the first present row survives into the session id so
+# `p9 status` shows which harness answered — a bare hash would make an
+# isolation failure indistinguishable from a derivation failure.
+#
+# Adding a harness is one row. Values are hashed verbatim; nothing here parses
+# them, so a harness changing its format cannot silently split one session.
+SESSION_MARKERS: tuple[tuple[str, str], ...] = (
+    # Claude Code: per-session control socket, path embeds the session pid.
+    ("CLAUDE_CODE_MESSAGING_SOCKET", "cc"),
+    # Orca: per-worktree agent launch identity, `<uuid>::<worktree path>`.
+    ("ORCA_WORKTREE_ID", "orca"),
+    # Generic contract for any other harness, without a code change.
+    ("AGENT_SESSION_ID", "agent"),
+)
+
+# Field separator for the composite payload. This alone does NOT make the
+# encoding unambiguous — an env var value may contain any byte except NUL,
+# Unit Separator included, so a crafted value can reproduce a separator. The
+# framing in `_composite_id` is length-prefixed for that reason; a test pins
+# that a value cannot forge a field boundary.
+_MARKER_SEP = "\x1f"
+
+
+def _present_markers() -> dict[str, str]:
+    """Every declared marker currently set, name -> **raw** value.
+
+    Values are not stripped. An earlier revision stripped them "to be forgiving
+    about whitespace" and thereby merged ``'x'``, ``' x '`` and ``'x  '`` into
+    one scope — four declared identities collapsing to one, which is the exact
+    defect class this module exists to remove. Whitespace only decides
+    *presence*; it never decides *identity*.
+    """
+    out: dict[str, str] = {}
+    for name, _prefix in SESSION_MARKERS:
+        raw = os.environ.get(name)
+        if raw is not None and raw.strip():
+            out[name] = raw
+    return out
+
+
+def _composite_id(markers: dict[str, str]) -> str:
+    """Id over **every** present marker, in declaration order.
+
+    Composite rather than first-present (BRO-2373 round 1 BLOCKER): with
+    first-present, a marker shared by two agents masks a lower-priority marker
+    that distinguishes them — two Fanout agents under one Claude process but
+    in different Orca worktrees both resolved to the same `cc-*` id and starved
+    each other exactly as before. Composing is never *less* discriminating: an
+    identical marker set yields an identical id, and any difference in any
+    marker yields a different one.
+
+    64 bits of SHA-256. That is a bound, not impossibility — at the scale of
+    concurrent agent sessions on one machine the birthday probability is
+    negligible, but the code does not claim collisions cannot happen.
+    """
+    prefix = next(p for n, p in SESSION_MARKERS if n in markers)
+    # Length-prefixed framing: `name:len(value):value`. A value containing the
+    # separator, an `=`, or another marker's name cannot forge a field
+    # boundary, because the reader is told each value's length up front. An
+    # earlier revision joined `name=value` on a separator and asserted in a
+    # comment that no env value could contain it — false, and the test that
+    # now pins this caught it.
+    payload = _MARKER_SEP.join(
+        f"{n}:{len(markers[n])}:{markers[n]}"
+        for n, _p in SESSION_MARKERS if n in markers)
+    # `surrogateescape`: os.environ decodes undecodable POSIX bytes into
+    # surrogates, and a plain .encode() raises UnicodeEncodeError on them.
+    digest = hashlib.sha256(
+        payload.encode("utf-8", "surrogateescape")).hexdigest()
+    return f"{prefix}-{digest[:16]}"
+
+
+def derived_session_id() -> str | None:
+    """Session id derived from the harness, or None if no marker is present.
+
+    **Composite over every present marker**, never first-present. A marker
+    shared by two agents would otherwise mask a lower-priority marker that
+    distinguishes them: two agents under one Claude process but in different
+    Orca worktrees both resolved to one `cc-*` id and starved each other. The
+    composite is never *less* discriminating — an identical marker set gives an
+    identical id, any difference gives a different *payload* — hence a
+    different id, up to the 64-bit bound below.
+
+    **No latch, deliberately.** A previous revision latched the composite so a
+    marker appearing or disappearing mid-session would keep its identity. That
+    is unsound, and demonstrably so: adoption by marker-set overlap is
+    non-transitive. ``A={cc:S, orca:W1}`` latches, ``A={cc:S}`` adopts A's id
+    and records a *subset* latch, and then ``B={cc:S, orca:W2}`` — which
+    correctly rejects A's full latch — adopts the subset one and merges into A.
+    Verified against this function; the round-1 BLOCKER came back through the
+    round-2 fix for it.
+
+    The two requirements are irreconcilable here, not merely hard:
+
+    * stability across a changing marker set *requires* adopting on partial
+      overlap;
+    * distinctness *requires* never adopting on partial overlap, because a
+      shared marker is exactly what two concurrent agents have in common.
+
+    Only an identifier present on **every** invocation satisfies both, and p9
+    cannot mint one — it has to be issued by the harness. That is
+    ``BROOMVA_P9_SESSION`` (rung 1), and wiring it is tracked separately.
+
+    So the accepted failure mode here is **fragmentation rather than merging**
+    — barring a 64-bit hash collision, and barring two agents whose marker sets
+    are genuinely identical, which no derivation can separate. An
+    agent whose environment is sanitized mid-session (``env -i`` strips these)
+    changes identity and loses its queued work. That costs a ceiling slot and
+    some orphaned queue items. Merging costs isolation — the whole property
+    this function exists to provide. Between an edge case that over-isolates
+    and one that under-isolates, only the first is safe to ship.
+
+    Public so `p9 doctor` can report the resolved identity without
+    re-implementing the precedence.
+    """
+    markers = _present_markers()
+    if not markers:
+        return None
+    return _composite_id(markers)
+
+
 def current_session_id() -> str:
     """Resolve the scope key for this invocation.
 
@@ -145,22 +267,53 @@ def current_session_id() -> str:
     collide on the ceiling or steal each other's wait-work.
 
     Precedence:
-      1. ``BROOMVA_P9_SESSION`` env — the contract a parallel harness
-         (Fanout P5 worktree, ``bstack wave`` plan, autonomous run) sets
-         per session. This is the ONLY way to get true isolation between
-         concurrent agents on one machine, because separate processes share
-         no other stable per-session marker.
-      2. A persisted per-state-dir uuid (``session-default.id``), stable
-         across invocations. Keeps single-session / no-env usage on ONE
-         scope — i.e. backward-compatible global behavior — rather than
-         fragmenting every CLI call into its own scope.
+      1. ``BROOMVA_P9_SESSION`` env — an explicit override for a harness that
+         knows its own scope better than we can infer it (``bstack wave``
+         plans, tests).
+      2. A composite over every harness marker present
+         (:data:`SESSION_MARKERS`), recomputed each call — **not** latched; see
+         :func:`derived_session_id` for why a latch is unsound here. This is
+         what makes isolation the **default** rather than an opt-in.
+      3. A persisted per-state-dir uuid (``session-default.id``) — the
+         pre-derivation behavior, for environments exposing no marker at all.
 
-    The fallback is created under ``session.lock`` (double-checked) so a
+    Why derivation exists (BRO-2373): rung 1 was the *only* isolating path, and
+    a workspace-wide grep found it set in tests and nowhere else. Every real
+    agent therefore landed on rung 3 — one shared id — so the per-session
+    ceiling degenerated to a global one and two agents in one repo starved each
+    other at ``max_concurrent_prs: 1``. 1364 of 3508 recorded events carried
+    that single shared id. The docstring this replaces asserted that "separate
+    processes share no other stable per-session marker"; that was never true in
+    either harness this workspace runs under.
+
+    **Stability is a binding constraint that derivation cannot fully meet.**
+    An id that moves between two invocations of one session fragments the
+    ceiling and orphans the wait-queue. Derivation reads env only, so a marker
+    *file* being unlinked cannot move the id — but a marker *variable*
+    disappearing does, and no latch can fix that soundly
+    (:func:`derived_session_id`). A harness needing continuity across a
+    sanitized environment must set ``BROOMVA_P9_SESSION`` (rung 1).
+
+    The git worktree is deliberately **not** a marker. An agent that ``cd``s
+    between repos, routine in this monorepo, would otherwise change identity
+    mid-session. ``ORCA_WORKTREE_ID`` already carries worktree identity where a
+    harness chose to expose it.
+
+    Known and bounded: a recycled pid can reproduce a prior session's marker.
+    ``p9 reap`` drains dead rows, but a *live* watcher left by a dead parent is
+    not safely drainable, so this is a real residue rather than a solved
+    problem — narrower than rung 3, which shares one scope unconditionally, and
+    not zero.
+
+    The rung-3 fallback is created under ``session.lock`` (double-checked) so a
     burst of concurrent first-invocations converges on a single id.
     """
     env = os.environ.get("BROOMVA_P9_SESSION")
     if env and env.strip():
         return env.strip()
+    derived = derived_session_id()
+    if derived is not None:
+        return derived
     path = session_default_id_path()
     if path.exists():
         txt = path.read_text(encoding="utf-8").strip()

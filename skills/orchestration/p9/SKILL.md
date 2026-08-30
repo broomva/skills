@@ -54,17 +54,85 @@ when_to_use: |
 | A watcher/wait looks wedged | `p9 stuck-scan` — structured dump + notification |
 | About to `sleep` | **Don't.** Pull from `p9 wait-queue pop` instead |
 
-## Parallel agent sessions (BRO-1529)
+## Parallel agent sessions (BRO-1529, BRO-2373)
 
 P9 state lives in one shared dir (`~/.config/broomva/p9/`). Concurrent agents
 stay collision-free by **scoping every record to a session id**.
 
-> **Contract:** each parallel agent session/worktree/wave-plan MUST export
-> `BROOMVA_P9_SESSION=<stable-unique-id>` before calling `p9`. Fanout (P5)
-> worktrees, `bstack wave` plans, and autonomous runs each set their own.
-> If unset, p9 falls back to a single persisted id (`session-default.id`) —
-> i.e. backward-compatible **global** behavior, *not* isolation. No env var ⇒
-> no parallel safety.
+**Isolation is on by default — no export required** (BRO-2373). `p9` resolves
+its scope in this order:
+
+| # | Source | When it applies |
+|---|---|---|
+| 1 | `BROOMVA_P9_SESSION` | explicit override, for a harness that knows its own scope better than p9 can infer it (`bstack wave` plans, tests) |
+| 2 | a **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` — recomputed each call, **not** latched | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
+| 3 | persisted `session-default.id` | nothing derivable — one shared scope, the pre-BRO-2373 behavior |
+
+Adding a harness is one row in `SESSION_MARKERS` (`p9.py`); a row that does not
+actually isolate fails `test_every_declared_marker_isolates`.
+
+> **Why this changed.** BRO-1529 built the scoping and required rung 1. A
+> workspace-wide grep found `BROOMVA_P9_SESSION` set in *tests and nowhere
+> else*, so every real agent landed on rung 3: **1364 of 3508** recorded
+> events carried one shared id. The per-session ceiling was a global one, and
+> two agents in one repo starved each other at `max_concurrent_prs: 1` on
+> different PRs. The guarantee this section used to promise had never held.
+
+### Why a composite, and why nothing is latched
+
+**Composite, not first-present.** A marker *shared* by two agents would
+otherwise mask a lower-priority marker that distinguishes them: two agents
+under one Claude process but in different Orca worktrees both resolved to the
+same `cc-*` id and starved each other. Composing is never *less*
+discriminating — an identical marker set gives an identical id, and any
+difference in any marker gives a different payload — hence a different id, up
+to the 64-bit bound noted below.
+
+**Identity is not latched, and that is deliberate.** A latch was built and
+removed. Adopting an existing identity when the marker *set* changes is
+non-transitive, so a subset latch bridges two sets that explicitly conflict:
+
+```
+A {cc:S, orca:W1}  -> latches id C
+A {cc:S}           -> adopts C, records a SUBSET latch {cc:S}
+B {cc:S, orca:W2}  -> rejects A's full latch (orca conflicts)
+                      ...then adopts the SUBSET latch -> merges into A
+```
+
+The two requirements are irreconcilable, not merely hard: stability across a
+changing marker set *requires* adopting on partial overlap, and distinctness
+*requires* never adopting on partial overlap — a shared marker is exactly what
+two concurrent agents have in common. Only an identifier present on **every**
+invocation satisfies both, and p9 cannot mint one; the harness must issue it.
+That is rung 1.
+
+So the accepted failure mode is **fragmentation rather than merging** — barring
+a 64-bit hash collision, and barring two agents whose marker sets are genuinely
+identical, which no derivation can separate. An agent
+whose environment is sanitized mid-session (`env -i` strips these markers)
+changes identity and loses its queued work. That costs a ceiling slot and some
+orphaned queue items; merging would cost isolation itself. Between an edge case
+that over-isolates and one that under-isolates, only the first is safe.
+
+**A harness that wants stability across a sanitized environment should set
+`BROOMVA_P9_SESSION`** — rung 1 exists precisely for the case derivation
+cannot serve.
+
+**The git worktree is not itself a marker.** An agent that `cd`s between repos
+— routine in this monorepo — would otherwise change identity mid-session.
+`ORCA_WORKTREE_ID` already carries worktree identity where a harness exposes it.
+
+**Marker values are never normalized.** Whitespace decides *presence*, never
+*identity*: an earlier revision stripped values "to be forgiving" and merged
+`'x'`, `' x '`, `'  x'` and `'x  '` into one scope. The composite is
+length-prefixed per field, so a crafted value cannot forge a field boundary,
+and values are encoded with `surrogateescape` so an undecodable POSIX byte
+does not raise.
+
+Known and **not** solved: two agents in one worktree under one process expose
+an identical marker set and therefore share a scope. Derivation cannot separate
+them — only rung 1 can. A recycled pid can likewise reproduce a prior session's
+marker. The 64-bit id is a birthday bound, not an impossibility claim.
 
 What the session id buys you:
 
