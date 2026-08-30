@@ -65,7 +65,7 @@ its scope in this order:
 | # | Source | When it applies |
 |---|---|---|
 | 1 | `BROOMVA_P9_SESSION` | explicit override, for a harness that knows its own scope better than p9 can infer it (`bstack wave` plans, tests) |
-| 2 | a latched **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
+| 2 | a **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` — recomputed each call, **not** latched | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
 | 3 | persisted `session-default.id` | nothing derivable — one shared scope, the pre-BRO-2373 behavior |
 
 Adding a harness is one row in `SESSION_MARKERS` (`p9.py`); a row that does not

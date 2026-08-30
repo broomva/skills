@@ -270,9 +270,10 @@ def current_session_id() -> str:
       1. ``BROOMVA_P9_SESSION`` env — an explicit override for a harness that
          knows its own scope better than we can infer it (``bstack wave``
          plans, tests).
-      2. A latched composite over every harness marker present
-         (:data:`SESSION_MARKERS`). This is what makes isolation the
-         **default** rather than something a caller must opt into.
+      2. A composite over every harness marker present
+         (:data:`SESSION_MARKERS`), recomputed each call — **not** latched; see
+         :func:`derived_session_id` for why a latch is unsound here. This is
+         what makes isolation the **default** rather than an opt-in.
       3. A persisted per-state-dir uuid (``session-default.id``) — the
          pre-derivation behavior, for environments exposing no marker at all.
 
@@ -285,10 +286,13 @@ def current_session_id() -> str:
     processes share no other stable per-session marker"; that was never true in
     either harness this workspace runs under.
 
-    **Stability is a binding constraint, not a nicety.** An id that moves
-    between two invocations of one session fragments the ceiling and orphans
-    the wait-queue, so derivation reads env only — it never stats a marker file
-    that may be unlinked mid-session — and the result is latched.
+    **Stability is a binding constraint that derivation cannot fully meet.**
+    An id that moves between two invocations of one session fragments the
+    ceiling and orphans the wait-queue. Derivation reads env only, so a marker
+    *file* being unlinked cannot move the id — but a marker *variable*
+    disappearing does, and no latch can fix that soundly
+    (:func:`derived_session_id`). A harness needing continuity across a
+    sanitized environment must set ``BROOMVA_P9_SESSION`` (rung 1).
 
     The git worktree is deliberately **not** a marker. An agent that ``cd``s
     between repos, routine in this monorepo, would otherwise change identity
