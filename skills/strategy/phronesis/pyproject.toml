@@ -47,6 +47,12 @@ dev = [
     "mypy>=2.0.0",
     "types-PyYAML>=6.0.12",
     "types-jsonschema>=4.26.0",
+    # Transitive dependency of the bookkeeping module, which the extraction
+    # pipeline imports for the canonical Nous gate and `derive_core_claim`.
+    # Without it the import fails, `_bookkeeping_module()` returns None, and
+    # the suite silently exercises the stub instead of the real gate — which
+    # is exactly how 20 entity pages shipped with stub scores.
+    "mistune>=3.0.0",
 ]
 build = [
     "build>=1.2.0",
