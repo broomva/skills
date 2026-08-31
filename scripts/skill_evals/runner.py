@@ -75,6 +75,11 @@ if str(_HERE.parent) not in sys.path:  # allow direct execution AND package impo
 
 from skill_evals import ablation as ablation_mod  # noqa: E402
 from skill_evals import checks as checks_mod  # noqa: E402
+# Imported as a MODULE, and called as `fixture_guard.scrub_recording(...)`, so that
+# neutering the module makes the record path die loudly instead of degrading to a
+# no-op. `from … import scrub_recording` with a getattr fallback would fail OPEN,
+# which is the polarity this whole file is fighting.
+from skill_evals import fixture_guard  # noqa: E402
 from skill_evals import jail as jail_mod  # noqa: E402
 from skill_evals.transcript import Transcript, normalize_skill_name  # noqa: E402
 
@@ -827,6 +832,12 @@ class LiveRunner:
     #: writes into the temp dir instead of the user's real one. Turning it OFF is
     #: what the escape mutation-proof does; there is no other reason to.
     env_jail: bool = True
+    #: Scrub every recording on its way to disk (BRO-2030). ON by default and
+    #: fail-CLOSED: if the scrubber cannot vouch for the bytes, ``_record`` raises and
+    #: no file is written. Turning it off is ``--no-scrub``, which is loud and lands in
+    #: the fixture meta, because a fixture nobody can tell was unscrubbed is the one
+    #: that gets committed. See fixture_guard.py for why this is not a manual step.
+    scrub_recordings: bool = True
     #: Written into every fixture so replay can detect a stale recording.
     skill: str = ""
     cli_version: str = ""
@@ -904,6 +915,24 @@ class LiveRunner:
                 "SKILL.md it was recorded from. Pass fingerprint=skill_fingerprint(dir)."
             )
         case_dir = Path(self.record_dir) / "cases" / case_id
+        where = f"{self.skill or '?'} {case_id} trial {trial}"
+        stderr = t.stderr[-4000:]
+
+        # SCRUB ON THE WAY TO DISK, fail-closed. Not "then run scrub.py by hand" —
+        # that was the arrangement, and it held for exactly as long as the person who
+        # wrote it was the person recording. fixture_guard raises rather than
+        # returning anything it cannot vouch for, so the write below is unreachable
+        # with dirty bytes.
+        if self.scrub_recordings:
+            stdout, stderr, redactions = fixture_guard.scrub_recording(
+                stdout, stderr, where=where
+            )
+            scrub_field: Any = redactions
+        else:
+            # Recorded in the meta so a reviewer sees it, and so fixture_pack refuses
+            # to publish it. An escape hatch that leaves no trace is a hole.
+            scrub_field = False
+
         case_dir.mkdir(parents=True, exist_ok=True)
         (case_dir / f"trial-{trial:02d}.jsonl").write_text(stdout, encoding="utf-8")
         meta = {
@@ -912,8 +941,9 @@ class LiveRunner:
             "skill": self.skill,
             "case_id": case_id,
             "trial": trial,
+            "scrubbed": scrub_field,
             "exit_code": t.exit_code,
-            "stderr": t.stderr[-4000:],
+            "stderr": stderr,
             "wall_ms": t.wall_ms,
             "model": self.model,
             "cli_version": self.cli_version,
@@ -1070,8 +1100,6 @@ class ReplayRunner:
         if not path.is_file():
             raise FixtureError(f"missing replay fixture: {path}")
         text = path.read_text(encoding="utf-8")
-        if not text.strip():
-            raise FixtureError(f"empty replay fixture: {path}")
 
         meta_path = path.with_suffix(".meta.json")
         if not meta_path.is_file():
@@ -1089,6 +1117,29 @@ class ReplayRunner:
 
         self._check_binding(meta, case_id, trial, path)
         self._note_drift(meta, case_id, trial)
+
+        # An EMPTY fixture whose meta records a FAILED run is a faithful recording,
+        # not a broken one. The first live run produced three: the CLI timed out at
+        # 300s, so stdout was empty and the trial scored ERROR — and replaying it
+        # then reported "fixture integrity failure", which is a different claim about
+        # a different thing. Live fixtures could not enter CI at all while a recorded
+        # timeout replayed as an unusable fixture.
+        #
+        # The distinction is what the META says: empty + a non-zero exit or a stderr
+        # is the run failing; empty + a clean exit is the FIXTURE failing, and that
+        # still raises.
+        if not text.strip():
+            recorded_exit = int(meta.get("exit_code", 0) or 0)
+            recorded_stderr = str(meta.get("stderr", ""))
+            if recorded_exit != 0 or recorded_stderr.strip():
+                return Transcript.from_ndjson(
+                    "", exit_code=recorded_exit, stderr=recorded_stderr,
+                    source=str(path), wall_ms=meta.get("wall_ms"),
+                )
+            raise FixtureError(
+                f"empty replay fixture whose meta records a CLEAN run: {path} — "
+                "that is a broken recording, not a recorded failure"
+            )
 
         recorded_hash = str(meta.get("prompt_sha256", ""))
         current_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -1747,6 +1798,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-synthetic-fixtures", action="store_true",
                    help="grade hand-authored fixtures (harness self-test only — a synthetic "
                         "fixture says nothing about a real skill's trigger behaviour)")
+    p.add_argument("--no-scrub", action="store_true",
+                   help="record WITHOUT redacting host content. For debugging a redaction "
+                        "that changed a verdict, and nothing else: the fixtures are model "
+                        "output from a bypassPermissions agent on your machine, and this "
+                        "repo is PUBLIC. The meta sidecar records \"scrubbed\": false and "
+                        "fixture_pack refuses to publish such a fixture.")
     # NOTE: the positive-arm bar is deliberately NOT a flag. Its *rate* is pinned
     # to --threshold, and beneath that it has a floor no flag can lower: at least
     # one positive trial must have been graded AND passed, so `--threshold 0.0`
@@ -1938,10 +1995,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             cli_version=version,
             fingerprint=fingerprint,
             env_jail=not args.no_env_jail,
+            scrub_recordings=not args.no_scrub,
         )
         mode_line = f"mode=LIVE  cli={cli} ({version or 'unknown'})  model={args.model}"
         if args.record:
             mode_line += f"  record={args.record}"
+            mode_line += "  scrub=" + ("ON" if not args.no_scrub else "OFF")
+        if args.record and args.no_scrub:
+            # Loud, on stderr, and repeated in every fixture's meta. The failure mode
+            # this guards against is someone recording with the flag on a Friday and
+            # committing the result on a Monday.
+            print(
+                "[skill-evals] ############################################################\n"
+                "[skill-evals] #  --no-scrub: recording UNREDACTED host output.            #\n"
+                "[skill-evals] #  These fixtures may contain your home paths, your process #\n"
+                "[skill-evals] #  table, your account identity and your credentials.       #\n"
+                "[skill-evals] #  broomva/skills is PUBLIC. Do not commit or publish them.  #\n"
+                "[skill-evals] ############################################################",
+                file=sys.stderr,
+            )
         mode_line += "  env-jail=" + ("ON" if not args.no_env_jail else "OFF")
 
     # The mode banner prints on EVERY invocation. A harness whose replay path is
