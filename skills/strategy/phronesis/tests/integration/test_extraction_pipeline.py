@@ -253,8 +253,16 @@ class TestEntityStub:
         # Frontmatter closes
         assert "\n---\n" in body
         # Required fields
-        for key in ("type:", "slug:", "title:", "status: candidate", "score:"):
+        for key in ("type:", "title:", "status: candidate", "score:"):
             assert key in body
+        # The original read `"slug:" in body`, which ALSO matches
+        # `engagement_slug:` — so it passed with no top-level slug key present,
+        # and asserted the opposite of the unit test
+        # (`"slug" not in _frontmatter(...)`, since workspace#530 dropped the
+        # redundant field). Line-anchored, and asserting ABSENCE, so the two
+        # tests now agree and this one can actually fail.
+        assert not any(ln.startswith("slug:") for ln in body.splitlines()), \
+            "top-level slug: is redundant with the filename (workspace#530)"
 
 
 class TestPromotionRefusals:

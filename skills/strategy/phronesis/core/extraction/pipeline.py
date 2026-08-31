@@ -343,8 +343,15 @@ def extract_and_queue(
         # didn't strip something). Never queue a candidate that carries a
         # tenant marker — the canary release gate would catch it later
         # but we'd rather fail fast.
-        leaked = anonymizer.carries_marker(candidate.content) + anonymizer.carries_marker(
-            candidate.quote
+        # candidate.slug is checked because it becomes the entity FILENAME and
+        # therefore a catalog-indexed field — the same surface as the
+        # `phronesis:{tenant_slug}` source ref this change removes. Gating
+        # content and quote while letting the slug through moves the leak
+        # rather than closing it: redacted body, tenant name in the path.
+        leaked = (
+            anonymizer.carries_marker(candidate.content)
+            + anonymizer.carries_marker(candidate.quote)
+            + anonymizer.carries_marker(candidate.slug)
         )
         if leaked:
             result.leaks.append((candidate.slug, leaked))
@@ -392,12 +399,21 @@ def extract_and_queue(
                 result.queued_count += 1
                 continue
             rendered = _render_entity_stub(candidate, score, engagement, core_claim)
-            if entity_path.exists():
+            # Atomic create. `exists()` then `write_text()` is a TOCTOU gap:
+            # two concurrent extractions producing the same slug can both see
+            # absence and the later clobbers the earlier. The skill is
+            # symlinked live, so concurrent extraction is the normal case.
+            # "x" fails closed on an existing file, which IS the refusal.
+            entity_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(entity_path, "x", encoding="utf-8") as fh:
+                    fh.write(rendered)
+            except FileExistsError:
                 result.skipped_existing.append(entity_path)
                 continue
-            entity_dir.mkdir(parents=True, exist_ok=True)
+            # Counted only after the write succeeds, so the tally cannot claim
+            # a page that was never written.
             result.promoted_count += 1
-            entity_path.write_text(rendered)
             result.promotion_paths.append(entity_path)
         else:
             result.queued_count += 1
