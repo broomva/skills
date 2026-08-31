@@ -255,3 +255,87 @@ class TestEntityStub:
         # Required fields
         for key in ("type:", "slug:", "title:", "status: candidate", "score:"):
             assert key in body
+
+
+class TestPromotionRefusals:
+    """The two refusals the writer used to ignore (BRO-2404).
+
+    A P20 mutation sweep found both of these behaviours SURVIVING every
+    mutation — the guards shipped with no test at all, which is the same
+    shape as the defect they were added to fix.
+    """
+
+    def test_existing_entity_page_is_never_overwritten(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        """This module's docstring says candidates "do NOT go directly to
+        research/entities/ — every candidate must clear a human review pass
+        first". `write_text` was unconditional and clobbered operator-polished
+        pages; observed overwriting a claim authored by repair commit
+        a1242b227.
+        """
+        eng = build_nova_construction_engagement()
+        first = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert first.promotion_paths, "fixture unreachable — nothing was promoted"
+
+        polished = first.promotion_paths[0]
+        sentinel = "OPERATOR-POLISHED BODY — MUST SURVIVE RE-EXTRACTION"
+        polished.write_text(sentinel, encoding="utf-8")
+
+        second = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+
+        assert polished.read_text(encoding="utf-8") == sentinel
+        assert polished in second.skipped_existing
+        assert polished not in second.promotion_paths
+
+    def test_queue_record_is_still_written_when_promotion_is_skipped(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        """Refusing to clobber must not lose the candidate."""
+        eng = build_nova_construction_engagement()
+        extract_and_queue(eng, queue_root=queue_root, entity_graph_root=entity_root)
+        second = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert second.skipped_existing
+        assert second.queue_paths, "the queue record is the operator's recovery path"
+
+    def test_underivable_claim_blocks_promotion_instead_of_truncating(
+        self, monkeypatch: pytest.MonkeyPatch, queue_root: Path, entity_root: Path
+    ) -> None:
+        """`derive_core_claim` returning None is promotion-blocking (BRO-1983).
+
+        The previous code truncated to `sentence[:139] + "…"`, which the
+        linter rejects as a hard ERROR.
+        """
+        import core.extraction.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_derive_core_claim", lambda c: None)
+        eng = build_nova_construction_engagement()
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+
+        assert result.unpromotable, "nothing was blocked — the guard is inert"
+        assert result.promotion_paths == []
+        assert not list(entity_root.rglob("*.md"))
+        assert result.queue_paths, "blocked candidates must still be queued"
+
+    def test_promoted_pages_are_status_candidate_not_active(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        """A stub entering the graph as `active` would bypass operator review."""
+        import yaml
+
+        eng = build_nova_construction_engagement()
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert result.promotion_paths
+        for page in result.promotion_paths:
+            fm = yaml.safe_load(page.read_text(encoding="utf-8").split("---", 2)[1])
+            assert fm["status"] == "candidate"

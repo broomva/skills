@@ -289,6 +289,24 @@ class TestDeriveCoreClaim:
             if claim is not None:
                 assert not claim.rstrip().endswith(("…", "..."))
 
+    def test_returns_none_when_bookkeeping_is_unavailable(self, monkeypatch):
+        """Fail CLOSED. If the canonical deriver cannot be imported, the answer
+        is None (block promotion) — never "" and never a local truncation.
+
+        This is the branch that let 20 pages ship with stub scores: the module
+        path was dead, the fallback was silent, and nothing noticed.
+        """
+        import core.extraction.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_bookkeeping_module", lambda: None)
+        assert pipeline._derive_core_claim(_candidate()) is None
+
+    def test_returns_none_when_bookkeeping_lacks_the_deriver(self, monkeypatch):
+        import core.extraction.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_bookkeeping_module", lambda: object())
+        assert pipeline._derive_core_claim(_candidate()) is None
+
     def test_derived_claim_is_the_one_that_gets_rendered(self):
         """Closes the integration edge: unwiring the deriver from the renderer
         used to leave every test green."""
