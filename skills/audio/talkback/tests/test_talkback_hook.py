@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -252,16 +253,80 @@ def test_cli_session_id_prefers_env(hook, monkeypatch):
     assert hook.cli_session_id(SESSION_B) == SESSION_B  # explicit still wins
 
 
-def test_cli_refuses_to_guess_which_session_it_belongs_to(hook, monkeypatch):
+def test_cli_refuses_to_guess_which_session_it_belongs_to(
+    hook, tmp_path, monkeypatch
+):
     """No env, no --session: return None rather than pick a transcript.
 
     The removed fallback took the newest transcript in the cwd, so with two
     sessions open in one directory `--on` from A landed on B.
+
+    Two *competing* transcripts are staged deliberately. Without them this
+    assertion passes against the old fallback too — in a clean CI home there is
+    nothing to guess, so `None` comes back either way and the test discriminates
+    nothing. With B newer than A, the old code returns B and this fails.
     """
+    home = tmp_path / "home"
+    project = home / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
+    project.mkdir(parents=True)
+    older = project / f"{SESSION_A}.jsonl"
+    older.write_text("{}\n")
+    os.utime(older, (time.time() - 9999, time.time() - 9999))
+    (project / f"{SESSION_B}.jsonl").write_text("{}\n")   # newest -> the old guess
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
-    assert hook.cli_session_id() is None
-    assert not hasattr(hook, "newest_transcript_session")
+
+    assert hook.cli_session_id() is None, "the CLI guessed a session again"
+
+
+@pytest.mark.parametrize(
+    "bad", [12, "../escape", "", None, {"a": 1}],
+    ids=["non-string", "traversal", "empty", "null", "dict"],
+)
+def test_present_but_invalid_session_id_fails_closed(hook, bad):
+    """A present session_id is authoritative even when it is unusable.
+
+    Round 2 of the review caught this: falling through to the stem whenever
+    session_id was merely *invalid* reopened the hole — {session_id: 12,
+    transcript_path: ".../B.jsonl"} resolved B, spoke in a session that never
+    opted in, and on SessionEnd would delete B's flag.
+    """
+    keys = hook.payload_keys(
+        {"session_id": bad, "transcript_path": f"/p/{SESSION_B}.jsonl"}
+    )
+    assert keys == [], f"{bad!r} borrowed the transcript identity"
+
+
+def test_absent_session_id_still_uses_the_stem(hook):
+    """Absent is the only case the stem answers — the anti-vacuity control."""
+    keys = hook.payload_keys({"transcript_path": f"/p/{SESSION_B}.jsonl"})
+    assert keys == [SESSION_B]
+
+
+def test_install_upgrades_a_stale_unquoted_registration(hook, tmp_path, monkeypatch):
+    """A pre-fix install must be repaired, not reported as already done.
+
+    `missing` is empty for an already-registered machine, so without an explicit
+    upgrade path install() returned early and the broken bare-path command
+    survived every re-install.
+    """
+    spaced = tmp_path / "skills copy" / "scripts"
+    spaced.mkdir(parents=True)
+    monkeypatch.setattr(hook, "HERE", spaced)
+    bare = str(spaced / "talkback-hook.py")            # what the old code wrote
+    hook.SETTINGS.write_text(json.dumps({"hooks": {
+        e: [{"hooks": [{"type": "command", "command": bare, "timeout": 10}]}]
+        for e in hook.HOOK_EVENTS}}))
+
+    assert hook.install() == 0
+    settings = json.loads(hook.SETTINGS.read_text())
+    cmds = [h["command"] for ms in settings["hooks"].values()
+            for m in ms for h in m["hooks"]]
+    assert cmds, "registrations vanished"
+    for c in cmds:
+        assert c != bare, "stale bare command was left in place"
+        assert shlex.split(c) == [bare], c
 
 
 def test_install_quotes_a_command_path_containing_a_space(hook, tmp_path, monkeypatch):

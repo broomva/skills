@@ -192,11 +192,18 @@ def payload_keys(payload: dict) -> list[str]:
     per session, so a disagreement between the two fields is not a reason to
     widen the search; it is a reason to trust the identifier.
     """
-    candidate = payload.get("session_id")
-    if not isinstance(candidate, str) or not safe_key(candidate):
-        raw = payload.get("transcript_path")
-        candidate = Path(str(raw)).stem if raw else None
-    k = safe_key(candidate if isinstance(candidate, str) else None)
+    if "session_id" in payload:
+        # PRESENT means authoritative, and authoritative must fail CLOSED. An
+        # earlier version fell through to the stem whenever session_id was
+        # merely unusable — a non-string, or a value safe_key rejects — which
+        # reopened the hole this function exists to close: a payload of
+        # {session_id: 12, transcript_path: ".../B.jsonl"} resolved B, spoke in
+        # a session that never opted in, and on SessionEnd deleted B's flag.
+        candidate = payload.get("session_id")
+        k = safe_key(candidate if isinstance(candidate, str) else None)
+        return [k] if k else []
+    raw = payload.get("transcript_path")
+    k = safe_key(Path(str(raw)).stem) if raw else None
     return [k] if k else []
 
 
@@ -520,6 +527,17 @@ def _registered_events(settings: dict) -> set[str]:
     return found
 
 
+def _talkback_hook_entries(settings: dict) -> list[dict]:
+    """Every registered hook entry that is ours, so a stale one can be rewritten."""
+    out: list[dict] = []
+    for matchers in (settings.get("hooks") or {}).values():
+        for matcher in matchers or []:
+            for hook in matcher.get("hooks", []) or []:
+                if "talkback-hook.py" in str(hook.get("command", "")):
+                    out.append(hook)
+    return out
+
+
 def install(dry_run: bool = False) -> int:
     """Register the hook for every session, permanently.
 
@@ -538,9 +556,19 @@ def install(dry_run: bool = False) -> int:
 
     already = _registered_events(settings)
     missing = [e for e in HOOK_EVENTS if e not in already]
-    if not missing:
+
+    # An install that predates the quoting fix left a bare path in settings, and
+    # `missing` is empty for it — so without this the upgrade never happens and
+    # the broken command survives every re-install. Rewrite any talkback entry
+    # whose command is not the one we would register today.
+    stale = [h for h in _talkback_hook_entries(settings)
+             if h.get("command") != command]
+    if not missing and not stale:
         print(f"talkback hook: already registered for {', '.join(sorted(already))}")
         return 0
+    if stale and not dry_run:
+        for h in stale:
+            h["command"] = command
 
     hooks = settings.setdefault("hooks", {})
     for event in missing:
@@ -552,6 +580,8 @@ def install(dry_run: bool = False) -> int:
         print(f"would add to {SETTINGS}:")
         for event in missing:
             print(f"  {event}: {command}")
+        for h in stale:
+            print(f"  rewrite stale command: {h.get('command')} -> {command}")
         return 0
 
     backup = SETTINGS.with_suffix(f".json.talkback-bak-{int(time.time())}")
