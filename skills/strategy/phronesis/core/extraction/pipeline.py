@@ -113,9 +113,23 @@ def _bookkeeping_module() -> Any | None:
     override = os.environ.get("PHRONESIS_BOOKKEEPING_PATH")
     if override:
         candidates.append(Path(override).expanduser())
+
+    # Repo-relative FIRST. bookkeeping is a sibling skill in this same
+    # repository, so resolving from __file__ works in a CI checkout, in a
+    # worktree, and under any clone path — none of which `Path.home()` does.
+    # Resolving via home is what made the original path dead on every machine
+    # whose checkout is not exactly ~/broomva/skills.
+    #   .../skills/strategy/phronesis/core/extraction/pipeline.py
+    #   parents[4] == .../skills   (the dir holding strategy/ and knowledge/)
+    here = Path(__file__).resolve()
+    if len(here.parents) > 4:
+        candidates.append(here.parents[4] / "knowledge" / "bookkeeping" / "scripts")
+
+    # Installed-skill layouts, for a phronesis vendored outside the monorepo.
     home = Path.home() / "broomva" / "skills"
     candidates.append(home / "skills" / "knowledge" / "bookkeeping" / "scripts")
     candidates.append(home / "bookkeeping" / "scripts")
+    candidates.append(Path.home() / ".claude" / "skills" / "bookkeeping" / "scripts")
 
     bookkeeping_path = next((c for c in candidates if c.exists()), None)
     if bookkeeping_path is None:
